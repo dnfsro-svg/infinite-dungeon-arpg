@@ -479,7 +479,8 @@ RequestResult DungeonSession::reset_current_room() noexcept {
 
 bool item_id_in_use(
     const items::ItemOwnershipState& ownership,
-    const std::array<GroundItem, kGroundDropCapacity>& ground_items,
+    const std::array<GroundItem,
+        kAuthoritativeEquipmentDropCapacity>& ground_items,
     std::uint64_t item_id,
     std::uint16_t ignored_ground_index) noexcept {
     if (item_id == 0U) return true;
@@ -568,21 +569,33 @@ bool DungeonSession::capture_save_checkpoint(
         || unlock_pending || full_clear_pending;
     room.full_clear = room_progress_.full_clear || full_clear_pending;
     room.reward_committed = room.full_clear;
-    for (std::size_t index = 0U;
-            index < durable.item_ownership.claimed_drop_bits.size(); ++index) {
-        room.equipment_claim_bits[index] =
-            durable.item_ownership.claimed_drop_bits[index];
-    }
-    for (std::uint16_t ordinal = 0U;
-            ordinal < durable.item_ownership.material_claimed_drop_bits.size()
-                * 64U; ++ordinal) {
-        if (bit_is_set(
-                durable.item_ownership.material_claimed_drop_bits, ordinal)) {
+    room.equipment_claim_bits = room_drop_state_.equipment_claim_bits();
+    room.secondary_claim_bits = room_drop_state_.secondary_claim_bits();
+    if (post_mutation && pending_save_.has_value()) {
+        if (pending_save_->kind == PendingSaveKind::loot_pickup
+                || pending_save_->kind
+                    == PendingSaveKind::abyss_reward_claim) {
+            set_bit(room.equipment_claim_bits,
+                pending_save_->pickup_ordinal);
+        }
+        if (pending_save_->kind == PendingSaveKind::material_pickup) {
             set_bit(room.secondary_claim_bits,
-                checkpoint_material_ordinal(ordinal));
-            if ((ordinal & 1U) != 0U
-                    && ordinal < kGroundHealthPotionCapacity * 2U) {
-                set_bit(room.secondary_claim_bits, ordinal);
+                pending_save_->pickup_ordinal);
+        }
+        if (pending_save_->health_potion_claim.has_value()) {
+            const PendingHealthPotionClaim& claim =
+                *pending_save_->health_potion_claim;
+            for (std::uint8_t index = 0U; index < claim.count; ++index) {
+                set_bit(room.secondary_claim_bits,
+                    secondary_drop_ordinal(claim.spawn_ordinals[index]));
+            }
+        }
+        if (pending_save_->kind == PendingSaveKind::room_clear
+                || pending_save_->kind == PendingSaveKind::abyss_clear) {
+            for (const GroundMaterial& material : ground_materials_) {
+                if (material.active) {
+                    set_bit(room.secondary_claim_bits, material.ordinal);
+                }
             }
         }
     }
@@ -640,15 +653,16 @@ bool DungeonSession::capture_save_checkpoint(
         if (bit_is_set(room.secondary_claim_bits, canonical)) continue;
         const bool abyss_material = canonical
             >= kCheckpointAbyssSecondaryOrdinalBegin;
-        if (abyss_material || (canonical & 1U) == 0U) {
-            const std::uint16_t material_ordinal =
-                material_ordinal_from_checkpoint(canonical);
-            if (material_ordinal >= ground_materials_.size()) continue;
-            const GroundMaterial& material = ground_materials_[material_ordinal];
-            if (!material.active) continue;
-            if (material.ordinal != material_ordinal
-                    || (material.source == GroundMaterialSource::abyss_reward)
-                        != abyss_material
+        const GroundMaterial& material = ground_materials_[canonical];
+        if (material.active) {
+            const bool valid_source =
+                (material.source == GroundMaterialSource::monster_common
+                    && !abyss_material && (canonical & 1U) == 0U)
+                || (material.source == GroundMaterialSource::monster_coupon
+                    && !abyss_material && (canonical & 1U) != 0U)
+                || (material.source == GroundMaterialSource::abyss_reward
+                    && abyss_material);
+            if (material.ordinal != canonical || !valid_source
                     || room.secondary_ground_count
                         >= room.secondary_ground.size()) {
                 return false;
@@ -662,6 +676,7 @@ bool DungeonSession::capture_save_checkpoint(
             packed.material = material.material;
             continue;
         }
+        if (abyss_material || (canonical & 1U) == 0U) continue;
         const std::uint16_t spawn = static_cast<std::uint16_t>(canonical / 2U);
         if (spawn >= ground_health_potions_.size()) continue;
         const GroundHealthPotion& potion = ground_health_potions_[spawn];
@@ -679,8 +694,45 @@ bool DungeonSession::capture_save_checkpoint(
         packed.position = checkpoint_position(potion.position);
         packed.material = items::MaterialId::count;
     }
+    const bool preserve_room_experience = durable_override == nullptr
+        || (post_mutation && pending_save_preserves_room_experience());
+    room.pending_room_experience = preserve_room_experience
+            && !full_clear_pending
+            && room.lifecycle == checkpoint::RoomProgressLifecycle::active
+        ? pending_room_experience_ : 0U;
     return checkpoint::valid_room_progress_checkpoint_structural(
         room, destination.state);
+}
+
+bool DungeonSession::pending_save_preserves_room_experience()
+    const noexcept {
+    if (!pending_save_.has_value()) return false;
+    switch (pending_save_->kind) {
+    case PendingSaveKind::loot_pickup:
+    case PendingSaveKind::material_pickup:
+    case PendingSaveKind::equipment:
+    case PendingSaveKind::craft:
+    case PendingSaveKind::recipe:
+    case PendingSaveKind::reinforcement:
+    case PendingSaveKind::skill_loadout:
+    case PendingSaveKind::health_potion_pickup:
+    case PendingSaveKind::room_unlock:
+        return true;
+    case PendingSaveKind::transition:
+    case PendingSaveKind::passive_tree:
+    case PendingSaveKind::room_clear:
+    case PendingSaveKind::abyss_start:
+    case PendingSaveKind::abyss_fail:
+    case PendingSaveKind::abyss_clear:
+    case PendingSaveKind::abyss_reward_materialized:
+    case PendingSaveKind::abyss_reward_claim:
+    case PendingSaveKind::abyss_abandon:
+    case PendingSaveKind::death_retreat:
+    case PendingSaveKind::death_continue:
+    case PendingSaveKind::abyss_early_exit:
+        return false;
+    }
+    return false;
 }
 
 void DungeonSession::clear_buffered_gameplay_input() noexcept {
@@ -745,12 +797,13 @@ void DungeonSession::adopt_restored_session(DungeonSession&& source) noexcept {
     room_environment_ = std::move(source.room_environment_);
     assert(combat_.has_value() && source.combat_.has_value());
     combat_->adopt_restored_state(std::move(*source.combat_));
-    ground_items_ = std::move(source.ground_items_);
+    advance_room_instance_generation();
+    room_drop_state_ = std::move(source.room_drop_state_);
     rolled_drop_bits_ = source.rolled_drop_bits_;
-    ground_materials_ = std::move(source.ground_materials_);
     rolled_material_bits_ = source.rolled_material_bits_;
-    ground_health_potions_ = std::move(source.ground_health_potions_);
     room_progress_ = source.room_progress_;
+    room_progression_ = source.room_progression_;
+    pending_room_experience_ = source.pending_room_experience_;
     phase_ = source.phase_;
 }
 
@@ -828,19 +881,24 @@ bool DungeonSession::restore_room_progress_checkpoint_in_place(
             index < room.secondary_ground_count; ++index) {
         const auto& packed = room.secondary_ground[index];
         if (packed.tag == checkpoint::SecondaryGroundTag::material) {
-            const std::uint16_t material_ordinal =
-                material_ordinal_from_checkpoint(packed.ordinal);
+            const std::uint16_t material_ordinal = packed.ordinal;
             const bool abyss_material = packed.ordinal
                 >= kCheckpointAbyssSecondaryOrdinalBegin;
             if (material_ordinal >= ground_materials_.size()
                     || packed.source > static_cast<std::uint8_t>(
-                        GroundMaterialSource::abyss_reward)
-                    || (static_cast<GroundMaterialSource>(packed.source)
-                            == GroundMaterialSource::abyss_reward)
-                        != abyss_material
-                    || (!abyss_material && (packed.ordinal & 1U) != 0U)) {
+                        GroundMaterialSource::abyss_reward)) {
                 return false;
             }
+            const GroundMaterialSource material_source =
+                static_cast<GroundMaterialSource>(packed.source);
+            const bool valid_source =
+                (material_source == GroundMaterialSource::monster_common
+                    && !abyss_material && (packed.ordinal & 1U) == 0U)
+                || (material_source == GroundMaterialSource::monster_coupon
+                    && !abyss_material && (packed.ordinal & 1U) != 0U)
+                || (material_source == GroundMaterialSource::abyss_reward
+                    && abyss_material);
+            if (!valid_source) return false;
             continue;
         }
         const std::uint16_t spawn =
@@ -874,36 +932,40 @@ bool DungeonSession::restore_room_progress_checkpoint_in_place(
     room_progress_.exits_unlocked = room.exits_unlocked;
     room_progress_.full_clear = room.full_clear;
     room_progress_.defeated_monster_bits = room.defeat_bits;
-    ground_items_ = {};
-    ground_materials_ = {};
-    ground_health_potions_ = {};
+    room_drop_state_.clear();
+    if (!room_drop_state_.reset(field->plan())) return false;
     rolled_drop_bits_ = {};
     rolled_material_bits_ = {};
+    pending_room_experience_ = room.pending_room_experience;
     for (std::uint16_t index = 0U;
             index < room.equipment_ground_count; ++index) {
         const auto& packed = room.equipment_ground[index];
-        ground_items_[packed.ordinal] = GroundItem{true, packed.ordinal,
+        const GroundItem ground{true, packed.ordinal,
             static_cast<GroundItemSource>(packed.source),
             packed.reward_ordinal, combat_position(packed.position),
             packed.item};
+        if (!room_drop_state_.place_equipment(ground)) return false;
     }
     for (std::uint16_t index = 0U;
             index < room.secondary_ground_count; ++index) {
         const auto& packed = room.secondary_ground[index];
         if (packed.tag == checkpoint::SecondaryGroundTag::material) {
-            const std::uint16_t material_ordinal =
-                material_ordinal_from_checkpoint(packed.ordinal);
-            ground_materials_[material_ordinal] = GroundMaterial{true,
+            const std::uint16_t material_ordinal = packed.ordinal;
+            const GroundMaterial ground{true,
                 material_ordinal,
                 static_cast<GroundMaterialSource>(packed.source),
                 combat_position(packed.position), packed.material};
+            if (!room_drop_state_.place_material(ground)) return false;
             continue;
         }
         const std::uint16_t spawn =
             static_cast<std::uint16_t>(packed.ordinal / 2U);
-        ground_health_potions_[spawn] = GroundHealthPotion{
+        const GroundHealthPotion potion{
             true, spawn, packed.ordinal, combat_position(packed.position)};
+        if (!room_drop_state_.place_health_potion(potion)) return false;
     }
+    room_drop_state_.restore_claim_bits(
+        room.equipment_claim_bits, room.secondary_claim_bits);
     while (events_.try_pop().has_value()) {}
     while (combat_events_.try_pop().has_value()) {}
     pending_save_.reset();
@@ -934,11 +996,9 @@ void DungeonSession::construct_current_room() noexcept {
         enter_fault(DungeonFault::death_sequence_mismatch);
         return;
     }
-    ground_items_ = {};
+    room_drop_state_.clear();
     rolled_drop_bits_ = {};
-    ground_materials_ = {};
     rolled_material_bits_ = {};
-    ground_health_potions_ = {};
     if (stable_state_.current_room.depth == 0U) {
         enter_fault(DungeonFault::invalid_item_state);
         return;
@@ -1025,11 +1085,9 @@ void DungeonSession::clear_transient_room_state() noexcept {
     room_environment_.reset();
     clear_staged_room_population();
     room_progress_ = {};
-    ground_items_ = {};
+    room_drop_state_.clear();
     rolled_drop_bits_ = {};
-    ground_materials_ = {};
     rolled_material_bits_ = {};
-    ground_health_potions_ = {};
     encounter_plan_ = {};
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
@@ -1153,9 +1211,7 @@ void DungeonSession::rebuild_committed_abyss_rewards() noexcept {
             for (std::uint16_t index = 0U;
                  index < ground_items_.size(); ++index) {
                 if (!ground_items_[index].active
-                        && !bit_is_set(
-                            stable_state_.item_ownership.claimed_drop_bits,
-                            index)) {
+                        && !room_drop_state_.equipment_claimed(index)) {
                     target_index = index;
                     break;
                 }
@@ -1195,7 +1251,10 @@ void DungeonSession::rebuild_committed_abyss_rewards() noexcept {
             continue;
         }
 
-        ground_items_[target_index] = *expected;
+        if (!room_drop_state_.place_equipment(*expected)) {
+            enter_fault(DungeonFault::population_capacity);
+            return;
+        }
     }
 }
 
@@ -1221,8 +1280,7 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
     std::uint16_t free_index = 0xFFFFU;
     for (std::uint16_t index = 0U; index < ground_items_.size(); ++index) {
         if (!ground_items_[index].active
-                && !bit_is_set(
-                    stable_state_.item_ownership.claimed_drop_bits, index)) {
+                && !room_drop_state_.equipment_claimed(index)) {
             free_index = index;
             break;
         }
@@ -1413,6 +1471,11 @@ bool DungeonSession::activate_staged_room_population(
         return false;
     }
 
+    if (!room_drop_state_.reset(staged_room_monster_field_->plan())) {
+        clear_staged_room_population();
+        enter_fault(DungeonFault::population_capacity);
+        return false;
+    }
     combat_.reset();
     room_environment_.reset();
     room_environment_ = std::move(staged_room_environment_);
@@ -1431,6 +1494,7 @@ bool DungeonSession::activate_staged_room_population(
         enter_fault(fault);
         return false;
     }
+    advance_room_instance_generation();
 
     room_progress_ = staged_room_progress_;
     staged_room_progress_ = {};
@@ -1443,6 +1507,12 @@ bool DungeonSession::activate_staged_room_population(
         return false;
     }
     return true;
+}
+
+void DungeonSession::advance_room_instance_generation() noexcept {
+    room_instance_generation_ = room_instance_generation_
+            == (std::numeric_limits<std::uint64_t>::max)()
+        ? 1U : room_instance_generation_ + 1U;
 }
 
 void DungeonSession::clear_staged_room_population() noexcept {
@@ -1462,6 +1532,7 @@ void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
     }
     combat_.reset();
     room_environment_.reset();
+    room_drop_state_.clear();
     clear_staged_room_population();
     room_progress_ = {};
     pending_save_.reset();
@@ -2023,8 +2094,11 @@ bool DungeonSession::pending_death_cache_consistent() const noexcept {
 bool DungeonSession::claim_defeat_reward(
     const combat::CombatEvent& event) noexcept {
     const std::uint16_t ordinal = event.spawn_ordinal;
-    if (ordinal >= kGroundDropCapacity
-            || bit_is_set(stable_state_.item_ownership.claimed_drop_bits, ordinal)
+    if (ordinal >= kAuthoritativeEquipmentDropCapacity
+            || room_drop_state_.equipment_claimed(ordinal)
+            || (legacy_equipment_claim_representable(ordinal)
+                && bit_is_set(stable_state_.item_ownership.claimed_drop_bits,
+                    ordinal))
             || bit_is_set(rolled_drop_bits_, ordinal)) {
         return false;
     }
@@ -2035,7 +2109,7 @@ bool DungeonSession::claim_defeat_reward(
 void DungeonSession::roll_ground_drop(
     const combat::CombatEvent& event) noexcept {
     const std::uint16_t ordinal = event.spawn_ordinal;
-    if (ordinal >= kGroundDropCapacity) return;
+    if (ordinal >= kAuthoritativeEquipmentDropCapacity) return;
 
     auto chance = drop_stream(
         stable_state_.current_room.seed, ordinal, kDropChanceDomain);
@@ -2078,7 +2152,7 @@ void DungeonSession::roll_ground_drop(
         enter_fault(DungeonFault::invalid_item_state);
         return;
     }
-    ground_items_[ordinal] = GroundItem{
+    const GroundItem ground{
         true,
         ordinal,
         GroundItemSource::monster_drop,
@@ -2086,13 +2160,18 @@ void DungeonSession::roll_ground_drop(
         {event.position.x, event.position.y, 0.0F},
         *generated,
     };
+    if (!room_drop_state_.place_equipment(ground)) {
+        enter_fault(DungeonFault::population_capacity);
+    }
 }
 
 bool DungeonSession::claim_material_roll(std::uint16_t ordinal) noexcept {
-    if (ordinal >= kGroundMaterialCapacity
-            || bit_is_set(
-                stable_state_.item_ownership.material_claimed_drop_bits,
-                ordinal)
+    if (ordinal >= kAuthoritativeSecondaryDropCapacity
+            || room_drop_state_.secondary_claimed(ordinal)
+            || (legacy_secondary_claim_representable(ordinal)
+                && bit_is_set(stable_state_.item_ownership
+                        .material_claimed_drop_bits,
+                    ordinal))
             || bit_is_set(rolled_material_bits_, ordinal)) {
         return false;
     }
@@ -2114,8 +2193,11 @@ bool DungeonSession::place_ground_material(
         saturating_increment(diagnostics_.material_ground_saturation_count);
         return false;
     }
-    ground_materials_[ordinal] = {
-        true, ordinal, source, position, material};
+    const GroundMaterial ground{true, ordinal, source, position, material};
+    if (!room_drop_state_.place_material(ground)) {
+        enter_fault(DungeonFault::population_capacity);
+        return false;
+    }
     return true;
 }
 
@@ -2128,8 +2210,12 @@ bool DungeonSession::place_ground_health_potion(
             diagnostics_.health_potion_ground_saturation_count);
         return false;
     }
-    slot = {true, spawn_ordinal,
+    const GroundHealthPotion potion{true, spawn_ordinal,
         health_potion_claim_ordinal(spawn_ordinal), position};
+    if (!room_drop_state_.place_health_potion(potion)) {
+        enter_fault(DungeonFault::population_capacity);
+        return false;
+    }
     return true;
 }
 
@@ -2178,18 +2264,19 @@ bool DungeonSession::append_clear_health_potion_claims(
             health_potion_claim_ordinal(spawn);
         if (ground.spawn_ordinal != spawn
                 || ground.claim_ordinal != claim_ordinal
-                || bit_is_set(stable_state_.item_ownership
-                        .material_claimed_drop_bits,
-                    claim_ordinal)
-                || bit_is_set(pending.next_state.item_ownership
-                        .material_claimed_drop_bits,
-                    claim_ordinal)) {
+                || room_drop_state_.secondary_claimed(claim_ordinal)
+                || (legacy_secondary_claim_representable(claim_ordinal)
+                    && bit_is_set(stable_state_.item_ownership
+                            .material_claimed_drop_bits,
+                        claim_ordinal))) {
             return false;
         }
         claim.spawn_ordinals[claim.count++] = spawn;
-        set_bit(pending.next_state.item_ownership
-                .material_claimed_drop_bits,
-            claim_ordinal);
+        if (legacy_secondary_claim_representable(claim_ordinal)) {
+            set_bit(pending.next_state.item_ownership
+                    .material_claimed_drop_bits,
+                claim_ordinal);
+        }
         projected_hp = (std::min)(
             snapshot.player.max_hp, projected_hp + restore);
         const bool strictly_above_threshold =
@@ -2208,7 +2295,7 @@ bool DungeonSession::append_clear_health_potion_claims(
 void DungeonSession::roll_ground_materials(
     const combat::CombatEvent& event) noexcept {
     const std::uint16_t spawn_ordinal = event.spawn_ordinal;
-    if (spawn_ordinal >= kGroundDropCapacity) return;
+    if (spawn_ordinal >= kAuthoritativeEquipmentDropCapacity) return;
     const std::uint16_t common_ordinal = static_cast<std::uint16_t>(
         spawn_ordinal * 2U);
     const std::uint16_t coupon_ordinal = static_cast<std::uint16_t>(
@@ -2255,11 +2342,9 @@ bool DungeonSession::materialize_abyss_clear_materials() noexcept {
     if (count == 0U || count > 3U) return false;
     for (std::uint8_t index = 0U; index < count; ++index) {
         const std::uint16_t ordinal = static_cast<std::uint16_t>(
-            kAbyssMaterialOrdinalBegin + index);
+            kAbyssSecondaryOrdinalBegin + index);
         if (!claim_material_roll(ordinal)) {
-            if (bit_is_set(
-                    stable_state_.item_ownership.material_claimed_drop_bits,
-                    ordinal)) {
+            if (room_drop_state_.secondary_claimed(ordinal)) {
                 continue;
             }
             const auto expected_material = roll_abyss_material(
@@ -2315,10 +2400,9 @@ void DungeonSession::vacuum_room_materials() noexcept {
         if (!ground.active) continue;
         const std::size_t material_index = items::material_index(
             ground.material);
-        if (ground.ordinal >= kGroundMaterialCapacity
+        if (ground.ordinal >= kAuthoritativeSecondaryDropCapacity
                 || material_index >= items::kMaterialCount
-                || bit_is_set(ownership.material_claimed_drop_bits,
-                    ground.ordinal)
+                || room_drop_state_.secondary_claimed(ground.ordinal)
                 || ownership.materials[material_index]
                     == (std::numeric_limits<std::uint64_t>::max)()) {
             pending_save_.reset();
@@ -2328,7 +2412,9 @@ void DungeonSession::vacuum_room_materials() noexcept {
         ++ownership.materials[material_index];
         ownership.material_discovery_bits |= static_cast<std::uint16_t>(
             std::uint16_t{1U} << material_index);
-        set_bit(ownership.material_claimed_drop_bits, ground.ordinal);
+        if (legacy_secondary_claim_representable(ground.ordinal)) {
+            set_bit(ownership.material_claimed_drop_bits, ground.ordinal);
+        }
     }
 }
 

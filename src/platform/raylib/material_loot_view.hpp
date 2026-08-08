@@ -90,6 +90,18 @@ private:
 [[nodiscard]] bool loot_label_rects_overlap(
     LootLabelRect left, LootLabelRect right) noexcept;
 [[nodiscard]] MaterialLootView build_material_loot_view(
+    const dungeon::DungeonRenderSnapshot&, const CombatCameraView& camera,
+    float width, float height) noexcept;
+[[nodiscard]] MaterialLootView build_material_loot_view(
+    const dungeon::DungeonRenderSnapshot&, const CombatCameraView& camera,
+    float width, float height, LootLabelObstacleSet&) noexcept;
+[[nodiscard]] MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot&, const CombatCameraView& camera,
+    float width, float height) noexcept;
+[[nodiscard]] MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot&, const CombatCameraView& camera,
+    float width, float height, LootLabelObstacleSet&) noexcept;
+[[nodiscard]] MaterialLootView build_material_loot_view(
     const dungeon::DungeonSnapshot&, float width, float height) noexcept;
 [[nodiscard]] MaterialLootView build_material_loot_view(
     const dungeon::DungeonSnapshot&, float width, float height,

@@ -16,6 +16,11 @@ namespace arpg::persistence {
 
 enum class SaveCommitRequestKind : std::uint8_t { background, exact };
 
+enum class SaveCommitPayloadKind : std::uint8_t {
+    captured_checkpoint,
+    verify_durable,
+};
+
 enum class SaveCommitSubmitState : std::uint8_t {
     accepted,
     superseded_background,
@@ -46,6 +51,7 @@ struct SaveCommitCaptureLease final {
     std::uint64_t token{};
     std::uint64_t epoch{};
     SaveCommitRequestKind kind{SaveCommitRequestKind::background};
+    SaveCommitPayloadKind payload{SaveCommitPayloadKind::captured_checkpoint};
 };
 
 struct SaveCommitSubmission final {
@@ -53,10 +59,23 @@ struct SaveCommitSubmission final {
     std::uint8_t reclaimed_slot{0xFFU};
 };
 
+// Per-commit wall-time observations from the production V10 persistence path.
+// These fields never participate in save authority, codec bytes, or commit
+// decisions; callers may use them only as bounded-cost evidence.
+struct SaveCommitCost final {
+    std::uint64_t encode_ns{};
+    std::uint64_t durable_write_ns{};
+    std::uint64_t file_readback_ns{};
+    std::size_t encoded_bytes{};
+    std::uint16_t write_operations{};
+    std::uint16_t readback_operations{};
+};
+
 struct SaveCommitExactResult final {
     SaveCommitState state{SaveCommitState::indeterminate};
     SaveError error{SaveError::none};
     SaveSlot active_slot{SaveSlot::none};
+    SaveCommitCost cost{};
 };
 
 struct SaveCommitCompletion final {
@@ -80,6 +99,7 @@ struct SaveCommitJobSlot final {
     std::uint64_t revision{};
     std::uint64_t intent{};
     SaveCommitRequestKind kind{SaveCommitRequestKind::background};
+    SaveCommitPayloadKind payload{SaveCommitPayloadKind::captured_checkpoint};
 };
 
 class SaveCommitStorage final {
@@ -156,7 +176,9 @@ public:
     [[nodiscard]] SaveCommitCaptureLease acquire_capture_slot(
         std::uint64_t revision,
         SaveCommitRequestKind kind,
-        std::uint64_t intent = 0U) noexcept;
+        std::uint64_t intent = 0U,
+        SaveCommitPayloadKind payload =
+            SaveCommitPayloadKind::captured_checkpoint) noexcept;
     [[nodiscard]] SaveCommitJobSlot* capture_job(
         const SaveCommitCaptureLease& lease) noexcept;
     [[nodiscard]] SaveCommitSubmission submit(

@@ -33,6 +33,7 @@
 #include <iostream>
 #include <initializer_list>
 #include <memory>
+#include <new>
 #include <numeric>
 #include <sstream>
 #include <string>
@@ -582,8 +583,11 @@ PixelRoi lightning_material_frame_roi(combat::MonsterId monster,
     if (clip == nullptr) return {};
     const auto frame = platform::monster_animation_frame(*clip, frame_index);
     if (!frame.has_value()) return {};
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view({}, 1280.0F, 720.0F);
     const platform::ScreenProjection projected =
-        platform::project_combat_position(position, 1280.0F, 720.0F);
+        platform::project_combat_position(
+            position, camera, 1280.0F, 720.0F);
     const float scale = platform::monster_material_draw_scale(
         frame->atlas, projected.scale);
     constexpr float kEvidencePadding = 12.0F;
@@ -611,12 +615,15 @@ PixelRoi active_skill_material_frame_roi(skills::ActiveSkillId skill,
     const IntegrationResolution& resolution) noexcept {
     const auto frame = platform::active_skill_atlas_frame(skill, frame_index);
     if (!frame.has_value()) return {};
+    const float width = static_cast<float>(resolution.width);
+    const float height = static_cast<float>(resolution.height);
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view({}, width, height);
     const platform::ScreenProjection projected =
-        platform::project_combat_position(player_position,
-            static_cast<float>(resolution.width),
-            static_cast<float>(resolution.height));
-    const float scale = projected.scale
-        * (skill == skills::ActiveSkillId::draw_slash ? 0.72F : 0.70F);
+        platform::project_combat_position(
+            player_position, camera, width, height);
+    const float scale = platform::active_skill_material_draw_scale(
+        skill, projected.scale);
     const float padding = 8.0F * projected.scale;
     const float left = projected.x - frame->foot_anchor.x * scale - padding;
     const float top = projected.ground_y
@@ -637,10 +644,13 @@ PixelRoi active_skill_material_frame_roi(skills::ActiveSkillId skill,
 PixelRoi draw_slash_procedural_roi(combat::Vec3 effect_center,
     combat::Facing facing,
     const IntegrationResolution& resolution) noexcept {
+    const float width = static_cast<float>(resolution.width);
+    const float height = static_cast<float>(resolution.height);
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view({}, width, height);
     const platform::ScreenProjection projected =
-        platform::project_combat_position(effect_center,
-            static_cast<float>(resolution.width),
-            static_cast<float>(resolution.height));
+        platform::project_combat_position(
+            effect_center, camera, width, height);
     const float origin_x = projected.x;
     const float origin_y = projected.ground_y - 42.0F * projected.scale;
     const float radius = 250.0F * projected.scale;
@@ -785,6 +795,59 @@ template <std::size_t Size>
     return snapshot;
 }
 
+void write_integration_environment(dungeon::DungeonElement ecology,
+    dungeon::VisibleEnvironmentSet& visible) noexcept {
+    constexpr std::array<combat::Vec3, 5U> kAnchors{{
+        {-8.5F, -3.4F, 0.0F}, {8.5F, -3.4F, 0.0F},
+        {-8.1F, 3.0F, 0.0F}, {7.0F, 3.0F, 0.0F},
+        {-5.0F, 4.2F, 0.0F},
+    }};
+    std::array<combat::RoomPropKind, 5U> props{};
+    switch (ecology) {
+    case dungeon::DungeonElement::fire:
+        props = {{combat::RoomPropKind::torch,
+            combat::RoomPropKind::banner,
+            combat::RoomPropKind::weapon_rack,
+            combat::RoomPropKind::bone_pile,
+            combat::RoomPropKind::crate}};
+        break;
+    case dungeon::DungeonElement::water:
+        props = {{combat::RoomPropKind::lantern,
+            combat::RoomPropKind::coral,
+            combat::RoomPropKind::grate,
+            combat::RoomPropKind::coral,
+            combat::RoomPropKind::lantern}};
+        break;
+    case dungeon::DungeonElement::lightning:
+        props = {{combat::RoomPropKind::arc_lamp,
+            combat::RoomPropKind::capacitor_bank,
+            combat::RoomPropKind::grounding_rod,
+            combat::RoomPropKind::capacitor_bank,
+            combat::RoomPropKind::arc_lamp}};
+        break;
+    case dungeon::DungeonElement::chaos:
+        props = {{combat::RoomPropKind::rift_lantern,
+            combat::RoomPropKind::anomaly_condenser,
+            combat::RoomPropKind::warning_obelisk,
+            combat::RoomPropKind::anomaly_condenser,
+            combat::RoomPropKind::rift_lantern}};
+        break;
+    }
+
+    visible = {};
+    visible.count = static_cast<std::uint16_t>(props.size());
+    visible.candidates_examined = visible.count;
+    for (std::size_t index{}; index < props.size(); ++index) {
+        combat::RoomEnvironmentRecord& record = visible.records[index];
+        record.ordinal = static_cast<std::uint16_t>(index);
+        record.home_cell = static_cast<std::uint16_t>(index);
+        record.prop = props[index];
+        record.anchor = kAnchors[index];
+        record.scale_bp = 10'000U;
+        record.mirror_x = index == 3U;
+    }
+}
+
 void set_monster(combat::MonsterSnapshot& monster, combat::MonsterId id,
     combat::Vec3 position, std::uint16_t ordinal) noexcept {
     monster = {};
@@ -810,7 +873,8 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
     snapshot.combat->active_skill = {};
     snapshot.combat->active_skill.id = skill;
     snapshot.combat->active_skill.elapsed_ticks = tick;
-    snapshot.combat->active_skill.locked_center = {0.5F, 0.0F, 0.0F};
+    snapshot.combat->active_skill.locked_center =
+        platform::stage12_material_showcase_position(0.5F, 0.0F);
     snapshot.combat->active_skill.phase = skill == skills::ActiveSkillId::draw_slash
         ? combat::ActiveSkillPhase::startup
         : combat::ActiveSkillPhase::strikes;
@@ -925,6 +989,61 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
             <= static_cast<float>(resolution.height) - hud_reserve;
 }
 
+bool write_integration_render_snapshot(
+    const dungeon::DungeonSnapshot& snapshot,
+    const IntegrationResolution& resolution,
+    platform::CombatCameraView& camera,
+    dungeon::DungeonRenderSnapshot& world) noexcept {
+    world = {};
+    camera = platform::make_combat_camera_view({},
+        static_cast<float>(resolution.width),
+        static_cast<float>(resolution.height));
+    world.query = platform::make_world_view_query(camera,
+        static_cast<float>(resolution.width),
+        static_cast<float>(resolution.height), 1U);
+    world.phase = snapshot.phase;
+    world.ecology = snapshot.ecology;
+    world.has_active_room = snapshot.has_active_room;
+    world.has_combat = snapshot.combat.has_value();
+    if (snapshot.combat.has_value()) world.combat = *snapshot.combat;
+    world.environment_query = {
+        dungeon::VisibleEnvironmentQueryStatus::ok,
+        dungeon::DungeonFault::none};
+    write_integration_environment(snapshot.ecology, world.environment);
+    world.equipment_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(snapshot.ground_item_count),
+        world.equipment.size()));
+    std::copy_n(snapshot.ground_items.begin(), world.equipment_count,
+        world.equipment.begin());
+    world.material_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(snapshot.ground_material_count),
+        world.materials.size()));
+    std::copy_n(snapshot.ground_materials.begin(), world.material_count,
+        world.materials.begin());
+    world.health_potion_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(snapshot.ground_health_potion_count),
+        world.health_potions.size()));
+    std::copy_n(snapshot.ground_health_potions.begin(),
+        world.health_potion_count, world.health_potions.begin());
+    constexpr std::array<combat::Vec3, 4U> kDoorPositions{{
+        {0.0F, combat::room_bounds::min_y, 0.0F},
+        {0.0F, combat::room_bounds::max_y, 0.0F},
+        {combat::room_bounds::min_x, 0.0F, 0.0F},
+        {combat::room_bounds::max_x, 0.0F, 0.0F},
+    }};
+    constexpr std::array<dungeon::ExitDirection, 4U> kDoorDirections{{
+        dungeon::ExitDirection::up, dungeon::ExitDirection::down,
+        dungeon::ExitDirection::left, dungeon::ExitDirection::right,
+    }};
+    for (std::size_t index{}; index < world.doors.size(); ++index) {
+        world.doors[index] = {kDoorPositions[index], kDoorDirections[index],
+            snapshot.exits_unlocked, snapshot.abyss_doors[index]};
+    }
+    world.hole = {{0.0F, 3.5F, 0.0F}, snapshot.has_hole,
+        snapshot.exits_unlocked};
+    return true;
+}
+
 [[nodiscard]] IntegrationFrameObservation present_integration_frame(
     platform::CombatRenderer& renderer,
     const dungeon::DungeonSnapshot& snapshot,
@@ -975,12 +1094,21 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
             : platform::HudPresentedFrame::normal,
         snapshot, snapshot, runtime_status, control_hints, 1.0F / 60.0F, false);
 
+    const std::unique_ptr<dungeon::DungeonRenderSnapshot> world{
+        new (std::nothrow) dungeon::DungeonRenderSnapshot{}};
+    platform::CombatCameraView camera{};
+    if (world == nullptr || !write_integration_render_snapshot(
+            snapshot, resolution, camera, *world)) {
+        observation.screenshot_ok = false;
+        return observation;
+    }
+
     const auto started = std::chrono::steady_clock::now();
     BeginDrawing();
     ClearBackground(Color{13, 17, 27, 255});
     platform::CombatFeedback feedback{};
-    static_cast<void>(renderer.draw(snapshot, snapshot, runtime_status,
-        0.0F, false, feedback, false));
+    static_cast<void>(renderer.draw(snapshot, snapshot, *world, camera,
+        runtime_status, 0.0F, false, feedback, false));
     observation.skill_draw = renderer.active_skill_draw_status();
     const Color expected_sentinel = integration_scene_sentinel(
         mode, tick, resolution);
@@ -1279,10 +1407,11 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
                 dungeon::DungeonElement::lightning,
                 dungeon::DungeonElement::chaos}) {
             dungeon::DungeonSnapshot environment = integration_snapshot(ecology);
+            dungeon::VisibleEnvironmentSet visible_environment{};
+            write_integration_environment(ecology, visible_environment);
             const platform::EnvironmentPropLayout layout =
                 platform::environment_prop_layout(ecology,
-                    static_cast<float>(resolution.width),
-                    static_cast<float>(resolution.height));
+                    visible_environment);
             std::array<std::uint64_t, 9> before{};
             for (std::size_t index{}; index < layout.count; ++index) {
                 before[index] = renderer.material_sprite_draw_count(
@@ -2283,10 +2412,12 @@ int main(int argc, char** argv) {
         && lightning_runtime.lightning_shooter_resident
         && lightning_runtime.lightning_dasher_resident;
     const PixelRoi lightning_shooter_roi = lightning_material_frame_roi(
-        combat::MonsterId::lightning_shooter, {-4.0F, 1.5F, 0.0F},
+        combat::MonsterId::lightning_shooter,
+        platform::stage12_material_showcase_column_position(0U, 1.5F),
         lightning_runtime.lightning_shooter_draw.frame_index);
     const PixelRoi lightning_dasher_roi = lightning_material_frame_roi(
-        combat::MonsterId::lightning_dasher, {-1.3F, 1.5F, 0.0F},
+        combat::MonsterId::lightning_dasher,
+        platform::stage12_material_showcase_column_position(1U, 1.5F),
         lightning_runtime.lightning_dasher_draw.frame_index);
     const bool lightning_rois_ok = lightning_shooter_roi.valid()
         && lightning_dasher_roi.valid()
@@ -2604,6 +2735,8 @@ int main(int argc, char** argv) {
            << "lightning_dasher_roi=" << lightning_dasher_roi.x << ','
            << lightning_dasher_roi.y << ',' << lightning_dasher_roi.width
            << ',' << lightning_dasher_roi.height << '\n'
+           << "lightning_roi_isolation="
+           << (lightning_rois_ok ? "pass" : "fail") << '\n'
            << "lightning_dasher_drawn=" << (lightning_runtime.lightning_dasher_draw.drawn ? "pass" : "fail") << '\n'
            << "chaos_showcase_pair_residency=" << (chaos_showcase_pair_residency_ok ? "pass" : "fail") << '\n'
            << "chaos_environment_pair=" << (chaos_runtime.chaos_environment_resident ? "resident" : "missing") << '\n'

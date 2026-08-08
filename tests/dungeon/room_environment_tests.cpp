@@ -100,6 +100,46 @@ bool same_environment_blueprint(
     return true;
 }
 
+bool oracle_visible(const Aabb& bounds,
+    const RoomEnvironmentRecord& record) noexcept {
+    if (record.obstacle.kind != RoomObstacleKind::none) {
+        return record.obstacle.bounds.minimum.x <= bounds.maximum.x
+            && record.obstacle.bounds.maximum.x >= bounds.minimum.x
+            && record.obstacle.bounds.minimum.y <= bounds.maximum.y
+            && record.obstacle.bounds.maximum.y >= bounds.minimum.y
+            && record.obstacle.bounds.minimum.z <= bounds.maximum.z
+            && record.obstacle.bounds.maximum.z >= bounds.minimum.z;
+    }
+    return record.anchor.x >= bounds.minimum.x
+        && record.anchor.x <= bounds.maximum.x
+        && record.anchor.y >= bounds.minimum.y
+        && record.anchor.y <= bounds.maximum.y
+        && record.anchor.z >= bounds.minimum.z
+        && record.anchor.z <= bounds.maximum.z;
+}
+
+bool oracle_record_precedes(const RoomEnvironmentRecord& left,
+    const RoomEnvironmentRecord& right) noexcept {
+    if (left.home_cell != right.home_cell) {
+        return left.home_cell < right.home_cell;
+    }
+    if (left.obstacle.kind != right.obstacle.kind) {
+        return static_cast<std::uint8_t>(left.obstacle.kind)
+            < static_cast<std::uint8_t>(right.obstacle.kind);
+    }
+    return left.ordinal < right.ordinal;
+}
+
+bool visible_output_empty(
+    const arpg::dungeon::VisibleEnvironmentSet& output) noexcept {
+    if (output.count != 0U || output.candidates_examined != 0U) return false;
+    const RoomEnvironmentRecord empty{};
+    for (const RoomEnvironmentRecord& record : output.records) {
+        if (!same_environment_record(record, empty)) return false;
+    }
+    return true;
+}
+
 bool circle_overlaps_aabb(
     Vec3 center, float radius, const Aabb& bounds) noexcept {
     const float nearest_x = std::clamp(
@@ -546,6 +586,241 @@ arpg::test::Failure monster_versions_rebuild_environment_deterministically()
     return {};
 }
 
+arpg::test::Failure visible_query_distinguishes_bad_query_from_index_hard_fault()
+    noexcept {
+    auto blueprint = std::make_unique<RoomEnvironmentBlueprint>();
+    blueprint->record_count = 1U;
+    blueprint->cell_offsets.fill(1U);
+    blueprint->cell_offsets[0U] = 0U;
+    blueprint->cell_counts[0U] = 1U;
+    blueprint->records[0U].ordinal = 0U;
+    blueprint->records[0U].home_cell = 0U;
+    blueprint->records[0U].anchor = {
+        arpg::combat::room_bounds::min_x + 1.0F,
+        arpg::combat::room_bounds::min_y + 1.0F,
+        0.0F};
+
+    arpg::dungeon::VisibleEnvironmentSet output{};
+    const Aabb invalid_bounds{{1.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 1.0F}};
+    const auto bad_query = arpg::dungeon::query_visible_environment(
+        *blueprint, invalid_bounds, output);
+    ARPG_REQUIRE(bad_query.status
+        == arpg::dungeon::VisibleEnvironmentQueryStatus::invalid_query);
+    ARPG_REQUIRE(bad_query.fault == DungeonFault::none);
+    ARPG_REQUIRE(output.count == 0U);
+    ARPG_REQUIRE(output.candidates_examined == 0U);
+
+    blueprint->cell_offsets[0U] = 2U;
+    const Aabb edge_bounds{
+        {arpg::combat::room_bounds::min_x,
+            arpg::combat::room_bounds::min_y, -1.0F},
+        {arpg::combat::room_bounds::min_x + 2.0F,
+            arpg::combat::room_bounds::min_y + 2.0F, 1.0F}};
+    output.count = 17U;
+    output.candidates_examined = 91U;
+    output.records[0U].ordinal = 55U;
+    const auto hard_fault = arpg::dungeon::query_visible_environment(
+        *blueprint, edge_bounds, output);
+    ARPG_REQUIRE(hard_fault.status
+        == arpg::dungeon::VisibleEnvironmentQueryStatus::hard_fault);
+    ARPG_REQUIRE(hard_fault.fault == DungeonFault::environment_capacity);
+    ARPG_REQUIRE(output.count == 0U);
+    ARPG_REQUIRE(output.candidates_examined == 0U);
+    ARPG_REQUIRE(output.records[0U].ordinal == 0U);
+    return {};
+}
+
+arpg::test::Failure every_camera_cell_matches_an_independent_brute_force_oracle()
+    noexcept {
+    const checkpoint::RoomDescriptor room = test_room();
+    const DungeonRules rules{};
+    auto monsters = std::make_unique<RoomMonsterPlan>();
+    auto blueprint = std::make_unique<RoomEnvironmentBlueprint>();
+    ARPG_REQUIRE(arpg::dungeon::build_room_monster_plan(
+        room, rules, 1U, *monsters).fault == DungeonFault::none);
+    ARPG_REQUIRE(arpg::dungeon::test_support::
+        build_room_environment_with_record_count(
+            room, rules, 1U, *monsters,
+            static_cast<std::uint16_t>(
+                arpg::combat::kRoomEnvironmentRecordCapacity),
+            *blueprint).fault == DungeonFault::none);
+
+    auto original_bytes = std::make_unique<
+        std::array<unsigned char, sizeof(RoomEnvironmentBlueprint)>>();
+    std::memcpy(original_bytes->data(), blueprint.get(),
+        original_bytes->size());
+    const RoomEnvironmentBlueprint* const original_address = blueprint.get();
+    constexpr float kVisibleWidth = 32.0F;
+    constexpr float kVisibleDepth = 11.0F;
+    std::uint16_t largest_candidate_count{};
+
+    for (std::size_t camera_row = 0U;
+            camera_row < arpg::combat::room_spatial::rows; ++camera_row) {
+        for (std::size_t camera_column = 0U;
+                camera_column < arpg::combat::room_spatial::columns;
+                ++camera_column) {
+            const float requested_x = arpg::combat::room_bounds::min_x
+                + (static_cast<float>(camera_column) + 0.5F)
+                    * arpg::combat::room_spatial::cell_width;
+            const float requested_y = arpg::combat::room_bounds::min_y
+                + (static_cast<float>(camera_row) + 0.5F)
+                    * arpg::combat::room_spatial::cell_depth;
+            const float center_x = std::clamp(requested_x,
+                arpg::combat::room_bounds::min_x + kVisibleWidth * 0.5F,
+                arpg::combat::room_bounds::max_x - kVisibleWidth * 0.5F);
+            const float center_y = std::clamp(requested_y,
+                arpg::combat::room_bounds::min_y + kVisibleDepth * 0.5F,
+                arpg::combat::room_bounds::max_y - kVisibleDepth * 0.5F);
+            const Aabb bounds{{center_x - kVisibleWidth * 0.5F,
+                                   center_y - kVisibleDepth * 0.5F, -1.0F},
+                {center_x + kVisibleWidth * 0.5F,
+                    center_y + kVisibleDepth * 0.5F, 32.0F}};
+
+            arpg::dungeon::VisibleEnvironmentSet actual{};
+            arpg::dungeon::VisibleEnvironmentSet repeated{};
+            const auto result = arpg::dungeon::query_visible_environment(
+                *blueprint, bounds, actual);
+            const auto repeat_result = arpg::dungeon::query_visible_environment(
+                *blueprint, bounds, repeated);
+            ARPG_REQUIRE(result.status
+                == arpg::dungeon::VisibleEnvironmentQueryStatus::ok);
+            ARPG_REQUIRE(result.fault == DungeonFault::none);
+            ARPG_REQUIRE(repeat_result.status == result.status);
+            ARPG_REQUIRE(actual.candidates_examined <= 105U);
+            ARPG_REQUIRE(actual.count <= 128U);
+            largest_candidate_count = (std::max)(largest_candidate_count,
+                actual.candidates_examined);
+
+            arpg::dungeon::VisibleEnvironmentSet expected{};
+            for (std::size_t index = 0U;
+                    index < blueprint->record_count; ++index) {
+                const RoomEnvironmentRecord& record =
+                    blueprint->records[index];
+                if (!oracle_visible(bounds, record)) continue;
+                ARPG_REQUIRE(expected.count < expected.records.size());
+                expected.records[expected.count++] = record;
+            }
+            std::sort(expected.records.begin(),
+                expected.records.begin() + expected.count,
+                &oracle_record_precedes);
+            ARPG_REQUIRE(actual.count == expected.count);
+            for (std::size_t index = 0U; index < actual.count; ++index) {
+                ARPG_REQUIRE(same_environment_record(
+                    actual.records[index], expected.records[index]));
+                if (index != 0U) {
+                    ARPG_REQUIRE(!oracle_record_precedes(
+                        actual.records[index], actual.records[index - 1U]));
+                }
+            }
+            ARPG_REQUIRE(actual.count == repeated.count);
+            ARPG_REQUIRE(actual.candidates_examined
+                == repeated.candidates_examined);
+            ARPG_REQUIRE(std::memcmp(actual.records.data(),
+                repeated.records.data(), sizeof(actual.records)) == 0);
+        }
+    }
+    ARPG_REQUIRE(largest_candidate_count == 105U);
+    ARPG_REQUIRE(blueprint.get() == original_address);
+    ARPG_REQUIRE(std::memcmp(original_bytes->data(), blueprint.get(),
+        original_bytes->size()) == 0);
+    return {};
+}
+
+arpg::test::Failure capacity_proof_breaks_publish_hard_fault_and_empty_output()
+    noexcept {
+    auto base = std::make_unique<RoomEnvironmentBlueprint>();
+    base->record_count = 4U;
+    base->cell_counts[0U] = 3U;
+    base->cell_offsets[1U] = 3U;
+    for (std::size_t cell = 2U; cell < base->cell_offsets.size(); ++cell) {
+        base->cell_offsets[cell] = 4U;
+    }
+    base->cell_counts[1U] = 1U;
+    for (std::uint16_t ordinal = 0U; ordinal < 4U; ++ordinal) {
+        RoomEnvironmentRecord& record = base->records[ordinal];
+        record.ordinal = ordinal;
+        record.home_cell = ordinal < 3U ? 0U : 1U;
+        record.anchor = {arpg::combat::room_bounds::min_x + 1.0F
+                + static_cast<float>(ordinal),
+            arpg::combat::room_bounds::min_y + 1.0F, 0.0F};
+    }
+    const Aabb edge_bounds{
+        {arpg::combat::room_bounds::min_x,
+            arpg::combat::room_bounds::min_y, -1.0F},
+        {arpg::combat::room_bounds::min_x + 4.0F,
+            arpg::combat::room_bounds::min_y + 4.0F, 1.0F}};
+
+    const auto require_hard_fault = [&edge_bounds](
+                                        const RoomEnvironmentBlueprint& plan)
+        noexcept -> arpg::test::Failure {
+        arpg::dungeon::VisibleEnvironmentSet output{};
+        output.count = 99U;
+        output.candidates_examined = 99U;
+        output.records[0U].ordinal = 99U;
+        const auto result = arpg::dungeon::query_visible_environment(
+            plan, edge_bounds, output);
+        ARPG_REQUIRE(result.status
+            == arpg::dungeon::VisibleEnvironmentQueryStatus::hard_fault);
+        ARPG_REQUIRE(result.fault == DungeonFault::environment_capacity);
+        ARPG_REQUIRE(visible_output_empty(output));
+        return {};
+    };
+
+    auto invalid_offset = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(invalid_offset.get(), base.get(), sizeof(*base));
+    invalid_offset->cell_offsets[0U] = 2U;
+    const auto offset_failure = require_hard_fault(*invalid_offset);
+    if (offset_failure.expression != nullptr) return offset_failure;
+
+    auto invalid_count = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(invalid_count.get(), base.get(), sizeof(*base));
+    invalid_count->cell_counts[0U] = 4U;
+    invalid_count->cell_offsets[1U] = 4U;
+    const auto count_failure = require_hard_fault(*invalid_count);
+    if (count_failure.expression != nullptr) return count_failure;
+
+    auto in_bounds_gap = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(in_bounds_gap.get(), base.get(), sizeof(*base));
+    in_bounds_gap->cell_offsets[0U] = 1U;
+    in_bounds_gap->cell_counts[0U] = 2U;
+    const auto gap_failure = require_hard_fault(*in_bounds_gap);
+    if (gap_failure.expression != nullptr) return gap_failure;
+
+    auto wrong_home_cell = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(wrong_home_cell.get(), base.get(), sizeof(*base));
+    wrong_home_cell->records[1U].home_cell = 1U;
+    const auto home_cell_failure = require_hard_fault(*wrong_home_cell);
+    if (home_cell_failure.expression != nullptr) return home_cell_failure;
+
+    auto wrong_ordinal = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(wrong_ordinal.get(), base.get(), sizeof(*base));
+    wrong_ordinal->records[1U].ordinal = 9U;
+    const auto ordinal_failure = require_hard_fault(*wrong_ordinal);
+    if (ordinal_failure.expression != nullptr) return ordinal_failure;
+
+    arpg::dungeon::VisibleEnvironmentSet span_output{};
+    const Aabb over_span{{arpg::combat::room_bounds::min_x,
+                             arpg::combat::room_bounds::min_y, -1.0F},
+        {arpg::combat::room_bounds::max_x,
+            arpg::combat::room_bounds::max_y, 1.0F}};
+    const auto span_result = arpg::dungeon::query_visible_environment(
+        *base, over_span, span_output);
+    ARPG_REQUIRE(span_result.status
+        == arpg::dungeon::VisibleEnvironmentQueryStatus::hard_fault);
+    ARPG_REQUIRE(span_result.fault == DungeonFault::environment_capacity);
+    ARPG_REQUIRE(visible_output_empty(span_output));
+
+    arpg::dungeon::VisibleEnvironmentSet overflow_output{};
+    const auto overflow_result = arpg::dungeon::test_support::
+        query_visible_environment_with_output_capacity(
+            *base, edge_bounds, 0U, overflow_output);
+    ARPG_REQUIRE(overflow_result.status
+        == arpg::dungeon::VisibleEnvironmentQueryStatus::hard_fault);
+    ARPG_REQUIRE(overflow_result.fault == DungeonFault::environment_capacity);
+    ARPG_REQUIRE(visible_output_empty(overflow_output));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"environment is deterministic and hashes canonical fields",
         &environment_is_deterministic_and_hashes_canonical_fields},
@@ -567,6 +842,12 @@ constexpr arpg::test::TestCase kCases[] = {
         &depth_changes_the_environment_hash_for_the_same_seed},
     {"monster versions rebuild environment deterministically",
         &monster_versions_rebuild_environment_deterministically},
+    {"visible query distinguishes bad query from index hard fault",
+        &visible_query_distinguishes_bad_query_from_index_hard_fault},
+    {"every camera cell matches independent brute force oracle",
+        &every_camera_cell_matches_an_independent_brute_force_oracle},
+    {"capacity proof breaks publish hard fault and empty output",
+        &capacity_proof_breaks_publish_hard_fault_and_empty_output},
 };
 
 }  // namespace

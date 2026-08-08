@@ -15,9 +15,14 @@ function Test-Stage9FormalCapture {
         if ($image.Width -ne 1280 -or $image.Height -ne 720) {
             throw "Stage9 formal capture rejects unexpected size: $($image.Width)x$($image.Height)"
         }
-        $corner = $image.GetPixel(0, 0)
-        if ($corner.R -ne 17 -or $corner.G -ne 18 -or $corner.B -ne 19) {
-            throw "Stage9 formal capture rejects submitted background mismatch: $corner"
+        # Avoid the Intel OpenGL outer-edge raster variance, while freezing an
+        # interior texel that the deterministic large-room camera maps from the
+        # authored fire-room atlas.  This rejects clear-color and wrong-material
+        # substitutions without depending on triangle-edge coverage.
+        $backgroundAnchor = $image.GetPixel(8, 8)
+        if ($backgroundAnchor.R -ne 41 -or $backgroundAnchor.G -ne 43 -or
+                $backgroundAnchor.B -ne 44) {
+            throw "Stage9 formal capture rejects submitted background mismatch: $backgroundAnchor"
         }
 
         # These whole-frame metrics are intentionally independent of any Stage11-C

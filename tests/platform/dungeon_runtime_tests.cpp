@@ -102,6 +102,41 @@ items::ItemInstance normal_item(std::uint64_t id,
     return item;
 }
 
+struct InstalledPickupGround final {
+    bool valid{};
+    std::uint16_t ordinal{0xFFFFU};
+};
+
+InstalledPickupGround install_pickup_ground_at_active_spawn(
+    platform::DungeonRuntime& runtime,
+    const dungeon::DungeonSnapshot& snapshot,
+    const items::ItemInstance& item,
+    const std::uint16_t excluded_ordinal = 0xFFFFU) noexcept {
+    dungeon::DungeonSession* const session = runtime.session();
+    if (session == nullptr || !snapshot.combat.has_value()) return {};
+    for (std::uint16_t index = 0U;
+            index < snapshot.combat->monster_count; ++index) {
+        const combat::MonsterSnapshot& monster =
+            snapshot.combat->monsters[index];
+        if (!monster.active || monster.spawn_ordinal == excluded_ordinal) {
+            continue;
+        }
+        const std::uint16_t ordinal = monster.spawn_ordinal;
+        if (!arpg::test::install_authoritative_ground_item(
+                *session, ordinal, item, monster.position)) {
+            continue;
+        }
+        const auto& ground = arpg::test::ground_items(*session)[ordinal];
+        if (!ground.active || ground.drop_ordinal != ordinal
+                || ground.item.id != item.id) {
+            return {};
+        }
+        arpg::test::set_player_position(*session, monster.position);
+        return {true, ordinal};
+    }
+    return {};
+}
+
 struct TempDirectory final {
     std::filesystem::path path{};
 
@@ -130,6 +165,7 @@ struct FaultContext final {
 struct GroundReplacementContext final {
     dungeon::DungeonSession* session{};
     items::ItemInstance replacement{};
+    std::uint16_t ordinal{0xFFFFU};
     bool armed{};
     bool invoked{};
 };
@@ -334,7 +370,7 @@ bool write_save(const std::filesystem::path& path,
     return out.good();
 }
 
-bool decode_active_v9(const TempDirectory& directory,
+bool decode_active_checkpoint(const TempDirectory& directory,
     persistence::SaveSlot slot,
     checkpoint::SaveCheckpointSlot& out) noexcept {
     const char* const name = slot == persistence::SaveSlot::a
@@ -354,10 +390,52 @@ bool decode_active_v9(const TempDirectory& directory,
     input.read(reinterpret_cast<char*>(bytes.data()), end);
     bool migrated{};
     return input.good()
-        && persistence::decode_checkpoint_v9_into(
+        && persistence::decode_checkpoint_v10_into(
             bytes.data(), bytes.size(), out, migrated)
                 == persistence::CodecError::none
         && !migrated;
+}
+
+arpg::test::Failure canonical_v9_load_rewrites_v10_before_session() noexcept {
+    TempDirectory directory;
+    dungeon::DungeonRules rules{};
+    const auto initial = dungeon::make_initial_run_state(0x510ULL, rules);
+    ARPG_REQUIRE(initial.fault == dungeon::DungeonFault::none);
+    dungeon::DungeonSession source{rules, initial.state};
+    source.tick({});
+
+    auto slot = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    std::vector<std::uint8_t> bytes(
+        persistence::kMaximumEncodedCheckpointBytes);
+    ARPG_REQUIRE(slot != nullptr);
+    ARPG_REQUIRE(source.capture_save_checkpoint(*slot, 17U));
+    ARPG_REQUIRE(slot->room_progress.pending_room_experience == 0U);
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*slot,
+        bytes.data(), bytes.size(), written) == persistence::CodecError::none);
+    bytes.resize(written);
+    ARPG_REQUIRE(write_save(directory.path / "run_a.sav", bytes));
+
+    platform::DungeonRuntime runtime(config_for(directory, 0xBADU));
+    ARPG_REQUIRE(runtime.initialize());
+    const auto upgraded = read_active_bytes(
+        directory, runtime.render_status().active_slot);
+    ARPG_REQUIRE(upgraded.size() >= 12U);
+    ARPG_REQUIRE(std::equal(upgraded.begin(), upgraded.begin() + 8U,
+        std::array<std::uint8_t, 8U>{
+            {'A','R','P','G','S','V','1','0'}}.begin()));
+    auto decoded = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    ARPG_REQUIRE(decoded != nullptr);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(upgraded.data(),
+        upgraded.size(), *decoded, migrated) == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->persistence_revision == 18U);
+    ARPG_REQUIRE(decoded->room_progress.pending_room_experience == 0U);
+    ARPG_REQUIRE(runtime.session() != nullptr);
+    ARPG_REQUIRE(runtime.session()->snapshot().room_index
+        == decoded->state.current_room.index);
+    return {};
 }
 
 bool same_room_descriptor(
@@ -989,8 +1067,10 @@ bool install_pickup_if_needed(platform::DungeonRuntime& runtime,
     if (kind != ItemRequestKind::pickup) return true;
     const auto snapshot = runtime.session()->snapshot();
     if (!snapshot.combat.has_value()) return false;
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(401U, 2U), snapshot.combat->player.position);
+    if (!arpg::test::install_authoritative_ground_item(*runtime.session(), 0U,
+            normal_item(401U, 2U), snapshot.combat->player.position)) {
+        return false;
+    }
     return runtime.session()->snapshot().ground_item_count == 1U;
 }
 
@@ -1010,9 +1090,10 @@ bool replace_ground_before_publish(persistence::SaveFaultPoint point,
     auto* const context = static_cast<GroundReplacementContext*>(opaque);
     if (context != nullptr && context->armed && context->session != nullptr
             && point == persistence::SaveFaultPoint::before_publish) {
-        arpg::test::install_ground_item(*context->session, 0U,
-            context->replacement, {0.0F, 0.0F, 0.0F});
-        context->invoked = true;
+        context->invoked =
+            arpg::test::replace_indexed_ground_item_for_fault(
+                *context->session, context->ordinal,
+                context->replacement);
     }
     return false;
 }
@@ -1069,8 +1150,10 @@ arpg::test::Failure fixed_tick_forwards_pickup_policy_and_defaults_show_all() no
     ARPG_REQUIRE(filtered.initialize());
     const auto filtered_before = filtered.session()->snapshot();
     ARPG_REQUIRE(filtered_before.combat.has_value());
-    arpg::test::install_ground_item(*filtered.session(), 0U,
-        normal_item(0xF117E201U), filtered_before.combat->player.position);
+    const InstalledPickupGround filtered_ground =
+        install_pickup_ground_at_active_spawn(
+            filtered, filtered_before, normal_item(0xF117E201U));
+    ARPG_REQUIRE(filtered_ground.valid);
 
     filtered.fixed_tick({}, {items::ItemRarity::rare});
 
@@ -1083,8 +1166,10 @@ arpg::test::Failure fixed_tick_forwards_pickup_policy_and_defaults_show_all() no
     ARPG_REQUIRE(default_runtime.initialize());
     const auto default_before = default_runtime.session()->snapshot();
     ARPG_REQUIRE(default_before.combat.has_value());
-    arpg::test::install_ground_item(*default_runtime.session(), 0U,
-        normal_item(0xDEF401701U), default_before.combat->player.position);
+    const InstalledPickupGround default_ground =
+        install_pickup_ground_at_active_spawn(
+            default_runtime, default_before, normal_item(0xDEF401701U));
+    ARPG_REQUIRE(default_ground.valid);
 
     default_runtime.fixed_tick({});
     settle_runtime_save(default_runtime);
@@ -1102,8 +1187,9 @@ arpg::test::Failure synchronous_pickup_publishes_exact_committed_receipt()
     const auto before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
     const items::ItemInstance item = normal_item(0x51A7E1101U, 3U);
-    arpg::test::install_ground_item(*runtime.session(), 0U, item,
-        before.combat->player.position);
+    const InstalledPickupGround ground =
+        install_pickup_ground_at_active_spawn(runtime, before, item);
+    ARPG_REQUIRE(ground.valid);
 
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
@@ -1165,8 +1251,9 @@ arpg::test::Failure failed_and_nonpickup_saves_do_not_replace_receipt()
     const auto start = runtime.session()->snapshot();
     ARPG_REQUIRE(start.combat.has_value());
     const items::ItemInstance first = normal_item(0xFA17E1101U, 2U);
-    arpg::test::install_ground_item(*runtime.session(), 0U, first,
-        start.combat->player.position);
+    const InstalledPickupGround first_ground =
+        install_pickup_ground_at_active_spawn(runtime, start, first);
+    ARPG_REQUIRE(first_ground.valid);
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
     const auto confirmed = runtime.render_status().loot_pickup;
@@ -1185,9 +1272,12 @@ arpg::test::Failure failed_and_nonpickup_saves_do_not_replace_receipt()
     const auto positioned = runtime.session()->snapshot();
     ARPG_REQUIRE(positioned.combat.has_value());
     const items::ItemInstance second = normal_item(0xFA17E1102U, 1U);
-    arpg::test::install_ground_item(*runtime.session(), 0U, second,
-        positioned.combat->player.position);
-    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    const InstalledPickupGround second_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, positioned, second, first_ground.ordinal);
+    ARPG_REQUIRE(second_ground.valid);
+    ARPG_REQUIRE(runtime.request_pickup(second_ground.ordinal)
+        == dungeon::RequestResult::accepted);
     fault.enabled = true;
     settle_runtime_save(runtime);
     ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
@@ -1206,8 +1296,10 @@ arpg::test::Failure wrong_pending_ordinal_fault_does_not_publish_receipt()
     ARPG_REQUIRE(runtime.initialize());
     auto before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xBAD0D100U), before.combat->player.position);
+    const InstalledPickupGround first_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xBAD0D100U));
+    ARPG_REQUIRE(first_ground.valid);
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
     const auto confirmed = runtime.render_status().loot_pickup;
@@ -1216,11 +1308,15 @@ arpg::test::Failure wrong_pending_ordinal_fault_does_not_publish_receipt()
 
     before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xBAD0D101U), before.combat->player.position);
-    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    const InstalledPickupGround second_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xBAD0D101U),
+            first_ground.ordinal);
+    ARPG_REQUIRE(second_ground.valid);
+    ARPG_REQUIRE(runtime.request_pickup(second_ground.ordinal)
+        == dungeon::RequestResult::accepted);
     arpg::test::DungeonSessionTestAccess::set_pending_pickup_ordinal(
-        *runtime.session(), 191U);
+        *runtime.session(), 0xFFFFU);
 
     settle_runtime_save(runtime);
 
@@ -1243,8 +1339,10 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
     replacement.session = runtime.session();
     auto before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xA17E2200U), before.combat->player.position);
+    const InstalledPickupGround first_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xA17E2200U));
+    ARPG_REQUIRE(first_ground.valid);
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
     const auto confirmed = runtime.render_status().loot_pickup;
@@ -1253,9 +1351,14 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
 
     before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xA17E2201U), before.combat->player.position);
-    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    const InstalledPickupGround second_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xA17E2201U),
+            first_ground.ordinal);
+    ARPG_REQUIRE(second_ground.valid);
+    replacement.ordinal = second_ground.ordinal;
+    ARPG_REQUIRE(runtime.request_pickup(second_ground.ordinal)
+        == dungeon::RequestResult::accepted);
     replacement.armed = true;
 
     settle_runtime_save(runtime);
@@ -1266,7 +1369,7 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
     ARPG_REQUIRE(same_receipt(runtime.render_status().loot_pickup, confirmed));
     const auto after = runtime.session()->snapshot();
     ARPG_REQUIRE(after.ground_item_count == 1U);
-    ARPG_REQUIRE(after.ground_items[0].ordinal == 0U);
+    ARPG_REQUIRE(after.ground_items[0].ordinal == replacement.ordinal);
     ARPG_REQUIRE(after.ground_items[0].item_id == replacement.replacement.id);
     return {};
 }
@@ -1286,8 +1389,10 @@ arpg::test::Failure failed_pickup_retry_publishes_one_presented_hud_notice()
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         previous, previous, runtime.render_status(), hints, 0.0F, false);
     ARPG_REQUIRE(previous.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xFEED77101U), previous.combat->player.position);
+    const InstalledPickupGround ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, previous, normal_item(0xFEED77101U));
+    ARPG_REQUIRE(ground.valid);
 
     fault.enabled = true;
     runtime.fixed_tick({});
@@ -1698,7 +1803,7 @@ arpg::test::Failure runtime_echoes_death_pending_kind() noexcept {
 
         auto decoded = std::make_unique<
             checkpoint::SaveCheckpointSlot>();
-        ARPG_REQUIRE(decode_active_v9(
+        ARPG_REQUIRE(decode_active_checkpoint(
             directory, runtime.render_status().active_slot, *decoded));
         ARPG_REQUIRE(decoded->room_progress.lifecycle
             == checkpoint::RoomProgressLifecycle::death_pending);
@@ -1932,7 +2037,7 @@ arpg::test::Failure v6_pending_death_load_preserves_generation_and_target() noex
 
             auto exact = std::make_unique<
                 checkpoint::SaveCheckpointSlot>();
-            ARPG_REQUIRE(decode_active_v9(directory,
+            ARPG_REQUIRE(decode_active_checkpoint(directory,
                 source->render_status().active_slot, *exact));
             ARPG_REQUIRE(dungeon::same_run_state(exact->state, expected));
             ARPG_REQUIRE(exact->state.last_abyss_resolution.lifecycle
@@ -2274,6 +2379,117 @@ arpg::test::Failure clean_shutdown_commits_latest_authority_and_rearms()
     return {};
 }
 
+arpg::test::Failure death_pending_clean_shutdown_reuses_durable_exact_save()
+    noexcept {
+    TempDirectory directory;
+    const auto config = config_for(directory, 0xD34DC105U);
+    std::uint64_t durable_death_revision{};
+    {
+        platform::DungeonRuntime runtime(config);
+        ARPG_REQUIRE(runtime.initialize());
+        auto* const session = runtime.session();
+        ARPG_REQUIRE(session != nullptr);
+        session->tick({});
+        ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(*session));
+        session->tick({});
+        ARPG_REQUIRE(session->pending_save_view() != nullptr);
+        ARPG_REQUIRE(session->pending_save_view()->kind
+            == dungeon::PendingSaveKind::death_retreat);
+
+        settle_runtime_save(runtime);
+        ARPG_REQUIRE(runtime.state()
+            == platform::DungeonRuntimeState::running);
+        ARPG_REQUIRE(session->pending_save_view() == nullptr);
+        const auto death = session->snapshot();
+        ARPG_REQUIRE(death.phase == dungeon::RoomPhase::death_pending);
+        ARPG_REQUIRE(death.death.has_value());
+        ARPG_REQUIRE(death.death->can_continue);
+        ARPG_REQUIRE(!arpg::test::DungeonRuntimeTestAccess::exact_active(
+            runtime));
+        ARPG_REQUIRE(!arpg::test::DungeonRuntimeTestAccess::background_active(
+            runtime));
+        durable_death_revision =
+            arpg::test::DungeonRuntimeTestAccess::durable_revision(runtime);
+        ARPG_REQUIRE(durable_death_revision
+            == arpg::test::DungeonRuntimeTestAccess::authority_revision(
+                runtime));
+
+        auto exact = std::make_unique<checkpoint::SaveCheckpointSlot>();
+        ARPG_REQUIRE(decode_active_checkpoint(
+            directory, runtime.render_status().active_slot, *exact));
+        ARPG_REQUIRE(exact->persistence_revision == durable_death_revision);
+        ARPG_REQUIRE(exact->state.death.lifecycle
+            == checkpoint::DeathLifecycle::pending_continue);
+        ARPG_REQUIRE(exact->room_progress.lifecycle
+            == checkpoint::RoomProgressLifecycle::death_pending);
+
+        ARPG_REQUIRE(runtime.request_clean_shutdown());
+        settle_clean_shutdown(runtime);
+        ARPG_REQUIRE(runtime.clean_shutdown_state()
+            == platform::CleanShutdownState::ready);
+    }
+
+    platform::DungeonRuntime resumed(config);
+    ARPG_REQUIRE(resumed.initialize());
+    const auto loaded = resumed.session()->snapshot();
+    ARPG_REQUIRE(loaded.phase == dungeon::RoomPhase::death_pending);
+    ARPG_REQUIRE(loaded.death.has_value());
+    ARPG_REQUIRE(loaded.death->can_continue);
+    auto exact = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    ARPG_REQUIRE(decode_active_checkpoint(
+        directory, resumed.render_status().active_slot, *exact));
+    ARPG_REQUIRE(exact->persistence_revision == durable_death_revision);
+    ARPG_REQUIRE(exact->state.death.lifecycle
+        == checkpoint::DeathLifecycle::pending_continue);
+    ARPG_REQUIRE(exact->room_progress.lifecycle
+        == checkpoint::RoomProgressLifecycle::death_pending);
+    return {};
+}
+
+arpg::test::Failure background_durable_shutdown_still_runs_exact_final_scan()
+    noexcept {
+    TempDirectory directory;
+    FaultContext fault{persistence::SaveFaultPoint::final_scan_a, false};
+    auto config = config_for(directory, 0xC105E4U);
+    config.save.fault_hook = &fail_when_enabled;
+    config.save.fault_context = &fault;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+
+    runtime.fixed_tick({1, 0});
+    ARPG_REQUIRE(arpg::test::DungeonRuntimeTestAccess::authority_revision(
+        runtime) > arpg::test::DungeonRuntimeTestAccess::durable_revision(
+        runtime));
+    arpg::test::DungeonRuntimeTestAccess::force_background_due(runtime);
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::seconds{10};
+    do {
+        runtime.pump_persistence_frame();
+        if (!arpg::test::DungeonRuntimeTestAccess::background_active(runtime)
+                && arpg::test::DungeonRuntimeTestAccess::durable_revision(
+                    runtime)
+                    == arpg::test::DungeonRuntimeTestAccess::authority_revision(
+                        runtime)) {
+            break;
+        }
+        std::this_thread::yield();
+    } while (std::chrono::steady_clock::now() < deadline);
+    ARPG_REQUIRE(!arpg::test::DungeonRuntimeTestAccess::background_active(
+        runtime));
+    ARPG_REQUIRE(arpg::test::DungeonRuntimeTestAccess::durable_revision(runtime)
+        == arpg::test::DungeonRuntimeTestAccess::authority_revision(runtime));
+
+    fault.enabled = true;
+    ARPG_REQUIRE(runtime.request_clean_shutdown());
+    settle_clean_shutdown(runtime);
+    ARPG_REQUIRE(runtime.clean_shutdown_state()
+        == platform::CleanShutdownState::faulted);
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(runtime.render_status().error
+        == persistence::SaveError::final_scan_failed);
+    return {};
+}
+
 arpg::test::Failure clean_shutdown_not_committed_cancels_close() noexcept {
     TempDirectory directory;
     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
@@ -2339,7 +2555,7 @@ arpg::test::Failure health_potion_exact_persists_post_heal_room_state()
 
     auto decoded = std::make_unique<
         checkpoint::SaveCheckpointSlot>();
-    ARPG_REQUIRE(decode_active_v9(
+    ARPG_REQUIRE(decode_active_checkpoint(
         directory, runtime->render_status().active_slot, *decoded));
     ARPG_REQUIRE(decoded->room_progress.combat.player.hp
         == healed.combat->player.hp);
@@ -2380,7 +2596,7 @@ arpg::test::Failure normal_full_clear_is_exact_and_reloads_awaiting_exit()
 
     auto decoded = std::make_unique<
         checkpoint::SaveCheckpointSlot>();
-    ARPG_REQUIRE(decode_active_v9(
+    ARPG_REQUIRE(decode_active_checkpoint(
         directory, runtime->render_status().active_slot, *decoded));
     ARPG_REQUIRE(decoded->room_progress.lifecycle
         == checkpoint::RoomProgressLifecycle::active);
@@ -2412,7 +2628,7 @@ arpg::test::Failure abyss_full_clear_persists_cleared_environment_and_reload()
 
     auto decoded = std::make_unique<
         checkpoint::SaveCheckpointSlot>();
-    ARPG_REQUIRE(decode_active_v9(
+    ARPG_REQUIRE(decode_active_checkpoint(
         directory, runtime->render_status().active_slot, *decoded));
     ARPG_REQUIRE(decoded->state.abyss.lifecycle
         == arpg::abyss::AbyssLifecycle::cleared);
@@ -2429,6 +2645,40 @@ arpg::test::Failure abyss_full_clear_persists_cleared_environment_and_reload()
     ARPG_REQUIRE(restarted.initialize());
     ARPG_REQUIRE(restarted.session()->snapshot().phase
         == dungeon::RoomPhase::awaiting_exit);
+    return {};
+}
+
+arpg::test::Failure render_snapshot_has_one_stable_heap_slot() noexcept {
+    static_assert(sizeof(platform::DungeonRuntime)
+        < sizeof(dungeon::DungeonRenderSnapshot));
+    TempDirectory failed_directory;
+    platform::DungeonRuntime failed(config_for(failed_directory, 0xC4A001U));
+    {
+        arpg::test::ScopedAllocationFailure fail_first_allocation{0U};
+        ARPG_REQUIRE(!failed.initialize());
+    }
+    ARPG_REQUIRE(failed.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(failed.render_snapshot_storage() == nullptr);
+
+    TempDirectory directory;
+    platform::DungeonRuntime runtime(config_for(directory, 0xC4A002U));
+    ARPG_REQUIRE(runtime.initialize());
+    dungeon::DungeonRenderSnapshot* const storage =
+        runtime.render_snapshot_storage();
+    ARPG_REQUIRE(storage != nullptr);
+    ARPG_REQUIRE(runtime.session() != nullptr);
+    const auto current = std::make_unique<dungeon::DungeonSnapshot>(
+        runtime.session()->snapshot());
+    ARPG_REQUIRE(current != nullptr && current->combat.has_value());
+    const combat::Vec3 player = current->combat->player.position;
+    const dungeon::WorldViewQuery query{
+        {{player.x - 12.0F, player.y - 5.5F, -1.0F},
+            {player.x + 12.0F, player.y + 5.5F, 32.0F}},
+        1920, 1080, 1U};
+    ARPG_REQUIRE(runtime.session()->write_render_snapshot(query, *storage));
+    ARPG_REQUIRE(storage->query.camera_version == 1U);
+    runtime.fixed_tick({});
+    ARPG_REQUIRE(runtime.render_snapshot_storage() == storage);
     return {};
 }
 
@@ -2486,6 +2736,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"item request fault matrix is atomic and restart consistent", &item_request_fault_matrix_is_atomic_and_restart_consistent},
     {"clean shutdown commits latest authority and rearms",
         &clean_shutdown_commits_latest_authority_and_rearms},
+    {"death pending clean shutdown reuses durable exact save",
+        &death_pending_clean_shutdown_reuses_durable_exact_save},
+    {"background durable shutdown still runs exact final scan",
+        &background_durable_shutdown_still_runs_exact_final_scan},
     {"clean shutdown not committed cancels close",
         &clean_shutdown_not_committed_cancels_close},
     {"clean shutdown indeterminate faults",
@@ -2496,10 +2750,22 @@ constexpr arpg::test::TestCase kCases[] = {
         &normal_full_clear_is_exact_and_reloads_awaiting_exit},
     {"abyss full clear persists cleared environment",
         &abyss_full_clear_persists_cleared_environment_and_reload},
+    {"render snapshot uses one stable heap slot",
+        &render_snapshot_has_one_stable_heap_slot},
+};
+
+constexpr arpg::test::TestCase kV10MigrationCases[] = {
+    {"canonical v9 load rewrites v10 before session",
+        &canonical_v9_load_rewrites_v10_before_session},
 };
 
 }  // namespace
 
 arpg::test::TestSuite dungeon_runtime_suite() noexcept {
     return arpg::test::make_suite("dungeon_runtime", kCases);
+}
+
+arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept {
+    return arpg::test::make_suite(
+        "dungeon_runtime_v10_migration", kV10MigrationCases);
 }

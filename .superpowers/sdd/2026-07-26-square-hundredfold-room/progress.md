@@ -17,3 +17,6 @@ Task 6: fix round 2/5 (inner V8 byte150 restored to zero; lifecycle moved to bac
 Task 6: fix round 3/5 (old V9 pending abyss-death lifecycle normalized from authoritative death checkpoint; cleared/ordinary negative controls, V9 6/6, death 31/31, worker 3/3 green)
 Task 6: closure migration (20 stale dungeon/platform assertions updated for exact room_unlock and V9 authority; transaction 20/20, equipment stress 2/2, affix stress 2/2)
 Task 6: complete (commit d9ecd93 amended; independent final review P0/P1/P2=0; exact serial build current; final gate 3/3 passed in 402.05 s)
+Task 7-8: complete (commits 5efb1e2, 50dc8d7, 595137a; independent review approved P0/P1/P2=0; persistence 115/115, V9 wire 1/1, platform 565/565)
+Task 9: complete (commits 3c86be8, 73083a0, plus final geometry hardening; independent review P0/P1/P2=0; dungeon 19/19, platform 57/57, full dungeon 359/359, full platform 574/574)
+Task 10: complete (commits 5efb1e2, 50dc8d7, 595137a; same-frame visible-set diagnostics, CJK glyph audit, and three-resolution layout approved)

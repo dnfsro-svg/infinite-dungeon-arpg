@@ -325,6 +325,34 @@ void clear_environment(RoomEnvironmentBlueprint& environment) noexcept {
         row * combat::room_spatial::columns + column);
 }
 
+[[nodiscard]] std::size_t cell_axis(float coordinate, float minimum,
+    float cell_size, std::size_t cell_count) noexcept {
+    if (!std::isfinite(coordinate)) return 0U;
+    const float normalized = (coordinate - minimum) / cell_size;
+    if (normalized <= 0.0F) return 0U;
+    if (normalized >= static_cast<float>(cell_count)) return cell_count - 1U;
+    return static_cast<std::size_t>(normalized);
+}
+
+[[nodiscard]] bool environment_record_visible(const Aabb& bounds,
+    const RoomEnvironmentRecord& record) noexcept {
+    if (record.obstacle.kind != combat::RoomObstacleKind::none) {
+        const Aabb& obstacle = record.obstacle.bounds;
+        return obstacle.minimum.x <= bounds.maximum.x
+            && obstacle.maximum.x >= bounds.minimum.x
+            && obstacle.minimum.y <= bounds.maximum.y
+            && obstacle.maximum.y >= bounds.minimum.y
+            && obstacle.minimum.z <= bounds.maximum.z
+            && obstacle.maximum.z >= bounds.minimum.z;
+    }
+    return record.anchor.x >= bounds.minimum.x
+        && record.anchor.x <= bounds.maximum.x
+        && record.anchor.y >= bounds.minimum.y
+        && record.anchor.y <= bounds.maximum.y
+        && record.anchor.z >= bounds.minimum.z
+        && record.anchor.z <= bounds.maximum.z;
+}
+
 [[nodiscard]] bool aabb_within_cell(
     const Aabb& bounds, std::size_t cell) noexcept {
     const std::size_t column = cell % combat::room_spatial::columns;
@@ -578,6 +606,148 @@ void hash_aabb(std::uint64_t& hash, const Aabb& bounds) noexcept {
 
 }  // namespace
 
+namespace {
+
+[[nodiscard]] bool visible_record_precedes(
+    const RoomEnvironmentRecord& left,
+    const RoomEnvironmentRecord& right) noexcept {
+    if (left.home_cell != right.home_cell) {
+        return left.home_cell < right.home_cell;
+    }
+    if (left.obstacle.kind != right.obstacle.kind) {
+        return static_cast<std::uint8_t>(left.obstacle.kind)
+            < static_cast<std::uint8_t>(right.obstacle.kind);
+    }
+    return left.ordinal < right.ordinal;
+}
+
+VisibleEnvironmentQueryResult query_visible_environment_bounded(
+    const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds, std::size_t output_capacity,
+    VisibleEnvironmentSet& output) noexcept {
+    output = {};
+    if (!finite(world_bounds)
+            || world_bounds.minimum.x > world_bounds.maximum.x
+            || world_bounds.minimum.y > world_bounds.maximum.y
+            || world_bounds.minimum.z > world_bounds.maximum.z) {
+        return {VisibleEnvironmentQueryStatus::invalid_query,
+            DungeonFault::none};
+    }
+    if (blueprint.record_count > blueprint.records.size()) {
+        return {VisibleEnvironmentQueryStatus::hard_fault,
+            DungeonFault::environment_capacity};
+    }
+    if (output_capacity > output.records.size()) {
+        return {VisibleEnvironmentQueryStatus::hard_fault,
+            DungeonFault::environment_capacity};
+    }
+
+    const std::size_t visible_first_column = cell_axis(
+        world_bounds.minimum.x, combat::room_bounds::min_x,
+        combat::room_spatial::cell_width, combat::room_spatial::columns);
+    const std::size_t visible_last_column = cell_axis(
+        world_bounds.maximum.x, combat::room_bounds::min_x,
+        combat::room_spatial::cell_width, combat::room_spatial::columns);
+    const std::size_t visible_first_row = cell_axis(
+        world_bounds.minimum.y, combat::room_bounds::min_y,
+        combat::room_spatial::cell_depth, combat::room_spatial::rows);
+    const std::size_t visible_last_row = cell_axis(
+        world_bounds.maximum.y, combat::room_bounds::min_y,
+        combat::room_spatial::cell_depth, combat::room_spatial::rows);
+    const std::size_t first_column = visible_first_column == 0U
+        ? 0U : visible_first_column - 1U;
+    const std::size_t last_column = (std::min)(
+        visible_last_column + 1U, combat::room_spatial::columns - 1U);
+    const std::size_t first_row = visible_first_row == 0U
+        ? 0U : visible_first_row - 1U;
+    const std::size_t last_row = (std::min)(
+        visible_last_row + 1U, combat::room_spatial::rows - 1U);
+    if (last_column - first_column + 1U > 7U
+            || last_row - first_row + 1U > 5U) {
+        return {VisibleEnvironmentQueryStatus::hard_fault,
+            DungeonFault::environment_capacity};
+    }
+
+    for (std::size_t row = first_row; row <= last_row; ++row) {
+        for (std::size_t column = first_column;
+                column <= last_column; ++column) {
+            const std::size_t cell = row * combat::room_spatial::columns
+                + column;
+            const std::size_t begin = blueprint.cell_offsets[cell];
+            const std::size_t count = blueprint.cell_counts[cell];
+            if (count > 3U || begin > blueprint.record_count
+                    || count > blueprint.record_count - begin) {
+                output = {};
+                return {VisibleEnvironmentQueryStatus::hard_fault,
+                    DungeonFault::environment_capacity};
+            }
+            const std::size_t end = begin + count;
+            bool broken_previous_span = begin != 0U;
+            if (cell != 0U) {
+                const std::size_t previous_begin =
+                    blueprint.cell_offsets[cell - 1U];
+                const std::size_t previous_count =
+                    blueprint.cell_counts[cell - 1U];
+                broken_previous_span = previous_count > 3U
+                    || previous_begin > blueprint.record_count
+                    || previous_count
+                        > blueprint.record_count - previous_begin
+                    || previous_begin + previous_count != begin;
+            }
+            if (broken_previous_span
+                    || blueprint.cell_offsets[cell + 1U] != end
+                    || output.candidates_examined + count
+                        > kEnvironmentQueryCandidateCapacity) {
+                output = {};
+                return {VisibleEnvironmentQueryStatus::hard_fault,
+                    DungeonFault::environment_capacity};
+            }
+            for (std::size_t index = begin; index < end; ++index) {
+                const RoomEnvironmentRecord& record = blueprint.records[index];
+                ++output.candidates_examined;
+                if (record.home_cell != cell || record.ordinal != index) {
+                    output = {};
+                    return {VisibleEnvironmentQueryStatus::hard_fault,
+                        DungeonFault::environment_capacity};
+                }
+                if (!environment_record_visible(world_bounds, record)) continue;
+                if (output.count >= output_capacity) {
+                    output = {};
+                    return {VisibleEnvironmentQueryStatus::hard_fault,
+                        DungeonFault::environment_capacity};
+                }
+                output.records[output.count++] = record;
+            }
+        }
+    }
+    for (std::size_t index = 1U; index < output.count; ++index) {
+        const RoomEnvironmentRecord value = output.records[index];
+        std::size_t insertion = index;
+        while (insertion != 0U && visible_record_precedes(
+                value, output.records[insertion - 1U])) {
+            output.records[insertion] = output.records[insertion - 1U];
+            --insertion;
+        }
+        output.records[insertion] = value;
+    }
+    return {VisibleEnvironmentQueryStatus::ok, DungeonFault::none};
+}
+
+}  // namespace
+
+VisibleEnvironmentQueryResult query_visible_environment(
+    const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds, VisibleEnvironmentSet& output) noexcept {
+    return query_visible_environment_bounded(blueprint, world_bounds,
+        output.records.size(), output);
+}
+
+bool write_visible_environment(const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds, VisibleEnvironmentSet& output) noexcept {
+    return query_visible_environment(blueprint, world_bounds, output).status
+        == VisibleEnvironmentQueryStatus::ok;
+}
+
 RoomEnvironmentBuildResult build_room_environment(
     const checkpoint::RoomDescriptor& room,
     const DungeonRules& rules,
@@ -661,6 +831,16 @@ bool room_environment_legal(
 }
 
 namespace test_support {
+
+VisibleEnvironmentQueryResult
+query_visible_environment_with_output_capacity(
+    const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds,
+    std::size_t output_capacity,
+    VisibleEnvironmentSet& output) noexcept {
+    return query_visible_environment_bounded(
+        blueprint, world_bounds, output_capacity, output);
+}
 
 RoomEnvironmentBuildResult build_room_environment_with_record_count(
     const checkpoint::RoomDescriptor& room,

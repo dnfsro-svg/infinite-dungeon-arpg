@@ -2,6 +2,7 @@
 
 #include "combat_feedback.hpp"
 #include "combat_renderer.hpp"
+#include "combat_view_math.hpp"
 #include "combat/active_skill_runtime.hpp"
 #include "combat/fire_room_obstacle.hpp"
 #include "combat/room_bounds.hpp"
@@ -251,8 +252,8 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
                 ? dungeon::GroundItemSource::abyss_chest
                 : dungeon::GroundItemSource::monster_drop;
             item.abyss_reward_ordinal = index == 3U ? 0U : 0xFFU;
-            item.position = {-5.0F + static_cast<float>(index) * 2.0F,
-                -3.2F, 0.0F};
+            item.position = stage12_material_showcase_position(
+                -5.0F + static_cast<float>(index) * 2.0F, -3.2F);
             item.item_id = index + 1U;
             item.base_id = static_cast<std::uint8_t>(index + 1U);
             item.item_level = 60U;
@@ -270,9 +271,9 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
                     static_cast<items::MaterialId>(index))
                 ? dungeon::GroundMaterialSource::monster_coupon
                 : dungeon::GroundMaterialSource::monster_common;
-            material.position = {
+            material.position = stage12_material_showcase_position(
                 -4.5F + static_cast<float>(index % 7U) * 1.5F,
-                2.0F + static_cast<float>(index / 7U) * 1.6F, 0.0F};
+                2.0F + static_cast<float>(index / 7U) * 1.6F);
             material.material = static_cast<items::MaterialId>(index);
         }
     }
@@ -283,9 +284,14 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
         combat::MonsterId::chaos_chaser, combat::MonsterId::chaos_hazard,
     }};
     constexpr std::array<combat::Vec3, 8> positions{{
-        {-4.0F, -2.0F, 0.0F}, {-1.3F, -2.0F, 0.0F}, {1.3F, -2.0F, 0.0F},
-        {4.0F, -2.0F, 0.0F}, {-4.0F, 1.5F, 0.0F}, {-1.3F, 1.5F, 0.0F},
-        {1.3F, 1.5F, 0.0F}, {4.0F, 1.5F, 0.0F},
+        stage12_material_showcase_column_position(0U, -2.0F),
+        stage12_material_showcase_column_position(1U, -2.0F),
+        stage12_material_showcase_column_position(2U, -2.0F),
+        stage12_material_showcase_column_position(3U, -2.0F),
+        stage12_material_showcase_column_position(0U, 1.5F),
+        stage12_material_showcase_column_position(1U, 1.5F),
+        stage12_material_showcase_column_position(2U, 1.5F),
+        stage12_material_showcase_column_position(3U, 1.5F),
     }};
     auto& combat_snapshot = *snapshot.combat;
     if (hide_monsters) {
@@ -312,6 +318,33 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
         monster.max_hp = 100;
         monster.ai_phase = combat::MonsterAiPhase::active;
     }
+}
+
+void apply_stage12_material_showcase_world(
+    const dungeon::DungeonSnapshot& showcase,
+    dungeon::DungeonRenderSnapshot& world) noexcept {
+    world.ecology = showcase.ecology;
+    world.has_combat = showcase.combat.has_value();
+    if (showcase.combat.has_value()) {
+        world.combat = *showcase.combat;
+    } else {
+        world.combat = {};
+    }
+    world.equipment_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(showcase.ground_item_count),
+        world.equipment.size()));
+    std::copy_n(showcase.ground_items.begin(), world.equipment_count,
+        world.equipment.begin());
+    world.material_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(showcase.ground_material_count),
+        world.materials.size()));
+    std::copy_n(showcase.ground_materials.begin(), world.material_count,
+        world.materials.begin());
+    world.health_potion_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(showcase.ground_health_potion_count),
+        world.health_potions.size()));
+    std::copy_n(showcase.ground_health_potions.begin(),
+        world.health_potion_count, world.health_potions.begin());
 }
 
 }  // namespace
@@ -388,6 +421,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && runtime.state() == DungeonRuntimeState::recovery_required) {
             TraceLog(LOG_ERROR,
                 "Stage 12 background-only capture refused a recovery save");
+            return HostExitCode::save_initialization_failed;
+        }
+        dungeon::DungeonRenderSnapshot* const render_world =
+            runtime.render_snapshot_storage();
+        if (render_world == nullptr) {
             return HostExitCode::save_initialization_failed;
         }
 
@@ -472,6 +510,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             exit_requested = true;
         };
         std::uint32_t presented_frame_count = 0U;
+        std::uint64_t camera_version = 0U;
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
         const std::string validation_capture_prefix = config.validation_capture
@@ -940,21 +979,53 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const dungeon::DungeonSnapshot& presented_hud_current =
                 config.stage12_material_showcase ? presented_snapshot : current;
 
-            // Observe after all possible fixed-step changes and before every
-            // presented frame, including death/recovery-owned overlay frames.
+            const settings::LootFilterMode presented_loot_filter =
+                renderer_loot_filter_mode(
+                    pause_menu.screen, live_settings, pause_menu.draft);
+            renderer.set_loot_filter_mode(presented_loot_filter);
+            const float screen_width = static_cast<float>(GetScreenWidth());
+            const float screen_height = static_cast<float>(GetScreenHeight());
+            const bool interpolate_camera = can_interpolate_room(
+                previous, current);
+            combat::Vec3 current_player{};
+            if (current.combat.has_value()) {
+                current_player = current.combat->player.position;
+            }
+            const combat::Vec3 previous_player = interpolate_camera
+                ? previous.combat->player.position : current_player;
+            const combat::Vec3 interpolated_player =
+                interpolate_combat_position(previous_player, current_player,
+                    static_cast<float>(frame.interpolation_alpha));
+            const CombatCameraView frame_camera = make_combat_camera_view(
+                interpolated_player, screen_width, screen_height);
+            camera_version = camera_version
+                    == (std::numeric_limits<std::uint64_t>::max)()
+                ? 1U : camera_version + 1U;
+            const dungeon::WorldViewQuery world_query = make_world_view_query(
+                frame_camera, screen_width, screen_height, camera_version);
+            if (!session->write_render_snapshot(world_query, *render_world)) {
+                TraceLog(LOG_ERROR, "failed to publish bounded render snapshot");
+                audio.shutdown();
+                renderer.shutdown_resources();
+                pause_menu_renderer.shutdown();
+                return HostExitCode::save_initialization_failed;
+            }
+            if (config.stage12_material_showcase) {
+                apply_stage12_material_showcase_world(
+                    presented_snapshot, *render_world);
+            }
+            // The presented HUD consumes this exact bounded world snapshot;
+            // publish it after all fixed-step and showcase transformations,
+            // and before the frame is drawn.
             const HudPresentedFrame hud_presented_frame = current.death.has_value()
                 ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
             renderer.observe_presented_hud_frame(hud_presented_frame,
                 presented_hud_previous, presented_hud_current,
                 runtime.render_status(), control_hints,
-                frame_seconds, pause_blocks_gameplay);
+                frame_seconds, pause_blocks_gameplay, render_world);
             validation_runtime->observe_hud(
                 current, renderer.hud_model(), renderer.hud_notice_view(),
                 draw_debug, GetScreenWidth(), GetScreenHeight());
-            const settings::LootFilterMode presented_loot_filter =
-                renderer_loot_filter_mode(
-                    pause_menu.screen, live_settings, pause_menu.draft);
-            renderer.set_loot_filter_mode(presented_loot_filter);
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             reset_ui_text_bounds_audit();
@@ -966,10 +1037,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
                 if (config.stage12_material_icons_only) {
                     return renderer.draw_ground_loot_icons_only(
-                        presented_snapshot);
+                        presented_snapshot, frame_camera);
                 }
                 return renderer.draw(
-                    previous, presented_snapshot, runtime.render_status(),
+                    previous, presented_snapshot, *render_world, frame_camera,
+                    runtime.render_status(),
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
                     feedback, audio_ready);
             }();

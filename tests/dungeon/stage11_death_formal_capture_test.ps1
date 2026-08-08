@@ -8,16 +8,23 @@ Add-Type -AssemblyName System.Drawing
 
 function Get-PanelHash {
     param([System.Drawing.Bitmap]$Image)
-    $bytes = [byte[]]::new(1040 * 624 * 3)
+    # Hash the opaque authored body, including all body and prompt text.  The
+    # title and decorated frame outside this rectangle are translucent and
+    # legitimately expose different live-room pixels before and after restart.
+    $panelLeft = 152
+    $panelTop = 80
+    $panelRightExclusive = 1128
+    $panelBottomExclusive = 644
+    $bytes = [byte[]]::new(
+        ($panelRightExclusive - $panelLeft) *
+        ($panelBottomExclusive - $panelTop) * 3)
     $offset = 0
-    for ($y = 48; $y -lt 672; ++$y) {
-        for ($x = 120; $x -lt 1160; ++$x) {
+    for ($y = $panelTop; $y -lt $panelBottomExclusive; ++$y) {
+        for ($x = $panelLeft; $x -lt $panelRightExclusive; ++$x) {
             $pixel = $Image.GetPixel($x, $y)
-            if ([Math]::Max($pixel.R, [Math]::Max($pixel.G, $pixel.B)) -ge 70) {
-                $bytes[$offset] = $pixel.R
-                $bytes[$offset + 1] = $pixel.G
-                $bytes[$offset + 2] = $pixel.B
-            }
+            $bytes[$offset] = $pixel.R
+            $bytes[$offset + 1] = $pixel.G
+            $bytes[$offset + 2] = $pixel.B
             $offset += 3
         }
     }
@@ -62,15 +69,26 @@ function Test-Capture {
         if ($RequirePanel) {
             $panelDark = 0
             $panelAccent = 0
+            $panelAuthored = 0
             for ($y = 48; $y -lt 672; $y += 10) {
                 for ($x = 120; $x -lt 1160; $x += 10) {
                     $pixel = $image.GetPixel($x, $y)
                     if ($pixel.R -lt 40 -and $pixel.G -lt 40 -and $pixel.B -lt 50) { $panelDark++ }
                     if ($pixel.R -gt 150 -and $pixel.G -gt 50) { $panelAccent++ }
+                    $greenDelta = [int]$pixel.G - [int]$pixel.R
+                    $blueDelta = [int]$pixel.B - [int]$pixel.G
+                    if ($pixel.R -ge 45 -and $pixel.R -le 80 -and
+                            $pixel.G -ge 55 -and $pixel.G -le 100 -and
+                            $pixel.B -ge 70 -and $pixel.B -le 120 -and
+                            $greenDelta -ge 8 -and $greenDelta -le 30 -and
+                            $blueDelta -ge 8 -and $blueDelta -le 30) {
+                        $panelAuthored++
+                    }
                 }
             }
-            if ($panelDark -lt 3000 -or $panelAccent -lt 15) {
-                throw "Death panel content missing: $Path dark=$panelDark accent=$panelAccent"
+            if ($panelDark -lt 500 -or $panelAccent -lt 15 -or
+                    $panelAuthored -lt 3000) {
+                throw "Death panel content missing: $Path dark=$panelDark accent=$panelAccent authored=$panelAuthored"
             }
         }
         return Get-PanelHash -Image $image

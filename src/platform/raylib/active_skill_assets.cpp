@@ -1,5 +1,6 @@
 #include "active_skill_assets.hpp"
 
+#include "material_animation.hpp"
 #include "material_manifest.hpp"
 
 namespace arpg::platform {
@@ -13,6 +14,10 @@ struct ActiveSkillAtlasGrid final {
     float cell_width{};
     float cell_height{};
 };
+
+constexpr float kBasePlayerOpaqueHeight = 117.0F;
+constexpr float kDrawSlashActorOpaqueHeight = 139.0F;
+constexpr float kStormSwordsActorOpaqueHeight = 164.0F;
 
 [[nodiscard]] constexpr ActiveSkillAtlasGrid active_skill_grid(
     skills::ActiveSkillId id) noexcept {
@@ -68,6 +73,25 @@ std::optional<ActiveSkillAtlasFrame> active_skill_atlas_frame(
         {grid.cell_width * 0.50F, grid.cell_height * 0.94F},
         {grid.cell_width * 0.64F, grid.cell_height * 0.48F},
     };
+}
+
+float active_skill_material_draw_scale(
+    skills::ActiveSkillId id, float projection_scale) noexcept {
+    if (projection_scale <= 0.0F) return 0.0F;
+    float actor_opaque_height{};
+    switch (id) {
+    case skills::ActiveSkillId::draw_slash:
+        actor_opaque_height = kDrawSlashActorOpaqueHeight;
+        break;
+    case skills::ActiveSkillId::storm_swords:
+        actor_opaque_height = kStormSwordsActorOpaqueHeight;
+        break;
+    case skills::ActiveSkillId::none:
+    case skills::ActiveSkillId::count:
+        return 0.0F;
+    }
+    return material_actor_draw_scale(true, projection_scale)
+        * kBasePlayerOpaqueHeight / actor_opaque_height;
 }
 
 bool active_skill_assets_ready() noexcept {

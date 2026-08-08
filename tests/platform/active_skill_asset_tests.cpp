@@ -2,6 +2,7 @@
 
 #include "active_skill_assets.hpp"
 #include "active_skill_view.hpp"
+#include "material_animation.hpp"
 #include "material_manifest.hpp"
 #include "skills/skill_loadout.hpp"
 
@@ -65,6 +66,30 @@ arpg::test::Failure active_skill_atlases_are_registered_as_material_pairs()
     return {};
 }
 
+arpg::test::Failure active_skill_actor_scale_matches_base_player_geometry()
+    noexcept {
+    constexpr float kBasePlayerOpaqueHeight = 117.0F;
+    constexpr float kDrawSlashActorOpaqueHeight = 139.0F;
+    constexpr float kStormSwordsActorOpaqueHeight = 164.0F;
+    const float base_height = platform::material_actor_draw_scale(true, 1.0F)
+        * kBasePlayerOpaqueHeight;
+    const float draw_slash_height = platform::active_skill_material_draw_scale(
+        arpg::skills::ActiveSkillId::draw_slash, 1.0F)
+        * kDrawSlashActorOpaqueHeight;
+    const float storm_swords_height = platform::active_skill_material_draw_scale(
+        arpg::skills::ActiveSkillId::storm_swords, 1.0F)
+        * kStormSwordsActorOpaqueHeight;
+    ARPG_REQUIRE(arpg::test::near(draw_slash_height, base_height, 0.1F));
+    ARPG_REQUIRE(arpg::test::near(storm_swords_height, base_height, 0.1F));
+    ARPG_REQUIRE(platform::active_skill_material_draw_scale(
+        arpg::skills::ActiveSkillId::draw_slash, 0.5F)
+        == platform::active_skill_material_draw_scale(
+            arpg::skills::ActiveSkillId::draw_slash, 1.0F) * 0.5F);
+    ARPG_REQUIRE(platform::active_skill_material_draw_scale(
+        arpg::skills::ActiveSkillId::none, 1.0F) == 0.0F);
+    return {};
+}
+
 arpg::test::Failure active_skill_hud_uses_distinct_registered_material_icons()
     noexcept {
     const auto manifest = platform::default_material_manifest();
@@ -116,7 +141,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"active skill atlases expose complete original frame grids",
      &active_skill_atlases_define_complete_original_frame_grids},
     {"active skill atlases are registered as material pairs",
-     &active_skill_atlases_are_registered_as_material_pairs},
+        &active_skill_atlases_are_registered_as_material_pairs},
+    {"active skill actor scale matches the base player geometry",
+        &active_skill_actor_scale_matches_base_player_geometry},
     {"active skill HUD uses distinct registered material icons",
      &active_skill_hud_uses_distinct_registered_material_icons},
 };

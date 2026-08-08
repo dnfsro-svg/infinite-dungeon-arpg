@@ -18,7 +18,11 @@ add_library(arpg_dungeon STATIC
     room_generation.cpp
     room_combat_template.cpp
     room_navigation.cpp)
-target_sources(arpg_dungeon PRIVATE room_progress_checkpoint.cpp)
+target_sources(arpg_dungeon PRIVATE
+    dungeon_render_snapshot.cpp
+    room_progress_checkpoint.cpp
+    room_drop_spatial_index.cpp
+    room_drop_state.cpp)
 
 target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_compile_features(arpg_dungeon PUBLIC cxx_std_17)

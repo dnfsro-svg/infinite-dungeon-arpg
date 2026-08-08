@@ -732,6 +732,13 @@ git commit -m "feat: show large room progression in the hud"
 
 ### Task 11: Validate functionality, determinism, visuals, and bounded cost
 
+**Persistence correction discovered during validation:** frozen V9 cannot
+represent unsettled active-room experience because it stores neither the
+experience scalar nor the reward-eligible defeat ledger. V9 bytes, validator
+semantics, golden fixtures, and decoder remain frozen. Production Task 11
+traces use V10, which preserves the full V9 payload and appends one explicit
+little-endian `pending_room_experience` u64 while retaining V1-V9 decoding.
+
 **Files:**
 - Create: `tests/dungeon/large_room_end_to_end_tests.cpp`
 - Modify: `tests/dungeon/CMakeLists.txt`
@@ -748,7 +755,7 @@ git commit -m "feat: show large room progression in the hud"
 
 - [ ] **Step 1: Run deterministic headless traces**
 
-Run normal min/max and abyss max rooms with 0, 1, 7, and 31 scheduled reloads. Repeat each schedule twice and require identical blueprint hashes, defeat bits, exit-open tick, drops/claims, event ordering, transition target, and V9 bytes within that schedule. Across different reload schedules, require equal durable progression/rewards/final target while allowing only the explicitly versioned transient clear behavior from Task 5. After warm-up, require zero allocation in fixed-tick, residency, snapshot, render-preparation, and main-thread checkpoint-capture paths; measure worker encode/write/readback separately rather than hiding them in that gate.
+Run normal min/max and abyss max rooms with 0, 1, 7, and 31 scheduled reloads. Repeat each schedule twice and require identical blueprint hashes, defeat bits, exit-open tick, drops/claims, event ordering, transition target, and current V10 bytes within that schedule. Across different reload schedules, require equal durable progression/rewards/final target and all persisted room authority while allowing only the explicitly versioned transient clear behavior from Task 5. After warm-up, require zero allocation in fixed-tick, residency, snapshot, render-preparation, and main-thread checkpoint-capture paths; measure worker encode/write/readback separately rather than hiding them in that gate.
 
 - [ ] **Step 2: Run focused Debug suites serially**
 

@@ -55,6 +55,7 @@ struct ObjectivePanelPlan final {
     HudText96 secondary{};
     HudText96 movement{};
     std::array<HudText96, 3U> controls{};
+    HudText96 diagnostics{};
 };
 
 struct NavigationPanelPlan final {

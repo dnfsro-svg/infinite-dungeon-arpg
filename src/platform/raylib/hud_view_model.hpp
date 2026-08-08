@@ -1,12 +1,17 @@
 #pragma once
 
 #include "control_hints.hpp"
+#include "dungeon/room_affix.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "dungeon_runtime.hpp"
 #include "hud_color.hpp"
 
 #include <array>
 #include <cstdint>
+
+namespace arpg::dungeon {
+struct DungeonRenderSnapshot;
+}
 
 namespace arpg::platform {
 
@@ -45,13 +50,36 @@ struct PlayerHudModel final {
     std::uint8_t status_tag_count{};
 };
 
+struct HudVisibleSetModel final {
+    HudText96 text{};
+    std::uint64_t camera_version{};
+    std::uint16_t residents{};
+    std::uint16_t environment{};
+    std::uint16_t drops{};
+    std::uint16_t environment_candidates_examined{};
+    std::uint16_t drop_candidates_examined{};
+    bool available{};
+};
+
 struct RoomHudModel final {
     HudText96 objective{};
     HudText96 secondary{};
+    HudText96 density_text{};
+    HudText96 progress_text{};
+    HudText96 remaining_text{};
+    HudText96 exit_text{};
     HudText96 movement{};
     std::array<HudText96, 3U> controls{};
+    HudVisibleSetModel visible_set{};
     bool abyss{};
+    dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+    dungeon::RoomDensityAffix density_affix{
+        dungeon::RoomDensityAffix::crowded};
+    std::uint32_t initial_monster_count{};
+    std::uint32_t defeated_monster_count{};
+    std::uint32_t required_kills{};
     std::uint32_t remaining_targets{};
+    bool exits_unlocked{};
 };
 
 struct NavigationHudModel final {
@@ -111,7 +139,9 @@ public:
     void build(HudViewModel& output,
         const dungeon::DungeonSnapshot& snapshot,
         const DungeonRenderStatus& runtime_status,
-        const ControlHints& hints) noexcept;
+        const ControlHints& hints,
+        const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
+        noexcept;
     [[nodiscard]] HudStaticFormattingDiagnostics
         static_formatting_diagnostics() const noexcept;
 
@@ -119,9 +149,13 @@ private:
     struct ObjectiveKey final {
         bool is_abyss{};
         dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+        std::uint64_t room_seed{};
         std::uint8_t wave_index{};
         std::uint8_t wave_count{};
+        std::uint32_t initial_monster_count{};
+        std::uint32_t defeated_monster_count{};
         std::uint32_t remaining_targets{};
+        bool exits_unlocked{};
         abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
         abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
         std::uint8_t abyss_pending_rewards{};

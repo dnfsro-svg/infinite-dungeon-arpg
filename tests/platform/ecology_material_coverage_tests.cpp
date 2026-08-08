@@ -1059,23 +1059,22 @@ arpg::test::Failure ecology_prop_layout_is_resolution_safe(
         std::array<Rectangle, 9> bounds{};
         const float bottom = resolution.y
             - std::max(72.0F, 0.12F * resolution.y) - 8.0F;
-        const auto hole_projection = arpg::platform::project_render_world(
-            arpg::platform::kHoleCenter.x, arpg::platform::kHoleCenter.y,
-            arpg::platform::kHoleCenter.z, resolution.x, resolution.y);
+        const arpg::platform::CombatCameraView camera =
+            arpg::platform::make_combat_camera_view(
+                {}, resolution.x, resolution.y);
         const auto* const hole_definition =
             arpg::platform::environment_prop_definition(hole_sprite);
         ARPG_REQUIRE(hole_definition != nullptr);
         const arpg::platform::EnvironmentPropPlacement hole_placement{
             hole_sprite,
-            {hole_projection.x / resolution.x,
-                hole_projection.ground_y / resolution.y},
+            arpg::platform::kHoleCenter,
             false,
-            arpg::platform::kEnvironmentGameplayHoleScale
-                * hole_projection.scale,
+            arpg::platform::kEnvironmentGameplayHoleScale,
         };
         const Rectangle hole_bounds =
             arpg::platform::project_environment_prop_bounds(
-                *hole_definition, hole_placement, resolution.x, resolution.y);
+                *hole_definition, hole_placement, camera,
+                resolution.x, resolution.y);
         for (std::size_t index{}; index < layout.count; ++index) {
             ARPG_REQUIRE(layout.props[index].sprite != hole_sprite);
             const auto* const definition =
@@ -1083,7 +1082,8 @@ arpg::test::Failure ecology_prop_layout_is_resolution_safe(
                     layout.props[index].sprite);
             ARPG_REQUIRE(definition != nullptr);
             bounds[index] = arpg::platform::project_environment_prop_bounds(
-                *definition, layout.props[index], resolution.x, resolution.y);
+                *definition, layout.props[index], camera,
+                resolution.x, resolution.y);
             ARPG_REQUIRE(bounds[index].x >= 8.0F);
             ARPG_REQUIRE(bounds[index].y >= 8.0F);
             ARPG_REQUIRE(bounds[index].x + bounds[index].width

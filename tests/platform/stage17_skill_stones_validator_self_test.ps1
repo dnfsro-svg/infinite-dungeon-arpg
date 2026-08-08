@@ -109,7 +109,7 @@ Assert-ValidatorRejects 'forged-state' {
     param($caseRun)
     $path = Join-Path $caseRun 'stage17-skill-stones-state.txt'
     $text = [System.IO.File]::ReadAllText($path).Replace(
-        'save_version=9', 'save_version=8')
+        'save_version=10', 'save_version=8')
     [System.IO.File]::WriteAllText(
         $path, $text, [System.Text.UTF8Encoding]::new($false))
 }

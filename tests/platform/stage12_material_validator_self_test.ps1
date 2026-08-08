@@ -7,6 +7,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
+New-Item -ItemType Directory -Path $MutationRoot -Force | Out-Null
+
 function New-Mutation([string]$Name) {
     $target = Join-Path $MutationRoot $Name
     if (Test-Path -LiteralPath $target) {

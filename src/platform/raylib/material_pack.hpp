@@ -28,6 +28,9 @@ struct MaterialTextureApi final {
     void (*draw_material)(Texture2D color, Texture2D material,
         Rectangle source, Rectangle destination, Vector2 origin,
         float rotation, Color tint, MaterialCompositeParameters parameters){};
+    void (*draw_material_quad)(Texture2D color, Texture2D material,
+        Rectangle source, MaterialScreenQuad destination, Color tint,
+        MaterialCompositeParameters parameters){};
 };
 
 class MaterialPackState final {
@@ -71,6 +74,10 @@ public:
     [[nodiscard]] bool draw(
         MaterialSpriteId id, Vector2 foot_position, bool flip_x,
         float scale = 1.0F, Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_transformed(
+        MaterialSpriteId id, Vector2 foot_position, bool flip_x,
+        float scale, float rotation_degrees,
+        Color tint = WHITE) const noexcept;
     [[nodiscard]] bool draw_to(MaterialSpriteId id, Rectangle destination,
         Color tint = WHITE) const noexcept;
     [[nodiscard]] bool draw_nine_slice(MaterialSpriteId id,
@@ -86,6 +93,12 @@ public:
         MaterialAtlasId atlas, Rectangle source, Vector2 foot_anchor,
         Vector2 foot_position, bool flip_x, float scale = 1.0F,
         Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_frame_to(
+        MaterialAtlasId atlas, Rectangle source, Rectangle destination,
+        Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_frame_quad(
+        MaterialAtlasId atlas, Rectangle source,
+        MaterialScreenQuad destination, Color tint = WHITE) const noexcept;
 
 private:
     MaterialTextureApi texture_api_{};

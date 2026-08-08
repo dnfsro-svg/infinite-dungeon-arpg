@@ -309,7 +309,12 @@ bool can_interpolate_room(
     return previous.has_active_room && current.has_active_room
         && previous.combat.has_value() && current.combat.has_value()
         && previous.room_index == current.room_index
-        && previous.room_seed == current.room_seed;
+        && previous.room_seed == current.room_seed
+        && previous.room_instance_generation
+            == current.room_instance_generation
+        && previous.death.has_value() == current.death.has_value()
+        && previous.phase != dungeon::RoomPhase::death_pending
+        && current.phase != dungeon::RoomPhase::death_pending;
 }
 
 bool dungeon_event_clears_transients(

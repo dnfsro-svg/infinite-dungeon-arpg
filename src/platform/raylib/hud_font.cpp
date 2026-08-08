@@ -41,6 +41,21 @@ void add_active_skill_codepoints(DeathOverlayFontPlan& plan) noexcept {
     }
 }
 
+void add_large_room_hud_codepoints(DeathOverlayFontPlan& plan) noexcept {
+    constexpr int kCodepoints[] = {
+        0x602A, 0x7FA4, 0x89C4, 0x6A21, 0xFF1A,
+        0x62E5, 0x6324, 0x5BC6, 0x96C6, 0x517D, 0x6F6E,
+        0x6D88, 0x706D, 0x603B, 0x8BA1, 0xFF08, 0xFF09,
+        0x5C1A, 0x5F00, 0x653E, 0xFF0C, 0x6218, 0x6597,
+        0x4ECD, 0x53EF, 0x7EE7, 0x7EED, 0x79BB, 0x5C06,
+        0x5F03, 0x5269, 0x4F59, 0x5956, 0x52B1,
+        0x89C1, 0x6389, 0x843D,
+    };
+    for (const int codepoint : kCodepoints) {
+        add_hud_codepoint(plan, codepoint);
+    }
+}
+
 }  // namespace
 
 HudFontPlan hud_font_plan() noexcept {
@@ -48,6 +63,7 @@ HudFontPlan hud_font_plan() noexcept {
     plan.shared = death_overlay_font_plan();
     add_ground_loot_codepoints(plan.shared);
     add_active_skill_codepoints(plan.shared);
+    add_large_room_hud_codepoints(plan.shared);
     constexpr const char* kRequiredText[] = {
         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
@@ -65,6 +81,11 @@ HudFontPlan hud_font_plan() noexcept {
         u8"无", u8"取出", u8"正在保存",
         u8"技能石背包关闭",
         u8"拔刀斩", u8"极·鬼剑术（暴风式）",
+        u8"怪群规模：拥挤密集兽潮",
+        u8"消灭（总计）剩余",
+        u8"出口尚未开放，战斗仍可继续",
+        u8"离开将放弃剩余奖励",
+        u8"可见：怪 105/105 环境 73/105 掉落 53/331",
     };
     plan.covers_required_text = true;
     for (const char* text : kRequiredText) {

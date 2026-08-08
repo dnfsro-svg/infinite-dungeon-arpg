@@ -1,7 +1,8 @@
 include("${CMAKE_CURRENT_LIST_DIR}/evidence_source_scan.cmake")
 
 foreach(required GUARD_SCRIPT VALID_FIXTURE VALIDATION_GAME_SOURCE FORMAL_SOURCE
-        CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE VALID_HOST_HEADER
+        CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE
+        VALIDATION_BUILD_SOURCE VALID_HOST_HEADER
         VALID_HOST_SOURCE BAD_CAPTURE_ORDER BAD_PRE_CAPTURE_DUMMY)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "Stage 10 guard self-test missing ${required}")
@@ -23,6 +24,7 @@ function(expect_guard_rejection name host expected)
             -DCAPTURE_SCRIPT=${CAPTURE_SCRIPT}
             -DFORMAL_CAPTURE_SCRIPT=${FORMAL_CAPTURE_SCRIPT}
             -DSTRESS_SOURCE=${STRESS_SOURCE}
+            -DVALIDATION_BUILD_SOURCE=${VALIDATION_BUILD_SOURCE}
             -DHOST_HEADER=${VALID_HOST_HEADER}
             -DHOST_SOURCE=${host}
             -DSTAGE_SOURCE=${VALID_STAGE_SOURCE}
@@ -57,6 +59,82 @@ function(assert_unique_anchor source anchor name)
             "${name}: expected one replacement anchor, found ${match_count}")
     endif()
 endfunction()
+
+function(expect_validation_build_injection_rejection)
+    file(READ "${VALIDATION_BUILD_SOURCE}" build_source)
+    string(APPEND build_source
+        "\nvoid forbidden_stage10_build_fixture() { DungeonSessionTestAccess access; }\n")
+    set(mutation_file
+        "${CMAKE_CURRENT_BINARY_DIR}/stage10_validation_build_injected.hpp")
+    file(WRITE "${mutation_file}" "${build_source}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            -DFIXTURE_SOURCE=${VALID_FIXTURE}
+            -DVALIDATION_GAME_SOURCE=${VALIDATION_GAME_SOURCE}
+            -DFORMAL_SOURCE=${FORMAL_SOURCE}
+            -DCAPTURE_SCRIPT=${CAPTURE_SCRIPT}
+            -DFORMAL_CAPTURE_SCRIPT=${FORMAL_CAPTURE_SCRIPT}
+            -DSTRESS_SOURCE=${STRESS_SOURCE}
+            -DVALIDATION_BUILD_SOURCE=${mutation_file}
+            -DHOST_HEADER=${VALID_HOST_HEADER}
+            -DHOST_SOURCE=${VALID_HOST_SOURCE}
+            -DSTAGE_SOURCE=${VALID_STAGE_SOURCE}
+            -P ${GUARD_SCRIPT}
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    file(REMOVE "${mutation_file}")
+    set(combined "${output}\n${error}")
+    if(result EQUAL 0)
+        message(FATAL_ERROR
+            "validation_build_injection: mutated evidence was accepted")
+    endif()
+    string(FIND "${combined}"
+        "Forbidden Stage 10 evidence injection: DungeonSessionTestAccess"
+        reason_index)
+    if(reason_index EQUAL -1)
+        message(FATAL_ERROR
+            "validation_build_injection: wrong rejection reason: ${combined}")
+    endif()
+endfunction()
+
+expect_validation_build_injection_rejection()
+
+function(expect_generated_mask_assignment_rejection)
+    file(READ "${VALIDATION_BUILD_SOURCE}" build_source)
+    string(APPEND build_source
+        "\nvoid forbidden_stage10_mask_fixture() { arpg::abyss::AbyssCheckpoint active{}; active.generated_mask = 0U; }\n")
+    set(mutation_file
+        "${CMAKE_CURRENT_BINARY_DIR}/stage10_generated_mask_injected.hpp")
+    file(WRITE "${mutation_file}" "${build_source}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            -DFIXTURE_SOURCE=${VALID_FIXTURE}
+            -DVALIDATION_GAME_SOURCE=${VALIDATION_GAME_SOURCE}
+            -DFORMAL_SOURCE=${FORMAL_SOURCE}
+            -DCAPTURE_SCRIPT=${CAPTURE_SCRIPT}
+            -DFORMAL_CAPTURE_SCRIPT=${FORMAL_CAPTURE_SCRIPT}
+            -DSTRESS_SOURCE=${STRESS_SOURCE}
+            -DVALIDATION_BUILD_SOURCE=${mutation_file}
+            -DHOST_HEADER=${VALID_HOST_HEADER}
+            -DHOST_SOURCE=${VALID_HOST_SOURCE}
+            -DSTAGE_SOURCE=${VALID_STAGE_SOURCE}
+            -P ${GUARD_SCRIPT}
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    file(REMOVE "${mutation_file}")
+    set(combined "${output}\n${error}")
+    if(result EQUAL 0)
+        message(FATAL_ERROR
+            "generated_mask_assignment: mutated evidence was accepted")
+    endif()
+    string(FIND "${combined}"
+        "Forbidden Stage 10 evidence injection: generated_mask[ \\t]*=[^=]"
+        reason_index)
+    if(reason_index EQUAL -1)
+        message(FATAL_ERROR
+            "generated_mask_assignment: wrong rejection reason: ${combined}")
+    endif()
+endfunction()
+
+expect_generated_mask_assignment_rejection()
 
 set_property(GLOBAL PROPERTY STAGE10_TASK7C_CASE_COUNT 0)
 set_property(GLOBAL PROPERTY STAGE10_SEMANTIC_CASE_COUNT 0)
@@ -95,6 +173,7 @@ function(expect_stage10_runtime_replacement_rejection
             -DCAPTURE_SCRIPT=${CAPTURE_SCRIPT}
             -DFORMAL_CAPTURE_SCRIPT=${FORMAL_CAPTURE_SCRIPT}
             -DSTRESS_SOURCE=${STRESS_SOURCE}
+            -DVALIDATION_BUILD_SOURCE=${VALIDATION_BUILD_SOURCE}
             -DHOST_HEADER=${VALID_HOST_HEADER}
             -DHOST_SOURCE=${VALID_HOST_SOURCE}
             -DSTAGE_SOURCE=${VALID_STAGE_SOURCE}
@@ -212,6 +291,7 @@ function(expect_stage_route_rejection name token inject_brace_noise decoy_kind)
             -DCAPTURE_SCRIPT=${CAPTURE_SCRIPT}
             -DFORMAL_CAPTURE_SCRIPT=${FORMAL_CAPTURE_SCRIPT}
             -DSTRESS_SOURCE=${STRESS_SOURCE}
+            -DVALIDATION_BUILD_SOURCE=${VALIDATION_BUILD_SOURCE}
             -DHOST_HEADER=${VALID_HOST_HEADER}
             -DHOST_SOURCE=${VALID_HOST_SOURCE}
             -DSTAGE_SOURCE=${mutation_file}
@@ -276,9 +356,12 @@ file(REMOVE "${duplicate_capture_file}")
 # The Stage10 facade guard also pressure-tests the real runtime owner. These
 # cases are separate from the fixed M15/M17/M18/M21/M23 inventory below.
 set(stage10_runtime_branch [=[if (impl_->config->stage10_validation
-            == Stage10ValidationScenario::chaos_expansion
-        && stage10_target_visible) {
-        ++impl_->states.stage10.chaos_presented_frames;
+            == Stage10ValidationScenario::chaos_expansion) {
+        if (stage10_target_visible) {
+            ++impl_->states.stage10.chaos_presented_frames;
+        } else {
+            impl_->states.stage10.chaos_presented_frames = 0U;
+        }
     }
 
     const bool stage10_reached = stage10_target_visible
@@ -291,7 +374,10 @@ expect_stage10_runtime_replacement_rejection(stage10_target_fabricated
     "T7C Stage10 target owner contract")
 expect_stage10_runtime_replacement_rejection(
     stage10_chaos_condition_discarded "${stage10_runtime_branch}"
-    [=[++impl_->states.stage10.chaos_presented_frames;
+    [=[if (impl_->config->stage10_validation
+            == Stage10ValidationScenario::chaos_expansion) {
+        ++impl_->states.stage10.chaos_presented_frames;
+    }
 
     const bool stage10_reached = stage10_target_visible
         && (impl_->config->stage10_validation

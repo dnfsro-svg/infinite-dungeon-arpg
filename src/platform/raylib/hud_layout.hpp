@@ -30,6 +30,7 @@ struct HudTextSafeLayout final {
     HudRect objective_hint{};
     HudRect objective_movement{};
     std::array<HudRect, 3U> objective_controls{};
+    HudRect objective_diagnostics{};
     HudRect navigation_title{};
     HudRect navigation_ecology{};
 };

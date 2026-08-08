@@ -35,6 +35,14 @@ if(DEFINED TASK7C_M24_M25_TARGETED_ONLY
         AND TASK7C_M24_M25_TARGETED_ONLY)
     list(APPEND _baseline_options "-DSTAGE11D_TASK7C_ONLY=ON")
 endif()
+if(DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+        AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY)
+    list(APPEND _baseline_options "-DSTAGE11D_ABYSS_PHYSICAL_ONLY=ON")
+endif()
+if(DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+        AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY)
+    list(APPEND _baseline_options "-DSTAGE11D_FORMAL_LIMIT_ONLY=ON")
+endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
     ${_baseline_options} -P "${_guard}"
     RESULT_VARIABLE _baseline OUTPUT_QUIET ERROR_QUIET)
@@ -42,8 +50,76 @@ if(NOT _baseline EQUAL 0)
     message(FATAL_ERROR "Stage11D loot evidence guard rejected its baseline")
 endif()
 
+if(DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+        AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY)
+    set_property(GLOBAL PROPERTY
+        STAGE11D_ABYSS_PHYSICAL_EXECUTED_MUTATIONS 0)
+endif()
+if(DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+        AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY)
+    set_property(GLOBAL PROPERTY
+        STAGE11D_FORMAL_LIMIT_EXECUTED_MUTATIONS 0)
+endif()
+
 function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
-    if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
+    if(DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+            AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY)
+        if(DEFINED STAGE11D_ABYSS_PHYSICAL_TAIL_ONLY
+                AND STAGE11D_ABYSS_PHYSICAL_TAIL_ONLY)
+            set(_targeted_names
+                "Stage11D sweep opportunity cannot run at low health"
+                "Stage11D dual sweep ownership cannot omit outer reset"
+                "Stage11D uncaptured abyss reward must use physical approach")
+        else()
+            set(_targeted_names
+            "Stage11D rearm cannot bypass physical suspension"
+            "Stage11D driver must honor physical suspension"
+            "Stage11D streaming sweep must map through physical movement"
+            "Stage11D unavailable player must stay physically neutral"
+            "Stage11D ranged movement must return before attacking"
+            "Stage11D area skill must use the equipped physical slot"
+            "Stage11D nearby danger must replan the ranged stance"
+            "Stage11D suspension gate cannot be weakened"
+            "Stage11D availability gate cannot move into a dead branch"
+            "Stage11D area skill cannot write a second physical slot"
+            "Stage11D melee fallback cannot move into a dead branch"
+            "Stage11D high-health target cannot trigger danger escape"
+            "Stage11D recovery fire route must use the plan destination"
+            "Stage11D driver cannot write a physical skill slot directly"
+            "Stage11D aggressive branch cannot move under an unbraced dead branch"
+            "Stage11D aggressive branch cannot hide alternate skill-slot access"
+            "Stage11D aggressive branch cannot alias physical skill slots"
+            "Stage11D storm injection must return before draw dispatch"
+            "Stage11D sweep cursor state cannot be omitted"
+            "Stage11D nearest sweep cursor comparison cannot be reversed"
+            "Stage11D sweep opportunity cannot run at low health"
+            "Stage11D dual sweep ownership cannot omit outer reset"
+            "Stage11D uncaptured abyss reward must use physical approach")
+        endif()
+        list(FIND _targeted_names "${NAME}" _targeted_index)
+        if(_targeted_index EQUAL -1)
+            return()
+        endif()
+    elseif(DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+            AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY)
+        set(_targeted_names
+            "Stage11D formal scenario cannot move under an unbraced dead branch"
+            "Stage11D formal fixed step cannot move into a comment"
+            "Stage11D formal fixed step cannot move into a string"
+            "Stage11D formal fixed step cannot move into a dead branch"
+            "Stage11D abyss budget call cannot move into a dead branch"
+            "Stage11D formal fixed step cannot move under an unbraced dead branch"
+            "Stage11D formal frame limit cannot move under an unbraced dead branch"
+            "Stage11D abyss validation survival passives cannot be omitted"
+            "Stage11D live-damage fixture cannot be omitted"
+            "Stage11D live-damage helper cannot weaken barrier-only removal"
+            "Stage11D abyss frame-budget manifest cannot move into a comment"
+            "Stage11D validator VSync check cannot move into an uncalled function")
+        list(FIND _targeted_names "${NAME}" _targeted_index)
+        if(_targeted_index EQUAL -1)
+            return()
+        endif()
+    elseif(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
         set(_targeted_names
             "stage11d header state payload cross scope"
             "runtime selector payload cross scope"
@@ -64,8 +140,78 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
         if(_targeted_index EQUAL -1)
             return()
         endif()
+    elseif(DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY)
+        set(_targeted_names
+            "tuple comparisons cannot move into comments"
+            "pickup predicate cannot move into a comment"
+            "tuple assignment cannot move after its Require"
+            "pickup derivation cannot move after its Require")
+        list(FIND _targeted_names "${NAME}" _targeted_index)
+        if(_targeted_index EQUAL -1)
+            return()
+        endif()
+    elseif(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
+        set(_targeted_names
+            "second render plan"
+            "draw-external render plan"
+            "diagnostic monster damage cannot be required"
+            "tuple assignment cannot move into a here string"
+            "tuple comparisons cannot move into comments"
+            "tuple assertion cannot move into an uncalled function"
+            "tuple assignment cannot move after its Require"
+            "pickup derivation cannot move into a here string"
+            "pickup predicate cannot move into a comment"
+            "pickup conservation cannot move into a false branch"
+            "pickup derivation cannot move after its Require"
+            "fixture prefix length cannot become a required kill count"
+            "player damage observation cannot be removed"
+            "player damage observation cannot use a below-max snapshot"
+            "rare capture must use the matching abyss label ordinal"
+            "abyss ordinal helper must require an abyss label"
+            "per-rarity tuple check cannot be weakened"
+            "pickup conservation cannot be reduced to a count")
+        list(FIND _targeted_names "${NAME}" _targeted_index)
+        if(_targeted_index EQUAL -1)
+            return()
+        endif()
+    endif()
+    if(DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+            AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY)
+        get_property(_executed GLOBAL PROPERTY
+            STAGE11D_ABYSS_PHYSICAL_EXECUTED_MUTATIONS)
+        math(EXPR _executed "${_executed} + 1")
+        set_property(GLOBAL PROPERTY
+            STAGE11D_ABYSS_PHYSICAL_EXECUTED_MUTATIONS ${_executed})
+        if(DEFINED STAGE11D_ABYSS_PHYSICAL_TAIL_ONLY
+                AND STAGE11D_ABYSS_PHYSICAL_TAIL_ONLY)
+            set(_expected_abyss_mutations 3)
+        else()
+            set(_expected_abyss_mutations 23)
+        endif()
+        if(_executed GREATER _expected_abyss_mutations)
+            message(FATAL_ERROR
+                "Stage11D rare-abyss targeted guard executed too many mutations: ${_executed}")
+        endif()
+    elseif(DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+            AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY)
+        get_property(_executed GLOBAL PROPERTY
+            STAGE11D_FORMAL_LIMIT_EXECUTED_MUTATIONS)
+        math(EXPR _executed "${_executed} + 1")
+        set_property(GLOBAL PROPERTY
+            STAGE11D_FORMAL_LIMIT_EXECUTED_MUTATIONS ${_executed})
+        if(_executed GREATER 12)
+            message(FATAL_ERROR
+                "Stage11D formal limit targeted guard executed too many mutations: ${_executed}")
+        endif()
     endif()
     set(_guard_options "")
+    if(DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+            AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY)
+        list(APPEND _guard_options "-DSTAGE11D_ABYSS_PHYSICAL_ONLY=ON")
+    elseif(DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+            AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY)
+        list(APPEND _guard_options "-DSTAGE11D_FORMAL_LIMIT_ONLY=ON")
+    endif()
     if(EXPECTED_REASON MATCHES "^T7C-M2(4|5)")
         list(APPEND _guard_options "-DSTAGE11D_TASK7C_ONLY=ON")
     endif()
@@ -94,6 +240,8 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
     endif()
 endfunction()
 
+if(NOT (DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+        AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY))
 function(task8b_expect_accepted NAME OVERRIDE PATH)
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${_guard}"
@@ -761,22 +909,23 @@ file(WRITE "${_path}" "${_task5b_report_summary_forward}")
 expect_rejected("report summary forward declaration decoy" REPORT "${_path}"
     "missing report summary writer definition")
 
-set(_task5b_affix_payload
-    "            state.monster_affix_danger[ordinal] =\n                combat::monster_affix_danger_score(monster.affixes);")
-string(REPLACE "${_task5b_affix_payload}" "            static_cast<void>(ordinal);"
+set(_task5b_damage_payload
+    "                state.monster_damage_observed = true;")
+string(REPLACE "${_task5b_damage_payload}"
+    "                state.monster_damage_observed = false;"
     _task5b_report_payload_removed "${_task5b_report_text}")
 if(_task5b_report_payload_removed STREQUAL _task5b_report_text)
     message(FATAL_ERROR "Task5B report payload mutation made no change")
 endif()
 set(_task5b_report_close "}  // namespace arpg::platform::host_validation")
 set(_task5b_cross_function
-    "void task5b_report_payload_decoy() {\n    ${_task5b_affix_payload}\n}\n\n${_task5b_report_close}")
+    "void task5b_report_payload_decoy() {\n    ${_task5b_damage_payload}\n}\n\n${_task5b_report_close}")
 string(REPLACE "${_task5b_report_close}" "${_task5b_cross_function}"
     _task5b_report_payload_cross_function "${_task5b_report_payload_removed}")
 set(_path "${GUARD_TEST_ROOT}/report-payload-cross-function-decoy.cpp")
 file(WRITE "${_path}" "${_task5b_report_payload_cross_function}")
 expect_rejected("report semantic payload cross function decoy" REPORT "${_path}"
-    "missing report evaluator semantic: state.monster_affix_danger")
+    "missing report evaluator semantic: state.monster_damage_observed")
 
 if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
     message(STATUS
@@ -785,6 +934,16 @@ if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
 endif()
 
 function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
+    if((DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+            AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY) OR
+        (DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+            AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY) OR
+        (DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY) OR
+        (DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY
+            AND NOT NAME STREQUAL "Stage11D renderer harmless definition decoy")
+    )
+        return()
+    endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${GUARD}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
@@ -795,6 +954,14 @@ function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
 endfunction()
 
 function(expect_sequence_rejected NAME PATH EXPECTED_REASON)
+    if((DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+            AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY) OR
+        (DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+            AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY) OR
+        (DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY) OR
+        (DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY))
+        return()
+    endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-DHOST_OVERRIDE=${PATH}" -P "${_sequence_guard}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
@@ -811,6 +978,7 @@ function(expect_sequence_rejected NAME PATH EXPECTED_REASON)
             "host sequence guard rejected ${NAME} for the wrong reason: ${_log}")
     endif()
 endfunction()
+endif()
 
 # Task 5A relocation RED: before the runtime exists, mutate the exact source
 # region that will move. The legacy guard ignores RUNTIME_OVERRIDE, which is
@@ -820,6 +988,597 @@ if(EXISTS "${_runtime}")
     file(READ "${_runtime}" _task5a_runtime_text)
 else()
     file(READ "${_host}" _task5a_runtime_text)
+endif()
+string(REPLACE "\r\n" "\n" _task5a_runtime_text
+    "${_task5a_runtime_text}")
+
+if(NOT (DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+        AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY))
+file(READ "${_formal}" _stage11d_formal_limit_text)
+string(REPLACE "\r\n" "\n" _stage11d_formal_limit_text
+    "${_stage11d_formal_limit_text}")
+set(_stage11d_formal_scenario
+    "    config.stage11d_loot_validation = spec.scenario;")
+string(REPLACE "${_stage11d_formal_scenario}"
+    "    if (false)\n        config.stage11d_loot_validation = spec.scenario;"
+    _stage11d_formal_scenario_unbraced_dead
+    "${_stage11d_formal_limit_text}")
+if(_stage11d_formal_scenario_unbraced_dead STREQUAL
+        _stage11d_formal_limit_text)
+    message(FATAL_ERROR
+        "Stage11D formal unbraced scenario mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-scenario-unbraced-dead.cpp")
+file(WRITE "${_path}" "${_stage11d_formal_scenario_unbraced_dead}")
+expect_rejected(
+    "Stage11D formal scenario cannot move under an unbraced dead branch"
+    FORMAL "${_path}"
+    "requires direct run_host scenario assignment")
+
+set(_stage11d_formal_step
+    "    config.validation_steps_per_frame = 1U;")
+string(REPLACE "${_stage11d_formal_step}"
+    "    // config.validation_steps_per_frame = 1U;"
+    _stage11d_formal_step_comment "${_stage11d_formal_limit_text}")
+if(_stage11d_formal_step_comment STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR "Stage11D formal step comment mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-step-comment.cpp")
+file(WRITE "${_path}" "${_stage11d_formal_step_comment}")
+expect_rejected("Stage11D formal fixed step cannot move into a comment"
+    FORMAL "${_path}"
+    "requires one direct 1-tick run_host assignment")
+
+string(REPLACE "${_stage11d_formal_step}"
+    "    constexpr const char* step_decoy = \"config.validation_steps_per_frame = 1U;\";"
+    _stage11d_formal_step_string "${_stage11d_formal_limit_text}")
+if(_stage11d_formal_step_string STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR "Stage11D formal step string mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-step-string.cpp")
+file(WRITE "${_path}" "${_stage11d_formal_step_string}")
+expect_rejected("Stage11D formal fixed step cannot move into a string"
+    FORMAL "${_path}"
+    "requires one direct 1-tick run_host assignment")
+
+string(REPLACE "${_stage11d_formal_step}"
+    "    if (false) { config.validation_steps_per_frame = 1U; }"
+    _stage11d_formal_step_dead "${_stage11d_formal_limit_text}")
+if(_stage11d_formal_step_dead STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR "Stage11D formal step dead-branch mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-step-dead.cpp")
+file(WRITE "${_path}" "${_stage11d_formal_step_dead}")
+expect_rejected("Stage11D formal fixed step cannot move into a dead branch"
+    FORMAL "${_path}"
+    "requires direct run_host fixed-step assignment")
+
+set(_stage11d_abyss_budget_call [=[    const auto budget = stage11d_rare_abyss_presented_frame_budget(
+        plan.monster_count);]=])
+string(REPLACE "${_stage11d_abyss_budget_call}"
+    [=[    std::optional<std::uint32_t> budget{};
+    if (false) {
+        budget = stage11d_rare_abyss_presented_frame_budget(
+            plan.monster_count);
+    }]=]
+    _stage11d_abyss_budget_dead "${_stage11d_formal_limit_text}")
+if(_stage11d_abyss_budget_dead STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR "Stage11D abyss budget-call mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-abyss-budget-dead.cpp")
+file(WRITE "${_path}" "${_stage11d_abyss_budget_dead}")
+expect_rejected("Stage11D abyss budget call cannot move into a dead branch"
+    FORMAL "${_path}"
+    "requires the production monster count to derive the rare-abyss frame budget")
+
+string(REPLACE "${_stage11d_formal_step}"
+    "    if (false)\n        config.validation_steps_per_frame = 1U;"
+    _stage11d_formal_step_unbraced_dead "${_stage11d_formal_limit_text}")
+if(_stage11d_formal_step_unbraced_dead STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR
+        "Stage11D formal unbraced step mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-step-unbraced-dead.cpp")
+file(WRITE "${_path}" "${_stage11d_formal_step_unbraced_dead}")
+expect_rejected(
+    "Stage11D formal fixed step cannot move under an unbraced dead branch"
+    FORMAL "${_path}"
+    "requires direct run_host fixed-step assignment")
+
+set(_stage11d_formal_limit_assignment [=[    config.validation_exit_after_presented_frames = spec.abyss
+        ? selected.abyss_presented_frame_budget
+        : kStage11DDefaultPresentedFrameLimit;]=])
+string(REPLACE "${_stage11d_formal_limit_assignment}"
+    "    if (false)\n        ${_stage11d_formal_limit_assignment}"
+    _stage11d_formal_limit_unbraced_dead "${_stage11d_formal_limit_text}")
+if(_stage11d_formal_limit_unbraced_dead STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR
+        "Stage11D formal unbraced frame-limit mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-limit-unbraced-dead.cpp")
+file(WRITE "${_path}" "${_stage11d_formal_limit_unbraced_dead}")
+expect_rejected(
+    "Stage11D formal frame limit cannot move under an unbraced dead branch"
+    FORMAL "${_path}"
+    "requires direct run_host frame limit")
+
+set(_stage11d_survival_fixture [=[                        && arpg::test::install_stage10_validation_survival_passives(
+                            validation_state)]=])
+string(REPLACE "${_stage11d_survival_fixture}" "                        && true"
+    _stage11d_survival_fixture_omitted "${_stage11d_formal_limit_text}")
+if(_stage11d_survival_fixture_omitted STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR
+        "Stage11D survival-passive fixture mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-survival-fixture-omitted.cpp")
+file(WRITE "${_path}" "${_stage11d_survival_fixture_omitted}")
+expect_rejected(
+    "Stage11D abyss validation survival passives cannot be omitted"
+    FORMAL "${_path}"
+    "requires the validation build")
+
+set(_stage11d_live_damage_fixture [=[                        && prepare_stage11d_live_damage_build(
+                            validation_state)]=])
+string(REPLACE "${_stage11d_live_damage_fixture}" "                        && true"
+    _stage11d_live_damage_fixture_omitted "${_stage11d_formal_limit_text}")
+if(_stage11d_live_damage_fixture_omitted STREQUAL
+        _stage11d_formal_limit_text)
+    message(FATAL_ERROR
+        "Stage11D live-damage fixture mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-live-damage-fixture-omitted.cpp")
+file(WRITE "${_path}" "${_stage11d_live_damage_fixture_omitted}")
+expect_rejected(
+    "Stage11D live-damage fixture cannot be omitted"
+    FORMAL "${_path}"
+    "requires the validation build")
+
+string(REPLACE "            if (affix.affix_id == kBarrierAffix) {"
+    "            if (affix.affix_id != kBarrierAffix) {"
+    _stage11d_live_damage_barrier_reversed
+    "${_stage11d_formal_limit_text}")
+if(_stage11d_live_damage_barrier_reversed STREQUAL
+        _stage11d_formal_limit_text)
+    message(FATAL_ERROR
+        "Stage11D live-damage barrier mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-live-damage-barrier-reversed.cpp")
+file(WRITE "${_path}" "${_stage11d_live_damage_barrier_reversed}")
+expect_rejected(
+    "Stage11D live-damage helper cannot weaken barrier-only removal"
+    FORMAL "${_path}"
+    "requires an exact live-damage validation build")
+
+string(REPLACE [=["abyss_presented_frame_budget="]=]
+    [=[/* "abyss_presented_frame_budget=" */ "abyss_budget_removed="]=]
+    _stage11d_manifest_budget_comment "${_stage11d_formal_limit_text}")
+if(_stage11d_manifest_budget_comment STREQUAL _stage11d_formal_limit_text)
+    message(FATAL_ERROR
+        "Stage11D manifest budget-comment mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-formal-manifest-budget-comment.cpp")
+file(WRITE "${_path}" "${_stage11d_manifest_budget_comment}")
+expect_rejected(
+    "Stage11D abyss frame-budget manifest cannot move into a comment"
+    FORMAL "${_path}"
+    "requires active main-scope manifest bindings")
+
+file(READ "${_validator}" _stage11d_validator_binding_text)
+string(REPLACE "\r\n" "\n" _stage11d_validator_binding_text
+    "${_stage11d_validator_binding_text}")
+set(_stage11d_validator_vsync_block [=[Require ($manifest.ContainsKey('formal_vsync_enabled') -and
+    $manifest.formal_vsync_enabled -eq '0') `
+    'formal validation must disable VSync in its production settings slot']=])
+string(REPLACE "${_stage11d_validator_vsync_block}"
+    "function Invoke-Stage11DDisabledVsyncDecoy {\n${_stage11d_validator_vsync_block}\n}"
+    _stage11d_validator_vsync_function "${_stage11d_validator_binding_text}")
+if(_stage11d_validator_vsync_function STREQUAL _stage11d_validator_binding_text)
+    message(FATAL_ERROR
+        "Stage11D validator VSync function mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-validator-vsync-function.ps1")
+file(WRITE "${_path}" "${_stage11d_validator_vsync_function}")
+expect_rejected(
+    "Stage11D validator VSync check cannot move into an uncalled function"
+    VALIDATOR "${_path}"
+    "requires a real top-level disabled-VSync check")
+if(DEFINED STAGE11D_FORMAL_LIMIT_TARGETED_ONLY
+        AND STAGE11D_FORMAL_LIMIT_TARGETED_ONLY)
+    get_property(_executed GLOBAL PROPERTY
+        STAGE11D_FORMAL_LIMIT_EXECUTED_MUTATIONS)
+    if(NOT _executed EQUAL 12)
+        message(FATAL_ERROR
+            "Stage11D formal limit targeted guard executed ${_executed} mutations, expected 12")
+    endif()
+    message(STATUS
+        "Stage11D formal limit guard passed: bad_mutations=${_executed}")
+    return()
+endif()
+endif()
+
+# Rare-abyss physical-input recovery contract. These mutations stay small so
+# the failed formal scenario can be guarded without running the long renderer
+# mutation suite.
+file(READ "${_host_validation_runtime}" _stage11d_abyss_facade_text)
+string(REPLACE "\r\n" "\n" _stage11d_abyss_facade_text
+    "${_stage11d_abyss_facade_text}")
+set(_stage11d_rearm_binding
+    "    impl_->states.stage11d.suspend_injection = gameplay_rearm_required;\n")
+string(REPLACE "${_stage11d_rearm_binding}" ""
+    _stage11d_rearm_bypass "${_stage11d_abyss_facade_text}")
+if(_stage11d_rearm_bypass STREQUAL _stage11d_abyss_facade_text)
+    message(FATAL_ERROR "Stage11D rearm mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-rearm-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_rearm_bypass}")
+expect_rejected("Stage11D rearm cannot bypass physical suspension"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "rejected host input call binding")
+
+string(REPLACE " || state.suspend_injection" ""
+    _stage11d_suspend_bypass "${_task5a_runtime_text}")
+if(_stage11d_suspend_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D suspend mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-suspend-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_suspend_bypass}")
+expect_rejected("Stage11D driver must honor physical suspension"
+    RUNTIME "${_path}"
+    "rejected runtime physical suspension gate token inventory")
+
+set(_stage11d_sweep_chain [=[            combat::MovementInput movement =
+                stage10_validation_sweep_movement(
+                    combat_state, state.sweep_grid,
+                    state.sweep_waypoint);
+            if ((movement.x != 0 || movement.y != 0)
+                    && current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire) {
+                movement = validation_route_fire_movement(
+                    combat_state.player.position,
+                    stage10_validation_sweep_waypoint(
+                        state.sweep_waypoint), movement);
+            }
+            inject_validation_movement(snapshot, settings_data, movement);]=])
+string(REPLACE "${_stage11d_sweep_chain}"
+    [=[            combat::MovementInput movement =
+                stage10_validation_sweep_movement(
+                    combat_state, state.sweep_grid,
+                    state.sweep_waypoint);
+            if ((movement.x != 0 || movement.y != 0)
+                    && current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire) {
+                movement = validation_route_fire_movement(
+                    combat_state.player.position,
+                    stage10_validation_sweep_waypoint(
+                        state.sweep_waypoint), movement);
+            }
+            static_cast<void>(movement);]=]
+    _stage11d_sweep_bypass "${_task5a_runtime_text}")
+if(_stage11d_sweep_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D physical sweep mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-sweep-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_sweep_bypass}")
+expect_rejected("Stage11D streaming sweep must map through physical movement"
+    RUNTIME "${_path}"
+    "rejected physical-input driver chain")
+
+set(_stage11d_neutral_chain [=[        if (!stage11d_rare_abyss_player_available(combat_state)) {
+            return snapshot;
+        }
+]=])
+string(REPLACE "${_stage11d_neutral_chain}" ""
+    _stage11d_neutral_bypass "${_task5a_runtime_text}")
+if(_stage11d_neutral_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D unavailable-player mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-neutral-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_neutral_bypass}")
+expect_rejected("Stage11D unavailable player must stay physically neutral"
+    RUNTIME "${_path}"
+    "rejected runtime rare abyss availability gate token inventory")
+
+set(_stage11d_ranged_return [=[        if (movement.x != 0 || movement.y != 0
+                || !plan.stance_reached || !plan.facing_target) {
+            if (state.abyss_ranged.close_for_light
+                    && (movement.x != 0 || movement.y != 0)
+                    && inject_stage11d_rare_abyss_area_skill(
+                        snapshot, current)
+                        == Stage11DRareAbyssSkillInput::injected) {
+                return snapshot;
+            }
+            return snapshot;
+        }
+]=])
+string(REPLACE "${_stage11d_ranged_return}" ""
+    _stage11d_turn_bypass "${_task5a_runtime_text}")
+if(_stage11d_turn_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D ranged-return mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-ranged-return-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_turn_bypass}")
+expect_rejected("Stage11D ranged movement must return before attacking"
+    RUNTIME "${_path}"
+    "rejected physical-input movement return owner")
+
+set(_stage11d_equipped_slot_chain [=[            if (dungeon_state.skill_loadout.slots[slot].active != skill) {
+                continue;
+            }
+]=])
+string(REPLACE "${_stage11d_equipped_slot_chain}" ""
+    _stage11d_skill_slot_bypass "${_task5a_runtime_text}")
+if(_stage11d_skill_slot_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D equipped skill-slot mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-skill-slot-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_skill_slot_bypass}")
+expect_rejected("Stage11D area skill must use the equipped physical slot"
+    RUNTIME "${_path}"
+    "missing runtime rare abyss skill token: dungeon_state.skill_loadout.slots[slot].active != skill")
+
+string(REPLACE "            state.abyss_ranged.sweep_escape = true;"
+    "            state.abyss_ranged.sweep_escape = false;"
+    _stage11d_danger_replan_mutation "${_task5a_runtime_text}")
+if(_stage11d_danger_replan_mutation STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D danger-replan mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-danger-replan-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_danger_replan_mutation}")
+expect_rejected("Stage11D nearby danger must replan the ranged stance"
+    RUNTIME "${_path}"
+    "rejected physical-input driver chain")
+
+string(REPLACE " || state.suspend_injection)"
+    " || (state.suspend_injection && false))"
+    _stage11d_suspend_weakened "${_task5a_runtime_text}")
+if(_stage11d_suspend_weakened STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D suspension weakening mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-suspend-weakened.cpp")
+file(WRITE "${_path}" "${_stage11d_suspend_weakened}")
+expect_rejected("Stage11D suspension gate cannot be weakened"
+    RUNTIME "${_path}"
+    "rejected physical-input driver chain")
+
+string(REPLACE "${_stage11d_neutral_chain}"
+    "        if (false) {\n${_stage11d_neutral_chain}        }\n"
+    _stage11d_neutral_dead_branch "${_task5a_runtime_text}")
+if(_stage11d_neutral_dead_branch STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR
+        "Stage11D availability dead-branch mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-neutral-dead-branch.cpp")
+file(WRITE "${_path}" "${_stage11d_neutral_dead_branch}")
+expect_rejected(
+    "Stage11D availability gate cannot move into a dead branch"
+    RUNTIME "${_path}"
+    "rejected runtime rare abyss availability gate scope")
+
+set(_stage11d_slot_helper_close [=[        return Stage11DEquippedSkillInput::absent;
+    };
+    bool area_skill_equipped = false;]=])
+string(REPLACE "${_stage11d_slot_helper_close}"
+    [=[        return Stage11DEquippedSkillInput::absent;
+    };
+    const std::size_t extra_slot = 0U;
+    snapshot.active_skill_slots[extra_slot] = true;
+    bool area_skill_equipped = false;]=]
+    _stage11d_second_slot_write "${_task5a_runtime_text}")
+if(_stage11d_second_slot_write STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D second skill-slot mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-second-skill-slot.cpp")
+file(WRITE "${_path}" "${_stage11d_second_slot_write}")
+expect_rejected("Stage11D area skill cannot write a second physical slot"
+    RUNTIME "${_path}"
+    "rejected rare abyss physical skill write inventory")
+
+set(_stage11d_melee_fallback_open
+    "        if (skill_input == Stage11DRareAbyssSkillInput::unavailable\n                || skill_input == Stage11DRareAbyssSkillInput::waiting) {\n")
+set(_stage11d_melee_fallback_close [=[        }
+        if (validation_attack_lane(combat_state, *target)) {]=])
+string(REPLACE "${_stage11d_melee_fallback_open}"
+    "        if (false) {\n${_stage11d_melee_fallback_open}"
+    _stage11d_melee_dead_branch "${_task5a_runtime_text}")
+string(REPLACE "${_stage11d_melee_fallback_close}"
+    "        }\n${_stage11d_melee_fallback_close}"
+    _stage11d_melee_dead_branch "${_stage11d_melee_dead_branch}")
+if(_stage11d_melee_dead_branch STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D melee dead-branch mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-melee-dead-branch.cpp")
+file(WRITE "${_path}" "${_stage11d_melee_dead_branch}")
+expect_rejected("Stage11D melee fallback cannot move into a dead branch"
+    RUNTIME "${_path}"
+    "rejected runtime rare abyss melee fallback scope")
+
+set(_stage11d_recovery_guard "                && low_health\n")
+string(REPLACE "${_stage11d_recovery_guard}" ""
+    _stage11d_recovery_guard_bypass "${_task5a_runtime_text}")
+if(_stage11d_recovery_guard_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D recovery guard mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-recovery-guard-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_recovery_guard_bypass}")
+expect_rejected("Stage11D high-health target cannot trigger danger escape"
+    RUNTIME "${_path}"
+    "rejected physical-input driver chain")
+
+string(REPLACE "                        plan.movement_target, recovery);"
+    "                        state.abyss_ranged.recovery_target, recovery);"
+    _stage11d_recovery_route_bypass "${_task5a_runtime_text}")
+if(_stage11d_recovery_route_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D recovery route mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-recovery-route-bypass.cpp")
+file(WRITE "${_path}" "${_stage11d_recovery_route_bypass}")
+expect_rejected("Stage11D recovery fire route must use the plan destination"
+    RUNTIME "${_path}"
+    "rejected physical-input recovery route")
+
+string(REPLACE "    if (aggressive_abyss) {\n"
+    "    if (aggressive_abyss) {\n        snapshot.active_skill_slots[state.sweep_waypoint] = true;\n"
+    _stage11d_driver_slot_bypass "${_task5a_runtime_text}")
+if(_stage11d_driver_slot_bypass STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D driver skill-slot mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-driver-skill-slot.cpp")
+file(WRITE "${_path}" "${_stage11d_driver_slot_bypass}")
+expect_rejected("Stage11D driver cannot write a physical skill slot directly"
+    RUNTIME "${_path}"
+    "rejected rare abyss direct skill-slot access")
+
+string(REPLACE "    if (aggressive_abyss) {\n"
+    "    if (false)\n        if (aggressive_abyss) {\n"
+    _stage11d_aggressive_unbraced_dead "${_task5a_runtime_text}")
+if(_stage11d_aggressive_unbraced_dead STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR
+        "Stage11D aggressive unbraced-dead mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-aggressive-unbraced-dead.cpp")
+file(WRITE "${_path}" "${_stage11d_aggressive_unbraced_dead}")
+expect_rejected(
+    "Stage11D aggressive branch cannot move under an unbraced dead branch"
+    RUNTIME "${_path}"
+    "rejected rare abyss branch owner")
+
+string(REPLACE "    if (aggressive_abyss) {\n"
+    [=[    if (aggressive_abyss) {
+        {
+            const auto& player = current.combat->player;
+            static_cast<void>(player);
+        }
+        snapshot.active_skill_slots.at(state.sweep_waypoint) = true;
+]=]
+    _stage11d_alternate_slot_after_early_player "${_task5a_runtime_text}")
+if(_stage11d_alternate_slot_after_early_player STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR
+        "Stage11D alternate skill-slot access mutation made no change")
+endif()
+set(_path
+    "${GUARD_TEST_ROOT}/stage11d-alternate-slot-after-early-player.cpp")
+file(WRITE "${_path}" "${_stage11d_alternate_slot_after_early_player}")
+expect_rejected(
+    "Stage11D aggressive branch cannot hide alternate skill-slot access"
+    RUNTIME "${_path}"
+    "rejected rare abyss direct skill-slot access")
+
+string(REPLACE "    if (aggressive_abyss) {\n"
+    [=[    if (aggressive_abyss) {
+        auto& stage11d_active_slots = snapshot.active_skill_slots;
+        static_cast<void>(stage11d_active_slots);
+]=]
+    _stage11d_driver_slot_alias "${_task5a_runtime_text}")
+if(_stage11d_driver_slot_alias STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D skill-slot alias mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-driver-skill-slot-alias.cpp")
+file(WRITE "${_path}" "${_stage11d_driver_slot_alias}")
+expect_rejected("Stage11D aggressive branch cannot alias physical skill slots"
+    RUNTIME "${_path}"
+    "rejected rare abyss direct skill-slot access")
+
+set(_stage11d_storm_success_return [=[        if (storm == Stage11DEquippedSkillInput::injected) {
+            return Stage11DRareAbyssSkillInput::injected;
+        }
+]=])
+string(REPLACE "${_stage11d_storm_success_return}" ""
+    _stage11d_storm_fallthrough "${_task5a_runtime_text}")
+if(_stage11d_storm_fallthrough STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "Stage11D storm fallthrough mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-storm-fallthrough.cpp")
+file(WRITE "${_path}" "${_stage11d_storm_fallthrough}")
+expect_rejected("Stage11D storm injection must return before draw dispatch"
+    RUNTIME "${_path}"
+    "rejected rare abyss storm success return")
+
+file(READ "${_stage_header}" _stage11d_sweep_header_text)
+string(REPLACE "    bool sweep_cursor_initialized{};\n" ""
+    _stage11d_sweep_cursor_state_omitted "${_stage11d_sweep_header_text}")
+if(_stage11d_sweep_cursor_state_omitted STREQUAL
+        _stage11d_sweep_header_text)
+    message(FATAL_ERROR "Stage11D sweep cursor state mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-sweep-cursor-state-omitted.hpp")
+file(WRITE "${_path}" "${_stage11d_sweep_cursor_state_omitted}")
+expect_rejected("Stage11D sweep cursor state cannot be omitted"
+    STAGE11D_HEADER "${_path}"
+    "missing runtime header token: bool sweep_cursor_initialized{};")
+
+string(REPLACE "        if (distance < best_distance) {"
+    "        if (distance > best_distance) {"
+    _stage11d_nearest_sweep_reversed "${_task5a_runtime_text}")
+if(_stage11d_nearest_sweep_reversed STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR
+        "Stage11D nearest sweep comparison mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-nearest-sweep-reversed.cpp")
+file(WRITE "${_path}" "${_stage11d_nearest_sweep_reversed}")
+expect_rejected("Stage11D nearest sweep cursor comparison cannot be reversed"
+    RUNTIME "${_path}"
+    "rejected nearest sweep cursor initialization")
+
+string(REPLACE
+    "        if (!low_health && state.abyss_ranged.sweep_escape"
+    "        if (state.abyss_ranged.sweep_escape"
+    _stage11d_sweep_opportunity_low_health "${_task5a_runtime_text}")
+if(_stage11d_sweep_opportunity_low_health STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR
+        "Stage11D sweep opportunity health mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-sweep-opportunity-low-health.cpp")
+file(WRITE "${_path}" "${_stage11d_sweep_opportunity_low_health}")
+expect_rejected("Stage11D sweep opportunity cannot run at low health"
+    RUNTIME "${_path}"
+    "rejected rare abyss sweep opportunity owner")
+
+set(_stage11d_inner_outer_reset [=[                state.sweep_grid = {};
+                next = stage10_validation_ranged_plan(]=])
+string(REPLACE "${_stage11d_inner_outer_reset}"
+    "                next = stage10_validation_ranged_plan("
+    _stage11d_inner_outer_reset_omitted "${_task5a_runtime_text}")
+if(_stage11d_inner_outer_reset_omitted STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR
+        "Stage11D dual sweep outer reset mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-dual-sweep-outer-reset-omitted.cpp")
+file(WRITE "${_path}" "${_stage11d_inner_outer_reset_omitted}")
+expect_rejected("Stage11D dual sweep ownership cannot omit outer reset"
+    RUNTIME "${_path}"
+    "rejected dual sweep cursor ownership")
+
+string(REPLACE "        if (item != nullptr) {"
+    "        if (state.captured && item != nullptr) {"
+    _stage11d_uncaptured_reward_blocked "${_task5a_runtime_text}")
+if(_stage11d_uncaptured_reward_blocked STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR
+        "Stage11D uncaptured reward approach mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-uncaptured-reward-blocked.cpp")
+file(WRITE "${_path}" "${_stage11d_uncaptured_reward_blocked}")
+expect_rejected(
+    "Stage11D uncaptured abyss reward must use physical approach"
+    RUNTIME "${_path}"
+    "requires uncaptured abyss rewards to use physical approach")
+
+if(DEFINED STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY
+        AND STAGE11D_ABYSS_PHYSICAL_TARGETED_ONLY)
+    get_property(_executed GLOBAL PROPERTY
+        STAGE11D_ABYSS_PHYSICAL_EXECUTED_MUTATIONS)
+    if(DEFINED STAGE11D_ABYSS_PHYSICAL_TAIL_ONLY
+            AND STAGE11D_ABYSS_PHYSICAL_TAIL_ONLY)
+        set(_expected_abyss_mutations 3)
+    else()
+        set(_expected_abyss_mutations 23)
+    endif()
+    if(NOT _executed EQUAL _expected_abyss_mutations)
+        message(FATAL_ERROR
+            "Stage11D rare-abyss targeted guard executed ${_executed} mutations, expected ${_expected_abyss_mutations}")
+    endif()
+    message(STATUS
+        "Stage11D rare-abyss physical-input guard passed: bad_mutations=${_executed}")
+    return()
 endif()
 set(_task5a_driver_open
     "Stage11DLootValidationState& state) noexcept {\n    using Scenario = Stage11DLootValidationScenario;")
@@ -1450,12 +2209,12 @@ expect_host_insert("host direct result pass" "host-result-pass"
     "${_host_scope_site}" "const char* result = \"result=pass\";"
     "host validation seam direct result pass")
 
-set(_site "const auto& item = current.ground_items[index];")
+set(_site "const auto& item = snapshot.ground_items[index];")
 string(FIND "${_task5a_runtime_text}" "${_site}" _site_index)
 if(_site_index EQUAL -1)
     message(FATAL_ERROR "snapshot-mutation site disappeared")
 endif()
-string(REPLACE "${_site}" "current.ground_items[0] = fabricated;"
+string(REPLACE "${_site}" "snapshot.ground_items[0] = fabricated;"
     _mutated "${_task5a_runtime_text}")
 if(_mutated STREQUAL _task5a_runtime_text)
     message(FATAL_ERROR "snapshot mutation made no change")
@@ -1482,6 +2241,19 @@ expect_rejected("pre-EndDrawing capture" HOST "${_path}"
     "rejected pre-EndDrawing capture")
 
 file(READ "${_renderer}" _renderer_text)
+set(_renderer_definition_decoy
+    "// CombatRenderPlan make_combat_render_plan( is a harmless signature decoy.\n")
+string(REPLACE "#include \"combat_renderer.hpp\""
+    "#include \"combat_renderer.hpp\"\n${_renderer_definition_decoy}"
+    _renderer_harmless_definition_decoy "${_renderer_text}")
+if(_renderer_harmless_definition_decoy STREQUAL _renderer_text)
+    message(FATAL_ERROR "renderer harmless definition decoy anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/renderer-harmless-definition-decoy.cpp")
+file(WRITE "${_path}" "${_renderer_harmless_definition_decoy}")
+expect_guard_accepted("Stage11D renderer harmless definition decoy"
+    "${_guard}" RENDERER "${_path}")
+
 set(_site "const CombatRenderPlan render_plan = make_combat_render_plan(")
 string(FIND "${_renderer_text}" "${_site}" _site_index)
 if(_site_index EQUAL -1)
@@ -1496,7 +2268,7 @@ endif()
 set(_path "${GUARD_TEST_ROOT}/second-render-plan.cpp")
 file(WRITE "${_path}" "${_mutated}")
 expect_rejected("second render plan" RENDERER "${_path}"
-    "requires the one production renderer plan")
+    "requires exactly one renderer plan in CombatRenderer::draw")
 
 set(_draw_site "GroundLootView CombatRenderer::draw(")
 string(FIND "${_renderer_text}" "${_draw_site}" _draw_site_index)
@@ -1513,9 +2285,257 @@ endif()
 set(_path "${GUARD_TEST_ROOT}/draw-external-plan.cpp")
 file(WRITE "${_path}" "${_mutated}")
 expect_rejected("draw-external render plan" RENDERER "${_path}"
-    "rejected a draw-external renderer plan")
+    "rejected renderer plan outside CombatRenderer::draw")
 
 file(READ "${_validator}" _validator_text)
+
+set(_task9_player_damage_condition "$values.player_damage_observed -eq '1' -and")
+string(REPLACE "${_task9_player_damage_condition}"
+    "$values.player_damage_observed -eq '1' -and\n        $values.monster_damage_observed -eq '1' -and"
+    _task9_monster_damage_required "${_validator_text}")
+if(_task9_monster_damage_required STREQUAL _validator_text)
+    message(FATAL_ERROR "diagnostic monster-damage mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/diagnostic-monster-damage-required.ps1")
+file(WRITE "${_path}" "${_task9_monster_damage_required}")
+expect_rejected("diagnostic monster damage cannot be required" VALIDATOR "${_path}"
+    "forbids diagnostic monster damage as a formal requirement")
+
+set(_task9_tuple_assignment [=[
+$ordinaryTupleChecks = @(
+    ($show.observed_normal -eq $manifest.ordinary_normal_tuple),
+    ($show.observed_magic -eq $manifest.ordinary_magic_tuple),
+    ($show.observed_rare -eq $manifest.ordinary_rare_tuple),
+    ($magic.observed_normal -eq $manifest.ordinary_normal_tuple),
+    ($magic.observed_magic -eq $manifest.ordinary_magic_tuple),
+    ($magic.observed_rare -eq $manifest.ordinary_rare_tuple),
+    ($rare.observed_normal -eq $manifest.ordinary_normal_tuple),
+    ($rare.observed_magic -eq $manifest.ordinary_magic_tuple),
+    ($rare.observed_rare -eq $manifest.ordinary_rare_tuple),
+    ($preview.observed_normal -eq $manifest.ordinary_normal_tuple),
+    ($preview.observed_magic -eq $manifest.ordinary_magic_tuple),
+    ($preview.observed_rare -eq $manifest.ordinary_rare_tuple),
+    ($pickup.observed_normal -eq $manifest.ordinary_normal_tuple),
+    ($pickup.observed_magic -eq $manifest.ordinary_magic_tuple),
+    ($pickup.observed_rare -eq $manifest.ordinary_rare_tuple)
+)
+]=])
+set(_task9_tuple_comment_assignment [=[
+$ordinaryTupleChecks = @(
+    $true # $show.observed_normal -eq $manifest.ordinary_normal_tuple, $show.observed_magic -eq $manifest.ordinary_magic_tuple, $show.observed_rare -eq $manifest.ordinary_rare_tuple, $magic.observed_normal -eq $manifest.ordinary_normal_tuple, $magic.observed_magic -eq $manifest.ordinary_magic_tuple, $magic.observed_rare -eq $manifest.ordinary_rare_tuple, $rare.observed_normal -eq $manifest.ordinary_normal_tuple, $rare.observed_magic -eq $manifest.ordinary_magic_tuple, $rare.observed_rare -eq $manifest.ordinary_rare_tuple, $preview.observed_normal -eq $manifest.ordinary_normal_tuple, $preview.observed_magic -eq $manifest.ordinary_magic_tuple, $preview.observed_rare -eq $manifest.ordinary_rare_tuple, $pickup.observed_normal -eq $manifest.ordinary_normal_tuple, $pickup.observed_magic -eq $manifest.ordinary_magic_tuple, $pickup.observed_rare -eq $manifest.ordinary_rare_tuple
+)
+]=])
+string(REPLACE "${_task9_tuple_assignment}" "${_task9_tuple_comment_assignment}"
+    _task9_tuple_comments "${_validator_text}")
+if(_task9_tuple_comments STREQUAL _validator_text)
+    message(FATAL_ERROR "tuple comment mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/tuple-comparisons-in-comments.ps1")
+file(WRITE "${_path}" "${_task9_tuple_comments}")
+expect_rejected("tuple comparisons cannot move into comments" VALIDATOR "${_path}"
+    "requires real top-level per-rarity tuple assignment")
+
+set(_task9_tuple_assignment_start "$ordinaryTupleChecks = @(")
+set(_task9_tuple_assignment_end
+    ")\nRequire (-not ($ordinaryTupleChecks -contains $false))")
+string(REPLACE "${_task9_tuple_assignment_start}"
+    "@'\n${_task9_tuple_assignment_start}"
+    _task9_tuple_here_string "${_validator_text}")
+string(REPLACE "${_task9_tuple_assignment_end}"
+    ")\n'@\nRequire (-not ($ordinaryTupleChecks -contains $false))"
+    _task9_tuple_here_string "${_task9_tuple_here_string}")
+if(_task9_tuple_here_string STREQUAL _validator_text)
+    message(FATAL_ERROR "tuple here-string mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/tuple-assignment-here-string.ps1")
+file(WRITE "${_path}" "${_task9_tuple_here_string}")
+expect_rejected("tuple assignment cannot move into a here string" VALIDATOR "${_path}"
+    "requires real top-level per-rarity tuple assignment")
+
+set(_task9_tuple_top_level
+    "Require (-not ($ordinaryTupleChecks -contains $false)) 'production rarity tuples drifted'")
+set(_task9_tuple_reorder_site
+    "${_task9_tuple_assignment}${_task9_tuple_top_level}")
+string(REPLACE "${_task9_tuple_reorder_site}"
+    "${_task9_tuple_top_level}\n${_task9_tuple_assignment}"
+    _task9_tuple_reordered "${_validator_text}")
+if(_task9_tuple_reordered STREQUAL _validator_text)
+    message(FATAL_ERROR "tuple assignment reorder mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/tuple-assignment-reordered.ps1")
+file(WRITE "${_path}" "${_task9_tuple_reordered}")
+expect_rejected("tuple assignment cannot move after its Require" VALIDATOR "${_path}"
+    "requires per-rarity tuple assignment immediately before its Require")
+set(_task9_tuple_function
+    "function Test-Stage11DTupleRelocation {\n    ${_task9_tuple_top_level}\n}")
+string(REPLACE "${_task9_tuple_top_level}" "${_task9_tuple_function}"
+    _task9_tuple_relocated "${_validator_text}")
+if(_task9_tuple_relocated STREQUAL _validator_text)
+    message(FATAL_ERROR "tuple relocation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/tuple-relocated-function.ps1")
+file(WRITE "${_path}" "${_task9_tuple_relocated}")
+expect_rejected("tuple assertion cannot move into an uncalled function" VALIDATOR "${_path}"
+    "requires exact per-rarity tuples in a top-level executable Require command")
+
+set(_task9_pickup_derivation
+    "$expectedPickupSnapshot = @($ordinaryIds | Where-Object { $_ -ne $pickup.pickup_item_id })")
+string(REPLACE "${_task9_pickup_derivation}"
+    "@'\n${_task9_pickup_derivation}\n'@"
+    _task9_pickup_here_string "${_validator_text}")
+if(_task9_pickup_here_string STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup here-string mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-derivation-here-string.ps1")
+file(WRITE "${_path}" "${_task9_pickup_here_string}")
+expect_rejected("pickup derivation cannot move into a here string" VALIDATOR "${_path}"
+    "requires real top-level pickup conservation derivation")
+
+set(_task9_pickup_predicate "Where-Object { $_ -ne $pickup.pickup_item_id }")
+string(REPLACE "${_task9_pickup_predicate}"
+    "Where-Object { $true # $_ -ne $pickup.pickup_item_id\n}"
+    _task9_pickup_predicate_comment "${_validator_text}")
+if(_task9_pickup_predicate_comment STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup predicate comment mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-predicate-in-comment.ps1")
+file(WRITE "${_path}" "${_task9_pickup_predicate_comment}")
+expect_rejected("pickup predicate cannot move into a comment" VALIDATOR "${_path}"
+    "requires real top-level pickup conservation derivation")
+
+set(_task9_pickup_top_level
+    "Require -Condition ((Compare-Object $expectedPickupSnapshot $pickupSnapshot).Count -eq 0) -Message 'pickup remaining ground IDs do not conserve the exact original set'")
+set(_task9_pickup_reorder_site
+    "${_task9_pickup_derivation}\n${_task9_pickup_top_level}")
+string(REPLACE "${_task9_pickup_reorder_site}"
+    "${_task9_pickup_top_level}\n${_task9_pickup_derivation}"
+    _task9_pickup_reordered "${_validator_text}")
+if(_task9_pickup_reordered STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup derivation reorder mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-derivation-reordered.ps1")
+file(WRITE "${_path}" "${_task9_pickup_reordered}")
+expect_rejected("pickup derivation cannot move after its Require" VALIDATOR "${_path}"
+    "requires pickup conservation derivation immediately before its Require")
+
+if(DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY)
+    message(STATUS
+        "Stage11D Task9 round3 targeted evidence guard passed: bad_mutations=4")
+    return()
+endif()
+
+set(_task9_pickup_false_branch
+    "if ($false) {\n    ${_task9_pickup_top_level}\n}")
+string(REPLACE "${_task9_pickup_top_level}" "${_task9_pickup_false_branch}"
+    _task9_pickup_relocated "${_validator_text}")
+if(_task9_pickup_relocated STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup relocation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-relocated-false-branch.ps1")
+file(WRITE "${_path}" "${_task9_pickup_relocated}")
+expect_rejected("pickup conservation cannot move into a false branch" VALIDATOR "${_path}"
+    "requires exact pickup conservation in a top-level executable Require command")
+
+set(_task9_actual_drop_count "$defeated -ge 3")
+string(REPLACE "${_task9_actual_drop_count}"
+    "$defeated -ge [uint32]$manifest.ordinary_prefix_kills"
+    _task9_prefix_kills_required "${_validator_text}")
+if(_task9_prefix_kills_required STREQUAL _validator_text)
+    message(FATAL_ERROR "actual-drop-count mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/prefix-kills-required.ps1")
+file(WRITE "${_path}" "${_task9_prefix_kills_required}")
+expect_rejected("fixture prefix length cannot become a required kill count" VALIDATOR "${_path}"
+    "forbids fixture prefix length as a formal kill requirement")
+
+file(READ "${_report}" _task9_report_text)
+set(_task9_player_damage_observation
+    "state.player_damage_observed = state.player_damage_observed\n            || (state.player_hp_sampled\n                && current_max_hp == state.player_max_hp\n                && current_hp < state.player_hp);")
+string(REPLACE "${_task9_player_damage_observation}"
+    "state.player_damage_observed = false;"
+    _task9_player_damage_removed "${_task9_report_text}")
+if(_task9_player_damage_removed STREQUAL _task9_report_text)
+    message(FATAL_ERROR "player-damage observation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/player-damage-observation-removed.cpp")
+file(WRITE "${_path}" "${_task9_player_damage_removed}")
+expect_rejected("player damage observation cannot be removed" REPORT "${_path}"
+    "requires consecutive live player HP sampling")
+
+string(REPLACE "                && current_hp < state.player_hp);"
+    "                && current_hp > 0 && current_hp < current_max_hp);"
+    _task9_player_damage_below_max "${_task9_report_text}")
+if(_task9_player_damage_below_max STREQUAL _task9_report_text)
+    message(FATAL_ERROR
+        "player-damage below-max mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/player-damage-below-max.cpp")
+file(WRITE "${_path}" "${_task9_player_damage_below_max}")
+expect_rejected(
+    "player damage observation cannot use a below-max snapshot"
+    REPORT "${_path}"
+    "requires consecutive live player HP sampling")
+
+set(_task9_rare_label_binding [=[                    && stage11d_view_has_abyss_ordinal(
+                        view, item.ordinal)) {]=])
+string(REPLACE "${_task9_rare_label_binding}"
+    "                    && view.count != 0U) {"
+    _task9_rare_label_unbound "${_task9_report_text}")
+if(_task9_rare_label_unbound STREQUAL _task9_report_text)
+    message(FATAL_ERROR "rare-label binding mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/rare-label-unbound.cpp")
+file(WRITE "${_path}" "${_task9_rare_label_unbound}")
+expect_rejected(
+    "rare capture must use the matching abyss label ordinal"
+    REPORT "${_path}"
+    "requires rare capture to bind the matching abyss label")
+
+string(REPLACE "                && view.labels[index].abyss) return true;"
+    "                ) return true;"
+    _task9_abyss_label_flag_removed "${_task9_report_text}")
+if(_task9_abyss_label_flag_removed STREQUAL _task9_report_text)
+    message(FATAL_ERROR "abyss-label flag mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/abyss-label-flag-removed.cpp")
+file(WRITE "${_path}" "${_task9_abyss_label_flag_removed}")
+expect_rejected(
+    "abyss ordinal helper must require an abyss label"
+    REPORT "${_path}"
+    "requires an abyss label with the same ordinal")
+
+set(_task9_rarity_tuple_check
+    "Require (-not ($ordinaryTupleChecks -contains $false)) 'production rarity tuples drifted'")
+string(REPLACE "${_task9_rarity_tuple_check}"
+    "Require ($true) 'production rarity tuples drifted'"
+    _task9_rarity_tuple_weakened "${_validator_text}")
+if(_task9_rarity_tuple_weakened STREQUAL _validator_text)
+    message(FATAL_ERROR "rarity-tuple mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/rarity-tuples-weakened.ps1")
+file(WRITE "${_path}" "${_task9_rarity_tuple_weakened}")
+expect_rejected("per-rarity tuple check cannot be weakened" VALIDATOR "${_path}"
+    "requires exact per-rarity tuples")
+
+set(_task9_pickup_conservation_check
+    "Require -Condition ((Compare-Object $expectedPickupSnapshot $pickupSnapshot).Count -eq 0) -Message 'pickup remaining ground IDs do not conserve the exact original set'")
+string(REPLACE "${_task9_pickup_conservation_check}"
+    "Require -Condition ($pickupSnapshot.Count -eq 2) -Message 'pickup remaining ground IDs do not conserve the exact original set'"
+    _task9_pickup_conservation_weakened "${_validator_text}")
+if(_task9_pickup_conservation_weakened STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup-conservation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-conservation-weakened.ps1")
+file(WRITE "${_path}" "${_task9_pickup_conservation_weakened}")
+expect_rejected("pickup conservation cannot be reduced to a count" VALIDATOR "${_path}"
+    "requires exact pickup conservation")
+
+if(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
+    message(STATUS
+        "Stage11D Task9 targeted evidence guard passed: bad_mutations=18")
+    return()
+endif()
+
 set(_mutated "${_validator_text}")
 string(REPLACE "LastWriteTimeUtc" "CreationTimeUtc" _mutated "${_mutated}")
 if(_mutated STREQUAL _validator_text)
@@ -1693,5 +2713,5 @@ if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
         "Stage11D Task5A targeted guard test passed: bad_mutations=5; harmless_decoys=2")
 else()
     message(STATUS
-        "Stage11D loot evidence guard self-test passed: bad_mutations=66; harmless_decoys=4")
+        "Stage11D loot evidence guard self-test passed: bad_mutations=83; harmless_decoys=4")
 endif()

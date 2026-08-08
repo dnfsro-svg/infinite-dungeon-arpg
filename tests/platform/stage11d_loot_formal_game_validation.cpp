@@ -2,14 +2,19 @@
 
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_catalog.hpp"
+#include "combat/room_spatial_grid.hpp"
 #include "core/deterministic_rng.hpp"
+#include "core/gameplay_limits.hpp"
 #include "dungeon/abyss_reward.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
-#include "dungeon/encounter_director.hpp"
+#include "dungeon/room_combat_template.hpp"
+#include "dungeon/room_environment.hpp"
+#include "dungeon/room_monster_plan_builder.hpp"
 #include "items/item_generation.hpp"
 #include "persistence/save_store.hpp"
 #include "platform/settings/settings_store.hpp"
+#include "stage10_validation_build.hpp"
 
 #include <array>
 #include <algorithm>
@@ -20,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -48,6 +54,38 @@ constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
 constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
 constexpr std::uint64_t kDropContentDomain = 0x44524F505F49544DULL;
 constexpr std::uint64_t kDropItemIdDomain = 0x44524F505F49445FULL;
+constexpr std::uint32_t kStage11DDefaultPresentedFrameLimit = 4000U;
+constexpr std::uint64_t kStage11DRareAbyssBaseFrameBudget = 12000U;
+constexpr std::uint64_t kStage11DRareAbyssFramesPerMonster = 96U;
+constexpr bool kStage11DFormalVsyncEnabled = false;
+
+[[nodiscard]] constexpr std::optional<std::uint32_t>
+stage11d_rare_abyss_presented_frame_budget(
+    std::uint32_t monster_count) noexcept {
+    if (monster_count == 0U
+            || static_cast<std::uint64_t>(monster_count)
+                > static_cast<std::uint64_t>(
+                    arpg::limits::kRoomMonsterCapacity)) {
+        return std::nullopt;
+    }
+    const std::uint64_t budget = kStage11DRareAbyssBaseFrameBudget
+        + static_cast<std::uint64_t>(monster_count)
+            * kStage11DRareAbyssFramesPerMonster;
+    if (budget > (std::numeric_limits<std::uint32_t>::max)()) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(budget);
+}
+
+static_assert(!stage11d_rare_abyss_presented_frame_budget(0U).has_value());
+static_assert(stage11d_rare_abyss_presented_frame_budget(1U).value_or(0U)
+    == 12096U);
+static_assert(stage11d_rare_abyss_presented_frame_budget(
+    static_cast<std::uint32_t>(arpg::limits::kRoomMonsterCapacity))
+        .value_or(0U) == 122592U);
+static_assert(!stage11d_rare_abyss_presented_frame_budget(
+    static_cast<std::uint32_t>(arpg::limits::kRoomMonsterCapacity + 1U))
+        .has_value());
 
 struct ScenarioSpec final {
     const char* argument{};
@@ -91,21 +129,22 @@ std::filesystem::path g_executable{};
 
 [[nodiscard]] std::optional<items::ItemInstance> expected_drop(
     const dungeon::checkpoint::DungeonRunState& state,
-    const combat::MonsterSpawnSpec& spawn) noexcept {
-    const std::uint16_t score = combat::monster_affix_danger_score(spawn.affixes);
+    const combat::RoomMonsterBlueprint& monster) noexcept {
+    const std::uint16_t score =
+        combat::monster_affix_danger_score(monster.affixes);
     auto chance = drop_stream(state.current_room.seed,
-        spawn.spawn_ordinal, kDropChanceDomain);
+        monster.spawn_ordinal, kDropChanceDomain);
     if ((score == 0U && chance.next_bounded(100U).value_or(1U) != 0U)
             || (score != 0U && chance.next_bounded(10000U).value_or(10000U)
                 >= dungeon::affix_drop_chance_bp(score))) return std::nullopt;
     auto slot = drop_stream(state.current_room.seed,
-        spawn.spawn_ordinal, kDropSlotDomain);
+        monster.spawn_ordinal, kDropSlotDomain);
     auto content = drop_stream(state.current_room.seed,
-        spawn.spawn_ordinal, kDropContentDomain);
+        monster.spawn_ordinal, kDropContentDomain);
     auto room = core::DeterministicRng::derive_stream(
         state.root_seed, state.current_room.index);
     auto id_stream = drop_stream(room.next_u64(),
-        spawn.spawn_ordinal, kDropItemIdDomain);
+        monster.spawn_ordinal, kDropItemIdDomain);
     std::uint64_t id = id_stream.next_u64();
     if (id == 0U) id = 1U;
     return items::generate_item({content.next_u64(),
@@ -132,102 +171,298 @@ next_normal_state(const dungeon::checkpoint::DungeonRunState& state,
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<dungeon::checkpoint::DungeonRunState>
+next_non_fire_state(const dungeon::checkpoint::DungeonRunState& state,
+    const dungeon::DungeonRules& rules) noexcept {
+    for (const auto direction : {dungeon::ExitDirection::left,
+        dungeon::ExitDirection::down, dungeon::ExitDirection::right}) {
+        const auto next = dungeon::make_door_transition(state, direction, rules);
+        if (next.fault == dungeon::DungeonFault::none
+                && !next.state.current_room.is_abyss) return next.state;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<dungeon::checkpoint::DungeonRunState>
+next_descending_state(const dungeon::checkpoint::DungeonRunState& state,
+    const dungeon::DungeonRules& rules) noexcept {
+    if (state.current_room.has_hole && !state.current_room.is_abyss) {
+        const auto next = dungeon::make_descent_transition(state, rules);
+        if (next.fault == dungeon::DungeonFault::none) return next.state;
+    }
+    for (const auto direction : {dungeon::ExitDirection::up,
+        dungeon::ExitDirection::down, dungeon::ExitDirection::left,
+        dungeon::ExitDirection::right}) {
+        const auto next = dungeon::make_door_transition(state, direction, rules);
+        if (next.fault == dungeon::DungeonFault::none
+                && !next.state.current_room.is_abyss) return next.state;
+    }
+    return std::nullopt;
+}
+
 struct SelectedStates final {
     dungeon::checkpoint::DungeonRunState ordinary{};
     dungeon::checkpoint::DungeonRunState abyss{};
+    std::uint64_t ordinary_blueprint_hash{};
+    std::uint16_t ordinary_monster_count{};
+    std::uint16_t ordinary_initial_resident_count{};
+    std::uint16_t ordinary_required_kills{};
+    std::array<std::uint16_t, 3> ordinary_drop_ordinals{{
+        combat::kInvalidMonsterOrdinal,
+        combat::kInvalidMonsterOrdinal,
+        combat::kInvalidMonsterOrdinal}};
+    std::array<std::uint64_t, 3> ordinary_drop_item_ids{};
+    std::array<items::ItemRarity, 3> ordinary_drop_rarities{{
+        items::ItemRarity::normal,
+        items::ItemRarity::normal,
+        items::ItemRarity::normal}};
+    std::uint64_t abyss_blueprint_hash{};
+    std::uint16_t abyss_monster_count{};
+    std::uint16_t abyss_initial_owned_item_count{};
+    std::uint32_t abyss_presented_frame_budget{};
     bool ordinary_ready{};
     bool abyss_ready{};
 };
 
-struct OrdinaryRoomScore final {
-    std::uint8_t last_wave{0xFFU};
-    std::uint16_t last_required_spawn{0xFFFFU};
-    std::uint32_t prefix_affix_danger{0xFFFFFFFFU};
-    std::uint32_t total_affix_danger{0xFFFFFFFFU};
-    std::uint16_t spawn_count{0xFFFFU};
-    std::uint64_t base_threat{0xFFFFFFFFFFFFFFFFULL};
-    std::uint8_t total_budget{0xFFU};
+struct OrdinaryRoomProfile final {
+    std::uint64_t blueprint_hash{};
+    std::uint16_t monster_count{};
+    std::uint16_t initial_resident_count{};
+    std::uint16_t required_kills{};
+    std::uint32_t prefix_hp{};
+    std::uint32_t prefix_affix_danger{};
+    std::uint16_t prefix_ranged{};
+    std::uint16_t prefix_ground_hazards{};
+    std::array<std::uint16_t, 3> drop_ordinals{{
+        combat::kInvalidMonsterOrdinal,
+        combat::kInvalidMonsterOrdinal,
+        combat::kInvalidMonsterOrdinal}};
+    std::array<std::uint64_t, 3> drop_item_ids{};
+    std::array<items::ItemRarity, 3> drop_rarities{{
+        items::ItemRarity::normal,
+        items::ItemRarity::normal,
+        items::ItemRarity::normal}};
 };
 
-[[nodiscard]] std::optional<OrdinaryRoomScore> ordinary_room_score(
+struct AbyssRoomProfile final {
+    std::uint64_t blueprint_hash{};
+    std::uint16_t monster_count{};
+    std::uint32_t presented_frame_budget{};
+};
+
+[[nodiscard]] std::optional<AbyssRoomProfile> abyss_room_profile(
     const dungeon::checkpoint::DungeonRunState& state,
     const dungeon::DungeonRules& rules) noexcept {
-    if (state.current_room.is_abyss || state.current_room.depth != 1U) {
+    if (!state.current_room.is_abyss) return std::nullopt;
+    combat::RoomMonsterPlan plan{};
+    const auto built = dungeon::build_room_monster_plan(state.current_room,
+        rules, dungeon::kRoomMonsterGeneratorVersion, plan);
+    const auto budget = stage11d_rare_abyss_presented_frame_budget(
+        plan.monster_count);
+    if (built.fault != dungeon::DungeonFault::none
+            || built.density.total_count != plan.monster_count
+            || !dungeon::room_monster_plan_legal(state.current_room, plan)
+            || !budget.has_value()) {
         return std::nullopt;
     }
-    const auto built = dungeon::build_encounter_plan(state.current_room.seed,
-        state.current_room.depth, state.current_room.ecology, rules.encounter);
-    if (built.fault != dungeon::DungeonFault::none) return std::nullopt;
-    bool normal = false;
-    bool magic = false;
-    bool rare = false;
-    std::uint32_t danger = 0U;
-    std::uint16_t spawn_count = 0U;
-    std::uint64_t base_threat = 0U;
-    std::optional<OrdinaryRoomScore> score{};
-    for (std::size_t wave = 0U; wave < built.plan.wave_count; ++wave) {
-        for (std::size_t index = 0U;
-             index < built.plan.waves[wave].spawn_count; ++index) {
-            const auto& spawn = built.plan.waves[wave].spawns[index];
-            ++spawn_count;
-            danger += combat::monster_affix_danger_score(spawn.affixes);
-            const auto* definition = combat::monster_definition(spawn.id);
-            if (definition == nullptr) return std::nullopt;
-            std::uint64_t damage = 0U;
-            for (const int amount : definition->contact_damage.amount) {
-                damage += static_cast<std::uint64_t>((std::max)(0, amount));
-            }
-            base_threat += static_cast<std::uint64_t>(definition->max_hp)
-                + damage * 20U
-                + (combat::has_tag(*definition, combat::MonsterTag::ranged)
-                    ? 500U : 0U)
-                + (combat::has_tag(*definition,
-                    combat::MonsterTag::ground_hazard) ? 1000U : 0U);
-            const auto item = expected_drop(state, spawn);
-            if (item.has_value()) {
-                normal = normal || item->rarity == items::ItemRarity::normal;
-                magic = magic || item->rarity == items::ItemRarity::magic;
-                rare = rare || item->rarity == items::ItemRarity::rare;
-            }
-            if (!score.has_value() && normal && magic && rare) {
-                score = OrdinaryRoomScore{
-                    static_cast<std::uint8_t>(wave), spawn.spawn_ordinal,
-                    danger, 0U, 0U, 0U, built.plan.total_budget};
+    return AbyssRoomProfile{
+        plan.blueprint_hash, plan.monster_count, *budget};
+}
+
+[[nodiscard]] std::uint8_t rarity_bit(items::ItemRarity rarity) noexcept {
+    switch (rarity) {
+    case items::ItemRarity::normal: return 1U;
+    case items::ItemRarity::magic: return 2U;
+    case items::ItemRarity::rare: return 4U;
+    }
+    return 0U;
+}
+
+[[nodiscard]] std::optional<OrdinaryRoomProfile> ordinary_room_profile(
+    const dungeon::checkpoint::DungeonRunState& state,
+    const dungeon::DungeonRules& rules) noexcept {
+    constexpr std::uint16_t kMaximumPrefixKills = 10U;
+    if (state.current_room.is_abyss || state.current_room.depth != 4U
+            || state.current_room.ecology == dungeon::DungeonElement::fire
+            || state.current_room.has_hole) {
+        return std::nullopt;
+    }
+    const dungeon::RoomDensityRoll density = dungeon::roll_room_density(
+        state.current_room.seed, false);
+    if (density.affix != dungeon::RoomDensityAffix::crowded
+            || density.total_count > 350U) return std::nullopt;
+
+    combat::RoomMonsterPlan plan{};
+    const auto built = dungeon::build_room_monster_plan(state.current_room,
+        rules, dungeon::kRoomMonsterGeneratorVersion, plan);
+    if (built.fault != dungeon::DungeonFault::none
+            || built.density.total_count != plan.monster_count
+            || !dungeon::room_monster_plan_legal(state.current_room, plan)) {
+        return std::nullopt;
+    }
+    const auto combat_config = dungeon::make_combat_lab_config(
+        state.current_room.entry, rules.rules_version);
+    if (!combat_config.has_value()) return std::nullopt;
+    const combat::RoomStreamingRegion region =
+        combat::make_room_streaming_region(combat_config->player_spawn);
+    std::array<std::uint16_t, combat::kMonsterCapacity> resident_ordinals{};
+    std::size_t resident_count = 0U;
+    for (std::size_t row = region.first_row;
+         row < static_cast<std::size_t>(region.first_row) + region.row_count;
+         ++row) {
+        for (std::size_t column = region.first_column;
+             column < static_cast<std::size_t>(region.first_column)
+                    + region.column_count; ++column) {
+            const std::size_t cell = row * combat::room_spatial::columns
+                + column;
+            for (std::uint16_t ordinal = plan.cell_offsets[cell];
+                 ordinal < plan.cell_offsets[cell + 1U]; ++ordinal) {
+                if (resident_count >= resident_ordinals.size()) {
+                    return std::nullopt;
+                }
+                resident_ordinals[resident_count++] = ordinal;
             }
         }
     }
-    if (score.has_value()) {
-        score->total_affix_danger = danger;
-        score->spawn_count = spawn_count;
-        score->base_threat = base_threat;
+    std::sort(resident_ordinals.begin(),
+        resident_ordinals.begin() + resident_count);
+    if (resident_count < kMaximumPrefixKills) return std::nullopt;
+
+    OrdinaryRoomProfile profile{};
+    profile.blueprint_hash = plan.blueprint_hash;
+    profile.monster_count = plan.monster_count;
+    profile.initial_resident_count = static_cast<std::uint16_t>(resident_count);
+    std::size_t drop_count = 0U;
+    std::uint8_t rarity_bits = 0U;
+    for (std::size_t index = 0U; index < kMaximumPrefixKills; ++index) {
+        const auto& monster = plan.monsters[resident_ordinals[index]];
+        const auto* definition = combat::monster_definition(monster.id);
+        if (definition == nullptr
+                || combat::has_tag(
+                    *definition, combat::MonsterTag::ground_hazard)) {
+            return std::nullopt;
+        }
+        profile.prefix_hp += static_cast<std::uint32_t>(definition->max_hp);
+        profile.prefix_affix_danger +=
+            combat::monster_affix_danger_score(monster.affixes);
+        profile.prefix_ranged += combat::has_tag(
+            *definition, combat::MonsterTag::ranged) ? 1U : 0U;
+        profile.prefix_ground_hazards += combat::has_tag(
+            *definition, combat::MonsterTag::ground_hazard) ? 1U : 0U;
+        const auto item = expected_drop(state, monster);
+        if (!item.has_value()) continue;
+        if (drop_count >= profile.drop_ordinals.size()) return std::nullopt;
+        profile.drop_ordinals[drop_count] = monster.spawn_ordinal;
+        profile.drop_item_ids[drop_count] = item->id;
+        profile.drop_rarities[drop_count] = item->rarity;
+        rarity_bits = static_cast<std::uint8_t>(
+            rarity_bits | rarity_bit(item->rarity));
+        ++drop_count;
+        if (drop_count == profile.drop_ordinals.size()) {
+            if (rarity_bits != 7U) return std::nullopt;
+            profile.required_kills = static_cast<std::uint16_t>(index + 1U);
+            for (std::size_t tail = index + 1U;
+                 tail < resident_count; ++tail) {
+                if (expected_drop(state,
+                        plan.monsters[resident_ordinals[tail]]).has_value()) {
+                    return std::nullopt;
+                }
+            }
+            return profile;
+        }
     }
-    return score;
+    return std::nullopt;
+}
+
+[[nodiscard]] bool prepare_stage11d_live_damage_build(
+    dungeon::checkpoint::DungeonRunState& state) noexcept {
+    constexpr std::uint16_t kBarrierAffix = 12U;
+    std::size_t non_weapon_count = 0U;
+    std::size_t removed_count = 0U;
+    for (auto& item : state.item_ownership.items) {
+        const items::BaseDefinition* base = items::base_definition(item.base_id);
+        if (base == nullptr) return false;
+        if (base->slot == items::ItemSlot::weapon) continue;
+        ++non_weapon_count;
+        std::array<items::AffixRoll, 6> retained{};
+        std::uint8_t retained_count = 0U;
+        for (std::uint8_t index = 0U; index < item.affix_count; ++index) {
+            const auto affix = item.affixes[index];
+            if (affix.affix_id == kBarrierAffix) {
+                ++removed_count;
+                continue;
+            }
+            if (retained_count >= retained.size()) return false;
+            retained[retained_count++] = affix;
+        }
+        item.affixes = retained;
+        item.affix_count = retained_count;
+        if (retained_count != 5U || !items::validate_item(item)) return false;
+    }
+    return state.item_ownership.items.size() == 6U
+        && non_weapon_count == 5U && removed_count == 5U
+        && items::validate_ownership(state.item_ownership);
 }
 
 [[nodiscard]] SelectedStates select_states() noexcept {
     const dungeon::DungeonRules rules{};
     SelectedStates selected{};
-    auto ordinary_built = dungeon::make_initial_run_state(62U, rules);
+    constexpr std::uint64_t kOrdinaryRootSeed = 12U;
+    constexpr std::size_t kOrdinaryFixtureTransitions = 4571U;
+    auto ordinary_built = dungeon::make_initial_run_state(
+        kOrdinaryRootSeed, rules);
     if (ordinary_built.fault == dungeon::DungeonFault::none) {
         auto state = ordinary_built.state;
-        for (std::size_t step = 0U; step < 1100U; ++step) {
-            if (state.current_room.index == 979U) {
-                const auto score = ordinary_room_score(state, rules);
-                if (score.has_value() && score->last_wave == 0U
-                        && score->last_required_spawn == 2U
-                        && score->prefix_affix_danger == 4U
-                        && score->total_affix_danger == 4U
-                        && score->spawn_count == 3U
-                        && score->base_threat == 5320U
-                        && score->total_budget == 8U) {
-                    selected.ordinary = state;
-                    selected.ordinary_ready = true;
-                }
+        bool reached = true;
+        for (std::size_t step = 0U;
+             step < kOrdinaryFixtureTransitions; ++step) {
+            const auto next = state.current_room.depth < 4U
+                ? next_descending_state(state, rules)
+                : next_non_fire_state(state, rules);
+            if (!next.has_value()) {
+                reached = false;
                 break;
             }
-            const auto next = next_normal_state(state, rules);
-            if (!next.has_value()) break;
             state = *next;
+        }
+        const auto profile = reached
+            ? ordinary_room_profile(state, rules) : std::nullopt;
+        constexpr std::array<std::uint16_t, 3> kDropOrdinals{{
+            124U, 125U, 137U}};
+        constexpr std::array<std::uint64_t, 3> kDropItemIds{{
+            16727938678320169397ULL,
+            17561380846184487225ULL,
+            18282590332386757687ULL}};
+        if (profile.has_value()
+                && state.current_room.index == 4571U
+                && state.current_room.seed == 16445546368581026750ULL
+                && state.current_room.depth == 4U
+                && state.current_room.ecology
+                    == dungeon::DungeonElement::lightning
+                && !state.current_room.has_hole
+                && profile->blueprint_hash == 2903734950153057739ULL
+                && profile->monster_count == 300U
+                && profile->initial_resident_count == 15U
+                && profile->required_kills == 4U
+                && profile->prefix_hp == 445U
+                && profile->prefix_affix_danger == 13U
+                && profile->prefix_ranged == 2U
+                && profile->prefix_ground_hazards == 0U
+                && profile->drop_ordinals == kDropOrdinals
+                && profile->drop_item_ids == kDropItemIds
+                && profile->drop_rarities[0] == items::ItemRarity::magic
+                && profile->drop_rarities[1] == items::ItemRarity::rare
+                && profile->drop_rarities[2] == items::ItemRarity::normal) {
+            selected.ordinary = state;
+            selected.ordinary_blueprint_hash = profile->blueprint_hash;
+            selected.ordinary_monster_count = profile->monster_count;
+            selected.ordinary_initial_resident_count =
+                profile->initial_resident_count;
+            selected.ordinary_required_kills = profile->required_kills;
+            selected.ordinary_drop_ordinals = profile->drop_ordinals;
+            selected.ordinary_drop_item_ids = profile->drop_item_ids;
+            selected.ordinary_drop_rarities = profile->drop_rarities;
+            selected.ordinary_ready = true;
         }
     }
     auto abyss_built = dungeon::make_initial_run_state(1U, rules);
@@ -246,9 +481,25 @@ struct OrdinaryRoomScore final {
                     next.state.current_room.seed, next.state.abyss.danger,
                     static_cast<std::uint8_t>((std::min<std::uint64_t>)(
                         next.state.current_room.depth, 100U)), 0U);
+                const auto profile = abyss_room_profile(next.state, rules);
+                auto validation_state = next.state;
                 if (reward.has_value()
-                        && reward->rarity != items::ItemRarity::rare) {
-                    selected.abyss = next.state;
+                        && reward->rarity != items::ItemRarity::rare
+                        && profile.has_value()
+                        && arpg::test::install_stage10_validation_build(
+                            validation_state)
+                        && arpg::test::install_stage10_validation_survival_passives(
+                            validation_state)
+                        && prepare_stage11d_live_damage_build(
+                            validation_state)) {
+                    selected.abyss = validation_state;
+                    selected.abyss_blueprint_hash = profile->blueprint_hash;
+                    selected.abyss_monster_count = profile->monster_count;
+                    selected.abyss_initial_owned_item_count =
+                        static_cast<std::uint16_t>(validation_state
+                            .item_ownership.items.size());
+                    selected.abyss_presented_frame_budget =
+                        profile->presented_frame_budget;
                     selected.abyss_ready = true;
                 }
             }
@@ -410,9 +661,26 @@ struct OrdinaryRoomScore final {
     const auto loaded = settings_store.load();
     auto draft = loaded.settings;
     draft.loot_filter_mode = spec.mode;
+    draft.vsync_enabled = kStage11DFormalVsyncEnabled;
     const auto settings_saved = settings_store.save(loaded.settings, draft);
+    const bool abyss_build_round_tripped = !spec.abyss
+        || (saved.verified_state.item_ownership.items.size()
+                == selected.abyss.item_ownership.items.size()
+            && saved.verified_state.item_ownership.equipment.equipped_ids
+                == selected.abyss.item_ownership.equipment.equipped_ids
+            && saved.verified_state.passive_tree.allocated_bits
+                == selected.abyss.passive_tree.allocated_bits
+            && saved.verified_state.progression.level
+                == selected.abyss.progression.level
+            && saved.verified_state.progression.earned_passive_points
+                == selected.abyss.progression.earned_passive_points
+            && saved.verified_state.progression.unspent_passive_points
+                == selected.abyss.progression.unspent_passive_points);
     return saved.state == persistence::SaveCommitState::committed
-        && settings_saved.status == settings::SettingsSaveStatus::committed;
+        && abyss_build_round_tripped
+        && settings_saved.status == settings::SettingsSaveStatus::committed
+        && settings_saved.settings.vsync_enabled
+            == kStage11DFormalVsyncEnabled;
 }
 
 [[nodiscard]] bool fresh_file(const std::filesystem::path& path,
@@ -424,7 +692,7 @@ struct OrdinaryRoomScore final {
 }
 
 [[nodiscard]] bool run_host(const std::filesystem::path& root,
-    const ScenarioSpec& spec) {
+    const ScenarioSpec& spec, const SelectedStates& selected) {
     const auto absolute_root = std::filesystem::absolute(root);
     const auto started = std::filesystem::file_time_type::clock::now()
         - std::chrono::seconds(2);
@@ -437,7 +705,10 @@ struct OrdinaryRoomScore final {
     config.settings_directory = directory / "settings";
     config.stage11d_loot_validation = spec.scenario;
     config.validation_steps_per_frame = 1U;
-    config.validation_exit_after_presented_frames = 4000U;
+    config.validation_exit_after_presented_frames = spec.abyss
+        ? selected.abyss_presented_frame_budget
+        : kStage11DDefaultPresentedFrameLimit;
+    if (config.validation_exit_after_presented_frames == 0U) return false;
     config.validation_capture_file = absolute_root / spec.image;
     config.validation_summary_file = absolute_root / spec.summary;
     return platform::run_raylib_host(config) == platform::HostExitCode::success
@@ -517,48 +788,53 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string{argv[1]} == "--select-only") {
         const SelectedStates selected = select_states();
         if (!selected.ordinary_ready || !selected.abyss_ready) return 4;
-        const auto score = ordinary_room_score(
+        const auto profile = ordinary_room_profile(
             selected.ordinary, dungeon::DungeonRules{});
         std::cout << "ordinary root=" << selected.ordinary.root_seed
             << " room=" << selected.ordinary.current_room.index
+            << " seed=" << selected.ordinary.current_room.seed
             << " depth=" << selected.ordinary.current_room.depth
-            << " score=" << static_cast<unsigned>(score->last_wave) << ','
-            << score->last_required_spawn << ','
-            << score->prefix_affix_danger << ','
-            << score->total_affix_danger << ','
-            << score->spawn_count << ','
-            << score->base_threat << ','
-            << static_cast<unsigned>(score->total_budget) << '\n';
-        const auto plan = dungeon::build_encounter_plan(
-            selected.ordinary.current_room.seed,
-            selected.ordinary.current_room.depth,
-            selected.ordinary.current_room.ecology,
-            dungeon::DungeonRules{}.encounter);
-        for (std::size_t wave = 0U; wave < plan.plan.wave_count; ++wave) {
-            for (std::size_t index = 0U;
-                 index < plan.plan.waves[wave].spawn_count; ++index) {
-                const auto& spawn = plan.plan.waves[wave].spawns[index];
-                const auto item = expected_drop(selected.ordinary, spawn);
-                const auto* definition = combat::monster_definition(spawn.id);
-                std::uint64_t damage = 0U;
-                for (const int amount : definition->contact_damage.amount) {
-                    damage += static_cast<std::uint64_t>(
-                        (std::max)(0, amount));
-                }
-                std::cout << "spawn ordinal=" << spawn.spawn_ordinal
-                    << " id=" << static_cast<unsigned>(spawn.id)
-                    << " pos=" << spawn.position.x << ',' << spawn.position.y
-                    << " hp=" << definition->max_hp
-                    << " damage=" << damage
-                    << " rarity=" << static_cast<unsigned>(item->rarity)
-                    << '\n';
-            }
+            << " entry=" << static_cast<unsigned>(
+                selected.ordinary.current_room.entry)
+            << " ecology=" << static_cast<unsigned>(
+                selected.ordinary.current_room.ecology)
+            << " monsters=" << profile->monster_count
+            << " residents=" << profile->initial_resident_count
+            << " prefix_kills=" << profile->required_kills
+            << " prefix_hp=" << profile->prefix_hp
+            << " prefix_danger=" << profile->prefix_affix_danger
+            << " ranged=" << profile->prefix_ranged
+            << " hazards=" << profile->prefix_ground_hazards
+            << " blueprint=" << profile->blueprint_hash
+            << " drops=";
+        for (std::size_t index = 0U;
+             index < profile->drop_ordinals.size(); ++index) {
+            if (index != 0U) std::cout << ',';
+            std::cout << profile->drop_ordinals[index] << ':'
+                << static_cast<unsigned>(profile->drop_rarities[index]) << ':'
+                << profile->drop_item_ids[index];
         }
+        std::cout << '\n';
+        std::cout << "abyss root=" << selected.abyss.root_seed
+            << " room=" << selected.abyss.current_room.index
+            << " seed=" << selected.abyss.current_room.seed
+            << " rule=" << static_cast<unsigned>(selected.abyss.abyss.rule)
+            << " monsters=" << selected.abyss_monster_count
+            << " blueprint=" << selected.abyss_blueprint_hash
+            << " frame_budget=" << selected.abyss_presented_frame_budget
+            << " owned_items=" << selected.abyss_initial_owned_item_count
+            << " passive_bits="
+                << selected.abyss.passive_tree.allocated_bits
+            << " vsync=" << (kStage11DFormalVsyncEnabled ? 1 : 0)
+            << '\n';
         return 0;
     }
     if (argc == 4 && std::string{argv[1]} == "--scenario") {
         const auto* spec = find_scenario(argv[2]);
-        return spec != nullptr && run_host(argv[3], *spec) ? 0 : 1;
+        const SelectedStates selected = select_states();
+        return spec != nullptr && selected.ordinary_ready
+                && selected.abyss_ready
+                && run_host(argv[3], *spec, selected) ? 0 : 1;
     }
     if (argc != 3) {
         std::cerr << "usage: arpg_stage11d_loot_formal <evidence> <committed>\n";
@@ -602,9 +878,84 @@ int main(int argc, char** argv) {
     std::ofstream manifest(root / "stage11d-loot-evidence.txt", std::ios::trunc);
     manifest << "ordinary_root=" << selected.ordinary.root_seed << '\n'
         << "ordinary_room=" << selected.ordinary.current_room.index << '\n'
+        << "ordinary_seed=" << selected.ordinary.current_room.seed << '\n'
         << "ordinary_depth=" << selected.ordinary.current_room.depth << '\n'
+        << "ordinary_monsters=" << selected.ordinary_monster_count << '\n'
+        << "ordinary_initial_residents="
+            << selected.ordinary_initial_resident_count << '\n'
+        << "ordinary_generator_version="
+            << dungeon::kRoomMonsterGeneratorVersion << '\n'
+        << "ordinary_blueprint_hash="
+            << selected.ordinary_blueprint_hash << '\n'
+        << "ordinary_prefix_kills=" << selected.ordinary_required_kills << '\n'
+        << "ordinary_drop_ordinals="
+            << selected.ordinary_drop_ordinals[0] << ','
+            << selected.ordinary_drop_ordinals[1] << ','
+            << selected.ordinary_drop_ordinals[2] << '\n'
+        << "ordinary_drop_item_ids="
+            << selected.ordinary_drop_item_ids[0] << ','
+            << selected.ordinary_drop_item_ids[1] << ','
+            << selected.ordinary_drop_item_ids[2] << '\n'
         << "abyss_root=" << selected.abyss.root_seed << '\n'
-        << "abyss_room=" << selected.abyss.current_room.index << '\n';
+        << "abyss_room=" << selected.abyss.current_room.index << '\n'
+        << "abyss_seed=" << selected.abyss.current_room.seed << '\n'
+        << "abyss_rule=" << static_cast<unsigned>(
+            selected.abyss.abyss.rule) << '\n'
+        << "abyss_monsters=" << selected.abyss_monster_count << '\n'
+        << "abyss_generator_version="
+            << dungeon::kRoomMonsterGeneratorVersion << '\n'
+        << "abyss_blueprint_hash=" << selected.abyss_blueprint_hash << '\n'
+        << "abyss_initial_owned_items="
+            << selected.abyss_initial_owned_item_count << '\n'
+        << "abyss_initial_equipped_items="
+            << std::count_if(selected.abyss.item_ownership.equipment
+                    .equipped_ids.begin(),
+                selected.abyss.item_ownership.equipment.equipped_ids.end(),
+                [](std::uint64_t id) { return id != 0U; }) << '\n'
+        << "abyss_validation_level="
+            << static_cast<unsigned>(selected.abyss.progression.level) << '\n'
+        << "abyss_validation_earned_passives="
+            << static_cast<unsigned>(
+                selected.abyss.progression.earned_passive_points) << '\n'
+        << "abyss_validation_unspent_passives="
+            << static_cast<unsigned>(
+                selected.abyss.progression.unspent_passive_points) << '\n'
+        << "abyss_validation_passive_bits="
+            << selected.abyss.passive_tree.allocated_bits << '\n'
+        << "abyss_presented_frame_budget="
+            << selected.abyss_presented_frame_budget << '\n'
+        << "formal_vsync_enabled="
+            << (kStage11DFormalVsyncEnabled ? 1 : 0) << '\n';
+    manifest << "abyss_validation_item_ids=";
+    for (std::size_t index = 0U;
+         index < selected.abyss.item_ownership.items.size(); ++index) {
+        if (index != 0U) manifest << ',';
+        manifest << selected.abyss.item_ownership.items[index].id;
+    }
+    manifest << '\n' << "abyss_validation_equipped_ids=";
+    bool first_equipped = true;
+    for (const std::uint64_t id :
+            selected.abyss.item_ownership.equipment.equipped_ids) {
+        if (id == 0U) continue;
+        if (!first_equipped) manifest << ',';
+        manifest << id;
+        first_equipped = false;
+    }
+    manifest << '\n';
+    const auto write_ordinary_tuple = [&](const char* name,
+                                          items::ItemRarity rarity) {
+        for (std::size_t index = 0U;
+             index < selected.ordinary_drop_ordinals.size(); ++index) {
+            if (selected.ordinary_drop_rarities[index] != rarity) continue;
+            manifest << name << '=' << selected.ordinary_drop_item_ids[index]
+                << ',' << selected.ordinary_drop_ordinals[index] << '\n';
+            return;
+        }
+        manifest << name << "=0,65535\n";
+    };
+    write_ordinary_tuple("ordinary_normal_tuple", items::ItemRarity::normal);
+    write_ordinary_tuple("ordinary_magic_tuple", items::ItemRarity::magic);
+    write_ordinary_tuple("ordinary_rare_tuple", items::ItemRarity::rare);
     for (const auto& spec : kScenarios) {
         manifest << spec.argument << "_hash=" << hash_file(root / spec.image) << '\n';
     }

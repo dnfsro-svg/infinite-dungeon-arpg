@@ -21,6 +21,8 @@ set(_report
 set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
+set(_validator_ast_guard
+    "${SOURCE_ROOT}/tests/platform/stage11d_loot_validator_ast_guard.ps1")
 if(DEFINED HEADER_OVERRIDE)
     set(_header "${HEADER_OVERRIDE}")
 endif()
@@ -54,7 +56,7 @@ endif()
 foreach(_file IN ITEMS "${_header}" "${_host}" "${_host_validation_runtime}"
         "${_settings_runtime}"
         "${_stage_header}" "${_runtime}" "${_report}" "${_renderer}"
-        "${_formal}" "${_validator}")
+        "${_formal}" "${_validator}" "${_validator_ast_guard}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11D loot evidence input is missing: ${_file}")
     endif()
@@ -220,6 +222,36 @@ function(stage11d_code_brace_depth SURFACE POSITION OUT_DEPTH)
     set(${OUT_DEPTH} ${_depth} PARENT_SCOPE)
 endfunction()
 
+function(stage11d_require_direct_statement_owner SURFACE POSITION ERROR_MESSAGE)
+    if(POSITION EQUAL 0)
+        set(_prefix "")
+    else()
+        string(SUBSTRING "${SURFACE}" 0 ${POSITION} _prefix)
+    endif()
+    string(FIND "${_prefix}" ";" _semicolon_position REVERSE)
+    string(FIND "${_prefix}" "{" _open_brace_position REVERSE)
+    string(FIND "${_prefix}" "}" _close_brace_position REVERSE)
+    set(_boundary_position ${_semicolon_position})
+    if(_open_brace_position GREATER _boundary_position)
+        set(_boundary_position ${_open_brace_position})
+    endif()
+    if(_close_brace_position GREATER _boundary_position)
+        set(_boundary_position ${_close_brace_position})
+    endif()
+    math(EXPR _leader_begin "${_boundary_position} + 1")
+    math(EXPR _leader_length "${POSITION} - ${_leader_begin}")
+    if(_leader_length GREATER 0)
+        string(SUBSTRING "${SURFACE}" ${_leader_begin}
+            ${_leader_length} _leader)
+    else()
+        set(_leader "")
+    endif()
+    string(REGEX REPLACE "[ \t\r\n]+" "" _leader "${_leader}")
+    if(NOT _leader STREQUAL "")
+        message(FATAL_ERROR "${ERROR_MESSAGE}")
+    endif()
+endfunction()
+
 function(stage11d_matching_brace_position SURFACE OPEN_POSITION OUT_POSITION)
     string(LENGTH "${SURFACE}" _length)
     set(_depth 0)
@@ -242,6 +274,42 @@ function(stage11d_matching_brace_position SURFACE OPEN_POSITION OUT_POSITION)
             "Stage11D direct-scope fixture has no closing brace")
     endif()
     set(${OUT_POSITION} ${_close} PARENT_SCOPE)
+endfunction()
+
+function(stage11d_extract_direct_braced_statement
+        LABEL SURFACE HEADER EXPECTED_DEPTH OUT_BLOCK)
+    stage11d_count_raw_token("${SURFACE}" "${HEADER}" _header_count)
+    if(NOT _header_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected ${LABEL} owner")
+    endif()
+    string(FIND "${SURFACE}" "${HEADER}" _header_position)
+    stage11d_code_brace_depth("${SURFACE}" ${_header_position}
+        _header_depth)
+    if(NOT _header_depth EQUAL EXPECTED_DEPTH)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected ${LABEL} owner")
+    endif()
+    stage11d_require_direct_statement_owner("${SURFACE}" ${_header_position}
+        "Stage11D loot evidence guard rejected ${LABEL} owner")
+
+    string(SUBSTRING "${SURFACE}" ${_header_position} -1 _header_tail)
+    string(FIND "${_header_tail}" "{" _open_relative)
+    string(FIND "${_header_tail}" ";" _semicolon_relative)
+    if(_open_relative EQUAL -1
+            OR (NOT _semicolon_relative EQUAL -1
+                AND _semicolon_relative LESS _open_relative))
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected ${LABEL} owner")
+    endif()
+    math(EXPR _open_position "${_header_position} + ${_open_relative}")
+    stage11d_matching_brace_position("${SURFACE}" ${_open_position}
+        _close_position)
+    math(EXPR _block_length
+        "${_close_position} - ${_header_position} + 1")
+    string(SUBSTRING "${SURFACE}" ${_header_position} ${_block_length}
+        _block)
+    set(${OUT_BLOCK} "${_block}" PARENT_SCOPE)
 endfunction()
 
 function(stage11d_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
@@ -412,9 +480,13 @@ function(stage11d_validate_facade_input_owner ACTIVE_SURFACE LEXICAL_SURFACE)
     endif()
     string(REGEX REPLACE "[ \t\r\n]+" "" _normalized "${_function}")
     string(FIND "${_normalized}"
+        "impl_->states.stage11d.suspend_injection=gameplay_rearm_required;"
+        _suspend_binding)
+    string(FIND "${_normalized}"
         "constPhysicalKeySnapshotstage11d_physical_keys=host_validation::inject_stage11d_physical_edges(stage11c_physical_keys,*impl_->config,input_settings,dungeon_snapshot,impl_->states.stage11d);"
         _binding)
-    if(_binding EQUAL -1)
+    if(_suspend_binding EQUAL -1 OR _binding EQUAL -1
+            OR NOT _suspend_binding LESS _binding)
         message(FATAL_ERROR
             "Stage11D loot evidence guard rejected host input call binding")
     endif()
@@ -584,6 +656,389 @@ stage11d_prepare_marker_surface("${_report_text}" report
     "${_report_labels}" _report_code)
 stage11d_require_marker_depth("${_report_code}" report evidence_semantics 1)
 
+if(NOT (DEFINED STAGE11D_ABYSS_PHYSICAL_ONLY
+        AND STAGE11D_ABYSS_PHYSICAL_ONLY))
+stage11d_unconditional_cpp_surface("${_formal_text}"
+    _formal_code _formal_lexical_code)
+set(_formal_run_host_signature "bool run_host(")
+stage11d_count_raw_token("${_formal_code}" "${_formal_run_host_signature}"
+    _formal_run_host_active_count)
+stage11d_count_raw_token("${_formal_lexical_code}"
+    "${_formal_run_host_signature}" _formal_run_host_lexical_count)
+if(NOT _formal_run_host_active_count EQUAL 1
+        OR NOT _formal_run_host_lexical_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard cannot isolate formal run_host")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_formal_code}" "${_formal_run_host_signature}"
+    _formal_run_host_begin _formal_run_host_open _formal_run_host_end)
+math(EXPR _formal_run_host_length
+    "${_formal_run_host_end} - ${_formal_run_host_begin} + 1")
+string(SUBSTRING "${_formal_code}" ${_formal_run_host_begin}
+    ${_formal_run_host_length} _formal_run_host)
+
+set(_formal_scenario_field "config.stage11d_loot_validation")
+stage11d_count_raw_token("${_formal_run_host}" "${_formal_scenario_field}"
+    _formal_scenario_count)
+set(_formal_scenario_assignment
+    "config.stage11d_loot_validation = spec.scenario;")
+string(FIND "${_formal_run_host}" "${_formal_scenario_assignment}"
+    _formal_scenario_position)
+if(NOT _formal_scenario_count EQUAL 1
+        OR _formal_scenario_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires one direct run_host scenario assignment")
+endif()
+stage11d_code_brace_depth("${_formal_run_host}"
+    ${_formal_scenario_position} _formal_scenario_depth)
+if(NOT _formal_scenario_depth EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires direct run_host scenario assignment")
+endif()
+stage11d_require_direct_statement_owner("${_formal_run_host}"
+    ${_formal_scenario_position}
+    "Stage11D loot evidence guard requires direct run_host scenario assignment")
+
+set(_formal_steps_field "config.validation_steps_per_frame")
+stage11d_count_raw_token("${_formal_run_host}" "${_formal_steps_field}"
+    _formal_steps_count)
+set(_formal_steps_assignment
+    "config.validation_steps_per_frame = 1U;")
+string(FIND "${_formal_run_host}" "${_formal_steps_assignment}"
+    _formal_steps_position)
+if(NOT _formal_steps_count EQUAL 1 OR _formal_steps_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires one direct 1-tick run_host assignment")
+endif()
+stage11d_code_brace_depth("${_formal_run_host}"
+    ${_formal_steps_position} _formal_steps_depth)
+if(NOT _formal_steps_depth EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires direct run_host fixed-step assignment")
+endif()
+stage11d_require_direct_statement_owner("${_formal_run_host}"
+    ${_formal_steps_position}
+    "Stage11D loot evidence guard requires direct run_host fixed-step assignment")
+
+set(_formal_default_limit
+    "constexpr std::uint32_t kStage11DDefaultPresentedFrameLimit = 4000U;")
+set(_formal_rare_base_budget
+    "constexpr std::uint64_t kStage11DRareAbyssBaseFrameBudget = 12000U;")
+set(_formal_rare_frames_per_monster
+    "constexpr std::uint64_t kStage11DRareAbyssFramesPerMonster = 96U;")
+set(_formal_vsync_setting
+    "constexpr bool kStage11DFormalVsyncEnabled = false;")
+foreach(_limit IN ITEMS "${_formal_default_limit}"
+        "${_formal_rare_base_budget}" "${_formal_rare_frames_per_monster}"
+        "${_formal_vsync_setting}")
+    stage11d_count_raw_token("${_formal_code}" "${_limit}" _limit_count)
+    string(FIND "${_formal_code}" "${_limit}" _limit_position)
+    if(NOT _limit_count EQUAL 1 OR _limit_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires exact formal presented-frame constants")
+    endif()
+    stage11d_code_brace_depth("${_formal_code}" ${_limit_position}
+        _limit_depth)
+    if(NOT _limit_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires namespace-scope presented-frame constants")
+    endif()
+endforeach()
+string(FIND "${_formal_code}"
+    "kStage11DRareOnlyAbyssPresentedFrameLimit" _obsolete_rare_limit)
+if(NOT _obsolete_rare_limit EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected fixed rare abyss frame limit")
+endif()
+evidence_extract_cpp_function_block("${_formal_text}"
+    "stage11d_rare_abyss_presented_frame_budget("
+    _formal_rare_budget_function)
+string(REGEX REPLACE "[ \t\r\n]+" "" _formal_rare_budget_normalized
+    "${_formal_rare_budget_function}")
+foreach(_rare_budget_property IN ITEMS
+        "monster_count==0U"
+        "static_cast<std::uint64_t>(monster_count)>static_cast<std::uint64_t>(arpg::limits::kRoomMonsterCapacity)"
+        "budget=kStage11DRareAbyssBaseFrameBudget+static_cast<std::uint64_t>(monster_count)*kStage11DRareAbyssFramesPerMonster;"
+        "budget>(std::numeric_limits<std::uint32_t>::max)()"
+        "returnstatic_cast<std::uint32_t>(budget);")
+    string(FIND "${_formal_rare_budget_normalized}"
+        "${_rare_budget_property}" _rare_budget_property_position)
+    if(_rare_budget_property_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires bounded population-derived rare abyss frame budget")
+    endif()
+endforeach()
+string(REGEX REPLACE "[ \t\r\n]+" "" _formal_code_normalized
+    "${_formal_code}")
+stage11d_count_raw_token("${_formal_code}" "static_assert("
+    _formal_budget_static_assert_count)
+if(NOT _formal_budget_static_assert_count EQUAL 4)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires four active rare-abyss budget boundary assertions")
+endif()
+foreach(_formal_budget_assertion IN ITEMS
+        "static_assert(!stage11d_rare_abyss_presented_frame_budget(0U).has_value());"
+        "static_assert(stage11d_rare_abyss_presented_frame_budget(1U).value_or(0U)==12096U);"
+        "static_assert(stage11d_rare_abyss_presented_frame_budget(static_cast<std::uint32_t>(arpg::limits::kRoomMonsterCapacity)).value_or(0U)==122592U);"
+        "static_assert(!stage11d_rare_abyss_presented_frame_budget(static_cast<std::uint32_t>(arpg::limits::kRoomMonsterCapacity+1U)).has_value());")
+    string(FIND "${_formal_code_normalized}"
+        "${_formal_budget_assertion}" _formal_budget_assertion_position)
+    if(_formal_budget_assertion_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires exact rare-abyss budget boundary assertions")
+    endif()
+endforeach()
+evidence_extract_cpp_function_block("${_formal_text}"
+    "abyss_room_profile(" _formal_abyss_room_profile)
+set(_formal_profile_budget_assignment
+    "const auto budget = stage11d_rare_abyss_presented_frame_budget(")
+stage11d_count_raw_token("${_formal_abyss_room_profile}"
+    "${_formal_profile_budget_assignment}" _formal_profile_budget_count)
+string(FIND "${_formal_abyss_room_profile}"
+    "${_formal_profile_budget_assignment}" _formal_profile_budget_position)
+if(NOT _formal_profile_budget_count EQUAL 1
+        OR _formal_profile_budget_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires the production monster count to derive the rare-abyss frame budget")
+endif()
+stage11d_code_brace_depth("${_formal_abyss_room_profile}"
+    ${_formal_profile_budget_position} _formal_profile_budget_depth)
+if(NOT _formal_profile_budget_depth EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires a direct rare-abyss frame-budget derivation")
+endif()
+stage11d_require_direct_statement_owner("${_formal_abyss_room_profile}"
+    ${_formal_profile_budget_position}
+    "Stage11D loot evidence guard requires a direct rare-abyss frame-budget derivation")
+string(REGEX REPLACE "[ \t\r\n]+" "" _formal_profile_normalized
+    "${_formal_abyss_room_profile}")
+foreach(_formal_profile_binding IN ITEMS
+        "constautobudget=stage11d_rare_abyss_presented_frame_budget(plan.monster_count);"
+        "returnAbyssRoomProfile{plan.blueprint_hash,plan.monster_count,*budget};")
+    string(FIND "${_formal_profile_normalized}"
+        "${_formal_profile_binding}" _formal_profile_binding_position)
+    if(_formal_profile_binding_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires the production monster count and budget to flow through the abyss profile")
+    endif()
+endforeach()
+set(_formal_limit_field
+    "config.validation_exit_after_presented_frames")
+stage11d_count_raw_token("${_formal_run_host}" "${_formal_limit_field}"
+    _formal_limit_count)
+set(_formal_limit_assignment
+    "config.validation_exit_after_presented_frames = spec.abyss")
+string(FIND "${_formal_run_host}" "${_formal_limit_assignment}"
+    _formal_limit_position)
+if(NOT _formal_limit_count EQUAL 2 OR _formal_limit_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires one assignment and one zero check for the run_host frame limit")
+endif()
+stage11d_code_brace_depth("${_formal_run_host}"
+    ${_formal_limit_position} _formal_limit_depth)
+if(NOT _formal_limit_depth EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires direct run_host frame limit")
+endif()
+stage11d_require_direct_statement_owner("${_formal_run_host}"
+    ${_formal_limit_position}
+    "Stage11D loot evidence guard requires direct run_host frame limit")
+string(REGEX REPLACE "[ \t\r\n]+" "" _formal_run_host_normalized
+    "${_formal_run_host}")
+set(_formal_validation_chain
+    "config.stage11d_loot_validation=spec.scenario;config.validation_steps_per_frame=1U;config.validation_exit_after_presented_frames=spec.abyss?selected.abyss_presented_frame_budget:kStage11DDefaultPresentedFrameLimit;if(config.validation_exit_after_presented_frames==0U)returnfalse;")
+string(FIND "${_formal_run_host_normalized}"
+    "${_formal_validation_chain}" _formal_validation_chain_position)
+if(_formal_validation_chain_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires contiguous formal run_host validation configuration")
+endif()
+evidence_extract_cpp_function_block("${_formal_text}"
+    "bool prepare_scenario(" _formal_prepare_scenario)
+string(REGEX REPLACE "[ \t\r\n]+" "" _formal_prepare_normalized
+    "${_formal_prepare_scenario}")
+foreach(_prepare_property IN ITEMS
+        "draft.vsync_enabled=kStage11DFormalVsyncEnabled;"
+        "settings_store.save(loaded.settings,draft)"
+        "abyss_build_round_tripped"
+        "saved.verified_state.item_ownership.items.size()"
+        "saved.verified_state.item_ownership.equipment.equipped_ids"
+        "saved.verified_state.passive_tree.allocated_bits"
+        "saved.verified_state.progression.level"
+        "saved.verified_state.progression.earned_passive_points"
+        "saved.verified_state.progression.unspent_passive_points"
+        "settings_saved.settings.vsync_enabled==kStage11DFormalVsyncEnabled")
+    string(FIND "${_formal_prepare_normalized}" "${_prepare_property}"
+        _prepare_property_position)
+    if(_prepare_property_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires persisted non-VSync abyss validation build")
+    endif()
+endforeach()
+evidence_extract_cpp_function_block("${_formal_text}"
+    "SelectedStates select_states(" _formal_select_states)
+stage11d_mask_non_direct_executable_scopes("${_formal_select_states}"
+    _formal_select_active)
+string(REGEX REPLACE "[ \t\r\n]+" "" _formal_select_normalized
+    "${_formal_select_active}")
+evidence_extract_cpp_function_block("${_formal_text}"
+    "bool prepare_stage11d_live_damage_build("
+    _formal_live_damage_build)
+stage11d_mask_non_direct_executable_scopes("${_formal_live_damage_build}"
+    _formal_live_damage_build_active)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _formal_live_damage_build_normalized
+    "${_formal_live_damage_build_active}")
+foreach(_live_damage_property IN ITEMS
+        "constexprstd::uint16_tkBarrierAffix=12U;"
+        "if(base->slot==items::ItemSlot::weapon)continue;"
+        "if(affix.affix_id==kBarrierAffix){++removed_count;continue;}"
+        "retained[retained_count++]=affix;"
+        "item.affixes=retained;"
+        "item.affix_count=retained_count;"
+        "if(retained_count!=5U||!items::validate_item(item))returnfalse;"
+        "returnstate.item_ownership.items.size()==6U&&non_weapon_count==5U&&removed_count==5U&&items::validate_ownership(state.item_ownership);")
+    string(FIND "${_formal_live_damage_build_normalized}"
+        "${_live_damage_property}" _live_damage_property_position)
+    if(_live_damage_property_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires an exact live-damage validation build")
+    endif()
+endforeach()
+stage11d_count_raw_token("${_formal_select_normalized}"
+    "install_stage10_validation_build(" _formal_build_install_count)
+stage11d_count_raw_token("${_formal_select_normalized}"
+    "install_stage10_validation_survival_passives("
+    _formal_survival_install_count)
+stage11d_count_raw_token("${_formal_select_normalized}"
+    "prepare_stage11d_live_damage_build("
+    _formal_live_damage_install_count)
+foreach(_build_property IN ITEMS
+        "autovalidation_state=next.state;"
+        "install_stage10_validation_build(validation_state)"
+        "install_stage10_validation_survival_passives(validation_state)"
+        "prepare_stage11d_live_damage_build(validation_state)"
+        "selected.abyss=validation_state;")
+    string(FIND "${_formal_select_normalized}" "${_build_property}"
+        _build_property_position)
+    if(_build_property_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires the validation build only on the selected abyss state")
+    endif()
+endforeach()
+if(NOT _formal_build_install_count EQUAL 1
+        OR NOT _formal_survival_install_count EQUAL 1
+        OR NOT _formal_live_damage_install_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires the validation build, survival passives, and live-damage fixture only on the selected abyss state")
+endif()
+set(_formal_validation_fixture_chain
+    "&&arpg::test::install_stage10_validation_build(validation_state)&&arpg::test::install_stage10_validation_survival_passives(validation_state)&&prepare_stage11d_live_damage_build(validation_state)){selected.abyss=validation_state;")
+string(FIND "${_formal_select_normalized}"
+    "${_formal_validation_fixture_chain}" _formal_validation_fixture_position)
+if(_formal_validation_fixture_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires every validation fixture to gate the selected abyss state")
+endif()
+
+# Turn the exact manifest literals into identifiers before lexical sanitizing.
+# A literal copied into a comment, raw string, inactive preprocessor branch,
+# dead branch or uncalled lambda therefore cannot impersonate main's stream.
+set(_formal_manifest_marked "${_formal_text}")
+set(_formal_manifest_labels
+    ABYSS_MONSTERS
+    ABYSS_INITIAL_OWNED_ITEMS
+    ABYSS_VALIDATION_LEVEL
+    ABYSS_VALIDATION_EARNED_PASSIVES
+    ABYSS_VALIDATION_UNSPENT_PASSIVES
+    ABYSS_VALIDATION_PASSIVE_BITS
+    ABYSS_PRESENTED_FRAME_BUDGET
+    FORMAL_VSYNC_ENABLED)
+foreach(_manifest_label IN LISTS _formal_manifest_labels)
+    string(TOLOWER "${_manifest_label}" _manifest_key)
+    set(_manifest_literal "\"${_manifest_key}=\"")
+    stage11d_count_raw_token("${_formal_manifest_marked}"
+        "${_manifest_literal}" _manifest_literal_count)
+    if(NOT _manifest_literal_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires one exact ${_manifest_key} manifest literal")
+    endif()
+    string(REPLACE "${_manifest_literal}"
+        "STAGE11D_MANIFEST_${_manifest_label}"
+        _formal_manifest_marked "${_formal_manifest_marked}")
+endforeach()
+stage11d_unconditional_cpp_surface("${_formal_manifest_marked}"
+    _formal_manifest_code)
+set(_formal_main_signature "int main(")
+stage11d_count_raw_token("${_formal_manifest_code}"
+    "${_formal_main_signature}" _formal_main_count)
+if(NOT _formal_main_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard cannot isolate the formal manifest owner")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized("${_formal_manifest_code}"
+    "${_formal_main_signature}" _formal_main_begin _formal_main_open
+    _formal_main_end)
+math(EXPR _formal_main_length
+    "${_formal_main_end} - ${_formal_main_begin} + 1")
+string(SUBSTRING "${_formal_manifest_code}" ${_formal_main_begin}
+    ${_formal_main_length} _formal_main)
+stage11d_mask_non_direct_executable_scopes("${_formal_main}"
+    _formal_main_active)
+string(REGEX REPLACE "[ \t\r\n]+" "" _formal_main_normalized
+    "${_formal_main_active}")
+foreach(_manifest_label IN LISTS _formal_manifest_labels)
+    set(_manifest_token "STAGE11D_MANIFEST_${_manifest_label}")
+    stage11d_count_raw_token("${_formal_main_active}"
+        "${_manifest_token}" _manifest_token_count)
+    string(FIND "${_formal_main_active}" "${_manifest_token}"
+        _manifest_token_position)
+    if(NOT _manifest_token_count EQUAL 1
+            OR _manifest_token_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires active main-scope manifest bindings")
+    endif()
+    stage11d_code_brace_depth("${_formal_main_active}"
+        ${_manifest_token_position} _manifest_token_depth)
+    if(NOT _manifest_token_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires direct main-scope manifest bindings")
+    endif()
+endforeach()
+foreach(_manifest_chain IN ITEMS
+        "STAGE11D_MANIFEST_ABYSS_MONSTERS<<selected.abyss_monster_count"
+        "STAGE11D_MANIFEST_ABYSS_INITIAL_OWNED_ITEMS<<selected.abyss_initial_owned_item_count"
+        "STAGE11D_MANIFEST_ABYSS_VALIDATION_LEVEL<<static_cast<unsigned>(selected.abyss.progression.level)"
+        "STAGE11D_MANIFEST_ABYSS_VALIDATION_EARNED_PASSIVES<<static_cast<unsigned>(selected.abyss.progression.earned_passive_points)"
+        "STAGE11D_MANIFEST_ABYSS_VALIDATION_UNSPENT_PASSIVES<<static_cast<unsigned>(selected.abyss.progression.unspent_passive_points)"
+        "STAGE11D_MANIFEST_ABYSS_VALIDATION_PASSIVE_BITS<<selected.abyss.passive_tree.allocated_bits"
+        "STAGE11D_MANIFEST_ABYSS_PRESENTED_FRAME_BUDGET<<selected.abyss_presented_frame_budget"
+        "STAGE11D_MANIFEST_FORMAL_VSYNC_ENABLED<<(kStage11DFormalVsyncEnabled?1:0)")
+    string(FIND "${_formal_main_normalized}" "${_manifest_chain}"
+        _manifest_chain_position)
+    if(_manifest_chain_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires exact active manifest value bindings")
+    endif()
+endforeach()
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${_validator_ast_guard}" -ValidatorPath "${_validator}"
+    RESULT_VARIABLE _stage11d_validator_ast_result
+    OUTPUT_VARIABLE _stage11d_validator_ast_output
+    ERROR_VARIABLE _stage11d_validator_ast_error)
+if(NOT _stage11d_validator_ast_result EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected formal validator executable bindings: ${_stage11d_validator_ast_output}\n${_stage11d_validator_ast_error}")
+endif()
+set(_stage11d_validator_ast_checked TRUE)
+if(DEFINED STAGE11D_FORMAL_LIMIT_ONLY AND STAGE11D_FORMAL_LIMIT_ONLY)
+    message(STATUS "Stage11D formal run_host limit guard passed")
+    return()
+endif()
+endif()
+
 set(_host_labels fixed_step abyss_claim)
 string(REPLACE "\r\n" "\n" _host_marker_count_text "${_host_text}")
 foreach(_label IN LISTS _host_labels)
@@ -731,11 +1186,20 @@ foreach(_required IN ITEMS
         "struct Stage11DLootValidationState final"
         "std::array<std::uint64_t, dungeon::kGroundDropCapacity> snapshot_item_ids{};"
         "std::array<std::uint64_t, dungeon::kGroundDropCapacity> inventory_item_ids{};"
-        "std::array<std::int32_t, 3> last_monster_hp{};"
-        "std::array<std::uint16_t, 3> monster_affix_danger{};"
-        "std::array<std::uint32_t, 3> defeat_distance_milli{};"
+        "std::array<std::uint32_t, 3> observed_drop_distance_milli{};"
+        "std::uint32_t initial_monster_count{};"
+        "std::uint32_t max_remaining_targets{};"
+        "std::uint32_t max_defeated_monsters{};"
+        "std::uint32_t monster_generator_version{};"
+        "std::uint64_t monster_blueprint_hash{};"
+        "bool monster_damage_observed{};"
         "std::uint64_t pickup_commit_generation{};"
         "bool abyss_claim_requested{};" "bool abyss_claimed{};"
+        "bool suspend_injection{};"
+        "bool sweep_cursor_initialized{};"
+        "std::uint8_t sweep_waypoint{};"
+        "Stage10GridRouteState sweep_grid{};"
+        "Stage10ValidationState abyss_ranged{};"
         "PhysicalKeySnapshot inject_stage11d_physical_edges("
         "bool stage11d_validation_active("
         "void observe_stage11d_abyss_claim("
@@ -775,8 +1239,15 @@ endforeach()
 set(_runtime_definitions
     "ordinary rarity selector|bool stage11d_has_three_ordinary_rarities(|1"
     "ground selector|const dungeon::GroundItemSnapshot* stage11d_nearest_ground(|2"
+    "rare abyss ground selector|const dungeon::GroundItemSnapshot*\nstage11d_rare_abyss_ground(|2"
     "monster selector|const combat::MonsterSnapshot* stage11d_priority_monster(|2"
     "attack selector|bool stage11d_attack_lane(|2"
+    "rare abyss skill helper|Stage11DRareAbyssSkillInput\ninject_stage11d_rare_abyss_area_skill(|2"
+    "rare abyss availability|bool stage11d_rare_abyss_player_available(|2"
+    "rare abyss danger|bool stage11d_rare_abyss_danger_near_player(|2"
+    "rare abyss ordinal selector|const combat::MonsterSnapshot*\nstage11d_monster_by_ordinal(|2"
+    "rare abyss outer sweep default|bool stage11d_outer_sweep_route_is_default(|2"
+    "rare abyss sweep cursor initializer|void initialize_stage11d_sweep_cursor(|2"
     "safe movement|combat::MovementInput stage11d_safe_movement_toward(|2"
     "physical driver|PhysicalKeySnapshot inject_stage11d_physical_edges(|1"
     "fixed-step activation|bool stage11d_validation_active(|1"
@@ -795,8 +1266,15 @@ endforeach()
 foreach(_signature IN ITEMS
         "bool stage11d_has_three_ordinary_rarities("
         "const dungeon::GroundItemSnapshot* stage11d_nearest_ground("
+        "const dungeon::GroundItemSnapshot*\nstage11d_rare_abyss_ground("
         "const combat::MonsterSnapshot* stage11d_priority_monster("
         "bool stage11d_attack_lane("
+        "Stage11DRareAbyssSkillInput\ninject_stage11d_rare_abyss_area_skill("
+        "bool stage11d_rare_abyss_player_available("
+        "bool stage11d_rare_abyss_danger_near_player("
+        "const combat::MonsterSnapshot*\nstage11d_monster_by_ordinal("
+        "bool stage11d_outer_sweep_route_is_default("
+        "void initialize_stage11d_sweep_cursor("
         "combat::MovementInput stage11d_safe_movement_toward("
         "PhysicalKeySnapshot inject_stage11d_physical_edges("
         "bool stage11d_validation_active("
@@ -810,6 +1288,7 @@ endforeach()
 
 set(_report_definitions
     "rarity-view helper|bool stage11d_view_has_rarity(|2"
+    "abyss ordinal-view helper|bool stage11d_view_has_abyss_ordinal(|2"
     "semantic recorder|void stage11d_record_semantics(|1"
     "target-visible evaluator|bool stage11d_target_visible(|1"
     "scenario-name helper|const char* stage11d_scenario_name(|2"
@@ -834,6 +1313,42 @@ stage11d_extract_report_definition("semantic recorder"
     "void stage11d_record_semantics(" _report_record_function)
 stage11d_extract_report_definition("target-visible evaluator"
     "bool stage11d_target_visible(" _report_target_function)
+stage11d_extract_report_definition("abyss ordinal-view helper"
+    "bool stage11d_view_has_abyss_ordinal("
+    _report_abyss_ordinal_function)
+stage11d_mask_non_direct_executable_scopes(
+    "${_report_abyss_ordinal_function}"
+    _report_abyss_ordinal_active)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _report_abyss_ordinal_normalized
+    "${_report_abyss_ordinal_active}")
+foreach(_required IN ITEMS
+        "index<view.count"
+        "view.labels[index].ordinal==ordinal"
+        "view.labels[index].abyss"
+        "returntrue;"
+        "returnfalse;")
+    string(FIND "${_report_abyss_ordinal_normalized}" "${_required}"
+        _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires an abyss label with the same ordinal")
+    endif()
+endforeach()
+stage11d_extract_direct_braced_statement("rare abyss target visibility"
+    "${_report_target_function}"
+    "if (scenario == Scenario::rare_only_abyss) {" 1
+    _report_rare_abyss_target)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _report_rare_abyss_target_normalized
+    "${_report_rare_abyss_target}")
+set(_report_rare_abyss_target_chain
+    "if(scenario==Scenario::rare_only_abyss){for(std::size_tindex=0U;index<snapshot.ground_item_count;++index){constauto&item=snapshot.ground_items[index];if(item.source==dungeon::GroundItemSource::abyss_chest&&item.rarity!=items::ItemRarity::rare&&ground_loot_visible(item,mode)&&stage11d_view_has_abyss_ordinal(view,item.ordinal)){returntrue;}}returnfalse;}")
+if(NOT _report_rare_abyss_target_normalized STREQUAL
+        _report_rare_abyss_target_chain)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires rare capture to bind the matching abyss label")
+endif()
 stage11d_extract_report_definition("summary writer"
     "void write_stage11d_loot_validation_summary(" _report_summary_function)
 string(REGEX REPLACE "[ \t\r\n]+" "" _stage_header_normalized
@@ -1248,9 +1763,10 @@ foreach(_required IN ITEMS
     endif()
 endforeach()
 foreach(_required IN ITEMS
-        "state.monster_affix_danger[ordinal] ="
-        "state.monster_ai_phase[ordinal] ="
-        "state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;"
+        "state.max_defeated_monsters ="
+        "state.monster_blueprint_hash = snapshot.monster_blueprint_hash;"
+        "state.monster_damage_observed = true;"
+        "state.observed_drop_distance_milli[distance_index] ="
         "state.pickup_commit_generation = status.loot_pickup.commit_generation;")
     string(FIND "${_report_target_function}" "${_required}" _found)
     if(_found EQUAL -1)
@@ -1259,23 +1775,347 @@ foreach(_required IN ITEMS
     endif()
 endforeach()
 
+stage11d_extract_runtime_definition("rare abyss ground selector"
+    "const dungeon::GroundItemSnapshot*\nstage11d_rare_abyss_ground("
+    _rare_abyss_ground_text)
+stage11d_mask_non_direct_executable_scopes("${_rare_abyss_ground_text}"
+    _rare_abyss_ground_active)
+string(REGEX REPLACE "[ \t\r\n]+" "" _rare_abyss_ground_normalized
+    "${_rare_abyss_ground_active}")
+foreach(_required IN ITEMS
+        "item.source!=dungeon::GroundItemSource::abyss_chest"
+        "item.rarity==items::ItemRarity::rare"
+        "state.abyss_item_id==0U||item.item_id==state.abyss_item_id"
+        "return&item;"
+        "returnnullptr;")
+    string(FIND "${_rare_abyss_ground_normalized}" "${_required}"
+        _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected rare abyss ground selector")
+    endif()
+endforeach()
+
+stage11d_extract_runtime_definition("rare abyss outer sweep default"
+    "bool stage11d_outer_sweep_route_is_default("
+    _outer_sweep_default_text)
+stage11d_mask_non_direct_executable_scopes("${_outer_sweep_default_text}"
+    _outer_sweep_default_active)
+string(REGEX REPLACE "[ \t\r\n]+" "" _outer_sweep_default_normalized
+    "${_outer_sweep_default_active}")
+foreach(_required IN ITEMS
+        "returnroute.phase==Stage10GridRoutePhase::need_join"
+        "route.boundary_column==0U"
+        "route.route_rejoins==0U"
+        "!route.pending_movement_progress_check"
+        "route.previous_position.x==0.0F"
+        "route.previous_position.y==0.0F"
+        "route.previous_position.z==0.0F;")
+    string(FIND "${_outer_sweep_default_normalized}" "${_required}"
+        _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected outer sweep route ownership")
+    endif()
+endforeach()
+
+stage11d_extract_runtime_definition("rare abyss sweep cursor initializer"
+    "void initialize_stage11d_sweep_cursor("
+    _sweep_cursor_initializer_text)
+stage11d_mask_non_direct_executable_scopes("${_sweep_cursor_initializer_text}"
+    _sweep_cursor_initializer_active)
+string(REGEX REPLACE "[ \t\r\n]+" "" _sweep_cursor_initializer_normalized
+    "${_sweep_cursor_initializer_active}")
+foreach(_required IN ITEMS
+        "if(state.sweep_cursor_initialized)return;"
+        "state.sweep_cursor_initialized=true;"
+        "if(state.sweep_waypoint!=0U||!stage11d_outer_sweep_route_is_default(state.sweep_grid)){return;}"
+        "constexprstd::size_twaypoint_count=combat::room_spatial::rows*2U;"
+        "combat::Vec3target=stage10_validation_sweep_waypoint(0U);"
+        "for(std::size_tindex=1U;index<waypoint_count;++index)"
+        "target=stage10_validation_sweep_waypoint(static_cast<std::uint8_t>(index));"
+        "constfloatdistance=x*x+y*y;"
+        "if(distance<best_distance){best_distance=distance;nearest=index;}"
+        "state.sweep_waypoint=static_cast<std::uint8_t>(nearest);")
+    string(FIND "${_sweep_cursor_initializer_normalized}" "${_required}"
+        _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected nearest sweep cursor initialization")
+    endif()
+endforeach()
+
 stage11d_extract_runtime_definition("physical driver"
     "PhysicalKeySnapshot inject_stage11d_physical_edges(" _driver_text)
 stage11d_require_unique_token_depth("runtime physical driver" "${_driver_text}"
     "using Scenario = Stage11DLootValidationScenario;" 1)
+stage11d_require_unique_token_depth("runtime physical suspension gate"
+    "${_driver_text}" "state.suspend_injection" 1)
+stage11d_require_unique_token_depth("runtime rare abyss availability gate"
+    "${_driver_text}"
+    "stage11d_rare_abyss_player_available(combat_state)" 2)
+stage11d_count_raw_token("${_driver_text}"
+    "inject_stage11d_rare_abyss_area_skill(snapshot, current)"
+    _driver_area_skill_dispatch_count)
+if(NOT _driver_area_skill_dispatch_count EQUAL 2)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected runtime rare abyss skill dispatch inventory")
+endif()
+stage11d_require_unique_token_depth("runtime rare abyss melee fallback"
+    "${_driver_text}" "state.abyss_ranged.close_for_light = true;" 3)
 foreach(_required IN ITEMS
         "inject_validation_pressed(" "inject_validation_action("
         "inject_validation_movement(" "validation_movement_toward("
-        "validation_route_fire_movement(" "nearest_living_monster("
-        "stage11d_safe_movement_toward(" "stage11d_attack_lane(")
+        "validation_route_fire_movement("
+        "stage11d_safe_movement_toward(" "stage11d_attack_lane("
+        "state.suspend_injection" "stage10_validation_sweep_movement("
+        "state.sweep_grid" "state.sweep_waypoint"
+        "stage11d_rare_abyss_player_available("
+        "plan_abyss_ranged()"
+        "stage11d_rare_abyss_danger_near_player("
+        "stage10_validation_release_ranged_target("
+        "state.abyss_ranged"
+        "inject_stage11d_rare_abyss_area_skill(")
     string(FIND "${_driver_text}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR
             "Stage11D loot evidence guard missing runtime physical driver token: ${_required}")
     endif()
 endforeach()
+string(REGEX REPLACE "[ \t\r\n]+" "" _driver_normalized "${_driver_text}")
+stage11d_extract_direct_braced_statement("rare abyss reward approach"
+    "${_driver_text}"
+    "if (config.stage11d_loot_validation == Scenario::rare_only_abyss" 1
+    _rare_abyss_reward_approach)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _rare_abyss_reward_approach_normalized
+    "${_rare_abyss_reward_approach}")
+set(_rare_abyss_reward_approach_chain
+    "if(config.stage11d_loot_validation==Scenario::rare_only_abyss&&current.combat.has_value()){constauto*item=stage11d_rare_abyss_ground(current,state);if(item!=nullptr){combat::MovementInputmovement=validation_movement_toward(current.combat->player.position,item->position);if(current.ecology==dungeon::checkpoint::DungeonElement::fire){movement=validation_route_fire_movement(current.combat->player.position,item->position,movement);}inject_validation_movement(snapshot,settings_data,movement);state.abyss_claim_requested=state.captured;returnsnapshot;}if(state.captured)returnsnapshot;}")
+if(NOT _rare_abyss_reward_approach_normalized STREQUAL
+        _rare_abyss_reward_approach_chain)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires uncaptured abyss rewards to use physical approach")
+endif()
+string(FIND "${_driver_normalized}"
+    "if(config.stage11d_loot_validation==Scenario::none||snapshot.focus_lost||state.suspend_injection){returnsnapshot;}"
+    _driver_suspension_gate)
+if(_driver_suspension_gate EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected physical-input driver chain")
+endif()
+stage11d_extract_direct_braced_statement("rare abyss branch"
+    "${_driver_text}" "if (aggressive_abyss) {" 1
+    _aggressive_driver_text)
+foreach(_required_branch_token IN ITEMS
+        "stage11d_rare_abyss_player_available(combat_state)"
+        "inject_stage11d_rare_abyss_area_skill(snapshot, current)"
+        "state.abyss_ranged.close_for_light = true;")
+    string(FIND "${_aggressive_driver_text}"
+        "${_required_branch_token}" _required_branch_position)
+    if(_required_branch_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected rare abyss branch owner")
+    endif()
+endforeach()
+string(REGEX REPLACE "[ \t\r\n]+" "" _aggressive_driver_normalized
+    "${_aggressive_driver_text}")
+stage11d_count_raw_token("${_aggressive_driver_text}"
+    "initialize_stage11d_sweep_cursor("
+    _aggressive_sweep_cursor_call_count)
+if(NOT _aggressive_sweep_cursor_call_count EQUAL 4)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected sweep cursor handoff inventory")
+endif()
+stage11d_extract_direct_braced_statement("rare abyss sweep opportunity"
+    "${_aggressive_driver_text}"
+    "if (!low_health && state.abyss_ranged.sweep_escape" 1
+    _aggressive_sweep_opportunity)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _aggressive_sweep_opportunity_normalized
+    "${_aggressive_sweep_opportunity}")
+foreach(_required IN ITEMS
+        "if(!low_health&&state.abyss_ranged.sweep_escape&&!state.abyss_ranged.recovery_target_valid){"
+        "if(inject_stage11d_rare_abyss_area_skill(snapshot,current)==Stage11DRareAbyssSkillInput::injected){returnsnapshot;}"
+        "if(!monster.active||monster.hp<=0||!validation_attack_lane(combat_state,monster)){continue;}"
+        "inject_validation_action(snapshot,settings_data,settings::SettingAction::light_attack,true);returnsnapshot;")
+    string(FIND "${_aggressive_sweep_opportunity_normalized}" "${_required}"
+        _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected high-health sweep opportunity input")
+    endif()
+endforeach()
+foreach(_required_branch_chain IN ITEMS
+        "if(!stage11d_rare_abyss_player_available(combat_state)){returnsnapshot;}"
+        "Stage10RangedValidationPlanplan=plan_abyss_ranged();"
+        "constcombat::MonsterSnapshot*target=stage11d_monster_by_ordinal(combat_state,plan.target_ordinal);"
+        "if(state.abyss_ranged.melee_chain&&validation_attack_lane(combat_state,*target)){inject_validation_action(snapshot,settings_data,settings::SettingAction::light_attack,true);returnsnapshot;}"
+        "if(skill_input==Stage11DRareAbyssSkillInput::injected){returnsnapshot;}")
+    string(FIND "${_aggressive_driver_normalized}"
+        "${_required_branch_chain}" _required_branch_chain_position)
+    if(_required_branch_chain_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected physical-input driver chain")
+    endif()
+endforeach()
+foreach(_required_handoff_chain IN ITEMS
+        "constautoinner_global_sweep_active=[&state]()noexcept{returnstate.abyss_ranged.sweep_escape&&!state.abyss_ranged.recovery_target_valid;};"
+        "constboolinner_was_global=inner_global_sweep_active();"
+        "Stage10RangedValidationPlannext=stage10_validation_ranged_plan(combat_state,state.abyss_ranged);"
+        "constboolinner_took_global=!inner_was_global&&inner_is_global;"
+        "if(inner_took_global){initialize_stage11d_sweep_cursor(state,combat_state.player.position);state.abyss_ranged.sweep_waypoint=state.sweep_waypoint;state.abyss_ranged.sweep_grid={};state.sweep_grid={};next=stage10_validation_ranged_plan(combat_state,state.abyss_ranged);inner_is_global=inner_global_sweep_active();}"
+        "if((inner_was_global||inner_took_global)&&!inner_is_global){state.sweep_waypoint=state.abyss_ranged.sweep_waypoint;}"
+        "if(state.abyss_ranged.sweep_escape||next.target_ordinal!=combat::kInvalidMonsterOrdinal){state.sweep_grid={};}"
+        "returnnext;")
+    string(FIND "${_aggressive_driver_normalized}"
+        "${_required_handoff_chain}" _required_handoff_position)
+    if(_required_handoff_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected dual sweep cursor ownership")
+    endif()
+endforeach()
+
+stage11d_extract_direct_braced_statement("physical-input driver chain"
+    "${_aggressive_driver_text}"
+    "if (target != nullptr" 1
+    _aggressive_danger_block)
+string(REGEX REPLACE "[ \t\r\n]+" "" _aggressive_danger_normalized
+    "${_aggressive_danger_block}")
+string(FIND "${_aggressive_danger_normalized}"
+    "if(target!=nullptr&&low_health&&!validation_attack_lane(combat_state,*target)&&stage11d_rare_abyss_danger_near_player("
+    _aggressive_danger_gate_position)
+if(_aggressive_danger_gate_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected physical-input driver chain")
+endif()
+foreach(_required_danger_token IN ITEMS
+        "low_health"
+        "stage11d_rare_abyss_danger_near_player("
+        "stage10_validation_release_ranged_target("
+        "state.abyss_ranged.stalled_target_ordinal = threatened_target;"
+        "state.abyss_ranged.sweep_escape = true;"
+        "plan = plan_abyss_ranged();"
+        "target = stage11d_monster_by_ordinal(")
+    string(FIND "${_aggressive_danger_block}"
+        "${_required_danger_token}" _required_danger_position)
+    if(_required_danger_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected physical-input driver chain")
+    endif()
+endforeach()
+
+stage11d_extract_direct_braced_statement("physical-input driver chain"
+    "${_aggressive_driver_text}" "if (target == nullptr) {" 1
+    _aggressive_no_target_block)
+foreach(_required_no_target_token IN ITEMS
+        "plan.movement"
+        "plan.movement_target_valid"
+        "plan.movement_target"
+        "stage10_validation_sweep_movement("
+        "stage10_validation_sweep_waypoint("
+        "validation_route_fire_movement("
+        "inject_validation_movement(")
+    string(FIND "${_aggressive_no_target_block}"
+        "${_required_no_target_token}" _required_no_target_position)
+    if(_required_no_target_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected physical-input driver chain")
+    endif()
+endforeach()
+stage11d_extract_direct_braced_statement("physical-input recovery route"
+    "${_aggressive_no_target_block}"
+    "if (plan.movement.x != 0 || plan.movement.y != 0) {" 1
+    _aggressive_recovery_block)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _aggressive_recovery_normalized "${_aggressive_recovery_block}")
+set(_aggressive_recovery_chain
+    "if(plan.movement.x!=0||plan.movement.y!=0){combat::MovementInputrecovery=plan.movement;if(current.ecology==dungeon::checkpoint::DungeonElement::fire&&plan.movement_target_valid){recovery=validation_route_fire_movement(combat_state.player.position,plan.movement_target,recovery);}inject_validation_movement(snapshot,settings_data,recovery);returnsnapshot;}")
+if(NOT _aggressive_recovery_normalized STREQUAL
+        _aggressive_recovery_chain)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected physical-input recovery route")
+endif()
+string(FIND "${_aggressive_no_target_block}"
+    "stage10_validation_sweep_movement(" _global_sweep_position)
+if(_global_sweep_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected physical-input driver chain")
+endif()
+string(SUBSTRING "${_aggressive_no_target_block}"
+    ${_global_sweep_position} -1 _global_sweep_tail)
+string(FIND "${_global_sweep_tail}"
+    "stage10_validation_sweep_waypoint(" _global_waypoint_position)
+string(FIND "${_global_sweep_tail}"
+    "validation_route_fire_movement(" _global_fire_route_position)
+string(FIND "${_global_sweep_tail}"
+    "inject_validation_movement(" _global_injection_position)
+if(_global_waypoint_position EQUAL -1
+        OR _global_fire_route_position EQUAL -1
+        OR _global_injection_position EQUAL -1
+        OR NOT _global_fire_route_position LESS _global_waypoint_position
+        OR NOT _global_waypoint_position LESS _global_injection_position)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected physical-input driver chain")
+endif()
+
+stage11d_extract_direct_braced_statement("physical-input movement return"
+    "${_aggressive_driver_text}"
+    "if (movement.x != 0 || movement.y != 0\n                || !plan.stance_reached || !plan.facing_target) {" 1
+    _aggressive_movement_return_block)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _aggressive_movement_return_normalized
+    "${_aggressive_movement_return_block}")
+set(_aggressive_movement_return_chain
+    "if(movement.x!=0||movement.y!=0||!plan.stance_reached||!plan.facing_target){if(state.abyss_ranged.close_for_light&&(movement.x!=0||movement.y!=0)&&inject_stage11d_rare_abyss_area_skill(snapshot,current)==Stage11DRareAbyssSkillInput::injected){returnsnapshot;}returnsnapshot;}")
+if(NOT _aggressive_movement_return_normalized STREQUAL
+        _aggressive_movement_return_chain)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected physical-input movement return")
+endif()
+
+stage11d_extract_direct_braced_statement("physical-input driver chain"
+    "${_aggressive_driver_text}"
+    "if (skill_input == Stage11DRareAbyssSkillInput::no_geometry) {" 1
+    _aggressive_no_geometry_block)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _aggressive_no_geometry_normalized "${_aggressive_no_geometry_block}")
+if(NOT _aggressive_no_geometry_normalized STREQUAL
+        "if(skill_input==Stage11DRareAbyssSkillInput::no_geometry){stage10_validation_release_ranged_target(state.abyss_ranged);returnsnapshot;}")
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected physical-input driver chain")
+endif()
+
+stage11d_extract_direct_braced_statement("physical-input driver chain"
+    "${_aggressive_driver_text}"
+    "if (skill_input == Stage11DRareAbyssSkillInput::unavailable" 1
+    _aggressive_melee_fallback_block)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _aggressive_melee_fallback_normalized
+    "${_aggressive_melee_fallback_block}")
+foreach(_required_fallback_token IN ITEMS
+        "if(skill_input==Stage11DRareAbyssSkillInput::unavailable||skill_input==Stage11DRareAbyssSkillInput::waiting){"
+        "state.abyss_ranged.melee_chain=true;"
+        "state.abyss_ranged.close_for_light=true;"
+        "plan_abyss_ranged()"
+        "validation_route_fire_movement("
+        "inject_validation_movement(")
+    string(FIND "${_aggressive_melee_fallback_normalized}"
+        "${_required_fallback_token}" _required_fallback_position)
+    if(_required_fallback_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected physical-input driver chain")
+    endif()
+endforeach()
+stage11d_count_raw_token("${_aggressive_driver_text}"
+    "active_skill_slots" _driver_skill_access_count)
+if(NOT _driver_skill_access_count EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected rare abyss direct skill-slot access")
+endif()
 foreach(_forbidden IN ITEMS
-        ".queue_action(" "request_pickup(" "complete_pickup(" "TestAccess"
+        ".request_active_skill_slot(" ".queue_action("
+        "request_pickup(" "complete_pickup(" "TestAccess"
         "inventory_count =" "renderer.draw(")
     string(FIND "${_driver_text}" "${_forbidden}" _found)
     if(NOT _found EQUAL -1)
@@ -1283,11 +2123,154 @@ foreach(_forbidden IN ITEMS
             "Stage11D loot evidence guard rejected physical-driver bypass: ${_forbidden}")
     endif()
 endforeach()
+stage11d_extract_runtime_definition("rare abyss skill helper"
+    "Stage11DRareAbyssSkillInput\ninject_stage11d_rare_abyss_area_skill("
+    _rare_abyss_skill_text)
+foreach(_required IN ITEMS
+        "const dungeon::DungeonSnapshot& dungeon_state"
+        "const combat::CombatSnapshot& combat_state = *dungeon_state.combat;"
+        "const auto inject_equipped_skill ="
+        "const std::size_t cooldown = static_cast<std::size_t>(skill);"
+        "combat_state.skill_cooldowns[cooldown] != 0U"
+        "slot < dungeon_state.skill_loadout.slots.size()"
+        "dungeon_state.skill_loadout.slots[slot].active != skill"
+        "snapshot.active_skill_slots[slot] = true;"
+        "skills::ActiveSkillId::storm_swords"
+        "skills::ActiveSkillId::draw_slash"
+        "Stage11DRareAbyssSkillInput::no_geometry"
+        "Stage11DRareAbyssSkillInput::unavailable"
+        "Stage11DRareAbyssSkillInput::waiting"
+        "Stage11DRareAbyssSkillInput::injected")
+    string(FIND "${_rare_abyss_skill_text}" "${_required}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard missing runtime rare abyss skill token: ${_required}")
+    endif()
+endforeach()
+string(REGEX REPLACE "[ \t\r\n]+" "" _rare_abyss_skill_normalized
+    "${_rare_abyss_skill_text}")
+stage11d_extract_direct_braced_statement("rare abyss storm success return"
+    "${_rare_abyss_skill_text}"
+    "if (storm == Stage11DEquippedSkillInput::injected) {" 2
+    _rare_abyss_storm_success_block)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _rare_abyss_storm_success_normalized
+    "${_rare_abyss_storm_success_block}")
+if(NOT _rare_abyss_storm_success_normalized STREQUAL
+        "if(storm==Stage11DEquippedSkillInput::injected){returnStage11DRareAbyssSkillInput::injected;}")
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected rare abyss storm success return")
+endif()
+stage11d_extract_direct_braced_statement("rare abyss draw success return"
+    "${_rare_abyss_skill_text}"
+    "if (draw == Stage11DEquippedSkillInput::injected) {" 2
+    _rare_abyss_draw_success_block)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _rare_abyss_draw_success_normalized
+    "${_rare_abyss_draw_success_block}")
+if(NOT _rare_abyss_draw_success_normalized STREQUAL
+        "if(draw==Stage11DEquippedSkillInput::injected){returnStage11DRareAbyssSkillInput::injected;}")
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected rare abyss draw success return")
+endif()
+stage11d_count_raw_token("${_rare_abyss_skill_text}"
+    "return Stage11DRareAbyssSkillInput::injected;"
+    _rare_abyss_injected_return_count)
+if(NOT _rare_abyss_injected_return_count EQUAL 2)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected rare abyss injected return inventory")
+endif()
+set(_rare_abyss_equipped_slot_chain
+    "for(std::size_tslot=0U;slot<dungeon_state.skill_loadout.slots.size();++slot){if(dungeon_state.skill_loadout.slots[slot].active!=skill){continue;}if(combat_state.skill_cooldowns[cooldown]!=0U){returnStage11DEquippedSkillInput::waiting;}snapshot.active_skill_slots[slot]=true;returnStage11DEquippedSkillInput::injected;}")
+string(FIND "${_rare_abyss_skill_normalized}"
+    "${_rare_abyss_equipped_slot_chain}" _rare_abyss_equipped_slot_found)
+if(_rare_abyss_equipped_slot_found EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected the equipped physical skill-slot chain")
+endif()
+stage11d_count_raw_token("${_rare_abyss_skill_text}"
+    "snapshot.active_skill_slots[" _rare_abyss_skill_write_count)
+if(NOT _rare_abyss_skill_write_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected rare abyss physical skill write inventory")
+endif()
+stage11d_require_unique_token_depth("rare abyss equipped skill write"
+    "${_rare_abyss_skill_text}"
+    "snapshot.active_skill_slots[slot] = true;" 3)
+foreach(_required_chain IN ITEMS
+        "unavailable=unavailable||storm==Stage11DEquippedSkillInput::absent;"
+        "unavailable=unavailable||draw==Stage11DEquippedSkillInput::absent;"
+        "for(constauto&slot:dungeon_state.skill_loadout.slots){area_skill_equipped=area_skill_equipped||slot.active==skills::ActiveSkillId::storm_swords||slot.active==skills::ActiveSkillId::draw_slash;}"
+        "returnwaiting?Stage11DRareAbyssSkillInput::waiting:(unavailable||!area_skill_equipped)?Stage11DRareAbyssSkillInput::unavailable:Stage11DRareAbyssSkillInput::no_geometry;")
+    string(FIND "${_rare_abyss_skill_normalized}"
+        "${_required_chain}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected unavailable-skill fallback")
+    endif()
+endforeach()
+foreach(_forbidden IN ITEMS
+        "snapshot.active_skill_slots[1]"
+        "snapshot.active_skill_slots[0]"
+        "snapshot.active_skill_slots[1U]"
+        "snapshot.active_skill_slots[0U]"
+        "combat_state.skill_cooldowns[1]"
+        "combat_state.skill_cooldowns[0]"
+        "combat_state.skill_cooldowns[1U]"
+        "combat_state.skill_cooldowns[0U]")
+    string(FIND "${_rare_abyss_skill_text}" "${_forbidden}" _found)
+    if(NOT _found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected hard-coded rare abyss skill slot: ${_forbidden}")
+    endif()
+endforeach()
+stage11d_extract_runtime_definition("rare abyss danger"
+    "bool stage11d_rare_abyss_danger_near_player(" _rare_abyss_danger_text)
+foreach(_required IN ITEMS
+        "!monster.active || monster.hp <= 0"
+        "monster.reaction != combat::ReactionState::idle"
+        "monster.ai_phase == combat::MonsterAiPhase::recovery"
+        "monster.ai_phase == combat::MonsterAiPhase::cooldown"
+        "monster.ai_phase == combat::MonsterAiPhase::defeated"
+        "x * x + y * y <= radius_squared")
+    string(FIND "${_rare_abyss_danger_text}" "${_required}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard missing rare abyss danger token: ${_required}")
+    endif()
+endforeach()
+stage11d_extract_runtime_definition("rare abyss availability"
+    "bool stage11d_rare_abyss_player_available(" _rare_abyss_ready_text)
+foreach(_required IN ITEMS
+        "player.hp > 0" "player.hurt_ticks == 0U"
+        "player.hit_stop_ticks == 0U"
+        "player.active_attack == combat::AttackId::none"
+        "state.active_skill.id == skills::ActiveSkillId::none"
+        "state.diagnostics.input_size == 0U")
+    string(FIND "${_rare_abyss_ready_text}" "${_required}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard missing rare abyss availability token: ${_required}")
+    endif()
+endforeach()
+foreach(_forbidden IN ITEMS
+        ".request_active_skill_slot(" ".queue_action("
+        "request_pickup(" "complete_pickup(")
+    string(FIND "${_runtime_code}" "${_forbidden}" _found)
+    if(NOT _found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected runtime input bypass: ${_forbidden}")
+    endif()
+endforeach()
 string(REGEX MATCH
     "ground_items[ \t\r\n]*\\[[^]]+\\][ \t\r\n]*=[^=]"
     _ground_mutation "${_runtime_code}")
 if(_ground_mutation)
     message(FATAL_ERROR "Stage11D loot evidence guard rejected snapshot mutation")
+endif()
+if(DEFINED STAGE11D_ABYSS_PHYSICAL_ONLY AND STAGE11D_ABYSS_PHYSICAL_ONLY)
+    message(STATUS "Stage11D rare-abyss physical-input guard passed")
+    return()
 endif()
 
 stage11d_extract_runtime_definition("fixed-step activation"
@@ -1317,10 +2300,21 @@ foreach(_required IN ITEMS
         "platform::run_raylib_host(config)" "persistence::SaveStore"
         "settings::SettingsStore" "settings_store.save("
         "present_frame_and_maybe_capture" "stage11d_record_semantics"
-        "renderer.draw(" "pickup_commit_generation" "defeat_distance_milli")
+        "renderer.draw(" "pickup_commit_generation" "drop_distance_milli"
+        "build_room_monster_plan(" "kRoomMonsterGeneratorVersion"
+        "monster_blueprint_hash" "ordinary_generator_version"
+        "ordinary_initial_residents"
+        "ordinary_drop_ordinals" "ordinary_drop_item_ids")
     string(FIND "${_combined}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11D loot evidence guard missing production token: ${_required}")
+    endif()
+endforeach()
+foreach(_forbidden IN ITEMS "build_encounter_plan(" "--search-ordinary")
+    string(FIND "${_formal_text}" "${_forbidden}" _found)
+    if(NOT _found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected obsolete fixture token: ${_forbidden}")
     endif()
 endforeach()
 
@@ -1747,34 +2741,24 @@ if(NOT _host_second_plan EQUAL -1)
     message(FATAL_ERROR "Stage11D loot evidence guard rejected a second host render plan")
 endif()
 arpg_sanitize_cpp_source("${_renderer_text}" _renderer_code)
-string(FIND "${_renderer_code}" "GroundLootView CombatRenderer::draw("
-    _renderer_draw_start)
-if(_renderer_draw_start EQUAL -1)
-    message(FATAL_ERROR "Stage11D loot evidence guard cannot isolate CombatRenderer::draw")
-endif()
-string(SUBSTRING "${_renderer_code}" 0 ${_renderer_draw_start}
-    _renderer_before_draw_text)
-string(SUBSTRING "${_renderer_code}" ${_renderer_draw_start} -1
-    _renderer_draw_text)
-string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\("
-    _renderer_plans "${_renderer_draw_text}")
-list(LENGTH _renderer_plans _renderer_plan_count)
-if(NOT _renderer_plan_count EQUAL 1)
-    message(FATAL_ERROR "Stage11D loot evidence guard requires the one production renderer plan")
-endif()
-string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\("
-    _renderer_before_draw_plans "${_renderer_before_draw_text}")
-list(LENGTH _renderer_before_draw_plans _renderer_before_draw_plan_count)
-if(NOT _renderer_before_draw_plan_count EQUAL 3)
+evidence_extract_cpp_function_block("${_renderer_text}"
+    "CombatRenderPlan make_combat_render_plan(" _renderer_plan_definition)
+evidence_extract_cpp_function_block("${_renderer_text}"
+    "GroundLootView CombatRenderer::draw(" _renderer_draw_function)
+foreach(_renderer_surface IN ITEMS _renderer_plan_definition
+        _renderer_draw_function)
+    stage11d_count_raw_token("${${_renderer_surface}}"
+        "make_combat_render_plan(" _renderer_surface_count)
+    if(NOT _renderer_surface_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires exactly one renderer plan in CombatRenderer::draw")
+    endif()
+endforeach()
+stage11d_count_raw_token("${_renderer_code}" "make_combat_render_plan("
+    _renderer_total_plan_count)
+if(NOT _renderer_total_plan_count EQUAL 2)
     message(FATAL_ERROR
-        "Stage11D loot evidence guard rejected a draw-external renderer plan")
-endif()
-string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\("
-    _renderer_all_plans "${_renderer_code}")
-list(LENGTH _renderer_all_plans _renderer_all_plan_count)
-if(NOT _renderer_all_plan_count EQUAL 4)
-    message(FATAL_ERROR
-        "Stage11D loot evidence guard requires the current four renderer-plan tokens")
+        "Stage11D loot evidence guard rejected renderer plan outside CombatRenderer::draw")
 endif()
 foreach(_required IN ITEMS
         "const GroundLootView ground_loot_view = [&]() noexcept {"
@@ -1801,11 +2785,109 @@ foreach(_required IN ITEMS
         "\$feature = Measure-Region \$bitmap"
         "snapshot_ids" "inventory_ids" "hidden-item semantics mismatch"
         "abyss_claimed" "pickup_commit_generation" "preview_visible_count"
+        "ordinary_blueprint_hash" "progress_defeated"
+        "drop_distance_milli"
+        "ordinary production kill progress is invalid"
         "pickup notice region is blank" "result -eq 'pass'")
     string(FIND "${_validator_text}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11D loot evidence validator missing semantic check: ${_required}")
     endif()
 endforeach()
+
+arpg_sanitize_cpp_source("${_stage_header_text}" _stage11d_header_code)
+foreach(_required IN ITEMS
+        "std::int32_t player_hp{};"
+        "std::int32_t player_max_hp{};"
+        "bool player_damage_observed{};"
+        "bool player_hp_sampled{};")
+    stage11d_count_raw_token("${_stage11d_header_code}" "${_required}"
+        _stage11d_player_state_count)
+    if(NOT _stage11d_player_state_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires live player damage observation")
+    endif()
+endforeach()
+evidence_extract_cpp_function_block("${_report_text}"
+    "bool stage11d_target_visible(" _stage11d_target_visible_function)
+stage11d_mask_non_direct_executable_scopes(
+    "${_stage11d_target_visible_function}"
+    _stage11d_target_visible_active)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _stage11d_target_visible_normalized
+    "${_stage11d_target_visible_active}")
+foreach(_required IN ITEMS
+        "conststd::int32_tcurrent_hp=snapshot.combat->player.hp;"
+        "conststd::int32_tcurrent_max_hp=snapshot.combat->player.max_hp;"
+        "state.player_damage_observed=state.player_damage_observed||(state.player_hp_sampled&&current_max_hp==state.player_max_hp&&current_hp<state.player_hp);"
+        "state.player_hp=current_hp;"
+        "state.player_max_hp=current_max_hp;"
+        "state.player_hp_sampled=true;"
+        "state.player_hp=0;"
+        "state.player_max_hp=0;"
+        "state.player_hp_sampled=false;")
+    string(FIND "${_stage11d_target_visible_normalized}" "${_required}"
+        _stage11d_player_damage_observation)
+    if(_stage11d_player_damage_observation EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires consecutive live player HP sampling")
+    endif()
+endforeach()
+evidence_extract_cpp_function_block("${_report_text}"
+    "void write_stage11d_loot_validation_summary(" _stage11d_summary_function)
+string(REGEX REPLACE "[ \t\r\n]+" "" _stage11d_summary_normalized
+    "${_stage11d_summary_function}")
+foreach(_required IN ITEMS
+        "state.player_hp" "state.player_max_hp"
+        "state.player_damage_observed")
+    stage11d_count_raw_token("${_stage11d_summary_normalized}"
+        "${_required}" _stage11d_summary_player_count)
+    if(NOT _stage11d_summary_player_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires consecutive live player HP sampling")
+    endif()
+endforeach()
+
+string(REGEX REPLACE "#[^\r\n]*" "" _stage11d_validator_code
+    "${_validator_text}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _stage11d_validator_normalized
+    "${_stage11d_validator_code}")
+foreach(_required IN ITEMS
+        "$values.player_damage_observed-eq'1'"
+        "[int]$values.progress_hp-gt0"
+        "[int]$values.progress_hp-le[int]$values.progress_max_hp")
+    stage11d_count_raw_token("${_stage11d_validator_normalized}"
+        "${_required}" _stage11d_player_validator_count)
+    if(NOT _stage11d_player_validator_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires live player damage observation")
+    endif()
+endforeach()
+foreach(_forbidden IN ITEMS
+        "$values.monster_damage_observed-eq'1'"
+        "$defeated-ge[uint32]$manifest.ordinary_prefix_kills")
+    string(FIND "${_stage11d_validator_normalized}" "${_forbidden}"
+        _stage11d_forbidden_requirement)
+    if(NOT _stage11d_forbidden_requirement EQUAL -1)
+        if(_forbidden MATCHES "monster_damage")
+            message(FATAL_ERROR
+                "Stage11D loot evidence guard forbids diagnostic monster damage as a formal requirement")
+        endif()
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard forbids fixture prefix length as a formal kill requirement")
+    endif()
+endforeach()
+if(NOT _stage11d_validator_ast_checked)
+    execute_process(
+        COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+            -File "${_validator_ast_guard}" -ValidatorPath "${_validator}"
+        RESULT_VARIABLE _stage11d_validator_ast_result
+        OUTPUT_VARIABLE _stage11d_validator_ast_output
+        ERROR_VARIABLE _stage11d_validator_ast_error)
+endif()
+if(NOT _stage11d_validator_ast_result EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard validator AST validation failed: ${_stage11d_validator_ast_output}\n${_stage11d_validator_ast_error}")
+endif()
 
 message(STATUS "Stage11D loot formal evidence guard passed")

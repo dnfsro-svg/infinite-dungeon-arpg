@@ -4,6 +4,7 @@
 #include "checkpoint/room_checkpoint_validation.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <system_error>
@@ -312,7 +313,7 @@ bool SaveCommitStorage::initialize(const SaveStoreConfig& config) noexcept {
                         buffers_[index][8U + byte]) << (byte * 8U);
                 }
             }
-            if (decode_checkpoint_v9_into(buffers_[index].data(),
+            if (decode_checkpoint_v10_into(buffers_[index].data(),
                     disk_sizes_[index], jobs_[index].checkpoint,
                     migrated[index]) != CodecError::none) {
                 disk_states_[index] = SaveCommitDiskState::invalid;
@@ -518,12 +519,15 @@ bool SaveCommitWorker::start() noexcept {
 
 SaveCommitCaptureLease SaveCommitWorker::acquire_capture_slot(
     const std::uint64_t revision, const SaveCommitRequestKind kind,
-    const std::uint64_t intent) noexcept {
+    const std::uint64_t intent,
+    const SaveCommitPayloadKind payload) noexcept {
     std::lock_guard<std::mutex> lock{mutex_};
     if (!started_ || stopping_) {
         return {SaveCommitSubmitState::stopped};
     }
-    if (revision == 0U) return {};
+    if (revision == 0U
+            || (payload == SaveCommitPayloadKind::verify_durable
+                && kind != SaveCommitRequestKind::exact)) return {};
     SaveCommitSubmitState acquisition = SaveCommitSubmitState::accepted;
     std::uint8_t slot = kNoSlot;
     for (std::uint8_t index = 0U; index < kSlotCount; ++index) {
@@ -550,7 +554,9 @@ SaveCommitCaptureLease SaveCommitWorker::acquire_capture_slot(
     job.revision = revision;
     job.intent = intent;
     job.kind = kind;
-    return {acquisition, slot, revision, intent, token, epoch_, kind};
+    job.payload = payload;
+    return {acquisition, slot, revision, intent, token, epoch_, kind,
+        payload};
 }
 
 SaveCommitJobSlot* SaveCommitWorker::capture_job(
@@ -577,8 +583,11 @@ SaveCommitSubmission SaveCommitWorker::submit(
             || storage_->jobs_[lease.job_slot].revision != lease.revision
             || storage_->jobs_[lease.job_slot].intent != lease.intent
             || storage_->jobs_[lease.job_slot].kind != lease.kind
-            || storage_->jobs_[lease.job_slot].checkpoint.persistence_revision
-                != lease.revision
+            || storage_->jobs_[lease.job_slot].payload != lease.payload
+            || (lease.payload
+                    == SaveCommitPayloadKind::captured_checkpoint
+                && storage_->jobs_[lease.job_slot]
+                    .checkpoint.persistence_revision != lease.revision)
             || queued_slot_ != kNoSlot) {
         return {SaveCommitSubmitState::busy};
     }
@@ -712,8 +721,29 @@ SaveCommitExactResult SaveCommitWorker::commit(
 
     // Between commits the two fixed buffers are byte-exact mirrors of the
     // last fully decoded/validated A/B images. Successful publication replaces
-    // only the target mirror with the canonical V9 image. This preserves a
-    // collision-free proof for legacy and V9 slots without a third large slot.
+    // only the target mirror with the canonical current image. This preserves
+    // a collision-free proof for legacy, V9, and V10 slots without a third
+    // large slot.
+    const auto record_elapsed = [](std::uint64_t& destination,
+                                    const auto begin) noexcept {
+        const auto elapsed = std::chrono::duration_cast<
+            std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - begin).count();
+        if (elapsed > 0) {
+            destination += static_cast<std::uint64_t>(elapsed);
+        }
+    };
+    const auto measured_compare_file = [&](const std::filesystem::path& path,
+                                            const std::uint8_t* expected,
+                                            const std::size_t expected_size)
+                                            noexcept {
+        const auto begin = std::chrono::steady_clock::now();
+        const FileIoResult compared = compare_file(
+            path, expected, expected_size);
+        record_elapsed(result.cost.file_readback_ns, begin);
+        ++result.cost.readback_operations;
+        return compared;
+    };
     const auto disk_matches_cache = [&](const std::size_t index,
                                         const bool replace_invalid) noexcept {
         const SaveCommitDiskState expected = storage_->disk_states_[index];
@@ -725,7 +755,7 @@ SaveCommitExactResult SaveCommitWorker::commit(
         if (actual != expected) return false;
         if (expected == SaveCommitDiskState::missing) return true;
         return expected == SaveCommitDiskState::valid
-            && compare_file(storage_->slot_paths_[index],
+            && measured_compare_file(storage_->slot_paths_[index],
                 storage_->buffers_[index].data(),
                 storage_->disk_sizes_[index]) == FileIoResult::ok;
     };
@@ -753,7 +783,7 @@ SaveCommitExactResult SaveCommitWorker::commit(
             }
             if (expected_states[index] != SaveCommitDiskState::valid
                     || actual != SaveCommitDiskState::valid
-                    || compare_file(storage_->slot_paths_[index],
+                    || measured_compare_file(storage_->slot_paths_[index],
                         storage_->buffers_[index].data(),
                         expected_sizes[index]) != FileIoResult::ok) {
                 failure = SaveError::final_scan_failed;
@@ -779,16 +809,27 @@ SaveCommitExactResult SaveCommitWorker::commit(
         return true;
     };
     if (job.revision == highest_revision) {
+        std::uint64_t verified_revision{};
+        const bool payload_verified = job.payload
+                == SaveCommitPayloadKind::verify_durable
+            ? inspect_checkpoint_latest_envelope(
+                storage_->buffers_[active].data(),
+                storage_->disk_sizes_[active], verified_revision)
+                    == CodecError::none
+                && verified_revision == job.revision
+            : verify_checkpoint_latest_readback(
+                storage_->buffers_[active].data(),
+                storage_->disk_sizes_[active], job.checkpoint,
+                storage_->buffers_[active].data(),
+                storage_->disk_sizes_[active]) == CodecError::none;
         if (job.kind != SaveCommitRequestKind::exact
                 || !disk_matches_cache(0U, false)
                 || !disk_matches_cache(1U, false)
-                || storage_->disk_formats_[active]
-                    != kCheckpointFormatVersionV9
-                || verify_checkpoint_v9_readback(
-                    storage_->buffers_[active].data(),
-                    storage_->disk_sizes_[active], job.checkpoint,
-                    storage_->buffers_[active].data(),
-                    storage_->disk_sizes_[active]) != CodecError::none) {
+                || (storage_->disk_formats_[active]
+                        != kCheckpointFormatVersionV9
+                    && storage_->disk_formats_[active]
+                        != kCheckpointFormatVersionV10)
+                || !payload_verified) {
             result.error = SaveError::invalid_checkpoint;
             return result;
         }
@@ -803,6 +844,10 @@ SaveCommitExactResult SaveCommitWorker::commit(
         result.error = SaveError::none;
         return result;
     }
+    if (job.payload == SaveCommitPayloadKind::verify_durable) {
+        result.error = SaveError::invalid_checkpoint;
+        return result;
+    }
     const std::size_t target = 1U - active;
     if (!disk_matches_cache(active, false)
             || !disk_matches_cache(target, true)) {
@@ -813,8 +858,10 @@ SaveCommitExactResult SaveCommitWorker::commit(
         storage_->disk_states_[target];
     std::uint8_t* const encoded = storage_->buffers_[target].data();
     std::size_t encoded_size{};
-    const CodecError encoded_error = encode_checkpoint_v9_into(
+    const auto encode_begin = std::chrono::steady_clock::now();
+    const CodecError encoded_error = encode_checkpoint_v10_into(
         job.checkpoint, encoded, kMaximumEncodedCheckpointBytes, encoded_size);
+    record_elapsed(result.cost.encode_ns, encode_begin);
     if (encoded_error != CodecError::none) {
         if (previous_target_state == SaveCommitDiskState::valid) {
             storage_->disk_states_[target] = SaveCommitDiskState::invalid;
@@ -826,6 +873,7 @@ SaveCommitExactResult SaveCommitWorker::commit(
         result.error = SaveError::invalid_checkpoint;
         return result;
     }
+    result.cost.encoded_bytes = encoded_size;
     const std::uint32_t encoded_checksum =
         crc32_update(0U, encoded, encoded_size);
     const auto discard_replaced_cache = [&]() noexcept {
@@ -845,8 +893,11 @@ SaveCommitExactResult SaveCommitWorker::commit(
         discard_replaced_cache();
         return result;
     }
+    const auto write_begin = std::chrono::steady_clock::now();
     const FileIoResult write = write_file(storage_->temp_paths_[target],
         encoded, encoded_size, storage_->config_);
+    record_elapsed(result.cost.durable_write_ns, write_begin);
+    ++result.cost.write_operations;
     if (write != FileIoResult::ok) {
         discard_replaced_cache();
         result.error = write == FileIoResult::flush_failed
@@ -863,7 +914,7 @@ SaveCommitExactResult SaveCommitWorker::commit(
         return result;
     }
     if (hook_failed(storage_->config_, SaveFaultPoint::temp_readback)
-            || compare_file(storage_->temp_paths_[target], encoded,
+            || measured_compare_file(storage_->temp_paths_[target], encoded,
                 encoded_size) != FileIoResult::ok) {
         if (!remove_file(storage_->temp_paths_[target])) {
             discard_replaced_cache();
@@ -877,10 +928,18 @@ SaveCommitExactResult SaveCommitWorker::commit(
     // The source checkpoint was structurally validated by the canonical
     // encoder.  Byte-for-byte readback therefore proves both the exact field
     // image and its decodability without mutating the immutable job slot.
-    if (hook_failed(storage_->config_, SaveFaultPoint::after_temp_validation)
-            || hook_failed(storage_->config_, SaveFaultPoint::before_publish)
-            || !publish_file(storage_->temp_paths_[target],
-                storage_->slot_paths_[target])) {
+    bool publish_failed = hook_failed(
+        storage_->config_, SaveFaultPoint::after_temp_validation)
+        || hook_failed(storage_->config_, SaveFaultPoint::before_publish);
+    if (!publish_failed) {
+        const auto publish_begin = std::chrono::steady_clock::now();
+        const bool published = publish_file(storage_->temp_paths_[target],
+            storage_->slot_paths_[target]);
+        record_elapsed(result.cost.durable_write_ns, publish_begin);
+        ++result.cost.write_operations;
+        publish_failed = !published;
+    }
+    if (publish_failed) {
         if (!remove_file(storage_->temp_paths_[target])) {
             discard_replaced_cache();
             result.error = SaveError::cleanup_failed;
@@ -896,7 +955,7 @@ SaveCommitExactResult SaveCommitWorker::commit(
         result.error = SaveError::publish_failed;
         return result;
     }
-    if (compare_file(storage_->slot_paths_[target], encoded,
+    if (measured_compare_file(storage_->slot_paths_[target], encoded,
             encoded_size) != FileIoResult::ok) {
         result.state = SaveCommitState::indeterminate;
         result.error = SaveError::final_scan_failed;
@@ -915,7 +974,7 @@ SaveCommitExactResult SaveCommitWorker::commit(
     final_states[target] = SaveCommitDiskState::valid;
     final_revisions[target] = job.revision;
     final_sizes[target] = encoded_size;
-    final_formats[target] = kCheckpointFormatVersionV9;
+    final_formats[target] = kCheckpointFormatVersionV10;
     final_checksums[target] = encoded_checksum;
     SaveError scan_error{SaveError::none};
     if (!final_scan(final_states, final_revisions, final_sizes, scan_error)) {

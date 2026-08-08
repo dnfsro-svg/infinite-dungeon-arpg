@@ -86,8 +86,11 @@ store 不引用 raylib、Combat、Dungeon、Items、角色 Persistence codec 或
 - `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/single-slot.png`
 - `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/corrupt.png`
 
-同目录的 `stage11b-settings-evidence.txt` 记录真实 V6 `run_a.sav`/`run_b.sav` 的字节
-hash 与大小、暂停前/后 tick、恢复前/后 tick、玩家/怪物 hash、旧/新攻击的生产
+同目录的 `stage11b-settings-evidence.txt` 在 `save_second_slot(main_settings)` 设置事务的
+紧邻前后记录真实 `run_a.sav`/`run_b.sav` 的字节 hash 与大小，并在全部生产 host 子场景
+结束后分别验证两个角色槽都是合法、revision 非零的 V9。这样设置隔离证据不会把真实 fixed tick、
+V8→V9 迁移或 clean-shutdown exact save 的合法存档演进误判成设置污染。报告同时记录暂停前/后
+tick、恢复前/后 tick、玩家/怪物 hash、旧/新攻击的生产
 `queue_action` 接受数、交换对、committed revision、重启绑定、单槽/双槽恢复状态与中文
 “设置已恢复默认值”可见性。正式子进程以带空格的证据目录运行，并通过受控 `.cmd` 中的逐项
 双引号引用启动。`stage11b.settings_evidence_validator` 检查这些字段和四张 PNG 尺寸；
@@ -114,13 +117,17 @@ ctest --preset windows-msvc-release --output-on-failure
   最终日志结束于 09:33:15。
 - Release：fresh configure、clean-first **263** 个构建目标成功，完整 CTest **61/61** 通过；
   最终日志结束于 09:38:29。
-- 后续整改的 Release formal 证据位于带空格目录 `stage11b settings evidence`：真实 V6 双槽
+- 2026-07-18 后续整改时的历史 Release formal 证据位于带空格目录 `stage11b settings evidence`：当时的真实 V6 双槽
   `run_a.sav`/`run_b.sav` 分别为 460 bytes：`run_a` 的前后 FNV-1a hash 均为
   `16395907754423809155`，`run_b` 的前后 hash 均为 `1222458592949165727`。`pause.png` 在暂停菜单
   仍可见的第 120 个冻结 presented frame 后捕获，摘要 `pause_capture_while_paused=1`；暂停先推进 1 tick，
   再冻结 120 presented frames（`1/1`），恢复后恰推进 1 tick（`1→2`，无 catch-up）；生产
   `queue_action` 接受计数为旧 `J=0`、新 `U=1`。`corrupt.png` 可见红色中文“设置已恢复默认值”，
   并由字体加载状态和正式验证器共同确认。
+- 2026-08-02 的 V9/异步 clean-shutdown 兼容整改把角色槽字节恒等的范围收紧到设置事务
+  本身（`character_hash_scope=settings_transaction`）。当前 Debug formal 在该事务边界内
+  `run_a`/`run_b` 的 hash 与大小分别保持不变，并在全部真实 host 子场景结束后验证两槽均为
+  合法 V9（revision 5/7）；暂停恢复证据仍为 `1→2`。
 - 最终整改门禁：Debug fresh configure、clean-first **263** 个构建目标、完整 CTest **61/61**
   通过（日志结束于 10:08:46）；Release fresh configure、clean-first **263** 个构建目标、完整
   CTest **61/61** 通过（日志结束于 10:13:50）。Release 的带空格证据目录于 10:12:27–10:12:31

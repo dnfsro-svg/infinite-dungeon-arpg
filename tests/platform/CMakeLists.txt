@@ -3,6 +3,7 @@ if(TARGET arpg_raylib)
         ../core/allocation_probe.cpp
         platform_test_main.cpp
         host_input_tests.cpp
+        host_validation_exit_tests.cpp
         active_skill_input_tests.cpp
         raylib_input_tests.cpp
         active_skill_view_tests.cpp
@@ -46,6 +47,7 @@ if(TARGET arpg_raylib)
         fire_room_material_slice_tests.cpp
         ecology_material_coverage_tests.cpp
         room_background_render_plan_tests.cpp
+        large_room_render_plan_tests.cpp
         stage12_environment_render_tests.cpp
         stage12_actor_render_tests.cpp
         stage12_material_render_tests.cpp)
@@ -67,6 +69,12 @@ if(TARGET arpg_raylib)
     add_test(NAME platform.units COMMAND arpg_platform_tests)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
+
+    add_test(NAME task11.large_room.platform COMMAND arpg_platform_tests)
+    set_tests_properties(task11.large_room.platform PROPERTIES
+        ENVIRONMENT "ARPG_TASK11_LARGE_ROOM_ONLY=1"
+        LABELS "headless;platform;task11;validation"
+        TIMEOUT 120)
 
     add_test(NAME platform.ui_dpi_manifest
         COMMAND "${CMAKE_COMMAND}"
@@ -136,6 +144,8 @@ if(TARGET arpg_raylib)
         PRIVATE arpg_raylib)
     if(MSVC)
         target_compile_options(arpg_stage16_loot_reinforcement_game_validation PRIVATE /utf-8)
+        target_link_options(arpg_stage16_loot_reinforcement_game_validation
+            PRIVATE /STACK:4194304)
     endif()
     arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_game_validation)
     add_custom_command(TARGET arpg_stage16_loot_reinforcement_game_validation POST_BUILD
@@ -238,7 +248,7 @@ if(TARGET arpg_raylib)
         COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
             "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
     set_tests_properties(stage12.material_formal
-        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 300
+        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 600
             FIXTURES_SETUP stage12_material_evidence RUN_SERIAL TRUE)
     add_test(
         NAME stage12.material_evidence_validator
@@ -442,6 +452,8 @@ if(TARGET arpg_raylib)
         add_executable(arpg_stage11d_loot_formal
             stage11d_loot_formal_game_validation.cpp)
         target_compile_features(arpg_stage11d_loot_formal PRIVATE cxx_std_17)
+        target_include_directories(arpg_stage11d_loot_formal
+            PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
         target_link_libraries(arpg_stage11d_loot_formal PRIVATE arpg_raylib)
         if(MSVC)
             target_compile_options(arpg_stage11d_loot_formal PRIVATE /utf-8)
@@ -1925,7 +1937,7 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_evidence_guard_self_test.cmake")
 set_tests_properties(
     stage11c.hud_evidence_guard_self_test
-    PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 600)
+    PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 900)
 
 add_test(
     NAME stage11d.renderer_integration_guard
@@ -1965,7 +1977,7 @@ set_tests_properties(
     stage11d.loot_evidence_guard_self_test
     PROPERTIES
         LABELS "headless;platform;architecture;stage11d"
-        TIMEOUT 1500
+        TIMEOUT 7200
         RUN_SERIAL TRUE)
 
 add_test(

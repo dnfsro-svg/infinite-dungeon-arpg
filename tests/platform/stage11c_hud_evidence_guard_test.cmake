@@ -3,6 +3,7 @@ if(NOT DEFINED SOURCE_ROOT)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/host_validation_success_tail_guard.cmake")
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
@@ -790,14 +791,11 @@ if(NOT _summary_call_count EQUAL 1)
     message(FATAL_ERROR
         "Stage11C evidence guard requires one facade summary call")
 endif()
-string(FIND "${_host_run_normalized}"
-    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);"
-    _summary_call)
-string(FIND "${_host_run_normalized}" "audio.shutdown();" _audio_shutdown)
-if(_summary_call EQUAL -1 OR _audio_shutdown EQUAL -1
-        OR NOT _summary_call LESS _audio_shutdown)
+evidence_host_success_tail_is_canonical("${_host_run_code}"
+    _success_tail_valid _success_tail_reason)
+if(NOT _success_tail_valid)
     message(FATAL_ERROR
-        "Stage11C evidence guard rejected facade summary binding/order")
+        "Stage11C evidence guard rejected facade summary binding/order: ${_success_tail_reason}")
 endif()
 
 foreach(_forbidden_host_owner IN ITEMS

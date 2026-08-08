@@ -364,7 +364,7 @@ arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
     const auto player = session.snapshot().combat->player.position;
     constexpr std::uint64_t kItemId = 0xC0FFEEU;
     constexpr std::uint16_t kItemOrdinal = 5U;
-    constexpr std::uint16_t kMaterialOrdinal = 7U;
+    constexpr std::uint16_t kMaterialOrdinal = 6U;
     constexpr std::uint16_t kPotionSpawn = 8U;
     const auto item = normal_item(kItemId);
     ARPG_REQUIRE(arpg::items::validate_item(item));
@@ -392,6 +392,7 @@ arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
     ARPG_REQUIRE(saved->persistence_revision == 61U);
     ARPG_REQUIRE(saved->room_progress.lifecycle
         == arpg::checkpoint::RoomProgressLifecycle::active);
+    ARPG_REQUIRE(saved->room_progress.pending_room_experience == 0U);
     ARPG_REQUIRE(saved->room_progress.equipment_ground_count == 1U);
     ARPG_REQUIRE(saved->room_progress.equipment_ground[0U].ordinal
         == kItemOrdinal);
@@ -401,15 +402,16 @@ arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
     ARPG_REQUIRE(saved->room_progress.secondary_ground[0U].tag
         == arpg::checkpoint::SecondaryGroundTag::material);
     ARPG_REQUIRE(saved->room_progress.secondary_ground[0U].ordinal
-        == arpg::checkpoint::checkpoint_material_ordinal(kMaterialOrdinal));
+        == kMaterialOrdinal);
     ARPG_REQUIRE(saved->room_progress.secondary_ground[1U].tag
         == arpg::checkpoint::SecondaryGroundTag::health_potion);
     ARPG_REQUIRE(saved->room_progress.secondary_ground[1U].ordinal
         == arpg::checkpoint::health_potion_claim_ordinal(kPotionSpawn));
 
-    arpg::test::DungeonSessionTestAccess::seed_checkpoint_unowned_runtime_state(
+    arpg::test::DungeonSessionTestAccess::seed_checkpoint_restore_probe_state(
         session);
     const auto live_before_restore = session.snapshot();
+    ARPG_REQUIRE(live_before_restore.pending_room_experience == 91U);
     ARPG_REQUIRE(session.restore_room_progress_checkpoint(*saved));
     const auto live_after_restore = session.snapshot();
     ARPG_REQUIRE(live_after_restore.session_tick
@@ -418,7 +420,7 @@ arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
         == live_before_restore.diagnostics.rejected_exit_count);
     ARPG_REQUIRE(live_after_restore.last_exit == live_before_restore.last_exit);
     ARPG_REQUIRE(live_after_restore.pending_room_experience
-        == live_before_restore.pending_room_experience);
+        == saved->room_progress.pending_room_experience);
 
     DungeonSession restored{DungeonRules{}, saved->state};
     arpg::test::set_player_health(restored, 1000000, 1000000);
@@ -582,7 +584,7 @@ arpg::test::Failure normal_early_exit_commits_monster_xp_and_claimed_loot_only()
     ARPG_REQUIRE(commit_current(session));
     ARPG_REQUIRE(contains_item(session.item_state(), kClaimedItemId));
 
-    constexpr std::uint16_t kUnpickedMaterialOrdinal = 191U;
+    constexpr std::uint16_t kUnpickedMaterialOrdinal = 190U;
     arpg::test::install_ground_material(session, kUnpickedMaterialOrdinal,
         arpg::items::MaterialId::reinforcement_stone, player);
     const auto materials_before = session.item_state().materials;

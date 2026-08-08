@@ -13,6 +13,8 @@
 
 namespace arpg::platform {
 
+struct CombatCameraView;
+
 struct DrawSlashVisualPlan final {
     bool visible{};
     combat::Vec3 center{};
@@ -86,6 +88,11 @@ struct ActiveSkillDrawRuntimeStatus final {
 class ActiveSkillRenderer final {
 public:
     [[nodiscard]] bool assets_ready() const noexcept;
+    [[nodiscard]] ActiveSkillDrawRuntimeStatus draw_world(
+        const ActiveSkillEffectPlan& plan,
+        const MaterialPack& material_pack,
+        const CombatCameraView& camera,
+        float width, float height) const noexcept;
     [[nodiscard]] ActiveSkillDrawRuntimeStatus draw_world(
         const ActiveSkillEffectPlan& plan,
         const MaterialPack& material_pack,

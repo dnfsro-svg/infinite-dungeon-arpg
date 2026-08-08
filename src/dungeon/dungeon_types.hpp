@@ -141,6 +141,14 @@ inline constexpr std::size_t kGroundDropCapacity = 192U;
 static_assert(kGroundHealthPotionCapacity == kGroundDropCapacity);
 inline constexpr float kPickupRadius = 1.5F;
 
+[[nodiscard]] constexpr bool legacy_equipment_claim_representable(
+    const std::uint16_t ordinal) noexcept {
+    return ordinal < kGroundDropCapacity;
+}
+
+static_assert(legacy_equipment_claim_representable(191U));
+static_assert(!legacy_equipment_claim_representable(192U));
+
 enum class GroundItemSource : std::uint8_t {
     monster_drop,
     abyss_chest,
@@ -208,6 +216,7 @@ struct DungeonSnapshot final {
     std::uint64_t commit_generation{};
     std::uint64_t room_index{};
     std::uint64_t room_seed{};
+    std::uint64_t room_instance_generation{};
     std::uint64_t depth{1};
     std::uint64_t floor_room_index{1};
     std::array<std::uint32_t, 4> biases{};

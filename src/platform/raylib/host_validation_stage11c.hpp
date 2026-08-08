@@ -1,5 +1,6 @@
 #pragma once
 
+#include "combat/combat_types.hpp"
 #include "hud_layout.hpp"
 #include "hud_notice_state.hpp"
 #include "hud_view_model.hpp"
@@ -24,6 +25,12 @@ namespace host_validation {
 struct Stage11CHudValidationState final {
     std::uint32_t injected_frames{};
     std::uint32_t target_presented_frames{};
+    combat::Vec3 previous_player_position{};
+    std::uint16_t stalled_movement_frames{};
+    std::uint16_t recovery_movement_frames{};
+    std::uint8_t recovery_direction{};
+    bool previous_player_position_valid{};
+    bool movement_was_requested{};
     std::uint64_t production_snapshot_hash{};
     HudViewModel model{};
     HudNoticeView notices{};
@@ -33,6 +40,8 @@ struct Stage11CHudValidationState final {
     bool captured{};
 };
 
+[[nodiscard]] bool stage11c_uses_full_clear_driver(
+    Stage11CHudValidationScenario) noexcept;
 [[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges(
     PhysicalKeySnapshot, const RaylibHostConfig&,
     const settings::SettingsData&, const dungeon::DungeonSnapshot&,

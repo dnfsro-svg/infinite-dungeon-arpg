@@ -1269,6 +1269,7 @@ host_validation_require_depth("input top-level definition" "${_runtime}"
 host_validation_require_order("runtime input composition" "${_inject}"
     "inject_stage11b_physical_edges("
     "inject_stage11c_physical_edges("
+    "stage11d.suspend_injection = gameplay_rearm_required;"
     "inject_stage11d_physical_edges("
     "death_input_snapshot = stage11d_physical_keys;"
     "stage17.suspend_injection = gameplay_rearm_required;"
@@ -1276,6 +1277,7 @@ host_validation_require_order("runtime input composition" "${_inject}"
 foreach(_injector IN ITEMS
         "inject_stage11b_physical_edges("
         "inject_stage11c_physical_edges("
+        "stage11d.suspend_injection = gameplay_rearm_required;"
         "inject_stage11d_physical_edges("
         "inject_stage17_physical_edges(")
     host_validation_require_count("runtime injector uniqueness" "${_inject}"
@@ -1293,6 +1295,8 @@ foreach(_inject_token IN ITEMS
     host_validation_require_depth("direct input composition" "${_inject}"
         "${_inject_token}" 1)
 endforeach()
+host_validation_require_count("runtime Stage11D rearm propagation" "${_inject}"
+    "stage11d.suspend_injection = gameplay_rearm_required;" 1)
 host_validation_reject_return_before("input composition" "${_inject}"
     "inject_stage11b_physical_edges(")
 
@@ -1421,12 +1425,16 @@ bool HostValidationRuntime::should_continue_death(
     const dungeon::DungeonSnapshot& snapshot) const noexcept {
     const bool pending = snapshot.death.has_value()
         && snapshot.death->can_continue && !snapshot.death->saving;
+    const bool stage10_validation_continue =
+        impl_->config->stage10_validation
+            == Stage10ValidationScenario::player_death;
     const auto scenario = impl_->config->stage11_validation;
-    const bool validation_continue =
+    const bool stage11_validation_continue =
         scenario == Stage11ValidationScenario::deep_continue
         || scenario == Stage11ValidationScenario::floor_one_continue;
-    return pending && validation_continue
-        && !impl_->states.stage11.continue_requested;
+    return pending && (stage10_validation_continue
+        || (stage11_validation_continue
+            && !impl_->states.stage11.continue_requested));
 }
 ]=])
 set(_fixed_step_movement_contract [=[
@@ -1441,6 +1449,18 @@ combat::MovementInput HostValidationRuntime::fixed_step_movement(
     }
     if (impl_->config->stage10_validation
             != Stage10ValidationScenario::none) {
+        return host_validation::stage10_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage10);
+    }
+    const bool stage11c_full_clear_combat =
+        snapshot.phase == dungeon::RoomPhase::combat
+        && host_validation::stage11c_uses_full_clear_driver(
+            impl_->config->stage11c_hud_validation);
+    const bool stage11c_abyss_exit =
+        snapshot.phase == dungeon::RoomPhase::awaiting_exit
+        && impl_->config->stage11c_hud_validation
+            == Stage11CHudValidationScenario::abyss_abandon;
+    if (stage11c_full_clear_combat || stage11c_abyss_exit) {
         return host_validation::stage10_validation_input(
             session, snapshot, *impl_->config, impl_->states.stage10);
     }

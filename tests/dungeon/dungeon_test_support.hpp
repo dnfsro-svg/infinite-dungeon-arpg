@@ -61,7 +61,7 @@ struct DungeonSessionTestAccess final {
         return field != nullptr
             && &field->active_pool() == &world.monsters_;
     }
-    static void seed_checkpoint_unowned_runtime_state(
+    static void seed_checkpoint_restore_probe_state(
         dungeon::DungeonSession& session) noexcept {
         session.session_tick_ = 73U;
         session.diagnostics_.rejected_exit_count = 5U;
@@ -283,7 +283,10 @@ struct DungeonSessionTestAccess final {
     }
     static std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
         dungeon::DungeonSession& session,
-        combat::MonsterOrdinal ordinal) noexcept {
+        combat::MonsterOrdinal ordinal,
+        combat::CombatEvent* observed_events = nullptr,
+        std::size_t observed_capacity = 0U,
+        std::size_t* observed_count = nullptr) noexcept {
         if (session.phase_ != dungeon::RoomPhase::combat
                 || !session.combat_.has_value()) {
             return std::nullopt;
@@ -345,7 +348,16 @@ struct DungeonSessionTestAccess final {
 
         std::optional<combat::CombatEvent> defeated{};
         bool invalid_event = false;
+        std::size_t event_count{};
         while (const auto event = session.combat_events_.try_pop()) {
+            if (observed_events != nullptr) {
+                if (event_count >= observed_capacity) {
+                    invalid_event = true;
+                } else {
+                    observed_events[event_count] = *event;
+                }
+                ++event_count;
+            }
             if (event->kind == combat::CombatEventKind::defeated) {
                 if (defeated.has_value() || event->target_ordinal != ordinal) {
                     invalid_event = true;
@@ -376,6 +388,7 @@ struct DungeonSessionTestAccess final {
                 || !defeated->reward_eligible) {
             return std::nullopt;
         }
+        if (observed_count != nullptr) *observed_count = event_count;
         return defeated;
     }
     static bool append_defeat_record(
@@ -540,9 +553,12 @@ struct DungeonSessionTestAccess final {
         const items::ItemInstance& item,
         combat::Vec3 position) noexcept {
         if (ordinal < session.ground_items_.size()) {
-            session.ground_items_[ordinal] = {
+            const dungeon::GroundItem ground{
                 true, ordinal, dungeon::GroundItemSource::monster_drop,
                 0xFFU, position, item};
+            if (!session.room_drop_state_.place_equipment(ground)) {
+                session.ground_items_[ordinal] = ground;
+            }
         }
     }
     static void install_abyss_ground_item(
@@ -552,9 +568,12 @@ struct DungeonSessionTestAccess final {
         const items::ItemInstance& item,
         combat::Vec3 position) noexcept {
         if (ordinal < session.ground_items_.size()) {
-            session.ground_items_[ordinal] = {
+            const dungeon::GroundItem ground{
                 true, ordinal, dungeon::GroundItemSource::abyss_chest,
                 reward_ordinal, position, item};
+            if (!session.room_drop_state_.place_equipment(ground)) {
+                session.ground_items_[ordinal] = ground;
+            }
         }
     }
     static combat::CombatWorld* mutable_combat_world(
@@ -622,7 +641,47 @@ struct DungeonSessionTestAccess final {
     }
     static void clear_all_ground_health_potions(
         dungeon::DungeonSession& session) noexcept {
-        session.ground_health_potions_ = {};
+        while (true) {
+            const std::uint16_t spawn =
+                session.room_drop_state_.first_health_potion_spawn();
+            if (spawn == 0xFFFFU) return;
+            const std::uint16_t ordinal =
+                session.ground_health_potions_[spawn].claim_ordinal;
+            if (!session.room_drop_state_.mark_secondary_claimed(ordinal)) {
+                return;
+            }
+        }
+    }
+    static bool install_authoritative_ground_item(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal,
+        const items::ItemInstance& item,
+        combat::Vec3 position) noexcept {
+        if (ordinal >= session.ground_items_.size()) return false;
+        const dungeon::GroundItem ground{
+            true, ordinal, dungeon::GroundItemSource::monster_drop,
+            0xFFU, position, item};
+        return session.room_drop_state_.place_equipment(ground);
+    }
+    static bool replace_indexed_ground_item_for_fault(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal,
+        const items::ItemInstance& item) noexcept {
+        if (ordinal >= session.ground_items_.size()
+                || !session.ground_items_[ordinal].active
+                || session.room_drop_state_.equipment_claimed(ordinal)
+                || !session.room_drop_state_.spatial_index()
+                    .has_present_record(
+                        dungeon::RoomDropKind::equipment, ordinal)) {
+            return false;
+        }
+        dungeon::GroundItem& ground = session.ground_items_[ordinal];
+        ground.item = item;
+        return true;
+    }
+    static void clear_room_drop_spatial_index(
+        dungeon::DungeonSession& session) noexcept {
+        session.room_drop_state_.spatial_index().clear();
     }
     static void install_ground_material(
         dungeon::DungeonSession& session,
@@ -632,8 +691,11 @@ struct DungeonSessionTestAccess final {
         dungeon::GroundMaterialSource source =
             dungeon::GroundMaterialSource::monster_common) noexcept {
         if (ordinal < session.ground_materials_.size()) {
-            session.ground_materials_[ordinal] = {
+            const dungeon::GroundMaterial ground{
                 true, ordinal, source, position, material};
+            if (!session.room_drop_state_.place_material(ground)) {
+                session.ground_materials_[ordinal] = ground;
+            }
         }
     }
     static void install_ground_health_potion(
@@ -641,10 +703,12 @@ struct DungeonSessionTestAccess final {
         std::uint16_t spawn_ordinal,
         combat::Vec3 position) noexcept {
         if (spawn_ordinal < session.ground_health_potions_.size()) {
-            session.ground_health_potions_[spawn_ordinal] = {
+            const dungeon::GroundHealthPotion potion{
                 true, spawn_ordinal,
                 dungeon::health_potion_claim_ordinal(spawn_ordinal),
                 position};
+            static_cast<void>(
+                session.room_drop_state_.place_health_potion(potion));
         }
     }
     static void replace_ground_health_potion(
@@ -802,9 +866,11 @@ struct DungeonSessionTestAccess final {
             position.z += offset.z;
         }
     }
-    static const std::array<std::uint64_t, 3>& rolled_drop_bits(
+    static std::array<std::uint64_t, 3U> rolled_drop_bits(
         const dungeon::DungeonSession& session) noexcept {
-        return session.rolled_drop_bits_;
+        return {{session.rolled_drop_bits_[0U],
+            session.rolled_drop_bits_[1U],
+            session.rolled_drop_bits_[2U]}};
     }
     static const dungeon::DungeonRunState& stable_state(
         const dungeon::DungeonSession& session) noexcept {
@@ -828,17 +894,17 @@ struct DungeonSessionTestAccess final {
             destination, source);
     }
     static const std::array<dungeon::GroundItem,
-        dungeon::kGroundDropCapacity>& ground_items(
+        dungeon::kAuthoritativeEquipmentDropCapacity>& ground_items(
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_items_;
     }
     static const std::array<dungeon::GroundMaterial,
-        dungeon::kGroundMaterialCapacity>& ground_materials(
+        dungeon::kAuthoritativeSecondaryDropCapacity>& ground_materials(
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_materials_;
     }
     static const std::array<dungeon::GroundHealthPotion,
-        dungeon::kGroundHealthPotionCapacity>& ground_health_potions(
+        dungeon::kAuthoritativeHealthPotionCapacity>& ground_health_potions(
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_health_potions_;
     }
@@ -1026,6 +1092,21 @@ inline void clear_ground_item(
     DungeonSessionTestAccess::clear_ground_item(session, ordinal);
 }
 
+inline std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
+    dungeon::DungeonSession& session,
+    combat::MonsterOrdinal ordinal,
+    combat::CombatEvent* observed_events,
+    std::size_t observed_capacity,
+    std::size_t& observed_count) noexcept {
+    return DungeonSessionTestAccess::defeat_room_monster_by_ordinal(
+        session, ordinal, observed_events, observed_capacity, &observed_count);
+}
+
+inline void clear_room_drop_spatial_index(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::clear_room_drop_spatial_index(session);
+}
+
 inline void install_ground_item(
     dungeon::DungeonSession& session,
     std::uint16_t ordinal,
@@ -1033,6 +1114,23 @@ inline void install_ground_item(
     combat::Vec3 position) noexcept {
     DungeonSessionTestAccess::install_ground_item(
         session, ordinal, item, position);
+}
+
+inline bool install_authoritative_ground_item(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal,
+    const items::ItemInstance& item,
+    combat::Vec3 position) noexcept {
+    return DungeonSessionTestAccess::install_authoritative_ground_item(
+        session, ordinal, item, position);
+}
+
+inline bool replace_indexed_ground_item_for_fault(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal,
+    const items::ItemInstance& item) noexcept {
+    return DungeonSessionTestAccess::replace_indexed_ground_item_for_fault(
+        session, ordinal, item);
 }
 
 inline void install_abyss_ground_item(
@@ -1174,7 +1272,7 @@ inline void offset_pending_abyss_reward_position(
         session, offset);
 }
 
-inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
+inline std::array<std::uint64_t, 3U> rolled_drop_bits(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::rolled_drop_bits(session);
 }
@@ -1205,7 +1303,7 @@ inline void publish_run_state_reusing_items(
 }
 
 inline const std::array<dungeon::GroundItem,
-    dungeon::kGroundDropCapacity>& ground_items(
+    dungeon::kAuthoritativeEquipmentDropCapacity>& ground_items(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::ground_items(session);
 }

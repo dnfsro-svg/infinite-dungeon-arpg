@@ -37,6 +37,7 @@ void DungeonSession::build_dungeon_snapshot(
     result.commit_generation = stable_state_.commit_generation;
     result.room_index = stable_state_.current_room.index;
     result.room_seed = stable_state_.current_room.seed;
+    result.room_instance_generation = room_instance_generation_;
     result.depth = stable_state_.current_room.depth;
     result.floor_room_index = stable_state_.current_room.floor_room_index;
     result.biases = stable_state_.biases;
@@ -136,6 +137,7 @@ void DungeonSession::build_dungeon_snapshot(
     }
     for (const GroundItem& ground : ground_items_) {
         if (!ground.active) continue;
+        if (result.ground_item_count >= result.ground_items.size()) break;
         GroundItemSnapshot& packed =
             result.ground_items[result.ground_item_count++];
         packed.ordinal = ground.drop_ordinal;
@@ -152,6 +154,8 @@ void DungeonSession::build_dungeon_snapshot(
     }
     for (const GroundMaterial& ground : ground_materials_) {
         if (!ground.active) continue;
+        if (result.ground_material_count
+                >= result.ground_materials.size()) break;
         GroundMaterialSnapshot& packed =
             result.ground_materials[result.ground_material_count++];
         packed.ordinal = ground.ordinal;
@@ -161,6 +165,8 @@ void DungeonSession::build_dungeon_snapshot(
     }
     for (const GroundHealthPotion& ground : ground_health_potions_) {
         if (!ground.active) continue;
+        if (result.ground_health_potion_count
+                >= result.ground_health_potions.size()) break;
         GroundHealthPotionSnapshot& packed =
             result.ground_health_potions[
                 result.ground_health_potion_count++];

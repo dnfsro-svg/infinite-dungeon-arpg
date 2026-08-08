@@ -83,7 +83,7 @@ out/build/windows-msvc-release/bin/stage11-death-formal-validation/
 | 普通/深渊 `death_retreat`、receipt、重试和同 tick 事件 | `dungeon.units`: `ordinary death prepares atomic retreat`, `abyss death prepares one atomic retreat`, `ordinary death receipt fault matrix`, `death wins same tick and events exactly once` |
 | `death_continue` 复用目标、深度 1、重试和 receipt | `dungeon.units`: `death continue prepares exact target`, `depth one continue constructs saved room`, `death continue retry is exact`, `death continue receipt fault matrix` |
 | V6 固定布局、完整 round-trip、V5 迁移、非法输入拒绝 | `persistence.units`: `v6 layout and full round trip`, `v5 fixture migrates to canonical none`, `v6 death enum boolean reserved and state errors`, `v6 lengths crc and magic are rejected` |
-| 跨真实 SaveStore 重启与固定 tick 提交顺序 | `platform.units`: `fixed tick commits death before returning snapshot`, `runtime continue is narrow and fixed tick commits it`, `v6 pending death load preserves generation and target`；`stage11.death_fixture.transactions` |
+| 跨真实 V9 A/B worker 重启与固定 tick 提交顺序 | `platform.units`: `fixed tick commits death before returning snapshot`, `runtime continue is narrow and fixed tick commits it`；`stage11.death_fixture.transactions` 的 completion identity、V9 envelope、fresh winner、death room restore 与 continue reload |
 | 死亡输入仅 E/F12/V/F1/Esc | `platform.units`: `saving allows only global controls`, `pending allows continue and global controls`, `saving wins when both flags are set` |
 | 完整回顾、中文来源、fallback 和窗口边界 | `platform.units`: `hidden and complete recap mapping`, `all source ids have Chinese names`, `ASCII fallback maps complete recap`, `layouts fit supported windows`, `worst case values fit compact columns` |
 | 1000 次确定性/重启/零分配 | `stage11.death_stress.determinism_zero_alloc` |

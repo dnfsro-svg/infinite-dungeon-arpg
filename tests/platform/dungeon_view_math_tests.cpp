@@ -22,11 +22,13 @@ using arpg::platform::SaveIndicator;
 
 DungeonSnapshot active_snapshot(
     std::uint64_t room_index,
-    std::uint64_t room_seed) noexcept {
+    std::uint64_t room_seed,
+    std::uint64_t room_instance_generation = 1U) noexcept {
     DungeonSnapshot snapshot{};
     snapshot.has_active_room = true;
     snapshot.room_index = room_index;
     snapshot.room_seed = room_seed;
+    snapshot.room_instance_generation = room_instance_generation;
     snapshot.combat.emplace();
     return snapshot;
 }
@@ -394,9 +396,25 @@ arpg::test::Failure recovery_requires_fault_and_n_press() noexcept {
 }
 
 arpg::test::Failure same_room_snapshots_can_interpolate() noexcept {
-    const DungeonSnapshot previous = active_snapshot(7U, 0x1234U);
-    const DungeonSnapshot current = active_snapshot(7U, 0x1234U);
+    const DungeonSnapshot previous = active_snapshot(7U, 0x1234U, 9U);
+    const DungeonSnapshot current = active_snapshot(7U, 0x1234U, 9U);
     ARPG_REQUIRE(arpg::platform::can_interpolate_room(previous, current));
+
+    const DungeonSnapshot reconstructed = active_snapshot(7U, 0x1234U, 10U);
+    ARPG_REQUIRE(!arpg::platform::can_interpolate_room(
+        previous, reconstructed));
+
+    DungeonSnapshot death_visible = current;
+    death_visible.death.emplace();
+    ARPG_REQUIRE(!arpg::platform::can_interpolate_room(
+        current, death_visible));
+    ARPG_REQUIRE(!arpg::platform::can_interpolate_room(
+        death_visible, current));
+
+    DungeonSnapshot death_pending = current;
+    death_pending.phase = RoomPhase::death_pending;
+    ARPG_REQUIRE(!arpg::platform::can_interpolate_room(
+        current, death_pending));
     return {};
 }
 

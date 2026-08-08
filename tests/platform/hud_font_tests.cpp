@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "death_overlay_font.hpp"
+#include "dungeon/dungeon_render_snapshot.hpp"
 #include "hud_font.hpp"
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
@@ -96,6 +97,32 @@ arpg::test::Failure production_view_model_texts_and_player_labels_are_covered() 
         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
     }
     ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+    return {};
+}
+
+arpg::test::Failure visible_set_model_text_is_covered_by_shared_font_plan()
+    noexcept {
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    arpg::dungeon::DungeonRenderSnapshot presented{};
+    presented.query.camera_version = 701U;
+    presented.has_combat = true;
+    presented.combat.monster_count = 105U;
+    presented.environment.count = 73U;
+    presented.environment.candidates_examined = 105U;
+    presented.equipment_count = 19U;
+    presented.material_count = 23U;
+    presented.health_potion_count = 11U;
+    presented.drop_candidates_examined = 331U;
+
+    platform::HudViewModelProjector projector{};
+    platform::HudViewModel model{};
+    projector.build(model, snapshot, {}, {}, &presented);
+    ARPG_REQUIRE(std::strcmp(model.room.visible_set.text.bytes.data(),
+        u8"可见：怪 105/105 环境 73/105 掉落 53/331") == 0);
+
+    const platform::HudFontPlan plan = platform::hud_font_plan();
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        plan.shared, model.room.visible_set.text.bytes.data()));
     return {};
 }
 
@@ -272,6 +299,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &ground_loot_labels_are_covered_by_the_hud_owned_font},
     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
     {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
+    {"visible-set ViewModel shared font coverage",
+        &visible_set_model_text_is_covered_by_shared_font_plan},
     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},
     {"bundled Noto Sans SC runtime font",
         &bundled_noto_sans_sc_is_the_required_runtime_font},

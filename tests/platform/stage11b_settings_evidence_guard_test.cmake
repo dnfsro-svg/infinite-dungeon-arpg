@@ -451,7 +451,7 @@ endif()
 string(REGEX REPLACE "[ \t\r\n]+" "" _presented_frame_compact
     "${_presented_frame_block}")
 foreach(_stage11b_present_direct_token IN ITEMS
-        "if (impl_->states.stage11b.resume_observed)"
+        "if (impl_->states.stage11b.resume_observed"
         "const bool stage11b_paused_visible_capture ="
         "impl_->pending_stage11b_paused_visible_capture ="
         "decision.validation_complete ="
@@ -465,7 +465,7 @@ stage11b_require_direct_token("presented-frame owner"
             == Stage11BValidationScenario::paused_freeze
         && pause_menu.screen != PauseScreen::closed)")
 set(_stage11b_resume_after_contract
-    "if(impl_->states.stage11b.resume_observed){impl_->states.stage11b.resume_ticks_after=impl_->states.stage11b.fixed_ticks;}")
+    "if(impl_->states.stage11b.resume_observed&&impl_->states.stage11b.resume_ticks_after==0U){impl_->states.stage11b.resume_ticks_after=impl_->states.stage11b.fixed_ticks;}")
 set(_stage11b_paused_contract
     "if(impl_->config->stage11b_validation==Stage11BValidationScenario::paused_freeze&&pause_menu.screen!=PauseScreen::closed){if(impl_->states.stage11b.paused_presented==0U){impl_->states.stage11b.paused_ticks_before=impl_->states.stage11b.fixed_ticks;impl_->states.stage11b.player_monster_hash_before=host_validation::stage11b_snapshot_hash(snapshot);}++impl_->states.stage11b.paused_presented;impl_->states.stage11b.paused_ticks_after=impl_->states.stage11b.fixed_ticks;impl_->states.stage11b.player_monster_hash_after=host_validation::stage11b_snapshot_hash(snapshot);}")
 set(_stage11b_visible_capture_contract
@@ -571,12 +571,37 @@ foreach(_required IN ITEMS
         "quote_command_argument"
         "run_a.sav"
         "run_b.sav"
-        "establish_v6_character_slots")
+        "establish_character_slots"
+        "valid_v9_character_slot"
+        "character_hash_scope=settings_transaction")
     string(FIND "${_formal_text}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11B evidence guard missing real persistence path: ${_required}")
     endif()
 endforeach()
+
+string(FIND "${_formal_text}"
+    "const FileFingerprint run_a_before = fingerprint_file"
+    _character_hash_before_position)
+string(FIND "${_formal_text}"
+    "const bool settings_slot_saved = save_second_slot(main_settings);"
+    _formal_settings_save_position)
+string(FIND "${_formal_text}"
+    "const FileFingerprint run_a_after = fingerprint_file"
+    _character_hash_after_position)
+string(FIND "${_formal_text}"
+    "ok = ok && settings_slot_saved"
+    _character_hash_assert_position)
+if(_character_hash_before_position EQUAL -1
+        OR _formal_settings_save_position EQUAL -1
+        OR _character_hash_after_position EQUAL -1
+        OR _character_hash_assert_position EQUAL -1
+        OR NOT _character_hash_before_position LESS _formal_settings_save_position
+        OR NOT _formal_settings_save_position LESS _character_hash_after_position
+        OR NOT _character_hash_after_position LESS _character_hash_assert_position)
+    message(FATAL_ERROR
+        "Stage11B character-save isolation must bracket the settings transaction")
+endif()
 foreach(_required IN ITEMS "PauseMenuRenderer" "draw_crisp_ui_text"
         "record_ui_text_bounds" "设置已恢复默认值")
     string(FIND "${_pause_renderer_text}${_font_source_text}" "${_required}" _found)

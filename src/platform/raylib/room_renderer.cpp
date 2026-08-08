@@ -67,35 +67,69 @@ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
 }
 
 bool draw_environment_room(const MaterialPack& material_pack,
-    dungeon::DungeonElement ecology) noexcept {
+    dungeon::DungeonElement ecology,
+    const CombatCameraView& camera) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
         Color{9, 12, 20, 255});
-    const RoomBackgroundRenderPlan plan = room_background_render_plan(ecology);
-    return material_pack.draw_frame(plan.atlas, plan.source,
-        {1280.0F, 1440.0F}, {width * 0.5F, height}, false,
-        room_background_scale(width, height));
+    const RoomBackgroundWorldTilePlan plan =
+        room_background_world_tile_plan(ecology, camera);
+    if (!plan.valid || plan.count == 0U
+            || !material_pack.available(plan.atlas)) return false;
+    std::array<ProjectedRoomBackgroundWorldTile,
+        kRoomBackgroundWorldTileCapacity> projected_tiles{};
+    for (std::size_t index{}; index < plan.count; ++index) {
+        projected_tiles[index] = project_room_background_world_tile(
+            plan.tiles[index], camera, width, height);
+        if (!projected_tiles[index].valid) return false;
+    }
+    for (std::size_t index{}; index < plan.count; ++index) {
+        if (!material_pack.draw_frame_quad(plan.atlas,
+                plan.tiles[index].source,
+                projected_tiles[index].destination)) return false;
+    }
+    return true;
 }
 
 void draw_environment_room_props(const MaterialPack& material_pack,
-    dungeon::DungeonElement ecology, float width, float height) noexcept {
-    const EnvironmentPropLayout layout = environment_prop_layout(
-        ecology, width, height);
+    const dungeon::DungeonRenderSnapshot& world,
+    const CombatCameraView& camera,
+    float width, float height) noexcept {
+    const EnvironmentPropLayout layout = environment_prop_layout(world);
+    if (layout.status != EnvironmentPropLayoutStatus::ok) return;
     for (std::size_t index{}; index < layout.count; ++index) {
         const EnvironmentPropPlacement& placement = layout.props[index];
-        const EnvironmentPropDefinition* const definition =
-            environment_prop_definition(placement.sprite);
-        if (definition == nullptr) continue;
-        const Vector2 foot_position{
-            placement.normalized_foot_position.x * width,
-            placement.normalized_foot_position.y * height,
-        };
-        if (!material_pack.draw(placement.sprite, foot_position,
-                placement.flip_x, placement.scale)) {
-            const Rectangle bounds = project_environment_prop_bounds(
-                *definition, placement, width, height);
-            DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72});
+        const ProjectedEnvironmentProp projected = project_environment_prop(
+            placement, camera, width, height);
+        const EnvironmentPropDrawStyle style =
+            environment_prop_draw_style(placement);
+        if (!material_pack.draw_transformed(placement.sprite,
+                projected.foot_position, placement.flip_x, projected.scale,
+                style.rotation_degrees, style.tint)) {
+            const EnvironmentPropDefinition* const definition =
+                environment_prop_definition(placement.sprite);
+            if (definition != nullptr) {
+                const Rectangle bounds = project_environment_prop_bounds(
+                    *definition, placement, camera, width, height);
+                DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72});
+            }
+        }
+        if (style.draw_break_marker) {
+            const float half = 11.0F * projected.scale;
+            const float thickness = (std::max)(1.0F,
+                2.0F * projected.scale);
+            const Color marker{255U, 181U, 92U, 224U};
+            DrawLineEx({projected.foot_position.x - half,
+                    projected.foot_position.y - half},
+                {projected.foot_position.x + half,
+                    projected.foot_position.y + half},
+                thickness, marker);
+            DrawLineEx({projected.foot_position.x - half,
+                    projected.foot_position.y + half},
+                {projected.foot_position.x + half,
+                    projected.foot_position.y - half},
+                thickness, marker);
         }
     }
 }
@@ -113,59 +147,22 @@ MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
     return MaterialSpriteId::environment_hole;
 }
 
-void draw_fire_room_props(const MaterialPack& material_pack,
-    const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
-    if (!material_pack.available(MaterialAtlasId::fire_environment)) return;
-    constexpr std::array<Vector2, 9> kPositions{{
-        {0.14F, 0.34F}, {0.88F, 0.35F}, {0.24F, 0.72F}, {0.76F, 0.71F},
-        {0.12F, 0.79F}, {0.22F, 0.84F}, {0.78F, 0.84F}, {0.50F, 0.84F},
-        {0.60F, 0.84F},
-    }};
-    constexpr std::array<FireRoomPropId, 9> kProps{{
-        FireRoomPropId::torch, FireRoomPropId::banner,
-        FireRoomPropId::weapon_rack, FireRoomPropId::bone_pile,
-        FireRoomPropId::chain, FireRoomPropId::breakable_crate,
-        FireRoomPropId::breakable_crate, FireRoomPropId::solid_brazier,
-        FireRoomPropId::wall,
-    }};
-    const FireRoomMaterialSlice& slice = fire_room_material_slice();
-    for (std::size_t index{}; index < kProps.size(); ++index) {
-        if (kProps[index] == FireRoomPropId::breakable_crate) {
-            const std::size_t crate_index = index == 5U ? 0U : 1U;
-            if (snapshot.combat.has_value()
-                && !fire_room_crate_visible(*snapshot.combat, crate_index)) {
-                continue;
-            }
-        }
-        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
-        static_cast<void>(material_pack.draw(prop.sprite,
-            {kPositions[index].x * width, kPositions[index].y * height}, false,
-            index == 8U ? 1.10F : 0.72F));
-    }
-}
-
-void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
+    const CombatCameraView& camera,
     float width, float height, const MaterialPack& material_pack, Font hud_font,
     bool hud_font_ready) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
-        snapshot.has_active_room, snapshot.exits_open[0]);
+        snapshot.has_active_room, snapshot.exits_unlocked);
     if (mode == DoorVisualMode::hidden) {
         return;
     }
-    constexpr std::array<combat::Vec3, 4> kDoorCenters{{
-        {0.0F, combat::room_bounds::min_y, 0.0F},
-        {0.0F, combat::room_bounds::max_y, 0.0F},
-        {combat::room_bounds::min_x, 0.0F, 0.0F},
-        {combat::room_bounds::max_x, 0.0F, 0.0F},
-    }};
-    constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
-        dungeon::ExitDirection::up, dungeon::ExitDirection::down,
-        dungeon::ExitDirection::left, dungeon::ExitDirection::right}};
-    for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
+    for (std::size_t index = 0; index < snapshot.doors.size(); ++index) {
+        const dungeon::DoorRenderSnapshot& door = snapshot.doors[index];
         const RenderProjection projected = project_render_world(
-            kDoorCenters[index].x, kDoorCenters[index].y, kDoorCenters[index].z,
-            width, height);
-        const DoorRenderDecision visual = door_render_decision(mode, kDirections[index]);
+            door.position.x, door.position.y, door.position.z,
+            camera, width, height);
+        const DoorRenderDecision visual = door_render_decision(
+            mode, door.direction, snapshot.full_clear);
         const Color body_tint{visual.body_tint.r, visual.body_tint.g,
             visual.body_tint.b, visual.body_tint.a};
         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
@@ -190,7 +187,7 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
                 lock.y + 8.0F * projected.scale}, 8.0F * projected.scale,
                 180.0F, 360.0F, 8, steel);
         }
-        const DoorArrowGeometry arrow = door_arrow_geometry(kDirections[index],
+        const DoorArrowGeometry arrow = door_arrow_geometry(door.direction,
             projected.x, frame.y + 35.0F * projected.scale, projected.scale);
         DrawLineEx(arrow.tail, arrow.tip, arrow.thickness, text_color);
         DrawLineEx(arrow.tip, arrow.head_left, arrow.thickness, text_color);
@@ -205,7 +202,16 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
                     frame.y + frame.height},
                 2.0F * projected.scale, edge);
         }
-        if (abyss_door_marker(snapshot, kDirections[index])) {
+        if (visual.draw_full_clear_decoration) {
+            const Color clear_glow = Fade(text_color, 0.82F);
+            DrawCircleLines(static_cast<int>(std::round(projected.x)),
+                static_cast<int>(std::round(frame.y + frame.height * 0.46F)),
+                13.0F * projected.scale, clear_glow);
+            DrawCircleV({projected.x,
+                frame.y + frame.height * 0.46F},
+                3.0F * projected.scale, clear_glow);
+        }
+        if (door.abyss) {
             const Vector2 marker{
                 frame.x + frame.width - 12.0F * projected.scale,
                 frame.y + 13.0F * projected.scale,
@@ -236,22 +242,24 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     }
 }
 
-void draw_environment_hazards(const dungeon::DungeonSnapshot& snapshot,
-    float width, float height) noexcept {
-    if (!snapshot.combat.has_value()) return;
-    for (const combat::HazardSnapshot& hazard : snapshot.combat->hazards) {
+void draw_environment_hazards(
+    const dungeon::DungeonRenderSnapshot& snapshot,
+    const CombatCameraView& camera, float width, float height) noexcept {
+    if (!snapshot.has_combat) return;
+    for (const combat::HazardSnapshot& hazard : snapshot.combat.hazards) {
         const EnvironmentHazardVisual visual =
             environment_hazard_visual(hazard);
         if (visual.mode == EnvironmentHazardVisualMode::hidden) continue;
 
         const RenderProjection center = project_render_world(
-            visual.center.x, visual.center.y, 0.0F, width, height);
+            visual.center.x, visual.center.y, 0.0F,
+            camera, width, height);
         const RenderProjection x_edge = project_render_world(
             visual.center.x + visual.radius, visual.center.y, 0.0F,
-            width, height);
+            camera, width, height);
         const RenderProjection y_edge = project_render_world(
             visual.center.x, visual.center.y + visual.radius, 0.0F,
-            width, height);
+            camera, width, height);
         const float radius_x = std::max(
             1.0F, std::fabs(x_edge.x - center.x));
         const float radius_y = std::max(
@@ -328,18 +336,36 @@ void draw_ground_item_shape(items::ItemSlot slot, Vector2 center,
     }
 }
 
-void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
-    settings::LootFilterMode mode,
-    const MaterialPack& material_pack, float width, float height) noexcept {
-    const std::size_t count = (std::min)(
+struct GroundItemRange final {
+    const dungeon::GroundItemSnapshot* data{};
+    std::size_t count{};
+};
+
+GroundItemRange ground_item_range(
+    const dungeon::DungeonRenderSnapshot& snapshot) noexcept {
+    return {snapshot.equipment.data(), (std::min)(
+        static_cast<std::size_t>(snapshot.equipment_count),
+        snapshot.equipment.size())};
+}
+
+// Compatibility adapter used only by material validation helpers.
+GroundItemRange ground_item_range(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    return {snapshot.ground_items.data(), (std::min)(
         static_cast<std::size_t>(snapshot.ground_item_count),
-        snapshot.ground_items.size());
-    for (std::size_t index = 0U; index < count; ++index) {
-        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+        snapshot.ground_items.size())};
+}
+
+void draw_ground_items(GroundItemRange items,
+    settings::LootFilterMode mode,
+    const MaterialPack& material_pack, const CombatCameraView& camera,
+    float width, float height) noexcept {
+    for (std::size_t index = 0U; index < items.count; ++index) {
+        const dungeon::GroundItemSnapshot& item = items.data[index];
         if (!ground_loot_visible(item, mode)) continue;
         const RenderProjection projected = project_render_world(
             item.position.x, item.position.y, item.position.z,
-            width, height);
+            camera, width, height);
         const Vector2 center{projected.x,
             projected.ground_y - 13.0F * projected.scale};
         const Color color = ground_item_color(item.rarity);
@@ -362,9 +388,10 @@ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
 
 void draw_secondary_loot_icon(combat::Vec3 position, Rgba8 rgba,
     MaterialSpriteId sprite, bool emphasized,
-    const MaterialPack& material_pack, float width, float height) noexcept {
+    const MaterialPack& material_pack, const CombatCameraView& camera,
+    float width, float height) noexcept {
     const RenderProjection projected = project_render_world(
-        position.x, position.y, position.z, width, height);
+        position.x, position.y, position.z, camera, width, height);
     const Color color{rgba.r, rgba.g, rgba.b, rgba.a};
     const float radius = (emphasized ? 9.0F : 6.0F) * projected.scale;
     const Vector2 center{projected.x, projected.ground_y - radius};
@@ -386,8 +413,36 @@ void draw_secondary_loot_icon(combat::Vec3 position, Rgba8 rgba,
         radius, RAYWHITE);
 }
 
+void draw_ground_materials(const dungeon::DungeonRenderSnapshot& snapshot,
+    const MaterialPack& material_pack, const CombatCameraView& camera,
+    float width, float height) noexcept {
+    const std::size_t material_count = (std::min)(
+        static_cast<std::size_t>(snapshot.material_count),
+        snapshot.materials.size());
+    for (std::size_t index = 0U; index < material_count; ++index) {
+        const dungeon::GroundMaterialSnapshot& material =
+            snapshot.materials[index];
+        if (items::material_definition(material.material) == nullptr) continue;
+        draw_secondary_loot_icon(material.position,
+            material_color(material.material),
+            material_loot_sprite(material.material),
+            material_is_emphasized(material.material),
+            material_pack, camera, width, height);
+    }
+    const std::size_t potion_count = (std::min)(
+        static_cast<std::size_t>(snapshot.health_potion_count),
+        snapshot.health_potions.size());
+    for (std::size_t index = 0U; index < potion_count; ++index) {
+        draw_secondary_loot_icon(snapshot.health_potions[index].position,
+            {255U, 48U, 48U, 255U}, MaterialSpriteId::health_potion, true,
+            material_pack, camera, width, height);
+    }
+}
+
+// Compatibility path used only by material validation helpers.
 void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialPack& material_pack, float width, float height) noexcept {
+    const MaterialPack& material_pack, const CombatCameraView& camera,
+    float width, float height) noexcept {
     const std::size_t material_count = (std::min)(
         static_cast<std::size_t>(snapshot.ground_material_count),
         snapshot.ground_materials.size());
@@ -399,7 +454,7 @@ void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
             material_color(material.material),
             material_loot_sprite(material.material),
             material_is_emphasized(material.material),
-            material_pack, width, height);
+            material_pack, camera, width, height);
     }
     const std::size_t potion_count = (std::min)(
         static_cast<std::size_t>(snapshot.ground_health_potion_count),
@@ -407,7 +462,7 @@ void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
     for (std::size_t index = 0U; index < potion_count; ++index) {
         draw_secondary_loot_icon(snapshot.ground_health_potions[index].position,
             {255U, 48U, 48U, 255U}, MaterialSpriteId::health_potion, true,
-            material_pack, width, height);
+            material_pack, camera, width, height);
     }
 }
 
@@ -431,32 +486,62 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
     }
 }
 
-void draw_hole(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialPack& material_pack) noexcept {
-    const HoleVisualMode hole = hole_visual_mode(snapshot);
+HoleVisualMode render_hole_visual_mode(
+    const dungeon::DungeonRenderSnapshot& snapshot) noexcept {
+    if (!snapshot.has_active_room || !snapshot.hole.present) {
+        return HoleVisualMode::hidden;
+    }
+    switch (snapshot.phase) {
+    case dungeon::RoomPhase::locked:
+        return HoleVisualMode::sealed;
+    case dungeon::RoomPhase::combat:
+    case dungeon::RoomPhase::cleared:
+    case dungeon::RoomPhase::awaiting_exit:
+        return snapshot.exits_unlocked
+            ? HoleVisualMode::ready : HoleVisualMode::sealed;
+    case dungeon::RoomPhase::committing:
+        return HoleVisualMode::busy;
+    case dungeon::RoomPhase::faulted:
+        return HoleVisualMode::faulted;
+    case dungeon::RoomPhase::transitioning:
+        return HoleVisualMode::hidden;
+    }
+    return HoleVisualMode::hidden;
+}
+
+void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
+    const MaterialPack& material_pack,
+    const CombatCameraView& camera) noexcept {
+    const HoleVisualMode hole = render_hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
     }
-    const RenderProjection projected = project_render_world(kHoleCenter.x,
-        kHoleCenter.y, kHoleCenter.z, static_cast<float>(GetScreenWidth()),
+    const HoleProjectedGeometry geometry = project_hole_geometry(
+        snapshot.hole.position, camera,
+        static_cast<float>(GetScreenWidth()),
         static_cast<float>(GetScreenHeight()));
-    const int x = static_cast<int>(projected.x);
-    const int y = static_cast<int>(projected.ground_y);
+    const int x = static_cast<int>(geometry.center.x);
+    const int y = static_cast<int>(geometry.center.y);
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
     if (!material_pack.draw(hole_sprite(snapshot.ecology),
-            {projected.x, projected.ground_y}, false,
-            kEnvironmentGameplayHoleScale * projected.scale)) {
-        DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+            geometry.center, false,
+            kEnvironmentGameplayHoleScale
+                * geometry.radius_x / 74.0F)) {
+        DrawEllipse(static_cast<int>(geometry.center.x),
+            static_cast<int>(geometry.center.y),
+            geometry.radius_x, geometry.radius_y, Color{5, 2, 9, 235});
     }
-    DrawEllipseLines(x, y, 74.0F, 25.0F, color);
+    DrawEllipseLinesV(geometry.center,
+        geometry.radius_x, geometry.radius_y, color);
     const char* label = hole == HoleVisualMode::sealed ? "SEALED"
         : hole == HoleVisualMode::ready ? "READY"
         : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
     DrawText(label, x - MeasureText(label, 20) / 2, y - 12, 20, color);
-    if (snapshot.combat.has_value()
-        && can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+    if (snapshot.has_combat && hole == HoleVisualMode::ready
+        && player_in_hole_range(snapshot.combat.player.position,
+            snapshot.hole.position, kHoleInteractionRadius)) {
         constexpr const char* kPrompt = "E: DESCEND";
         DrawText(kPrompt, x - MeasureText(kPrompt, 26) / 2, y + 36, 26, RAYWHITE);
     }
@@ -478,20 +563,48 @@ RoomBackgroundDrawRuntimeStatus room_background_status(
     };
 }
 
+MaterialResidencyRequest room_background_residency_request(
+    dungeon::DungeonElement ecology) noexcept {
+    MaterialResidencyRequest request = base_material_residency_request();
+    switch (ecology) {
+    case dungeon::DungeonElement::fire:
+        request.require(MaterialAtlasId::fire_environment);
+        request.require(MaterialAtlasId::fire_room_background);
+        break;
+    case dungeon::DungeonElement::water:
+        request.require(MaterialAtlasId::water_environment);
+        request.require(MaterialAtlasId::water_room_background);
+        break;
+    case dungeon::DungeonElement::lightning:
+        request.require(MaterialAtlasId::lightning_environment);
+        request.require(MaterialAtlasId::lightning_room_background);
+        break;
+    case dungeon::DungeonElement::chaos:
+        request.require(MaterialAtlasId::chaos_environment);
+        request.require(MaterialAtlasId::chaos_room_background);
+        break;
+    }
+    return request;
+}
+
 }  // namespace
+
+void CombatRenderer::draw_abyss_overlay(
+    const dungeon::DungeonSnapshot& current) const noexcept {
+    draw_abyss(current, static_cast<float>(GetTime()));
+}
 
 RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
     dungeon::DungeonElement ecology) noexcept {
-    dungeon::DungeonSnapshot snapshot{};
-    snapshot.has_active_room = true;
-    snapshot.ecology = ecology;
-    // Replaces material_pack_.load(material_ecology(ecology)) with the
-    // selective request used by all production room rendering paths.
     static_cast<void>(material_pack_.synchronize_residency(
-        make_material_residency_request(snapshot)));
+        room_background_residency_request(ecology)));
     room_background_draw_status_ = room_background_status(material_pack_, ecology);
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const CombatCameraView camera = make_combat_camera_view(
+        {}, width, height);
     room_background_draw_status_.drawn = room_background_draw_status_.resident
-        && draw_environment_room(material_pack_, ecology);
+        && draw_environment_room(material_pack_, ecology, camera);
     if (!room_background_draw_status_.drawn) {
         draw_graybox_room(ecology);
     }
@@ -499,11 +612,12 @@ RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
 }
 
 GroundLootView CombatRenderer::draw_ground_loot_icons_only(
-    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    const dungeon::DungeonSnapshot& snapshot,
+    const CombatCameraView& camera) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     const GroundLootView ground_loot = build_ground_loot_view(
-        snapshot, loot_filter_mode_, width, height);
+        snapshot, loot_filter_mode_, camera, width, height);
 
     Camera2D world_camera{};
     world_camera.zoom = 1.0F;
@@ -511,16 +625,19 @@ GroundLootView CombatRenderer::draw_ground_loot_icons_only(
     static_cast<void>(draw_room_background_only(snapshot.ecology));
     static_cast<void>(material_pack_.synchronize_residency(
         make_material_residency_request(snapshot)));
-    draw_ground_materials(snapshot, material_pack_, width, height);
-    draw_ground_items(snapshot, loot_filter_mode_, material_pack_, width, height);
+    draw_ground_materials(
+        snapshot, material_pack_, camera, width, height);
+    draw_ground_items(ground_item_range(snapshot), loot_filter_mode_, material_pack_,
+        camera, width, height);
     EndMode2D();
     return ground_loot;
 }
 
 void CombatRenderer::draw_room(
-    const dungeon::DungeonSnapshot& current,
+    const dungeon::DungeonRenderSnapshot& current,
     const GroundLootView& ground_loot,
-    const MaterialLootView& material_loot) noexcept {
+    const MaterialLootView& material_loot,
+    const CombatCameraView& camera) noexcept {
     static_cast<void>(ground_loot);
     static_cast<void>(material_loot);
     const float width = static_cast<float>(GetScreenWidth());
@@ -528,24 +645,21 @@ void CombatRenderer::draw_room(
     room_background_draw_status_ = room_background_status(
         material_pack_, current.ecology);
     const bool draw_material_background = room_background_draw_status_.resident
-        && draw_environment_room(material_pack_, current.ecology);
+        && draw_environment_room(material_pack_, current.ecology, camera);
     room_background_draw_status_.drawn = draw_material_background;
     if (!draw_material_background) {
         draw_graybox_room(current.ecology);
     }
-    draw_abyss(current, static_cast<float>(GetTime()));
-    draw_environment_hazards(current, width, height);
-    if (current.ecology == dungeon::DungeonElement::fire) {
-        draw_fire_room_props(material_pack_, current, width, height);
-    } else {
-        draw_environment_room_props(material_pack_, current.ecology,
-            width, height);
-    }
-    draw_doors(current, width, height, material_pack_, hud_renderer_.hud_font(),
+    draw_environment_hazards(current, camera, width, height);
+    draw_environment_room_props(
+        material_pack_, current, camera, width, height);
+    draw_doors(current, camera, width, height, material_pack_, hud_renderer_.hud_font(),
         hud_renderer_.font_ready());
-    draw_hole(current, material_pack_);
-    draw_ground_materials(current, material_pack_, width, height);
-    draw_ground_items(current, loot_filter_mode_, material_pack_, width, height);
+    draw_hole(current, material_pack_, camera);
+    draw_ground_materials(
+        current, material_pack_, camera, width, height);
+    draw_ground_items(ground_item_range(current), loot_filter_mode_, material_pack_,
+        camera, width, height);
 }
 
 }  // namespace arpg::platform

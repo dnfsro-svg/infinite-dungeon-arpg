@@ -125,9 +125,49 @@ if (-not (Test-Path -LiteralPath $ReferenceImage -PathType Leaf)) {
 }
 New-Item -ItemType Directory -Path $MutationRoot -Force | Out-Null
 Add-Type -AssemblyName System.Drawing
-$background = [System.Drawing.Color]::FromArgb(17, 18, 19)
+$background = [System.Drawing.Color]::FromArgb(41, 43, 44)
+$clearEdge = [System.Drawing.Color]::FromArgb(13, 17, 27)
+$wrongMaterial = [System.Drawing.Color]::FromArgb(255, 0, 255)
 
 Invoke-Stage9Validator -Path $ReferenceImage
+
+$edgeVariance = Join-Path $MutationRoot 'edge-raster-variance.png'
+$edgeBitmap = [System.Drawing.Bitmap]::new($ReferenceImage)
+try {
+    for ($y = 0; $y -le 4; ++$y) {
+        for ($x = 0; $x -le 4; ++$x) {
+            $edgeBitmap.SetPixel($x, $y, $clearEdge)
+        }
+    }
+    $edgeBitmap.Save($edgeVariance, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+    $edgeBitmap.Dispose()
+}
+Invoke-Stage9Validator -Path $edgeVariance
+
+$missingBackgroundAnchor = Join-Path $MutationRoot 'missing-background-anchor.png'
+$missingBackgroundBitmap = [System.Drawing.Bitmap]::new($ReferenceImage)
+try {
+    $missingBackgroundBitmap.SetPixel(8, 8, $clearEdge)
+    $missingBackgroundBitmap.Save(
+        $missingBackgroundAnchor, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+    $missingBackgroundBitmap.Dispose()
+}
+Invoke-Stage9Validator -Path $missingBackgroundAnchor `
+    -ExpectedFailure 'background mismatch'
+
+$wrongBackgroundAnchor = Join-Path $MutationRoot 'wrong-background-anchor.png'
+$wrongBackgroundBitmap = [System.Drawing.Bitmap]::new($ReferenceImage)
+try {
+    $wrongBackgroundBitmap.SetPixel(8, 8, $wrongMaterial)
+    $wrongBackgroundBitmap.Save(
+        $wrongBackgroundAnchor, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+    $wrongBackgroundBitmap.Dispose()
+}
+Invoke-Stage9Validator -Path $wrongBackgroundAnchor `
+    -ExpectedFailure 'background mismatch'
 
 $wrongSize = Join-Path $MutationRoot 'wrong-size.png'
 $small = [System.Drawing.Bitmap]::new(640, 360)
@@ -205,6 +245,7 @@ try {
         }
     }
     $darkBitmap.SetPixel(0, 0, $background)
+    $darkBitmap.SetPixel(8, 8, $background)
     $darkBitmap.Save($tooDark, [System.Drawing.Imaging.ImageFormat]::Png)
 } finally {
     $darkBitmap.Dispose()
@@ -223,6 +264,7 @@ try {
         }
     }
     $brightBitmap.SetPixel(0, 0, $background)
+    $brightBitmap.SetPixel(8, 8, $background)
     $brightBitmap.Save($tooBright, [System.Drawing.Imaging.ImageFormat]::Png)
 } finally {
     $brightBitmap.Dispose()
@@ -260,4 +302,4 @@ try {
     }
 }
 
-Write-Output 'stage9_formal_capture_validator_self_test=PASS mutations=7 infrastructure_probes=2'
+Write-Output 'stage9_formal_capture_validator_self_test=PASS rejected_mutations=9 accepted_edge_variants=1 infrastructure_probes=2'

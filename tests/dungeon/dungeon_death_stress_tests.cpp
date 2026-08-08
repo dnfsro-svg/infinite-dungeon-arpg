@@ -2,13 +2,14 @@
 #include "test_framework.hpp"
 
 #include "abyss/abyss_rules.hpp"
+#include "checkpoint/room_checkpoint_validation.hpp"
 #include "core/deterministic_rng.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon/room_generation.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_types.hpp"
-#include "persistence/checkpoint_codec.hpp"
+#include "persistence/room_progress_codec.hpp"
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <new>
 #include <utility>
 
 namespace arpg::test {
@@ -58,6 +60,7 @@ namespace combat = arpg::combat;
 namespace core = arpg::core;
 namespace dungeon = arpg::dungeon;
 namespace persistence = arpg::persistence;
+namespace save_checkpoint = arpg::checkpoint;
 
 constexpr std::size_t kDeathCount = 1000U;
 constexpr std::uint64_t kHashOffset = 1469598103934665603ULL;
@@ -147,8 +150,6 @@ bool same_permanent_player_state(
                 != right.item_ownership.equipment.equipped_ids
             || left.item_ownership.materials
                 != right.item_ownership.materials
-            || left.item_ownership.claimed_drop_bits
-                != right.item_ownership.claimed_drop_bits
             || left.item_ownership.next_item_sequence
                 != right.item_ownership.next_item_sequence) {
         return false;
@@ -180,17 +181,77 @@ bool same_permanent_player_state(
     return true;
 }
 
-bool codec_round_trip(checkpoint::DungeonRunState& state) noexcept {
-    const auto encoded = persistence::encode_checkpoint(state);
-    if (!encoded.has_value()) return false;
-    const auto decoded = persistence::decode_checkpoint(
-        encoded->data(), encoded->size());
-    if (decoded.error != persistence::CodecError::none
-            || decoded.migrated
-            || !dungeon::same_run_state(state, decoded.state)) {
+bool codec_round_trip(const dungeon::DungeonSession& session,
+    checkpoint::DungeonRunState& state) noexcept {
+    std::unique_ptr<save_checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) save_checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<save_checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) save_checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    if (source == nullptr || decoded == nullptr || bytes == nullptr) {
+        std::fprintf(stderr, "[stage11-death-v9] allocation failed\n");
         return false;
     }
-    state = decoded.state;
+    try {
+        source->state.item_ownership.items.reserve(
+            state.item_ownership.items.size());
+        decoded->state.item_ownership.items.reserve(
+            state.item_ownership.items.size());
+    } catch (...) {
+        std::fprintf(stderr, "[stage11-death-v9] reserve failed\n");
+        return false;
+    }
+    if (!session.capture_save_checkpoint(
+            *source, state.commit_generation, &state)) {
+        std::fprintf(stderr, "[stage11-death-v9] capture failed\n");
+        return false;
+    }
+    std::size_t written{};
+    const auto encode_error = persistence::encode_checkpoint_v9_into(
+        *source, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        written);
+    if (encode_error != persistence::CodecError::none) {
+        const auto& resolution = source->state.last_abyss_resolution;
+        std::fprintf(stderr,
+            "[stage11-death-v9] encode error=%u "
+            "resolution=%u/%u total=%u generated=%u claimed=%u abandoned=%u "
+            "death=%u room_progress=%u claims=%llx/%llx\n",
+            static_cast<unsigned>(encode_error), resolution.valid ? 1U : 0U,
+            static_cast<unsigned>(resolution.lifecycle),
+            static_cast<unsigned>(resolution.total),
+            static_cast<unsigned>(resolution.generated),
+            static_cast<unsigned>(resolution.claimed),
+            static_cast<unsigned>(resolution.abandoned),
+            static_cast<unsigned>(source->state.death.lifecycle),
+            static_cast<unsigned>(source->room_progress.lifecycle),
+            static_cast<unsigned long long>(
+                source->state.item_ownership.claimed_drop_bits[0U]),
+            static_cast<unsigned long long>(
+                source->room_progress.equipment_claim_bits[0U]));
+        return false;
+    }
+    bool migrated = true;
+    const auto decode_error = persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated);
+    if (decode_error != persistence::CodecError::none || migrated) {
+        std::fprintf(stderr,
+            "[stage11-death-v9] decode error=%u migrated=%u bytes=%zu\n",
+            static_cast<unsigned>(decode_error), migrated ? 1U : 0U,
+            written);
+        return false;
+    }
+    const bool same_state = dungeon::same_run_state(state, decoded->state);
+    const bool same_room = save_checkpoint::same_room_progress_checkpoint(
+        source->room_progress, decoded->room_progress);
+    if (!same_state || !same_room) {
+        std::fprintf(stderr,
+            "[stage11-death-v9] mismatch state=%u room=%u\n",
+            same_state ? 1U : 0U, same_room ? 1U : 0U);
+        return false;
+    }
+    state = decoded->state;
     return true;
 }
 
@@ -320,7 +381,6 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
     checkpoint::DungeonRunState state = case_root(2U, true);
     if (state.root_seed == 0U || state.current_room.seed == 0U) return false;
     state.progression = {2U, 7U, 1U, 1U};
-    state.item_ownership.claimed_drop_bits = {{1U, 2U, 4U}};
     state.item_ownership.next_item_sequence = 17U;
     state.item_ownership.items.push_back(baseline_weapon());
     state.item_ownership.equipment.equipped_ids[0] =
@@ -482,11 +542,11 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
         }
 
         if (restart_rhythm && (index + 1U) % 17U == 0U) {
-            if (!codec_round_trip(state)) return fail("codec-17");
+            if (!codec_round_trip(*session, state)) return fail("codec-17");
             ++trace.codec_round_trips;
         }
         if (restart_rhythm && (index + 1U) % 31U == 0U) {
-            if (!codec_round_trip(state)) return fail("codec-31");
+            if (!codec_round_trip(*session, state)) return fail("codec-31");
             session = std::make_unique<dungeon::DungeonSession>(rules, state);
             ++trace.pending_restarts;
         }
@@ -541,7 +601,7 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
         fold(trace.cumulative_hash, state.commit_generation);
 
         if (restart_rhythm && (index + 1U) % 43U == 0U) {
-            if (!codec_round_trip(state)) return fail("codec-43");
+            if (!codec_round_trip(*session, state)) return fail("codec-43");
             session = std::make_unique<dungeon::DungeonSession>(rules, state);
             if (session->snapshot().phase == dungeon::RoomPhase::faulted) {
                 return fail("continue-restart");

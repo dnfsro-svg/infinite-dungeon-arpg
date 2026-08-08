@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -1064,42 +1065,47 @@ abyss_clear_health_retry_gates_all_public_mutation_entries() noexcept {
                 health_potion_abyss_clear_retry_pending(session);
     };
 
-    DungeonSession nearby{DungeonRules{}, retry_gate_state(306U)};
-    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(nearby));
-    const auto nearby_before = nearby.snapshot();
+    auto nearby = std::make_unique<DungeonSession>(
+        DungeonRules{}, retry_gate_state(306U));
+    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(*nearby));
+    const auto nearby_before = nearby->snapshot();
     const DungeonRunState nearby_stable_before =
-        arpg::test::stable_state(nearby);
-    nearby.request_nearby_pickups({100.0F, 0.0F, 0.0F});
-    ARPG_REQUIRE(retry_is_intact(nearby));
-    ARPG_REQUIRE(nearby.snapshot().ground_health_potion_count
+        arpg::test::stable_state(*nearby);
+    nearby->request_nearby_pickups({100.0F, 0.0F, 0.0F});
+    ARPG_REQUIRE(retry_is_intact(*nearby));
+    ARPG_REQUIRE(nearby->snapshot().ground_health_potion_count
         == nearby_before.ground_health_potion_count);
     ARPG_REQUIRE(arpg::dungeon::same_run_state(
-        arpg::test::stable_state(nearby), nearby_stable_before));
+        arpg::test::stable_state(*nearby), nearby_stable_before));
 
-    DungeonSession equipment{DungeonRules{}, retry_gate_state(307U)};
-    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(equipment));
-    ARPG_REQUIRE(equipment.request_equip(7001U)
+    auto equipment = std::make_unique<DungeonSession>(
+        DungeonRules{}, retry_gate_state(307U));
+    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(*equipment));
+    ARPG_REQUIRE(equipment->request_equip(7001U)
         == arpg::dungeon::RequestResult::rejected);
-    ARPG_REQUIRE(retry_is_intact(equipment));
+    ARPG_REQUIRE(retry_is_intact(*equipment));
 
-    DungeonSession crafting{DungeonRules{}, retry_gate_state(308U)};
-    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(crafting));
-    ARPG_REQUIRE(crafting.request_craft(
+    auto crafting = std::make_unique<DungeonSession>(
+        DungeonRules{}, retry_gate_state(308U));
+    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(*crafting));
+    ARPG_REQUIRE(crafting->request_craft(
         arpg::items::MaterialId::transmute, 7001U)
         == arpg::dungeon::RequestResult::rejected);
-    ARPG_REQUIRE(retry_is_intact(crafting));
+    ARPG_REQUIRE(retry_is_intact(*crafting));
 
-    DungeonSession loadout{DungeonRules{}, retry_gate_state(309U)};
-    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(loadout));
-    ARPG_REQUIRE(loadout.request_remove_active_skill(0U)
+    auto loadout = std::make_unique<DungeonSession>(
+        DungeonRules{}, retry_gate_state(309U));
+    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(*loadout));
+    ARPG_REQUIRE(loadout->request_remove_active_skill(0U)
         == arpg::dungeon::RequestResult::rejected);
-    ARPG_REQUIRE(retry_is_intact(loadout));
+    ARPG_REQUIRE(retry_is_intact(*loadout));
 
-    DungeonSession reset{DungeonRules{}, retry_gate_state(310U)};
-    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(reset));
-    ARPG_REQUIRE(reset.reset_current_room()
+    auto reset = std::make_unique<DungeonSession>(
+        DungeonRules{}, retry_gate_state(310U));
+    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(*reset));
+    ARPG_REQUIRE(reset->reset_current_room()
         == arpg::dungeon::RequestResult::rejected);
-    ARPG_REQUIRE(retry_is_intact(reset));
+    ARPG_REQUIRE(retry_is_intact(*reset));
 
     const arpg::dungeon::PendingSaveResult stray_result{
         arpg::dungeon::SaveDisposition::not_committed,
@@ -1107,19 +1113,21 @@ abyss_clear_health_retry_gates_all_public_mutation_entries() noexcept {
         {},
         arpg::dungeon::PendingSaveKind::transition,
     };
-    DungeonSession save_resolve{DungeonRules{}, retry_gate_state(311U)};
-    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(save_resolve));
-    save_resolve.resolve_pending_save(stray_result);
-    ARPG_REQUIRE(retry_is_intact(save_resolve));
+    auto save_resolve = std::make_unique<DungeonSession>(
+        DungeonRules{}, retry_gate_state(311U));
+    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(*save_resolve));
+    save_resolve->resolve_pending_save(stray_result);
+    ARPG_REQUIRE(retry_is_intact(*save_resolve));
 
-    DungeonSession transition_resolve{
-        DungeonRules{}, retry_gate_state(312U)};
-    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(transition_resolve));
-    transition_resolve.resolve_pending_transition(stray_result);
-    ARPG_REQUIRE(retry_is_intact(transition_resolve));
+    auto transition_resolve = std::make_unique<DungeonSession>(
+        DungeonRules{}, retry_gate_state(312U));
+    ARPG_REQUIRE(enter_health_potion_abyss_clear_retry(
+        *transition_resolve));
+    transition_resolve->resolve_pending_transition(stray_result);
+    ARPG_REQUIRE(retry_is_intact(*transition_resolve));
 
-    nearby.tick({});
-    const auto rebuilt = nearby.pending_save();
+    nearby->tick({});
+    const auto rebuilt = nearby->pending_save();
     ARPG_REQUIRE(rebuilt.has_value());
     ARPG_REQUIRE(rebuilt->kind
         == arpg::dungeon::PendingSaveKind::abyss_clear);

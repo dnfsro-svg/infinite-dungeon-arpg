@@ -34,7 +34,70 @@ void write_stage11c_rect(std::ostream& stream, const char* name,
            << rect.width << ',' << rect.height << '\n';
 }
 
+[[nodiscard]] bool stage11c_player_controllable(
+    const combat::CombatSnapshot& snapshot) noexcept {
+    return snapshot.player.hp > 0
+        && snapshot.player.hurt_ticks == 0U
+        && snapshot.player.hit_stop_ticks == 0U
+        && snapshot.player.active_attack == combat::AttackId::none
+        && snapshot.active_skill.id == skills::ActiveSkillId::none
+        && snapshot.diagnostics.input_size == 0U;
+}
+
+[[nodiscard]] combat::MovementInput stage11c_recovery_movement(
+    combat::MovementInput requested,
+    Stage11CHudValidationState& state) noexcept {
+    if (state.recovery_movement_frames == 0U) return requested;
+    --state.recovery_movement_frames;
+    combat::MovementInput recovery{};
+    const bool positive = (state.recovery_direction & 1U) == 0U;
+    if (requested.x != 0) {
+        recovery.y = positive ? 1 : -1;
+    } else {
+        recovery.x = positive ? 1 : -1;
+    }
+    return recovery;
+}
+
+void stage11c_observe_movement_progress(
+    const combat::CombatSnapshot& snapshot,
+    Stage11CHudValidationState& state) noexcept {
+    const combat::Vec3 player = snapshot.player.position;
+    if (state.previous_player_position_valid
+            && state.movement_was_requested
+            && stage11c_player_controllable(snapshot)) {
+        const float dx = player.x - state.previous_player_position.x;
+        const float dy = player.y - state.previous_player_position.y;
+        if (dx * dx + dy * dy <= 1.0e-6F) {
+            if (state.stalled_movement_frames < 0xFFFFU) {
+                ++state.stalled_movement_frames;
+            }
+        } else {
+            state.stalled_movement_frames = 0U;
+        }
+    } else if (!state.movement_was_requested) {
+        state.stalled_movement_frames = 0U;
+    }
+    if (state.stalled_movement_frames >= 4U) {
+        state.stalled_movement_frames = 0U;
+        state.recovery_movement_frames = 12U;
+        state.recovery_direction = static_cast<std::uint8_t>(
+            state.recovery_direction + 1U);
+    }
+    state.previous_player_position = player;
+    state.previous_player_position_valid = true;
+    state.movement_was_requested = false;
+}
+
 }  // namespace
+
+bool stage11c_uses_full_clear_driver(
+    Stage11CHudValidationScenario scenario) noexcept {
+    using Scenario = Stage11CHudValidationScenario;
+    return scenario == Scenario::cleared_exit
+        || scenario == Scenario::abyss_abandon
+        || scenario == Scenario::level_up_points;
+}
 
 PhysicalKeySnapshot inject_stage11c_physical_edges(
     PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
@@ -49,37 +112,26 @@ PhysicalKeySnapshot inject_stage11c_physical_edges(
             if (!state.debug_visible) snapshot.f1 = true;
         } else if (current.combat.has_value()) {
             const combat::CombatSnapshot& combat_snapshot = *current.combat;
+            stage11c_observe_movement_progress(combat_snapshot, state);
+            if (stage11c_uses_full_clear_driver(
+                    config.stage11c_hud_validation)) {
+                return snapshot;
+            }
             if (current.phase == dungeon::RoomPhase::combat) {
                 const combat::MonsterSnapshot* const target =
                     nearest_living_monster(combat_snapshot);
                 if (target != nullptr) {
-                    const bool clears_room = config.stage11c_hud_validation
-                            == Scenario::cleared_exit
-                        || config.stage11c_hud_validation
-                            == Scenario::level_up_points
-                        || config.stage11c_hud_validation
-                            == Scenario::abyss_abandon;
-                    combat::Vec3 destination = target->position;
-                    if (clears_room) {
-                        destination.x += combat_snapshot.player.position.x
-                                <= target->position.x ? -1.0F : 1.0F;
-                    }
-                    inject_validation_movement(snapshot, settings_data,
-                        validation_movement_toward(
-                            combat_snapshot.player.position, destination));
-                    if (clears_room
-                            && validation_attack_lane(combat_snapshot, *target)) {
-                        inject_validation_action(snapshot, settings_data,
-                            settings::SettingAction::light_attack, true);
-                    }
+                    const combat::MovementInput movement =
+                        stage11c_recovery_movement(
+                            validation_movement_toward(
+                                combat_snapshot.player.position,
+                                target->position),
+                            state);
+                    inject_validation_movement(
+                        snapshot, settings_data, movement);
+                    state.movement_was_requested =
+                        movement.x != 0 || movement.y != 0;
                 }
-            } else if (config.stage11c_hud_validation == Scenario::abyss_abandon
-                    && current.phase == dungeon::RoomPhase::awaiting_exit) {
-                const dungeon::ExitDirection direction = current.is_abyss
-                    ? dungeon::ExitDirection::right : validation_direction(config);
-                inject_validation_movement(snapshot, settings_data,
-                    validation_exit_movement(
-                        combat_snapshot.player.position, direction));
             }
         }
     }

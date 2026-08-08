@@ -7,6 +7,7 @@
 #include "persistence/save_commit_worker.hpp"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -121,6 +122,20 @@ bool write_v9(const std::filesystem::path& path,
     return output.good();
 }
 
+bool write_v10(const std::filesystem::path& path,
+    const checkpoint::SaveCheckpointSlot& slot) {
+    std::vector<std::uint8_t> bytes(
+        persistence::kMaximumEncodedCheckpointBytes);
+    std::size_t written{};
+    if (persistence::encode_checkpoint_v10_into(
+            slot, bytes.data(), bytes.size(), written)
+            != persistence::CodecError::none) return false;
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+        static_cast<std::streamsize>(written));
+    return output.good();
+}
+
 bool write_bytes(const std::filesystem::path& path,
     const std::vector<std::uint8_t>& bytes) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -139,7 +154,86 @@ bool fail_single_worker_point(persistence::SaveFaultPoint point,
     return fault != nullptr && point == fault->point;
 }
 
-test::Failure worker_commits_v9_and_readback_verifies_exact_bytes() noexcept {
+test::Failure worker_verify_durable_is_exact_same_revision_only() noexcept {
+    TempDirectory directory{};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> durable{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(durable != nullptr);
+    ARPG_REQUIRE(fixture(*durable, 41U));
+    ARPG_REQUIRE(write_v9(directory.path / "run_a.sav", *durable));
+    std::unique_ptr<persistence::SaveCommitStorage> storage{
+        new (std::nothrow) persistence::SaveCommitStorage{}};
+    ARPG_REQUIRE(storage != nullptr);
+    ARPG_REQUIRE(storage->initialize({directory.path}));
+    storage->release_loaded_checkpoints();
+    persistence::SaveCommitWorker worker{*storage};
+    ARPG_REQUIRE(worker.start());
+
+    const auto verified = worker.acquire_capture_slot(41U,
+        persistence::SaveCommitRequestKind::exact, 411U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(verified.state
+        == persistence::SaveCommitSubmitState::accepted);
+    ARPG_REQUIRE(worker.submit(verified).state
+        == persistence::SaveCommitSubmitState::accepted);
+    persistence::SaveCommitCompletion verified_completion{};
+    ARPG_REQUIRE(wait_completion(worker, verified_completion));
+    ARPG_REQUIRE(verified_completion.kind
+        == persistence::SaveCommitRequestKind::exact);
+    ARPG_REQUIRE(verified_completion.result.state
+        == persistence::SaveCommitState::committed);
+
+    const auto non_exact = worker.acquire_capture_slot(41U,
+        persistence::SaveCommitRequestKind::background, 412U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(non_exact.state
+        == persistence::SaveCommitSubmitState::busy);
+
+    const auto wrong_revision = worker.acquire_capture_slot(42U,
+        persistence::SaveCommitRequestKind::exact, 413U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(wrong_revision.state
+        == persistence::SaveCommitSubmitState::accepted);
+    ARPG_REQUIRE(worker.submit(wrong_revision).state
+        == persistence::SaveCommitSubmitState::accepted);
+    persistence::SaveCommitCompletion wrong_completion{};
+    ARPG_REQUIRE(wait_completion(worker, wrong_completion));
+    ARPG_REQUIRE(wrong_completion.result.state
+        == persistence::SaveCommitState::not_committed);
+    ARPG_REQUIRE(wrong_completion.result.error
+        == persistence::SaveError::invalid_checkpoint);
+    worker.stop_and_join();
+
+    TempDirectory scan_directory{};
+    ARPG_REQUIRE(write_v9(scan_directory.path / "run_a.sav", *durable));
+    SingleFaultHook scan_fault{persistence::SaveFaultPoint::final_scan_a};
+    persistence::SaveStoreConfig scan_config{scan_directory.path};
+    scan_config.fault_hook = &fail_single_worker_point;
+    scan_config.fault_context = &scan_fault;
+    std::unique_ptr<persistence::SaveCommitStorage> scan_storage{
+        new (std::nothrow) persistence::SaveCommitStorage{}};
+    ARPG_REQUIRE(scan_storage != nullptr);
+    ARPG_REQUIRE(scan_storage->initialize(scan_config));
+    scan_storage->release_loaded_checkpoints();
+    persistence::SaveCommitWorker scan_worker{*scan_storage};
+    ARPG_REQUIRE(scan_worker.start());
+    const auto scan = scan_worker.acquire_capture_slot(41U,
+        persistence::SaveCommitRequestKind::exact, 414U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(scan.state == persistence::SaveCommitSubmitState::accepted);
+    ARPG_REQUIRE(scan_worker.submit(scan).state
+        == persistence::SaveCommitSubmitState::accepted);
+    persistence::SaveCommitCompletion scan_completion{};
+    ARPG_REQUIRE(wait_completion(scan_worker, scan_completion));
+    ARPG_REQUIRE(scan_completion.result.state
+        == persistence::SaveCommitState::indeterminate);
+    ARPG_REQUIRE(scan_completion.result.error
+        == persistence::SaveError::final_scan_failed);
+    scan_worker.stop_and_join();
+    return {};
+}
+
+test::Failure worker_commits_v10_and_readback_verifies_exact_bytes() noexcept {
     TempDirectory directory{};
     std::unique_ptr<persistence::SaveCommitStorage> storage{
         new (std::nothrow) persistence::SaveCommitStorage{}};
@@ -158,6 +252,7 @@ test::Failure worker_commits_v9_and_readback_verifies_exact_bytes() noexcept {
     auto* const job = worker.capture_job(lease);
     ARPG_REQUIRE(job != nullptr);
     ARPG_REQUIRE(fixture(job->checkpoint, 17U));
+    job->checkpoint.room_progress.pending_room_experience = 0x12345678U;
     ARPG_REQUIRE(worker.submit(lease).state
         == persistence::SaveCommitSubmitState::accepted);
     persistence::SaveCommitCompletion completion{};
@@ -186,13 +281,32 @@ test::Failure worker_commits_v9_and_readback_verifies_exact_bytes() noexcept {
         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(decoded != nullptr);
     bool migrated{};
-    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.data(),
+    ARPG_REQUIRE(bytes.size() >= 12U);
+    ARPG_REQUIRE(std::equal(bytes.begin(), bytes.begin() + 8U,
+        std::array<std::uint8_t, 8U>{
+            {'A','R','P','G','S','V','1','0'}}.begin()));
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(bytes.data(),
         bytes.size(), *decoded, migrated)
         == persistence::CodecError::none);
     ARPG_REQUIRE(!migrated);
     ARPG_REQUIRE(decoded->persistence_revision == 17U);
+    ARPG_REQUIRE(decoded->room_progress.pending_room_experience
+        == 0x12345678U);
     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
         == abyss::AbyssLifecycle::failed);
+
+    std::unique_ptr<persistence::SaveCommitStorage> restarted_storage{
+        new (std::nothrow) persistence::SaveCommitStorage{}};
+    ARPG_REQUIRE(restarted_storage != nullptr);
+    ARPG_REQUIRE(restarted_storage->initialize({directory.path}));
+    ARPG_REQUIRE(restarted_storage->load_state()
+        == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(restarted_storage->loaded_format()
+        == persistence::kCheckpointFormatVersionV10);
+    ARPG_REQUIRE(!restarted_storage->loaded_migrated());
+    ARPG_REQUIRE(restarted_storage->loaded_checkpoint() != nullptr);
+    ARPG_REQUIRE(restarted_storage->loaded_checkpoint()->room_progress
+        .pending_room_experience == 0x12345678U);
 
     TempDirectory stale_directory{};
     ARPG_REQUIRE(std::filesystem::create_directory(
@@ -720,11 +834,98 @@ test::Failure equal_revision_conflict_archives_both_slots() noexcept {
     return {};
 }
 
+test::Failure mixed_v9_v10_slots_arbitrate_by_revision_and_validity()
+    noexcept {
+    const auto make_slot = [] {
+        return std::unique_ptr<checkpoint::SaveCheckpointSlot>{
+            new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    };
+
+    {
+        TempDirectory directory{};
+        auto older = make_slot();
+        auto newer = make_slot();
+        ARPG_REQUIRE(older != nullptr && newer != nullptr);
+        ARPG_REQUIRE(fixture(*older, 50U) && fixture(*newer, 51U));
+        ARPG_REQUIRE(write_v9(directory.path / "run_a.sav", *older));
+        ARPG_REQUIRE(write_v10(directory.path / "run_b.sav", *newer));
+        std::unique_ptr<persistence::SaveCommitStorage> storage{
+            new (std::nothrow) persistence::SaveCommitStorage{}};
+        ARPG_REQUIRE(storage != nullptr && storage->initialize({directory.path}));
+        ARPG_REQUIRE(storage->load_state() == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(storage->loaded_slot() == persistence::SaveSlot::b);
+        ARPG_REQUIRE(storage->loaded_format()
+            == persistence::kCheckpointFormatVersionV10);
+        ARPG_REQUIRE(!storage->loaded_migrated());
+    }
+    {
+        TempDirectory directory{};
+        auto newer = make_slot();
+        auto older = make_slot();
+        ARPG_REQUIRE(newer != nullptr && older != nullptr);
+        ARPG_REQUIRE(fixture(*newer, 51U) && fixture(*older, 50U));
+        ARPG_REQUIRE(write_v9(directory.path / "run_a.sav", *newer));
+        ARPG_REQUIRE(write_v10(directory.path / "run_b.sav", *older));
+        std::unique_ptr<persistence::SaveCommitStorage> storage{
+            new (std::nothrow) persistence::SaveCommitStorage{}};
+        ARPG_REQUIRE(storage != nullptr && storage->initialize({directory.path}));
+        ARPG_REQUIRE(storage->load_state() == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(storage->loaded_slot() == persistence::SaveSlot::a);
+        ARPG_REQUIRE(storage->loaded_format()
+            == persistence::kCheckpointFormatVersionV9);
+        ARPG_REQUIRE(storage->loaded_migrated());
+    }
+    {
+        TempDirectory directory{};
+        auto equal = make_slot();
+        ARPG_REQUIRE(equal != nullptr && fixture(*equal, 60U));
+        ARPG_REQUIRE(write_v9(directory.path / "run_a.sav", *equal));
+        ARPG_REQUIRE(write_v10(directory.path / "run_b.sav", *equal));
+        std::unique_ptr<persistence::SaveCommitStorage> storage{
+            new (std::nothrow) persistence::SaveCommitStorage{}};
+        ARPG_REQUIRE(storage != nullptr && storage->initialize({directory.path}));
+        ARPG_REQUIRE(storage->load_state()
+            == persistence::SaveLoadState::recovery_required);
+    }
+    {
+        TempDirectory directory{};
+        auto valid = make_slot();
+        auto corrupt = make_slot();
+        ARPG_REQUIRE(valid != nullptr && corrupt != nullptr);
+        ARPG_REQUIRE(fixture(*valid, 70U) && fixture(*corrupt, 71U));
+        ARPG_REQUIRE(write_v9(directory.path / "run_a.sav", *valid));
+        std::vector<std::uint8_t> bytes(
+            persistence::kMaximumEncodedCheckpointBytes);
+        std::size_t written{};
+        ARPG_REQUIRE(persistence::encode_checkpoint_v10_into(*corrupt,
+            bytes.data(), bytes.size(), written)
+            == persistence::CodecError::none);
+        bytes.resize(written);
+        bytes.back() ^= 0x80U;
+        ARPG_REQUIRE(write_bytes(directory.path / "run_b.sav", bytes));
+        std::unique_ptr<persistence::SaveCommitStorage> storage{
+            new (std::nothrow) persistence::SaveCommitStorage{}};
+        ARPG_REQUIRE(storage != nullptr && storage->initialize({directory.path}));
+        ARPG_REQUIRE(storage->load_state() == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(storage->loaded_slot() == persistence::SaveSlot::a);
+        ARPG_REQUIRE(storage->loaded_format()
+            == persistence::kCheckpointFormatVersionV9);
+        ARPG_REQUIRE(storage->loaded_migrated());
+        ARPG_REQUIRE(storage->loaded_recovered());
+    }
+    return {};
+}
+
 constexpr test::TestCase kCases[] = {
-    {"worker exact v9 commit", &worker_commits_v9_and_readback_verifies_exact_bytes},
+    {"worker verify durable exact same revision only",
+        &worker_verify_durable_is_exact_same_revision_only},
+    {"worker exact v10 commit",
+        &worker_commits_v10_and_readback_verifies_exact_bytes},
     {"worker pending coalescing", &one_pending_slot_coalesces_background_for_exact},
     {"worker equal revision conflict archive",
         &equal_revision_conflict_archives_both_slots},
+    {"worker mixed v9 v10 arbitration",
+        &mixed_v9_v10_slots_arbitrate_by_revision_and_validity},
 };
 
 }  // namespace

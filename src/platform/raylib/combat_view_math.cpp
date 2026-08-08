@@ -61,6 +61,116 @@ const char* affix_tier_text(combat::MonsterAffixTier tier) noexcept {
 
 }  // namespace
 
+CombatCameraView make_combat_camera_view(
+    combat::Vec3 interpolated_player,
+    float width,
+    float height) noexcept {
+    constexpr float kBaselineAspect = 16.0F / 9.0F;
+    constexpr float kBaselineVisibleWidth = 24.0F;
+    constexpr float kMaximumVisibleWidth = 32.0F;
+    constexpr float kVisibleDepth = 11.0F;
+    const float aspect = std::isfinite(width) && std::isfinite(height)
+            && width > 0.0F && height > 0.0F
+        ? width / height
+        : kBaselineAspect;
+
+    CombatCameraView view{};
+    view.visible_width = std::min(
+        combat::room_bounds::width,
+        std::clamp(
+            kBaselineVisibleWidth * aspect / kBaselineAspect,
+            kBaselineVisibleWidth,
+            kMaximumVisibleWidth));
+    view.visible_depth = std::min(
+        combat::room_bounds::depth, kVisibleDepth);
+
+    const auto clamped_center = [](
+        float position,
+        float minimum,
+        float maximum,
+        float visible_extent) noexcept {
+        if (visible_extent >= maximum - minimum) {
+            return (minimum + maximum) * 0.5F;
+        }
+        const float half_extent = visible_extent * 0.5F;
+        return std::clamp(
+            position, minimum + half_extent, maximum - half_extent);
+    };
+    view.center.x = clamped_center(
+        interpolated_player.x,
+        combat::room_bounds::min_x,
+        combat::room_bounds::max_x,
+        view.visible_width);
+    view.center.y = clamped_center(
+        interpolated_player.y,
+        combat::room_bounds::min_y,
+        combat::room_bounds::max_y,
+        view.visible_depth);
+    view.center.z = 0.0F;
+    return view;
+}
+
+dungeon::WorldViewQuery make_world_view_query(
+    CombatCameraView camera,
+    float width,
+    float height,
+    std::uint64_t camera_version) noexcept {
+    constexpr float kMinimumWorldZ = -1.0F;
+    constexpr float kMaximumWorldZ = 32.0F;
+    const float half_width = camera.visible_width * 0.5F;
+    const float half_depth = camera.visible_depth * 0.5F;
+    const int screen_width = std::isfinite(width) && width > 0.0F
+        ? static_cast<int>(width) : 0;
+    const int screen_height = std::isfinite(height) && height > 0.0F
+        ? static_cast<int>(height) : 0;
+    return {
+        {{camera.center.x - half_width,
+             camera.center.y - half_depth, kMinimumWorldZ},
+            {camera.center.x + half_width,
+             camera.center.y + half_depth, kMaximumWorldZ}},
+        screen_width,
+        screen_height,
+        camera_version,
+    };
+}
+
+combat::Vec3 interpolate_combat_position(
+    combat::Vec3 from,
+    combat::Vec3 to,
+    float interpolation_alpha) noexcept {
+    const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
+    return {
+        from.x + (to.x - from.x) * alpha,
+        from.y + (to.y - from.y) * alpha,
+        from.z + (to.z - from.z) * alpha,
+    };
+}
+
+ScreenProjection project_combat_position(
+    combat::Vec3 position,
+    CombatCameraView view,
+    float width,
+    float height) noexcept {
+    constexpr float kDefaultVisibleWidth = 24.0F;
+    constexpr float kDefaultVisibleDepth = 11.0F;
+    const float visible_width = view.visible_width > 0.0F
+        ? view.visible_width : kDefaultVisibleWidth;
+    const float visible_depth = view.visible_depth > 0.0F
+        ? view.visible_depth : kDefaultVisibleDepth;
+    const float depth = (position.y
+        - (view.center.y - visible_depth * 0.5F)) / visible_depth;
+    const float visual_depth = std::clamp(depth, 0.0F, 1.0F);
+    const float scale = 0.70F + 0.30F * visual_depth;
+    const float ground_y = height * (0.38F + 0.50F * depth);
+    const float horizontal = (position.x - view.center.x) / visible_width;
+    return {
+        width * 0.50F + horizontal * width * 0.92F * scale,
+        ground_y - position.z * 70.0F * scale,
+        ground_y,
+        scale,
+    };
+}
+
 ScreenProjection project_combat_position(
     combat::Vec3 position,
     float width,
@@ -252,9 +362,25 @@ Rgba8 hazard_color(combat::HazardKind kind) noexcept {
 
 ScreenProjection project_projectile_position(
     const combat::ProjectileSnapshot& projectile,
+    CombatCameraView view,
+    float width,
+    float height) noexcept {
+    return project_combat_position(projectile.position, view, width, height);
+}
+
+ScreenProjection project_projectile_position(
+    const combat::ProjectileSnapshot& projectile,
     float width,
     float height) noexcept {
     return project_combat_position(projectile.position, width, height);
+}
+
+ScreenProjection project_hazard_center(
+    const combat::HazardSnapshot& hazard,
+    CombatCameraView view,
+    float width,
+    float height) noexcept {
+    return project_combat_position(hazard.center, view, width, height);
 }
 
 ScreenProjection project_hazard_center(

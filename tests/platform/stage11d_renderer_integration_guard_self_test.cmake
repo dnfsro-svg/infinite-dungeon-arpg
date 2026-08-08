@@ -574,9 +574,9 @@ stage11d_run_guard_case(canonical_predicate_result_ignored "${_combat}"
     "canonical predicate.*exactly once")
 
 set(_production_room_draw
-    "    draw_ground_items(current, loot_filter_mode_, material_pack_, width, height);")
+    "    draw_ground_items(ground_item_range(current), loot_filter_mode_, material_pack_,\n        camera, width, height);")
 set(_production_mode_bypass
-    "    draw_ground_items(current, settings::LootFilterMode::show_all, material_pack_, width, height);")
+    "    draw_ground_items(ground_item_range(current), settings::LootFilterMode::show_all, material_pack_,\n        camera, width, height);")
 stage11d_replace_required(_room_mode_bypass "${_room}"
     "${_production_room_draw}" "${_production_mode_bypass}"
     production_mode_bypass)
@@ -584,12 +584,12 @@ stage11d_run_guard_case(production_mode_bypass "${_combat}"
     "${_room_mode_bypass}" "${_hud}" FALSE "production.*filter mode")
 
 set(_icons_only_builder
-    "    const GroundLootView ground_loot = build_ground_loot_view(\n        snapshot, loot_filter_mode_, width, height);")
+    "    const GroundLootView ground_loot = build_ground_loot_view(\n        snapshot, loot_filter_mode_, camera, width, height);")
 stage11d_replace_required(_room_without_icons_builder "${_room}"
     "${_icons_only_builder}" "    const GroundLootView ground_loot{};"
     icons_only_builder_removal)
 set(_builder_moved_to_room
-    "    static_cast<void>(build_ground_loot_view(\n        current, loot_filter_mode_, width, height));\n${_production_room_draw}")
+    "    static_cast<void>(build_ground_loot_view(\n        current, loot_filter_mode_, camera, width, height));\n${_production_room_draw}")
 stage11d_replace_required(_room_builder_scope "${_room_without_icons_builder}"
     "${_production_room_draw}" "${_builder_moved_to_room}"
     builder_scope_move)
@@ -627,9 +627,9 @@ stage11d_replace_required(_combat_renamed_declaration "${_combat}"
 stage11d_replace_required(_combat_renamed "${_combat_renamed_declaration}"
     "render_plan." "frame_plan." local_plan_use_rename)
 set(_renamed_room
-    "            draw_room(current, frame_plan.ground_loot, frame_plan.material_loot);")
+    "            draw_room(world, frame_plan.ground_loot,\n                frame_plan.material_loot, camera);")
 set(_formatted_room
-    "            draw_room(\n                current,\n                frame_plan.ground_loot,\n                frame_plan.material_loot); ")
+    "            draw_room(\n                world,\n                frame_plan.ground_loot,\n                frame_plan.material_loot, camera); ")
 stage11d_replace_required(_combat_formatted "${_combat_renamed}"
     "${_renamed_room}" "${_formatted_room}" harmless_formatting)
 stage11d_run_guard_case(rename_and_format "${_combat_formatted}" "${_room}"
@@ -642,8 +642,8 @@ set(_alias_declaration
 stage11d_replace_required(_combat_alias "${_combat_renamed}"
     "${_renamed_camera}" "${_alias_declaration}" const_reference_alias)
 stage11d_replace_required(_combat_alias_room "${_combat_alias}"
-    "frame_plan.ground_loot, frame_plan.material_loot);"
-    "shared_ground_loot, frame_plan.material_loot);" alias_room_consumer)
+    "frame_plan.ground_loot,\n                frame_plan.material_loot, camera);"
+    "shared_ground_loot,\n                frame_plan.material_loot, camera);" alias_room_consumer)
 stage11d_replace_required(_combat_alias_consumers "${_combat_alias_room}"
     "frame_plan.ground_loot);" "shared_ground_loot);" alias_hud_consumer)
 stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_room}"

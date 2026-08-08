@@ -500,10 +500,16 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
             for (std::uint8_t target = 0U; target < 96U; ++target) {
                 const std::uint16_t ordinal = static_cast<std::uint16_t>(
                     static_cast<std::uint16_t>(wave) * 96U + target);
-                const arpg::combat::Vec3 position{
-                    static_cast<float>(ordinal) * 4.0F,
-                    static_cast<float>(wave) * 4.0F,
-                    0.0F};
+                auto* const world = arpg::test::mutable_combat_world(*left);
+                auto* const field = world == nullptr
+                    ? nullptr : world->room_monster_field();
+                if (field == nullptr
+                        || ordinal >= field->plan().monster_count) {
+                    result.abort_point = "drop_position_leash";
+                    return result;
+                }
+                const arpg::combat::Vec3 position =
+                    field->plan().monsters[ordinal].initial_position;
                 if (!arpg::test::relay_defeated(
                         *left, wave, target, position)
                         || !arpg::test::relay_defeated(
@@ -556,6 +562,26 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
             const PickupAttempt expected = left_eligible
                 ? PickupAttempt::picked : PickupAttempt::retained;
             if (left_attempt != expected || right_attempt != expected) {
+                const GroundItem& left_ground = arpg::test::ground_items(
+                    *left)[left_order[index]];
+                const GroundItem& right_ground = arpg::test::ground_items(
+                    *right)[right_order[index]];
+                std::fprintf(stderr,
+                    "stage8 pickup failure room=%zu index=%zu ordinals=%u/%u "
+                    "attempts=%u/%u expected=%u eligible=%u/%u "
+                    "active=%u/%u positions=%.2f,%.2f/%.2f,%.2f\n",
+                    room, index,
+                    static_cast<unsigned>(left_order[index]),
+                    static_cast<unsigned>(right_order[index]),
+                    static_cast<unsigned>(left_attempt),
+                    static_cast<unsigned>(right_attempt),
+                    static_cast<unsigned>(expected),
+                    static_cast<unsigned>(left_eligible),
+                    static_cast<unsigned>(right_eligible),
+                    static_cast<unsigned>(left_ground.active),
+                    static_cast<unsigned>(right_ground.active),
+                    left_ground.position.x, left_ground.position.y,
+                    right_ground.position.x, right_ground.position.y);
                 result.mismatch_room = room;
                 result.mismatch_step = step;
                 result.abort_point = "pickup_attempt";

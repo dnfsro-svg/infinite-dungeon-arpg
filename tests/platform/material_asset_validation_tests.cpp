@@ -47,6 +47,10 @@ struct FakeMaterialTextures final {
     std::array<unsigned int, kDrawCapacity> drawn_material_ids{};
     std::array<Rectangle, kDrawCapacity> drawn_sources{};
     std::array<Rectangle, kDrawCapacity> drawn_destinations{};
+    std::array<arpg::platform::MaterialScreenQuad,
+        kDrawCapacity> drawn_quads{};
+    std::array<float, kDrawCapacity> drawn_rotations{};
+    std::array<Color, kDrawCapacity> drawn_tints{};
     std::array<MaterialCompositeParameters, kDrawCapacity> composites{};
     std::size_t load_count{};
     std::size_t unload_count{};
@@ -120,7 +124,8 @@ void fake_shutdown_material_pipeline() noexcept {
 }
 
 void fake_draw_material(Texture2D color, Texture2D material,
-    Rectangle source, Rectangle destination, Vector2, float, Color,
+    Rectangle source, Rectangle destination, Vector2, float rotation,
+    Color tint,
     MaterialCompositeParameters parameters) noexcept {
     if (g_fake_material_textures == nullptr
         || g_fake_material_textures->draw_count
@@ -130,13 +135,30 @@ void fake_draw_material(Texture2D color, Texture2D material,
     g_fake_material_textures->drawn_material_ids[index] = material.id;
     g_fake_material_textures->drawn_sources[index] = source;
     g_fake_material_textures->drawn_destinations[index] = destination;
+    g_fake_material_textures->drawn_rotations[index] = rotation;
+    g_fake_material_textures->drawn_tints[index] = tint;
+    g_fake_material_textures->composites[index] = parameters;
+}
+
+void fake_draw_material_quad(Texture2D color, Texture2D material,
+    Rectangle source, arpg::platform::MaterialScreenQuad destination,
+    Color tint, MaterialCompositeParameters parameters) noexcept {
+    if (g_fake_material_textures == nullptr
+        || g_fake_material_textures->draw_count
+            >= g_fake_material_textures->drawn_color_ids.size()) return;
+    const std::size_t index = g_fake_material_textures->draw_count++;
+    g_fake_material_textures->drawn_color_ids[index] = color.id;
+    g_fake_material_textures->drawn_material_ids[index] = material.id;
+    g_fake_material_textures->drawn_sources[index] = source;
+    g_fake_material_textures->drawn_quads[index] = destination;
+    g_fake_material_textures->drawn_tints[index] = tint;
     g_fake_material_textures->composites[index] = parameters;
 }
 
 arpg::platform::MaterialTextureApi fake_material_texture_api() noexcept {
     return {&fake_load_texture, &fake_texture_valid, &fake_unload_texture,
         &fake_initialize_material_pipeline, &fake_shutdown_material_pipeline,
-        &fake_draw_material};
+        &fake_draw_material, &fake_draw_material_quad};
 }
 
 std::size_t atlas_count_for_ecology(MaterialEcology ecology) noexcept {
@@ -323,6 +345,94 @@ arpg::test::Failure material_pack_records_successful_item_sprite_draws() noexcep
     ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::missing) == 0U);
     pack.unload();
     ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::item_weapon) == 0U);
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure transformed_sprite_draw_forwards_rotation_and_tint() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(3500U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(3501U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    const Color tint{113U, 97U, 83U, 211U};
+    ARPG_REQUIRE(pack.draw_transformed(MaterialSpriteId::item_weapon,
+        {100.0F, 100.0F}, false, 0.25F, 270.0F, tint));
+    ARPG_REQUIRE(fake.draw_count == 1U);
+    ARPG_REQUIRE(fake.drawn_rotations[0U] == 270.0F);
+    ARPG_REQUIRE(fake.drawn_tints[0U].r == tint.r);
+    ARPG_REQUIRE(fake.drawn_tints[0U].g == tint.g);
+    ARPG_REQUIRE(fake.drawn_tints[0U].b == tint.b);
+    ARPG_REQUIRE(fake.drawn_tints[0U].a == tint.a);
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure atlas_region_draw_forwards_exact_destination() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(3700U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(3701U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load(MaterialEcology::water));
+    const Rectangle source{512.0F, 288.0F, 256.0F, 144.0F};
+    const Rectangle destination{-25.0F, 31.0F, 640.0F, 360.0F};
+    ARPG_REQUIRE(pack.draw_frame_to(
+        MaterialAtlasId::water_room_background, source, destination));
+    ARPG_REQUIRE(fake.draw_count == 1U);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_sources[0U],
+        &source, sizeof(Rectangle)) == 0);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_destinations[0U],
+        &destination, sizeof(Rectangle)) == 0);
+    const arpg::platform::MaterialScreenQuad quad{
+        {-25.0F, 31.0F}, {-40.0F, 391.0F},
+        {640.0F, 391.0F}, {615.0F, 31.0F}};
+    ARPG_REQUIRE(pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, quad));
+    ARPG_REQUIRE(fake.draw_count == 2U);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_sources[1U],
+        &source, sizeof(Rectangle)) == 0);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_quads[1U],
+        &quad, sizeof(quad)) == 0);
+    const arpg::platform::MaterialScreenQuad subpixel_quad{
+        {0.0F, 0.0F}, {0.0F, 0.001F},
+        {0.001F, 0.001F}, {0.001F, 0.0F}};
+    ARPG_REQUIRE(pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, subpixel_quad));
+    const arpg::platform::MaterialScreenQuad zero_area_quad{
+        {0.0F, 0.0F}, {1.0F, 1.0F}, {2.0F, 2.0F}, {1.0F, 1.0F}};
+    ARPG_REQUIRE(!pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, zero_area_quad));
+    const arpg::platform::MaterialScreenQuad concave_quad{
+        {0.0F, 0.0F}, {1.0F, 5.0F}, {2.0F, 2.0F}, {4.0F, 1.0F}};
+    ARPG_REQUIRE(!pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, concave_quad));
+    const arpg::platform::MaterialScreenQuad bow_tie_quad{
+        {0.0F, 0.0F}, {0.0F, 1.0F}, {4.0F, 5.0F}, {1.0F, 4.0F}};
+    ARPG_REQUIRE(!pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, bow_tie_quad));
+    ARPG_REQUIRE(fake.draw_count == 3U);
+    pack.unload();
     g_fake_material_textures = nullptr;
     return {};
 }
@@ -1268,6 +1378,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_loads_and_draws_color_material_pairs},
     {"records successful item sprite draws",
         &material_pack_records_successful_item_sprite_draws},
+    {"transformed sprite draw forwards rotation and tint",
+        &transformed_sprite_draw_forwards_rotation_and_tint},
+    {"atlas region draw forwards exact destination",
+        &atlas_region_draw_forwards_exact_destination},
     {"nine slice preserves authored panel corners",
         &material_pack_nine_slice_preserves_panel_corners},
     {"horizontal slice preserves decorated caps",

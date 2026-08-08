@@ -1,6 +1,5 @@
 #include "host_validation_stage11d.hpp"
 
-#include "combat/monster_affix_generation.hpp"
 #include "dungeon_runtime.hpp"
 #include "pause_menu_state.hpp"
 #include "platform/settings/settings_types.hpp"
@@ -35,6 +34,15 @@ namespace {
     return false;
 }
 
+[[nodiscard]] bool stage11d_view_has_abyss_ordinal(
+    const GroundLootView& view, std::uint16_t ordinal) noexcept {
+    for (std::size_t index = 0U; index < view.count; ++index) {
+        if (view.labels[index].ordinal == ordinal
+                && view.labels[index].abyss) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 void stage11d_record_semantics(Stage11DLootValidationState& state,
@@ -48,7 +56,8 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
     for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
         const auto& item = snapshot.ground_items[index];
         state.snapshot_item_ids[index] = item.item_id;
-        if (item.source == dungeon::GroundItemSource::abyss_chest) {
+        if (item.source == dungeon::GroundItemSource::abyss_chest
+                && stage11d_view_has_abyss_ordinal(view, item.ordinal)) {
             state.abyss_item_id = item.item_id;
             state.abyss_rarity = item.rarity;
         } else if (item.rarity == items::ItemRarity::normal) {
@@ -82,10 +91,37 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
     state.ordinary_magic_count = 0U;
     state.ordinary_rare_count = 0U;
     state.remaining_targets = snapshot.remaining_targets;
+    state.initial_monster_count = (std::max)(
+        state.initial_monster_count, snapshot.initial_monster_count);
+    state.max_defeated_monsters = (std::max)(
+        state.max_defeated_monsters, snapshot.defeated_monster_count);
+    if (snapshot.initial_monster_count != 0U) {
+        state.max_remaining_targets = (std::max)(
+            state.max_remaining_targets, snapshot.remaining_targets);
+        state.min_remaining_targets = (std::min)(
+            state.min_remaining_targets, snapshot.remaining_targets);
+    }
+    if (snapshot.monster_generator_version != 0U) {
+        state.monster_generator_version = snapshot.monster_generator_version;
+        state.monster_blueprint_hash = snapshot.monster_blueprint_hash;
+    }
     state.live_inventory_count = snapshot.inventory_count;
     state.last_phase = snapshot.phase;
-    state.player_hp = snapshot.combat.has_value()
-        ? snapshot.combat->player.hp : 0;
+    if (snapshot.combat.has_value()) {
+        const std::int32_t current_hp = snapshot.combat->player.hp;
+        const std::int32_t current_max_hp = snapshot.combat->player.max_hp;
+        state.player_damage_observed = state.player_damage_observed
+            || (state.player_hp_sampled
+                && current_max_hp == state.player_max_hp
+                && current_hp < state.player_hp);
+        state.player_hp = current_hp;
+        state.player_max_hp = current_max_hp;
+        state.player_hp_sampled = true;
+    } else {
+        state.player_hp = 0;
+        state.player_max_hp = 0;
+        state.player_hp_sampled = false;
+    }
     if (status.loot_pickup.valid) {
         state.pickup_item_id = status.loot_pickup.item_id;
         state.pickup_commit_generation = status.loot_pickup.commit_generation;
@@ -102,51 +138,39 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
         for (std::size_t index = 0U;
              index < snapshot.combat->monster_count; ++index) {
             const auto& monster = snapshot.combat->monsters[index];
-            if (monster.spawn_ordinal >= state.last_monster_hp.size()) continue;
-            const std::size_t ordinal = monster.spawn_ordinal;
-            state.seen_ordinal_bits = static_cast<std::uint8_t>(
-                state.seen_ordinal_bits | (1U << ordinal));
-            state.last_monster_hp[ordinal] = monster.hp;
-            state.min_monster_hp[ordinal] = (std::min)(
-                state.min_monster_hp[ordinal], monster.hp);
-            state.monster_affix_danger[ordinal] =
-                combat::monster_affix_danger_score(monster.affixes);
-            state.monster_ai_phase[ordinal] = static_cast<std::uint8_t>(
-                monster.ai_phase);
-            if (monster.hp <= 0
-                    || monster.reaction == combat::ReactionState::defeated
-                    || monster.ai_phase == combat::MonsterAiPhase::defeated) {
-                const std::uint8_t bit = static_cast<std::uint8_t>(1U << ordinal);
-                if ((state.defeated_ordinal_bits & bit) == 0U) {
-                    const float x = monster.position.x
-                        - snapshot.combat->player.position.x;
-                    const float y = monster.position.y
-                        - snapshot.combat->player.position.y;
-                    state.defeat_distance_milli[ordinal] =
-                        static_cast<std::uint32_t>(std::lround(
-                            std::sqrt(x * x + y * y) * 1000.0F));
-                    state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;
-                }
-                state.defeated_ordinal_bits = static_cast<std::uint8_t>(
-                    state.defeated_ordinal_bits | bit);
+            if (monster.active && monster.hp > 0
+                    && monster.hp < monster.max_hp) {
+                state.monster_damage_observed = true;
             }
         }
     }
     for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
         const auto& item = snapshot.ground_items[index];
         if (item.source != dungeon::GroundItemSource::monster_drop) continue;
+        std::size_t distance_index = 0U;
         if (item.rarity == items::ItemRarity::normal) {
             ++state.ordinary_normal_count;
             state.observed_normal_item_id = item.item_id;
             state.observed_normal_ordinal = item.ordinal;
         } else if (item.rarity == items::ItemRarity::magic) {
+            distance_index = 1U;
             ++state.ordinary_magic_count;
             state.observed_magic_item_id = item.item_id;
             state.observed_magic_ordinal = item.ordinal;
         } else if (item.rarity == items::ItemRarity::rare) {
+            distance_index = 2U;
             ++state.ordinary_rare_count;
             state.observed_rare_item_id = item.item_id;
             state.observed_rare_ordinal = item.ordinal;
+        }
+        if (snapshot.combat.has_value()) {
+            const float x = item.position.x
+                - snapshot.combat->player.position.x;
+            const float y = item.position.y
+                - snapshot.combat->player.position.y;
+            state.observed_drop_distance_milli[distance_index] =
+                static_cast<std::uint32_t>(std::lround(
+                    std::sqrt(x * x + y * y) * 1000.0F));
         }
     }
     state.max_ordinary_normal_count = (std::max)(
@@ -159,8 +183,6 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
         static_cast<std::uint32_t>(snapshot.ground_item_count));
     state.max_inventory_count = (std::max)(state.max_inventory_count,
         snapshot.inventory_count);
-    state.min_remaining_targets = (std::min)(
-        state.min_remaining_targets, snapshot.remaining_targets);
     if (scenario == Scenario::pickup_feedback) {
         const bool notice = notices.primary.kind == HudNoticeKind::loot_pickup
             || notices.secondary.kind == HudNoticeKind::loot_pickup;
@@ -171,7 +193,9 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
             const auto& item = snapshot.ground_items[index];
             if (item.source == dungeon::GroundItemSource::abyss_chest
                     && item.rarity != items::ItemRarity::rare
-                    && ground_loot_visible(item, mode)) {
+                    && ground_loot_visible(item, mode)
+                    && stage11d_view_has_abyss_ordinal(
+                        view, item.ordinal)) {
                 return true;
             }
         }
@@ -248,10 +272,13 @@ void write_stage11d_loot_validation_summary(const RaylibHostConfig& config,
             << "restored_visible_count=" << state.restored_visible_count << '\n'
             << "abyss_claimed=" << (state.abyss_claimed ? 1 : 0) << '\n'
             << "progress_phase=" << static_cast<unsigned>(state.last_phase) << '\n'
+            << "progress_initial=" << state.initial_monster_count << '\n'
+            << "progress_defeated=" << state.max_defeated_monsters << '\n'
             << "progress_remaining=" << static_cast<unsigned>(
                 state.remaining_targets) << '\n'
             << "progress_inventory=" << state.live_inventory_count << '\n'
             << "progress_hp=" << state.player_hp << '\n'
+            << "progress_max_hp=" << state.player_max_hp << '\n'
             << "progress_rarities=" << state.ordinary_normal_count << ','
                 << state.ordinary_magic_count << ','
                 << state.ordinary_rare_count << '\n'
@@ -259,38 +286,28 @@ void write_stage11d_loot_validation_summary(const RaylibHostConfig& config,
                 << state.max_ordinary_magic_count << ','
                 << state.max_ordinary_rare_count << '\n'
             << "max_ground_count=" << state.max_ground_item_count << '\n'
+            << "max_remaining=" << state.max_remaining_targets << '\n'
             << "min_remaining=" << static_cast<unsigned>(
                 state.min_remaining_targets) << '\n'
             << "max_inventory=" << state.max_inventory_count << '\n'
+            << "monster_generator_version="
+                << state.monster_generator_version << '\n'
+            << "monster_blueprint_hash="
+                << state.monster_blueprint_hash << '\n'
+            << "monster_damage_observed="
+                << (state.monster_damage_observed ? 1 : 0) << '\n'
+            << "player_damage_observed="
+                << (state.player_damage_observed ? 1 : 0) << '\n'
             << "observed_normal=" << state.observed_normal_item_id << ','
                 << state.observed_normal_ordinal << '\n'
             << "observed_magic=" << state.observed_magic_item_id << ','
                 << state.observed_magic_ordinal << '\n'
             << "observed_rare=" << state.observed_rare_item_id << ','
                 << state.observed_rare_ordinal << '\n'
-            << "monster_seen_bits=" << static_cast<unsigned>(
-                state.seen_ordinal_bits) << '\n'
-            << "monster_defeated_bits=" << static_cast<unsigned>(
-                state.defeated_ordinal_bits) << '\n'
-            << "monster_last_hp=" << state.last_monster_hp[0] << ','
-                << state.last_monster_hp[1] << ','
-                << state.last_monster_hp[2] << '\n'
-            << "monster_min_hp=" << state.min_monster_hp[0] << ','
-                << state.min_monster_hp[1] << ','
-                << state.min_monster_hp[2] << '\n'
-            << "monster_affix_danger=" << state.monster_affix_danger[0]
-                << ',' << state.monster_affix_danger[1] << ','
-                << state.monster_affix_danger[2] << '\n'
-            << "monster_ai_phase=" << static_cast<unsigned>(
-                state.monster_ai_phase[0]) << ',' << static_cast<unsigned>(
-                state.monster_ai_phase[1]) << ',' << static_cast<unsigned>(
-                state.monster_ai_phase[2]) << '\n'
-            << "defeat_distance_milli=" << state.defeat_distance_milli[0]
-                << ',' << state.defeat_distance_milli[1] << ','
-                << state.defeat_distance_milli[2] << '\n'
-            << "defeat_player_hp=" << state.defeat_player_hp[0] << ','
-                << state.defeat_player_hp[1] << ','
-                << state.defeat_player_hp[2] << '\n'
+            << "drop_distance_milli="
+                << state.observed_drop_distance_milli[0] << ','
+                << state.observed_drop_distance_milli[1] << ','
+                << state.observed_drop_distance_milli[2] << '\n'
             << "target_ordinal=" << state.target_ordinal << '\n'
             << "pickup_item_id=" << state.pickup_item_id << '\n'
             << "pickup_commit_generation="

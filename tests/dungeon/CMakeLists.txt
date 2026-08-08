@@ -10,6 +10,8 @@ add_executable(arpg_dungeon_tests
     room_affix_tests.cpp
     room_population_tests.cpp
     room_environment_tests.cpp
+    room_drop_state_tests.cpp
+    dungeon_render_snapshot_tests.cpp
     room_generation_tests.cpp
     dungeon_rules_tests.cpp
     dungeon_progression_tests.cpp
@@ -27,6 +29,7 @@ add_executable(arpg_dungeon_tests
     dungeon_transaction_tests.cpp
     dungeon_abyss_reward_tests.cpp
     dungeon_abyss_stress_tests.cpp
+    large_room_end_to_end_tests.cpp
     encounter_director_tests.cpp
     dungeon_wave_tests.cpp)
 target_sources(arpg_dungeon_tests PRIVATE
@@ -50,6 +53,12 @@ if(MSVC)
 endif()
 
 add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+
+add_test(NAME task11.large_room.dungeon COMMAND arpg_dungeon_tests)
+set_tests_properties(task11.large_room.dungeon PROPERTIES
+    ENVIRONMENT "ARPG_TASK11_LARGE_ROOM_ONLY=1"
+    LABELS "headless;dungeon;task11;validation"
+    TIMEOUT 300)
 
 add_test(NAME stage16.material_loot.units COMMAND arpg_dungeon_tests)
 set_tests_properties(stage16.material_loot.units PROPERTIES
@@ -248,6 +257,7 @@ add_test(NAME stage10.evidence.no_private_injection
         -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
         -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
         -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DVALIDATION_BUILD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_build.hpp
         -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
         -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
@@ -262,6 +272,7 @@ add_test(NAME stage10.evidence.rejects_private_injection
         -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
         -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
         -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DVALIDATION_BUILD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_build.hpp
         -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
         -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
@@ -277,6 +288,7 @@ add_test(NAME stage10.evidence.rejects_pre_present_capture
         -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
         -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
         -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DVALIDATION_BUILD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_build.hpp
         -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
         -DHOST_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_capture_order.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
@@ -292,6 +304,7 @@ add_test(NAME stage10.evidence.rejects_pre_capture_with_post_dummy
         -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
         -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
         -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DVALIDATION_BUILD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_build.hpp
         -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
         -DHOST_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_pre_capture_with_dummy.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
@@ -308,6 +321,7 @@ add_test(NAME stage10.evidence.mutation_self_test
         -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
         -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
         -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DVALIDATION_BUILD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_build.hpp
         -DVALID_HOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
         -DVALID_HOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
         -DBAD_CAPTURE_ORDER=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_capture_order.txt
@@ -316,16 +330,24 @@ add_test(NAME stage10.evidence.mutation_self_test
 set_tests_properties(stage10.evidence.mutation_self_test PROPERTIES
     LABELS "headless;dungeon;stage10;evidence")
 
-add_executable(arpg_stage11_death_validation_fixture
-    stage11_death_validation_fixture.cpp)
-target_compile_features(arpg_stage11_death_validation_fixture PRIVATE cxx_std_17)
-target_link_libraries(arpg_stage11_death_validation_fixture
-    PRIVATE arpg_dungeon arpg_persistence)
-arpg_enable_project_warnings(arpg_stage11_death_validation_fixture)
-add_test(NAME stage11.death_fixture.transactions
-    COMMAND arpg_stage11_death_validation_fixture)
-set_tests_properties(stage11.death_fixture.transactions PROPERTIES
-    LABELS "headless;dungeon;stage11;validation" TIMEOUT 120)
+if(WIN32)
+    add_executable(arpg_stage11_death_validation_fixture
+        stage11_death_validation_fixture.cpp)
+    target_compile_features(arpg_stage11_death_validation_fixture PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage11_death_validation_fixture
+        PRIVATE arpg_dungeon arpg_persistence)
+    arpg_enable_project_warnings(arpg_stage11_death_validation_fixture)
+    # Keep parity with the other standalone lifecycle fixtures: this executable
+    # holds multiple fixed-capacity dungeon sessions across restart validation.
+    if(MSVC)
+        target_link_options(arpg_stage11_death_validation_fixture
+            PRIVATE /STACK:4194304)
+    endif()
+    add_test(NAME stage11.death_fixture.transactions
+        COMMAND arpg_stage11_death_validation_fixture)
+    set_tests_properties(stage11.death_fixture.transactions PROPERTIES
+        LABELS "headless;dungeon;stage11;validation" TIMEOUT 120)
+endif()
 
 if(TARGET arpg_raylib)
     add_executable(arpg_stage11_death_formal_game_validation

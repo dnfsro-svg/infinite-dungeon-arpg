@@ -1,11 +1,13 @@
 #include "abyss/abyss_rules.hpp"
 #include "combat/monster_catalog.hpp"
 #include "dungeon/dungeon_progression.hpp"
-#include "dungeon/encounter_director.hpp"
+#include "dungeon/room_affix.hpp"
+#include "dungeon/room_environment.hpp"
 #include "dungeon/room_generation.hpp"
-#include "items/item_generation.hpp"
+#include "dungeon/room_monster_plan_builder.hpp"
 #include "persistence/save_store.hpp"
 #include "raylib_host.hpp"
+#include "stage10_validation_build.hpp"
 
 #include <raylib.h>
 
@@ -14,22 +16,34 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <new>
 #include <optional>
 #include <string>
-#include <string_view>
+#include <utility>
 
 namespace {
+
+// The reward and hole paths clear the 25% ordinary-room gate and all 450
+// monsters in the 100x abyss room before reaching their validation target.
+// Keep headroom for render/simulation scheduling; each scenario exits as soon
+// as its required state is presented, so this is only a safety ceiling.
+constexpr std::uint32_t kAbyssFullClearMaximumFrames = 4096U;
 
 struct SelectedRun final {
     std::uint64_t root{};
     std::uint64_t target_seed{};
     arpg::dungeon::ExitDirection direction{arpg::dungeon::ExitDirection::none};
+    std::uint16_t population{};
+    std::uint16_t abyss_population{};
 };
 
 std::optional<SelectedRun> find_run(
     arpg::abyss::AbyssRuleId required_rule,
     bool require_hole = false,
-    bool require_all_melee = false) noexcept {
+    bool require_exact_abyss_population = false,
+    bool require_lateral_exit = false,
+    std::optional<std::uint64_t> exact_root = std::nullopt) noexcept {
     constexpr std::array<arpg::dungeon::ExitDirection, 4> directions{{
         arpg::dungeon::ExitDirection::up,
         arpg::dungeon::ExitDirection::down,
@@ -37,86 +51,117 @@ std::optional<SelectedRun> find_run(
         arpg::dungeon::ExitDirection::right,
     }};
     const arpg::dungeon::DungeonRules rules{};
-    for (std::uint64_t root = 1U; root < 500000U; ++root) {
-        const auto initial = arpg::dungeon::make_initial_run_state(root, rules);
-        if (initial.fault != arpg::dungeon::DungeonFault::none) continue;
+    const std::uint64_t first_root = exact_root.value_or(1U);
+    const std::uint64_t root_limit = exact_root.has_value()
+        ? first_root + 1U : 500000U;
+    for (std::uint64_t root = first_root; root < root_limit; ++root) {
+        const auto initial_result =
+            arpg::dungeon::make_initial_run_state(root, rules);
+        if (initial_result.fault != arpg::dungeon::DungeonFault::none) continue;
+        const auto& initial = initial_result.state;
         const auto preview = arpg::dungeon::preview_abyss_doors(
-            initial.state.current_room);
+            initial.current_room);
         for (std::size_t index = 0U; index < directions.size(); ++index) {
             if (!preview[index]) continue;
+            if (require_lateral_exit
+                    && directions[index] != arpg::dungeon::ExitDirection::left
+                    && directions[index] != arpg::dungeon::ExitDirection::right) {
+                continue;
+            }
             const auto next = arpg::dungeon::make_door_transition(
-                initial.state, directions[index], rules);
+                initial, directions[index], rules);
             if (next.fault == arpg::dungeon::DungeonFault::none
                     && next.state.current_room.is_abyss
                     && next.state.abyss.rule == required_rule
                     && (!require_hole || next.state.current_room.has_hole)) {
-                if (require_all_melee) {
-                    const auto plan = arpg::dungeon::build_abyss_encounter_plan(
-                        next.state.current_room.seed,
-                        next.state.current_room.depth,
-                        next.state.current_room.ecology,
-                        rules.encounter);
-                    bool all_melee = plan.fault
-                        == arpg::dungeon::DungeonFault::none;
-                    for (std::size_t wave = 0U;
-                         all_melee && wave < plan.plan.wave_count; ++wave) {
-                        for (std::size_t spawn = 0U;
-                             spawn < plan.plan.waves[wave].spawn_count; ++spawn) {
-                            const auto* definition =
-                                arpg::combat::monster_definition(
-                                    plan.plan.waves[wave].spawns[spawn].id);
-                            all_melee = definition != nullptr
-                                && (definition->tags & static_cast<std::uint16_t>(
-                                    arpg::combat::MonsterTag::melee)) != 0U;
-                            if (!all_melee) break;
-                        }
-                    }
-                    if (!all_melee) continue;
+                const std::uint16_t population =
+                    arpg::dungeon::roll_room_density(
+                        initial.current_room.seed, false).total_count;
+                const std::uint16_t abyss_population =
+                    arpg::dungeon::roll_room_density(
+                        next.state.current_room.seed, true).total_count;
+                if (population != 300U
+                        || (require_exact_abyss_population
+                            && abyss_population != 450U)) {
+                    continue;
                 }
                 return SelectedRun{root, next.state.current_room.seed,
-                    directions[index]};
+                    directions[index], population, abyss_population};
             }
         }
     }
     return std::nullopt;
 }
 
-bool install_validation_build(arpg::dungeon::DungeonRunState& state) {
-    state.progression = {100U, 0U, 99U, 99U};
-    state.item_ownership = {};
-    state.item_ownership.items.reserve(6U);
-    for (std::uint8_t index = 0U; index < 6U; ++index) {
-        const std::uint64_t id = static_cast<std::uint64_t>(index) + 1U;
-        const auto item = arpg::items::generate_item({
-            0xA8100000ULL + index,
-            static_cast<arpg::items::ItemSlot>(index),
-            100U,
-            id,
-            arpg::items::ItemRarity::rare,
-        });
-        if (!item.has_value()) return false;
-        state.item_ownership.items.push_back(*item);
-        state.item_ownership.equipment.equipped_ids[index] = id;
+bool valid_mixed_hole_fixture(const SelectedRun& selected) noexcept {
+    const arpg::dungeon::DungeonRules rules{};
+    const auto initial = arpg::dungeon::make_initial_run_state(
+        selected.root, rules);
+    if (initial.fault != arpg::dungeon::DungeonFault::none) return false;
+    const auto next = arpg::dungeon::make_door_transition(
+        initial.state, selected.direction, rules);
+    if (next.fault != arpg::dungeon::DungeonFault::none
+            || !next.state.current_room.is_abyss
+            || !next.state.current_room.has_hole) {
+        return false;
     }
-    state.item_ownership.next_item_sequence = 7U;
-    return true;
+    std::unique_ptr<arpg::combat::RoomMonsterPlan> plan{
+        new (std::nothrow) arpg::combat::RoomMonsterPlan{}};
+    if (!plan) return false;
+    const auto built = arpg::dungeon::build_room_monster_plan(
+        next.state.current_room, rules,
+        arpg::dungeon::kRoomMonsterGeneratorVersion, *plan);
+    if (built.fault != arpg::dungeon::DungeonFault::none
+            || plan->monster_count != 450U
+            || !arpg::dungeon::room_monster_plan_legal(
+                next.state.current_room, *plan)) {
+        return false;
+    }
+    bool has_melee = false;
+    bool has_ranged = false;
+    bool has_ordinal_19_shooter = false;
+    for (std::uint16_t index = 0U; index < plan->monster_count; ++index) {
+        const auto& monster = plan->monsters[index];
+        const auto* definition = arpg::combat::monster_definition(monster.id);
+        if (definition == nullptr) return false;
+        has_melee = has_melee || arpg::combat::has_tag(
+            *definition, arpg::combat::MonsterTag::melee);
+        has_ranged = has_ranged || arpg::combat::has_tag(
+            *definition, arpg::combat::MonsterTag::ranged);
+        has_ordinal_19_shooter = has_ordinal_19_shooter
+            || (monster.spawn_ordinal == 19U
+                && monster.id == arpg::combat::MonsterId::lightning_shooter);
+    }
+    return has_melee && has_ranged && has_ordinal_19_shooter;
 }
 
 bool prepare_save(const std::filesystem::path& directory,
-    std::uint64_t root, bool geared) {
+    std::uint64_t root, bool geared, bool survival_passives = false,
+    bool offense_only = false) {
     std::error_code error;
     std::filesystem::remove_all(directory, error);
     if (error) return false;
     std::filesystem::create_directories(directory, error);
     if (error) return false;
-    auto initial = arpg::dungeon::make_initial_run_state(
+    auto initial_result = arpg::dungeon::make_initial_run_state(
         root, arpg::dungeon::DungeonRules{});
-    if (initial.fault != arpg::dungeon::DungeonFault::none
-            || (geared && !install_validation_build(initial.state))) {
+    if (initial_result.fault != arpg::dungeon::DungeonFault::none) {
+        return false;
+    }
+    auto initial = std::move(initial_result.state);
+    if ((geared
+                && !arpg::test::install_stage10_validation_build(
+                    initial))
+            || (survival_passives
+                && !arpg::test::install_stage10_validation_survival_passives(
+                    initial))
+            || (offense_only
+                && !arpg::test::install_stage10_validation_offense_build(
+                    initial))) {
         return false;
     }
     arpg::persistence::SaveStore store({directory});
-    return store.commit(initial.state).state
+    return store.commit(initial).state
         == arpg::persistence::SaveCommitState::committed;
 }
 
@@ -161,6 +206,76 @@ bool failed_same_room(const std::filesystem::path& directory,
         && state->abyss.lifecycle == arpg::abyss::AbyssLifecycle::failed;
 }
 
+bool resumed_started_same_room(const std::filesystem::path& directory,
+    std::uint64_t target_seed,
+    const arpg::dungeon::DungeonRunState& before) noexcept {
+    const auto after = load_state(directory);
+    return after.has_value()
+        && after->current_room.seed == target_seed
+        && after->current_room.is_abyss
+        && after->abyss.lifecycle == arpg::abyss::AbyssLifecycle::started
+        && arpg::dungeon::same_run_state(before, *after);
+}
+
+bool continued_from_failed_same_room(
+    const std::filesystem::path& directory,
+    std::uint64_t failed_seed,
+    arpg::abyss::AbyssRuleId expected_rule) noexcept {
+    const auto state = load_state(directory);
+    if (!state.has_value()) return false;
+    const auto& active = state->abyss;
+    const auto& history = state->last_abyss_resolution;
+    return !state->current_room.is_abyss
+        && state->current_room.seed != 0U
+        && active.lifecycle == arpg::abyss::AbyssLifecycle::none
+        && active.danger == arpg::abyss::AbyssDanger::low
+        && active.rule == arpg::abyss::AbyssRuleId::none
+        && active.rules_version == 0U
+        && active.reward_total == 0U
+        && active.generated_mask == 0U
+        && active.claimed_mask == 0U
+        && active.abandoned_mask == 0U
+        && active.reward_revision == 0U
+        && state->death.lifecycle
+            == arpg::checkpoint::DeathLifecycle::none
+        && arpg::checkpoint::valid_death_checkpoint_structural(state->death)
+        && history.valid
+        && history.lifecycle == arpg::abyss::AbyssLifecycle::failed
+        && history.room_seed == failed_seed
+        && history.rule == expected_rule
+        && history.total > 0U
+        && history.generated == 0U
+        && history.claimed == 0U
+        && history.abandoned == history.total
+        && state->last_transition
+            == arpg::checkpoint::TransitionKind::death_retreat;
+}
+
+bool valid_cleared_reward_save(const std::filesystem::path& directory,
+    std::uint64_t target_seed) noexcept {
+    const auto state = load_state(directory);
+    if (!state.has_value()
+            || !state->current_room.is_abyss
+            || state->current_room.seed != target_seed
+            || state->abyss.lifecycle
+                != arpg::abyss::AbyssLifecycle::cleared
+            || state->abyss.reward_total == 0U
+            || state->abyss.reward_total > 3U) {
+        return false;
+    }
+    const auto valid_mask = static_cast<std::uint8_t>(
+        (std::uint8_t{1U} << state->abyss.reward_total) - 1U);
+    return state->abyss.generated_mask != 0U
+        && (state->abyss.generated_mask
+            & static_cast<std::uint8_t>(~valid_mask)) == 0U
+        && (state->abyss.claimed_mask
+            & static_cast<std::uint8_t>(~state->abyss.generated_mask)) == 0U
+        && (state->abyss.abandoned_mask
+            & static_cast<std::uint8_t>(~valid_mask)) == 0U
+        && (state->abyss.abandoned_mask
+            & state->abyss.generated_mask) == 0U;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -175,20 +290,30 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(root_directory, error);
     if (error) return 4;
 
-    const auto thunder = find_run(arpg::abyss::AbyssRuleId::thunderstorm);
-    const auto flames = find_run(arpg::abyss::AbyssRuleId::hunting_flames);
-    const auto chaos = find_run(arpg::abyss::AbyssRuleId::chaos_expansion);
-    const auto rewards = find_run(arpg::abyss::AbyssRuleId::life_sacrifice);
+    const auto thunder = find_run(
+        arpg::abyss::AbyssRuleId::thunderstorm,
+        false, false, false, 2395U);
+    const auto flames = find_run(
+        arpg::abyss::AbyssRuleId::hunting_flames,
+        false, false, false, 6695U);
+    const auto chaos = find_run(
+        arpg::abyss::AbyssRuleId::chaos_expansion,
+        false, false, false, 31237U);
+    const auto rewards = find_run(
+        arpg::abyss::AbyssRuleId::life_sacrifice,
+        false, true, false, 244541U);
     const auto hole = find_run(
-        arpg::abyss::AbyssRuleId::hunting_flames, true, true);
-    if (!thunder || !flames || !chaos || !rewards || !hole) return 5;
+        arpg::abyss::AbyssRuleId::hunting_flames,
+        true, true, false, 408182U);
+    if (!thunder || !flames || !chaos || !rewards || !hole
+            || !valid_mixed_hole_fixture(*hole)) return 5;
 
     struct CaptureRun final {
         const char* name{};
         const SelectedRun* selected{};
         arpg::platform::Stage10ValidationScenario scenario{};
     };
-    const std::array<CaptureRun, 7> captures{{
+    const std::array<CaptureRun, 4> captures{{
         {"01-abyss-door.png", &thunder.value(),
             arpg::platform::Stage10ValidationScenario::abyss_door},
         {"02-thunderstorm-warning.png", &thunder.value(),
@@ -197,12 +322,6 @@ int main(int argc, char** argv) {
             arpg::platform::Stage10ValidationScenario::hunting_flames_warning},
         {"04-chaos-expansion.png", &chaos.value(),
             arpg::platform::Stage10ValidationScenario::chaos_expansion},
-        {"05-reward-chest.png", &rewards.value(),
-            arpg::platform::Stage10ValidationScenario::reward_chest},
-        {"06-pending-reward.png", &rewards.value(),
-            arpg::platform::Stage10ValidationScenario::pending_reward},
-        {"07-exit-confirmation.png", &rewards.value(),
-            arpg::platform::Stage10ValidationScenario::exit_confirmation},
     }};
     for (std::size_t index = 0U; index < captures.size(); ++index) {
         const auto directory = root_directory
@@ -214,12 +333,35 @@ int main(int argc, char** argv) {
             return static_cast<int>(10U + index);
         }
     }
-
+    const auto reward_directory = root_directory / "capture-reward-chain";
+    if (!prepare_save(reward_directory, rewards->root, true, true)
+            || !run_scenario(reward_directory, *rewards,
+                arpg::platform::Stage10ValidationScenario::pending_reward,
+                root_directory / "06-pending-reward.png",
+                kAbyssFullClearMaximumFrames)
+            || !valid_cleared_reward_save(
+                reward_directory, rewards->target_seed)) {
+        return 15;
+    }
+    if (!run_scenario(reward_directory, *rewards,
+            arpg::platform::Stage10ValidationScenario::reward_chest,
+            root_directory / "05-reward-chest.png")
+            || !valid_cleared_reward_save(
+                reward_directory, rewards->target_seed)) {
+        return 14;
+    }
+    if (!run_scenario(reward_directory, *rewards,
+            arpg::platform::Stage10ValidationScenario::exit_confirmation,
+            root_directory / "07-exit-confirmation.png")) {
+        return 16;
+    }
     const auto death_directory = root_directory / "path-death";
-    if (!prepare_save(death_directory, thunder->root, false)
+    if (!prepare_save(death_directory, thunder->root, false, false, true)
             || !run_scenario(death_directory, *thunder,
                 arpg::platform::Stage10ValidationScenario::player_death)
-            || !failed_same_room(death_directory, thunder->target_seed)) {
+            || !continued_from_failed_same_room(
+                death_directory, thunder->target_seed,
+                arpg::abyss::AbyssRuleId::thunderstorm)) {
         return 20;
     }
 
@@ -243,15 +385,16 @@ int main(int argc, char** argv) {
                 != arpg::abyss::AbyssLifecycle::started
             || !run_scenario(restart_directory, *rewards,
                 arpg::platform::Stage10ValidationScenario::restarted_failed)
-            || !failed_same_room(restart_directory, rewards->target_seed)) {
+            || !resumed_started_same_room(
+                restart_directory, rewards->target_seed, *started)) {
         return 23;
     }
 
     const auto hole_directory = root_directory / "path-hole";
-    if (!prepare_save(hole_directory, hole->root, true)
+    if (!prepare_save(hole_directory, hole->root, true, true)
             || !run_scenario(hole_directory, *hole,
                 arpg::platform::Stage10ValidationScenario::abyss_hole_descent,
-                std::nullopt, 2400U)) {
+                std::nullopt, kAbyssFullClearMaximumFrames)) {
         return 24;
     }
     const auto descended = load_state(hole_directory);

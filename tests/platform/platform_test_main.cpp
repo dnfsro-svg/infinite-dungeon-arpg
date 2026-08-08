@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include <cstdlib>
+
 #if defined(_WIN32) && defined(_DEBUG)
 #include <crtdbg.h>
 #include <cstdlib>
@@ -13,6 +15,7 @@ arpg::test::TestSuite audio_routing_suite() noexcept;
 arpg::test::TestSuite audio_scene_suite() noexcept;
 arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
 arpg::test::TestSuite host_input_suite() noexcept;
+arpg::test::TestSuite host_validation_exit_suite() noexcept;
 arpg::test::TestSuite active_skill_input_suite() noexcept;
 arpg::test::TestSuite raylib_input_suite() noexcept;
 arpg::test::TestSuite active_skill_view_suite() noexcept;
@@ -23,6 +26,7 @@ arpg::test::TestSuite task6_exit_unlock_view_suite() noexcept;
 arpg::test::TestSuite passive_tree_view_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept;
 arpg::test::TestSuite inventory_view_math_suite() noexcept;
 arpg::test::TestSuite death_input_gate_suite() noexcept;
 arpg::test::TestSuite death_overlay_view_suite() noexcept;
@@ -53,6 +57,41 @@ arpg::test::TestSuite room_background_render_plan_suite() noexcept;
 arpg::test::TestSuite stage12_environment_render_suite() noexcept;
 arpg::test::TestSuite stage12_actor_render_suite() noexcept;
 arpg::test::TestSuite stage12_material_render_suite() noexcept;
+arpg::test::TestSuite large_room_render_plan_suite() noexcept;
+
+namespace {
+
+bool task11_large_room_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK11_LARGE_ROOM_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool task9_environment_render_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK9_ENVIRONMENT_RENDER_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool v10_migration_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_V10_MIGRATION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+}  // namespace
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -64,6 +103,32 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (task11_large_room_only()) {
+        const arpg::test::TestSuite task11_only[] = {
+            large_room_render_plan_suite(),
+        };
+        return arpg::test::run_suites(task11_only, 4,
+            "task 11 large room render preparation validation");
+    }
+
+    if (task9_environment_render_only()) {
+        const arpg::test::TestSuite task9_only[] = {
+            material_asset_validation_suite(),
+            room_background_render_plan_suite(),
+            stage12_environment_render_suite(),
+        };
+        return arpg::test::run_suites(task9_only, 57,
+            "task 9 deterministic world environment render");
+    }
+
+    if (v10_migration_only()) {
+        const arpg::test::TestSuite migration_only[] = {
+            dungeon_runtime_v10_migration_suite(),
+        };
+        return arpg::test::run_suites(migration_only, 1,
+            "v9 to v10 runtime migration");
+    }
+
     const arpg::test::TestSuite suites[] = {
         combat_view_math_suite(),
         monster_view_suite(),
@@ -73,6 +138,7 @@ int main() {
         audio_scene_suite(),
         stage15_audio_pack_suite(),
         host_input_suite(),
+        host_validation_exit_suite(),
         active_skill_input_suite(),
         raylib_input_suite(),
         active_skill_view_suite(),
@@ -83,6 +149,7 @@ int main() {
         passive_tree_view_suite(),
         host_launch_options_suite(),
         dungeon_runtime_suite(),
+        dungeon_runtime_v10_migration_suite(),
         pause_host_gate_suite(),
         host_settings_runtime_suite(),
         host_window_lifetime_suite(),
@@ -113,8 +180,9 @@ int main() {
         stage12_environment_render_suite(),
         stage12_actor_render_suite(),
         stage12_material_render_suite(),
+        large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 514,
+    return arpg::test::run_suites(suites, 632,
         "host settings runtime contract");
 }

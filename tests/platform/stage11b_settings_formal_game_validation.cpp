@@ -2,6 +2,7 @@
 
 #include "dungeon_runtime.hpp"
 
+#include "persistence/room_progress_codec.hpp"
 #include "persistence/save_store.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
@@ -14,6 +15,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -52,7 +54,7 @@ struct FileFingerprint final {
     return lhs.valid && rhs.valid && lhs.hash == rhs.hash && lhs.size == rhs.size;
 }
 
-[[nodiscard]] bool establish_v6_character_slots(
+[[nodiscard]] bool establish_character_slots(
     const std::filesystem::path& directory) {
     platform::DungeonRuntimeConfig config{};
     config.save.directory = directory;
@@ -73,6 +75,22 @@ struct FileFingerprint final {
         == persistence::SaveCommitState::committed
         && fingerprint_file(directory / "run_a.sav").valid
         && fingerprint_file(directory / "run_b.sav").valid;
+}
+
+[[nodiscard]] bool valid_current_character_slot(
+    const std::filesystem::path& path, std::uint64_t& revision) {
+    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    if (!stream) return false;
+    const std::streampos end = stream.tellg();
+    if (end <= 0) return false;
+    const auto size = static_cast<std::size_t>(end);
+    std::vector<std::uint8_t> bytes(size);
+    stream.seekg(0, std::ios::beg);
+    stream.read(reinterpret_cast<char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
+    return stream && persistence::inspect_checkpoint_latest_envelope(
+        bytes.data(), bytes.size(), revision) == persistence::CodecError::none
+        && revision != 0U;
 }
 
 [[nodiscard]] std::string quote_command_argument(
@@ -217,15 +235,21 @@ int main(int argc, char** argv) {
     std::filesystem::remove_all(root, error);
     std::filesystem::create_directories(saves, error);
     if (error) return 3;
-    if (!establish_v6_character_slots(saves)) return 3;
-    const FileFingerprint run_a_before = fingerprint_file(saves / "run_a.sav");
-    const FileFingerprint run_b_before = fingerprint_file(saves / "run_b.sav");
+    if (!establish_character_slots(saves)) return 3;
 
     bool ok = run_child(root, saves, main_settings, "rebound");
     const auto rebound = read_summary(root / "rebound.txt");
     ok = ok && equals(rebound, "old_attack_count", "0")
         && nonzero(rebound, "new_attack_count")
-        && equals(rebound, "light_attack", "U") && save_second_slot(main_settings);
+        && equals(rebound, "light_attack", "U");
+    const FileFingerprint run_a_before = fingerprint_file(saves / "run_a.sav");
+    const FileFingerprint run_b_before = fingerprint_file(saves / "run_b.sav");
+    const bool settings_slot_saved = save_second_slot(main_settings);
+    const FileFingerprint run_a_after = fingerprint_file(saves / "run_a.sav");
+    const FileFingerprint run_b_after = fingerprint_file(saves / "run_b.sav");
+    ok = ok && settings_slot_saved
+        && same_fingerprint(run_a_before, run_a_after)
+        && same_fingerprint(run_b_before, run_b_after);
 
     ok = ok && run_child(root, saves, main_settings, "restart");
     const auto restart = read_summary(root / "restart.txt");
@@ -263,12 +287,17 @@ int main(int argc, char** argv) {
     const auto swap = read_summary(root / "swap.txt");
     ok = ok && equals(swap, "light_attack", "K") && equals(swap, "jump", "J");
 
-    const FileFingerprint run_a_after = fingerprint_file(saves / "run_a.sav");
-    const FileFingerprint run_b_after = fingerprint_file(saves / "run_b.sav");
-    ok = ok && same_fingerprint(run_a_before, run_a_after)
-        && same_fingerprint(run_b_before, run_b_after);
+    std::uint64_t final_run_a_revision{};
+    std::uint64_t final_run_b_revision{};
+    const bool final_run_a_checkpoint_valid = valid_current_character_slot(
+        saves / "run_a.sav", final_run_a_revision);
+    const bool final_run_b_checkpoint_valid = valid_current_character_slot(
+        saves / "run_b.sav", final_run_b_revision);
+    ok = ok && final_run_a_checkpoint_valid
+        && final_run_b_checkpoint_valid;
     std::ofstream report(root / "stage11b-settings-evidence.txt", std::ios::trunc);
-    report << "run_a_hash_before=" << run_a_before.hash << '\n'
+    report << "character_hash_scope=settings_transaction\n"
+           << "run_a_hash_before=" << run_a_before.hash << '\n'
            << "run_a_hash_after=" << run_a_after.hash << '\n'
            << "run_b_hash_before=" << run_b_before.hash << '\n'
            << "run_b_hash_after=" << run_b_after.hash << '\n'
@@ -276,6 +305,12 @@ int main(int argc, char** argv) {
            << "run_a_size_after=" << run_a_after.size << '\n'
            << "run_b_size_before=" << run_b_before.size << '\n'
            << "run_b_size_after=" << run_b_after.size << '\n'
+           << "final_run_a_checkpoint_valid="
+           << (final_run_a_checkpoint_valid ? 1 : 0) << '\n'
+           << "final_run_b_checkpoint_valid="
+           << (final_run_b_checkpoint_valid ? 1 : 0) << '\n'
+           << "final_run_a_revision=" << final_run_a_revision << '\n'
+           << "final_run_b_revision=" << final_run_b_revision << '\n'
            << "rebound_old_attack=" << value_or_empty(rebound, "old_attack_count") << '\n'
            << "rebound_new_attack=" << value_or_empty(rebound, "new_attack_count") << '\n'
            << "paused_tick_before=" << value_or_empty(pause, "paused_tick_before") << '\n'

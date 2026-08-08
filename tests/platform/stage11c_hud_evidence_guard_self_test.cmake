@@ -77,6 +77,41 @@ string(REPLACE "${_task7c_mask_hud_observer}"
 stage11c_expect_task7c_host_rejection(task7c_m10_notices_lambda_decoy_get_call
     "${_task7c_m10_notices_mask_host}" "T7C-M10")
 
+set(_task7c_m25_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        audio.shutdown();
+        renderer.shutdown_resources();
+        pause_menu_renderer.shutdown();
+        window.close();]=])
+set(_task7c_m25_dead_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        if (false) {
+            audio.shutdown();
+            renderer.shutdown_resources();
+            pause_menu_renderer.shutdown();
+            window.close();
+        }]=])
+string(REPLACE "${_task7c_m25_shutdown_chain}"
+    "${_task7c_m25_dead_shutdown_chain}"
+    _task7c_m25_dead_shutdown_host "${_host_source}")
+stage11c_expect_task7c_host_rejection(task7c_m25_dead_shutdown_decoy
+    "${_task7c_m25_dead_shutdown_host}" "facade summary binding/order")
+
+set(_task7c_m25_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        if (config.fullscreen) {
+            audio.shutdown();
+            renderer.shutdown_resources();
+            pause_menu_renderer.shutdown();
+            window.close();
+        }]=])
+string(REPLACE "${_task7c_m25_shutdown_chain}"
+    "${_task7c_m25_conditional_shutdown_chain}"
+    _task7c_m25_conditional_shutdown_host "${_host_source}")
+stage11c_expect_task7c_host_rejection(task7c_m25_conditional_shutdown_decoy
+    "${_task7c_m25_conditional_shutdown_host}"
+    "facade summary binding/order")
+
 if(DEFINED STAGE11C_TASK7C_HOST_MASK_ONLY)
     message(STATUS "Stage11C HUD evidence Task7C Host-mask cases passed")
     return()

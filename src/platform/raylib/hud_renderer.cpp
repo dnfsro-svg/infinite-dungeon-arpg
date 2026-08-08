@@ -195,6 +195,7 @@ ObjectivePanelPlan make_objective_panel_plan(const RoomHudModel& room,
     plan.secondary = room.secondary;
     plan.movement = room.movement;
     plan.controls = room.controls;
+    plan.diagnostics = room.visible_set.text;
     return plan;
 }
 
@@ -667,16 +668,71 @@ void HudRenderer::draw(const HudViewModel& view,
                 bounds.y + 5.0F * layout.scale,
                 bounds.width - 16.0F * layout.scale,
                 24.0F * layout.scale}));
-        draw_panel_text(draw_font, text_layout.objective_title,
-            objective.primary,
-            style.objective_primary_font_size * layout.scale,
-            objective.abyss ? palette.chaos : palette.text,
-            UiTextAuditRole::hud_objective, layout.scale);
-        draw_panel_text(draw_font, text_layout.objective_hint,
-            objective.secondary,
-            style.objective_secondary_font_size * layout.scale,
-            ui_text_contrast_style().primary,
-            UiTextAuditRole::hud_objective, layout.scale);
+        const bool large_room_status =
+            view.room.density_text.bytes[0] != '\0';
+        if (large_room_status) {
+            HudRect density_bounds = text_layout.objective_title;
+            density_bounds.width = 320.0F * layout.scale;
+            HudRect exit_bounds = text_layout.objective_title;
+            exit_bounds.x = density_bounds.x + density_bounds.width;
+            exit_bounds.width = std::max(0.0F,
+                text_layout.objective_title.width - density_bounds.width);
+
+            HudRect progress_bounds = text_layout.objective_hint;
+            progress_bounds.width = 330.0F * layout.scale;
+            HudRect remaining_bounds = text_layout.objective_hint;
+            remaining_bounds.x = progress_bounds.x + progress_bounds.width;
+            remaining_bounds.width = 120.0F * layout.scale;
+            HudRect detail_bounds = text_layout.objective_hint;
+            detail_bounds.x = remaining_bounds.x + remaining_bounds.width;
+            detail_bounds.width = std::max(0.0F,
+                text_layout.objective_hint.width - progress_bounds.width
+                    - remaining_bounds.width);
+
+            const bool transient_room_state =
+                view.room.phase == dungeon::RoomPhase::committing
+                || view.room.phase == dungeon::RoomPhase::death_pending
+                || view.room.phase == dungeon::RoomPhase::faulted;
+            const HudText96& density_or_state =
+                (!objective.abyss && !transient_room_state)
+                    ? view.room.density_text : objective.primary;
+            draw_panel_text(draw_font, density_bounds, density_or_state,
+                style.objective_secondary_font_size * layout.scale,
+                objective.abyss ? palette.chaos : palette.text,
+                UiTextAuditRole::hud_objective, layout.scale);
+            draw_panel_text(draw_font, exit_bounds, view.room.exit_text,
+                style.objective_secondary_font_size * layout.scale,
+                objective.abyss && view.room.exits_unlocked
+                    && view.room.remaining_targets != 0U
+                        ? ui_text_contrast_style().warning
+                        : ui_text_contrast_style().primary,
+                UiTextAuditRole::hud_objective, layout.scale);
+            draw_panel_text(draw_font, progress_bounds,
+                view.room.progress_text,
+                style.objective_secondary_font_size * layout.scale,
+                ui_text_contrast_style().primary,
+                UiTextAuditRole::hud_objective, layout.scale);
+            draw_panel_text(draw_font, remaining_bounds,
+                view.room.remaining_text,
+                style.objective_secondary_font_size * layout.scale,
+                ui_text_contrast_style().secondary,
+                UiTextAuditRole::hud_objective, layout.scale);
+            draw_panel_text(draw_font, detail_bounds, objective.secondary,
+                style.objective_secondary_font_size * layout.scale,
+                ui_text_contrast_style().secondary,
+                UiTextAuditRole::hud_objective, layout.scale);
+        } else {
+            draw_panel_text(draw_font, text_layout.objective_title,
+                objective.primary,
+                style.objective_primary_font_size * layout.scale,
+                objective.abyss ? palette.chaos : palette.text,
+                UiTextAuditRole::hud_objective, layout.scale);
+            draw_panel_text(draw_font, text_layout.objective_hint,
+                objective.secondary,
+                style.objective_secondary_font_size * layout.scale,
+                ui_text_contrast_style().primary,
+                UiTextAuditRole::hud_objective, layout.scale);
+        }
         draw_panel_text(draw_font, text_layout.objective_movement,
             objective.movement,
             style.objective_secondary_font_size * layout.scale,
@@ -689,6 +745,11 @@ void HudRenderer::draw(const HudViewModel& view,
                 ui_text_contrast_style().primary,
                 UiTextAuditRole::hud_objective, layout.scale);
         }
+        draw_panel_text(draw_font, text_layout.objective_diagnostics,
+            objective.diagnostics,
+            style.objective_secondary_font_size * layout.scale,
+            ui_text_contrast_style().secondary,
+            UiTextAuditRole::hud_objective, layout.scale);
     }
     if (navigation.visible) {
         const Rectangle bounds{navigation.bounds.x, navigation.bounds.y,

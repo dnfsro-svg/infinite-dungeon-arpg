@@ -3,6 +3,7 @@
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon/encounter_director.hpp"
 #include "dungeon/material_loot.hpp"
+#include "dungeon/reinforcement_roll.hpp"
 #include "dungeon_test_support.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_crafting.hpp"
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 
 namespace {
@@ -383,42 +385,60 @@ bool all_currency_and_reinforcement_boundaries() noexcept {
     return true;
 }
 
+struct ReinforcementCase final {
+    std::uint32_t level;
+    std::uint16_t chance_bp;
+};
+
+bool reinforcement_pipeline_matches_roll(
+    ReinforcementCase sample) noexcept {
+    const std::uint64_t pipeline_root = 0x1600U + sample.level;
+    const std::uint64_t pipeline_item_id = 0x160000U + pipeline_root;
+    auto built = dungeon::make_initial_run_state(
+        pipeline_root, dungeon::DungeonRules{});
+    const auto item = generated(
+        pipeline_item_id, 1U, items::ItemRarity::normal);
+    if (built.fault != dungeon::DungeonFault::none || !item) return false;
+    auto state = built.state;
+    auto reinforced = *item;
+    reinforced.reinforcement = sample.level;
+    state.item_ownership.items = {reinforced};
+    state.item_ownership.next_item_sequence = reinforced.id + 1U;
+    state.item_ownership.materials[items::material_index(
+        items::MaterialId::reinforcement_stone)] = 1U;
+    dungeon::DungeonSession pipeline{dungeon::DungeonRules{}, state};
+    if (pipeline.request_reinforcement(reinforced.id)
+            != dungeon::RequestResult::accepted) return false;
+    const auto pipeline_pending = pipeline.pending_save();
+    if (!pipeline_pending
+            || !pipeline_pending->reinforcement_receipt.has_value()) {
+        return false;
+    }
+    const auto& pipeline_receipt =
+        *pipeline_pending->reinforcement_receipt;
+    const bool expected_pipeline_success = dungeon::reinforcement_succeeds(
+        state.root_seed, reinforced.id, reinforced.reinforcement,
+        state.commit_generation, sample.chance_bp);
+    return require(pipeline_receipt.success == expected_pipeline_success
+            && pipeline_receipt.before == sample.level
+            && pipeline_receipt.success_chance_bp == sample.chance_bp,
+        "reinforcement production pipeline matches roll domain")
+        && commit(pipeline);
+}
+
 bool reinforcement_long_run() noexcept {
     constexpr std::uint64_t kRuns = 75000U;
-    struct Case final { std::uint32_t level; std::uint16_t chance_bp; };
-    constexpr std::array<Case, 4U> kCases{{{4U, 8000U}, {7U, 7000U},
-        {10U, 7000U}, {12U, 6000U}}};
-    for (const Case sample : kCases) {
+    constexpr std::array<ReinforcementCase, 4U> kCases{{
+        {4U, 8000U}, {7U, 7000U}, {10U, 7000U}, {12U, 6000U}}};
+    for (const ReinforcementCase sample : kCases) {
+        if (!reinforcement_pipeline_matches_roll(sample)) return false;
         std::uint64_t success_count = 0U;
         std::uint64_t failure_count = 0U;
         for (std::uint64_t root = 1U; root <= kRuns; ++root) {
-            auto built = dungeon::make_initial_run_state(root, dungeon::DungeonRules{});
-            const auto item = generated(0x160000U + root, 1U, items::ItemRarity::normal);
-            if (built.fault != dungeon::DungeonFault::none || !item) return false;
-            auto state = built.state;
-            auto reinforced = *item;
-            reinforced.reinforcement = sample.level;
-            state.item_ownership.items = {reinforced};
-            state.item_ownership.next_item_sequence = reinforced.id + 1U;
-            state.item_ownership.materials[items::material_index(
-                items::MaterialId::reinforcement_stone)] = 1U;
-            dungeon::DungeonSession session{dungeon::DungeonRules{}, state};
-            if (session.request_reinforcement(reinforced.id)
-                    != dungeon::RequestResult::accepted) return false;
-            const auto pending = session.pending_save();
-            if (!pending || !pending->reinforcement_receipt.has_value()) return false;
-            const auto& receipt = *pending->reinforcement_receipt;
-            if (receipt.success) ++success_count;
+            const bool success = dungeon::reinforcement_succeeds(root,
+                0x160000U + root, sample.level, 0U, sample.chance_bp);
+            if (success) ++success_count;
             else ++failure_count;
-            if (sample.level == 4U && !receipt.success
-                    && receipt.after != 4U) return false;
-            if (sample.level == 7U && !receipt.success
-                    && receipt.after != 6U) return false;
-            if (sample.level == 10U && !receipt.success
-                    && receipt.after != 0U) return false;
-            if (sample.level == 12U && !receipt.success
-                    && (!receipt.destroyed || receipt.after != 0U)) return false;
-            if (!commit(session)) return false;
         }
         const double probability = static_cast<double>(sample.chance_bp) / 10000.0;
         const double mean = static_cast<double>(kRuns) * probability;
@@ -437,13 +457,15 @@ bool reinforcement_long_run() noexcept {
 bool pickup_vacuum_death_reload_and_saturation() noexcept {
     auto built = dungeon::make_initial_run_state(0x16B0U, dungeon::DungeonRules{});
     if (built.fault != dungeon::DungeonFault::none) return false;
-    dungeon::DungeonSession session{dungeon::DungeonRules{}, built.state};
-    const auto player = session.snapshot().combat->player.position;
-    arpg::test::install_ground_material(session, 4U, items::MaterialId::chaos, player);
-    if (!require(session.request_material_pickup(4U)
-            == dungeon::RequestResult::accepted && commit(session),
+    auto session = std::make_unique<dungeon::DungeonSession>(
+        dungeon::DungeonRules{}, built.state);
+    const auto player = session->snapshot().combat->player.position;
+    arpg::test::install_ground_material(
+        *session, 4U, items::MaterialId::chaos, player);
+    if (!require(session->request_material_pickup(4U)
+            == dungeon::RequestResult::accepted && commit(*session),
             "material pickup committed")) return false;
-    auto persisted = arpg::test::DungeonSessionTestAccess::stable_state(session);
+    auto persisted = arpg::test::DungeonSessionTestAccess::stable_state(*session);
     persisted.item_ownership.items.clear();
     const auto durable_item = generated(7001U, 1U, items::ItemRarity::normal);
     if (!durable_item.has_value()) return false;
@@ -464,30 +486,34 @@ bool pickup_vacuum_death_reload_and_saturation() noexcept {
             && decoded.state.item_ownership.items.size() == 1U
             && decoded.state.item_ownership.items[0].reinforcement == 15U,
             "V7 materials claims reinforcement round trip")) return false;
-    dungeon::DungeonSession reload{dungeon::DungeonRules{}, decoded.state};
-    if (!require(reload.item_state().materials[
+    auto reload = std::make_unique<dungeon::DungeonSession>(
+        dungeon::DungeonRules{}, decoded.state);
+    if (!require(reload->item_state().materials[
                 items::material_index(items::MaterialId::chaos)] == 1U
-            && reload.item_state().items[0].reinforcement == 15U,
+            && reload->item_state().items[0].reinforcement == 15U,
             "decoded V7 rebuilds a valid session")) return false;
 
-    auto vacuum_state = arpg::test::DungeonSessionTestAccess::stable_state(session);
-    dungeon::DungeonSession vacuum{dungeon::DungeonRules{}, vacuum_state};
-    arpg::test::install_ground_material(vacuum, 6U, items::MaterialId::coupon_6,
+    auto vacuum_state = arpg::test::DungeonSessionTestAccess::stable_state(*session);
+    auto vacuum = std::make_unique<dungeon::DungeonSession>(
+        dungeon::DungeonRules{}, vacuum_state);
+    arpg::test::install_ground_material(*vacuum, 7U, items::MaterialId::coupon_6,
         player, dungeon::GroundMaterialSource::monster_coupon);
-    arpg::test::set_phase(vacuum, dungeon::RoomPhase::combat);
-    arpg::test::prepare_room_clear(vacuum);
-    if (!require(vacuum.pending_save().has_value()
-            && vacuum.pending_save()->kind == dungeon::PendingSaveKind::room_clear
-            && commit(vacuum), "room clear vacuum")) return false;
+    arpg::test::set_phase(*vacuum, dungeon::RoomPhase::combat);
+    arpg::test::prepare_room_clear(*vacuum);
+    if (!require(vacuum->pending_save().has_value()
+            && vacuum->pending_save()->kind == dungeon::PendingSaveKind::room_clear
+            && commit(*vacuum), "room clear vacuum")) return false;
 
-    auto death_state = arpg::test::DungeonSessionTestAccess::stable_state(vacuum);
-    dungeon::DungeonSession death{dungeon::DungeonRules{}, death_state};
-    arpg::test::install_ground_material(death, 8U, items::MaterialId::exalt, player);
-    arpg::test::set_phase(death, dungeon::RoomPhase::combat);
-    if (!arpg::test::kill_current_player_through_combat(death)) return false;
-    arpg::test::DungeonSessionTestAccess::handle_player_defeat(death);
-    if (!require(death.pending_save().has_value() && commit(death)
-            && death.item_state().materials[items::material_index(items::MaterialId::exalt)]
+    auto death_state = arpg::test::DungeonSessionTestAccess::stable_state(*vacuum);
+    auto death = std::make_unique<dungeon::DungeonSession>(
+        dungeon::DungeonRules{}, death_state);
+    arpg::test::install_ground_material(
+        *death, 8U, items::MaterialId::exalt, player);
+    arpg::test::set_phase(*death, dungeon::RoomPhase::combat);
+    if (!arpg::test::kill_current_player_through_combat(*death)) return false;
+    arpg::test::DungeonSessionTestAccess::handle_player_defeat(*death);
+    if (!require(death->pending_save().has_value() && commit(*death)
+            && death->item_state().materials[items::material_index(items::MaterialId::exalt)]
                 == 0U, "death loses unpicked material")) return false;
 
     return require(items::reinforced_base_value(1,
