@@ -1,0 +1,123 @@
+[RUN] room_generation.golden seed chain is stable
+[RUN] room_generation.ecology and three stream samples are fixed
+[RUN] room_generation.hole threshold boundary is left closed
+[RUN] room_generation.abyss threshold boundary is left closed
+[RUN] room_generation.hole and abyss can coexist
+[RUN] room_generation.bias only changes ecology stream
+[RUN] room_generation.entry templates preserve stage two layout
+[RUN] room_generation.non v1 combat template is rejected
+[RUN] dungeon_lifecycle.construction and first tick are staged
+[RUN] dungeon_lifecycle.closed doors ignore pre-clear contact
+[RUN] dungeon_lifecycle.real combat clears once without respawn
+[RUN] dungeon_lifecycle.reset reconstructs same room and clears queues
+[RUN] dungeon_lifecycle.combat events relay in source order
+[RUN] dungeon_navigation.exact apertures accept outward input
+[RUN] dungeon_navigation.invalid physical requests are rejected
+[RUN] dungeon_navigation.first exit commits destroys and removes combat
+[RUN] dungeon_navigation.transition and combat start are separate ticks
+[RUN] dungeon_navigation.contact and held inputs never duplicate rooms
+[RUN] dungeon_navigation.maximum index faults once without destroying
+[RUN] dungeon_stress.launcher robot clears room38 reverse deadband regression
+[RUN] dungeon_stress.launcher input robot clears ten minimal committed rooms
+[RUN] dungeon_stress.launcher input robot clears thousand minimal committed rooms
+[RUN] dungeon_stress.ten thousand director plans are legal deterministic and allocation free
+[RUN] dungeon_stress.identical seed and route are field equal
+[RUN] dungeon_stress.one changed direction changes only committed room
+[RUN] dungeon_stress.fixed seed room trace matches baseline golden
+[RUN] dungeon_stress.thousand real rooms preserve single world invariants
+[RUN] dungeon_stress.measured thousand rooms isolate save allocations and never overflow
+[RUN] dungeon_stress.passive star chart end to end trace is deterministic
+[RUN] dungeon_rules.exit directions map to elements
+[RUN] dungeon_rules.default rules are valid
+[RUN] dungeon_rules.default biases produce checked weights
+[RUN] dungeon_rules.threshold boundaries are checked
+[RUN] dungeon_rules.invalid weights leave outputs zeroed
+[RUN] dungeon_progression.initial state is one commit and three samples
+[RUN] dungeon_progression.each door advances counters and bias
+[RUN] dungeon_progression.door bias is applied before room generation
+[RUN] dungeon_progression.descent resets floor bias and entry
+[RUN] dungeon_progression.checked limits preserve input state
+[RUN] dungeon_progression.same root and route are replayable
+[RUN] dungeon_progression.uncalled door domains do not change selected samples
+[RUN] dungeon_passive_tree.passive mutation only after clear
+[RUN] dungeon_passive_tree.not committed passive mutation keeps old state
+[RUN] dungeon_passive_tree.committed passive mutation adopts tree
+[RUN] dungeon_passive_tree.indeterminate passive mutation faults
+[RUN] dungeon_passive_tree.committed passive generation mismatch faults
+[RUN] dungeon_passive_tree.committed passive bitset mismatch faults
+[RUN] dungeon_passive_tree.disconnecting passive refund is rejected
+[RUN] dungeon_passive_tree.next room uses committed passive player build
+[RUN] dungeon_passive_tree.current room keeps old build until transition
+[RUN] dungeon_item_transaction.item snapshot lightweight pending fields
+[RUN] dungeon_item_transaction.equip rejects invalid requests
+[RUN] dungeon_item_transaction.equip publishes on commit and preserves health
+[RUN] dungeon_item_transaction.equipment indeterminate faults
+[RUN] dungeon_item_transaction.recipe atomic order and retry
+[RUN] dungeon_item_transaction.recipe rejects invalid materials
+[RUN] dungeon_item_transaction.equipment receipt compares complete item state
+[RUN] dungeon_item_transaction.recipe product collision faults
+[RUN] dungeon_item_transaction.recipe sequence overflow faults
+[RUN] dungeon_item_transaction.invalid loaded progression tree faults
+[RUN] dungeon_item_transaction.room build combines passives and equipment
+[RUN] dungeon_item_transaction.same run state compares item ownership
+[RUN] dungeon_item_transaction.equipment preview combines passive build
+[RUN] dungeon_item_transaction.ownership scratch oom is atomic
+[RUN] dungeon_item_transaction.stable vector copy oom is atomic
+[RUN] dungeon_item_transaction.recipe post-copy scratch oom is atomic
+[RUN] dungeon_item_transaction.build projection scratch oom is atomic
+[RUN] dungeon_item_transaction.commit generation overflow faults
+[RUN] dungeon_item_transaction.item transaction phase restoration
+[RUN] dungeon_item_transaction.invalid loaded equipment ownership faults
+[RUN] dungeon_item_transaction.committed receipt publishes without allocation
+[RUN] dungeon_equipment_stress.pickup order perturbation is detected
+[RUN] dungeon_equipment_stress.1000 room equipment trace is deterministic
+[RUN] dungeon_loot_drop.two wave trace rolls each ordinal once
+[RUN] dungeon_loot_drop.nearby tick prepares atomic pickup
+[RUN] dungeon_loot_drop.auto pickup precedes exit
+[RUN] dungeon_loot_drop.explicit pickup inclusive radius
+[RUN] dungeon_loot_drop.nearby pickup lowest ordinal only
+[RUN] dungeon_loot_drop.pickup save outcomes atomic
+[RUN] dungeon_loot_drop.pickup commit no allocation
+[RUN] dungeon_loot_drop.disappeared ground rejects receipt
+[RUN] dungeon_loot_drop.wrong ordinal or replaced ground rejects receipt
+[RUN] dungeon_loot_drop.pickup allocation rollback
+[RUN] dungeon_loot_drop.claimed and unclaimed reload
+[RUN] dungeon_loot_drop.miss rolls once until reset
+[RUN] dungeon_loot_drop.ground pool full capacity
+[RUN] dungeon_loot_drop.drop collision and invalid depth
+[RUN] dungeon_loot_drop.deep room caps item level
+[RUN] dungeon_loot_drop.transition cleanup commit semantics
+[RUN] dungeon_transaction.constructor uses saved room descriptor
+[RUN] dungeon_transaction.door request freezes old combat until commit
+[RUN] dungeon_transaction.exact commit adopts verified state and destroys old room
+[RUN] dungeon_transaction.not committed discards pending and retries identically
+[RUN] dungeon_transaction.indeterminate faults and blocks all actions
+[RUN] dungeon_transaction.generation mismatch faults with receipt mismatch
+[RUN] dungeon_transaction.verified state mismatch faults with receipt mismatch
+[RUN] dungeon_transaction.descent requires clear hole range and edge
+[RUN] dungeon_transaction.queue overflow faults without release propagation
+[RUN] encounter_director.budget is bounded and depth driven
+[RUN] encounter_director.plan is deterministic and legal
+[RUN] encounter_director.generated spawn ordinals and affixes
+[RUN] encounter_director.ecology weighting prefers matching elements
+[RUN] encounter_director.invalid director config is rejected
+[RUN] encounter_director.high budget limit applies to each wave
+[RUN] encounter_director.illegal wave budget or cost is rejected
+[RUN] encounter_director.invalid spawn ordinal is rejected
+[RUN] encounter_director.mutually conflicting affixes are rejected
+[RUN] encounter_director.indivisible small two-wave config is rejected
+[RUN] encounter_director.large base with low threshold is accepted
+[RUN] encounter_director.fallback keeps a direct target
+[RUN] dungeon_waves.two wave room keeps exits closed until last wave
+[RUN] dungeon_waves.sealed hole stays closed through wave delay
+[RUN] dungeon_waves.reset and reload rebuild the same encounter plan
+[RUN] dungeon_waves.abyss uses the normal director configuration
+[RUN] dungeon_waves.four chaser fixture reaches awaiting exit
+[RUN] dungeon_waves.shooter and chasers fixture reaches awaiting exit
+[RUN] dungeon_waves.forced defeat advances real wave lifecycle
+[RUN] dungeon_waves.wave delay freezes combat and preserves health
+[RUN] dungeon_waves.hole stays rejected for every delay tick
+[RUN] dungeon_waves.rollback keeps health but committed room resets it
+[RUN] dungeon_progression_reward.reset discards pending XP
+[RUN] dungeon_progression_reward.clear settles XP once
+[RUN] dungeon_progression_reward.reward-ineligible defeats do not reward player
