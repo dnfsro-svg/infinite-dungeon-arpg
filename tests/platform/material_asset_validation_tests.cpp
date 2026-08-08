@@ -26,6 +26,7 @@ using arpg::platform::MaterialAtlasId;
 using arpg::platform::MaterialFrameDefinition;
 using arpg::platform::MaterialManifestDefinition;
 using arpg::platform::MaterialCompositeParameters;
+using arpg::platform::MaterialCompositeMode;
 using arpg::platform::MaterialPackState;
 using arpg::platform::MaterialSpriteId;
 
@@ -310,6 +311,19 @@ arpg::test::Failure material_pack_loads_and_draws_color_material_pairs() noexcep
     ARPG_REQUIRE(fake.composites[0].roughness_strength > 0.0F);
     ARPG_REQUIRE(fake.composites[0].metalness_strength > 0.0F);
     ARPG_REQUIRE(fake.composites[0].emissive_strength > 0.0F);
+    const std::size_t loads_before_emissive = fake.load_count;
+    ARPG_REQUIRE(pack.draw_frame_emissive(
+        MaterialAtlasId::water_bulwark,
+        {0.0F, 0.0F, 96.0F, 96.0F}, {48.0F, 93.0F},
+        {100.0F, 100.0F}, false, 0.70F));
+    ARPG_REQUIRE(fake.draw_count == 2U);
+    ARPG_REQUIRE(fake.drawn_color_ids[1] == fake.drawn_color_ids[0]);
+    ARPG_REQUIRE(fake.drawn_material_ids[1] == fake.drawn_material_ids[0]);
+    ARPG_REQUIRE(fake.composites[1].mode
+        == MaterialCompositeMode::emissive_only);
+    ARPG_REQUIRE(fake.composites[1].emissive_mask_start == 0.08F);
+    ARPG_REQUIRE(fake.composites[1].emissive_mask_end == 0.24F);
+    ARPG_REQUIRE(fake.load_count == loads_before_emissive);
     pack.unload();
     ARPG_REQUIRE(fake.unload_count
         == atlas_count_for_ecology(MaterialEcology::water) * 2U);

@@ -199,9 +199,18 @@ void draw_sword(Vector2 center, float angle, float scale,
         plan.player_position, camera, width, height);
     const bool flip_x = id == skills::ActiveSkillId::draw_slash
         && plan.draw_slash.facing == combat::Facing::left;
-    const float scale = active_skill_material_draw_scale(id, player.scale);
-    return material_pack.draw_frame(frame->atlas, frame->source,
-        frame->foot_anchor, {player.x, player.ground_y}, flip_x, scale, WHITE);
+    const Vector2 foot_position{player.x, player.ground_y};
+    const float actor_scale = active_skill_material_draw_scale(
+        id, player.scale);
+    const bool actor_drawn = material_pack.draw_frame(
+        frame->atlas, frame->source, frame->foot_anchor,
+        foot_position, flip_x, actor_scale, WHITE);
+    if (!actor_drawn) return false;
+    const float effect_scale = active_skill_material_effect_scale(
+        id, player.scale);
+    return material_pack.draw_frame_emissive(
+        frame->atlas, frame->source, frame->foot_anchor,
+        foot_position, flip_x, effect_scale, WHITE);
 }
 
 }  // namespace

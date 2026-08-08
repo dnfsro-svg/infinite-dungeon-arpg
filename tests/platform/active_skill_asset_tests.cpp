@@ -87,6 +87,27 @@ arpg::test::Failure active_skill_actor_scale_matches_base_player_geometry()
             arpg::skills::ActiveSkillId::draw_slash, 1.0F) * 0.5F);
     ARPG_REQUIRE(platform::active_skill_material_draw_scale(
         arpg::skills::ActiveSkillId::none, 1.0F) == 0.0F);
+    constexpr float kProjectionScale = 1.25F;
+    const float draw_effect_scale =
+        platform::active_skill_material_effect_scale(
+            arpg::skills::ActiveSkillId::draw_slash, kProjectionScale);
+    const float storm_effect_scale =
+        platform::active_skill_material_effect_scale(
+            arpg::skills::ActiveSkillId::storm_swords, kProjectionScale);
+    ARPG_REQUIRE(arpg::test::near(
+        draw_effect_scale, 0.72F * kProjectionScale));
+    ARPG_REQUIRE(arpg::test::near(
+        storm_effect_scale, 0.70F * kProjectionScale));
+    ARPG_REQUIRE(draw_effect_scale
+        > platform::active_skill_material_draw_scale(
+            arpg::skills::ActiveSkillId::draw_slash, kProjectionScale));
+    ARPG_REQUIRE(storm_effect_scale
+        > platform::active_skill_material_draw_scale(
+            arpg::skills::ActiveSkillId::storm_swords, kProjectionScale));
+    ARPG_REQUIRE(platform::active_skill_material_effect_scale(
+        arpg::skills::ActiveSkillId::none, kProjectionScale) == 0.0F);
+    ARPG_REQUIRE(platform::active_skill_material_effect_scale(
+        arpg::skills::ActiveSkillId::draw_slash, 0.0F) == 0.0F);
     return {};
 }
 

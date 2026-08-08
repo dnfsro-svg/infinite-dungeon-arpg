@@ -194,6 +194,8 @@ struct MaterialShaderState final {
     int channel_map_location{-1};
     int channel_strengths_location{-1};
     int emissive_tint_location{-1};
+    int emissive_only_location{-1};
+    int emissive_mask_range_location{-1};
     bool ready{};
 };
 
@@ -208,6 +210,8 @@ uniform sampler2D materialMap;
 uniform vec3 channelMap;
 uniform vec3 channelStrengths;
 uniform vec3 emissiveTint;
+uniform float emissiveOnly;
+uniform vec2 emissiveMaskRange;
 out vec4 finalColor;
 float packedChannel(vec4 materialSample, float channel) {
     if (channel < 0.5) return materialSample.r;
@@ -227,6 +231,14 @@ void main() {
     float diffuseLight = 1.0 - 0.42 * roughness;
     vec3 metalLight = metalness * (base.rgb * 0.24 + vec3(0.08, 0.10, 0.13));
     vec3 emissiveLight = emissiveTint * emissive;
+    if (emissiveOnly > 0.5) {
+        float effectMask = smoothstep(
+            emissiveMaskRange.x, emissiveMaskRange.y, emissive);
+        vec3 effectColor = base.rgb + emissiveLight;
+        finalColor = vec4(effectColor,
+            base.a * materialSample.a * effectMask);
+        return;
+    }
     finalColor = vec4(base.rgb * diffuseLight + metalLight + emissiveLight,
         base.a * materialSample.a);
 }
@@ -245,10 +257,16 @@ bool initialize_material_pipeline() noexcept {
         g_material_shader.shader, "channelStrengths");
     g_material_shader.emissive_tint_location = GetShaderLocation(
         g_material_shader.shader, "emissiveTint");
+    g_material_shader.emissive_only_location = GetShaderLocation(
+        g_material_shader.shader, "emissiveOnly");
+    g_material_shader.emissive_mask_range_location = GetShaderLocation(
+        g_material_shader.shader, "emissiveMaskRange");
     g_material_shader.ready = g_material_shader.material_map_location >= 0
         && g_material_shader.channel_map_location >= 0
         && g_material_shader.channel_strengths_location >= 0
-        && g_material_shader.emissive_tint_location >= 0;
+        && g_material_shader.emissive_tint_location >= 0
+        && g_material_shader.emissive_only_location >= 0
+        && g_material_shader.emissive_mask_range_location >= 0;
     if (!g_material_shader.ready) {
         UnloadShader(g_material_shader.shader);
         g_material_shader = {};
@@ -273,6 +291,11 @@ void begin_material_composite(Texture2D material,
         static_cast<float>(parameters.emissive_tint.r) / 255.0F,
         static_cast<float>(parameters.emissive_tint.g) / 255.0F,
         static_cast<float>(parameters.emissive_tint.b) / 255.0F};
+    const float emissive_only = parameters.mode
+            == MaterialCompositeMode::emissive_only
+        ? 1.0F : 0.0F;
+    const float emissive_mask_range[2]{parameters.emissive_mask_start,
+        parameters.emissive_mask_end};
     BeginShaderMode(g_material_shader.shader);
     SetShaderValueTexture(g_material_shader.shader,
         g_material_shader.material_map_location, material);
@@ -285,6 +308,12 @@ void begin_material_composite(Texture2D material,
     SetShaderValue(g_material_shader.shader,
         g_material_shader.emissive_tint_location, emissive_tint,
         SHADER_UNIFORM_VEC3);
+    SetShaderValue(g_material_shader.shader,
+        g_material_shader.emissive_only_location, &emissive_only,
+        SHADER_UNIFORM_FLOAT);
+    SetShaderValue(g_material_shader.shader,
+        g_material_shader.emissive_mask_range_location,
+        emissive_mask_range, SHADER_UNIFORM_VEC2);
 }
 
 void draw_material(Texture2D color, Texture2D material, Rectangle source,
@@ -895,6 +924,23 @@ std::uint64_t MaterialPack::direct_stretch_draw_count(
 bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
     Vector2 foot_anchor, Vector2 foot_position, bool flip_x, float scale,
     Color tint) const noexcept {
+    return draw_frame_composited(atlas, source, foot_anchor, foot_position,
+        flip_x, scale, tint, {});
+}
+
+bool MaterialPack::draw_frame_emissive(MaterialAtlasId atlas,
+    Rectangle source, Vector2 foot_anchor, Vector2 foot_position,
+    bool flip_x, float scale, Color tint) const noexcept {
+    MaterialCompositeParameters parameters{};
+    parameters.mode = MaterialCompositeMode::emissive_only;
+    return draw_frame_composited(atlas, source, foot_anchor, foot_position,
+        flip_x, scale, tint, parameters);
+}
+
+bool MaterialPack::draw_frame_composited(MaterialAtlasId atlas,
+    Rectangle source, Vector2 foot_anchor, Vector2 foot_position,
+    bool flip_x, float scale, Color tint,
+    MaterialCompositeParameters parameters) const noexcept {
     if (!is_known_atlas(atlas) || !state_.available(atlas)
         || !valid_texture_api(texture_api_) || scale <= 0.0F
         || source.width <= 0.0F || source.height <= 0.0F
@@ -919,7 +965,7 @@ bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
         source.width < 0.0F ? -source.width * scale : source.width * scale,
         source.height * scale};
     texture_api_.draw_material(color_texture, material_texture, source,
-        destination, {0.0F, 0.0F}, 0.0F, tint, {});
+        destination, {0.0F, 0.0F}, 0.0F, tint, parameters);
     return true;
 }
 
