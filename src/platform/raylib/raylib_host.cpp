@@ -367,7 +367,8 @@ DeathInputGate host_death_input_gate(
     bool death_pending,
     FrameKeyState keys,
     const PhysicalKeySnapshot& physical_keys) noexcept {
-    keys.e = stable_pressed(physical_keys, settings::StableKey::e);
+    keys.e = !physical_keys.focus_lost
+        && stable_pressed(physical_keys, settings::StableKey::e);
     return death_input_gate(death_saving, death_pending, keys);
 }
 

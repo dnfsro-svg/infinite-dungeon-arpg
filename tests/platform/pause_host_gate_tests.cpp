@@ -245,6 +245,24 @@ arpg::test::Failure death_continue_uses_fixed_e_from_authoritative_snapshot()
     return {};
 }
 
+arpg::test::Failure death_continue_rejects_fixed_e_while_focus_is_lost()
+    noexcept {
+    const settings::SettingsData settings_data = settings::default_settings();
+    platform::PhysicalKeySnapshot physical{};
+    physical.pressed[static_cast<std::size_t>(settings::StableKey::e)] = true;
+    physical.focus_lost = true;
+
+    const platform::HostFrameInput input =
+        platform::map_host_frame_input(settings_data, physical);
+    ARPG_REQUIRE(input.keys.focus_lost);
+    ARPG_REQUIRE(!input.keys.e);
+    const platform::DeathInputGate gate = platform::host_death_input_gate(
+        false, true, input.keys, physical);
+    ARPG_REQUIRE(!gate.continue_death);
+    ARPG_REQUIRE(!gate.forward_gameplay);
+    return {};
+}
+
 arpg::test::Failure corrupt_settings_notice_is_deferred_until_first_settings()
     noexcept {
     platform::HostSettingsNotice notice = platform::make_host_settings_notice(
@@ -431,6 +449,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &room_reset_gate_keeps_pause_gameplay_frozen},
     {"death continue uses fixed E snapshot",
         &death_continue_uses_fixed_e_from_authoritative_snapshot},
+    {"death continue rejects fixed E while focus lost",
+        &death_continue_rejects_fixed_e_while_focus_is_lost},
     {"corrupt settings notice is deferred",
         &corrupt_settings_notice_is_deferred_until_first_settings},
     {"healthy settings loads have no notice",

@@ -189,7 +189,7 @@ int main() {
         const arpg::test::TestSuite cplay023_only[] = {
             pause_host_gate_suite(),
         };
-        return arpg::test::run_suites(cplay023_only, 10,
+        return arpg::test::run_suites(cplay023_only, 11,
             "CPLAY-023 pause root room reset");
     }
     if (cplay022_skill_empty_slot_only()) {
@@ -329,6 +329,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 645,
+    return arpg::test::run_suites(suites, 646,
         "host settings runtime contract");
 }
