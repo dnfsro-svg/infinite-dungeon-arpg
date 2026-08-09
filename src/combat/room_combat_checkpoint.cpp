@@ -1098,6 +1098,16 @@ bool CombatWorld::restore_room_checkpoint(
                 room_monster_field_->persistent_state(
                     checkpoint.monsters[index].ordinal);
             assert(state != nullptr);
+            MonsterRuntime restored{};
+            restore_monster_persistent_state(converted, restored);
+            const bool differs_from_persistent_state =
+                !monster_persistent_state_matches(restored, *state);
+            const bool required_resident = std::binary_search(
+                desired.ordinals.begin(),
+                desired.ordinals.begin() + desired.count,
+                checkpoint.monsters[index].ordinal);
+            converted.touched = state->touched || !required_resident
+                || differs_from_persistent_state;
             *state = converted;
         }
         room_monster_field_->rebind_active_pool(monsters_);

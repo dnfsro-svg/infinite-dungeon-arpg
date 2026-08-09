@@ -668,6 +668,145 @@ arpg::test::Failure empty_blueprint_still_disables_legacy_fire_geometry()
     return {};
 }
 
+arpg::test::Failure reload_does_not_retain_untouched_departed_residents()
+    noexcept {
+    auto field = std::make_unique<RoomMonsterField>();
+    ARPG_REQUIRE(fixture::seal_test_plan(*field, 1125U)
+        == RoomMonsterFieldFault::none);
+    CombatEncounterConfig config{};
+    config.player_spawn = fixture::cell_center(0U, 0U);
+    CombatWorld world{config, std::move(field), {}};
+    auto saved = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    auto after = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    ARPG_REQUIRE(saved != nullptr && after != nullptr);
+    ARPG_REQUIRE(world.capture_room_checkpoint(*saved));
+    ARPG_REQUIRE(saved->monster_count != 0U);
+    ARPG_REQUIRE(world.restore_room_checkpoint(*saved));
+
+    const Vec3 destination = fixture::cell_center(19U, 19U);
+    const RoomStreamingRegion destination_region =
+        fixture::streaming_region_for_cell(19U, 19U);
+    const RoomResidentOrdinals expected =
+        world.room_monster_field()->required_residents(destination_region);
+    ARPG_REQUIRE(expected.fault == RoomMonsterFieldFault::none);
+    arpg::test::CombatWorldTestAccess::set_player_position(
+        world, destination);
+    ARPG_REQUIRE(world.room_monster_field()->synchronize_active_region(
+        destination_region));
+    ARPG_REQUIRE(world.capture_room_checkpoint(*after));
+    ARPG_REQUIRE(after->monster_count == expected.count);
+    return {};
+}
+
+arpg::test::Failure reload_retains_only_the_engaged_departed_resident()
+    noexcept {
+    auto field = std::make_unique<RoomMonsterField>();
+    ARPG_REQUIRE(fixture::seal_test_plan(*field, 1125U)
+        == RoomMonsterFieldFault::none);
+    CombatEncounterConfig config{};
+    config.player_spawn = fixture::cell_center(0U, 0U);
+    CombatWorld world{config, std::move(field), {}};
+
+    const CombatSnapshot before = world.snapshot();
+    ARPG_REQUIRE(before.monster_count != 0U);
+    const MonsterOrdinal engaged_ordinal =
+        before.monsters[0U].monster_ordinal;
+    PlayerAttackHitSpec hit{};
+    hit.source = AttackId::j1;
+    hit.base_physical = 1;
+    hit.break_damage = 1;
+    hit.impact = ImpactKind::light_hitstun;
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::resolve_player_attack_hit(
+        world, 0U, hit));
+
+    auto saved = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    auto after = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    ARPG_REQUIRE(saved != nullptr && after != nullptr);
+    ARPG_REQUIRE(world.capture_room_checkpoint(*saved));
+    ARPG_REQUIRE(world.restore_room_checkpoint(*saved));
+
+    const Vec3 destination = fixture::cell_center(19U, 19U);
+    const RoomStreamingRegion destination_region =
+        fixture::streaming_region_for_cell(19U, 19U);
+    const RoomResidentOrdinals expected =
+        world.room_monster_field()->required_residents(destination_region);
+    ARPG_REQUIRE(expected.fault == RoomMonsterFieldFault::none);
+    ARPG_REQUIRE(std::find(expected.ordinals.begin(),
+        expected.ordinals.begin() + expected.count, engaged_ordinal)
+        == expected.ordinals.begin() + expected.count);
+    arpg::test::CombatWorldTestAccess::set_player_position(
+        world, destination);
+    ARPG_REQUIRE(world.room_monster_field()->synchronize_active_region(
+        destination_region));
+    ARPG_REQUIRE(world.capture_room_checkpoint(*after));
+    ARPG_REQUIRE(after->monster_count == expected.count + 1U);
+    ARPG_REQUIRE(std::find_if(after->monsters.begin(),
+        after->monsters.begin() + after->monster_count,
+        [engaged_ordinal](
+            const arpg::checkpoint::MonsterCombatCheckpoint& monster) {
+            return monster.ordinal == engaged_ordinal;
+        }) != after->monsters.begin() + after->monster_count);
+    return {};
+}
+
+arpg::test::Failure repeated_reload_retains_touched_matching_resident()
+    noexcept {
+    auto field = std::make_unique<RoomMonsterField>();
+    ARPG_REQUIRE(fixture::seal_test_plan(*field, 1125U)
+        == RoomMonsterFieldFault::none);
+    CombatEncounterConfig config{};
+    config.player_spawn = fixture::cell_center(0U, 0U);
+    CombatWorld world{config, std::move(field), {}};
+
+    const CombatSnapshot before = world.snapshot();
+    ARPG_REQUIRE(before.monster_count != 0U);
+    const MonsterOrdinal engaged_ordinal =
+        before.monsters[0U].monster_ordinal;
+    PlayerAttackHitSpec hit{};
+    hit.source = AttackId::j1;
+    hit.base_physical = 1;
+    hit.break_damage = 1;
+    hit.impact = ImpactKind::light_hitstun;
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::resolve_player_attack_hit(
+        world, 0U, hit));
+
+    const RoomStreamingRegion origin_region =
+        fixture::streaming_region_for_cell(0U, 0U);
+    const RoomStreamingRegion destination_region =
+        fixture::streaming_region_for_cell(19U, 19U);
+    ARPG_REQUIRE(world.room_monster_field()->synchronize_active_region(
+        destination_region));
+    ARPG_REQUIRE(world.room_monster_field()->synchronize_active_region(
+        origin_region));
+
+    auto saved = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    auto after = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    ARPG_REQUIRE(saved != nullptr && after != nullptr);
+    ARPG_REQUIRE(world.capture_room_checkpoint(*saved));
+    ARPG_REQUIRE(world.restore_room_checkpoint(*saved));
+    ARPG_REQUIRE(world.restore_room_checkpoint(*saved));
+
+    const RoomResidentOrdinals expected =
+        world.room_monster_field()->required_residents(destination_region);
+    ARPG_REQUIRE(expected.fault == RoomMonsterFieldFault::none);
+    ARPG_REQUIRE(std::find(expected.ordinals.begin(),
+        expected.ordinals.begin() + expected.count, engaged_ordinal)
+        == expected.ordinals.begin() + expected.count);
+    arpg::test::CombatWorldTestAccess::set_player_position(
+        world, fixture::cell_center(19U, 19U));
+    ARPG_REQUIRE(world.room_monster_field()->synchronize_active_region(
+        destination_region));
+    ARPG_REQUIRE(world.capture_room_checkpoint(*after));
+    ARPG_REQUIRE(after->monster_count == expected.count + 1U);
+    ARPG_REQUIRE(std::find_if(after->monsters.begin(),
+        after->monsters.begin() + after->monster_count,
+        [engaged_ordinal](
+            const arpg::checkpoint::MonsterCombatCheckpoint& monster) {
+            return monster.ordinal == engaged_ordinal;
+        }) != after->monsters.begin() + after->monster_count);
+    return {};
+}
+
 arpg::test::Failure room_resident_uses_sticky_ten_meter_engagement()
     noexcept {
     const Vec3 spawn = fixture::cell_center(0U, 0U);
@@ -955,6 +1094,12 @@ constexpr arpg::test::TestCase kCases[] = {
         &blueprint_obstacles_replace_legacy_fire_geometry},
     {"empty blueprint disables legacy fire geometry",
         &empty_blueprint_still_disables_legacy_fire_geometry},
+    {"reload omits untouched departed residents",
+        &reload_does_not_retain_untouched_departed_residents},
+    {"reload retains only engaged departed resident",
+        &reload_retains_only_the_engaged_departed_resident},
+    {"repeat reload retains touched matching resident",
+        &repeated_reload_retains_touched_matching_resident},
     {"room resident uses sticky ten meter engagement",
         &room_resident_uses_sticky_ten_meter_engagement},
     {"front armor hit wakes distant room resident",
