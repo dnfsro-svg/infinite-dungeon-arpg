@@ -502,6 +502,7 @@ void InventoryRenderer::close() noexcept {
     page_ = InventoryPage::equipment_materials;
     active_skill_selection_ = {};
     click_tracker_ = {};
+    static_cast<void>(material_bag_.clear_selection());
     static_cast<void>(material_bag_.resolve_reinforcement_confirmation(false));
 }
 

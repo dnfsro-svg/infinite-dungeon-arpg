@@ -544,6 +544,34 @@ bool settle_pending_save(platform::DungeonRuntime& runtime) noexcept {
     return false;
 }
 
+bool inventory_close_clears_material_selection(
+    platform::InventoryRenderer& inventory,
+    platform::DungeonRuntime& runtime) noexcept {
+    const auto* const session = runtime.session();
+    if (session == nullptr || !settle_pending_save(runtime)
+            || runtime.item_state() == nullptr) {
+        return false;
+    }
+    const std::size_t material_index = items::material_index(
+        items::MaterialId::chaos);
+    const auto before = session->snapshot();
+    const std::uint64_t material_before =
+        runtime.item_state()->materials[material_index];
+    const auto bag = platform::material_bag_layout(1280, 720);
+    const bool selection_committed = inventory.process_input(runtime, before,
+        click(center(bag.slots[material_index])));
+    inventory.close();
+    inventory.open(*session, session->snapshot());
+    const bool item_click_committed = inventory.process_input(
+        runtime, session->snapshot(), click(first_inventory_cell()));
+    const auto after = session->snapshot();
+    return !selection_committed && !item_click_committed
+        && !after.pending_save_kind.has_value()
+        && after.commit_generation == before.commit_generation
+        && runtime.item_state() != nullptr
+        && runtime.item_state()->materials[material_index] == material_before;
+}
+
 bool process_item_action(platform::InventoryRenderer& inventory,
     platform::DungeonRuntime& runtime, items::MaterialId material,
     std::uint64_t expected_item, bool& action_result) noexcept {
@@ -709,6 +737,10 @@ std::optional<ScenarioResult> run_production_scenario(
 
     const auto inventory = std::make_unique<platform::InventoryRenderer>();
     inventory->open(*runtime->session(), runtime->session()->snapshot());
+    if (!inventory_close_clears_material_selection(*inventory, *runtime)) {
+        std::cerr << "stage16 failure=inventory_close_material_selection\n";
+        return std::nullopt;
+    }
     if (!process_item_action(*inventory, *runtime, items::MaterialId::chaos,
             target_id, result.craft) || !result.craft) {
         std::cerr << "stage16 failure=chaos_craft\n";
