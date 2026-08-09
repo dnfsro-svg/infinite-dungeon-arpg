@@ -34,6 +34,8 @@ constexpr const char* kPauseRootResetFooter =
     "Arrow keys navigate | Enter select | Esc back | R Reset Room";
 constexpr const char* kSettingsFooter =
     "Up/Down navigate | Left/Right adjust | Enter activate | Esc back";
+constexpr const char* kCaptureFooter =
+    "Press any supported key to bind | Esc cancel";
 
 template <typename... Arguments>
 void write_row(
@@ -209,7 +211,7 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
             return view;
         case PauseScreen::capture_binding: {
             view.title = "BIND KEY";
-            view.footer = kPauseFooter;
+            view.footer = kCaptureFooter;
             view.row_count = 1U;
             view.selected_row = 0U;
             const settings::SettingAction action = state.capture_action.value_or(

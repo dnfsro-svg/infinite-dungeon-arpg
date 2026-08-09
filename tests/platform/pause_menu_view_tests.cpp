@@ -338,6 +338,8 @@ test::Failure capture_and_closed_views_are_explicit() noexcept {
     ARPG_REQUIRE(capture.selected_row == 0U);
     ARPG_REQUIRE(std::strcmp(capture.rows[0].data(),
         "Press a key for Light Attack (current 4)") == 0);
+    ARPG_REQUIRE(std::strcmp(capture.footer,
+        "Press any supported key to bind | Esc cancel") == 0);
 
     state.capture_action.reset();
     const auto missing = platform::make_pause_menu_view(state);
