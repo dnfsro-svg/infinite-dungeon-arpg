@@ -680,6 +680,51 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
     return {};
 }
 
+test::Failure unfocused_modal_input_is_ignored() noexcept {
+    platform::PauseInput input{};
+    input.focus_lost = true;
+    const platform::PauseContext context = unfocused_context();
+
+    auto state = make_state();
+    input.escape = true;
+    ARPG_REQUIRE(update(state, input, context) == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::closed);
+
+    state = make_state();
+    state.screen = platform::PauseScreen::root;
+    input = {};
+    input.focus_lost = true;
+    input.down = true;
+    ARPG_REQUIRE(update(state, input, context) == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+    ARPG_REQUIRE(state.selected_row == 0U);
+
+    input = {};
+    input.focus_lost = true;
+    input.enter = true;
+    ARPG_REQUIRE(update(state, input, context) == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+
+    state = make_state();
+    state.screen = platform::PauseScreen::settings;
+    state.draft.master_sfx_percent = 50U;
+    input = {};
+    input.focus_lost = true;
+    input.right = true;
+    ARPG_REQUIRE(update(state, input, context) == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.draft.master_sfx_percent == 50U);
+
+    state = make_state();
+    state.screen = platform::PauseScreen::quit_confirm;
+    state.selected_row = 0U;
+    input = {};
+    input.focus_lost = true;
+    input.enter = true;
+    ARPG_REQUIRE(update(state, input, context) == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
+    return {};
+}
+
 constexpr test::TestCase kCases[] = {
     {"closed is idle without escape", &closed_is_idle_without_escape},
     {"higher priority contexts block pause", &higher_priority_contexts_block_pause_opening},
@@ -710,6 +755,7 @@ constexpr test::TestCase kCases[] = {
     {"quit row zero quits", &quit_confirm_only_row_zero_quits},
     {"non-action input is ignored", &non_action_inputs_do_not_mutate_settings},
     {"state machine has zero allocations", &state_machine_performs_no_heap_allocations},
+    {"unfocused modal input is ignored", &unfocused_modal_input_is_ignored},
 };
 
 }  // namespace

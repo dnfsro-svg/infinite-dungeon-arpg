@@ -280,6 +280,10 @@ PauseCommand update_pause_menu(
     PauseMenuState& state,
     const PauseContext& context,
     const PauseInput& input) noexcept {
+    if (state.screen != PauseScreen::capture_binding
+        && (input.focus_lost || !context.window_focused)) {
+        return PauseCommand::none;
+    }
     switch (state.screen) {
         case PauseScreen::closed:
             return update_closed(state, context, input);

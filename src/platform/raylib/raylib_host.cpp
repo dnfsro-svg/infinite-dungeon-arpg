@@ -768,7 +768,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const PauseScreen pause_screen_before = pause_menu.screen;
             const bool pause_was_open =
                 pause_screen_before != PauseScreen::closed;
-            if (pause_was_open && physical_keys.mouse_left) {
+            if (pause_was_open
+                    && !physical_keys.focus_lost
+                    && physical_keys.mouse_left) {
                 const PauseMenuView pause_view =
                     make_pause_menu_view(pause_menu);
                 const PauseMenuLayout layout = pause_menu_layout(
