@@ -139,34 +139,19 @@ endif()
 file(READ "${_stage14_app_cmake}" _stage14_app_cmake_text)
 string(REGEX REPLACE "#[^\\r\\n]*" "" _stage14_app_cmake_without_comments
     "${_stage14_app_cmake_text}")
-string(REPLACE "add_custom_command(TARGET arpg_game POST_BUILD" ";"
-    _stage14_post_build_sections "${_stage14_app_cmake_without_comments}")
-set(_stage14_copy_rule_found FALSE)
-foreach(_stage14_post_build_section IN LISTS _stage14_post_build_sections)
-    string(FIND "${_stage14_post_build_section}" "VERBATIM)"
-        _stage14_post_build_end)
-    if(_stage14_post_build_end EQUAL -1)
-        continue()
-    endif()
-    string(SUBSTRING "${_stage14_post_build_section}" 0
-        ${_stage14_post_build_end} _stage14_post_build_command)
-    string(FIND "${_stage14_post_build_command}" "copy_directory"
-        _stage14_copy_directory_index)
-    string(FIND "${_stage14_post_build_command}"
-        [=[${PROJECT_SOURCE_DIR}/assets/stage14/audio]=]
-        _stage14_copy_source_index)
-    string(FIND "${_stage14_post_build_command}"
-        [=[$<TARGET_FILE_DIR:arpg_game>/assets/stage14/audio]=]
-        _stage14_copy_destination_index)
-    if(NOT _stage14_copy_directory_index EQUAL -1
-            AND NOT _stage14_copy_source_index EQUAL -1
-            AND NOT _stage14_copy_destination_index EQUAL -1)
-        set(_stage14_copy_rule_found TRUE)
+foreach(_stage14_sync_token IN ITEMS
+        "ArpgRuntimeAssets.cmake"
+        "arpg_add_runtime_asset_sync("
+        "TARGET arpg_game"
+        [=[${PROJECT_SOURCE_DIR}/assets]=]
+        [=[$<TARGET_FILE_DIR:arpg_game>/assets]=]
+        "stage14/audio")
+    string(FIND "${_stage14_app_cmake_without_comments}"
+        "${_stage14_sync_token}" _stage14_sync_token_index)
+    if(_stage14_sync_token_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage14 runtime asset sync rule missing: ${_stage14_sync_token}")
     endif()
 endforeach()
-if(NOT _stage14_copy_rule_found)
-    message(FATAL_ERROR
-        "Stage14 audio integration guard missing Stage14 copy rule in src/app/CMakeLists.txt")
-endif()
 
 message(STATUS "[stage14-audio-integration] source and packaging boundaries passed")

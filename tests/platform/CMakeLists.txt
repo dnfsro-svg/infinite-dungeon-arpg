@@ -1,3 +1,12 @@
+add_test(NAME app.runtime_asset_sync
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/runtime-asset-sync-self-test"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime_asset_sync_self_test.cmake")
+set_tests_properties(app.runtime_asset_sync PROPERTIES
+    LABELS "headless;platform;assets;app"
+    TIMEOUT 60)
+
 if(TARGET arpg_raylib)
     add_executable(arpg_platform_tests
         ../core/allocation_probe.cpp
