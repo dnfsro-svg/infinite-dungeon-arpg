@@ -113,6 +113,8 @@ void draw_pause_menu_with_font(
                 break;
             case PauseMenuRenderOpKind::row: {
                 const Rectangle bounds = layout.rows[op.row_index];
+                const UiTextContrastStyle style = ui_text_contrast_style();
+                DrawRectangleRounded(bounds, 0.18F, 5, style.backing);
                 const bool row_drawn = assets != nullptr
                     && assets->draw_horizontal_slice(
                         ui_material_sprite(op.selected
@@ -129,35 +131,48 @@ void draw_pause_menu_with_font(
                         bounds, 0.18F, 5, 1.0F,
                         Color{121, 197, 244, 255});
                 }
-                const UiTextContrastStyle style = ui_text_contrast_style();
                 const float viewport_scale = ui_viewport_scale(
                     screen_width, screen_height);
                 const float row_font_size = layout.row_font_size;
-                const Vector2 measured = MeasureTextEx(font,
-                    view.rows[op.row_index].data(), row_font_size, 0.5F);
+                constexpr float kRowTextSpacing = 0.5F;
+                const PauseMenuRowView& row = view.rows[op.row_index];
+                const Vector2 measured = MeasureTextEx(
+                    font, row.primary.data(), row_font_size, kRowTextSpacing);
+                const PauseMenuCenteredTextLayout centered =
+                    centered_pause_text_layout(bounds,
+                        measured.x, measured.y, 12.0F * viewport_scale);
                 const Vector2 row_position{
-                    bounds.x + 14.0F * viewport_scale,
-                    bounds.y + (bounds.height - measured.y) * 0.5F};
-                const float row_text_width = measured.x;
-                DrawRectangleRounded(
-                    {bounds.x + 8.0F * viewport_scale,
-                     bounds.y + 1.0F * viewport_scale,
-                     (std::min)(row_text_width + 16.0F * viewport_scale,
-                         bounds.width - 16.0F * viewport_scale),
-                     bounds.height - 2.0F * viewport_scale},
-                    0.20F, 4, style.backing);
+                    centered.text.x, centered.text.y};
                 record_ui_text_bounds(UiTextAuditPage::pause,
                     UiTextAuditRole::pause_row, font,
-                    view.rows[op.row_index].data(), row_position,
-                    row_font_size, 0.5F,
-                    {bounds.x + 8.0F * viewport_scale,
-                        bounds.y + 1.0F * viewport_scale,
-                        bounds.width - 16.0F * viewport_scale,
-                        bounds.height - 2.0F * viewport_scale},
+                    row.primary.data(), row_position,
+                    row_font_size, kRowTextSpacing, centered.backing,
                     row_font_size);
-                draw_crisp_ui_text(font, view.rows[op.row_index].data(),
-                    row_position, row_font_size, 0.5F,
+                draw_crisp_ui_text(font, row.primary.data(),
+                    row_position, row_font_size, kRowTextSpacing,
                     op.selected ? style.interaction : style.primary);
+                if (row.saved[0] != '\0') {
+                    const float saved_font_size = row_font_size * 0.68F;
+                    const Vector2 saved_size = MeasureTextEx(font,
+                        row.saved.data(), saved_font_size, kRowTextSpacing);
+                    const float saved_x = bounds.x + bounds.width
+                        - 12.0F * viewport_scale - saved_size.x;
+                    const float safe_gap = 16.0F * viewport_scale;
+                    if (saved_x >= centered.text.x
+                            + centered.text.width + safe_gap) {
+                        const Vector2 saved_position{
+                            saved_x,
+                            bounds.y + (bounds.height - saved_size.y) * 0.5F};
+                        record_ui_text_bounds(UiTextAuditPage::pause,
+                            UiTextAuditRole::pause_row, font,
+                            row.saved.data(), saved_position,
+                            saved_font_size, kRowTextSpacing,
+                            centered.backing, saved_font_size);
+                        draw_crisp_ui_text(font, row.saved.data(),
+                            saved_position, saved_font_size, kRowTextSpacing,
+                            style.secondary);
+                    }
+                }
                 break;
             }
             case PauseMenuRenderOpKind::message:

@@ -3,6 +3,8 @@
 
 #include "pause_menu_renderer.hpp"
 #include "pause_menu_view.hpp"
+#include "shared_ui_font.hpp"
+#include "ui_utf8.hpp"
 
 #include <array>
 #include <cstddef>
@@ -54,6 +56,14 @@ platform::PauseMenuState settings_state() noexcept {
     };
     state.message = "Apply failed; retry";
     return state;
+}
+
+bool row_equals(
+    const platform::PauseMenuRowView& row,
+    const char* primary,
+    const char* saved = "") noexcept {
+    return std::strcmp(row.primary.data(), primary) == 0
+        && std::strcmp(row.saved.data(), saved) == 0;
 }
 
 test::Failure layouts_are_bounded_centered_and_fixed() noexcept {
@@ -221,16 +231,16 @@ test::Failure root_and_quit_views_have_complete_content() noexcept {
     state.selected_row = 1U;
     state.message = "Settings recovered";
     const auto root = platform::make_pause_menu_view(state);
-    ARPG_REQUIRE(std::strcmp(root.title, "PAUSED") == 0);
+    ARPG_REQUIRE(std::strcmp(root.title, u8"暂停") == 0);
     ARPG_REQUIRE(root.row_count == 3U);
     ARPG_REQUIRE(root.selected_row == 1U);
-    ARPG_REQUIRE(std::strcmp(root.rows[0].data(), "Continue") == 0);
-    ARPG_REQUIRE(std::strcmp(root.rows[1].data(), "Settings") == 0);
-    ARPG_REQUIRE(std::strcmp(root.rows[2].data(), "Quit Game") == 0);
+    ARPG_REQUIRE(row_equals(root.rows[0], u8"继续游戏"));
+    ARPG_REQUIRE(row_equals(root.rows[1], u8"设置"));
+    ARPG_REQUIRE(row_equals(root.rows[2], u8"退出游戏"));
     ARPG_REQUIRE(root.message == state.message);
     ARPG_REQUIRE(root.footer != nullptr);
     ARPG_REQUIRE(std::strcmp(root.footer,
-        "Arrow keys navigate | Enter select | Esc back | R Reset Room") == 0);
+        u8"方向键导航｜Enter 选择｜Esc 返回｜R 重置房间") == 0);
 
     ARPG_REQUIRE(settings::assign_or_swap(state.draft,
         settings::SettingAction::light_attack, settings::StableKey::r));
@@ -238,7 +248,7 @@ test::Failure root_and_quit_views_have_complete_content() noexcept {
         platform::make_pause_menu_view(state);
     ARPG_REQUIRE(draft_only_rebound_root.footer != nullptr);
     ARPG_REQUIRE(std::strcmp(draft_only_rebound_root.footer,
-        "Arrow keys navigate | Enter select | Esc back | R Reset Room") == 0);
+        u8"方向键导航｜Enter 选择｜Esc 返回｜R 重置房间") == 0);
 
     ARPG_REQUIRE(settings::assign_or_swap(state.committed,
         settings::SettingAction::light_attack, settings::StableKey::r));
@@ -246,20 +256,20 @@ test::Failure root_and_quit_views_have_complete_content() noexcept {
         platform::make_pause_menu_view(state);
     ARPG_REQUIRE(committed_rebound_root.footer != nullptr);
     ARPG_REQUIRE(std::strcmp(committed_rebound_root.footer,
-        "Arrow keys navigate | Enter select | Esc back") == 0);
+        u8"方向键导航｜Enter 选择｜Esc 返回") == 0);
 
     state.committed = settings::default_settings();
     state.screen = platform::PauseScreen::quit_confirm;
     state.selected_row = 0U;
     const auto quit = platform::make_pause_menu_view(state);
-    ARPG_REQUIRE(std::strcmp(quit.title, "QUIT GAME?") == 0);
+    ARPG_REQUIRE(std::strcmp(quit.title, u8"确认退出？") == 0);
     ARPG_REQUIRE(quit.row_count == 2U);
     ARPG_REQUIRE(quit.selected_row == 0U);
-    ARPG_REQUIRE(std::strcmp(quit.rows[0].data(), "Quit Game") == 0);
-    ARPG_REQUIRE(std::strcmp(quit.rows[1].data(), "Back") == 0);
+    ARPG_REQUIRE(row_equals(quit.rows[0], u8"退出游戏"));
+    ARPG_REQUIRE(row_equals(quit.rows[1], u8"返回"));
     ARPG_REQUIRE(quit.footer != nullptr);
     ARPG_REQUIRE(std::strcmp(quit.footer,
-        "Arrow keys navigate | Enter select | Esc back") == 0);
+        u8"方向键导航｜Enter 选择｜Esc 返回") == 0);
     return {};
 }
 
@@ -289,41 +299,102 @@ test::Failure root_layout_is_compact_and_legible_at_reference_viewport() noexcep
     return {};
 }
 
-test::Failure settings_view_shows_all_draft_and_committed_values() noexcept {
-    const platform::PauseMenuState state = settings_state();
-    const auto view = platform::make_pause_menu_view(state);
-    ARPG_REQUIRE(std::strcmp(view.title, "SETTINGS") == 0);
-    ARPG_REQUIRE(view.row_count == 21U);
-    ARPG_REQUIRE(view.selected_row == 12U);
+test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcept {
+    platform::PauseMenuState state = settings_state();
+    state.selected_row = 2U;
+
+    state.settings_page = platform::PauseSettingsPage::home;
+    auto view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"设置") == 0);
+    ARPG_REQUIRE(view.row_count == 6U);
+    ARPG_REQUIRE(view.selected_row == 2U);
     ARPG_REQUIRE(view.message == state.message);
-    ARPG_REQUIRE(view.footer != nullptr);
     ARPG_REQUIRE(std::strcmp(view.footer,
-        "Up/Down navigate | Left/Right adjust | Enter activate | Esc back") == 0);
-    constexpr const char* kRows[] = {
-        "Master: 55% (saved 100%)",
-        "SFX: 60% (saved 100%)",
-        "Music: 35% (saved 45%)",
-        "Ambience: 25% (saved 35%)",
-        "UI: 70% (saved 80%)",
-        "Window Mode: Fullscreen (saved Windowed)",
-        "VSync: Off (saved On)",
-        "Loot Filter: Magic or Better (saved Show All)",
-        "Move Up: 0 (saved W)",
-        "Move Down: 1 (saved S)",
-        "Move Left: 2 (saved A)",
-        "Move Right: 3 (saved D)",
-        "Light Attack: 4 (saved J)",
-        "Jump: 5 (saved K)",
-        "Launcher: 6 (saved L)",
-        "Interact: 7 (saved E)",
-        "Inventory: 8 (saved I)",
-        "Passive Tree: 9 (saved P)",
-        "Reset Defaults",
-        "Apply",
-        "Cancel",
+        u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回") == 0);
+    constexpr const char* kHome[] = {
+        u8"音频设置", u8"显示设置", u8"按键设置",
+        u8"恢复默认设置", u8"应用", u8"取消",
     };
-    for (std::size_t row = 0U; row < std::size(kRows); ++row) {
-        ARPG_REQUIRE(std::strcmp(view.rows[row].data(), kRows[row]) == 0);
+    for (std::size_t row = 0U; row < std::size(kHome); ++row) {
+        ARPG_REQUIRE(row_equals(view.rows[row], kHome[row]));
+    }
+
+    state.settings_page = platform::PauseSettingsPage::audio;
+    view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"音频设置") == 0);
+    ARPG_REQUIRE(view.row_count == 6U);
+    constexpr const char* kAudioPrimary[] = {
+        u8"总音量：55%", u8"音效：60%", u8"音乐：35%",
+        u8"环境音：25%", u8"界面音：70%", u8"返回",
+    };
+    constexpr const char* kAudioSaved[] = {
+        u8"已保存：100%", u8"已保存：100%", u8"已保存：45%",
+        u8"已保存：35%", u8"已保存：80%", "",
+    };
+    for (std::size_t row = 0U; row < std::size(kAudioPrimary); ++row) {
+        ARPG_REQUIRE(row_equals(
+            view.rows[row], kAudioPrimary[row], kAudioSaved[row]));
+        ARPG_REQUIRE(std::strstr(view.rows[row].primary.data(), "saved") == nullptr);
+    }
+
+    state.settings_page = platform::PauseSettingsPage::display;
+    view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"显示设置") == 0);
+    ARPG_REQUIRE(view.row_count == 4U);
+    ARPG_REQUIRE(row_equals(view.rows[0], u8"窗口模式：全屏",
+        u8"已保存：窗口化"));
+    ARPG_REQUIRE(row_equals(view.rows[1], u8"垂直同步：关",
+        u8"已保存：开"));
+    ARPG_REQUIRE(row_equals(view.rows[2], u8"拾取过滤：魔法及以上",
+        u8"已保存：显示全部"));
+    ARPG_REQUIRE(row_equals(view.rows[3], u8"返回"));
+
+    state.settings_page = platform::PauseSettingsPage::bindings;
+    view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"按键设置") == 0);
+    ARPG_REQUIRE(view.row_count == 11U);
+    constexpr const char* kBindingPrimary[] = {
+        u8"上移：0", u8"下移：1", u8"左移：2", u8"右移：3",
+        u8"轻攻击：4", u8"跳跃：5", u8"挑飞：6", u8"交互：7",
+        u8"背包：8", u8"被动树：9", u8"返回",
+    };
+    constexpr const char* kBindingSaved[] = {
+        u8"已保存：W", u8"已保存：S", u8"已保存：A", u8"已保存：D",
+        u8"已保存：J", u8"已保存：K", u8"已保存：L", u8"已保存：E",
+        u8"已保存：I", u8"已保存：P", "",
+    };
+    for (std::size_t row = 0U; row < std::size(kBindingPrimary); ++row) {
+        ARPG_REQUIRE(row_equals(
+            view.rows[row], kBindingPrimary[row], kBindingSaved[row]));
+    }
+
+    state.draft.bindings[0] = state.committed.bindings[0];
+    view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(row_equals(view.rows[0], u8"上移：W"));
+    return {};
+}
+
+test::Failure row_text_is_centered_inside_full_width_backing() noexcept {
+    constexpr std::array<std::array<int, 2>, 3> kSizes{{
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto& size : kSizes) {
+        const auto layout = platform::pause_menu_layout(size[0], size[1], 6U);
+        const auto centered = platform::centered_pause_text_layout(
+            layout.rows[0], 180.0F, 24.0F, 12.0F);
+        ARPG_REQUIRE(test::near(
+            centered.text.x + centered.text.width * 0.5F,
+            layout.rows[0].x + layout.rows[0].width * 0.5F));
+        ARPG_REQUIRE(test::near(
+            centered.text.y + centered.text.height * 0.5F,
+            layout.rows[0].y + layout.rows[0].height * 0.5F));
+        ARPG_REQUIRE(centered.backing.x == layout.rows[0].x);
+        ARPG_REQUIRE(centered.backing.y == layout.rows[0].y);
+        ARPG_REQUIRE(centered.backing.width == layout.rows[0].width);
+        ARPG_REQUIRE(centered.backing.height == layout.rows[0].height);
+        ARPG_REQUIRE(centered.text.x >= centered.backing.x + 12.0F);
+        ARPG_REQUIRE(centered.text.x + centered.text.width
+            <= centered.backing.x + centered.backing.width - 12.0F);
     }
     return {};
 }
@@ -333,18 +404,18 @@ test::Failure capture_and_closed_views_are_explicit() noexcept {
     state.screen = platform::PauseScreen::capture_binding;
     state.capture_action = settings::SettingAction::light_attack;
     const auto capture = platform::make_pause_menu_view(state);
-    ARPG_REQUIRE(std::strcmp(capture.title, "BIND KEY") == 0);
+    ARPG_REQUIRE(std::strcmp(capture.title, u8"绑定按键") == 0);
     ARPG_REQUIRE(capture.row_count == 1U);
     ARPG_REQUIRE(capture.selected_row == 0U);
-    ARPG_REQUIRE(std::strcmp(capture.rows[0].data(),
-        "Press a key for Light Attack (current 4)") == 0);
+    ARPG_REQUIRE(row_equals(capture.rows[0],
+        u8"请按下用于轻攻击的按键（当前：4）"));
     ARPG_REQUIRE(std::strcmp(capture.footer,
-        "Press any supported key to bind | Esc cancel") == 0);
+        u8"请按下可绑定按键｜Esc 取消") == 0);
 
     state.capture_action.reset();
     const auto missing = platform::make_pause_menu_view(state);
-    ARPG_REQUIRE(std::strcmp(missing.rows[0].data(),
-        "Press a key for Unknown (current Unknown)") == 0);
+    ARPG_REQUIRE(row_equals(missing.rows[0],
+        u8"请按下用于未知的按键（当前：未知）"));
 
     state.screen = platform::PauseScreen::closed;
     const auto closed = platform::make_pause_menu_view(state);
@@ -361,7 +432,14 @@ test::Failure selected_rows_clamp_to_each_visible_view() noexcept {
     ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 2U);
 
     state.screen = platform::PauseScreen::settings;
-    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 20U);
+    state.settings_page = platform::PauseSettingsPage::home;
+    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 5U);
+    state.settings_page = platform::PauseSettingsPage::audio;
+    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 5U);
+    state.settings_page = platform::PauseSettingsPage::display;
+    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 3U);
+    state.settings_page = platform::PauseSettingsPage::bindings;
+    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 10U);
 
     state.screen = platform::PauseScreen::quit_confirm;
     ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 1U);
@@ -429,7 +507,7 @@ test::Failure render_plan_draws_footer_surface_before_message_text() noexcept {
     ARPG_REQUIRE(message_plan.has_message);
     ARPG_REQUIRE(message_plan.op_count == view.row_count + 5U);
     ARPG_REQUIRE(platform::kPauseMenuRenderOpCapacity == 26U);
-    ARPG_REQUIRE(message_plan.op_count == platform::kPauseMenuRenderOpCapacity);
+    ARPG_REQUIRE(message_plan.op_count < platform::kPauseMenuRenderOpCapacity);
     ARPG_REQUIRE(message_plan.ops[message_plan.op_count - 2U].kind
         == platform::PauseMenuRenderOpKind::footer);
     ARPG_REQUIRE(message_plan.ops[message_plan.op_count - 1U].kind
@@ -452,9 +530,55 @@ test::Failure row_buffers_terminate_and_generation_is_deterministic() noexcept {
     const auto first = platform::make_pause_menu_view(state);
     const auto second = platform::make_pause_menu_view(state);
     for (std::size_t row = 0U; row < first.rows.size(); ++row) {
-        ARPG_REQUIRE(first.rows[row][63U] == '\0');
-        ARPG_REQUIRE(std::memcmp(first.rows[row].data(),
-            second.rows[row].data(), first.rows[row].size()) == 0);
+        ARPG_REQUIRE(first.rows[row].primary[95U] == '\0');
+        ARPG_REQUIRE(first.rows[row].saved[63U] == '\0');
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(
+            first.rows[row].primary.data()));
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(
+            first.rows[row].saved.data()));
+        ARPG_REQUIRE(std::memcmp(first.rows[row].primary.data(),
+            second.rows[row].primary.data(), first.rows[row].primary.size()) == 0);
+        ARPG_REQUIRE(std::memcmp(first.rows[row].saved.data(),
+            second.rows[row].saved.data(), first.rows[row].saved.size()) == 0);
+    }
+    return {};
+}
+
+test::Failure every_static_pause_view_text_has_shared_font_coverage() noexcept {
+    platform::PauseMenuState state = settings_state();
+    constexpr platform::PauseScreen kScreens[] = {
+        platform::PauseScreen::root,
+        platform::PauseScreen::settings,
+        platform::PauseScreen::capture_binding,
+        platform::PauseScreen::quit_confirm,
+    };
+    constexpr platform::PauseSettingsPage kPages[] = {
+        platform::PauseSettingsPage::home,
+        platform::PauseSettingsPage::audio,
+        platform::PauseSettingsPage::display,
+        platform::PauseSettingsPage::bindings,
+    };
+    const platform::UiGlyphPlan glyphs = platform::ui_glyph_plan();
+    for (const platform::PauseScreen screen : kScreens) {
+        state.screen = screen;
+        state.capture_action = settings::SettingAction::light_attack;
+        const std::size_t page_count = screen == platform::PauseScreen::settings
+            ? std::size(kPages) : 1U;
+        for (std::size_t page = 0U; page < page_count; ++page) {
+            state.settings_page = kPages[page];
+            const platform::PauseMenuView view =
+                platform::make_pause_menu_view(state);
+            ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+                glyphs, view.title));
+            ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+                glyphs, view.footer));
+            for (std::size_t row = 0U; row < view.row_count; ++row) {
+                ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+                    glyphs, view.rows[row].primary.data()));
+                ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+                    glyphs, view.rows[row].saved.data()));
+            }
+        }
     }
     return {};
 }
@@ -509,13 +633,18 @@ constexpr test::TestCase kCases[] = {
         &root_layout_is_compact_and_legible_at_reference_viewport},
     {"hit test is half open", &hit_test_uses_half_open_rows_only},
     {"root and quit content", &root_and_quit_views_have_complete_content},
-    {"settings draft and committed content", &settings_view_shows_all_draft_and_committed_values},
+    {"settings pages have exact Chinese text",
+        &settings_pages_have_exact_chinese_primary_and_saved_text},
+    {"row text is centered in full backing",
+        &row_text_is_centered_inside_full_width_backing},
     {"capture and closed content", &capture_and_closed_views_are_explicit},
     {"selected rows clamp to visible views", &selected_rows_clamp_to_each_visible_view},
     {"render plans have exact screen orders", &render_plans_have_exact_screen_orders},
     {"render plan layers message over footer",
         &render_plan_draws_footer_surface_before_message_text},
     {"row buffers terminate deterministically", &row_buffers_terminate_and_generation_is_deterministic},
+    {"pause view text has shared font coverage",
+        &every_static_pause_view_text_has_shared_font_coverage},
     {"view layout hit have zero allocations", &all_view_layout_and_hit_paths_allocate_nothing},
 };
 

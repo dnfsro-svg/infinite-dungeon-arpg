@@ -543,6 +543,15 @@ set_tests_properties(
     platform.pause_menu_hit_test_layout_source
     PROPERTIES LABELS "headless;platform;ui;architecture")
 
+add_test(
+    NAME platform.pause_menu_host_layout_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/pause_menu_host_layout_source_test.cmake")
+set_tests_properties(
+    platform.pause_menu_host_layout_source
+    PROPERTIES LABELS "headless;platform;ui;architecture")
+
 function(arpg_tokenize_dependency_value INPUT_VALUE OUT_TOKENS)
     set(_arpg_token_text "${INPUT_VALUE}")
     foreach(_arpg_delimiter IN ITEMS

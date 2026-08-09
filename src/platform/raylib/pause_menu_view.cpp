@@ -1,9 +1,10 @@
 #include "pause_menu_view.hpp"
 
 #include "stable_key_raylib.hpp"
+#include "ui_text_catalog.hpp"
 #include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 
-#include <cstdio>
 #include <algorithm>
 
 namespace arpg::platform {
@@ -29,88 +30,164 @@ constexpr float kCompactFooterY = 330.0F;
 constexpr float kCompactFooterHeight = 32.0F;
 constexpr std::size_t kCompactRowCapacity = 3U;
 constexpr const char* kPauseFooter =
-    "Arrow keys navigate | Enter select | Esc back";
+    u8"方向键导航｜Enter 选择｜Esc 返回";
 constexpr const char* kPauseRootResetFooter =
-    "Arrow keys navigate | Enter select | Esc back | R Reset Room";
+    u8"方向键导航｜Enter 选择｜Esc 返回｜R 重置房间";
 constexpr const char* kSettingsFooter =
-    "Up/Down navigate | Left/Right adjust | Enter activate | Esc back";
+    u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回";
 constexpr const char* kCaptureFooter =
-    "Press any supported key to bind | Esc cancel";
+    u8"请按下可绑定按键｜Esc 取消";
 
 template <typename... Arguments>
-void write_row(
+void write_primary(
     PauseMenuView& view,
     std::size_t row,
     const char* format,
     Arguments... arguments) noexcept {
     if (row >= view.rows.size()) return;
-    static_cast<void>(std::snprintf(
-        view.rows[row].data(), view.rows[row].size(),
+    static_cast<void>(ui_utf8_format(
+        view.rows[row].primary.data(), view.rows[row].primary.size(),
         format, arguments...));
-    view.rows[row].back() = '\0';
+}
+
+template <typename... Arguments>
+void write_saved(
+    PauseMenuView& view,
+    std::size_t row,
+    const char* format,
+    Arguments... arguments) noexcept {
+    if (row >= view.rows.size()) return;
+    static_cast<void>(ui_utf8_format(
+        view.rows[row].saved.data(), view.rows[row].saved.size(),
+        format, arguments...));
 }
 
 [[nodiscard]] const char* window_mode_label(
     settings::WindowMode mode) noexcept {
     switch (mode) {
         case settings::WindowMode::windowed:
-            return "Windowed";
+            return u8"窗口化";
         case settings::WindowMode::fullscreen:
-            return "Fullscreen";
+            return u8"全屏";
     }
-    return "Unknown";
+    return ui_text(UiTextId::settings_unknown);
 }
 
 [[nodiscard]] const char* enabled_label(bool enabled) noexcept {
-    return enabled ? "On" : "Off";
+    return enabled ? u8"开" : u8"关";
+}
+
+[[nodiscard]] const char* chinese_loot_filter_label(
+    settings::LootFilterMode mode) noexcept {
+    switch (mode) {
+        case settings::LootFilterMode::show_all:
+            return u8"显示全部";
+        case settings::LootFilterMode::magic_or_better:
+            return u8"魔法及以上";
+        case settings::LootFilterMode::rare_only:
+            return u8"仅稀有";
+    }
+    return ui_text(UiTextId::settings_unknown);
+}
+
+[[nodiscard]] const char* key_label(settings::StableKey key) noexcept {
+    return key == settings::StableKey::count
+        ? ui_text(UiTextId::settings_unknown)
+        : stable_key_label(key);
 }
 
 [[nodiscard]] std::size_t clamp_selected_row(
     std::size_t selected_row,
     std::size_t row_count) noexcept {
+    if (row_count == 0U) return 0U;
     return selected_row < row_count ? selected_row : row_count - 1U;
 }
 
-void build_settings_rows(
+void build_settings_home_rows(PauseMenuView& view) noexcept {
+    write_primary(view, 0U, "%s", ui_text(UiTextId::settings_audio));
+    write_primary(view, 1U, "%s", ui_text(UiTextId::settings_display));
+    write_primary(view, 2U, "%s", ui_text(UiTextId::settings_bindings));
+    write_primary(view, 3U, "%s", ui_text(UiTextId::settings_restore_defaults));
+    write_primary(view, 4U, "%s", ui_text(UiTextId::settings_apply));
+    write_primary(view, 5U, "%s", ui_text(UiTextId::settings_cancel));
+}
+
+void build_settings_audio_rows(
     PauseMenuView& view,
     const PauseMenuState& state) noexcept {
-    write_row(view, 0U, "Master: %u%% (saved %u%%)",
-        static_cast<unsigned>(state.draft.master_sfx_percent),
-        static_cast<unsigned>(state.committed.master_sfx_percent));
-    write_row(view, 1U, "SFX: %u%% (saved %u%%)",
-        static_cast<unsigned>(state.draft.sfx_percent),
-        static_cast<unsigned>(state.committed.sfx_percent));
-    write_row(view, 2U, "Music: %u%% (saved %u%%)",
-        static_cast<unsigned>(state.draft.music_percent),
-        static_cast<unsigned>(state.committed.music_percent));
-    write_row(view, 3U, "Ambience: %u%% (saved %u%%)",
-        static_cast<unsigned>(state.draft.ambience_percent),
-        static_cast<unsigned>(state.committed.ambience_percent));
-    write_row(view, 4U, "UI: %u%% (saved %u%%)",
-        static_cast<unsigned>(state.draft.ui_percent),
-        static_cast<unsigned>(state.committed.ui_percent));
-    write_row(view, 5U, "Window Mode: %s (saved %s)",
-        window_mode_label(state.draft.window_mode),
-        window_mode_label(state.committed.window_mode));
-    write_row(view, 6U, "VSync: %s (saved %s)",
-        enabled_label(state.draft.vsync_enabled),
-        enabled_label(state.committed.vsync_enabled));
-    write_row(view, 7U, "Loot Filter: %s (saved %s)",
-        settings::loot_filter_label(state.draft.loot_filter_mode),
-        settings::loot_filter_label(state.committed.loot_filter_mode));
+    struct VolumeRow final {
+        const char* label;
+        std::uint8_t draft;
+        std::uint8_t committed;
+    };
+    const VolumeRow rows[] = {
+        {u8"总音量", state.draft.master_sfx_percent,
+            state.committed.master_sfx_percent},
+        {u8"音效", state.draft.sfx_percent, state.committed.sfx_percent},
+        {u8"音乐", state.draft.music_percent, state.committed.music_percent},
+        {u8"环境音", state.draft.ambience_percent,
+            state.committed.ambience_percent},
+        {u8"界面音", state.draft.ui_percent, state.committed.ui_percent},
+    };
+    for (std::size_t row = 0U; row < std::size(rows); ++row) {
+        write_primary(view, row, u8"%s：%u%%", rows[row].label,
+            static_cast<unsigned>(rows[row].draft));
+        if (rows[row].draft != rows[row].committed) {
+            write_saved(view, row, u8"%s%u%%",
+                ui_text(UiTextId::settings_saved_prefix),
+                static_cast<unsigned>(rows[row].committed));
+        }
+    }
+    write_primary(view, 5U, "%s", u8"返回");
+}
 
+void build_settings_display_rows(
+    PauseMenuView& view,
+    const PauseMenuState& state) noexcept {
+    write_primary(view, 0U, u8"窗口模式：%s",
+        window_mode_label(state.draft.window_mode));
+    if (state.draft.window_mode != state.committed.window_mode) {
+        write_saved(view, 0U, "%s%s",
+            ui_text(UiTextId::settings_saved_prefix),
+            window_mode_label(state.committed.window_mode));
+    }
+    write_primary(view, 1U, u8"垂直同步：%s",
+        enabled_label(state.draft.vsync_enabled));
+    if (state.draft.vsync_enabled != state.committed.vsync_enabled) {
+        write_saved(view, 1U, "%s%s",
+            ui_text(UiTextId::settings_saved_prefix),
+            enabled_label(state.committed.vsync_enabled));
+    }
+    write_primary(view, 2U, u8"拾取过滤：%s",
+        chinese_loot_filter_label(state.draft.loot_filter_mode));
+    if (state.draft.loot_filter_mode != state.committed.loot_filter_mode) {
+        write_saved(view, 2U, "%s%s",
+            ui_text(UiTextId::settings_saved_prefix),
+            chinese_loot_filter_label(state.committed.loot_filter_mode));
+    }
+    write_primary(view, 3U, "%s", u8"返回");
+}
+
+void build_settings_bindings_rows(
+    PauseMenuView& view,
+    const PauseMenuState& state) noexcept {
     for (std::size_t index = 0U;
          index < static_cast<std::size_t>(settings::SettingAction::count);
          ++index) {
         const auto action = static_cast<settings::SettingAction>(index);
-        write_row(view, index + 8U, "%s: %s (saved %s)",
-            settings::action_label(action),
-            stable_key_label(settings::binding_for(state.draft, action)),
-            stable_key_label(settings::binding_for(state.committed, action)));
+        const settings::StableKey draft_key =
+            settings::binding_for(state.draft, action);
+        const settings::StableKey committed_key =
+            settings::binding_for(state.committed, action);
+        write_primary(view, index, u8"%s：%s",
+            ui_setting_action_name(action), key_label(draft_key));
+        if (draft_key != committed_key) {
+            write_saved(view, index, "%s%s",
+                ui_text(UiTextId::settings_saved_prefix),
+                key_label(committed_key));
+        }
     }
-    write_row(view, 18U, "%s", "Reset Defaults");
-    write_row(view, 19U, "%s", "Apply");
-    write_row(view, 20U, "%s", "Cancel");
+    write_primary(view, 10U, "%s", u8"返回");
 }
 
 }  // namespace
@@ -182,6 +259,28 @@ PauseMenuLayout pause_menu_layout(
     return layout;
 }
 
+PauseMenuCenteredTextLayout centered_pause_text_layout(
+    Rectangle row_bounds,
+    float text_width,
+    float text_height,
+    float horizontal_inset) noexcept {
+    const float inset = (std::max)(0.0F, horizontal_inset);
+    const float available_width = (std::max)(
+        0.0F, row_bounds.width - inset * 2.0F);
+    const float clamped_text_width = (std::min)(
+        (std::max)(0.0F, text_width), available_width);
+    const float clamped_text_height = (std::max)(0.0F, text_height);
+    return {
+        row_bounds,
+        {
+            row_bounds.x + (row_bounds.width - clamped_text_width) * 0.5F,
+            row_bounds.y + (row_bounds.height - clamped_text_height) * 0.5F,
+            clamped_text_width,
+            clamped_text_height,
+        },
+    };
+}
+
 PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
     PauseMenuView view{};
     view.message = state.message;
@@ -189,7 +288,7 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
         case PauseScreen::closed:
             return view;
         case PauseScreen::root:
-            view.title = "PAUSED";
+            view.title = ui_text(UiTextId::pause_title);
             view.footer = std::find(state.committed.bindings.begin(),
                 state.committed.bindings.end(), settings::StableKey::r)
                     == state.committed.bindings.end()
@@ -197,38 +296,58 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
             view.row_count = 3U;
             view.selected_row = clamp_selected_row(
                 state.selected_row, view.row_count);
-            write_row(view, 0U, "%s", "Continue");
-            write_row(view, 1U, "%s", "Settings");
-            write_row(view, 2U, "%s", "Quit Game");
+            write_primary(view, 0U, "%s", ui_text(UiTextId::pause_continue));
+            write_primary(view, 1U, "%s", ui_text(UiTextId::pause_settings));
+            write_primary(view, 2U, "%s", ui_text(UiTextId::pause_quit));
             return view;
-        case PauseScreen::settings:
-            view.title = "SETTINGS";
+        case PauseScreen::settings: {
             view.footer = kSettingsFooter;
-            view.row_count = kPauseMenuRowCapacity;
+            switch (state.settings_page) {
+                case PauseSettingsPage::home:
+                    view.title = ui_text(UiTextId::settings_title);
+                    view.row_count = 6U;
+                    build_settings_home_rows(view);
+                    break;
+                case PauseSettingsPage::audio:
+                    view.title = ui_text(UiTextId::settings_audio);
+                    view.row_count = 6U;
+                    build_settings_audio_rows(view, state);
+                    break;
+                case PauseSettingsPage::display:
+                    view.title = ui_text(UiTextId::settings_display);
+                    view.row_count = 4U;
+                    build_settings_display_rows(view, state);
+                    break;
+                case PauseSettingsPage::bindings:
+                    view.title = ui_text(UiTextId::settings_bindings);
+                    view.row_count = 11U;
+                    build_settings_bindings_rows(view, state);
+                    break;
+            }
             view.selected_row = clamp_selected_row(
                 state.selected_row, view.row_count);
-            build_settings_rows(view, state);
             return view;
+        }
         case PauseScreen::capture_binding: {
-            view.title = "BIND KEY";
+            view.title = u8"绑定按键";
             view.footer = kCaptureFooter;
             view.row_count = 1U;
             view.selected_row = 0U;
             const settings::SettingAction action = state.capture_action.value_or(
                 settings::SettingAction::count);
-            write_row(view, 0U, "Press a key for %s (current %s)",
-                settings::action_label(action),
-                stable_key_label(settings::binding_for(state.draft, action)));
+            write_primary(view, 0U, u8"请按下用于%s的按键（当前：%s）",
+                ui_setting_action_name(action),
+                key_label(settings::binding_for(state.draft, action)));
             return view;
         }
         case PauseScreen::quit_confirm:
-            view.title = "QUIT GAME?";
+            view.title = u8"确认退出？";
             view.footer = kPauseFooter;
             view.row_count = 2U;
             view.selected_row = clamp_selected_row(
                 state.selected_row, view.row_count);
-            write_row(view, 0U, "%s", "Quit Game");
-            write_row(view, 1U, "%s", "Back");
+            write_primary(view, 0U, "%s", ui_text(UiTextId::pause_quit));
+            write_primary(view, 1U, "%s", u8"返回");
             return view;
     }
     return view;

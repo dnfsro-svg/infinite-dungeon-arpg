@@ -11,7 +11,18 @@
 namespace arpg::platform {
 
 inline constexpr std::size_t kPauseMenuRowCapacity = 21U;
-inline constexpr std::size_t kPauseMenuRowTextCapacity = 64U;
+inline constexpr std::size_t kPauseMenuPrimaryTextCapacity = 96U;
+inline constexpr std::size_t kPauseMenuSavedTextCapacity = 64U;
+
+struct PauseMenuRowView final {
+    std::array<char, kPauseMenuPrimaryTextCapacity> primary{};
+    std::array<char, kPauseMenuSavedTextCapacity> saved{};
+};
+
+struct PauseMenuCenteredTextLayout final {
+    Rectangle backing{};
+    Rectangle text{};
+};
 
 struct PauseMenuLayout final {
     Rectangle panel{};
@@ -25,8 +36,7 @@ struct PauseMenuLayout final {
 };
 
 struct PauseMenuView final {
-    std::array<std::array<char, kPauseMenuRowTextCapacity>,
-        kPauseMenuRowCapacity> rows{};
+    std::array<PauseMenuRowView, kPauseMenuRowCapacity> rows{};
     std::size_t row_count{};
     std::size_t selected_row{};
     const char* title{};
@@ -42,6 +52,12 @@ struct PauseMenuView final {
     int width,
     int height,
     std::size_t visible_row_count) noexcept;
+
+[[nodiscard]] PauseMenuCenteredTextLayout centered_pause_text_layout(
+    Rectangle row_bounds,
+    float text_width,
+    float text_height,
+    float horizontal_inset) noexcept;
 
 [[nodiscard]] PauseMenuView make_pause_menu_view(
     const PauseMenuState& state) noexcept;

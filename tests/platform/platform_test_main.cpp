@@ -301,8 +301,9 @@ int main() {
     if (full_chinese_ui_menu_hud_only()) {
         const arpg::test::TestSuite full_chinese_ui_menu_hud[] = {
             pause_menu_state_suite(),
+            pause_menu_view_suite(),
         };
-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 32,
+        return arpg::test::run_suites(full_chinese_ui_menu_hud, 47,
             "full Chinese UI menus and HUD");
     }
     if (cplay038_save_directory_only()) {
@@ -413,7 +414,7 @@ int main() {
             pause_menu_view_suite(),
             material_asset_validation_suite(),
         };
-        return arpg::test::run_suites(cplay014_only, 53,
+        return arpg::test::run_suites(cplay014_only, 55,
             "CPLAY-014 pause menu visual contract");
     }
 
