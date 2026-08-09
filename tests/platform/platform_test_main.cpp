@@ -351,7 +351,7 @@ int main() {
         const arpg::test::TestSuite cplay028_only[] = {
             pause_menu_state_suite(),
         };
-        return arpg::test::run_suites(cplay028_only, 30,
+        return arpg::test::run_suites(cplay028_only, 32,
             "CPLAY-028 unfocused pause input");
     }
     if (cplay027_inventory_binding_label_only()) {
@@ -505,6 +505,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 654,
+    return arpg::test::run_suites(suites, 656,
         "host settings runtime contract");
 }
