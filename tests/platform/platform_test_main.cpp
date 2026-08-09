@@ -61,6 +61,7 @@ arpg::test::TestSuite stage12_environment_render_suite() noexcept;
 arpg::test::TestSuite stage12_actor_render_suite() noexcept;
 arpg::test::TestSuite stage12_material_render_suite() noexcept;
 arpg::test::TestSuite large_room_render_plan_suite() noexcept;
+arpg::test::TestSuite ui_text_catalog_suite() noexcept;
 
 namespace {
 
@@ -129,6 +130,16 @@ bool cplay016_ground_potion_label_only() noexcept {
     std::size_t length = 0U;
     const errno_t error = _dupenv_s(&value, &length,
         "ARPG_CPLAY016_GROUND_POTION_LABEL_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool full_chinese_ui_foundation_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_FULL_CHINESE_UI_FOUNDATION_ONLY");
     const bool enabled = error == 0 && value != nullptr;
     std::free(value);
     return enabled;
@@ -266,6 +277,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (full_chinese_ui_foundation_only()) {
+        const arpg::test::TestSuite full_chinese_ui_foundation[] = {
+            ui_text_catalog_suite(),
+        };
+        return arpg::test::run_suites(full_chinese_ui_foundation, 5,
+            "full Chinese UI foundation");
+    }
     if (cplay038_save_directory_only()) {
         const arpg::test::TestSuite cplay038_only[] = {
             dungeon_runtime_save_directory_lease_suite(),

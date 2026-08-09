@@ -11,6 +11,7 @@ if(TARGET arpg_raylib)
     add_executable(arpg_platform_tests
         ../core/allocation_probe.cpp
         platform_test_main.cpp
+        ui_text_catalog_tests.cpp
         host_input_tests.cpp
         host_validation_exit_tests.cpp
         active_skill_input_tests.cpp
