@@ -8,14 +8,21 @@ namespace arpg::platform {
 namespace {
 
 constexpr std::size_t kRootRowCount = 3U;
-constexpr std::size_t kSettingsRowCount = 21U;
+constexpr std::size_t kSettingsHomeRowCount = 6U;
+constexpr std::size_t kSettingsAudioRowCount = 6U;
+constexpr std::size_t kSettingsDisplayRowCount = 4U;
+constexpr std::size_t kSettingsBindingsRowCount = 11U;
 constexpr std::size_t kQuitRowCount = 2U;
-constexpr std::size_t kLootFilterRow = 7U;
-constexpr std::size_t kFirstBindingRow = 8U;
-constexpr std::size_t kLastBindingRow = 17U;
-constexpr std::size_t kResetRow = 18U;
-constexpr std::size_t kApplyRow = 19U;
-constexpr std::size_t kCancelRow = 20U;
+constexpr std::size_t kSettingsHomeAudioRow = 0U;
+constexpr std::size_t kSettingsHomeDisplayRow = 1U;
+constexpr std::size_t kSettingsHomeBindingsRow = 2U;
+constexpr std::size_t kSettingsHomeResetRow = 3U;
+constexpr std::size_t kSettingsHomeApplyRow = 4U;
+constexpr std::size_t kSettingsHomeCancelRow = 5U;
+constexpr std::size_t kSettingsAudioBackRow = 5U;
+constexpr std::size_t kSettingsDisplayLootFilterRow = 2U;
+constexpr std::size_t kSettingsDisplayBackRow = 3U;
+constexpr std::size_t kSettingsBindingsBackRow = 10U;
 
 constexpr char kInvalidBindingMessage[] = "Key cannot be assigned";
 constexpr char kInvalidSettingsMessage[] = "Settings are invalid";
@@ -43,8 +50,45 @@ constexpr char kRevisionOverflowMessage[] = "Settings revision limit reached";
 
 void return_to_root(PauseMenuState& state) noexcept {
     state.screen = PauseScreen::root;
+    state.settings_page = PauseSettingsPage::home;
     state.selected_row = 0U;
     state.capture_action.reset();
+}
+
+[[nodiscard]] constexpr std::size_t home_row_for(
+    PauseSettingsPage page) noexcept {
+    switch (page) {
+        case PauseSettingsPage::audio:
+            return kSettingsHomeAudioRow;
+        case PauseSettingsPage::display:
+            return kSettingsHomeDisplayRow;
+        case PauseSettingsPage::bindings:
+            return kSettingsHomeBindingsRow;
+        case PauseSettingsPage::home:
+            return 0U;
+    }
+    return 0U;
+}
+
+void return_to_settings_home(PauseMenuState& state) noexcept {
+    const std::size_t selected_row = home_row_for(state.settings_page);
+    state.settings_page = PauseSettingsPage::home;
+    state.selected_row = selected_row;
+}
+
+[[nodiscard]] constexpr std::size_t settings_row_count(
+    PauseSettingsPage page) noexcept {
+    switch (page) {
+        case PauseSettingsPage::home:
+            return kSettingsHomeRowCount;
+        case PauseSettingsPage::audio:
+            return kSettingsAudioRowCount;
+        case PauseSettingsPage::display:
+            return kSettingsDisplayRowCount;
+        case PauseSettingsPage::bindings:
+            return kSettingsBindingsRowCount;
+    }
+    return kSettingsHomeRowCount;
 }
 
 [[nodiscard]] PauseCommand rollback_to_root(PauseMenuState& state) noexcept {
@@ -94,6 +138,7 @@ void return_to_root(PauseMenuState& state) noexcept {
     }
     if (state.selected_row == 1U) {
         state.screen = PauseScreen::settings;
+        state.settings_page = PauseSettingsPage::home;
         state.selected_row = 0U;
         state.capture_action.reset();
         state.draft = state.committed;
@@ -163,68 +208,104 @@ void return_to_root(PauseMenuState& state) noexcept {
     PauseMenuState& state,
     const PauseInput& input) noexcept {
     if (input.escape) {
-        return rollback_to_root(state);
-    }
-    if (navigate(state.selected_row, kSettingsRowCount, input)) {
-        return PauseCommand::none;
-    }
-    if (state.selected_row <= 4U) {
-        std::uint8_t* volumes[] = {
-            &state.draft.master_sfx_percent, &state.draft.sfx_percent,
-            &state.draft.music_percent, &state.draft.ambience_percent,
-            &state.draft.ui_percent,
-        };
-        return update_volume(*volumes[state.selected_row], input);
-    }
-    if (state.selected_row == 5U &&
-        (input.left || input.right || confirmed(input))) {
-        state.draft.window_mode =
-            state.draft.window_mode == settings::WindowMode::windowed
-            ? settings::WindowMode::fullscreen
-            : settings::WindowMode::windowed;
-        return PauseCommand::preview;
-    }
-    if (state.selected_row == 6U &&
-        (input.left || input.right || confirmed(input))) {
-        state.draft.vsync_enabled = !state.draft.vsync_enabled;
-        return PauseCommand::preview;
-    }
-    if (state.selected_row == kLootFilterRow) {
-        return update_loot_filter(state, input);
-    }
-    if (!confirmed(input)) {
-        return PauseCommand::none;
-    }
-    if (state.selected_row >= kFirstBindingRow &&
-        state.selected_row <= kLastBindingRow) {
-        state.capture_action = static_cast<settings::SettingAction>(
-            state.selected_row - kFirstBindingRow);
-        state.screen = PauseScreen::capture_binding;
-        state.message = nullptr;
-        return PauseCommand::none;
-    }
-    if (state.selected_row == kResetRow) {
-        const std::uint64_t revision = state.draft.revision;
-        state.draft = settings::default_settings();
-        state.draft.revision = revision;
-        return PauseCommand::preview;
-    }
-    if (state.selected_row == kApplyRow) {
-        if (settings::validate_settings(state.draft) !=
-            settings::SettingsValidationError::none) {
-            state.message = kInvalidSettingsMessage;
+        if (state.settings_page != PauseSettingsPage::home) {
+            return_to_settings_home(state);
             return PauseCommand::none;
         }
-        if (state.committed.revision ==
-            std::numeric_limits<std::uint64_t>::max()) {
-            state.message = kRevisionOverflowMessage;
-            return PauseCommand::none;
-        }
-        state.draft.revision = state.committed.revision + 1U;
-        return PauseCommand::apply;
-    }
-    if (state.selected_row == kCancelRow) {
         return rollback_to_root(state);
+    }
+    if (navigate(
+            state.selected_row, settings_row_count(state.settings_page), input)) {
+        return PauseCommand::none;
+    }
+    switch (state.settings_page) {
+        case PauseSettingsPage::home:
+            if (!confirmed(input)) {
+                return PauseCommand::none;
+            }
+            if (state.selected_row <= kSettingsHomeBindingsRow) {
+                state.settings_page = static_cast<PauseSettingsPage>(
+                    state.selected_row + 1U);
+                state.selected_row = 0U;
+                return PauseCommand::none;
+            }
+            if (state.selected_row == kSettingsHomeResetRow) {
+                const std::uint64_t revision = state.draft.revision;
+                state.draft = settings::default_settings();
+                state.draft.revision = revision;
+                return PauseCommand::preview;
+            }
+            if (state.selected_row == kSettingsHomeApplyRow) {
+                if (settings::validate_settings(state.draft) !=
+                    settings::SettingsValidationError::none) {
+                    state.message = kInvalidSettingsMessage;
+                    return PauseCommand::none;
+                }
+                if (state.committed.revision ==
+                    std::numeric_limits<std::uint64_t>::max()) {
+                    state.message = kRevisionOverflowMessage;
+                    return PauseCommand::none;
+                }
+                state.draft.revision = state.committed.revision + 1U;
+                return PauseCommand::apply;
+            }
+            if (state.selected_row == kSettingsHomeCancelRow) {
+                return rollback_to_root(state);
+            }
+            return PauseCommand::none;
+
+        case PauseSettingsPage::audio:
+            if (state.selected_row < kSettingsAudioBackRow) {
+                std::uint8_t* volumes[] = {
+                    &state.draft.master_sfx_percent, &state.draft.sfx_percent,
+                    &state.draft.music_percent, &state.draft.ambience_percent,
+                    &state.draft.ui_percent,
+                };
+                return update_volume(*volumes[state.selected_row], input);
+            }
+            if (confirmed(input)) {
+                return_to_settings_home(state);
+            }
+            return PauseCommand::none;
+
+        case PauseSettingsPage::display:
+            if (state.selected_row == 0U &&
+                (input.left || input.right || confirmed(input))) {
+                state.draft.window_mode =
+                    state.draft.window_mode == settings::WindowMode::windowed
+                    ? settings::WindowMode::fullscreen
+                    : settings::WindowMode::windowed;
+                return PauseCommand::preview;
+            }
+            if (state.selected_row == 1U &&
+                (input.left || input.right || confirmed(input))) {
+                state.draft.vsync_enabled = !state.draft.vsync_enabled;
+                return PauseCommand::preview;
+            }
+            if (state.selected_row == kSettingsDisplayLootFilterRow) {
+                return update_loot_filter(state, input);
+            }
+            if (state.selected_row == kSettingsDisplayBackRow &&
+                confirmed(input)) {
+                return_to_settings_home(state);
+            }
+            return PauseCommand::none;
+
+        case PauseSettingsPage::bindings:
+            if (!confirmed(input)) {
+                return PauseCommand::none;
+            }
+            if (state.selected_row < kSettingsBindingsBackRow) {
+                state.capture_action = static_cast<settings::SettingAction>(
+                    state.selected_row);
+                state.screen = PauseScreen::capture_binding;
+                state.message = nullptr;
+                return PauseCommand::none;
+            }
+            if (state.selected_row == kSettingsBindingsBackRow) {
+                return_to_settings_home(state);
+            }
+            return PauseCommand::none;
     }
     return PauseCommand::none;
 }
@@ -235,6 +316,7 @@ void return_to_root(PauseMenuState& state) noexcept {
     const PauseInput& input) noexcept {
     if (input.escape || input.focus_lost || !context.window_focused) {
         state.screen = PauseScreen::settings;
+        state.settings_page = PauseSettingsPage::bindings;
         state.capture_action.reset();
         state.message = nullptr;
         return PauseCommand::none;
@@ -249,6 +331,7 @@ void return_to_root(PauseMenuState& state) noexcept {
         return PauseCommand::none;
     }
     state.screen = PauseScreen::settings;
+    state.settings_page = PauseSettingsPage::bindings;
     state.capture_action.reset();
     state.message = nullptr;
     return PauseCommand::none;
@@ -297,6 +380,7 @@ PauseCommand update_pause_menu(
             return update_quit_confirm(state, input);
     }
     state.screen = PauseScreen::closed;
+    state.settings_page = PauseSettingsPage::home;
     state.selected_row = 0U;
     state.capture_action.reset();
     return PauseCommand::none;

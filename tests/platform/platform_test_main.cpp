@@ -147,6 +147,16 @@ bool full_chinese_ui_foundation_only() noexcept {
     return enabled;
 }
 
+bool full_chinese_ui_menu_hud_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 bool cplay021_loot_suction_only() noexcept {
     char* value = nullptr;
     std::size_t length = 0U;
@@ -287,6 +297,13 @@ int main() {
         };
         return arpg::test::run_suites(full_chinese_ui_foundation, 15,
             "full Chinese UI foundation");
+    }
+    if (full_chinese_ui_menu_hud_only()) {
+        const arpg::test::TestSuite full_chinese_ui_menu_hud[] = {
+            pause_menu_state_suite(),
+        };
+        return arpg::test::run_suites(full_chinese_ui_menu_hud, 32,
+            "full Chinese UI menus and HUD");
     }
     if (cplay038_save_directory_only()) {
         const arpg::test::TestSuite cplay038_only[] = {

@@ -16,6 +16,13 @@ enum class PauseScreen : std::uint8_t {
     quit_confirm
 };
 
+enum class PauseSettingsPage : std::uint8_t {
+    home,
+    audio,
+    display,
+    bindings,
+};
+
 enum class PauseCommand : std::uint8_t {
     none,
     preview,
@@ -48,6 +55,7 @@ struct PauseInput final {
 
 struct PauseMenuState final {
     PauseScreen screen{PauseScreen::closed};
+    PauseSettingsPage settings_page{PauseSettingsPage::home};
     std::size_t selected_row{};
     std::optional<settings::SettingAction> capture_action{};
     settings::SettingsData committed{};

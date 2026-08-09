@@ -154,12 +154,14 @@ test::Failure root_continue_supports_enter_and_escape() noexcept {
 test::Failure opening_settings_copies_committed_and_clears_message() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::root;
+    state.settings_page = platform::PauseSettingsPage::bindings;
     state.selected_row = 1U;
     state.committed.master_sfx_percent = 35U;
     state.draft.master_sfx_percent = 80U;
     state.message = "old error";
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+    ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::home);
     ARPG_REQUIRE(state.selected_row == 0U);
     ARPG_REQUIRE(state.draft.master_sfx_percent == 35U);
     ARPG_REQUIRE(state.message == nullptr);
@@ -176,14 +178,83 @@ test::Failure opening_quit_confirmation_defaults_to_back() noexcept {
     return {};
 }
 
-test::Failure settings_navigation_wraps_all_seventeen_rows() noexcept {
-    auto state = make_state();
-    state.screen = platform::PauseScreen::settings;
-    ARPG_REQUIRE(update(state, input_for(InputKind::up)) == platform::PauseCommand::none);
-    ARPG_REQUIRE(state.selected_row == 20U);
-    for (std::size_t expected = 0U; expected < 21U; ++expected) {
-        ARPG_REQUIRE(update(state, input_for(InputKind::down)) == platform::PauseCommand::none);
-        ARPG_REQUIRE(state.selected_row == expected);
+test::Failure settings_navigation_wraps_each_page_row_count() noexcept {
+    struct PageRows final {
+        platform::PauseSettingsPage page;
+        std::size_t row_count;
+    };
+    constexpr PageRows pages[] = {
+        {platform::PauseSettingsPage::home, 6U},
+        {platform::PauseSettingsPage::audio, 6U},
+        {platform::PauseSettingsPage::display, 4U},
+        {platform::PauseSettingsPage::bindings, 11U},
+    };
+    for (const auto [page, row_count] : pages) {
+        auto state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.settings_page = page;
+        ARPG_REQUIRE(update(state, input_for(InputKind::up)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.selected_row == row_count - 1U);
+        for (std::size_t expected = 0U; expected < row_count; ++expected) {
+            ARPG_REQUIRE(update(state, input_for(InputKind::down)) ==
+                platform::PauseCommand::none);
+            ARPG_REQUIRE(state.selected_row == expected);
+        }
+    }
+    return {};
+}
+
+test::Failure settings_home_enters_pages_and_escape_preserves_draft() noexcept {
+    constexpr platform::PauseSettingsPage expected_pages[] = {
+        platform::PauseSettingsPage::audio,
+        platform::PauseSettingsPage::display,
+        platform::PauseSettingsPage::bindings,
+    };
+    for (std::size_t row = 0U; row < 3U; ++row) {
+        auto state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.settings_page = platform::PauseSettingsPage::home;
+        state.selected_row = row;
+        ARPG_REQUIRE(update(state, input_for(InputKind::enter)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.settings_page == expected_pages[row]);
+        ARPG_REQUIRE(state.selected_row == 0U);
+
+        state.draft.master_sfx_percent = 80U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::escape)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+        ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::home);
+        ARPG_REQUIRE(state.selected_row == row);
+        ARPG_REQUIRE(state.draft.master_sfx_percent == 80U);
+    }
+    return {};
+}
+
+test::Failure settings_subpage_back_rows_preserve_draft() noexcept {
+    struct PageBackRow final {
+        platform::PauseSettingsPage page;
+        std::size_t back_row;
+        std::size_t home_row;
+    };
+    constexpr PageBackRow pages[] = {
+        {platform::PauseSettingsPage::audio, 5U, 0U},
+        {platform::PauseSettingsPage::display, 3U, 1U},
+        {platform::PauseSettingsPage::bindings, 10U, 2U},
+    };
+    for (const auto [page, back_row, home_row] : pages) {
+        auto state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.settings_page = page;
+        state.selected_row = back_row;
+        state.draft.master_sfx_percent = 80U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+        ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::home);
+        ARPG_REQUIRE(state.selected_row == home_row);
+        ARPG_REQUIRE(state.draft.master_sfx_percent == 80U);
     }
     return {};
 }
@@ -191,6 +262,7 @@ test::Failure settings_navigation_wraps_all_seventeen_rows() noexcept {
 test::Failure volume_preview_clamps_and_noop_returns_none() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
+    state.settings_page = platform::PauseSettingsPage::audio;
     state.selected_row = 0U;
     state.draft.master_sfx_percent = 5U;
     ARPG_REQUIRE(update(state, input_for(InputKind::left)) == platform::PauseCommand::preview);
@@ -219,7 +291,8 @@ test::Failure volume_preview_clamps_and_noop_returns_none() noexcept {
 test::Failure window_mode_preview_toggles_for_all_controls() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 5U;
+    state.settings_page = platform::PauseSettingsPage::display;
+    state.selected_row = 0U;
     const platform::PauseInput inputs[] = {
         input_for(InputKind::left),
         input_for(InputKind::right),
@@ -239,7 +312,8 @@ test::Failure window_mode_preview_toggles_for_all_controls() noexcept {
 test::Failure vsync_preview_toggles_for_all_controls() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 6U;
+    state.settings_page = platform::PauseSettingsPage::display;
+    state.selected_row = 1U;
     const platform::PauseInput inputs[] = {
         input_for(InputKind::left),
         input_for(InputKind::right),
@@ -257,7 +331,8 @@ test::Failure vsync_preview_toggles_for_all_controls() noexcept {
 test::Failure loot_filter_preview_cycles_for_all_controls() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 7U;
+    state.settings_page = platform::PauseSettingsPage::display;
+    state.selected_row = 2U;
     ARPG_REQUIRE(update(state, input_for(InputKind::left)) ==
         platform::PauseCommand::preview);
     ARPG_REQUIRE(state.draft.loot_filter_mode ==
@@ -279,12 +354,15 @@ test::Failure every_binding_row_enters_matching_capture() noexcept {
          ++action) {
         auto state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = action + 8U;
+        state.settings_page = platform::PauseSettingsPage::bindings;
+        state.selected_row = action;
         const InputKind confirm = action % 2U == 0U
             ? InputKind::activate
             : InputKind::enter;
         ARPG_REQUIRE(update(state, input_for(confirm)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.screen == platform::PauseScreen::capture_binding);
+        ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::bindings);
+        ARPG_REQUIRE(state.selected_row == action);
         ARPG_REQUIRE(state.capture_action == static_cast<settings::SettingAction>(action));
         ARPG_REQUIRE(state.message == nullptr);
     }
@@ -294,11 +372,14 @@ test::Failure every_binding_row_enters_matching_capture() noexcept {
 test::Failure valid_capture_assigns_without_preview() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::capture_binding;
-    state.selected_row = 7U;
+    state.settings_page = platform::PauseSettingsPage::bindings;
+    state.selected_row = 4U;
     state.capture_action = settings::SettingAction::light_attack;
     ARPG_REQUIRE(update(state, capture_input(settings::StableKey::q)) ==
         platform::PauseCommand::none);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+    ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::bindings);
+    ARPG_REQUIRE(state.selected_row == 4U);
     ARPG_REQUIRE(!state.capture_action.has_value());
     ARPG_REQUIRE(settings::binding_for(
         state.draft, settings::SettingAction::light_attack) == settings::StableKey::q);
@@ -309,10 +390,14 @@ test::Failure valid_capture_assigns_without_preview() noexcept {
 test::Failure occupied_capture_swaps_without_preview() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::capture_binding;
+    state.settings_page = platform::PauseSettingsPage::bindings;
+    state.selected_row = 4U;
     state.capture_action = settings::SettingAction::light_attack;
     ARPG_REQUIRE(update(state, capture_input(settings::StableKey::k)) ==
         platform::PauseCommand::none);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+    ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::bindings);
+    ARPG_REQUIRE(state.selected_row == 4U);
     ARPG_REQUIRE(settings::binding_for(
         state.draft, settings::SettingAction::light_attack) == settings::StableKey::k);
     ARPG_REQUIRE(settings::binding_for(
@@ -323,6 +408,8 @@ test::Failure occupied_capture_swaps_without_preview() noexcept {
 test::Failure reserved_and_invalid_capture_remain_active() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::capture_binding;
+    state.settings_page = platform::PauseSettingsPage::bindings;
+    state.selected_row = 4U;
     state.capture_action = settings::SettingAction::light_attack;
     const auto original = state.draft;
     ARPG_REQUIRE(update(state, capture_input(settings::StableKey::v)) ==
@@ -348,14 +435,16 @@ test::Failure capture_cancellation_paths_preserve_draft() noexcept {
     for (std::size_t index = 0U; index < 3U; ++index) {
         auto state = make_state();
         state.screen = platform::PauseScreen::capture_binding;
-        state.selected_row = 5U;
+        state.settings_page = platform::PauseSettingsPage::bindings;
+        state.selected_row = 2U;
         state.capture_action = settings::SettingAction::move_left;
         state.message = "capture error";
         const auto original = state.draft;
         ARPG_REQUIRE(update(state, inputs[index], contexts[index]) ==
             platform::PauseCommand::none);
         ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
-        ARPG_REQUIRE(state.selected_row == 5U);
+        ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::bindings);
+        ARPG_REQUIRE(state.selected_row == 2U);
         ARPG_REQUIRE(!state.capture_action.has_value());
         ARPG_REQUIRE(state.message == nullptr);
         ARPG_REQUIRE(state.draft.bindings == original.bindings);
@@ -366,7 +455,8 @@ test::Failure capture_cancellation_paths_preserve_draft() noexcept {
 test::Failure reset_defaults_preserves_revision_and_previews() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 18U;
+    state.settings_page = platform::PauseSettingsPage::home;
+    state.selected_row = 3U;
     state.draft.master_sfx_percent = 25U;
     state.draft.window_mode = settings::WindowMode::fullscreen;
     state.draft.vsync_enabled = false;
@@ -390,7 +480,8 @@ test::Failure reset_defaults_preserves_revision_and_previews() noexcept {
 test::Failure apply_increments_draft_without_publishing_or_closing() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 19U;
+    state.settings_page = platform::PauseSettingsPage::home;
+    state.selected_row = 4U;
     state.committed.revision = 7U;
     state.draft.revision = 2U;
     state.draft.master_sfx_percent = 55U;
@@ -408,7 +499,8 @@ test::Failure apply_increments_draft_without_publishing_or_closing() noexcept {
 test::Failure apply_preserves_host_retry_message() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 19U;
+    state.settings_page = platform::PauseSettingsPage::home;
+    state.selected_row = 4U;
     state.message = "save failed; retry";
     const char* message = state.message;
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::apply);
@@ -419,7 +511,8 @@ test::Failure apply_preserves_host_retry_message() noexcept {
 test::Failure apply_rejects_invalid_draft() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 19U;
+    state.settings_page = platform::PauseSettingsPage::home;
+    state.selected_row = 4U;
     state.draft.master_sfx_percent = 53U;
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
@@ -431,7 +524,8 @@ test::Failure apply_rejects_invalid_draft() noexcept {
 test::Failure apply_rejects_revision_overflow() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 19U;
+    state.settings_page = platform::PauseSettingsPage::home;
+    state.selected_row = 4U;
     state.committed.revision = std::numeric_limits<std::uint64_t>::max();
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
     ARPG_REQUIRE(state.draft.revision == 0U);
@@ -442,6 +536,7 @@ test::Failure apply_rejects_revision_overflow() noexcept {
 test::Failure settings_escape_rolls_back_to_committed() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
+    state.settings_page = platform::PauseSettingsPage::home;
     state.draft.master_sfx_percent = 20U;
     state.message = "error";
     ARPG_REQUIRE(update(state, input_for(InputKind::escape)) == platform::PauseCommand::rollback);
@@ -455,7 +550,8 @@ test::Failure settings_escape_rolls_back_to_committed() noexcept {
 test::Failure settings_cancel_row_rolls_back_to_committed() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 20U;
+    state.settings_page = platform::PauseSettingsPage::home;
+    state.selected_row = 5U;
     state.committed.loot_filter_mode = settings::LootFilterMode::magic_or_better;
     state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
     ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::rollback);
@@ -505,7 +601,8 @@ test::Failure quit_confirm_only_row_zero_quits() noexcept {
 test::Failure non_action_inputs_do_not_mutate_settings() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 8U;
+    state.settings_page = platform::PauseSettingsPage::bindings;
+    state.selected_row = 0U;
     const auto original = state.draft;
     ARPG_REQUIRE(update(state, capture_input(settings::StableKey::q)) ==
         platform::PauseCommand::none);
@@ -552,6 +649,15 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
         state.selected_row = 1U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+        ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::home);
+
+        state.selected_row = 0U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::audio);
+        ARPG_REQUIRE(update(state, input_for(InputKind::escape)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.settings_page == platform::PauseSettingsPage::home);
 
         state = make_state();
         state.screen = platform::PauseScreen::root;
@@ -562,27 +668,32 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
+        state.settings_page = platform::PauseSettingsPage::audio;
         state.selected_row = 0U;
         ARPG_REQUIRE(update(state, input_for(InputKind::left)) == platform::PauseCommand::preview);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 5U;
+        state.settings_page = platform::PauseSettingsPage::display;
+        state.selected_row = 0U;
         ARPG_REQUIRE(update(state, input_for(InputKind::right)) == platform::PauseCommand::preview);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 6U;
+        state.settings_page = platform::PauseSettingsPage::display;
+        state.selected_row = 1U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 7U;
+        state.settings_page = platform::PauseSettingsPage::display;
+        state.selected_row = 2U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 18U;
+        state.settings_page = platform::PauseSettingsPage::home;
+        state.selected_row = 3U;
         state.draft.master_sfx_percent = 50U;
         state.draft.revision = iteration;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
@@ -590,7 +701,8 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 19U;
+        state.settings_page = platform::PauseSettingsPage::home;
+        state.selected_row = 4U;
         state.committed.revision = iteration;
         state.draft = state.committed;
         state.message = kRetryMessage;
@@ -600,21 +712,24 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 19U;
+        state.settings_page = platform::PauseSettingsPage::home;
+        state.selected_row = 4U;
         state.draft.master_sfx_percent = 53U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.message != nullptr);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 19U;
+        state.settings_page = platform::PauseSettingsPage::home;
+        state.selected_row = 4U;
         state.committed.revision = std::numeric_limits<std::uint64_t>::max();
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.message != nullptr);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 20U;
+        state.settings_page = platform::PauseSettingsPage::home;
+        state.selected_row = 5U;
         state.draft.master_sfx_percent = 25U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::rollback);
         ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
@@ -624,6 +739,8 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
              ++action) {
             state = make_state();
             state.screen = platform::PauseScreen::capture_binding;
+            state.settings_page = platform::PauseSettingsPage::bindings;
+            state.selected_row = action;
             state.capture_action = static_cast<settings::SettingAction>(action);
             ARPG_REQUIRE(update(state, capture_input(settings::StableKey::q)) ==
                 platform::PauseCommand::none);
@@ -632,6 +749,8 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::capture_binding;
+        state.settings_page = platform::PauseSettingsPage::bindings;
+        state.selected_row = 4U;
         state.capture_action = settings::SettingAction::light_attack;
         ARPG_REQUIRE(update(state, capture_input(settings::StableKey::k)) ==
             platform::PauseCommand::none);
@@ -640,6 +759,8 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::capture_binding;
+        state.settings_page = platform::PauseSettingsPage::bindings;
+        state.selected_row = 4U;
         state.capture_action = settings::SettingAction::light_attack;
         ARPG_REQUIRE(update(state, capture_input(settings::StableKey::v)) ==
             platform::PauseCommand::none);
@@ -647,6 +768,8 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::capture_binding;
+        state.settings_page = platform::PauseSettingsPage::bindings;
+        state.selected_row = 4U;
         state.capture_action = settings::SettingAction::light_attack;
         ARPG_REQUIRE(update(state, capture_input(settings::StableKey::count)) ==
             platform::PauseCommand::none);
@@ -654,12 +777,16 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::capture_binding;
+        state.settings_page = platform::PauseSettingsPage::bindings;
+        state.selected_row = 4U;
         state.capture_action = settings::SettingAction::light_attack;
         ARPG_REQUIRE(update(state, {}, unfocused_context()) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
 
         state = make_state();
         state.screen = platform::PauseScreen::capture_binding;
+        state.settings_page = platform::PauseSettingsPage::bindings;
+        state.selected_row = 4U;
         state.capture_action = settings::SettingAction::light_attack;
         ARPG_REQUIRE(update(state, input_for(InputKind::escape)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
@@ -733,7 +860,9 @@ constexpr test::TestCase kCases[] = {
     {"root continue uses enter and escape", &root_continue_supports_enter_and_escape},
     {"settings copies committed", &opening_settings_copies_committed_and_clears_message},
     {"quit defaults to back", &opening_quit_confirmation_defaults_to_back},
-    {"settings navigation wraps", &settings_navigation_wraps_all_seventeen_rows},
+    {"settings pages wrap exact rows", &settings_navigation_wraps_each_page_row_count},
+    {"settings home enters pages", &settings_home_enters_pages_and_escape_preserves_draft},
+    {"settings subpage back preserves draft", &settings_subpage_back_rows_preserve_draft},
     {"volume preview clamps and noops", &volume_preview_clamps_and_noop_returns_none},
     {"window mode toggles", &window_mode_preview_toggles_for_all_controls},
     {"vsync toggles", &vsync_preview_toggles_for_all_controls},
