@@ -146,7 +146,8 @@ void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
 }  // namespace
 
 void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
-    const DungeonRenderStatus& runtime_status) noexcept {
+    const DungeonRenderStatus& runtime_status,
+    const char* passive_tree_binding_label) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{5, 8, 17, 242});
@@ -212,7 +213,18 @@ void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
     DrawText(saving ? "Autosave SAVING" : error ? "Autosave ERROR" : "Autosave READY",
         40, 94, 16, error ? Color{255, 119, 119, 255}
             : saving ? Color{255, 201, 98, 255} : Color{156, 224, 183, 255});
-    DrawText("P Close", GetScreenWidth() - 115, 38, 17, Color{201, 213, 232, 255});
+    constexpr int kCloseFontSize = 17;
+    constexpr const char* kCloseSuffix = " Close";
+    const int binding_width = MeasureText(
+        passive_tree_binding_label, kCloseFontSize);
+    const int close_width = binding_width
+        + MeasureText(kCloseSuffix, kCloseFontSize);
+    const int close_x = (std::max)(38, GetScreenWidth() - 38 - close_width);
+    const Color close_color{201, 213, 232, 255};
+    DrawText(passive_tree_binding_label, close_x, 38, kCloseFontSize,
+        close_color);
+    DrawText(kCloseSuffix, close_x + binding_width, 38, kCloseFontSize,
+        close_color);
 
     const Vector2 mouse = GetMousePosition();
     if (const auto hovered = hit_test_passive_node({mouse.x, mouse.y}, width, height)) {

@@ -220,7 +220,7 @@ function(stage11d_expect_stage12_lambda_decoy LABEL)
 endfunction()
 
 set(_passive_overlay_block
-    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && passive_overlay_open) {\n                draw_passive_tree_overlay(current, runtime.render_status());\n            }")
+    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && passive_overlay_open) {\n                draw_passive_tree_overlay(current, runtime.render_status(),\n                    stable_key_label(settings::binding_for(input_settings,\n                        settings::SettingAction::passive_tree)));\n            }")
 function(stage11d_run_task7c_scope_mutations)
     stage11d_expect_dead_ground_decoy(task7c_m01_dead_decoy_before_stage17
         "validation_runtime->observe_active_skill_draw(" FALSE "T7C-M01")
