@@ -12,6 +12,7 @@ if(TARGET arpg_raylib)
         ../core/allocation_probe.cpp
         platform_test_main.cpp
         ui_text_catalog_tests.cpp
+        ui_utf8_tests.cpp
         host_input_tests.cpp
         host_validation_exit_tests.cpp
         active_skill_input_tests.cpp
