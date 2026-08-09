@@ -9,7 +9,7 @@ namespace arpg::platform {
 
 struct ControlHints final {
     std::array<char, 160> primary{};
-    std::array<char, 192> secondary{};
+    std::array<char, 160> secondary{};
     std::uint64_t revision{};
 };
 

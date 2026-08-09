@@ -205,9 +205,8 @@ void build_navigation(NavigationHudModel& navigation,
     }
 }
 
-template <std::size_t Capacity>
 [[nodiscard]] std::size_t bounded_hint_length(
-    const std::array<char, Capacity>& source) noexcept {
+    const std::array<char, 160U>& source) noexcept {
     std::size_t length{};
     while (length < source.size() && source[length] != '\0') ++length;
     return length;
@@ -242,7 +241,7 @@ void copy_movement_hint(HudText96& output,
 
 void split_control_hints(std::array<HudText96, 3U>& output,
     HudBuildDiagnostics& diagnostics,
-    const std::array<char, 192U>& source) noexcept {
+    const std::array<char, 160U>& source) noexcept {
     constexpr std::size_t kPreferredLineBytes = 42U;
     const std::size_t source_length = bounded_hint_length(source);
     std::size_t cursor{};
