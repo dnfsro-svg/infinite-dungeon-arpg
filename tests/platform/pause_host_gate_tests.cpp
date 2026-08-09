@@ -170,6 +170,49 @@ arpg::test::Failure pause_entry_discards_same_frame_action_and_accumulator()
     return {};
 }
 
+arpg::test::Failure room_reset_gate_keeps_pause_gameplay_frozen() noexcept {
+    core::FixedStepRunner fixed_step{};
+    bool pause_latched = false;
+    const platform::HostFrameGateResult paused = platform::gate_host_frame(
+        fixed_step, pause_latched, true,
+        core::FixedStepRunner::kStepSeconds);
+    ARPG_REQUIRE(!paused.forward_gameplay);
+
+    platform::HostRoomResetGateInput input{};
+    input.pause_screen = platform::PauseScreen::root;
+    input.reset_pressed = true;
+    input.gameplay_armed = true;
+    input.death_allows_gameplay = true;
+    input.forward_actions = paused.forward_gameplay;
+    input.inventory_allows_room_reset = false;
+    ARPG_REQUIRE(platform::host_requests_room_reset(input));
+
+    for (const platform::PauseScreen screen : {
+             platform::PauseScreen::settings,
+             platform::PauseScreen::capture_binding,
+             platform::PauseScreen::quit_confirm,
+         }) {
+        input.pause_screen = screen;
+        ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    }
+
+    input.pause_screen = platform::PauseScreen::closed;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    input.forward_actions = true;
+    input.inventory_allows_room_reset = true;
+    ARPG_REQUIRE(platform::host_requests_room_reset(input));
+
+    input.gameplay_armed = false;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    input.gameplay_armed = true;
+    input.death_allows_gameplay = false;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    input.death_allows_gameplay = true;
+    input.reset_pressed = false;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    return {};
+}
+
 arpg::test::Failure death_continue_uses_fixed_e_from_authoritative_snapshot()
     noexcept {
     settings::SettingsData rebound = settings::default_settings();
@@ -384,6 +427,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &six_hundred_paused_presented_frames_freeze_simulation},
     {"pause entry discards action and accumulator",
         &pause_entry_discards_same_frame_action_and_accumulator},
+    {"room reset gate keeps pause gameplay frozen",
+        &room_reset_gate_keeps_pause_gameplay_frozen},
     {"death continue uses fixed E snapshot",
         &death_continue_uses_fixed_e_from_authoritative_snapshot},
     {"corrupt settings notice is deferred",

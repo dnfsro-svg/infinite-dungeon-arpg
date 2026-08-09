@@ -841,8 +841,15 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && death_gate.forward_gameplay
                 && host_gate.forward_gameplay && !pause_blocks_gameplay
                 && gameplay_armed;
-            if (forward_actions && inventory_gate.forward_room_reset
-                && frame_input.keys.reset) {
+            HostRoomResetGateInput room_reset_gate{};
+            room_reset_gate.pause_screen = pause_screen_before;
+            room_reset_gate.reset_pressed = frame_input.keys.reset;
+            room_reset_gate.gameplay_armed = gameplay_armed;
+            room_reset_gate.death_allows_gameplay = death_gate.forward_gameplay;
+            room_reset_gate.forward_actions = forward_actions;
+            room_reset_gate.inventory_allows_room_reset =
+                inventory_gate.forward_room_reset;
+            if (host_requests_room_reset(room_reset_gate)) {
                 const dungeon::RequestResult reset =
                     session->reset_current_room();
                 if (reset != dungeon::RequestResult::rejected) {

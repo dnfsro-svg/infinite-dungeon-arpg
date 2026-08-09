@@ -163,6 +163,16 @@ bool cplay022_skill_empty_slot_only() noexcept {
     return enabled;
 }
 
+bool cplay023_pause_reset_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY023_PAUSE_RESET_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -175,6 +185,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay023_pause_reset_only()) {
+        const arpg::test::TestSuite cplay023_only[] = {
+            pause_host_gate_suite(),
+        };
+        return arpg::test::run_suites(cplay023_only, 10,
+            "CPLAY-023 pause root room reset");
+    }
     if (cplay022_skill_empty_slot_only()) {
         const arpg::test::TestSuite cplay022_only[] = {
             active_skill_loadout_view_suite(),
@@ -312,6 +329,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 644,
+    return arpg::test::run_suites(suites, 645,
         "host settings runtime contract");
 }
