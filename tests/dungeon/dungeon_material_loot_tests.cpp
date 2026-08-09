@@ -436,6 +436,115 @@ arpg::test::Failure room_clear_save_failure_retries_vacuum_after_unlock()
     return {};
 }
 
+arpg::test::Failure direct_material_pickup_publishes_origin_only_on_commit()
+    noexcept {
+    constexpr std::uint16_t kOrdinal = 6U;
+    constexpr arpg::combat::Vec3 kOrigin{14.0F, -3.0F, 0.0F};
+    DungeonSession session{DungeonRules{}, material_state(45U, 3U, 27U)};
+    arpg::test::set_player_position(session, kOrigin);
+    arpg::test::install_ground_material(
+        session, kOrdinal, MaterialId::chaos, kOrigin);
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
+
+    ARPG_REQUIRE(session.request_material_pickup(kOrdinal)
+        == arpg::dungeon::RequestResult::accepted);
+    ARPG_REQUIRE(!session.snapshot().material_pickup_receipt.valid);
+    ARPG_REQUIRE(session.snapshot().material_pickup_receipt.origin_valid_mask
+        == 0U);
+    const auto rejected = *session.pending_save();
+    session.resolve_pending_save({arpg::dungeon::SaveDisposition::not_committed,
+        rejected.expected_generation, rejected.next_state, rejected.kind});
+    ARPG_REQUIRE(!session.snapshot().material_pickup_receipt.valid);
+    ARPG_REQUIRE(session.snapshot().material_pickup_receipt.origin_valid_mask
+        == 0U);
+
+    ARPG_REQUIRE(session.request_material_pickup(kOrdinal)
+        == arpg::dungeon::RequestResult::accepted);
+    const auto committed = *session.pending_save();
+    ARPG_REQUIRE(resolve_committed(session));
+    const auto& receipt = session.snapshot().material_pickup_receipt;
+    const std::size_t chaos = arpg::items::material_index(MaterialId::chaos);
+    ARPG_REQUIRE(receipt.valid);
+    ARPG_REQUIRE(!receipt.room_vacuum);
+    ARPG_REQUIRE(receipt.commit_generation == committed.expected_generation);
+    ARPG_REQUIRE(receipt.counts[chaos] == 1U);
+    ARPG_REQUIRE((receipt.origin_valid_mask & (std::uint16_t{1U} << chaos))
+        != 0U);
+    ARPG_REQUIRE(receipt.representative_origins[chaos].x == kOrigin.x);
+    ARPG_REQUIRE(receipt.representative_origins[chaos].y == kOrigin.y);
+    ARPG_REQUIRE(receipt.representative_origins[chaos].z == kOrigin.z);
+    const auto committed_receipt = receipt;
+    arpg::test::install_ground_material(
+        session, 8U, MaterialId::divine, kOrigin);
+    ARPG_REQUIRE(session.request_material_pickup(8U)
+        == arpg::dungeon::RequestResult::accepted);
+    const auto retry = *session.pending_save();
+    session.resolve_pending_save({arpg::dungeon::SaveDisposition::not_committed,
+        retry.expected_generation, retry.next_state, retry.kind});
+    const auto& after_rollback = session.snapshot().material_pickup_receipt;
+    ARPG_REQUIRE(after_rollback.commit_generation
+        == committed_receipt.commit_generation);
+    ARPG_REQUIRE(after_rollback.origin_valid_mask
+        == committed_receipt.origin_valid_mask);
+    ARPG_REQUIRE(after_rollback.representative_origins[chaos].x
+        == committed_receipt.representative_origins[chaos].x);
+    ARPG_REQUIRE(after_rollback.representative_origins[chaos].y
+        == committed_receipt.representative_origins[chaos].y);
+    ARPG_REQUIRE(after_rollback.representative_origins[chaos].z
+        == committed_receipt.representative_origins[chaos].z);
+
+    constexpr arpg::combat::Vec3 kFirstChaos{9.0F, 1.0F, 0.0F};
+    constexpr arpg::combat::Vec3 kSecondChaos{12.0F, 2.0F, 0.0F};
+    constexpr arpg::combat::Vec3 kCoupon{15.0F, 3.0F, 0.0F};
+    DungeonSession vacuum{DungeonRules{}, material_state(45U, 3U, 27U)};
+    const arpg::combat::Vec3 valid_position =
+        vacuum.snapshot().combat->player.position;
+    arpg::test::install_ground_material(
+        vacuum, 6U, MaterialId::chaos, valid_position);
+    arpg::test::install_ground_material(
+        vacuum, 8U, MaterialId::chaos, valid_position);
+    arpg::test::install_ground_material(vacuum, 7U, MaterialId::coupon_6,
+        valid_position, arpg::dungeon::GroundMaterialSource::monster_coupon);
+    arpg::test::set_ground_material_position(vacuum, 6U, kFirstChaos);
+    arpg::test::set_ground_material_position(vacuum, 8U, kSecondChaos);
+    arpg::test::set_ground_material_position(vacuum, 7U, kCoupon);
+    arpg::test::set_phase(vacuum, arpg::dungeon::RoomPhase::combat);
+    arpg::test::prepare_room_clear(vacuum);
+    ARPG_REQUIRE(!vacuum.snapshot().material_pickup_receipt.valid);
+    const auto vacuum_commit = *vacuum.pending_save();
+    ARPG_REQUIRE(vacuum_commit.kind
+        == arpg::dungeon::PendingSaveKind::room_clear);
+    ARPG_REQUIRE(resolve_committed(vacuum));
+
+    const auto& vacuum_receipt = vacuum.snapshot().material_pickup_receipt;
+    const std::size_t coupon = arpg::items::material_index(MaterialId::coupon_6);
+    ARPG_REQUIRE(vacuum_receipt.valid);
+    ARPG_REQUIRE(vacuum_receipt.room_vacuum);
+    ARPG_REQUIRE(vacuum_receipt.commit_generation
+        == vacuum_commit.expected_generation);
+    ARPG_REQUIRE(vacuum_receipt.counts[chaos] == 2U);
+    ARPG_REQUIRE(vacuum_receipt.counts[coupon] == 1U);
+    ARPG_REQUIRE((vacuum_receipt.origin_valid_mask
+        & (std::uint16_t{1U} << chaos))
+        != 0U);
+    ARPG_REQUIRE((vacuum_receipt.origin_valid_mask
+        & (std::uint16_t{1U} << coupon))
+        != 0U);
+    ARPG_REQUIRE(vacuum_receipt.representative_origins[chaos].x
+        == kFirstChaos.x);
+    ARPG_REQUIRE(vacuum_receipt.representative_origins[chaos].y
+        == kFirstChaos.y);
+    ARPG_REQUIRE(vacuum_receipt.representative_origins[chaos].z
+        == kFirstChaos.z);
+    ARPG_REQUIRE(vacuum_receipt.representative_origins[coupon].x
+        == kCoupon.x);
+    ARPG_REQUIRE(vacuum_receipt.representative_origins[coupon].y
+        == kCoupon.y);
+    ARPG_REQUIRE(vacuum_receipt.representative_origins[coupon].z
+        == kCoupon.z);
+    return {};
+}
+
 arpg::test::Failure abyss_clear_adds_one_two_or_three_materials() noexcept {
     constexpr std::array<arpg::abyss::AbyssDanger, 3U> kDangers{{
         arpg::abyss::AbyssDanger::low,
@@ -546,4 +655,12 @@ constexpr arpg::test::TestCase kCases[] = {
 
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept {
     return arpg::test::make_suite("dungeon_material_loot", kCases);
+}
+
+arpg::test::TestSuite loot_suction_material_origin_suite() noexcept {
+    static constexpr arpg::test::TestCase kOriginCases[] = {
+        {"direct and vacuum material origins publish on commit",
+            &direct_material_pickup_publishes_origin_only_on_commit},
+    };
+    return arpg::test::make_suite("loot_suction_material_origin", kOriginCases);
 }

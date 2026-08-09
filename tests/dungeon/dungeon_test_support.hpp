@@ -907,6 +907,14 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_materials_;
     }
+    static void set_ground_material_position(
+        dungeon::DungeonSession& session, std::uint16_t ordinal,
+        combat::Vec3 position) noexcept {
+        if (ordinal < session.ground_materials_.size()
+                && session.ground_materials_[ordinal].active) {
+            session.ground_materials_[ordinal].position = position;
+        }
+    }
     static const std::array<dungeon::GroundHealthPotion,
         dungeon::kAuthoritativeHealthPotionCapacity>& ground_health_potions(
         const dungeon::DungeonSession& session) noexcept {
@@ -1201,6 +1209,13 @@ inline void install_ground_material(
         dungeon::GroundMaterialSource::monster_common) noexcept {
     DungeonSessionTestAccess::install_ground_material(
         session, ordinal, material, position, source);
+}
+
+inline void set_ground_material_position(
+    dungeon::DungeonSession& session, std::uint16_t ordinal,
+    combat::Vec3 position) noexcept {
+    DungeonSessionTestAccess::set_ground_material_position(
+        session, ordinal, position);
 }
 
 inline void install_ground_health_potion(

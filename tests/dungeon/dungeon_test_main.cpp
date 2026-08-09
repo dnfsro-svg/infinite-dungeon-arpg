@@ -30,6 +30,7 @@ arpg::test::TestSuite dungeon_skill_cast_suite() noexcept;
 arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+arpg::test::TestSuite loot_suction_material_origin_suite() noexcept;
 arpg::test::TestSuite dungeon_health_potion_suite() noexcept;
 arpg::test::TestSuite dungeon_exit_unlock_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
@@ -159,6 +160,16 @@ bool stage16_material_loot_only() noexcept {
     std::size_t length = 0U;
     const errno_t error = _dupenv_s(&value, &length,
         "ARPG_STAGE16_MATERIAL_LOOT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool loot_suction_material_origin_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_LOOT_SUCTION_MATERIAL_ORIGIN_ONLY");
     const bool enabled = error == 0 && value != nullptr;
     std::free(value);
     return enabled;
@@ -373,6 +384,14 @@ int main() {
         };
         return arpg::test::run_suites(material_only, 13,
             "stage 16 task 4 material loot");
+    }
+
+    if (loot_suction_material_origin_only()) {
+        const arpg::test::TestSuite origin_only[] = {
+            loot_suction_material_origin_suite(),
+        };
+        return arpg::test::run_suites(origin_only, 1,
+            "loot suction material origin publisher");
     }
 
     if (stage16_crafting_transaction_only()) {
