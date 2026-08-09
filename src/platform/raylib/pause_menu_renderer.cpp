@@ -70,8 +70,8 @@ PauseMenuRenderPlan make_pause_menu_render_plan(
         push(PauseMenuRenderOpKind::row, row, row == view.selected_row);
     }
     plan.has_message = view.message != nullptr && view.message[0] != '\0';
-    if (plan.has_message) push(PauseMenuRenderOpKind::message);
     push(PauseMenuRenderOpKind::footer);
+    if (plan.has_message) push(PauseMenuRenderOpKind::message);
     return plan;
 }
 

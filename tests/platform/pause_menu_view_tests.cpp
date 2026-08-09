@@ -420,7 +420,7 @@ test::Failure render_plans_have_exact_screen_orders() noexcept {
     return {};
 }
 
-test::Failure render_plan_inserts_optional_message_before_footer() noexcept {
+test::Failure render_plan_draws_footer_surface_before_message_text() noexcept {
     platform::PauseMenuState state = settings_state();
     const platform::PauseMenuView view =
         platform::make_pause_menu_view(state);
@@ -431,9 +431,9 @@ test::Failure render_plan_inserts_optional_message_before_footer() noexcept {
     ARPG_REQUIRE(platform::kPauseMenuRenderOpCapacity == 26U);
     ARPG_REQUIRE(message_plan.op_count == platform::kPauseMenuRenderOpCapacity);
     ARPG_REQUIRE(message_plan.ops[message_plan.op_count - 2U].kind
-        == platform::PauseMenuRenderOpKind::message);
-    ARPG_REQUIRE(message_plan.ops[message_plan.op_count - 1U].kind
         == platform::PauseMenuRenderOpKind::footer);
+    ARPG_REQUIRE(message_plan.ops[message_plan.op_count - 1U].kind
+        == platform::PauseMenuRenderOpKind::message);
 
     state.message = "";
     const platform::PauseMenuView empty_view =
@@ -513,7 +513,8 @@ constexpr test::TestCase kCases[] = {
     {"capture and closed content", &capture_and_closed_views_are_explicit},
     {"selected rows clamp to visible views", &selected_rows_clamp_to_each_visible_view},
     {"render plans have exact screen orders", &render_plans_have_exact_screen_orders},
-    {"render plan inserts optional message", &render_plan_inserts_optional_message_before_footer},
+    {"render plan layers message over footer",
+        &render_plan_draws_footer_surface_before_message_text},
     {"row buffers terminate deterministically", &row_buffers_terminate_and_generation_is_deterministic},
     {"view layout hit have zero allocations", &all_view_layout_and_hit_paths_allocate_nothing},
 };
