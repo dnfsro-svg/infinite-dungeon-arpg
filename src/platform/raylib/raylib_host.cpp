@@ -416,6 +416,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         DungeonRuntime& runtime = *runtime_storage;
         const bool initialized = runtime.initialize();
         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
+            if (runtime.render_status().error
+                    == persistence::SaveError::directory_busy) {
+                TraceLog(LOG_ERROR,
+                    "Save directory is already in use by another game instance");
+            }
             return HostExitCode::save_initialization_failed;
         }
         if ((config.stage12_material_background_only

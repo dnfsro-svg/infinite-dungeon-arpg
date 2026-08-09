@@ -105,12 +105,15 @@ struct SaveCommitJobSlot final {
 class SaveCommitStorage final {
 public:
     SaveCommitStorage() noexcept = default;
+    ~SaveCommitStorage() noexcept;
     SaveCommitStorage(const SaveCommitStorage&) = delete;
     SaveCommitStorage& operator=(const SaveCommitStorage&) = delete;
     SaveCommitStorage(SaveCommitStorage&&) = delete;
     SaveCommitStorage& operator=(SaveCommitStorage&&) = delete;
 
     [[nodiscard]] bool initialize(const SaveStoreConfig& config) noexcept;
+    [[nodiscard]] bool initialize(
+        const SaveStoreConfig& config, SaveError& error) noexcept;
     [[nodiscard]] const SaveCommitJobSlot* job(
         std::size_t index) const noexcept;
     [[nodiscard]] const std::filesystem::path* slot_path(
@@ -130,6 +133,7 @@ public:
 
 private:
     friend class SaveCommitWorker;
+    void release_directory_lease() noexcept;
     void reset_initialization() noexcept;
     [[nodiscard]] std::size_t compute_resident_bytes() const noexcept;
     std::array<SaveCommitJobSlot, 2U> jobs_{};
@@ -150,6 +154,7 @@ private:
     bool equal_revision_conflict_{};
     bool initialized_{};
     std::size_t resident_bytes_{};
+    std::intptr_t directory_lease_token_{-1};
 };
 
 inline constexpr std::size_t kSaveCommitMaximumPathCodeUnits = 32767U;

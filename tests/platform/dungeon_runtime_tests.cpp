@@ -691,15 +691,37 @@ arpg::test::Failure empty_directory_commits_seeded_generation_one_before_running
 
 arpg::test::Failure valid_save_ignores_new_run_seed_override() noexcept {
     TempDirectory directory;
-    auto first = config_for(directory, 8U);
-    platform::DungeonRuntime original(first);
-    ARPG_REQUIRE(original.initialize());
-    const auto original_seed = original.session()->snapshot().root_seed;
+    std::uint64_t original_seed{};
+    {
+        auto first = config_for(directory, 8U);
+        platform::DungeonRuntime original(first);
+        ARPG_REQUIRE(original.initialize());
+        original_seed = original.session()->snapshot().root_seed;
+    }
     auto second = config_for(directory, 999U);
     platform::DungeonRuntime resumed(second);
     ARPG_REQUIRE(resumed.initialize());
     ARPG_REQUIRE(resumed.session() != nullptr);
     ARPG_REQUIRE(resumed.session()->snapshot().root_seed == original_seed);
+    return {};
+}
+
+arpg::test::Failure runtime_directory_lease_rejects_concurrent_owner_and_retries()
+    noexcept {
+    TempDirectory directory;
+    const auto config = config_for(directory, 8U);
+    auto owner = std::make_unique<platform::DungeonRuntime>(config);
+    ARPG_REQUIRE(owner->initialize());
+
+    platform::DungeonRuntime contender(config);
+    ARPG_REQUIRE(!contender.initialize());
+    ARPG_REQUIRE(contender.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(contender.render_status().error
+        == persistence::SaveError::directory_busy);
+
+    owner.reset();
+    ARPG_REQUIRE(contender.initialize());
+    ARPG_REQUIRE(contender.state() == platform::DungeonRuntimeState::running);
     return {};
 }
 
@@ -721,14 +743,15 @@ arpg::test::Failure committed_pending_transition_maps_verified_state_and_saved_i
 
 arpg::test::Failure committed_passive_save_survives_runtime_restart() noexcept {
     TempDirectory directory;
-    platform::DungeonRuntime runtime(config_for(directory));
-    ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(runtime));
-    const auto before = runtime.session()->snapshot();
+    auto runtime = std::make_unique<platform::DungeonRuntime>(
+        config_for(directory));
+    ARPG_REQUIRE(runtime->initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime));
+    const auto before = runtime->session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    ARPG_REQUIRE(runtime.session()->request_passive_allocation(1U));
-    settle_runtime_save(runtime);
-    const auto saved = runtime.session()->snapshot();
+    ARPG_REQUIRE(runtime->session()->request_passive_allocation(1U));
+    settle_runtime_save(*runtime);
+    const auto saved = runtime->session()->snapshot();
     ARPG_REQUIRE(saved.passive_tree.allocated_bits
         == ((1ULL << 0U) | (1ULL << 1U)));
     ARPG_REQUIRE(saved.combat.has_value());
@@ -736,8 +759,9 @@ arpg::test::Failure committed_passive_save_survives_runtime_restart() noexcept {
         == before.combat->player.max_hp + 20);
     ARPG_REQUIRE(!saved.passive_save_pending);
     const auto generation = saved.commit_generation;
-    settle_runtime_save(runtime);
-    ARPG_REQUIRE(runtime.session()->snapshot().commit_generation == generation);
+    settle_runtime_save(*runtime);
+    ARPG_REQUIRE(runtime->session()->snapshot().commit_generation == generation);
+    runtime.reset();
     platform::DungeonRuntime resumed(config_for(directory, 999U));
     ARPG_REQUIRE(resumed.initialize());
     ARPG_REQUIRE(resumed.session()->snapshot().passive_tree.allocated_bits
@@ -757,20 +781,21 @@ arpg::test::Failure committed_route_and_refund_survive_runtime_restart() noexcep
     ARPG_REQUIRE(seed_store.commit(initial).state
         == persistence::SaveCommitState::committed);
 
-    platform::DungeonRuntime runtime(config);
-    ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(runtime));
-    const auto before = runtime.session()->snapshot();
+    auto runtime = std::make_unique<platform::DungeonRuntime>(config);
+    ARPG_REQUIRE(runtime->initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime));
+    const auto before = runtime->session()->snapshot();
     for (const std::uint8_t node : {std::uint8_t{8U}, std::uint8_t{9U},
             std::uint8_t{10U}}) {
-        ARPG_REQUIRE(runtime.session()->request_passive_allocation(node));
-        settle_runtime_save(runtime);
-        ARPG_REQUIRE(!runtime.session()->snapshot().passive_save_pending);
-        ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::saved);
+        ARPG_REQUIRE(runtime->session()->request_passive_allocation(node));
+        settle_runtime_save(*runtime);
+        ARPG_REQUIRE(!runtime->session()->snapshot().passive_save_pending);
+        ARPG_REQUIRE(runtime->render_status().indicator
+            == platform::SaveIndicator::saved);
     }
-    ARPG_REQUIRE(runtime.session()->request_passive_refund(10U));
-    settle_runtime_save(runtime);
-    const auto saved = runtime.session()->snapshot();
+    ARPG_REQUIRE(runtime->session()->request_passive_refund(10U));
+    settle_runtime_save(*runtime);
+    const auto saved = runtime->session()->snapshot();
     constexpr std::uint64_t kExpectedBits = (1ULL << 0U) | (1ULL << 8U)
         | (1ULL << 9U);
     ARPG_REQUIRE(saved.passive_tree.allocated_bits == kExpectedBits);
@@ -778,6 +803,7 @@ arpg::test::Failure committed_route_and_refund_survive_runtime_restart() noexcep
         == before.progression.unspent_passive_points - 2U);
     ARPG_REQUIRE(!saved.passive_save_pending);
 
+    runtime.reset();
     platform::DungeonRuntime resumed(config_for(directory, 999U));
     ARPG_REQUIRE(resumed.initialize());
     const auto restored = resumed.session()->snapshot();
@@ -794,20 +820,23 @@ arpg::test::Failure passive_pre_publish_failure_keeps_old_tree_and_retryable_run
     auto config = config_for(directory);
     config.save.fault_hook = &fail_when_enabled;
     config.save.fault_context = &fault;
-    platform::DungeonRuntime runtime(config);
-    ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(runtime));
-    const auto before = runtime.session()->snapshot();
-    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
+    auto runtime = std::make_unique<platform::DungeonRuntime>(config);
+    ARPG_REQUIRE(runtime->initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime));
+    const auto before = runtime->session()->snapshot();
+    ARPG_REQUIRE(runtime->session()->request_passive_allocation(8U));
     fault.enabled = true;
-    settle_runtime_save(runtime);
-    const auto after = runtime.session()->snapshot();
-    ARPG_REQUIRE(after.passive_tree.allocated_bits == before.passive_tree.allocated_bits);
+    settle_runtime_save(*runtime);
+    const auto after = runtime->session()->snapshot();
+    ARPG_REQUIRE(after.passive_tree.allocated_bits
+        == before.passive_tree.allocated_bits);
     ARPG_REQUIRE(after.commit_generation == before.commit_generation);
     ARPG_REQUIRE(after.phase == dungeon::RoomPhase::awaiting_exit);
     ARPG_REQUIRE(!after.passive_save_pending);
-    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
-    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
+    ARPG_REQUIRE(runtime->state() == platform::DungeonRuntimeState::running);
+    ARPG_REQUIRE(runtime->render_status().indicator
+        == platform::SaveIndicator::error);
+    runtime.reset();
     platform::DungeonRuntime resumed(config_for(directory, 999U));
     ARPG_REQUIRE(resumed.initialize());
     const auto restored = resumed.session()->snapshot();
@@ -2104,10 +2133,10 @@ arpg::test::Failure production_startup_auto_continues_pending_death() noexcept {
         == persistence::SaveCommitState::committed);
 
     config.continue_pending_death_on_initialize = true;
-    platform::DungeonRuntime runtime(config);
-    ARPG_REQUIRE(runtime.initialize());
+    auto runtime = std::make_unique<platform::DungeonRuntime>(config);
+    ARPG_REQUIRE(runtime->initialize());
 
-    const auto resumed = runtime.session()->snapshot();
+    const auto resumed = runtime->session()->snapshot();
     ARPG_REQUIRE(resumed.phase == dungeon::RoomPhase::transitioning);
     ARPG_REQUIRE(!resumed.death.has_value());
     ARPG_REQUIRE(!resumed.combat.has_value());
@@ -2124,6 +2153,16 @@ arpg::test::Failure production_startup_auto_continues_pending_death() noexcept {
     ARPG_REQUIRE(saved.state == persistence::SaveLoadState::ready);
     ARPG_REQUIRE(dungeon::same_run_state(saved.checkpoint, expected));
 
+    runtime->acknowledge_gameplay_rearmed();
+    runtime->fixed_tick({});
+    const auto playable = runtime->session()->snapshot();
+    ARPG_REQUIRE(playable.phase == dungeon::RoomPhase::locked);
+    ARPG_REQUIRE(playable.combat.has_value());
+    ARPG_REQUIRE(playable.combat->player.hp > 0);
+    ARPG_REQUIRE(playable.combat->player.hp
+        == playable.combat->player.max_hp);
+    runtime.reset();
+
     platform::DungeonRuntime relaunched(config);
     ARPG_REQUIRE(relaunched.initialize());
     const auto already_clear = relaunched.session()->snapshot();
@@ -2137,15 +2176,6 @@ arpg::test::Failure production_startup_auto_continues_pending_death() noexcept {
         == checkpoint::DeathLifecycle::none);
     ARPG_REQUIRE(saved_after_relaunch.checkpoint.commit_generation
         == expected.commit_generation);
-
-    runtime.acknowledge_gameplay_rearmed();
-    runtime.fixed_tick({});
-    const auto playable = runtime.session()->snapshot();
-    ARPG_REQUIRE(playable.phase == dungeon::RoomPhase::locked);
-    ARPG_REQUIRE(playable.combat.has_value());
-    ARPG_REQUIRE(playable.combat->player.hp > 0);
-    ARPG_REQUIRE(playable.combat->player.hp
-        == playable.combat->player.max_hp);
     return {};
 }
 
@@ -2333,6 +2363,7 @@ arpg::test::Failure item_request_fault_matrix_is_atomic_and_restart_consistent()
             persistence::SaveStore disk_store(restart_config.save);
             const auto disk = disk_store.load();
             ARPG_REQUIRE(disk.state == persistence::SaveLoadState::ready);
+            runtime.reset();
             auto restarted = std::make_unique<platform::DungeonRuntime>(
                 restart_config);
             ARPG_REQUIRE(restarted->initialize());
@@ -2370,22 +2401,26 @@ void settle_clean_shutdown(platform::DungeonRuntime& runtime) noexcept {
 arpg::test::Failure clean_shutdown_commits_latest_authority_and_rearms()
     noexcept {
     TempDirectory directory;
-    platform::DungeonRuntime runtime(config_for(directory, 0xC105E1U));
-    ARPG_REQUIRE(runtime.initialize());
-    runtime.fixed_tick({1, 0});
-    ARPG_REQUIRE(runtime.request_clean_shutdown());
-    ARPG_REQUIRE(runtime.gameplay_rearm_required());
-    settle_clean_shutdown(runtime);
-    ARPG_REQUIRE(runtime.clean_shutdown_state()
+    auto runtime = std::make_unique<platform::DungeonRuntime>(
+        config_for(directory, 0xC105E1U));
+    ARPG_REQUIRE(runtime->initialize());
+    runtime->fixed_tick({1, 0});
+    ARPG_REQUIRE(runtime->request_clean_shutdown());
+    ARPG_REQUIRE(runtime->gameplay_rearm_required());
+    settle_clean_shutdown(*runtime);
+    ARPG_REQUIRE(runtime->clean_shutdown_state()
         == platform::CleanShutdownState::ready);
-    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
-    runtime.acknowledge_gameplay_rearmed();
-    ARPG_REQUIRE(!runtime.gameplay_rearm_required());
+    ARPG_REQUIRE(runtime->state() == platform::DungeonRuntimeState::running);
+    runtime->acknowledge_gameplay_rearmed();
+    ARPG_REQUIRE(!runtime->gameplay_rearm_required());
+    const auto expected_generation =
+        runtime->session()->snapshot().commit_generation;
+    runtime.reset();
 
     platform::DungeonRuntime resumed(config_for(directory, 0xBADU));
     ARPG_REQUIRE(resumed.initialize());
     ARPG_REQUIRE(resumed.session()->snapshot().commit_generation
-        == runtime.session()->snapshot().commit_generation);
+        == expected_generation);
     return {};
 }
 
@@ -2703,6 +2738,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"migrated door available commits before start pending", &migrated_door_available_commits_before_start_pending},
     {"empty directory commits seeded generation one before running", &empty_directory_commits_seeded_generation_one_before_running},
     {"valid save ignores new run seed override", &valid_save_ignores_new_run_seed_override},
+    {"runtime directory lease rejects concurrent owner and retries",
+        &runtime_directory_lease_rejects_concurrent_owner_and_retries},
     {"committed pending transition maps verified state and saved indicator", &committed_pending_transition_maps_verified_state_and_saved_indicator},
     {"committed passive save survives runtime restart", &committed_passive_save_survives_runtime_restart},
     {"committed route and refund survive runtime restart", &committed_route_and_refund_survive_runtime_restart},
@@ -2769,6 +2806,25 @@ constexpr arpg::test::TestCase kV10MigrationCases[] = {
         &canonical_v9_load_rewrites_v10_before_session},
 };
 
+constexpr arpg::test::TestCase kSaveDirectoryLeaseCases[] = {
+    {"runtime directory lease rejects concurrent owner and retries",
+        &runtime_directory_lease_rejects_concurrent_owner_and_retries},
+    {"valid save ignores new run seed override",
+        &valid_save_ignores_new_run_seed_override},
+    {"committed passive save survives runtime restart",
+        &committed_passive_save_survives_runtime_restart},
+    {"committed route and refund survive runtime restart",
+        &committed_route_and_refund_survive_runtime_restart},
+    {"passive pre publish failure keeps old tree and retryable runtime",
+        &passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime},
+    {"production startup auto continues pending death",
+        &production_startup_auto_continues_pending_death},
+    {"item request fault matrix is atomic and restart consistent",
+        &item_request_fault_matrix_is_atomic_and_restart_consistent},
+    {"clean shutdown commits latest authority and rearms",
+        &clean_shutdown_commits_latest_authority_and_rearms},
+};
+
 }  // namespace
 
 arpg::test::TestSuite dungeon_runtime_suite() noexcept {
@@ -2778,6 +2834,11 @@ arpg::test::TestSuite dungeon_runtime_suite() noexcept {
 arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept {
     return arpg::test::make_suite(
         "dungeon_runtime_v10_migration", kV10MigrationCases);
+}
+
+arpg::test::TestSuite dungeon_runtime_save_directory_lease_suite() noexcept {
+    return arpg::test::make_suite(
+        "dungeon_runtime_save_directory_lease", kSaveDirectoryLeaseCases);
 }
 
 arpg::test::TestSuite loot_suction_runtime_origin_suite() noexcept {

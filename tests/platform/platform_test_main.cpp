@@ -27,6 +27,7 @@ arpg::test::TestSuite passive_tree_view_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept;
+arpg::test::TestSuite dungeon_runtime_save_directory_lease_suite() noexcept;
 arpg::test::TestSuite loot_suction_runtime_origin_suite() noexcept;
 arpg::test::TestSuite inventory_view_math_suite() noexcept;
 arpg::test::TestSuite death_input_gate_suite() noexcept;
@@ -243,6 +244,16 @@ bool cplay035_settings_conflict_only() noexcept {
     return enabled;
 }
 
+bool cplay038_save_directory_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY038_SAVE_DIRECTORY_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -255,6 +266,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay038_save_directory_only()) {
+        const arpg::test::TestSuite cplay038_only[] = {
+            dungeon_runtime_save_directory_lease_suite(),
+        };
+        return arpg::test::run_suites(cplay038_only, 8,
+            "CPLAY-038 runtime save directory lease");
+    }
     if (cplay035_settings_conflict_only()) {
         const arpg::test::TestSuite cplay035_only[] = {
             host_settings_runtime_suite(),
@@ -448,6 +466,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 652,
+    return arpg::test::run_suites(suites, 653,
         "host settings runtime contract");
 }

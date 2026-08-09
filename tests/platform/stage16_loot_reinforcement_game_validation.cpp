@@ -773,7 +773,7 @@ std::optional<ScenarioResult> run_production_scenario(
     platform::DungeonRuntimeConfig config{};
     config.save.directory = save_directory;
     config.new_run_seed = root;
-    const auto runtime = std::make_unique<platform::DungeonRuntime>(config);
+    auto runtime = std::make_unique<platform::DungeonRuntime>(config);
     if (!runtime->initialize() || runtime->state()
             != platform::DungeonRuntimeState::running) {
         std::cerr << "stage16 failure=runtime_initialize state="
@@ -854,6 +854,7 @@ std::optional<ScenarioResult> run_production_scenario(
         return std::nullopt;
     }
 
+    runtime.reset();
     const auto restarted = std::make_unique<platform::DungeonRuntime>(config);
     const bool restart_initialized = restarted->initialize();
     const bool restart_running = restarted->state()

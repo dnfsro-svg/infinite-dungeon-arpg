@@ -206,11 +206,14 @@ bool DungeonRuntime::initialize() noexcept {
     }
 
     save_storage_.reset(new (std::nothrow) persistence::SaveCommitStorage{});
+    persistence::SaveError initialization_error =
+        persistence::SaveError::directory_unavailable;
     if (save_storage_ == nullptr
-            || !save_storage_->initialize(config_.save)) {
+            || !save_storage_->initialize(
+                config_.save, initialization_error)) {
         state_ = DungeonRuntimeState::faulted;
         status_.indicator = SaveIndicator::error;
-        status_.error = persistence::SaveError::directory_unavailable;
+        status_.error = initialization_error;
         return false;
     }
     const persistence::SaveLoadState load_state = save_storage_->load_state();

@@ -244,19 +244,20 @@ test::Failure worker_commits_v10_and_readback_verifies_exact_bytes() noexcept {
         <= persistence::kSaveCommitStorageResidentBytes);
     ARPG_REQUIRE(storage->resident_bytes()
         <= persistence::kSaveCommitResidentBudgetBytes);
-    persistence::SaveCommitWorker worker{*storage};
-    ARPG_REQUIRE(worker.start());
-    const auto lease = worker.acquire_capture_slot(17U,
+    std::unique_ptr<persistence::SaveCommitWorker> worker{
+        new (std::nothrow) persistence::SaveCommitWorker{*storage}};
+    ARPG_REQUIRE(worker != nullptr && worker->start());
+    const auto lease = worker->acquire_capture_slot(17U,
         persistence::SaveCommitRequestKind::exact, 101U);
     ARPG_REQUIRE(lease.state == persistence::SaveCommitSubmitState::accepted);
-    auto* const job = worker.capture_job(lease);
+    auto* const job = worker->capture_job(lease);
     ARPG_REQUIRE(job != nullptr);
     ARPG_REQUIRE(fixture(job->checkpoint, 17U));
     job->checkpoint.room_progress.pending_room_experience = 0x12345678U;
-    ARPG_REQUIRE(worker.submit(lease).state
+    ARPG_REQUIRE(worker->submit(lease).state
         == persistence::SaveCommitSubmitState::accepted);
     persistence::SaveCommitCompletion completion{};
-    ARPG_REQUIRE(wait_completion(worker, completion));
+    ARPG_REQUIRE(wait_completion(*worker, completion));
     ARPG_REQUIRE(completion.job_slot == 0U);
     ARPG_REQUIRE(completion.revision == 17U);
     ARPG_REQUIRE(completion.intent == 101U);
@@ -264,7 +265,7 @@ test::Failure worker_commits_v10_and_readback_verifies_exact_bytes() noexcept {
     ARPG_REQUIRE(completion.epoch == lease.epoch);
     ARPG_REQUIRE(completion.result.state
         == persistence::SaveCommitState::committed);
-    worker.stop_and_join();
+    worker->stop_and_join();
 
     const std::filesystem::path* const saved = completion.result.active_slot
             == persistence::SaveSlot::a
@@ -294,6 +295,11 @@ test::Failure worker_commits_v10_and_readback_verifies_exact_bytes() noexcept {
         == 0x12345678U);
     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
         == abyss::AbyssLifecycle::failed);
+
+    // The directory lease belongs to the running storage instance. Reloading
+    // the same journal is valid only after that owner has released it.
+    worker.reset();
+    storage.reset();
 
     std::unique_ptr<persistence::SaveCommitStorage> restarted_storage{
         new (std::nothrow) persistence::SaveCommitStorage{}};
@@ -481,6 +487,95 @@ bool block_first_write(persistence::SaveFaultPoint point,
             || hook.entered.exchange(true)) return false;
     while (!hook.release.load()) std::this_thread::yield();
     return false;
+}
+
+bool block_after_temp_write(persistence::SaveFaultPoint point,
+    void* context) noexcept {
+    auto& hook = *static_cast<BlockingHook*>(context);
+    if (point != persistence::SaveFaultPoint::after_temp_write
+            || hook.entered.exchange(true)) return false;
+    while (!hook.release.load()) std::this_thread::yield();
+    return false;
+}
+
+test::Failure
+exclusive_save_directory_rejects_contender_without_deleting_active_temp()
+    noexcept {
+    TempDirectory directory{};
+    BlockingHook hook{};
+    std::unique_ptr<persistence::SaveCommitStorage> owner{
+        new (std::nothrow) persistence::SaveCommitStorage{}};
+    std::unique_ptr<persistence::SaveCommitStorage> contender{
+        new (std::nothrow) persistence::SaveCommitStorage{}};
+    ARPG_REQUIRE(owner != nullptr && contender != nullptr);
+    persistence::SaveStoreConfig config{directory.path};
+    config.fault_hook = &block_after_temp_write;
+    config.fault_context = &hook;
+    ARPG_REQUIRE(owner->initialize(config));
+    std::unique_ptr<persistence::SaveCommitWorker> worker{
+        new (std::nothrow) persistence::SaveCommitWorker{*owner}};
+    ARPG_REQUIRE(worker != nullptr && worker->start());
+    const auto lease = worker->acquire_capture_slot(70U,
+        persistence::SaveCommitRequestKind::exact, 700U);
+    auto* const job = worker->capture_job(lease);
+    ARPG_REQUIRE(job != nullptr);
+    ARPG_REQUIRE(fixture(job->checkpoint, 70U));
+    ARPG_REQUIRE(worker->submit(lease).state
+        == persistence::SaveCommitSubmitState::accepted);
+
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::seconds{10};
+    while (!hook.entered.load()
+            && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    if (!hook.entered.load()) {
+        hook.release = true;
+        worker->stop_and_join();
+        ARPG_REQUIRE(hook.entered.load());
+    }
+
+    const std::filesystem::path active_temp =
+        directory.path / "run_a.tmp";
+    const bool temp_existed_before_contender =
+        std::filesystem::exists(active_temp);
+    persistence::SaveError contender_error{persistence::SaveError::none};
+    const auto contender_begin = std::chrono::steady_clock::now();
+    const bool contender_initialized = contender->initialize(
+        {directory.path}, contender_error);
+    const auto contender_elapsed = std::chrono::steady_clock::now()
+        - contender_begin;
+    const bool temp_survived_contender = std::filesystem::exists(active_temp);
+
+    hook.release = true;
+    persistence::SaveCommitCompletion completion{};
+    const bool completed = wait_completion(*worker, completion);
+    worker->stop_and_join();
+    const bool temps_cleaned_after_publish =
+        !std::filesystem::exists(directory.path / "run_a.tmp")
+        && !std::filesystem::exists(directory.path / "run_b.tmp");
+    worker.reset();
+    owner.reset();
+    persistence::SaveError retry_error{persistence::SaveError::none};
+    const bool retry_initialized = contender->initialize(
+        {directory.path}, retry_error);
+    const auto* const reloaded = contender->loaded_checkpoint();
+
+    ARPG_REQUIRE(temp_existed_before_contender);
+    ARPG_REQUIRE(!contender_initialized);
+    ARPG_REQUIRE(contender_error == persistence::SaveError::directory_busy);
+    ARPG_REQUIRE(contender_elapsed < std::chrono::seconds{2});
+    ARPG_REQUIRE(temp_survived_contender);
+    ARPG_REQUIRE(completed);
+    ARPG_REQUIRE(completion.result.state
+        == persistence::SaveCommitState::committed);
+    ARPG_REQUIRE(completion.result.error == persistence::SaveError::none);
+    ARPG_REQUIRE(temps_cleaned_after_publish);
+    ARPG_REQUIRE(retry_initialized);
+    ARPG_REQUIRE(retry_error == persistence::SaveError::none);
+    ARPG_REQUIRE(contender->load_state() == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(reloaded != nullptr && reloaded->persistence_revision == 70U);
+    return {};
 }
 
 test::Failure one_pending_slot_coalesces_background_for_exact() noexcept {
@@ -928,8 +1023,18 @@ constexpr test::TestCase kCases[] = {
         &mixed_v9_v10_slots_arbitrate_by_revision_and_validity},
 };
 
+constexpr test::TestCase kDirectoryLeaseCases[] = {
+    {"exclusive save directory rejects contender",
+        &exclusive_save_directory_rejects_contender_without_deleting_active_temp},
+};
+
 }  // namespace
 
 arpg::test::TestSuite save_commit_worker_suite() noexcept {
     return arpg::test::make_suite("save_commit_worker", kCases);
+}
+
+arpg::test::TestSuite save_directory_lease_suite() noexcept {
+    return arpg::test::make_suite("save_directory_lease",
+        kDirectoryLeaseCases);
 }

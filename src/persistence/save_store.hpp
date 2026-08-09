@@ -35,7 +35,8 @@ enum class SaveError : std::uint8_t {
     final_scan_failed,
     conflicting_slots,
     archive_failed,
-    invalid_checkpoint
+    invalid_checkpoint,
+    directory_busy
 };
 
 enum class SaveFaultPoint : std::uint8_t {
