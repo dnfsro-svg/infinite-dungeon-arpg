@@ -69,15 +69,28 @@ arpg::test::Failure unchanged_revision_does_not_rebuild_and_new_revision_does() 
 
 arpg::test::Failure buffers_are_terminated_and_keep_global_labels_fixed() noexcept {
     settings::SettingsData values = settings::default_settings();
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::light_attack, settings::StableKey::right_shift));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::jump, settings::StableKey::left_shift));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::launcher, settings::StableKey::right_control));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::interact, settings::StableKey::left_control));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::inventory, settings::StableKey::space));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::passive_tree, settings::StableKey::arrow_right));
     values.revision = 11U;
     platform::ControlHints hints{};
     platform::refresh_control_hints(hints, values);
 
     ARPG_REQUIRE(hints.primary.back() == '\0');
     ARPG_REQUIRE(hints.secondary.back() == '\0');
-    ARPG_REQUIRE(contains(hints.secondary.data(), "F1 Debug"));
-    ARPG_REQUIRE(contains(hints.secondary.data(), "F12 Screenshot"));
-    ARPG_REQUIRE(contains(hints.secondary.data(), "Esc Pause"));
+    ARPG_REQUIRE(std::strcmp(hints.secondary.data(),
+        "Right Shift Light Attack  Left Shift Jump  Right Ctrl Launcher  "
+        "Left Ctrl Interact  Space Inventory  Right Passive Tree (After Full Clear)  "
+        "F1 Debug  F12 Screenshot  Esc Pause") == 0);
     return {};
 }
 

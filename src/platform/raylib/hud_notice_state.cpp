@@ -25,8 +25,9 @@ constexpr std::uint8_t kPassivePointsPriority = 40U;
 constexpr std::uint8_t kInventoryPriority = 30U;
 constexpr std::uint8_t kPassiveTreePriority = 20U;
 
+template <std::size_t Capacity>
 [[nodiscard]] std::size_t bounded_length(
-    const std::array<char, 160>& text) noexcept {
+    const std::array<char, Capacity>& text) noexcept {
     std::size_t length{};
     while (length < text.size() && text[length] != '\0') {
         ++length;
