@@ -13,6 +13,7 @@ if(TARGET arpg_raylib)
         platform_test_main.cpp
         ui_text_catalog_tests.cpp
         ui_utf8_tests.cpp
+        shared_ui_font_tests.cpp
         host_input_tests.cpp
         host_validation_exit_tests.cpp
         active_skill_input_tests.cpp

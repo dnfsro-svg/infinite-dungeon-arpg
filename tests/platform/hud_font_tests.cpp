@@ -263,8 +263,9 @@ arpg::test::Failure bundled_font_uses_bounded_high_resolution_glyph_atlas() noex
     static_assert(platform::kUiFontSourceBaseSize
         >= platform::kUiFontMaximumDisplaySize * 2);
     static_assert(platform::kUiFontAtlasByteBudget > 0U);
-    static_assert(platform::kUiFontAtlasByteBudget <= 16U * 1024U * 1024U);
-    static_assert(platform::kDeathOverlayCodepointCapacity <= 384U);
+    static_assert(platform::kUiFontAtlasByteBudget <= 32U * 1024U * 1024U);
+    static_assert(platform::kDeathOverlayCodepointCapacity
+        == platform::kUiGlyphCapacity);
     const platform::DeathOverlayFontPlan plan =
         platform::death_overlay_font_plan();
     ARPG_REQUIRE(plan.codepoint_count <= platform::kDeathOverlayCodepointCapacity);

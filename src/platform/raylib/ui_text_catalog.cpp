@@ -80,6 +80,45 @@ constexpr std::array<const char*, 2U> kSkillNames{{
     u8"拔刀斩", u8"风暴剑阵",
 }};
 
+// Dynamic and formatted player-facing text has no stable lookup ID.  Keep
+// its existing death-overlay/HUD corpus in the single catalog visitor so the
+// shared glyph plan covers it without a second hand-maintained font list.
+constexpr std::array<const char*, 63U> kUiDynamicGlyphCoverage{{
+    u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
+    "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
+    "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
+    "剩余出口已开放未分配点减速无敌目标个敌人待结算经验深度 · 层房间生态第波下一波即将开始待领奖励未领取"
+    "正在保存房间正在处理撤退房间状态异常"
+    "需要恢复存档再次交互，以放弃奖励离开后触碰同一出口全部剩余并下降进入下一层进入出口已清理升级至级有被动点打开背包树"
+    "投弹者冲锋之壁垒支援射手突袭追猎灾术师原生燃烧连锁爆破雷暴"
+    "猎杀之焰扩张强力狂热迅捷装甲多重寒冷腐蚀闪现无规则追猎狂怒"
+    "沉重脚步疲惫恢复献祭"
+    "装备背包技能石暂停继续设置退出游戏关闭选择操作提示材料条目",
+    u8"生命药", u8"第 层 → 第 层",
+    u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
+    u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
+    u8"减速", u8"腐蚀", u8"无敌", u8"深度", u8"层房间", u8"生态",
+    u8"第", u8"波", u8"下一波即将开始", u8"待领奖励", u8"未领取",
+    u8"正在保存房间", u8"正在处理撤退", u8"房间状态异常", u8"深渊",
+    u8"目标", u8"个敌人", u8"待结算经验",
+    u8"需要恢复存档", u8"离开后再次触碰同一出口以放弃全部剩余奖励",
+    u8"再次交互，放弃剩余奖励并下降", u8"进入下一层", u8"进入出口",
+    u8"房间已清理", u8"奖励", u8"升级至级", u8"有未分配被动点",
+    u8"打开背包", u8"打开被动树",
+    u8"普通魔法稀有已拾取未知装备",
+    u8"装备 / 材料", u8"技能石", u8"主动技能石槽",
+    u8"空主技能槽", u8"辅助技能石（只读）", u8"未装备技能石",
+    u8"无", u8"取出", u8"正在保存",
+    u8"技能石背包关闭",
+    u8"拔刀斩", u8"极·鬼剑术（暴风式）",
+    u8"怪群规模：拥挤密集兽潮",
+    u8"消灭（总计）剩余",
+    u8"出口尚未开放，战斗仍可继续",
+    u8"离开将放弃剩余奖励",
+    u8"可见：怪 105/105 环境 73/105 掉落 53/331",
+    u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
+}};
+
 template <typename Id, std::size_t Count>
 const char* value_or_unknown(const std::array<const char*, Count>& values,
     Id id) noexcept {
@@ -163,6 +202,7 @@ void visit_ui_text_catalog(UiTextVisitor visitor, void* context) noexcept {
     visit_values(kMonsterAffixShortNames, visitor, context);
     visit_values(kSettingActionNames, visitor, context);
     visit_values(kSkillNames, visitor, context);
+    visit_values(kUiDynamicGlyphCoverage, visitor, context);
 }
 
 }  // namespace arpg::platform

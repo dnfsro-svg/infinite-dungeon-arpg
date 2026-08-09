@@ -68,6 +68,7 @@ add_library(arpg_raylib STATIC
     raylib_host.cpp
     room_background_render_plan.cpp
     room_renderer.cpp
+    shared_ui_font.cpp
     stable_key_raylib.cpp
     stream_pack.cpp
     ui_audio_pack.cpp
