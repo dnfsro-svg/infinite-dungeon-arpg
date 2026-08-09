@@ -94,11 +94,15 @@ endif()
 
 file(READ "${_app_cmake}" _app_cmake_text)
 foreach(_token IN ITEMS
-        "assets/stage15/audio"
-        "$<TARGET_FILE_DIR:arpg_game>/assets/stage15/audio")
+        "ArpgRuntimeAssets.cmake"
+        "arpg_add_runtime_asset_sync("
+        "TARGET arpg_game"
+        [=[${PROJECT_SOURCE_DIR}/assets]=]
+        [=[$<TARGET_FILE_DIR:arpg_game>/assets]=]
+        "stage15/audio")
     string(FIND "${_app_cmake_text}" "${_token}" _copy_found)
     if(_copy_found EQUAL -1)
-        message(FATAL_ERROR "Stage15 release copy rule missing: ${_token}")
+        message(FATAL_ERROR "Stage15 runtime asset sync rule missing: ${_token}")
     endif()
 endforeach()
 

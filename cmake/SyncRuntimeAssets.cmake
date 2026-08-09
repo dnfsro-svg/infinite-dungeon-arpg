@@ -1,0 +1,71 @@
+cmake_minimum_required(VERSION 3.25)
+
+foreach(required_variable IN ITEMS SOURCE_ROOT DESTINATION_ROOT MANIFEST STAMP)
+    if(NOT DEFINED ${required_variable} OR "${${required_variable}}" STREQUAL "")
+        message(FATAL_ERROR "${required_variable} is required")
+    endif()
+endforeach()
+if(NOT EXISTS "${MANIFEST}")
+    message(FATAL_ERROR "Runtime asset manifest is missing: ${MANIFEST}")
+endif()
+
+file(STRINGS "${MANIFEST}" manifest_lines ENCODING UTF-8)
+set(managed_directories)
+set(desired_assets)
+foreach(manifest_line IN LISTS manifest_lines)
+    if(manifest_line MATCHES "^D\\|(.+)$")
+        list(APPEND managed_directories "${CMAKE_MATCH_1}")
+    elseif(manifest_line MATCHES "^F\\|(.+)$")
+        list(APPEND desired_assets "${CMAKE_MATCH_1}")
+    elseif(NOT manifest_line STREQUAL "")
+        message(FATAL_ERROR "Malformed runtime asset manifest line: ${manifest_line}")
+    endif()
+endforeach()
+
+foreach(relative_path IN LISTS managed_directories desired_assets)
+    if(IS_ABSOLUTE "${relative_path}"
+            OR relative_path MATCHES "(^|/)\\.\\.(/|$)")
+        message(FATAL_ERROR
+            "Runtime asset path escapes the managed root: ${relative_path}")
+    endif()
+endforeach()
+
+file(MAKE_DIRECTORY "${DESTINATION_ROOT}")
+foreach(relative_asset IN LISTS desired_assets)
+    set(source "${SOURCE_ROOT}/${relative_asset}")
+    set(destination "${DESTINATION_ROOT}/${relative_asset}")
+    if(NOT EXISTS "${source}")
+        message(FATAL_ERROR "Manifest source asset is missing: ${source}")
+    endif()
+    get_filename_component(destination_directory "${destination}" DIRECTORY)
+    file(MAKE_DIRECTORY "${destination_directory}")
+    file(COPY_FILE "${source}" "${destination}"
+        ONLY_IF_DIFFERENT RESULT copy_result)
+    if(NOT copy_result EQUAL 0)
+        message(FATAL_ERROR
+            "Failed to copy runtime asset ${source}: ${copy_result}")
+    endif()
+endforeach()
+
+foreach(managed_directory IN LISTS managed_directories)
+    set(destination_directory "${DESTINATION_ROOT}/${managed_directory}")
+    if(NOT IS_DIRECTORY "${destination_directory}")
+        continue()
+    endif()
+    file(GLOB_RECURSE published_assets
+        LIST_DIRECTORIES false
+        "${destination_directory}/*")
+    foreach(published_asset IN LISTS published_assets)
+        file(RELATIVE_PATH relative_asset
+            "${DESTINATION_ROOT}" "${published_asset}")
+        file(TO_CMAKE_PATH "${relative_asset}" relative_asset)
+        list(FIND desired_assets "${relative_asset}" desired_index)
+        if(desired_index EQUAL -1)
+            file(REMOVE "${published_asset}")
+        endif()
+    endforeach()
+endforeach()
+
+get_filename_component(stamp_directory "${STAMP}" DIRECTORY)
+file(MAKE_DIRECTORY "${stamp_directory}")
+file(TOUCH "${STAMP}")

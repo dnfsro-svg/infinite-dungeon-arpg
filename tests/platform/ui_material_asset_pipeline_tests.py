@@ -85,7 +85,8 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn('assets/fonts/NotoSansCJKsc-Medium.otf', font_source)
         self.assertNotIn('NotoSansSC[wght].ttf', font_source)
-        self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', app_cmake)
+        self.assertIn('${PROJECT_SOURCE_DIR}/assets', app_cmake)
+        self.assertRegex(app_cmake, r"DIRECTORIES[\s\S]*\bfonts\b")
         self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', formal_cmake)
 
         contract = (ROOT / "src/platform/raylib/death_overlay_font.hpp").read_text(
