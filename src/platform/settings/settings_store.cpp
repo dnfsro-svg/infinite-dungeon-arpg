@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <mutex>
+#include <new>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +18,10 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 namespace arpg::settings {
@@ -23,6 +29,9 @@ namespace {
 
 constexpr const char* slot_a_name = "settings-a.bin";
 constexpr const char* slot_b_name = "settings-b.bin";
+constexpr const char* write_lock_name = "settings.lock";
+
+std::mutex settings_write_mutex{};
 
 enum class SlotState : std::uint8_t { missing, invalid, valid };
 
@@ -103,6 +112,45 @@ struct SlotRecord final {
     }
     return slot_b_name;
 }
+
+class ScopedWriteLock final {
+public:
+    explicit ScopedWriteLock(const SettingsFileOps& ops) noexcept : ops_(ops) {}
+
+    [[nodiscard]] SettingsWriteLockStatus acquire(
+        const std::filesystem::path& directory) {
+        if (ops_.acquire_write_lock == nullptr ||
+                ops_.release_write_lock == nullptr) {
+            return SettingsWriteLockStatus::failed;
+        }
+        const SettingsWriteLockResult result =
+            ops_.acquire_write_lock(ops_.context, directory);
+        if (result.status != SettingsWriteLockStatus::acquired) {
+            return result.status;
+        }
+        token_ = result.token;
+        return token_ == nullptr
+            ? SettingsWriteLockStatus::failed
+            : SettingsWriteLockStatus::acquired;
+    }
+
+    ~ScopedWriteLock() noexcept {
+        if (token_ == nullptr || ops_.release_write_lock == nullptr) {
+            return;
+        }
+        try {
+            ops_.release_write_lock(ops_.context, token_);
+        } catch (...) {
+        }
+    }
+
+    ScopedWriteLock(const ScopedWriteLock&) = delete;
+    ScopedWriteLock& operator=(const ScopedWriteLock&) = delete;
+
+private:
+    SettingsFileOps ops_{};
+    void* token_{};
+};
 
 bool native_read(
     void*,
@@ -204,10 +252,90 @@ bool native_replace(
 #endif
 }
 
+SettingsWriteLockResult native_acquire_write_lock(
+    void*, const std::filesystem::path& directory) {
+    std::error_code directory_error{};
+    std::filesystem::create_directories(directory, directory_error);
+    if (directory_error) {
+        return {SettingsWriteLockStatus::failed, nullptr};
+    }
+    const std::filesystem::path path = directory / write_lock_name;
+#ifdef _WIN32
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return {SettingsWriteLockStatus::failed, nullptr};
+    }
+    OVERLAPPED overlapped{};
+    if (LockFileEx(file,
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0U, 1U, 0U,
+            &overlapped) == FALSE) {
+        const DWORD error = GetLastError();
+        CloseHandle(file);
+        return {error == ERROR_LOCK_VIOLATION
+                ? SettingsWriteLockStatus::busy
+                : SettingsWriteLockStatus::failed,
+            nullptr};
+    }
+    return {SettingsWriteLockStatus::acquired, file};
+#else
+    const int descriptor = ::open(path.c_str(), O_CREAT | O_RDWR, 0600);
+    if (descriptor < 0) {
+        return {SettingsWriteLockStatus::failed, nullptr};
+    }
+    struct flock lock {};
+    lock.l_type = F_WRLCK;
+    lock.l_whence = SEEK_SET;
+    int result = 0;
+    do {
+        result = ::fcntl(descriptor, F_SETLK, &lock);
+    } while (result != 0 && errno == EINTR);
+    if (result != 0) {
+        const int error = errno;
+        static_cast<void>(::close(descriptor));
+        return {error == EACCES || error == EAGAIN
+                ? SettingsWriteLockStatus::busy
+                : SettingsWriteLockStatus::failed,
+            nullptr};
+    }
+    auto* const token = new (std::nothrow) int{descriptor};
+    if (token == nullptr) {
+        lock.l_type = F_UNLCK;
+        static_cast<void>(::fcntl(descriptor, F_SETLK, &lock));
+        static_cast<void>(::close(descriptor));
+        return {SettingsWriteLockStatus::failed, nullptr};
+    }
+    return {SettingsWriteLockStatus::acquired, token};
+#endif
+}
+
+void native_release_write_lock(void*, void* token) {
+    if (token == nullptr) {
+        return;
+    }
+#ifdef _WIN32
+    HANDLE file = static_cast<HANDLE>(token);
+    OVERLAPPED overlapped{};
+    static_cast<void>(UnlockFileEx(file, 0U, 1U, 0U, &overlapped));
+    static_cast<void>(CloseHandle(file));
+#else
+    auto* const descriptor = static_cast<int*>(token);
+    struct flock lock {};
+    lock.l_type = F_UNLCK;
+    lock.l_whence = SEEK_SET;
+    static_cast<void>(::fcntl(*descriptor, F_SETLK, &lock));
+    static_cast<void>(::close(*descriptor));
+    delete descriptor;
+#endif
+}
+
 }  // namespace
 
 SettingsFileOps native_settings_file_ops() noexcept {
-    return {nullptr, native_read, native_replace};
+    return {nullptr, native_read, native_replace,
+        native_acquire_write_lock, native_release_write_lock};
 }
 
 SettingsStore::SettingsStore(
@@ -244,30 +372,56 @@ SettingsSaveResult SettingsStore::save(
         return {SettingsSaveStatus::invalid_settings, committed};
     }
 
-    std::filesystem::path target{};
     try {
-        const SlotRecord a = read_slot(file_ops_, directory_ / slot_a_name);
-        const SlotRecord b = read_slot(file_ops_, directory_ / slot_b_name);
-        target = directory_ / target_slot_name(a, b);
-        const auto encoded = encode_settings(draft);
-        if (file_ops_.replace == nullptr ||
-                !file_ops_.replace(file_ops_.context, target,
-                    encoded.data(), encoded.size())) {
+        std::unique_lock<std::mutex> process_lock(
+            settings_write_mutex, std::try_to_lock);
+        if (!process_lock.owns_lock()) {
+            return {SettingsSaveStatus::busy, committed};
+        }
+        ScopedWriteLock write_lock{file_ops_};
+        const SettingsWriteLockStatus lock_status =
+            write_lock.acquire(directory_);
+        if (lock_status == SettingsWriteLockStatus::busy) {
+            return {SettingsSaveStatus::busy, committed};
+        }
+        if (lock_status != SettingsWriteLockStatus::acquired) {
             return {SettingsSaveStatus::write_failed, committed};
+        }
+
+        std::filesystem::path target{};
+        try {
+            const SlotRecord a = read_slot(file_ops_, directory_ / slot_a_name);
+            const SlotRecord b = read_slot(file_ops_, directory_ / slot_b_name);
+            const SettingsLoadResult current = select_loaded(a, b);
+            if (current.status == SettingsLoadStatus::defaults_corrupt) {
+                return {SettingsSaveStatus::storage_conflict, committed};
+            }
+            if (!same_settings(current.settings, committed)) {
+                return {SettingsSaveStatus::stale_revision, committed};
+            }
+            target = directory_ / target_slot_name(a, b);
+            const auto encoded = encode_settings(draft);
+            if (file_ops_.replace == nullptr ||
+                    !file_ops_.replace(file_ops_.context, target,
+                        encoded.data(), encoded.size())) {
+                return {SettingsSaveStatus::write_failed, committed};
+            }
+        } catch (...) {
+            return {SettingsSaveStatus::write_failed, committed};
+        }
+
+        try {
+            const SlotRecord published = read_slot(file_ops_, target);
+            if (!is_valid(published) ||
+                    !same_settings(published.settings, draft)) {
+                return {SettingsSaveStatus::readback_failed, committed};
+            }
+            return {SettingsSaveStatus::committed, published.settings};
+        } catch (...) {
+            return {SettingsSaveStatus::readback_failed, committed};
         }
     } catch (...) {
         return {SettingsSaveStatus::write_failed, committed};
-    }
-
-    try {
-        const SlotRecord published = read_slot(file_ops_, target);
-        if (!is_valid(published) ||
-                !same_settings(published.settings, draft)) {
-            return {SettingsSaveStatus::readback_failed, committed};
-        }
-        return {SettingsSaveStatus::committed, published.settings};
-    } catch (...) {
-        return {SettingsSaveStatus::readback_failed, committed};
     }
 }
 

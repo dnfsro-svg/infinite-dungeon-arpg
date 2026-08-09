@@ -38,6 +38,9 @@ struct FakeFiles final {
     bool fail_readback{};
     bool corrupt_readback{};
     bool replacement_completed{};
+    bool write_lock_held{};
+    std::size_t write_lock_acquires{};
+    std::size_t write_lock_releases{};
 };
 
 [[nodiscard]] std::string file_name(const std::filesystem::path& path) {
@@ -93,8 +96,29 @@ bool fake_replace(
     return true;
 }
 
+arpg::settings::SettingsWriteLockResult fake_acquire_write_lock(
+    void* context, const std::filesystem::path&) noexcept {
+    auto& fake = *static_cast<FakeFiles*>(context);
+    if (fake.write_lock_held) {
+        return {arpg::settings::SettingsWriteLockStatus::busy, nullptr};
+    }
+    fake.write_lock_held = true;
+    ++fake.write_lock_acquires;
+    return {arpg::settings::SettingsWriteLockStatus::acquired, &fake};
+}
+
+void fake_release_write_lock(void* context, void* token) noexcept {
+    auto& fake = *static_cast<FakeFiles*>(context);
+    if (token != &fake) {
+        return;
+    }
+    fake.write_lock_held = false;
+    ++fake.write_lock_releases;
+}
+
 [[nodiscard]] SettingsFileOps fake_ops(FakeFiles& fake) noexcept {
-    return {&fake, fake_read, fake_replace};
+    return {&fake, fake_read, fake_replace,
+        fake_acquire_write_lock, fake_release_write_lock};
 }
 
 [[nodiscard]] SettingsData settings_at(
@@ -271,6 +295,121 @@ arpg::test::Failure save_writes_older_slot_and_returns_readback_value() noexcept
     return {};
 }
 
+arpg::test::Failure stale_second_instance_does_not_create_conflicting_slots() noexcept {
+    FakeFiles fake{};
+    const SettingsStore first{"C:/settings", fake_ops(fake)};
+    const SettingsStore second{"C:/settings", fake_ops(fake)};
+
+    const auto first_loaded = first.load();
+    const auto second_loaded = second.load();
+    ARPG_REQUIRE(first_loaded.status == SettingsLoadStatus::defaults_missing);
+    ARPG_REQUIRE(second_loaded.status == SettingsLoadStatus::defaults_missing);
+
+    SettingsData first_draft = first_loaded.settings;
+    first_draft.master_sfx_percent = 90U;
+    const auto first_saved = first.save(first_loaded.settings, first_draft);
+    ARPG_REQUIRE(first_saved.status == SettingsSaveStatus::committed);
+    ARPG_REQUIRE(first_saved.settings.revision == 1U);
+    ARPG_REQUIRE(first_saved.settings.master_sfx_percent == 90U);
+    ARPG_REQUIRE(fake.replacements.size() == 1U);
+
+    SettingsData stale_draft = second_loaded.settings;
+    stale_draft.master_sfx_percent = 80U;
+    const auto stale_saved = second.save(second_loaded.settings, stale_draft);
+    ARPG_REQUIRE(stale_saved.status == SettingsSaveStatus::stale_revision);
+    ARPG_REQUIRE(same_settings(stale_saved.settings, second_loaded.settings));
+    ARPG_REQUIRE(fake.replacements.size() == 1U);
+    ARPG_REQUIRE(fake.write_lock_acquires == 2U);
+    ARPG_REQUIRE(fake.write_lock_releases == 2U);
+
+    const auto reloaded = first.load();
+    ARPG_REQUIRE(reloaded.status != SettingsLoadStatus::defaults_corrupt);
+    ARPG_REQUIRE(same_settings(reloaded.settings, first_saved.settings));
+    return {};
+}
+
+arpg::test::Failure missing_storage_rejects_nondefault_committed_settings() noexcept {
+    FakeFiles fake{};
+    const SettingsData committed = settings_at(0U, 90U);
+    SettingsData draft = committed;
+    draft.master_sfx_percent = 95U;
+
+    const auto result =
+        SettingsStore{"C:/settings", fake_ops(fake)}.save(committed, draft);
+
+    ARPG_REQUIRE(result.status == SettingsSaveStatus::stale_revision);
+    ARPG_REQUIRE(same_settings(result.settings, committed));
+    ARPG_REQUIRE(fake.replacements.empty());
+    ARPG_REQUIRE(fake.write_lock_acquires == 1U);
+    ARPG_REQUIRE(fake.write_lock_releases == 1U);
+    return {};
+}
+
+arpg::test::Failure corrupt_storage_is_not_overwritten_by_save() noexcept {
+    FakeFiles fake{};
+    const SettingsData slot_a = settings_at(1U, 85U);
+    SettingsData slot_b = slot_a;
+    slot_b.loot_filter_mode = arpg::settings::LootFilterMode::rare_only;
+    put(fake, "settings-a.bin", slot_a);
+    put(fake, "settings-b.bin", slot_b);
+    const SettingsData committed = arpg::settings::default_settings();
+    SettingsData draft = committed;
+    draft.master_sfx_percent = 90U;
+
+    const auto result =
+        SettingsStore{"C:/settings", fake_ops(fake)}.save(committed, draft);
+
+    ARPG_REQUIRE(result.status == SettingsSaveStatus::storage_conflict);
+    ARPG_REQUIRE(same_settings(result.settings, committed));
+    ARPG_REQUIRE(fake.replacements.empty());
+    ARPG_REQUIRE(fake.write_lock_acquires == 1U);
+    ARPG_REQUIRE(fake.write_lock_releases == 1U);
+    return {};
+}
+
+arpg::test::Failure busy_write_lock_does_not_read_or_replace() noexcept {
+    FakeFiles fake{};
+    fake.write_lock_held = true;
+    const SettingsData committed = arpg::settings::default_settings();
+    SettingsData draft = committed;
+    draft.master_sfx_percent = 90U;
+
+    const auto result =
+        SettingsStore{"C:/settings", fake_ops(fake)}.save(committed, draft);
+
+    ARPG_REQUIRE(result.status == SettingsSaveStatus::busy);
+    ARPG_REQUIRE(same_settings(result.settings, committed));
+    ARPG_REQUIRE(fake.reads.empty());
+    ARPG_REQUIRE(fake.replacements.empty());
+    ARPG_REQUIRE(fake.write_lock_held);
+    ARPG_REQUIRE(fake.write_lock_releases == 0U);
+    return {};
+}
+
+arpg::test::Failure save_requires_complete_write_lock_protocol() noexcept {
+    for (const bool missing_acquire : {false, true}) {
+        FakeFiles fake{};
+        SettingsFileOps ops = fake_ops(fake);
+        if (missing_acquire) {
+            ops.acquire_write_lock = nullptr;
+        } else {
+            ops.release_write_lock = nullptr;
+        }
+        const SettingsData committed = arpg::settings::default_settings();
+        SettingsData draft = committed;
+        draft.master_sfx_percent = 90U;
+
+        const auto result = SettingsStore{"C:/settings", ops}.save(
+            committed, draft);
+
+        ARPG_REQUIRE(result.status == SettingsSaveStatus::write_failed);
+        ARPG_REQUIRE(same_settings(result.settings, committed));
+        ARPG_REQUIRE(fake.reads.empty());
+        ARPG_REQUIRE(fake.replacements.empty());
+    }
+    return {};
+}
+
 arpg::test::Failure write_and_publish_failures_preserve_last_valid_slot() noexcept {
     for (const auto fault : {FakeFiles::ReplaceFault::write,
              FakeFiles::ReplaceFault::publish}) {
@@ -377,6 +516,11 @@ constexpr arpg::test::TestCase cases[] = {
     {"save validates revision and settings before I/O", save_validates_revision_and_settings_before_io},
     {"save rejects revision overflow without I/O", save_rejects_revision_overflow_without_io},
     {"save writes older slot and returns readback value", save_writes_older_slot_and_returns_readback_value},
+    {"stale second instance does not create conflicting slots", stale_second_instance_does_not_create_conflicting_slots},
+    {"missing storage rejects nondefault committed settings", missing_storage_rejects_nondefault_committed_settings},
+    {"corrupt storage is not overwritten by save", corrupt_storage_is_not_overwritten_by_save},
+    {"busy write lock does not read or replace", busy_write_lock_does_not_read_or_replace},
+    {"save requires complete write lock protocol", save_requires_complete_write_lock_protocol},
     {"write and publish failures preserve last valid slot", write_and_publish_failures_preserve_last_valid_slot},
     {"readback failure does not publish to caller", readback_failure_does_not_publish_to_caller},
     {"readback exceptions are not classified as write failures", readback_exceptions_are_not_classified_as_write_failures},

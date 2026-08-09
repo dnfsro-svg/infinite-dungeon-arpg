@@ -26,6 +26,7 @@ struct MemorySettingsFiles final {
     std::filesystem::path path{};
     std::vector<std::uint8_t> bytes{};
     bool fail_replace{};
+    bool write_lock_held{};
 };
 
 bool memory_read(void* context, const std::filesystem::path& path,
@@ -45,9 +46,25 @@ bool memory_replace(void* context, const std::filesystem::path& path,
     return true;
 }
 
+settings::SettingsWriteLockResult memory_acquire_write_lock(
+    void* context, const std::filesystem::path&) noexcept {
+    auto& files = *static_cast<MemorySettingsFiles*>(context);
+    if (files.write_lock_held) {
+        return {settings::SettingsWriteLockStatus::busy, nullptr};
+    }
+    files.write_lock_held = true;
+    return {settings::SettingsWriteLockStatus::acquired, &files};
+}
+
+void memory_release_write_lock(void* context, void* token) noexcept {
+    auto& files = *static_cast<MemorySettingsFiles*>(context);
+    if (token == &files) files.write_lock_held = false;
+}
+
 settings::SettingsStore memory_store(MemorySettingsFiles& files) {
     return settings::SettingsStore{"memory-settings",
-        {&files, &memory_read, &memory_replace}};
+        {&files, &memory_read, &memory_replace,
+            &memory_acquire_write_lock, &memory_release_write_lock}};
 }
 
 struct ApplyRollbackFailureBackend final {

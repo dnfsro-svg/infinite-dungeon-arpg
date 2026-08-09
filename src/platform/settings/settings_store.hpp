@@ -20,9 +20,22 @@ enum class SettingsSaveStatus : std::uint8_t {
     committed,
     invalid_settings,
     stale_revision,
+    busy,
+    storage_conflict,
     revision_overflow,
     write_failed,
     readback_failed
+};
+
+enum class SettingsWriteLockStatus : std::uint8_t {
+    acquired,
+    busy,
+    failed
+};
+
+struct SettingsWriteLockResult final {
+    SettingsWriteLockStatus status{SettingsWriteLockStatus::failed};
+    void* token{};
 };
 
 struct SettingsLoadResult final {
@@ -40,6 +53,9 @@ struct SettingsFileOps final {
     bool (*read)(void*, const std::filesystem::path&, std::vector<std::uint8_t>&){};
     bool (*replace)(void*, const std::filesystem::path&,
         const std::uint8_t*, std::size_t){};
+    SettingsWriteLockResult (*acquire_write_lock)(
+        void*, const std::filesystem::path&){};
+    void (*release_write_lock)(void*, void*){};
 };
 
 [[nodiscard]] SettingsFileOps native_settings_file_ops() noexcept;

@@ -6,4 +6,5 @@ add_library(arpg_settings STATIC
 target_include_directories(arpg_settings PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_compile_features(arpg_settings PUBLIC cxx_std_17)
 arpg_enable_project_warnings(arpg_settings)
-target_link_libraries(arpg_settings PRIVATE arpg_core)
+find_package(Threads REQUIRED)
+target_link_libraries(arpg_settings PRIVATE arpg_core Threads::Threads)

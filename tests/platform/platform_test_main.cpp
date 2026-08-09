@@ -233,6 +233,16 @@ bool cplay034_passive_feedback_only() noexcept {
     return enabled;
 }
 
+bool cplay035_settings_conflict_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY035_SETTINGS_CONFLICT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -245,6 +255,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay035_settings_conflict_only()) {
+        const arpg::test::TestSuite cplay035_only[] = {
+            host_settings_runtime_suite(),
+        };
+        return arpg::test::run_suites(cplay035_only, 15,
+            "CPLAY-035 settings conflict recovery");
+    }
     if (cplay034_passive_feedback_only()) {
         const arpg::test::TestSuite cplay034_only[] = {
             passive_tree_view_suite(),
@@ -431,6 +448,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 650,
+    return arpg::test::run_suites(suites, 652,
         "host settings runtime contract");
 }
