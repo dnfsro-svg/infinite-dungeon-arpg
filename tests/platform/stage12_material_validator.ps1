@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$EvidenceDirectory,
-    [string]$ItemAtlasPath = ''
+    [string]$ItemAtlasPath = '',
+    [switch]$BundledFontOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +34,41 @@ function Read-Report([string]$Path) {
         $values[$key] = $pair[1]
     }
     return $values
+}
+
+function Assert-BundledFontRuntime([hashtable]$Report) {
+    foreach ($key in @('bundled_font_runtime','bundled_font_glyph_count',
+            'bundled_font_instance_count','bundled_font_subset_capacity',
+            'bundled_font_source_base_size','bundled_font_max_display_size',
+            'bundled_font_atlas_bytes','bundled_font_atlas_byte_budget',
+            'bundled_font_total_atlas_bytes',
+            'bundled_font_total_atlas_byte_budget')) {
+        if (-not $Report.ContainsKey($key)) {
+            throw "missing bundled font report field: $key"
+        }
+    }
+    if ($Report.bundled_font_runtime -ne 'pass') {
+        throw 'bundled font runtime failed'
+    }
+    [uint64]$glyphCount = $Report.bundled_font_glyph_count
+    [uint64]$subsetCapacity = $Report.bundled_font_subset_capacity
+    [uint64]$instanceCount = $Report.bundled_font_instance_count
+    if ($instanceCount -ne 1 -or $glyphCount -eq 0 -or
+            $subsetCapacity -ne 640 -or $glyphCount -gt $subsetCapacity) {
+        throw 'bundled font glyph subset contract failed'
+    }
+    [uint64]$sourceBase = $Report.bundled_font_source_base_size
+    [uint64]$maxDisplay = $Report.bundled_font_max_display_size
+    [uint64]$atlasBytes = $Report.bundled_font_atlas_bytes
+    [uint64]$atlasBudget = $Report.bundled_font_atlas_byte_budget
+    [uint64]$totalAtlasBytes = $Report.bundled_font_total_atlas_bytes
+    [uint64]$totalAtlasBudget = $Report.bundled_font_total_atlas_byte_budget
+    if ($sourceBase -lt ($maxDisplay * 2) -or
+            $atlasBytes -eq 0 -or $atlasBytes -gt $atlasBudget -or
+            $totalAtlasBytes -ne $atlasBytes -or
+            $totalAtlasBytes -gt $totalAtlasBudget) {
+        throw 'bundled high-resolution font atlas budget failed'
+    }
 }
 
 function Read-PngSize([string]$Path) {
@@ -1595,6 +1631,11 @@ function Measure-ItemAtlasPalette([string]$Path) {
 $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
+if ($BundledFontOnly) {
+    Assert-BundledFontRuntime $report
+    Write-Output 'Stage 12 bundled font runtime evidence accepted'
+    exit 0
+}
 foreach ($key in @('manifest','atlas_bytes','full_pack_bytes',
         'resident_peak_bytes','transition_peak_bytes','fallback','input_hole_regression',
         'monsters','monster_screenshot','item_screenshot','item_baseline_screenshot',
@@ -1697,26 +1738,7 @@ if ($primaryContrast -lt 7.0 -or $secondaryContrast -lt 6.0 -or
         [int]$report.ui_text_backing_alpha -lt 220) {
     throw 'UI text contrast metrics failed'
 }
-$fontGlyphCount = [uint64]$report.bundled_font_glyph_count
-$fontSubsetCapacity = [uint64]$report.bundled_font_subset_capacity
-$fontInstanceCount = [uint64]$report.bundled_font_instance_count
-if ($fontInstanceCount -ne 1 -or $fontGlyphCount -eq 0 -or
-        $fontSubsetCapacity -ne 640 -or
-        $fontGlyphCount -gt $fontSubsetCapacity) {
-    throw 'bundled font glyph subset contract failed'
-}
-$fontSourceBase = [uint64]$report.bundled_font_source_base_size
-$fontMaxDisplay = [uint64]$report.bundled_font_max_display_size
-$fontAtlasBytes = [uint64]$report.bundled_font_atlas_bytes
-$fontAtlasBudget = [uint64]$report.bundled_font_atlas_byte_budget
-$fontTotalAtlasBytes = [uint64]$report.bundled_font_total_atlas_bytes
-$fontTotalAtlasBudget = [uint64]$report.bundled_font_total_atlas_byte_budget
-if ($fontSourceBase -lt ($fontMaxDisplay * 2) -or
-        $fontAtlasBytes -eq 0 -or $fontAtlasBytes -gt $fontAtlasBudget -or
-        $fontTotalAtlasBytes -ne $fontAtlasBytes -or
-        $fontTotalAtlasBytes -gt $fontTotalAtlasBudget) {
-    throw 'bundled high-resolution font atlas budget failed'
-}
+Assert-BundledFontRuntime $report
 if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.fallback -ne 'pass' -or $report.input_hole_regression -ne 'pass' -or
         $report.items_ui_pair -ne 'resident' -or

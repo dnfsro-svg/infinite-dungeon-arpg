@@ -282,6 +282,17 @@ if(TARGET arpg_raylib)
         PROPERTIES LABELS "platform;raylib;stage12;negative" TIMEOUT 240
             FIXTURES_REQUIRED stage12_material_evidence)
     add_test(
+        NAME stage12.bundled_font_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator_self_test.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage12-bundled-font-validator-mutations"
+            -BundledFontOnly)
+    set_tests_properties(stage12.bundled_font_validator_self_test
+        PROPERTIES LABELS "platform;raylib;stage12;negative;full_chinese_ui"
+            TIMEOUT 30)
+    add_test(
         NAME stage12.material_root_safety
         COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
             --root-safety-self-test
@@ -1996,6 +2007,25 @@ add_test(
 set_tests_properties(
     stage11d.renderer_integration_guard
     PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME platform.shared_ui_font_lifecycle_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/shared_ui_font_lifecycle_guard_test.cmake")
+set_tests_properties(
+    platform.shared_ui_font_lifecycle_guard
+    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui" TIMEOUT 30)
+
+add_test(
+    NAME platform.shared_ui_font_lifecycle_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/shared-ui-font-lifecycle-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/shared_ui_font_lifecycle_guard_self_test.cmake")
+set_tests_properties(
+    platform.shared_ui_font_lifecycle_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui" TIMEOUT 30)
 
 add_test(
     NAME stage11d.renderer_integration_guard_self_test

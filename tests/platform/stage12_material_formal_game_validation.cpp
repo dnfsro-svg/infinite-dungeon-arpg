@@ -1323,6 +1323,18 @@ bool write_integration_render_snapshot(
     platform::CombatRenderer renderer{};
     result.overlay_resources_initialized = shared_ui_font.initialize()
         && renderer.initialize_resources(shared_ui_font);
+    const Font borrowed_font = renderer.hud_font();
+    const Font owned_font = shared_ui_font.font();
+    const std::size_t owned_atlas_bytes = shared_ui_font.atlas_bytes();
+    result.overlay_resources_initialized = result.overlay_resources_initialized
+        && shared_ui_font.initialize()
+        && shared_ui_font.font().texture.id == owned_font.texture.id
+        && shared_ui_font.font().glyphs == owned_font.glyphs
+        && renderer.hud_font().texture.id == borrowed_font.texture.id
+        && renderer.hud_font().glyphs == borrowed_font.glyphs
+        && shared_ui_font.active_instance_count() == 1U
+        && shared_ui_font.atlas_bytes() == owned_atlas_bytes
+        && shared_ui_font.total_atlas_bytes() == owned_atlas_bytes;
     const platform::MaterialResidencyRequest base_request =
         platform::base_material_residency_request();
     result.renderer_initialized = renderer.material_pipeline_ready()

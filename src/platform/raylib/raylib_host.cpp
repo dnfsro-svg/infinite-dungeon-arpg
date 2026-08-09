@@ -1045,6 +1045,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 pause_menu_renderer.shutdown();
                 renderer.shutdown_resources();
                 shared_ui_font.shutdown();
+                window.close();
                 return HostExitCode::save_initialization_failed;
             }
             if (config.stage12_material_showcase) {
@@ -1191,9 +1192,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     shared_ui_font.ready() && renderer.hud_font_ready()
                     && pause_menu_renderer.has_cjk_font();
                 material_status.bundled_font_instance_count =
-                    shared_ui_font.ready()
-                    ? static_cast<std::uint8_t>(kUiFontAtlasInstanceCount)
-                    : 0U;
+                    static_cast<std::uint8_t>(
+                        shared_ui_font.active_instance_count());
                 material_status.bundled_font_glyph_count =
                     shared_ui_font.ready()
                     ? static_cast<std::uint16_t>((std::min)(
@@ -1208,7 +1208,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 material_status.bundled_font_atlas_bytes =
                     shared_ui_font.atlas_bytes();
                 material_status.bundled_font_total_atlas_bytes =
-                    material_status.bundled_font_atlas_bytes;
+                    shared_ui_font.total_atlas_bytes();
                 material_status.bundled_font_total_atlas_byte_budget =
                     kUiFontTotalAtlasByteBudget;
             }
@@ -1356,6 +1356,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer_storage->shutdown_resources();
         }
         shared_ui_font.shutdown();
+        window.close();
         return HostExitCode::save_initialization_failed;
     } catch (...) {
         TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
@@ -1366,6 +1367,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer_storage->shutdown_resources();
         }
         shared_ui_font.shutdown();
+        window.close();
         return HostExitCode::save_initialization_failed;
     }
 }

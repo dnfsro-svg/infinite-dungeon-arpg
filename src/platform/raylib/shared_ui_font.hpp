@@ -18,12 +18,19 @@ inline constexpr int kUiFontMaximumDisplaySize = 39;
 inline constexpr std::size_t kUiFontAtlasBytesPerPixel = 2U;
 
 [[nodiscard]] constexpr std::size_t ui_font_atlas_bytes(
-    int width, int height) noexcept {
+    int width, int height, int pixel_format) noexcept {
     return width > 0 && height > 0
+            && pixel_format == PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA
         ? static_cast<std::size_t>(width)
             * static_cast<std::size_t>(height)
             * kUiFontAtlasBytesPerPixel
         : 0U;
+}
+
+[[nodiscard]] constexpr std::size_t ui_font_atlas_bytes(
+    int width, int height) noexcept {
+    return ui_font_atlas_bytes(
+        width, height, PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA);
 }
 
 struct UiGlyphPlan final {
@@ -36,12 +43,19 @@ struct UiGlyphPlan final {
 
 class SharedUiFont final {
 public:
+    SharedUiFont() noexcept = default;
     ~SharedUiFont() noexcept;
+    SharedUiFont(const SharedUiFont&) = delete;
+    SharedUiFont& operator=(const SharedUiFont&) = delete;
+    SharedUiFont(SharedUiFont&&) = delete;
+    SharedUiFont& operator=(SharedUiFont&&) = delete;
     [[nodiscard]] bool initialize() noexcept;
     void shutdown() noexcept;
     [[nodiscard]] bool ready() const noexcept;
     [[nodiscard]] Font font() const noexcept;
     [[nodiscard]] std::size_t atlas_bytes() const noexcept;
+    [[nodiscard]] std::size_t active_instance_count() const noexcept;
+    [[nodiscard]] std::size_t total_atlas_bytes() const noexcept;
     [[nodiscard]] const UiGlyphPlan& plan() const noexcept;
 
 private:
@@ -60,5 +74,7 @@ using UiGlyphPlanCatalogVisitor = void (*)(UiTextVisitor visitor,
     const UiGlyphPlan& plan, int codepoint) noexcept;
 [[nodiscard]] bool ui_glyph_plan_covers_text(
     const UiGlyphPlan& plan, const char* utf8_text) noexcept;
+[[nodiscard]] bool ui_font_candidate_is_acceptable(
+    Font font, const UiGlyphPlan& plan) noexcept;
 
 }  // namespace arpg::platform

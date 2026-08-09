@@ -27,6 +27,11 @@ namespace {
     return true;
 }
 
+void release_font(Font& font) noexcept {
+    UnloadFont(font);
+    font = {};
+}
+
 [[nodiscard]] bool is_continuation(unsigned char byte) noexcept {
     return byte >= 0x80U && byte <= 0xBFU;
 }
@@ -116,7 +121,7 @@ SharedUiFont::~SharedUiFont() noexcept {
 }
 
 bool SharedUiFont::initialize() noexcept {
-    shutdown();
+    if (ready_) return true;
     plan_ = ui_glyph_plan();
     if (plan_.capacity_exceeded || plan_.codepoint_count == 0U
             || plan_.codepoint_count > plan_.codepoints.size()) {
@@ -130,10 +135,9 @@ bool SharedUiFont::initialize() noexcept {
         Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
             plan_.codepoints.data(), static_cast<int>(plan_.codepoint_count));
         const std::size_t candidate_atlas_bytes = ui_font_atlas_bytes(
-            candidate.texture.width, candidate.texture.height);
-        if (has_requested_glyphs(candidate, plan_)
-                && candidate_atlas_bytes > 0U
-                && candidate_atlas_bytes <= kUiFontAtlasByteBudget) {
+            candidate.texture.width, candidate.texture.height,
+            candidate.texture.format);
+        if (ui_font_candidate_is_acceptable(candidate, plan_)) {
             SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
             font_ = candidate;
             ready_ = true;
@@ -143,7 +147,7 @@ bool SharedUiFont::initialize() noexcept {
                 static_cast<unsigned long long>(candidate_atlas_bytes));
             return true;
         }
-        if (IsFontValid(candidate)) UnloadFont(candidate);
+        release_font(candidate);
     }
 
     font_ = {};
@@ -152,8 +156,8 @@ bool SharedUiFont::initialize() noexcept {
 }
 
 void SharedUiFont::shutdown() noexcept {
-    if (ready_ && IsWindowReady() && IsFontValid(font_)) UnloadFont(font_);
-    font_ = {};
+    if (ready_ && IsWindowReady()) release_font(font_);
+    else font_ = {};
     ready_ = false;
 }
 
@@ -167,7 +171,16 @@ Font SharedUiFont::font() const noexcept {
 
 std::size_t SharedUiFont::atlas_bytes() const noexcept {
     return ready_ ? ui_font_atlas_bytes(
-        font_.texture.width, font_.texture.height) : 0U;
+        font_.texture.width, font_.texture.height,
+        font_.texture.format) : 0U;
+}
+
+std::size_t SharedUiFont::active_instance_count() const noexcept {
+    return ready_ ? 1U : 0U;
+}
+
+std::size_t SharedUiFont::total_atlas_bytes() const noexcept {
+    return atlas_bytes();
 }
 
 const UiGlyphPlan& SharedUiFont::plan() const noexcept {
@@ -214,6 +227,18 @@ bool ui_glyph_plan_covers_text(const UiGlyphPlan& plan,
         }
     }
     return true;
+}
+
+bool ui_font_candidate_is_acceptable(Font font,
+    const UiGlyphPlan& plan) noexcept {
+    if (!IsTextureValid(font.texture)
+        || ui_font_atlas_bytes(font.texture.width, font.texture.height,
+               font.texture.format) == 0U
+        || ui_font_atlas_bytes(font.texture.width, font.texture.height,
+               font.texture.format) > kUiFontAtlasByteBudget) {
+        return false;
+    }
+    return has_requested_glyphs(font, plan);
 }
 
 }  // namespace arpg::platform

@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <type_traits>
 
 namespace {
 
@@ -74,6 +75,10 @@ arpg::test::Failure plan_codepoints_are_unique() noexcept {
 }
 
 arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept {
+    static_assert(!std::is_copy_constructible_v<platform::SharedUiFont>);
+    static_assert(!std::is_copy_assignable_v<platform::SharedUiFont>);
+    static_assert(!std::is_move_constructible_v<platform::SharedUiFont>);
+    static_assert(!std::is_move_assignable_v<platform::SharedUiFont>);
     static_assert(platform::kUiFontAtlasInstanceCount == 1U);
     static_assert(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
     static_assert(platform::ui_font_atlas_bytes(4096, 4096)
@@ -95,6 +100,47 @@ arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept 
     ARPG_REQUIRE(over_capacity.codepoint_count == platform::kUiGlyphCapacity);
     ARPG_REQUIRE(over_capacity.capacity_exceeded);
     ARPG_REQUIRE(!platform::ui_glyph_plan_covers_text(over_capacity, u8"一"));
+
+    platform::UiGlyphPlan candidate_plan{};
+    candidate_plan.codepoints[0] = 65;
+    candidate_plan.codepoint_count = 1U;
+    GlyphInfo glyph{};
+    glyph.value = 65;
+    Rectangle rec{};
+    Font candidate{};
+    candidate.baseSize = platform::kUiFontSourceBaseSize;
+    candidate.glyphCount = 1;
+    candidate.glyphs = &glyph;
+    candidate.recs = &rec;
+    candidate.texture = Texture2D{1U, 4096, 4096, 1,
+        PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA};
+    ARPG_REQUIRE(platform::ui_font_candidate_is_acceptable(
+        candidate, candidate_plan));
+    ARPG_REQUIRE(platform::ui_font_atlas_bytes(4096, 4096,
+        candidate.texture.format) == platform::kUiFontAtlasByteBudget);
+
+    candidate.texture.id = 0U;
+    ARPG_REQUIRE(!platform::ui_font_candidate_is_acceptable(
+        candidate, candidate_plan));
+
+    candidate.texture.id = 1U;
+    candidate.texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    ARPG_REQUIRE(platform::ui_font_atlas_bytes(4096, 4096,
+        candidate.texture.format) == 0U);
+    ARPG_REQUIRE(!platform::ui_font_candidate_is_acceptable(
+        candidate, candidate_plan));
+
+    candidate.texture.format = PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA;
+    candidate.texture.width = 4097;
+    ARPG_REQUIRE(platform::ui_font_atlas_bytes(candidate.texture.width,
+        candidate.texture.height, candidate.texture.format)
+        > platform::kUiFontAtlasByteBudget);
+    ARPG_REQUIRE(!platform::ui_font_candidate_is_acceptable(
+        candidate, candidate_plan));
+
+    platform::SharedUiFont unloaded_owner{};
+    ARPG_REQUIRE(unloaded_owner.active_instance_count() == 0U);
+    ARPG_REQUIRE(unloaded_owner.total_atlas_bytes() == 0U);
 
     return {};
 }

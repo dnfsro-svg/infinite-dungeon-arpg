@@ -2367,7 +2367,7 @@ host_validation_require_canonical_order("Task 8B Host settings order"
 
 # Task 8C centralizes only the raylib window's lifetime.  The Host retains
 # post-ready policy calls, while the dedicated owner preserves the exact
-# flags -> create -> readiness boundary and provides the sole CloseWindow call.
+# flags -> create -> readiness boundary and owns every CloseWindow call.
 function(task8c_compact_cpp_surface SOURCE OUT_COMPACT)
     string(REGEX REPLACE "[ \t\r\n]" "" _compact "${SOURCE}")
     set("${OUT_COMPACT}" "${_compact}" PARENT_SCOPE)
@@ -2866,7 +2866,7 @@ host_validation_require_canonical_count("Task 8C Host initializes one lifetime"
     "${_run_host_direct}"
     "if (!window.initialize(config, committed_settings))" 1)
 host_validation_require_canonical_count("Task 8C Host explicit close"
-    "${_run_host_direct}" "window.close();" 1)
+    "${_run_host_direct}" "window.close();" 4)
 foreach(_task8c_removed_host_call IN ITEMS
         "SetConfigFlags(" "InitWindow(" "IsWindowReady(" "CloseWindow(")
     host_validation_require_count("Task 8C removed direct Host lifecycle"

@@ -16,6 +16,7 @@
 #include "host_input.hpp"
 #include "inventory_renderer.hpp"
 #include "inventory_view_math.hpp"
+#include "shared_ui_font.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_crafting.hpp"
 #include "items/item_generation.hpp"
@@ -260,11 +261,22 @@ bool export_flushed_frame(const std::filesystem::path& path) noexcept {
 }
 
 bool render_world_capture(const std::filesystem::path& run,
-    platform::DungeonRuntime& runtime, const char* name) noexcept {
+    platform::DungeonRuntime& runtime,
+    const platform::SharedUiFont& shared_ui_font,
+    const char* name) noexcept {
     const auto start = std::filesystem::file_time_type::clock::now()
         - std::chrono::seconds(1);
     const auto room = std::make_unique<platform::CombatRenderer>();
-    if (!room->initialize_resources() || runtime.session() == nullptr) return false;
+    struct RendererShutdown final {
+        platform::CombatRenderer* renderer{};
+        ~RendererShutdown() noexcept {
+            if (renderer != nullptr) renderer->shutdown_resources();
+        }
+    } renderer_shutdown{room.get()};
+    if (!room->initialize_resources(shared_ui_font)
+            || runtime.session() == nullptr) {
+        return false;
+    }
     const auto current = std::make_unique<dungeon::DungeonSnapshot>(
         runtime.session()->snapshot());
     dungeon::DungeonRenderSnapshot* const world =
@@ -287,7 +299,6 @@ bool render_world_capture(const std::filesystem::path& run,
     const auto image = run / name;
     const bool exported = export_flushed_frame(image);
     EndDrawing();
-    room->shutdown_resources();
     std::error_code error{};
     const Image decoded = LoadImage(image.string().c_str());
     const bool valid = decoded.data != nullptr && decoded.width == 1280
@@ -302,7 +313,9 @@ bool render_world_capture(const std::filesystem::path& run,
 }
 
 bool drive_real_material_pickup(const std::filesystem::path& run,
-    platform::DungeonRuntime& runtime, ScenarioResult& result) noexcept {
+    platform::DungeonRuntime& runtime,
+    const platform::SharedUiFont& shared_ui_font,
+    ScenarioResult& result) noexcept {
     std::int8_t retreat_direction{};
     int last_hp{-1};
     int last_max_hp{-1};
@@ -380,7 +393,8 @@ bool drive_real_material_pickup(const std::filesystem::path& run,
                     - snapshot->combat->player.position.y;
                 if (!result.ground_material_visible) {
                     result.ground_spawn_distance = std::sqrt(dx * dx + dy * dy);
-                    result.ground_material_visible = render_world_capture(run, runtime,
+                    result.ground_material_visible = render_world_capture(
+                        run, runtime, shared_ui_font,
                         "stage16-ground-material-1280x720.png");
                     if (!result.ground_material_visible) {
                         std::cerr << "stage16 failure=ground_material_capture tick="
@@ -705,11 +719,20 @@ bool process_item_action(platform::InventoryRenderer& inventory,
 
 bool render_inventory_capture(const std::filesystem::path& run,
     platform::DungeonRuntime& runtime, platform::InventoryRenderer& inventory,
-    const char* name) noexcept {
+    const platform::SharedUiFont& shared_ui_font, const char* name) noexcept {
     const auto start = std::filesystem::file_time_type::clock::now()
         - std::chrono::seconds(1);
     const auto room = std::make_unique<platform::CombatRenderer>();
-    if (!room->initialize_resources() || runtime.session() == nullptr) return false;
+    struct RendererShutdown final {
+        platform::CombatRenderer* renderer{};
+        ~RendererShutdown() noexcept {
+            if (renderer != nullptr) renderer->shutdown_resources();
+        }
+    } renderer_shutdown{room.get()};
+    if (!room->initialize_resources(shared_ui_font)
+            || runtime.session() == nullptr) {
+        return false;
+    }
     const auto current = std::make_unique<dungeon::DungeonSnapshot>(
         runtime.session()->snapshot());
     dungeon::DungeonRenderSnapshot* const world =
@@ -734,7 +757,6 @@ bool render_inventory_capture(const std::filesystem::path& run,
     const auto image = run / name;
     const bool exported = export_flushed_frame(image);
     EndDrawing();
-    room->shutdown_resources();
     std::error_code error{};
     const Image decoded = LoadImage(image.string().c_str());
     const bool valid = decoded.data != nullptr && decoded.width == 1280
@@ -749,7 +771,8 @@ bool render_inventory_capture(const std::filesystem::path& run,
 }
 
 std::optional<ScenarioResult> run_production_scenario(
-    const std::filesystem::path& run) noexcept {
+    const std::filesystem::path& run,
+    const platform::SharedUiFont& shared_ui_font) noexcept {
     std::uint64_t target_id = 0x1601U;
     std::uint64_t root{};
     std::uint16_t first_drop_ordinal{};
@@ -793,7 +816,7 @@ std::optional<ScenarioResult> run_production_scenario(
     result.first_drop_ordinal = first_drop_ordinal;
     result.first_spawn_distance = first_spawn_distance;
     result.first_spawn_position = first_spawn_position;
-    if (!drive_real_material_pickup(run, *runtime, result)
+    if (!drive_real_material_pickup(run, *runtime, shared_ui_font, result)
             || runtime->item_state() == nullptr
             || !settle_pending_save(*runtime)) {
         std::cerr << "stage16 failure=drive_real_material_pickup"
@@ -830,7 +853,8 @@ std::optional<ScenarioResult> run_production_scenario(
     static_cast<void>(inventory->process_input(*runtime, runtime->session()->snapshot(),
         click(first_inventory_cell())));
     const auto confirmation = platform::reinforcement_confirmation_layout(1280, 720);
-    result.confirmation_visible = render_inventory_capture(run, *runtime, *inventory,
+    result.confirmation_visible = render_inventory_capture(
+        run, *runtime, *inventory, shared_ui_font,
         "stage16-confirmation-1280x720.png");
     if (!result.confirmation_visible) {
         std::cerr << "stage16 failure=confirmation_capture\n";
@@ -848,7 +872,7 @@ std::optional<ScenarioResult> run_production_scenario(
                   << " destroyed=" << (result.destroyed ? 1 : 0) << '\n';
         return std::nullopt;
     }
-    if (!render_inventory_capture(run, *runtime, *inventory,
+    if (!render_inventory_capture(run, *runtime, *inventory, shared_ui_font,
             "stage16-complete-1280x720.png")) {
         std::cerr << "stage16 failure=complete_capture\n";
         return std::nullopt;
@@ -921,8 +945,30 @@ int main(int argc, char** argv) {
     if (!prepare_evidence(std::filesystem::absolute(argv[1]), run)) return 3;
     InitWindow(1280, 720, "Stage 16 Production UI Validation");
     if (!IsWindowReady()) return 4;
-    const auto scenario = run_production_scenario(run);
+    if (!ChangeDirectory(GetApplicationDirectory())) {
+        CloseWindow();
+        return 5;
+    }
+    platform::SharedUiFont shared_ui_font{};
+    if (!shared_ui_font.initialize()) {
+        CloseWindow();
+        return 6;
+    }
+    const Font borrowed_font = shared_ui_font.font();
+    const std::size_t borrowed_atlas_bytes = shared_ui_font.atlas_bytes();
+    if (!shared_ui_font.initialize()
+            || shared_ui_font.font().texture.id != borrowed_font.texture.id
+            || shared_ui_font.font().glyphs != borrowed_font.glyphs
+            || shared_ui_font.atlas_bytes() != borrowed_atlas_bytes
+            || shared_ui_font.active_instance_count() != 1U
+            || shared_ui_font.total_atlas_bytes() != borrowed_atlas_bytes) {
+        shared_ui_font.shutdown();
+        CloseWindow();
+        return 7;
+    }
+    const auto scenario = run_production_scenario(run, shared_ui_font);
     const bool written = scenario.has_value() && write_state(run, *scenario);
+    shared_ui_font.shutdown();
     CloseWindow();
     if (!scenario.has_value()) return 1;
     const bool passed = written && scenario->ground_material_visible && scenario->real_material_pickup

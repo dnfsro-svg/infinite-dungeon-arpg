@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$EvidenceDirectory,
     [Parameter(Mandatory = $true)][string]$Validator,
-    [Parameter(Mandatory = $true)][string]$MutationRoot
+    [Parameter(Mandatory = $true)][string]$MutationRoot,
+    [switch]$BundledFontOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,7 +73,7 @@ function Replace-RegexRequired([string]$Content, [string]$Pattern,
 }
 
 function Invoke-Validator([string]$Directory,
-        [string]$PublishedItemAtlas = '') {
+        [string]$PublishedItemAtlas = '', [switch]$FontOnly) {
     $savedPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
@@ -81,9 +82,49 @@ function Invoke-Validator([string]$Directory,
         if (-not [string]::IsNullOrWhiteSpace($PublishedItemAtlas)) {
             $validatorArguments += @('-ItemAtlasPath', $PublishedItemAtlas)
         }
+        if ($FontOnly) { $validatorArguments += '-BundledFontOnly' }
         & powershell.exe @validatorArguments *> $null
         return [int]$LASTEXITCODE
     } finally { $ErrorActionPreference = $savedPreference }
+}
+
+if ($BundledFontOnly) {
+    $fontFixture = Join-Path $MutationRoot 'bundled-font-pristine'
+    New-Item -ItemType Directory -Path $fontFixture -Force | Out-Null
+    $fontReport = @'
+bundled_font_runtime=pass
+bundled_font_glyph_count=517
+bundled_font_instance_count=1
+bundled_font_subset_capacity=640
+bundled_font_source_base_size=96
+bundled_font_max_display_size=39
+bundled_font_atlas_bytes=8388608
+bundled_font_atlas_byte_budget=33554432
+bundled_font_total_atlas_bytes=8388608
+bundled_font_total_atlas_byte_budget=33554432
+'@
+    Set-Content -LiteralPath (Join-Path $fontFixture `
+        'stage12-material-evidence.txt') -Value $fontReport -Encoding UTF8
+    if ((Invoke-Validator $fontFixture -FontOnly) -ne 0) {
+        throw 'bundled font validator rejected minimal pristine fixture'
+    }
+    foreach ($mutation in @(
+            @{Name='font-instance-fabrication'; Old='bundled_font_instance_count=1'; New='bundled_font_instance_count=3'},
+            @{Name='font-total-fabrication'; Old='bundled_font_total_atlas_bytes=8388608'; New='bundled_font_total_atlas_bytes=16777216'})) {
+        $target = Join-Path $MutationRoot $mutation.Name
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        $mutated = $fontReport.Replace($mutation.Old, $mutation.New)
+        if ($mutated -eq $fontReport) {
+            throw "bundled font mutation was a no-op: $($mutation.Name)"
+        }
+        Set-Content -LiteralPath (Join-Path $target `
+            'stage12-material-evidence.txt') -Value $mutated -Encoding UTF8
+        if ((Invoke-Validator $target -FontOnly) -eq 0) {
+            throw "bundled font validator accepted mutation: $($mutation.Name)"
+        }
+    }
+    Write-Output 'Stage 12 bundled font validator self-test rejected all mutations'
+    exit 0
 }
 
 $pristineExitCode = Invoke-Validator $EvidenceDirectory
