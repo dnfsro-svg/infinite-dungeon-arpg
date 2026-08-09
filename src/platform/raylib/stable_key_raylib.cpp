@@ -52,15 +52,15 @@ constexpr std::array<StableKeyEntry,
     {settings::StableKey::digit_7, KEY_SEVEN, "7"},
     {settings::StableKey::digit_8, KEY_EIGHT, "8"},
     {settings::StableKey::digit_9, KEY_NINE, "9"},
-    {settings::StableKey::arrow_up, KEY_UP, "Up"},
-    {settings::StableKey::arrow_down, KEY_DOWN, "Down"},
-    {settings::StableKey::arrow_left, KEY_LEFT, "Left"},
-    {settings::StableKey::arrow_right, KEY_RIGHT, "Right"},
-    {settings::StableKey::space, KEY_SPACE, "Space"},
-    {settings::StableKey::left_shift, KEY_LEFT_SHIFT, "Left Shift"},
-    {settings::StableKey::right_shift, KEY_RIGHT_SHIFT, "Right Shift"},
-    {settings::StableKey::left_control, KEY_LEFT_CONTROL, "Left Ctrl"},
-    {settings::StableKey::right_control, KEY_RIGHT_CONTROL, "Right Ctrl"},
+    {settings::StableKey::arrow_up, KEY_UP, u8"上方向键"},
+    {settings::StableKey::arrow_down, KEY_DOWN, u8"下方向键"},
+    {settings::StableKey::arrow_left, KEY_LEFT, u8"左方向键"},
+    {settings::StableKey::arrow_right, KEY_RIGHT, u8"右方向键"},
+    {settings::StableKey::space, KEY_SPACE, u8"空格"},
+    {settings::StableKey::left_shift, KEY_LEFT_SHIFT, u8"左 Shift"},
+    {settings::StableKey::right_shift, KEY_RIGHT_SHIFT, u8"右 Shift"},
+    {settings::StableKey::left_control, KEY_LEFT_CONTROL, u8"左 Ctrl"},
+    {settings::StableKey::right_control, KEY_RIGHT_CONTROL, u8"右 Ctrl"},
 }};
 
 }  // namespace
@@ -79,7 +79,7 @@ std::optional<settings::StableKey> stable_key_from_raylib(int key) noexcept {
 
 const char* stable_key_label(settings::StableKey key) noexcept {
     const std::size_t index = static_cast<std::size_t>(key);
-    return index < kStableKeys.size() ? kStableKeys[index].label : "Unknown";
+    return index < kStableKeys.size() ? kStableKeys[index].label : u8"未知";
 }
 
 }  // namespace arpg::platform

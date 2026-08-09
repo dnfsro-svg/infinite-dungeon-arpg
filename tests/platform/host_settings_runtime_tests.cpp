@@ -280,7 +280,7 @@ arpg::test::Failure preview_failure_preserves_live_and_reports_message()
     ARPG_REQUIRE(same_settings(menu.draft, draft_before));
     ARPG_REQUIRE(same_settings(input, input_before));
     ARPG_REQUIRE(menu.message != nullptr);
-    ARPG_REQUIRE(std::strcmp(menu.message, "Live preview failed") == 0);
+    ARPG_REQUIRE(std::strcmp(menu.message, u8"实时预览失败") == 0);
     return {};
 }
 
@@ -307,7 +307,7 @@ arpg::test::Failure apply_commits_every_field_and_advances_revision() noexcept {
     ARPG_REQUIRE(same_settings(live, expected));
     ARPG_REQUIRE(same_settings(input, expected));
     ARPG_REQUIRE(menu.message != nullptr);
-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings saved") == 0);
+    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置已保存") == 0);
     return {};
 }
 
@@ -336,7 +336,7 @@ arpg::test::Failure save_failure_rolls_back_live_and_reports_retry()
     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
     ARPG_REQUIRE(menu.message != nullptr);
     ARPG_REQUIRE(std::strcmp(menu.message,
-        "Settings save failed; retry") == 0);
+        u8"设置保存失败，请重试") == 0);
     return {};
 }
 
@@ -371,7 +371,7 @@ arpg::test::Failure stale_apply_reloads_external_settings() noexcept {
     ARPG_REQUIRE(backend.vsync == external.vsync_enabled);
     ARPG_REQUIRE(menu.message != nullptr);
     ARPG_REQUIRE(std::strcmp(menu.message,
-        "Settings changed in another game instance; reloaded") == 0);
+        u8"另一实例修改已重载") == 0);
     return {};
 }
 
@@ -401,7 +401,7 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
         ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
         ARPG_REQUIRE(menu.message != nullptr);
         ARPG_REQUIRE(std::strcmp(menu.message,
-            "Settings save busy in another game instance; try again") == 0);
+            u8"另一实例保存繁忙") == 0);
     }
     {
         MemorySettingsFiles files{};
@@ -423,7 +423,7 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
         ARPG_REQUIRE(same_settings(input, menu.committed));
         ARPG_REQUIRE(menu.message != nullptr);
         ARPG_REQUIRE(std::strcmp(menu.message,
-            "Settings storage conflict; restart to recover") == 0);
+            u8"设置存储冲突，需重启") == 0);
     }
     return {};
 }
@@ -452,7 +452,7 @@ arpg::test::Failure rollback_failure_preserves_live_and_reports_message()
     ARPG_REQUIRE(same_settings(menu.draft, draft_before));
     ARPG_REQUIRE(same_settings(input, input_before));
     ARPG_REQUIRE(menu.message != nullptr);
-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings rollback failed") == 0);
+    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
     return {};
 }
 
@@ -505,7 +505,7 @@ arpg::test::Failure apply_preview_failure_rolls_back_and_reports_preview()
     settings::SettingsData expected_draft = edited;
     expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
-    ARPG_REQUIRE(std::strcmp(menu.message, "Live preview failed") == 0);
+    ARPG_REQUIRE(std::strcmp(menu.message, u8"实时预览失败") == 0);
     return {};
 }
 
@@ -539,7 +539,7 @@ arpg::test::Failure apply_preview_and_rollback_failure_reports_rollback()
     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
     ARPG_REQUIRE(same_settings(input, input_before));
-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings rollback failed") == 0);
+    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
     return {};
 }
 
@@ -569,7 +569,7 @@ arpg::test::Failure apply_save_and_rollback_failure_keeps_previewed_live()
     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
     ARPG_REQUIRE(same_settings(input, input_before));
-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings rollback failed") == 0);
+    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
     return {};
 }
 

@@ -1,5 +1,7 @@
 #include "host_settings_runtime.hpp"
 
+#include "ui_text_catalog.hpp"
+
 #include "pause_menu_state.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "raylib_host.hpp"
@@ -7,19 +9,23 @@
 #include <cassert>
 
 namespace arpg::platform {
+
 namespace {
 
-constexpr char kSettingsPreviewFailed[] = "Live preview failed";
-constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
-constexpr char kSettingsSaveBusy[] =
-    "Settings save busy in another game instance; try again";
-constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
-constexpr char kSettingsSaved[] = "Settings saved";
-constexpr char kSettingsReloadedElsewhere[] =
-    "Settings changed in another game instance; reloaded";
-constexpr char kSettingsStorageConflict[] =
-    "Settings storage conflict; restart to recover";
-constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
+const char* const kSettingsPreviewFailed =
+    ui_text(UiTextId::settings_preview_failed);
+const char* const kSettingsSaveFailed =
+    ui_text(UiTextId::settings_save_failed_retry);
+const char* const kSettingsSaveBusy = ui_text(UiTextId::settings_save_busy);
+const char* const kSettingsRollbackFailed =
+    ui_text(UiTextId::settings_rollback_failed);
+const char* const kSettingsSaved = ui_text(UiTextId::settings_saved);
+const char* const kSettingsReloadedElsewhere =
+    ui_text(UiTextId::settings_reloaded_elsewhere);
+const char* const kSettingsStorageConflict =
+    ui_text(UiTextId::settings_storage_conflict);
+const char* const kSettingsRecoveredDefaults =
+    ui_text(UiTextId::settings_recovered_defaults);
 
 }  // namespace
 

@@ -416,6 +416,7 @@ test::Failure reserved_and_invalid_capture_remain_active() noexcept {
         platform::PauseCommand::none);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::capture_binding);
     ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(state.message, u8"该按键不可绑定") == 0);
     ARPG_REQUIRE(state.draft.bindings == original.bindings);
     const char* reserved_message = state.message;
     ARPG_REQUIRE(update(state, capture_input(settings::StableKey::count)) ==
@@ -518,6 +519,7 @@ test::Failure apply_rejects_invalid_draft() noexcept {
     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
     ARPG_REQUIRE(state.draft.revision == 0U);
     ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(state.message, u8"设置无效") == 0);
     return {};
 }
 
@@ -530,6 +532,7 @@ test::Failure apply_rejects_revision_overflow() noexcept {
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
     ARPG_REQUIRE(state.draft.revision == 0U);
     ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(state.message, u8"版本号已达上限") == 0);
     return {};
 }
 

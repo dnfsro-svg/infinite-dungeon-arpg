@@ -1,5 +1,7 @@
 #include "pause_menu_state.hpp"
 
+#include "ui_text_catalog.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -23,10 +25,6 @@ constexpr std::size_t kSettingsAudioBackRow = 5U;
 constexpr std::size_t kSettingsDisplayLootFilterRow = 2U;
 constexpr std::size_t kSettingsDisplayBackRow = 3U;
 constexpr std::size_t kSettingsBindingsBackRow = 10U;
-
-constexpr char kInvalidBindingMessage[] = "Key cannot be assigned";
-constexpr char kInvalidSettingsMessage[] = "Settings are invalid";
-constexpr char kRevisionOverflowMessage[] = "Settings revision limit reached";
 
 [[nodiscard]] bool confirmed(const PauseInput& input) noexcept {
     return input.enter || input.activate;
@@ -238,12 +236,12 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
             if (state.selected_row == kSettingsHomeApplyRow) {
                 if (settings::validate_settings(state.draft) !=
                     settings::SettingsValidationError::none) {
-                    state.message = kInvalidSettingsMessage;
+                    state.message = ui_text(UiTextId::settings_invalid);
                     return PauseCommand::none;
                 }
                 if (state.committed.revision ==
                     std::numeric_limits<std::uint64_t>::max()) {
-                    state.message = kRevisionOverflowMessage;
+                    state.message = ui_text(UiTextId::settings_revision_limit);
                     return PauseCommand::none;
                 }
                 state.draft.revision = state.committed.revision + 1U;
@@ -327,7 +325,7 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
     if (!state.capture_action.has_value() ||
         !settings::assign_or_swap(
             state.draft, *state.capture_action, *input.captured_key)) {
-        state.message = kInvalidBindingMessage;
+        state.message = ui_text(UiTextId::settings_invalid_binding);
         return PauseCommand::none;
     }
     state.screen = PauseScreen::settings;

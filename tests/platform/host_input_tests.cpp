@@ -34,8 +34,8 @@ constexpr std::array<const char*, kStableKeyCount> kExpectedLabels{{
     "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L",
     "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X",
     "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    "Up", "Down", "Left", "Right", "Space", "Left Shift", "Right Shift",
-    "Left Ctrl", "Right Ctrl",
+    u8"上方向键", u8"下方向键", u8"左方向键", u8"右方向键", u8"空格",
+    u8"左 Shift", u8"右 Shift", u8"左 Ctrl", u8"右 Ctrl",
 }};
 
 [[nodiscard]] constexpr std::size_t key_index(settings::StableKey key) noexcept {
@@ -78,7 +78,7 @@ test::Failure adapter_rejects_unknown_values() noexcept {
     ARPG_REQUIRE(!platform::stable_key_from_raylib(KEY_NULL).has_value());
     ARPG_REQUIRE(!platform::stable_key_from_raylib(KEY_ESCAPE).has_value());
     ARPG_REQUIRE(std::strcmp(
-        platform::stable_key_label(settings::StableKey::count), "Unknown") == 0);
+        platform::stable_key_label(settings::StableKey::count), u8"未知") == 0);
     return {};
 }
 

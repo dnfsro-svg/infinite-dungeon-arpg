@@ -28,7 +28,7 @@ std::size_t utf8_codepoint_count(const char* text) noexcept {
 }
 
 arpg::test::Failure fixed_messages_are_chinese() noexcept {
-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 32U>
+    constexpr std::array<std::pair<platform::UiTextId, const char*>, 43U>
         kExpectedTexts{{
             {platform::UiTextId::pause_title, u8"暂停"},
             {platform::UiTextId::pause_continue, u8"继续游戏"},
@@ -43,6 +43,17 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
             {platform::UiTextId::settings_cancel, u8"取消"},
             {platform::UiTextId::settings_saved_prefix, u8"已保存："},
             {platform::UiTextId::settings_unknown, u8"未知"},
+            {platform::UiTextId::settings_invalid_binding, u8"该按键不可绑定"},
+            {platform::UiTextId::settings_invalid, u8"设置无效"},
+            {platform::UiTextId::settings_revision_limit, u8"版本号已达上限"},
+            {platform::UiTextId::settings_preview_failed, u8"实时预览失败"},
+            {platform::UiTextId::settings_save_failed_retry, u8"设置保存失败，请重试"},
+            {platform::UiTextId::settings_save_busy, u8"另一实例保存繁忙"},
+            {platform::UiTextId::settings_rollback_failed, u8"设置回滚失败"},
+            {platform::UiTextId::settings_saved, u8"设置已保存"},
+            {platform::UiTextId::settings_reloaded_elsewhere, u8"另一实例修改已重载"},
+            {platform::UiTextId::settings_storage_conflict, u8"设置存储冲突，需重启"},
+            {platform::UiTextId::settings_recovered_defaults, u8"设置已恢复默认值"},
             {platform::UiTextId::hud_health, u8"生命"},
             {platform::UiTextId::hud_barrier, u8"护盾"},
             {platform::UiTextId::hud_experience, u8"经验"},
@@ -98,14 +109,26 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
 }
 
 arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
-    constexpr std::array<platform::UiTextId, 32U> texts{{
+    constexpr std::array<platform::UiTextId, 43U> texts{{
         platform::UiTextId::pause_title, platform::UiTextId::pause_continue,
         platform::UiTextId::pause_settings, platform::UiTextId::pause_quit,
         platform::UiTextId::settings_title, platform::UiTextId::settings_audio,
         platform::UiTextId::settings_display, platform::UiTextId::settings_bindings,
         platform::UiTextId::settings_restore_defaults, platform::UiTextId::settings_apply,
         platform::UiTextId::settings_cancel, platform::UiTextId::settings_saved_prefix,
-        platform::UiTextId::settings_unknown, platform::UiTextId::hud_health,
+        platform::UiTextId::settings_unknown,
+        platform::UiTextId::settings_invalid_binding,
+        platform::UiTextId::settings_invalid,
+        platform::UiTextId::settings_revision_limit,
+        platform::UiTextId::settings_preview_failed,
+        platform::UiTextId::settings_save_failed_retry,
+        platform::UiTextId::settings_save_busy,
+        platform::UiTextId::settings_rollback_failed,
+        platform::UiTextId::settings_saved,
+        platform::UiTextId::settings_reloaded_elsewhere,
+        platform::UiTextId::settings_storage_conflict,
+        platform::UiTextId::settings_recovered_defaults,
+        platform::UiTextId::hud_health,
         platform::UiTextId::hud_barrier, platform::UiTextId::hud_experience,
         platform::UiTextId::hud_level, platform::UiTextId::save_saving,
         platform::UiTextId::save_saved, platform::UiTextId::save_recovered,
@@ -211,7 +234,7 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
 arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
     std::size_t count{};
     platform::visit_ui_text_catalog(&count_text, &count);
-    ARPG_REQUIRE(count == 271U);
+    ARPG_REQUIRE(count == 282U);
     return {};
 }
 
@@ -222,7 +245,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 271U);
+        ARPG_REQUIRE(count == 282U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

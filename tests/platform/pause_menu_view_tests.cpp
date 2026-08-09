@@ -434,7 +434,7 @@ test::Failure capture_text_fits_centered_with_real_font_measurement() noexcept {
     const platform::PauseMenuView view =
         platform::make_pause_menu_view(state);
     ARPG_REQUIRE(std::strcmp(view.rows[0].primary.data(),
-        u8"请按下用于轻攻击的按键（当前：Right Shift）") == 0);
+        u8"请按下用于轻攻击的按键（当前：右 Shift）") == 0);
 
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
@@ -482,8 +482,8 @@ test::Failure capture_text_fits_centered_with_real_font_measurement() noexcept {
     }
 
     constexpr const char* kOversized =
-        u8"请按下用于轻攻击的按键（当前：Right Shift）"
-        u8"请按下用于轻攻击的按键（当前：Right Shift）";
+        u8"请按下用于轻攻击的按键（当前：右 Shift）"
+        u8"请按下用于轻攻击的按键（当前：右 Shift）";
     const auto layout = platform::pause_menu_layout(800, 450, 1U);
     std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
     const auto shortened = platform::fit_centered_pause_text_layout(
