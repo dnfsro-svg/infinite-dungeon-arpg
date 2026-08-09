@@ -32,6 +32,22 @@ endfunction()
 
 run_guard(clean "${ORIGINAL}" TRUE)
 
+set(DEAD_REQUIRED_CALL
+    "if (false) {\n        format_notice(notice, \"%s %s\",\n            control_hint_key_label(hints, action), suffix);\n    }")
+set(LOOP_LOOKUP
+    "${DEAD_REQUIRED_CALL}\n    const char* parsed_key = u8\"未知\";\n    for (const char* cursor = suffix; *cursor != '\\0'; ++cursor) {\n        if (*cursor == ':') parsed_key = cursor + 1;\n    }\n    format_notice(notice, \"%s %s\", parsed_key, suffix);")
+string(REPLACE
+    "format_notice(notice, \"%s %s\",\n        control_hint_key_label(hints, action), suffix);"
+    "${LOOP_LOOKUP}" MUTATED "${ORIGINAL}")
+run_guard(dead_required_call_with_loop_lookup "${MUTATED}" FALSE)
+
+set(STD_SEARCH_LOOKUP
+    "${DEAD_REQUIRED_CALL}\n    const char* parsed_key = std::search(suffix, suffix + 4, suffix, suffix + 1);\n    format_notice(notice, \"%s %s\", parsed_key, suffix);")
+string(REPLACE
+    "format_notice(notice, \"%s %s\",\n        control_hint_key_label(hints, action), suffix);"
+    "${STD_SEARCH_LOOKUP}" MUTATED "${ORIGINAL}")
+run_guard(dead_required_call_with_std_search "${MUTATED}" FALSE)
+
 set(COMMENTED_FORBIDDEN "${ORIGINAL}\n// memcmp(hints.primary, hints.secondary)\n/* std::strstr std::strchr std::string_view::find */\n")
 run_guard(forbidden_tokens_in_comments_are_ignored "${COMMENTED_FORBIDDEN}" TRUE)
 

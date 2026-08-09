@@ -4,43 +4,43 @@ if(NOT DEFINED HUD_NOTICE_SOURCE OR NOT EXISTS "${HUD_NOTICE_SOURCE}")
     message(FATAL_ERROR "HUD notice source is required")
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
 file(READ "${HUD_NOTICE_SOURCE}" SOURCE)
 
-string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" CODE "${SOURCE}")
-string(REGEX REPLACE "//[^\r\n]*" "" CODE "${CODE}")
-string(REGEX REPLACE "[ \t\r\n]+" " " NORMALIZED_CODE "${CODE}")
-
-foreach(FORBIDDEN_REGEX IN ITEMS
-        "hints[ \t\r\n]*\\.[ \t\r\n]*(primary|secondary)"
-        "(std::)?strstr[ \t\r\n]*\\("
-        "(std::)?strchr[ \t\r\n]*\\("
-        "(std::)?memcmp[ \t\r\n]*\\("
-        "(std::)?string_view"
-        "\\.[ \t\r\n]*find[ \t\r\n]*\\("
-        "\"Interact\""
-        "\"Inventory\""
-        "\"Passive Tree\"")
-    string(REGEX MATCH "${FORBIDDEN_REGEX}" FOUND "${CODE}")
-    if(FOUND)
-        message(FATAL_ERROR
-            "HUD notice display-text parsing is forbidden: ${FORBIDDEN_REGEX}")
-    endif()
-endforeach()
-
-set(REQUIRED_FORMAT_CALL
-    "format_notice(notice, \"%s %s\", control_hint_key_label(hints, action), suffix);")
-string(FIND "${NORMALIZED_CODE}" "${REQUIRED_FORMAT_CALL}" FOUND)
-if(FOUND EQUAL -1)
+extract_cpp_function_body("${SOURCE}" "void add_action_notice("
+    ADD_ACTION_BODY)
+set(EXPECTED_ADD_ACTION_BODY
+    "HudNotice notice{}; notice.kind = kind; notice.priority = priority; notice.seconds_left = kTransientSeconds; format_notice(notice, \"%s %s\", control_hint_key_label(hints, action), suffix); enqueue(notices, dropped_count, notice);")
+if(NOT ADD_ACTION_BODY STREQUAL EXPECTED_ADD_ACTION_BODY)
     message(FATAL_ERROR
-        "HUD notice action formatter must consume control_hint_key_label")
+        "add_action_notice must be the exact structured-binding formatter")
 endif()
 
-foreach(REQUIRED_ACTION IN ITEMS interact inventory passive_tree)
-    set(REQUIRED_CALL_REGEX
-        "add_action_notice\\([^;]*hints,[ \t\r\n]*settings::SettingAction::${REQUIRED_ACTION},")
-    string(REGEX MATCH "${REQUIRED_CALL_REGEX}" FOUND "${CODE}")
-    if(NOT FOUND)
+extract_cpp_function_body("${SOURCE}"
+    "void add_abyss_confirmation_notice(" ABYSS_BODY)
+set(EXPECTED_ABYSS_BODY
+    "const AbyssHudValues values = abyss_hud_values(current); if (values.confirmation_transition == dungeon::TransitionKind::descent) { add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, hints, settings::SettingAction::interact, u8\"再次交互，放弃剩余奖励并下降\"); return; } add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, u8\"离开后再次触碰同一出口以放弃全部剩余奖励\");")
+if(NOT ABYSS_BODY STREQUAL EXPECTED_ABYSS_BODY)
+    message(FATAL_ERROR
+        "Abyss action notice must use the exact structured interact call")
+endif()
+
+extract_cpp_function_body("${SOURCE}" "void HudNoticeState::observe("
+    OBSERVE_BODY)
+foreach(REQUIRED_BLOCK IN ITEMS
+        "if (context_changed && exits_unlocked && current.has_hole) { add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact, kHolePriority, hints, settings::SettingAction::interact, u8\"交互：进入下一层\"); }"
+        "if (context_changed && current.inventory_count != 0U) { add_action_notice(notices_, dropped_count_, HudNoticeKind::inventory, kInventoryPriority, hints, settings::SettingAction::inventory, u8\"打开背包\"); }"
+        "if (context_changed && awaiting_exit && current.progression.unspent_passive_points != 0U) { add_action_notice(notices_, dropped_count_, HudNoticeKind::passive_tree, kPassiveTreePriority, hints, settings::SettingAction::passive_tree, u8\"打开被动树\"); }")
+    string(FIND "${OBSERVE_BODY}" "${REQUIRED_BLOCK}" FOUND)
+    if(FOUND EQUAL -1)
         message(FATAL_ERROR
-            "HUD notice structured action call missing: ${REQUIRED_ACTION}")
+            "HudNoticeState::observe structured action block missing")
     endif()
 endforeach()
+string(REGEX MATCHALL "add_action_notice\\(" OBSERVE_ACTION_CALLS
+    "${OBSERVE_BODY}")
+list(LENGTH OBSERVE_ACTION_CALLS OBSERVE_ACTION_CALL_COUNT)
+if(NOT OBSERVE_ACTION_CALL_COUNT EQUAL 3)
+    message(FATAL_ERROR
+        "HudNoticeState::observe must contain exactly three action calls")
+endif()
