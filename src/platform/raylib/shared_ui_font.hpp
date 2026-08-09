@@ -1,12 +1,14 @@
 #pragma once
 
+#include "ui_text_catalog.hpp"
+
 #include <array>
 #include <cstddef>
 
 namespace arpg::platform {
 
 inline constexpr std::size_t kUiGlyphCapacity = 640U;
-inline constexpr std::size_t kUiFontAtlasInstanceCount = 1U;
+inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
 inline constexpr std::size_t kUiFontAtlasByteBudget =
     32U * 1024U * 1024U;
 inline constexpr int kUiFontSourceBaseSize = 96;
@@ -36,6 +38,11 @@ struct SharedUiFont final {
     UiGlyphPlan glyph_plan{};
 };
 
+using UiGlyphPlanCatalogVisitor = void (*)(UiTextVisitor visitor,
+    void* context) noexcept;
+
+[[nodiscard]] UiGlyphPlan build_ui_glyph_plan(
+    UiGlyphPlanCatalogVisitor visit_catalog) noexcept;
 [[nodiscard]] UiGlyphPlan ui_glyph_plan() noexcept;
 [[nodiscard]] bool ui_glyph_plan_has_codepoint(
     const UiGlyphPlan& plan, int codepoint) noexcept;

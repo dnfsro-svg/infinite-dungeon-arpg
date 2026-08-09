@@ -22,6 +22,30 @@ void record_catalog_coverage(const char* text, void* context) noexcept {
         && platform::ui_glyph_plan_covers_text(*coverage.plan, text);
 }
 
+void visit_synthetic_cjk_codepoints(platform::UiTextVisitor visitor,
+    void* context, int count) noexcept {
+    for (int offset = 0; offset < count; ++offset) {
+        const int codepoint = 0x4E00 + offset;
+        char text[4]{
+            static_cast<char>(0xE0U | ((codepoint >> 12U) & 0x0FU)),
+            static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3FU)),
+            static_cast<char>(0x80U | (codepoint & 0x3FU)),
+            '\0',
+        };
+        visitor(text, context);
+    }
+}
+
+void visit_exact_glyph_capacity(platform::UiTextVisitor visitor,
+    void* context) noexcept {
+    visit_synthetic_cjk_codepoints(visitor, context, 545);
+}
+
+void visit_one_codepoint_over_capacity(platform::UiTextVisitor visitor,
+    void* context) noexcept {
+    visit_synthetic_cjk_codepoints(visitor, context, 546);
+}
+
 arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
     CatalogCoverage coverage{&plan};
@@ -50,16 +74,28 @@ arpg::test::Failure plan_codepoints_are_unique() noexcept {
 }
 
 arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept {
-    static_assert(platform::kUiFontAtlasInstanceCount == 1U);
+    static_assert(platform::kUiFontAtlasInstanceCount == 3U);
     static_assert(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
     static_assert(platform::ui_font_atlas_bytes(4096, 4096)
         == 32U * 1024U * 1024U);
     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
     ARPG_REQUIRE(!plan.capacity_exceeded);
+    for (std::size_t index = 0U; index < 95U; ++index) {
+        ARPG_REQUIRE(plan.codepoints[index] == static_cast<int>(32U + index));
+    }
 
-    platform::UiGlyphPlan overflow = plan;
-    overflow.capacity_exceeded = true;
-    ARPG_REQUIRE(!platform::ui_glyph_plan_covers_text(overflow, u8"混沌之眼"));
+    const platform::UiGlyphPlan exact_capacity =
+        platform::build_ui_glyph_plan(&visit_exact_glyph_capacity);
+    ARPG_REQUIRE(exact_capacity.codepoint_count == platform::kUiGlyphCapacity);
+    ARPG_REQUIRE(!exact_capacity.capacity_exceeded);
+    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(exact_capacity, u8"一"));
+
+    const platform::UiGlyphPlan over_capacity =
+        platform::build_ui_glyph_plan(&visit_one_codepoint_over_capacity);
+    ARPG_REQUIRE(over_capacity.codepoint_count == platform::kUiGlyphCapacity);
+    ARPG_REQUIRE(over_capacity.capacity_exceeded);
+    ARPG_REQUIRE(!platform::ui_glyph_plan_covers_text(over_capacity, u8"一"));
+
     return {};
 }
 

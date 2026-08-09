@@ -90,15 +90,20 @@ void add_catalog_text(const char* text, void* context) noexcept {
 
 }  // namespace
 
-UiGlyphPlan ui_glyph_plan() noexcept {
+UiGlyphPlan build_ui_glyph_plan(
+    UiGlyphPlanCatalogVisitor visit_catalog) noexcept {
     UiGlyphPlan plan{};
     plan.candidate_paths = {{"assets/fonts/NotoSansCJKsc-Medium.otf"}};
     plan.candidate_count = 1U;
     for (int codepoint = 32; codepoint <= 126; ++codepoint) {
         add_codepoint(plan, codepoint);
     }
-    visit_ui_text_catalog(&add_catalog_text, &plan);
+    if (visit_catalog != nullptr) visit_catalog(&add_catalog_text, &plan);
     return plan;
+}
+
+UiGlyphPlan ui_glyph_plan() noexcept {
+    return build_ui_glyph_plan(&visit_ui_text_catalog);
 }
 
 bool ui_glyph_plan_has_codepoint(const UiGlyphPlan& plan,

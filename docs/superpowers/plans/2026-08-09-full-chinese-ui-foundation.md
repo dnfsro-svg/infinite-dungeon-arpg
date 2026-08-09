@@ -251,7 +251,7 @@ const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
 ARPG_REQUIRE(plan.codepoint_count > 384U);
 ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
 ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
-ARPG_REQUIRE(platform::kUiFontAtlasInstanceCount == 1U);
+ARPG_REQUIRE(platform::kUiFontAtlasInstanceCount == 3U);
 ARPG_REQUIRE(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
 ```
 
@@ -269,7 +269,9 @@ Expected: 编译失败于 `UiGlyphPlan` 缺失。
 
 ```cpp
 inline constexpr std::size_t kUiGlyphCapacity = 640U;
-inline constexpr std::size_t kUiFontAtlasInstanceCount = 1U;
+// Task 3 only unifies the glyph plan. The three existing renderer-owned
+// atlases remain real until Task 4 atomically transfers ownership.
+inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
 inline constexpr std::size_t kUiFontAtlasByteBudget =
     32U * 1024U * 1024U;
 inline constexpr int kUiFontSourceBaseSize = 96;
@@ -283,7 +285,7 @@ struct UiGlyphPlan final {
 };
 ```
 
-先加入 ASCII 32–126，再访问完整中文目录并去重。超过容量设置 `capacity_exceeded=true`，覆盖检查返回 false。`death_overlay_font_plan()` 和 `hud_font_plan()` 转发同一个字形结果，不得继续手写补字。
+先加入 ASCII 32–126，再访问完整中文目录并去重。超过容量设置 `capacity_exceeded=true`，覆盖检查返回 false。Task 3 的实例常量必须如实记录当前三个 renderer 各自拥有的图集；`death_overlay_font_plan()` 和 `hud_font_plan()` 转发同一个字形结果，不得继续手写补字。
 
 - [ ] **Step 4: 运行 15 个 foundation case 并确认 GREEN**
 
@@ -322,6 +324,10 @@ git commit -m "feat: unify Chinese UI glyph planning"
 - Produces: 一个宿主持有的 `SharedUiFont`；renderer 的 `initialize(const SharedUiFont&)` 仅建立借用。
 
 - [ ] **Step 1: 把现有字体测试改成单实例契约并观察 RED**
+
+Task 4 在实现宿主唯一所有权的同一变更中，把 Task 3 的阶段性
+`kUiFontAtlasInstanceCount == 3U` 原子切换为最终 `== 1U`；不得在 Task 3
+提前低报仍由三个 renderer 独立加载的资源。
 
 新增/更新断言：
 
