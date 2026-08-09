@@ -63,7 +63,7 @@ ctest --preset windows-msvc-debug --output-on-failure -R '^stage12\.material_for
 
 - 运行 474.70s；每个独立 raylib 初始化段各有一次 `Shared UI font loaded`，同一段内无重复加载。
 - 字体字段全部通过：`bundled_font_runtime=pass`、instance 1、glyph 517、atlas/total 均 8388608、capacity 640。
-- 整体测试仍 fail，原因不是字体生命周期：`hud_viewport_safe=fail`、HUD bounds/runtime draw fail，以及 Intel UHD 上 stress average 28.405 FPS、1% low 26.505 FPS，低于 60/45 门槛。
+- 整体测试仍 fail，原因不是字体生命周期：`hud_viewport_safe=fail`、`input_hole_regression=fail`、HUD bounds/runtime draw fail，以及 Intel UHD 上 stress average 28.405 FPS、1% low 26.505 FPS，低于 60/45 门槛。
 - 因正式证据不是 pristine pass，`stage12_material_validator_self_test.ps1` 在 pristine gate 以 exit 1 停止，无法进入负向 mutation；两个脚本均已通过 PowerShell 语法解析。
 
 ### 全平台与既有守卫
@@ -141,7 +141,7 @@ cmake --build --preset windows-msvc-debug --target arpg_stage16_loot_reinforceme
 
 ### Stage12 正式运行复验
 
-`stage12.material_formal` 运行 475.85s，整体仍因既有 `hud_viewport_safe=fail`、HUD runtime draws 与 Intel UHD 性能（average 28.400 FPS、1% low 26.655 FPS）失败。字体与本轮幂等检查通过：
+`stage12.material_formal` 运行 475.85s，整体仍因既有 `hud_viewport_safe=fail`、`input_hole_regression=fail`、HUD runtime draws 与 Intel UHD 性能（average 28.400 FPS、1% low 26.655 FPS）失败。字体与本轮幂等检查通过：
 
 - `overlay_resources_initialized=pass`（包含第二次 initialize 后 owner/borrower texture id、glyph 指针与 metrics 不变）；
 - `bundled_font_runtime=pass`；

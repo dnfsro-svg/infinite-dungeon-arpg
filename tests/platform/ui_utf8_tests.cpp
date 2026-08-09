@@ -76,6 +76,25 @@ arpg::test::Failure copy_never_splits_one_to_four_byte_code_points_at_capacity_b
     ARPG_REQUIRE(four.bytes_written == 10U);
     ARPG_REQUIRE(!four.truncated);
 
+    char prefix_only[2]{'x', 'x'};
+    const auto exhausted = platform::ui_utf8_copy(
+        prefix_only, sizeof(prefix_only), u8"😀A");
+    ARPG_REQUIRE(std::strcmp(prefix_only, "") == 0);
+    ARPG_REQUIRE(exhausted.bytes_written == 0U);
+    ARPG_REQUIRE(exhausted.input_was_valid);
+    ARPG_REQUIRE(exhausted.truncated);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(prefix_only));
+    ARPG_REQUIRE(prefix_only[0] == '\0');
+
+    constexpr char kInvalidAfterExhaustion[] =
+        "\xF0\x9F\x98\x80\x80" "A";
+    const auto invalid_tail = platform::ui_utf8_copy(
+        prefix_only, sizeof(prefix_only), kInvalidAfterExhaustion);
+    ARPG_REQUIRE(std::strcmp(prefix_only, "") == 0);
+    ARPG_REQUIRE(invalid_tail.bytes_written == 0U);
+    ARPG_REQUIRE(!invalid_tail.input_was_valid);
+    ARPG_REQUIRE(invalid_tail.truncated);
+
     char in_place[16] = u8"设置";
     const auto in_place_copy = platform::ui_utf8_copy(
         in_place, sizeof(in_place), in_place);

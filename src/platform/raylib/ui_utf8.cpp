@@ -229,6 +229,7 @@ UiUtf8CopyResult ui_utf8_copy(
     result.input_was_valid = source != nullptr;
     const std::size_t writable = writable_capacity(destination, capacity);
     std::size_t written{};
+    bool capacity_exhausted{};
     if (source == nullptr) {
         terminate(destination, capacity, written);
         return result;
@@ -245,8 +246,9 @@ UiUtf8CopyResult ui_utf8_copy(
             : 1U;
         result.input_was_valid = result.input_was_valid
             && decoded.kind == DecodeKind::valid;
-        if (output_length > writable - written) {
+        if (capacity_exhausted || output_length > writable - written) {
             result.truncated = true;
+            capacity_exhausted = true;
         } else if (decoded.kind == DecodeKind::valid) {
             write_bytes(destination, written, cursor, decoded.length);
         } else {

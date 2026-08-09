@@ -9,26 +9,26 @@ namespace {
 constexpr const char* kUnknown = u8"未知";
 
 constexpr std::array<const char*, 32U> kUiTexts{{
-    u8"暂停", u8"继续", u8"设置", u8"退出",
-    u8"设置", u8"音频", u8"显示", u8"按键绑定",
-    u8"恢复默认", u8"应用", u8"取消", u8"设置已保存：", kUnknown,
+    u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
+    u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
+    u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
     u8"生命", u8"护盾", u8"经验", u8"等级",
-    u8"正在保存", u8"保存完成", u8"已恢复存档", u8"保存错误",
-    u8"恢复", u8"无效存档槽",
+    u8"正在保存", u8"保存完成", u8"已恢复存档", u8"存档错误",
+    u8"需要恢复存档", u8"无效存档槽",
     u8"背包", u8"装备", u8"物品详情",
-    u8"被动树", u8"可用点数", u8"关闭",
+    u8"被动星图", u8"未分配点", u8"关闭",
     u8"调试就绪", u8"调试不可用", kUnknown,
 }};
 
 constexpr std::array<const char*, 18U> kItemBaseNames{{
-    u8"精炼之刃", u8"守卫头盔", u8"守护外套", u8"斗士手套", u8"行者长靴", u8"元素护符",
-    u8"迅捷匕首", u8"攻城巨刃", u8"暗影兜帽", u8"堡垒头盔", u8"夜行者外套", u8"城塞板甲",
-    u8"猎人护腕", u8"碎骨护手", u8"轻捷长靴", u8"铁胫甲", u8"三相吊坠", u8"混沌之眼",
+    u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套", u8"行者战靴", u8"元素护符",
+    u8"迅捷匕首", u8"攻城巨刃", u8"暗影兜帽", u8"堡垒头盔", u8"夜行者外衣", u8"城塞胸甲",
+    u8"猎手护腕", u8"碎骨护手", u8"轻捷战靴", u8"铁护胫", u8"三元吊坠", u8"混沌之眼",
 }};
 
 constexpr std::array<const char*, 14U> kMaterialNames{{
-    u8"蜕变石", u8"增幅石", u8"富豪石", u8"混沌石", u8"崇高石", u8"剥离石", u8"神圣石",
-    u8"重铸石", u8"定向石", u8"强化石", u8"强化券+6", u8"强化券+9", u8"强化券+12", u8"强化券+15",
+    u8"嬗变石", u8"增幅石", u8"富豪石", u8"混沌石", u8"崇高石", u8"剥离石", u8"神圣石",
+    u8"重铸石", u8"定向核心", u8"强化石", u8"+6 强化券", u8"+9 强化券", u8"+12 强化券", u8"+15 强化券",
 }};
 
 constexpr std::array<const char*, 6U> kItemSlotNames{{
@@ -58,18 +58,18 @@ constexpr std::array<const char*, 64U> kPassiveNodeNames{{
 }};
 
 constexpr std::array<const char*, 8U> kMonsterNames{{
-    u8"火焰爆弹", u8"火焰冲锋者", u8"水域壁垒", u8"水域支援者",
-    u8"雷霆射手", u8"雷霆突进者", u8"混沌追猎者", u8"混沌危害体",
+    u8"烈焰爆破者", u8"烈焰冲锋者", u8"水流壁垒", u8"水流援护者",
+    u8"雷电射手", u8"雷电突进者", u8"混沌追猎者", u8"混沌危机体",
 }};
 
 constexpr std::array<const char*, 12U> kMonsterAffixNames{{
-    u8"强壮", u8"狂暴", u8"迅捷", u8"装甲", u8"护盾", u8"多重射击",
-    u8"燃烧地面", u8"冰冷", u8"连锁闪电", u8"混沌腐蚀", u8"闪现突袭", u8"死亡爆炸",
+    u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多重投射",
+    u8"灼烧地面", u8"冰寒", u8"连锁闪电", u8"混沌腐蚀", u8"闪烁突袭", u8"死亡爆破",
 }};
 
 constexpr std::array<const char*, 12U> kMonsterAffixShortNames{{
-    u8"强壮", u8"狂暴", u8"迅捷", u8"装甲", u8"护盾", u8"多射",
-    u8"灼地", u8"冰冷", u8"链电", u8"腐蚀", u8"闪袭", u8"死爆",
+    u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多投",
+    u8"灼地", u8"冰寒", u8"链电", u8"腐蚀", u8"闪袭", u8"死爆",
 }};
 
 constexpr std::array<const char*, 10U> kSettingActionNames{{
@@ -83,7 +83,7 @@ constexpr std::array<const char*, 2U> kSkillNames{{
 // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
 // its existing death-overlay/HUD corpus in the single catalog visitor so the
 // shared glyph plan covers it without a second hand-maintained font list.
-constexpr std::array<const char*, 63U> kUiDynamicGlyphCoverage{{
+constexpr std::array<const char*, 65U> kUiDynamicGlyphCoverage{{
     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
     "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
@@ -117,6 +117,8 @@ constexpr std::array<const char*, 63U> kUiDynamicGlyphCoverage{{
     u8"离开将放弃剩余奖励",
     u8"可见：怪 105/105 环境 73/105 掉落 53/331",
     u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
+    u8"设置界面…",
+    u8"已拾取：强化石 x1、混沌石 x1",
 }};
 
 template <typename Id, std::size_t Count>
