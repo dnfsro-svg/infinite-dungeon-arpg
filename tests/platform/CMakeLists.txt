@@ -1871,6 +1871,15 @@ set_tests_properties(
     PROPERTIES LABELS "headless;platform;architecture")
 
 add_test(
+    NAME platform.hole_prompt_binding_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_test.cmake")
+set_tests_properties(
+    platform.hole_prompt_binding_source
+    PROPERTIES LABELS "headless;platform;architecture")
+
+add_test(
     NAME platform.host_validation_source
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"

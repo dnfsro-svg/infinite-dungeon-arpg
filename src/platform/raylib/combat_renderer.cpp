@@ -536,7 +536,8 @@ GroundLootView CombatRenderer::draw(
     float interpolation_alpha,
     bool draw_debug,
     const CombatFeedback& feedback,
-    bool audio_ready) noexcept {
+    bool audio_ready,
+    const char* interact_binding_label) noexcept {
     active_skill_draw_status_ = {};
     static_cast<void>(material_pack_.synchronize_residency(
         world_material_residency_request(world, current_hud.skill_loadout)));
@@ -587,7 +588,7 @@ GroundLootView CombatRenderer::draw(
         switch (stage) {
         case CombatRenderStage::room:
             draw_room(world, render_plan.ground_loot,
-                render_plan.material_loot, camera);
+                render_plan.material_loot, camera, interact_binding_label);
             draw_abyss_overlay(current_hud);
             break;
         case CombatRenderStage::actors:

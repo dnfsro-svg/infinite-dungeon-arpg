@@ -1108,7 +1108,7 @@ bool write_integration_render_snapshot(
     ClearBackground(Color{13, 17, 27, 255});
     platform::CombatFeedback feedback{};
     static_cast<void>(renderer.draw(snapshot, snapshot, *world, camera,
-        runtime_status, 0.0F, false, feedback, false));
+        runtime_status, 0.0F, false, feedback, false, "E"));
     observation.skill_draw = renderer.active_skill_draw_status();
     const Color expected_sentinel = integration_scene_sentinel(
         mode, tick, resolution);

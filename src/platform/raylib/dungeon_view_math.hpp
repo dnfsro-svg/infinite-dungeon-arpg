@@ -5,6 +5,7 @@
 
 #include <raylib.h>
 
+#include <array>
 #include <cstdint>
 
 namespace arpg::platform {
@@ -98,6 +99,7 @@ struct AbyssHudValues final {
 
 inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
 inline constexpr float kHoleInteractionRadius = 3.25F;
+using HoleInteractionPrompt = std::array<char, 32>;
 
 [[nodiscard]] DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
@@ -124,6 +126,8 @@ inline constexpr float kHoleInteractionRadius = 3.25F;
 [[nodiscard]] bool can_prompt_descent(
     const dungeon::DungeonSnapshot& snapshot,
     combat::Vec3 player_position) noexcept;
+[[nodiscard]] HoleInteractionPrompt hole_interaction_prompt(
+    const char* interact_binding_label) noexcept;
 [[nodiscard]] Rgba8 ecosystem_tint(
     dungeon::DungeonElement element) noexcept;
 [[nodiscard]] float abyss_pulse_alpha(float elapsed_seconds) noexcept;

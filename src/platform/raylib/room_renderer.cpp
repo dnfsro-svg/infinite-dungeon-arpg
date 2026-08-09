@@ -511,7 +511,8 @@ HoleVisualMode render_hole_visual_mode(
 
 void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
     const MaterialPack& material_pack,
-    const CombatCameraView& camera) noexcept {
+    const CombatCameraView& camera,
+    const char* interact_binding_label) noexcept {
     const HoleVisualMode hole = render_hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
@@ -542,8 +543,10 @@ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
     if (snapshot.has_combat && hole == HoleVisualMode::ready
         && player_in_hole_range(snapshot.combat.player.position,
             snapshot.hole.position, kHoleInteractionRadius)) {
-        constexpr const char* kPrompt = "E: DESCEND";
-        DrawText(kPrompt, x - MeasureText(kPrompt, 26) / 2, y + 36, 26, RAYWHITE);
+        const auto prompt = hole_interaction_prompt(
+            interact_binding_label);
+        DrawText(prompt.data(), x - MeasureText(prompt.data(), 26) / 2,
+            y + 36, 26, RAYWHITE);
     }
 }
 
@@ -637,7 +640,8 @@ void CombatRenderer::draw_room(
     const dungeon::DungeonRenderSnapshot& current,
     const GroundLootView& ground_loot,
     const MaterialLootView& material_loot,
-    const CombatCameraView& camera) noexcept {
+    const CombatCameraView& camera,
+    const char* interact_binding_label) noexcept {
     static_cast<void>(ground_loot);
     static_cast<void>(material_loot);
     const float width = static_cast<float>(GetScreenWidth());
@@ -655,7 +659,7 @@ void CombatRenderer::draw_room(
         material_pack_, current, camera, width, height);
     draw_doors(current, camera, width, height, material_pack_, hud_renderer_.hud_font(),
         hud_renderer_.font_ready());
-    draw_hole(current, material_pack_, camera);
+    draw_hole(current, material_pack_, camera, interact_binding_label);
     draw_ground_materials(
         current, material_pack_, camera, width, height);
     draw_ground_items(ground_item_range(current), loot_filter_mode_, material_pack_,

@@ -530,6 +530,23 @@ arpg::test::Failure progression_hud_values_follow_snapshot() noexcept {
     return {};
 }
 
+arpg::test::Failure hole_prompt_follows_current_interact_binding() noexcept {
+    const auto default_prompt = arpg::platform::hole_interaction_prompt("E");
+    const auto rebound_prompt = arpg::platform::hole_interaction_prompt("Right");
+    const auto longest_prompt =
+        arpg::platform::hole_interaction_prompt("Right Shift");
+    const auto fallback_prompt = arpg::platform::hole_interaction_prompt(nullptr);
+    const auto empty_fallback_prompt =
+        arpg::platform::hole_interaction_prompt("");
+    ARPG_REQUIRE(std::strcmp(default_prompt.data(), "E: DESCEND") == 0);
+    ARPG_REQUIRE(std::strcmp(rebound_prompt.data(), "Right: DESCEND") == 0);
+    ARPG_REQUIRE(std::strcmp(longest_prompt.data(),
+        "Right Shift: DESCEND") == 0);
+    ARPG_REQUIRE(std::strcmp(fallback_prompt.data(), "E: DESCEND") == 0);
+    ARPG_REQUIRE(std::strcmp(empty_fallback_prompt.data(), "E: DESCEND") == 0);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"door lifecycle modes", &door_modes_follow_room_lifecycle},
     {"same room interpolation", &same_room_snapshots_can_interpolate},
@@ -552,6 +569,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"save indicators and labels", &indicators_and_phase_labels_are_stable},
     {"recovery request gate", &recovery_requires_fault_and_n_press},
     {"progression HUD values", &progression_hud_values_follow_snapshot},
+    {"hole prompt follows interact binding",
+        &hole_prompt_follows_current_interact_binding},
 };
 
 }  // namespace

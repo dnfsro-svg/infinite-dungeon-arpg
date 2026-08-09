@@ -1067,7 +1067,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     previous, presented_snapshot, *render_world, frame_camera,
                     runtime.render_status(),
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
-                    feedback, audio_ready);
+                    feedback, audio_ready, stable_key_label(
+                        settings::binding_for(input_settings,
+                            settings::SettingAction::interact)));
             }();
             validation_runtime->observe_active_skill_draw(
                 presented_snapshot, renderer.active_skill_draw_status());

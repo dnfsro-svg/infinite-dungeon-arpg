@@ -448,7 +448,7 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
     ARPG_REQUIRE(door_call.find(
         "draw_material_background") == std::string::npos);
     ARPG_REQUIRE(draw_room_block.find(
-        "draw_hole(current, material_pack_, camera)")
+        "draw_hole(current, material_pack_, camera, interact_binding_label)")
         != std::string::npos);
     ARPG_REQUIRE(occurrence_count(draw_room_block,
         "draw_fire_room_props(") == 0U);

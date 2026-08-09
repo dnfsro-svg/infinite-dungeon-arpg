@@ -193,6 +193,16 @@ bool cplay028_pause_focus_only() noexcept {
     return enabled;
 }
 
+bool cplay030_hole_prompt_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY030_HOLE_PROMPT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -205,6 +215,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay030_hole_prompt_only()) {
+        const arpg::test::TestSuite cplay030_only[] = {
+            dungeon_view_math_suite(),
+        };
+        return arpg::test::run_suites(cplay030_only, 20,
+            "CPLAY-030 dynamic hole interaction prompt");
+    }
     if (cplay028_pause_focus_only()) {
         const arpg::test::TestSuite cplay028_only[] = {
             pause_menu_state_suite(),
@@ -363,6 +380,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 648,
+    return arpg::test::run_suites(suites, 649,
         "host settings runtime contract");
 }

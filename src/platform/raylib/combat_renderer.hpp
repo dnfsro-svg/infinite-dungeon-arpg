@@ -183,14 +183,16 @@ public:
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback,
-        bool audio_ready) noexcept;
+        bool audio_ready,
+        const char* interact_binding_label) noexcept;
 
 private:
     void draw_room(
         const dungeon::DungeonRenderSnapshot& current,
         const GroundLootView& ground_loot,
         const MaterialLootView& material_loot,
-        const CombatCameraView& camera) noexcept;
+        const CombatCameraView& camera,
+        const char* interact_binding_label) noexcept;
     [[nodiscard]] bool draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonRenderSnapshot& current,
