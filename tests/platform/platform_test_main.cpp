@@ -203,6 +203,16 @@ bool cplay030_hole_prompt_only() noexcept {
     return enabled;
 }
 
+bool cplay032_death_retry_hint_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY032_DEATH_RETRY_HINT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -215,6 +225,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay032_death_retry_hint_only()) {
+        const arpg::test::TestSuite cplay032_only[] = {
+            death_overlay_view_suite(),
+        };
+        return arpg::test::run_suites(cplay032_only, 12,
+            "CPLAY-032 death retry key hint");
+    }
     if (cplay030_hole_prompt_only()) {
         const arpg::test::TestSuite cplay030_only[] = {
             dungeon_view_math_suite(),

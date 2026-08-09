@@ -150,7 +150,7 @@ arpg::test::Failure maps_abyss_unknown_and_all_prompt_states() noexcept {
     auto failed = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
     failed.death->continue_failed = true;
     ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(failed)
-        .prompt.data(), "保存失败，请重试") == 0);
+        .prompt.data(), "保存失败，E 重试") == 0);
     return {};
 }
 

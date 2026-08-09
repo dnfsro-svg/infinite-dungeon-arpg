@@ -340,7 +340,7 @@ DeathOverlayView build_death_overlay_view(
     if (state.saving) {
         copy_text(view.prompt, "正在记录死亡");
     } else if (state.continue_failed) {
-        copy_text(view.prompt, "保存失败，请重试");
+        copy_text(view.prompt, "保存失败，E 重试");
     } else if (state.can_continue) {
         copy_text(view.prompt, "E 继续");
     }
