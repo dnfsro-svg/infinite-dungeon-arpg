@@ -45,6 +45,15 @@ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
         set(CURRENT_LOOT_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
         set(CURRENT_STAGE12_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
     endif()
+    if(DEFINED DUNGEON_FIXTURE_OVERRIDE)
+        set(CURRENT_DUNGEON_FIXTURE_TEXT "${DUNGEON_FIXTURE_OVERRIDE}")
+    endif()
+    if(DEFINED LOOT_FIXTURE_OVERRIDE)
+        set(CURRENT_LOOT_FIXTURE_TEXT "${LOOT_FIXTURE_OVERRIDE}")
+    endif()
+    if(DEFINED STAGE12_FIXTURE_OVERRIDE)
+        set(CURRENT_STAGE12_FIXTURE_TEXT "${STAGE12_FIXTURE_OVERRIDE}")
+    endif()
     if(DEFINED STAGE16_FIXTURE_OVERRIDE)
         set(CURRENT_STAGE16_FIXTURE_TEXT "${STAGE16_FIXTURE_OVERRIDE}")
     endif()
@@ -73,6 +82,54 @@ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
 endfunction()
 
 run_guard(clean "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" TRUE)
+
+string(REPLACE "bar.label.bytes.data()" "legacy_bar_label(bar)"
+    HUD_MUTATED "${HUD_ORIGINAL}")
+set(HUD_COMPLETE_DECOY
+    "if (false) {\n                record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,\n                    bar.label.bytes.data(), label_position,\n                    style.player_bar_font_size * layout.scale,\n                    1.0F, label_container,\n                    style.player_bar_font_size * layout.scale, &blocker, 1U);\n                draw_hud_text(draw_font, bar.label.bytes.data(), label_position,\n                    style.player_bar_font_size * layout.scale,\n                    palette.text, style.outline_pixels);\n            }\n            ")
+string(REPLACE
+    "record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,"
+    "${HUD_COMPLETE_DECOY}record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,"
+    HUD_MUTATED "${HUD_MUTATED}")
+run_guard(hud_complete_dead_calls_with_live_legacy_path
+    "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
+
+string(REPLACE "slot.key_label.data()" "legacy_key_label(slot)"
+    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
+string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
+    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
+set(ACTIVE_COMPLETE_DECOY
+    "if (false) {\n            if (!hud_font_ready) continue;\n            draw_skill_text(hud_font, slot.key_label.data(),\n                bounds.x + 5.0F * scale,\n                bounds.y + 3.0F * scale, 16.0F * scale,\n                ui_text_contrast_style().primary);\n            if (!slot.empty) { }\n            if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;\n            draw_skill_text(hud_font, slot.cooldown_label.data(),\n                bounds.x + 18.0F * scale,\n                bounds.y + 22.0F * scale, 16.0F * scale,\n                ui_text_contrast_style().primary);\n        }\n        ")
+string(REPLACE "if (!hud_font_ready) continue;"
+    "${ACTIVE_COMPLETE_DECOY}if (!hud_font_ready) continue;"
+    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
+run_guard(active_complete_dead_calls_with_live_legacy_path
+    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+
+macro(run_fixture_reset_mutant LABEL RESET_HINTS RESET_CONTROL_HINTS)
+    set(DUNGEON_FIXTURE_OVERRIDE
+        "void fixture(){ platform::ControlHints hints{}; platform::refresh_control_hints(hints, arpg::settings::default_settings()); ${RESET_HINTS} renderer.observe_hud(previous, current, status, hints, 0.0F, false); }")
+    set(LOOT_FIXTURE_OVERRIDE
+        "platform::ControlHints control_hints(){ platform::ControlHints hints{}; platform::refresh_control_hints(hints, arpg::settings::default_settings()); ${RESET_HINTS} return hints; } void fixture(){ renderer.observe_hud(previous, current, status, control_hints(), 0.0F, false); }")
+    set(STAGE12_FIXTURE_OVERRIDE
+        "void fixture(){ platform::ControlHints control_hints{}; platform::refresh_control_hints(control_hints, arpg::settings::default_settings()); ${RESET_CONTROL_HINTS} renderer.observe_hud(previous, current, status, control_hints, 0.0F, false); }")
+    set(STAGE16_FIXTURE_OVERRIDE
+        "${DUNGEON_FIXTURE_OVERRIDE}${DUNGEON_FIXTURE_OVERRIDE}")
+    run_guard("${LABEL}" "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" FALSE)
+    unset(DUNGEON_FIXTURE_OVERRIDE)
+    unset(LOOT_FIXTURE_OVERRIDE)
+    unset(STAGE12_FIXTURE_OVERRIDE)
+    unset(STAGE16_FIXTURE_OVERRIDE)
+endmacro()
+
+run_fixture_reset_mutant(refresh_then_brace_assignment
+    "hints = {};" "control_hints = {};")
+run_fixture_reset_mutant(refresh_then_typed_reassignment
+    "hints = platform::ControlHints{};"
+    "control_hints = platform::ControlHints{};")
+run_fixture_reset_mutant(refresh_then_memset_clear
+    "std::memset(&hints, 0, sizeof(hints));"
+    "std::memset(&control_hints, 0, sizeof(control_hints));")
 
 string(REPLACE "bar.label.bytes.data()" "u8\"生命\""
     HUD_MUTATED "${HUD_ORIGINAL}")

@@ -32,6 +32,13 @@ endfunction()
 
 run_guard(clean "${ORIGINAL}" TRUE)
 
+set(OBSERVE_LOOP_LOOKUP
+    "const char* parsed_key = u8\"未知\";\n    for (const char* cursor = notices_[0].text.bytes.data(); *cursor != '\\0'; ++cursor) {\n        if (*cursor == ':') parsed_key = cursor + 1;\n    }\n    static_cast<void>(parsed_key);\n    if (context_changed && exits_unlocked && current.has_hole) {")
+string(REPLACE
+    "if (context_changed && exits_unlocked && current.has_hole) {"
+    "${OBSERVE_LOOP_LOOKUP}" MUTATED "${ORIGINAL}")
+run_guard(observe_live_handwritten_display_lookup "${MUTATED}" FALSE)
+
 set(DEAD_REQUIRED_CALL
     "if (false) {\n        format_notice(notice, \"%s %s\",\n            control_hint_key_label(hints, action), suffix);\n    }")
 set(LOOP_LOOKUP

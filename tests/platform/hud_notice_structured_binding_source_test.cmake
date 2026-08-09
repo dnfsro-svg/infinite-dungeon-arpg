@@ -6,6 +6,21 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
 file(READ "${HUD_NOTICE_SOURCE}" SOURCE)
+normalize_cpp_source("${SOURCE}" NORMALIZED_SOURCE SOURCE_CODE)
+
+foreach(FORBIDDEN_CODE_REGEX IN ITEMS
+        "(std::)?strstr[ ]*\\("
+        "(std::)?strchr[ ]*\\("
+        "(std::)?memcmp[ ]*\\("
+        "std::search[ ]*\\("
+        "(std::)?string_view"
+        "\\.[ ]*find[ ]*\\(")
+    string(REGEX MATCH "${FORBIDDEN_CODE_REGEX}" FOUND "${SOURCE_CODE}")
+    if(FOUND)
+        message(FATAL_ERROR
+            "HUD notice display-text lookup is forbidden in real code: ${FORBIDDEN_CODE_REGEX}")
+    endif()
+endforeach()
 
 extract_cpp_function_body("${SOURCE}" "void add_action_notice("
     ADD_ACTION_BODY)
@@ -26,7 +41,7 @@ if(NOT ABYSS_BODY STREQUAL EXPECTED_ABYSS_BODY)
 endif()
 
 extract_cpp_function_body("${SOURCE}" "void HudNoticeState::observe("
-    OBSERVE_BODY)
+    OBSERVE_BODY OBSERVE_CODE)
 foreach(REQUIRED_BLOCK IN ITEMS
         "if (context_changed && exits_unlocked && current.has_hole) { add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact, kHolePriority, hints, settings::SettingAction::interact, u8\"交互：进入下一层\"); }"
         "if (context_changed && current.inventory_count != 0U) { add_action_notice(notices_, dropped_count_, HudNoticeKind::inventory, kInventoryPriority, hints, settings::SettingAction::inventory, u8\"打开背包\"); }"
@@ -44,3 +59,14 @@ if(NOT OBSERVE_ACTION_CALL_COUNT EQUAL 3)
     message(FATAL_ERROR
         "HudNoticeState::observe must contain exactly three action calls")
 endif()
+
+foreach(FORBIDDEN_OBSERVE_REGEX IN ITEMS
+        "for[ ]*\\("
+        "while[ ]*\\("
+        "hints[ ]*\\.")
+    string(REGEX MATCH "${FORBIDDEN_OBSERVE_REGEX}" FOUND "${OBSERVE_CODE}")
+    if(FOUND)
+        message(FATAL_ERROR
+            "HudNoticeState::observe must not scan display text: ${FORBIDDEN_OBSERVE_REGEX}")
+    endif()
+endforeach()

@@ -1912,6 +1912,16 @@ set_tests_properties(
     PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
 
 add_test(
+    NAME platform.cpp_source_function_body_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DPARSER_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/cpp_source_function_body.cmake"
+        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cpp-source-function-body-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cpp_source_function_body_self_test.cmake")
+set_tests_properties(
+    platform.cpp_source_function_body_self_test
+    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
+
+add_test(
     NAME platform.hud_notice_structured_binding_source_self_test
     COMMAND "${CMAKE_COMMAND}"
         "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"

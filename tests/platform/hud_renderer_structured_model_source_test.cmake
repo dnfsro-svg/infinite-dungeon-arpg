@@ -31,16 +31,17 @@ set(HUD_DRAW_MARKER
     "void HudRenderer::draw(const HudViewModel& view,\n    const HudLayout& layout, const MaterialPack& assets) const noexcept")
 extract_cpp_function_body("${HUD_SOURCE}"
     "${HUD_DRAW_MARKER}"
-    HUD_DRAW_BODY)
+    HUD_DRAW_BODY HUD_DRAW_CODE)
 set(REQUIRED_BAR_AUDIT
     "record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font, bar.label.bytes.data(), label_position, style.player_bar_font_size * layout.scale, 1.0F, label_container, style.player_bar_font_size * layout.scale, &blocker, 1U);")
 set(REQUIRED_BAR_DRAW
     "draw_hud_text(draw_font, bar.label.bytes.data(), label_position, style.player_bar_font_size * layout.scale, palette.text, style.outline_pixels);")
 foreach(REQUIRED_CALL IN ITEMS REQUIRED_BAR_AUDIT REQUIRED_BAR_DRAW)
-    string(FIND "${HUD_DRAW_BODY}" "${${REQUIRED_CALL}}" FOUND)
-    if(FOUND EQUAL -1)
+    count_substring("${HUD_DRAW_BODY}" "${${REQUIRED_CALL}}"
+        REQUIRED_CALL_COUNT)
+    if(NOT REQUIRED_CALL_COUNT EQUAL 1)
         message(FATAL_ERROR
-            "HudRenderer::draw must consume HudBarPlan::label in the real audit/draw call")
+            "HudRenderer::draw must contain exactly one required audit/draw call")
     endif()
 endforeach()
 string(REGEX MATCHALL "bar\\.label\\.bytes\\.data\\(\\)" BAR_LABEL_USES
@@ -54,16 +55,17 @@ endif()
 file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_SOURCE)
 extract_cpp_function_body("${ACTIVE_SOURCE}"
     "void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,"
-    ACTIVE_DRAW_BODY)
+    ACTIVE_DRAW_BODY ACTIVE_DRAW_CODE)
 set(REQUIRED_KEY_DRAW
     "if (!hud_font_ready) continue; draw_skill_text(hud_font, slot.key_label.data(), bounds.x + 5.0F * scale, bounds.y + 3.0F * scale, 16.0F * scale, ui_text_contrast_style().primary); if (!slot.empty) {")
 set(REQUIRED_COOLDOWN_DRAW
     "if (slot.cooldown_ratio <= 0.0F || slot.empty) continue; draw_skill_text(hud_font, slot.cooldown_label.data(), bounds.x + 18.0F * scale, bounds.y + 22.0F * scale, 16.0F * scale, ui_text_contrast_style().primary);")
 foreach(REQUIRED_CALL IN ITEMS REQUIRED_KEY_DRAW REQUIRED_COOLDOWN_DRAW)
-    string(FIND "${ACTIVE_DRAW_BODY}" "${${REQUIRED_CALL}}" FOUND)
-    if(FOUND EQUAL -1)
+    count_substring("${ACTIVE_DRAW_BODY}" "${${REQUIRED_CALL}}"
+        REQUIRED_CALL_COUNT)
+    if(NOT REQUIRED_CALL_COUNT EQUAL 1)
         message(FATAL_ERROR
-            "ActiveSkillRenderer::draw_hud must consume model text on the real draw path")
+            "ActiveSkillRenderer::draw_hud must contain exactly one required model draw call")
     endif()
 endforeach()
 foreach(MODEL_TOKEN IN ITEMS
@@ -90,12 +92,32 @@ foreach(DRAW_BODY IN ITEMS HUD_DRAW_BODY ACTIVE_DRAW_BODY)
     endforeach()
 endforeach()
 
+foreach(DRAW_CODE IN ITEMS HUD_DRAW_CODE ACTIVE_DRAW_CODE)
+    string(REGEX MATCH "if[ ]*\\([ ]*(false|0)[ ]*\\)"
+        DEAD_BRANCH "${${DRAW_CODE}}")
+    if(DEAD_BRANCH)
+        message(FATAL_ERROR
+            "HUD draw function must not hide required calls in a compile-time dead branch")
+    endif()
+    foreach(FORBIDDEN_CODE_REGEX IN ITEMS
+            "TextFormat[ ]*\\("
+            "(std::)?snprintf[ ]*\\(")
+        string(REGEX MATCH "${FORBIDDEN_CODE_REGEX}" FOUND "${${DRAW_CODE}}")
+        if(FOUND)
+            message(FATAL_ERROR
+                "HUD draw function must not format legacy model text")
+        endif()
+    endforeach()
+endforeach()
+
 function(require_initialized_fixture PATH EXPECTED_COUNT OWNER
         CONSUMER_TOKEN MIN_CONSUMERS LABEL)
     file(READ "${PATH}" FIXTURE_SOURCE)
-    normalize_cpp_source("${FIXTURE_SOURCE}" FIXTURE)
+    normalize_cpp_source("${FIXTURE_SOURCE}" FIXTURE FIXTURE_CODE)
     string(REGEX REPLACE "\\( +" "(" FIXTURE "${FIXTURE}")
     string(REGEX REPLACE " +\\)" ")" FIXTURE "${FIXTURE}")
+    string(REGEX REPLACE "\\( +" "(" FIXTURE_CODE "${FIXTURE_CODE}")
+    string(REGEX REPLACE " +\\)" ")" FIXTURE_CODE "${FIXTURE_CODE}")
     set(DECLARATION_COUNT 0)
     set(INITIALIZED_OWNER_COUNT 0)
     foreach(CANDIDATE_OWNER IN ITEMS hints control_hints initialized)
@@ -122,6 +144,43 @@ function(require_initialized_fixture PATH EXPECTED_COUNT OWNER
         message(FATAL_ERROR
             "${LABEL} must consume the refreshed ${OWNER} owner")
     endif()
+
+    set(INITIALIZER
+        "platform::ControlHints ${OWNER}{}; platform::refresh_control_hints(${OWNER}, arpg::settings::default_settings());")
+    set(REMAINDER "${FIXTURE_CODE}")
+    foreach(SEQUENCE_INDEX RANGE 1 ${EXPECTED_COUNT})
+        string(FIND "${REMAINDER}" "${INITIALIZER}" INITIALIZER_INDEX)
+        if(INITIALIZER_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "${LABEL} must initialize each consumed ${OWNER} owner")
+        endif()
+        string(LENGTH "${INITIALIZER}" INITIALIZER_LENGTH)
+        math(EXPR AFTER_INITIALIZER
+            "${INITIALIZER_INDEX} + ${INITIALIZER_LENGTH}")
+        string(SUBSTRING "${REMAINDER}" ${AFTER_INITIALIZER} -1
+            AFTER_REFRESH)
+        string(FIND "${AFTER_REFRESH}" "${CONSUMER_TOKEN}" CONSUMER_INDEX)
+        if(CONSUMER_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "${LABEL} must consume ${OWNER} after refresh")
+        endif()
+        string(SUBSTRING "${AFTER_REFRESH}" 0 ${CONSUMER_INDEX}
+            REFRESH_TO_CONSUMER)
+        foreach(INVALIDATION_REGEX IN ITEMS
+                "${OWNER}[ ]*=[^=]"
+                "(std::)?memset[ ]*\\([ ]*&[ ]*${OWNER}"
+                "${OWNER}[ ]*\\.[ ]*(reset|clear)[ ]*\\(")
+            string(REGEX MATCH "${INVALIDATION_REGEX}" INVALIDATION
+                "${REFRESH_TO_CONSUMER}")
+            if(INVALIDATION)
+                message(FATAL_ERROR
+                    "${LABEL} invalidates ${OWNER} after refresh and before consumption")
+            endif()
+        endforeach()
+        string(LENGTH "${CONSUMER_TOKEN}" CONSUMER_LENGTH)
+        math(EXPR AFTER_CONSUMER "${CONSUMER_INDEX} + ${CONSUMER_LENGTH}")
+        string(SUBSTRING "${AFTER_REFRESH}" ${AFTER_CONSUMER} -1 REMAINDER)
+    endforeach()
 endfunction()
 
 require_initialized_fixture("${DUNGEON_RUNTIME_SOURCE}" 1 hints
