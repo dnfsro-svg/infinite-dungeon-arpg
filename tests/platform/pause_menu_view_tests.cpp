@@ -4,6 +4,7 @@
 #include "pause_menu_renderer.hpp"
 #include "pause_menu_view.hpp"
 #include "shared_ui_font.hpp"
+#include "ui_typography.hpp"
 #include "ui_utf8.hpp"
 
 #include <array>
@@ -57,6 +58,53 @@ platform::PauseMenuState settings_state() noexcept {
     state.message = "Apply failed; retry";
     return state;
 }
+
+class TestPauseFont final {
+public:
+    ~TestPauseFont() noexcept {
+        if (glyphs_ != nullptr) UnloadFontData(glyphs_, glyph_count_);
+        if (file_data_ != nullptr) UnloadFileData(file_data_);
+    }
+
+    [[nodiscard]] bool initialize() noexcept {
+        const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+        if (plan.capacity_exceeded || plan.codepoint_count == 0U) return false;
+        file_data_ = LoadFileData(
+            ARPG_PROJECT_SOURCE_DIR "/assets/fonts/NotoSansCJKsc-Medium.otf",
+            &file_size_);
+        if (file_data_ == nullptr || file_size_ <= 0) return false;
+        glyphs_ = LoadFontData(file_data_, file_size_,
+            platform::kUiFontSourceBaseSize, plan.codepoints.data(),
+            static_cast<int>(plan.codepoint_count), FONT_DEFAULT,
+            &glyph_count_);
+        if (glyphs_ == nullptr
+                || glyph_count_ != static_cast<int>(plan.codepoint_count)) {
+            return false;
+        }
+        for (int index = 0; index < glyph_count_; ++index) {
+            recs_[static_cast<std::size_t>(index)].width =
+                static_cast<float>(glyphs_[index].image.width);
+            recs_[static_cast<std::size_t>(index)].height =
+                static_cast<float>(glyphs_[index].image.height);
+        }
+        font_.baseSize = platform::kUiFontSourceBaseSize;
+        font_.glyphCount = glyph_count_;
+        font_.glyphs = glyphs_;
+        font_.recs = recs_.data();
+        font_.texture.id = 1U;
+        return true;
+    }
+
+    [[nodiscard]] Font font() const noexcept { return font_; }
+
+private:
+    unsigned char* file_data_{};
+    int file_size_{};
+    GlyphInfo* glyphs_{};
+    int glyph_count_{};
+    std::array<Rectangle, platform::kUiGlyphCapacity> recs_{};
+    Font font_{};
+};
 
 bool row_equals(
     const platform::PauseMenuRowView& row,
@@ -374,14 +422,45 @@ test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcep
     return {};
 }
 
-test::Failure row_text_is_centered_inside_full_width_backing() noexcept {
+test::Failure capture_text_fits_centered_with_real_font_measurement() noexcept {
+    TestPauseFont font{};
+    ARPG_REQUIRE(font.initialize());
+    platform::PauseMenuState state = settings_state();
+    state.screen = platform::PauseScreen::capture_binding;
+    state.capture_action = settings::SettingAction::light_attack;
+    state.draft.bindings[static_cast<std::size_t>(
+        settings::SettingAction::light_attack)] =
+            settings::StableKey::right_shift;
+    const platform::PauseMenuView view =
+        platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.rows[0].primary.data(),
+        u8"请按下用于轻攻击的按键（当前：Right Shift）") == 0);
+
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto& size : kSizes) {
-        const auto layout = platform::pause_menu_layout(size[0], size[1], 6U);
-        const auto centered = platform::centered_pause_text_layout(
-            layout.rows[0], 180.0F, 24.0F, 12.0F);
+        const auto layout = platform::pause_menu_layout(
+            size[0], size[1], view.row_count);
+        std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
+        const auto centered = platform::fit_centered_pause_text_layout(
+            font.font(), view.rows[0].primary.data(),
+            fitted.data(), fitted.size(), layout.rows[0],
+            layout.row_font_size, 0.5F,
+            platform::kPauseMenuMinimumRowFontSize,
+            12.0F * platform::ui_viewport_scale(size[0], size[1]));
+        ARPG_REQUIRE(!centered.truncated);
+        ARPG_REQUIRE(std::strcmp(
+            fitted.data(), view.rows[0].primary.data()) == 0);
+        ARPG_REQUIRE(centered.font_size
+            >= platform::kPauseMenuMinimumRowFontSize);
+        ARPG_REQUIRE(centered.font_size <= layout.row_font_size);
+        ARPG_REQUIRE(centered.spacing >= 0.0F);
+        ARPG_REQUIRE(centered.spacing <= 0.5F);
+        const Vector2 measured = MeasureTextEx(font.font(), fitted.data(),
+            centered.font_size, centered.spacing);
+        ARPG_REQUIRE(test::near(centered.text.width, measured.x, 0.01));
+        ARPG_REQUIRE(test::near(centered.text.height, measured.y, 0.01));
         ARPG_REQUIRE(test::near(
             centered.text.x + centered.text.width * 0.5F,
             layout.rows[0].x + layout.rows[0].width * 0.5F));
@@ -392,10 +471,59 @@ test::Failure row_text_is_centered_inside_full_width_backing() noexcept {
         ARPG_REQUIRE(centered.backing.y == layout.rows[0].y);
         ARPG_REQUIRE(centered.backing.width == layout.rows[0].width);
         ARPG_REQUIRE(centered.backing.height == layout.rows[0].height);
-        ARPG_REQUIRE(centered.text.x >= centered.backing.x + 12.0F);
+        const float inset = 12.0F
+            * platform::ui_viewport_scale(size[0], size[1]);
+        ARPG_REQUIRE(centered.text.x >= centered.backing.x + inset);
         ARPG_REQUIRE(centered.text.x + centered.text.width
-            <= centered.backing.x + centered.backing.width - 12.0F);
+            <= centered.backing.x + centered.backing.width - inset);
+        ARPG_REQUIRE(centered.text.y >= centered.backing.y);
+        ARPG_REQUIRE(centered.text.y + centered.text.height
+            <= centered.backing.y + centered.backing.height);
     }
+
+    constexpr const char* kOversized =
+        u8"请按下用于轻攻击的按键（当前：Right Shift）"
+        u8"请按下用于轻攻击的按键（当前：Right Shift）";
+    const auto layout = platform::pause_menu_layout(800, 450, 1U);
+    std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
+    const auto shortened = platform::fit_centered_pause_text_layout(
+        font.font(), kOversized, fitted.data(), fitted.size(), layout.rows[0],
+        layout.row_font_size, 0.5F,
+        platform::kPauseMenuMinimumRowFontSize,
+        12.0F * platform::ui_viewport_scale(800, 450));
+    ARPG_REQUIRE(shortened.truncated);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(fitted.data()));
+    ARPG_REQUIRE(std::strstr(fitted.data(), u8"…") != nullptr);
+    const Vector2 shortened_measure = MeasureTextEx(font.font(), fitted.data(),
+        shortened.font_size, shortened.spacing);
+    ARPG_REQUIRE(test::near(shortened.text.width,
+        shortened_measure.x, 0.01));
+    ARPG_REQUIRE(inside(shortened.text, shortened.backing));
+
+    std::array<char, platform::kPauseMenuPrimaryTextCapacity> ordinary{};
+    const auto ordinary_fit = platform::fit_centered_pause_text_layout(
+        font.font(), u8"继续游戏", ordinary.data(), ordinary.size(),
+        layout.rows[0], layout.row_font_size, 0.5F,
+        platform::kPauseMenuMinimumRowFontSize,
+        12.0F * platform::ui_viewport_scale(800, 450));
+    ARPG_REQUIRE(!ordinary_fit.truncated);
+    ARPG_REQUIRE(std::strcmp(ordinary.data(), u8"继续游戏") == 0);
+    ARPG_REQUIRE(test::near(
+        ordinary_fit.font_size, layout.row_font_size, 0.01));
+    ARPG_REQUIRE(test::near(ordinary_fit.spacing, 0.5F, 0.01));
+
+    const std::uint64_t before = test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+        std::array<char, platform::kPauseMenuPrimaryTextCapacity> output{};
+        const auto fitted_layout = platform::fit_centered_pause_text_layout(
+            font.font(), view.rows[0].primary.data(),
+            output.data(), output.size(), layout.rows[0],
+            layout.row_font_size, 0.5F,
+            platform::kPauseMenuMinimumRowFontSize,
+            12.0F * platform::ui_viewport_scale(800, 450));
+        ARPG_REQUIRE(!fitted_layout.truncated);
+    }
+    ARPG_REQUIRE(test::allocation_count() == before);
     return {};
 }
 
@@ -635,8 +763,8 @@ constexpr test::TestCase kCases[] = {
     {"root and quit content", &root_and_quit_views_have_complete_content},
     {"settings pages have exact Chinese text",
         &settings_pages_have_exact_chinese_primary_and_saved_text},
-    {"row text is centered in full backing",
-        &row_text_is_centered_inside_full_width_backing},
+    {"capture text fits centered using real font",
+        &capture_text_fits_centered_with_real_font_measurement},
     {"capture and closed content", &capture_and_closed_views_are_explicit},
     {"selected rows clamp to visible views", &selected_rows_clamp_to_each_visible_view},
     {"render plans have exact screen orders", &render_plans_have_exact_screen_orders},

@@ -506,6 +506,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 656,
+    return arpg::test::run_suites(suites, 658,
         "host settings runtime contract");
 }

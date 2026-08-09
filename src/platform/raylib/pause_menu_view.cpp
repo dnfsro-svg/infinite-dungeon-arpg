@@ -6,6 +6,7 @@
 #include "ui_utf8.hpp"
 
 #include <algorithm>
+#include <cstring>
 
 namespace arpg::platform {
 namespace {
@@ -279,6 +280,78 @@ PauseMenuCenteredTextLayout centered_pause_text_layout(
             clamped_text_height,
         },
     };
+}
+
+PauseMenuFittedTextLayout fit_centered_pause_text_layout(
+    Font font,
+    const char* source,
+    char* output,
+    std::size_t output_capacity,
+    Rectangle row_bounds,
+    float preferred_font_size,
+    float preferred_spacing,
+    float minimum_font_size,
+    float horizontal_inset) noexcept {
+    const float desired_font_size = (std::max)(0.0F, preferred_font_size);
+    const float minimum = (std::min)(desired_font_size,
+        (std::max)(0.0F, minimum_font_size));
+    float font_size = desired_font_size;
+    float spacing = (std::max)(0.0F, preferred_spacing);
+    bool truncated = false;
+    if (output == nullptr || output_capacity == 0U) {
+        return {row_bounds, {}, font_size, spacing, true};
+    }
+
+    const UiUtf8CopyResult copied = ui_utf8_fit_with_ellipsis(
+        output, output_capacity, source == nullptr ? "" : source);
+    truncated = copied.truncated;
+    const float inset = (std::max)(0.0F, horizontal_inset);
+    const float available_width = (std::max)(
+        0.0F, row_bounds.width - inset * 2.0F);
+    Vector2 measured = MeasureTextEx(font, output, font_size, spacing);
+    if (measured.x > available_width && measured.x > 0.0F) {
+        const float ratio = available_width / measured.x;
+        font_size = (std::max)(minimum, font_size * ratio);
+        spacing *= ratio;
+        measured = MeasureTextEx(font, output, font_size, spacing);
+        while (measured.x > available_width && font_size > minimum) {
+            font_size = (std::max)(minimum, font_size - 0.25F);
+            spacing = desired_font_size > 0.0F
+                ? (std::max)(0.0F, preferred_spacing)
+                    * (font_size / desired_font_size)
+                : 0.0F;
+            measured = MeasureTextEx(font, output, font_size, spacing);
+        }
+    }
+
+    constexpr char kEllipsis[] = u8"…";
+    constexpr std::size_t kEllipsisBytes = sizeof(kEllipsis) - 1U;
+    while (measured.x > available_width && output[0] != '\0') {
+        std::size_t length = std::strlen(output);
+        if (length >= kEllipsisBytes
+                && std::memcmp(output + length - kEllipsisBytes,
+                    kEllipsis, kEllipsisBytes) == 0) {
+            length -= kEllipsisBytes;
+        }
+        if (length == 0U) {
+            output[0] = '\0';
+            break;
+        }
+        do {
+            --length;
+        } while (length > 0U
+            && (static_cast<unsigned char>(output[length]) & 0xC0U) == 0x80U);
+        output[length] = '\0';
+        if (length + kEllipsisBytes < output_capacity) {
+            std::memcpy(output + length, kEllipsis, sizeof(kEllipsis));
+        }
+        truncated = true;
+        measured = MeasureTextEx(font, output, font_size, spacing);
+    }
+
+    const PauseMenuCenteredTextLayout centered = centered_pause_text_layout(
+        row_bounds, measured.x, measured.y, inset);
+    return {centered.backing, centered.text, font_size, spacing, truncated};
 }
 
 PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {

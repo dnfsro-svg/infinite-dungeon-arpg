@@ -74,5 +74,21 @@ if(NOT LEGACY_TEXT_BACKING_INDEX EQUAL -1)
         "pause renderer must not size row backing from measured text width")
 endif()
 
+string(FIND "${RENDERER_COMPACT}"
+    "fit_centered_pause_text_layout(font,row.primary.data(),"
+    FITTED_PRIMARY_INDEX)
+if(FITTED_PRIMARY_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause renderer must fit real primary text measurements to the row")
+endif()
+
+string(FIND "${RENDERER_COMPACT}"
+    "draw_crisp_ui_text(font,fitted_primary,row_position,centered.font_size,centered.spacing,"
+    FITTED_DRAW_INDEX)
+if(FITTED_DRAW_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause renderer must draw the final fitted text with its final metrics")
+endif()
+
 message(STATUS
     "[CPLAY-031] pause host and renderer share row-count layout geometry")

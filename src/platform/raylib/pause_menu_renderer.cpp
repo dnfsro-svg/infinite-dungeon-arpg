@@ -136,20 +136,23 @@ void draw_pause_menu_with_font(
                 const float row_font_size = layout.row_font_size;
                 constexpr float kRowTextSpacing = 0.5F;
                 const PauseMenuRowView& row = view.rows[op.row_index];
-                const Vector2 measured = MeasureTextEx(
-                    font, row.primary.data(), row_font_size, kRowTextSpacing);
-                const PauseMenuCenteredTextLayout centered =
-                    centered_pause_text_layout(bounds,
-                        measured.x, measured.y, 12.0F * viewport_scale);
+                char fitted_primary[kPauseMenuPrimaryTextCapacity]{};
+                const PauseMenuFittedTextLayout centered =
+                    fit_centered_pause_text_layout(font, row.primary.data(),
+                        fitted_primary, sizeof(fitted_primary), bounds,
+                        row_font_size, kRowTextSpacing,
+                        kPauseMenuMinimumRowFontSize,
+                        12.0F * viewport_scale);
                 const Vector2 row_position{
                     centered.text.x, centered.text.y};
                 record_ui_text_bounds(UiTextAuditPage::pause,
                     UiTextAuditRole::pause_row, font,
-                    row.primary.data(), row_position,
-                    row_font_size, kRowTextSpacing, centered.backing,
-                    row_font_size);
-                draw_crisp_ui_text(font, row.primary.data(),
-                    row_position, row_font_size, kRowTextSpacing,
+                    fitted_primary, row_position,
+                    centered.font_size, centered.spacing, centered.backing,
+                    (std::min)(row_font_size,
+                        kPauseMenuMinimumRowFontSize));
+                draw_crisp_ui_text(font, fitted_primary,
+                    row_position, centered.font_size, centered.spacing,
                     op.selected ? style.interaction : style.primary);
                 if (row.saved[0] != '\0') {
                     const float saved_font_size = row_font_size * 0.68F;

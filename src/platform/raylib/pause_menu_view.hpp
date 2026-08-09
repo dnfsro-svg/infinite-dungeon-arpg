@@ -13,6 +13,7 @@ namespace arpg::platform {
 inline constexpr std::size_t kPauseMenuRowCapacity = 21U;
 inline constexpr std::size_t kPauseMenuPrimaryTextCapacity = 96U;
 inline constexpr std::size_t kPauseMenuSavedTextCapacity = 64U;
+inline constexpr float kPauseMenuMinimumRowFontSize = 12.0F;
 
 struct PauseMenuRowView final {
     std::array<char, kPauseMenuPrimaryTextCapacity> primary{};
@@ -22,6 +23,14 @@ struct PauseMenuRowView final {
 struct PauseMenuCenteredTextLayout final {
     Rectangle backing{};
     Rectangle text{};
+};
+
+struct PauseMenuFittedTextLayout final {
+    Rectangle backing{};
+    Rectangle text{};
+    float font_size{};
+    float spacing{};
+    bool truncated{};
 };
 
 struct PauseMenuLayout final {
@@ -57,6 +66,17 @@ struct PauseMenuView final {
     Rectangle row_bounds,
     float text_width,
     float text_height,
+    float horizontal_inset) noexcept;
+
+[[nodiscard]] PauseMenuFittedTextLayout fit_centered_pause_text_layout(
+    Font font,
+    const char* source,
+    char* output,
+    std::size_t output_capacity,
+    Rectangle row_bounds,
+    float preferred_font_size,
+    float preferred_spacing,
+    float minimum_font_size,
     float horizontal_inset) noexcept;
 
 [[nodiscard]] PauseMenuView make_pause_menu_view(
