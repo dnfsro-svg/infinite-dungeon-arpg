@@ -289,7 +289,9 @@ bool render_world_capture(const std::filesystem::path& run,
         camera, 1280.0F, 720.0F, 1U);
     if (!runtime.session()->write_render_snapshot(query, *world)) return false;
     const platform::CombatFeedback feedback{};
-    const platform::ControlHints hints{};
+    platform::ControlHints hints{};
+    platform::refresh_control_hints(
+        hints, arpg::settings::default_settings());
     room->observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         *current, *current, runtime.render_status(), hints, 1.0F / 60.0F, false);
     BeginDrawing();
@@ -745,7 +747,9 @@ bool render_inventory_capture(const std::filesystem::path& run,
         camera, 1280.0F, 720.0F, 2U);
     if (!runtime.session()->write_render_snapshot(query, *world)) return false;
     const platform::CombatFeedback feedback{};
-    const platform::ControlHints hints{};
+    platform::ControlHints hints{};
+    platform::refresh_control_hints(
+        hints, arpg::settings::default_settings());
     room->observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         *current, *current, runtime.render_status(), hints, 1.0F / 60.0F, false);
     BeginDrawing();

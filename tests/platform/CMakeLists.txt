@@ -1923,6 +1923,32 @@ set_tests_properties(
     PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
 
 add_test(
+    NAME platform.hud_renderer_structured_model_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DHUD_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_renderer.cpp"
+        "-DACTIVE_SKILL_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/active_skill_renderer.cpp"
+        "-DDUNGEON_RUNTIME_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/dungeon_runtime_tests.cpp"
+        "-DLOOT_SUCTION_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/loot_suction_animation_tests.cpp"
+        "-DSTAGE12_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/stage12_material_formal_game_validation.cpp"
+        "-DSTAGE16_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/stage16_loot_reinforcement_game_validation.cpp"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_test.cmake")
+set_tests_properties(
+    platform.hud_renderer_structured_model_source
+    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+
+add_test(
+    NAME platform.hud_renderer_structured_model_source_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DHUD_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_renderer.cpp"
+        "-DACTIVE_SKILL_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/active_skill_renderer.cpp"
+        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_test.cmake"
+        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hud-renderer-structured-model-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_self_test.cmake")
+set_tests_properties(
+    platform.hud_renderer_structured_model_source_self_test
+    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
+
+add_test(
     NAME platform.passive_tree_binding_label_source
     COMMAND "${CMAKE_COMMAND}"
         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"

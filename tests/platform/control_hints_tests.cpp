@@ -69,7 +69,9 @@ arpg::test::Failure same_revision_preserves_the_complete_cache() noexcept {
         settings::SettingAction::jump, settings::StableKey::q));
     platform::refresh_control_hints(hints, values);
 
-    ARPG_REQUIRE(std::memcmp(&hints, &original, sizeof(hints)) == 0);
+    ARPG_REQUIRE(hints.bindings == original.bindings);
+    ARPG_REQUIRE(hints.revision == original.revision);
+    ARPG_REQUIRE(hints.initialized == original.initialized);
     return {};
 }
 

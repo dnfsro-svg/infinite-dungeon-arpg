@@ -1424,6 +1424,8 @@ arpg::test::Failure failed_pickup_retry_publishes_one_presented_hud_notice()
     ARPG_REQUIRE(runtime.initialize());
     platform::CombatRenderer renderer{};
     platform::ControlHints hints{};
+    platform::refresh_control_hints(
+        hints, arpg::settings::default_settings());
     auto previous = runtime.session()->snapshot();
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         previous, previous, runtime.render_status(), hints, 0.0F, false);

@@ -32,9 +32,26 @@ endfunction()
 
 run_guard(clean "${ORIGINAL}" TRUE)
 
+set(COMMENTED_FORBIDDEN "${ORIGINAL}\n// memcmp(hints.primary, hints.secondary)\n/* std::strstr std::strchr std::string_view::find */\n")
+run_guard(forbidden_tokens_in_comments_are_ignored "${COMMENTED_FORBIDDEN}" TRUE)
+
 string(REPLACE "control_hint_key_label(hints, action)"
     "legacy_action_key(hints, action)" MUTATED "${ORIGINAL}")
 run_guard(missing_structured_query "${MUTATED}" FALSE)
+
+string(REPLACE "control_hint_key_label(hints, action)"
+    "legacy_action_key(hints, action)"
+    MUTATED "${ORIGINAL}")
+set(MUTATED "${MUTATED}\n// control_hint_key_label(hints, action)\n")
+run_guard(required_query_only_in_comment "${MUTATED}" FALSE)
+
+string(REPLACE "control_hint_key_label(hints, action)"
+    "legacy_action_key(hints, action)"
+    MUTATED "${ORIGINAL}")
+string(REPLACE "HudNotice notice{};"
+    "if (false) { static_cast<void>(control_hint_key_label(hints, action)); }\n    HudNotice notice{};"
+    MUTATED "${MUTATED}")
+run_guard(required_query_only_in_dead_code "${MUTATED}" FALSE)
 
 string(REPLACE "settings::SettingAction::interact" "\"Interact\""
     MUTATED "${ORIGINAL}")
@@ -52,3 +69,13 @@ string(REPLACE "format_notice(notice, \"%s %s\","
     "std::memcmp(hints.secondary.data(), action, 1);\n    format_notice(notice, \"%s %s\","
     MUTATED "${ORIGINAL}")
 run_guard(display_text_memcmp "${MUTATED}" FALSE)
+
+string(REPLACE "format_notice(notice, \"%s %s\","
+    "const char* parsed_action = std::strstr(suffix, u8\"交互\");\n    static_cast<void>(parsed_action);\n    format_notice(notice, \"%s %s\","
+    MUTATED "${ORIGINAL}")
+run_guard(display_text_strstr_with_required_tokens "${MUTATED}" FALSE)
+
+string(REPLACE "format_notice(notice, \"%s %s\","
+    "const auto parsed_action = std::string_view{suffix}.find(u8\"打开\");\n    static_cast<void>(parsed_action);\n    format_notice(notice, \"%s %s\","
+    MUTATED "${ORIGINAL}")
+run_guard(display_text_string_view_find_with_required_tokens "${MUTATED}" FALSE)

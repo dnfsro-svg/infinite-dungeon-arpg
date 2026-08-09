@@ -172,6 +172,7 @@ private:
     bool objective_ready_{};
     bool navigation_ready_{};
     bool control_hints_ready_{};
+    bool control_hints_initialized_{};
     ObjectiveKey objective_key_{};
     NavigationKey navigation_key_{};
     std::uint64_t control_hints_revision_{};

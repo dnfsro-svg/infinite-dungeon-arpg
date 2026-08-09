@@ -10,7 +10,10 @@
 #include "pause_menu_state.hpp"
 #include "platform/settings/settings_types.hpp"
 #include "raylib_host.hpp"
+#include "skills/active_skill_catalog.hpp"
+#include "skills/skill_loadout.hpp"
 
+#include <array>
 #include <cstring>
 
 namespace {
@@ -220,13 +223,52 @@ arpg::test::Failure paused_frames_freeze_hud_notice_time() noexcept {
 }
 
 arpg::test::Failure committed_settings_hints_and_revision_are_used_after_apply() noexcept {
-    const dungeon::DungeonSnapshot value = snapshot();
+    settings::SettingsData values = settings::default_settings();
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::interact, settings::StableKey::q));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::inventory, settings::StableKey::o));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::passive_tree, settings::StableKey::t));
+    values.revision = 42U;
+    platform::ControlHints hints{};
+    platform::refresh_control_hints(hints, values);
+    dungeon::DungeonSnapshot value = snapshot();
+    value.phase = dungeon::RoomPhase::awaiting_exit;
+    value.exits_unlocked = true;
+    value.has_hole = true;
+    value.skill_loadout = arpg::skills::default_skill_loadout();
+    value.combat.emplace();
+    value.combat->skill_cooldowns[static_cast<std::size_t>(
+        arpg::skills::ActiveSkillId::draw_slash)] =
+        arpg::skills::kDrawSlashCooldownTicks / 2U;
+    value.combat->skill_cooldowns[static_cast<std::size_t>(
+        arpg::skills::ActiveSkillId::storm_swords)] =
+        arpg::skills::kStormSwordsCooldownTicks;
     platform::CombatRenderer renderer{};
 
-    renderer.observe_hud(value, value, saved_status(), committed_hints(42U),
+    renderer.observe_hud(value, value, saved_status(), hints,
         0.0F, false);
     ARPG_REQUIRE(renderer.hud_binding_revision() == 42U);
-    ARPG_REQUIRE(renderer.hud_model().diagnostics.combat_snapshot_missing);
+    ARPG_REQUIRE(std::strcmp(
+        renderer.hud_model().room.controls[1].bytes.data(),
+        u8"Q 交互  O 背包  T 被动树") == 0);
+    ARPG_REQUIRE(std::strcmp(
+        renderer.hud_notice_view().primary.text.bytes.data(),
+        u8"Q 交互：进入下一层") == 0);
+    constexpr std::array<const char*, arpg::skills::kActiveSkillSlotCount>
+        kExpectedKeycaps{{u8"小键盘1", u8"小键盘2", u8"小键盘3",
+            u8"小键盘4", u8"小键盘5"}};
+    const platform::ActiveSkillHudModel& active =
+        renderer.active_skill_hud_model();
+    for (std::size_t index{}; index < active.slots.size(); ++index) {
+        ARPG_REQUIRE(std::strcmp(
+            active.slots[index].key_label.data(), kExpectedKeycaps[index]) == 0);
+    }
+    ARPG_REQUIRE(std::strcmp(
+        active.slots[0].cooldown_label.data(), u8"2秒") == 0);
+    ARPG_REQUIRE(std::strcmp(
+        active.slots[1].cooldown_label.data(), u8"30秒") == 0);
     return {};
 }
 
@@ -252,7 +294,7 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
     previous.combat->player.max_hp = 100;
     dungeon::DungeonSnapshot current = previous;
     platform::CombatRenderer renderer{};
-    const platform::ControlHints hints = committed_hints(21U);
+    platform::ControlHints hints{};
 
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         previous, current, saved_status(), hints, 0.1F, false);
@@ -261,6 +303,23 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
     ARPG_REQUIRE(initial.objective_rebuilds == 1U);
     ARPG_REQUIRE(initial.navigation_rebuilds == 1U);
     ARPG_REQUIRE(initial.control_hint_rebuilds == 1U);
+    ARPG_REQUIRE(std::strstr(
+        renderer.hud_model().room.controls[0].bytes.data(), u8"未知") != nullptr);
+
+    settings::SettingsData default_values = settings::default_settings();
+    ARPG_REQUIRE(default_values.revision == 0U);
+    platform::refresh_control_hints(hints, default_values);
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        current, current, saved_status(), hints, 0.1F, false);
+    platform::HudStaticFormattingDiagnostics expected = initial;
+    ++expected.control_hint_rebuilds;
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+    ARPG_REQUIRE(std::strcmp(renderer.hud_model().room.movement.bytes.data(),
+        u8"W 上移  S 下移  A 左移  D 右移") == 0);
+    ARPG_REQUIRE(std::strstr(
+        renderer.hud_model().room.controls[0].bytes.data(), u8"未知") == nullptr);
+    ARPG_REQUIRE(std::strstr(
+        renderer.hud_model().room.controls[0].bytes.data(), u8"轻攻击") != nullptr);
 
     // The three valid frame owners share one production projection cache.
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::recovery,
@@ -268,7 +327,7 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::death_overlay,
         current, current, saved_status(), hints, 0.1F, false);
     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics()
-        == initial);
+        == expected);
 
     // Dynamic player values still refresh without rebuilding static fragments.
     dungeon::DungeonSnapshot dynamic = current;
@@ -277,14 +336,13 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
         current, dynamic, saved_status(), hints, 0.1F, false);
     ARPG_REQUIRE(renderer.hud_model().player.hp == 31);
     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics()
-        == initial);
+        == expected);
 
     // Objective, navigation and committed bindings invalidate independently.
     dungeon::DungeonSnapshot changed_objective = dynamic;
     changed_objective.remaining_targets = 1U;
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         dynamic, changed_objective, saved_status(), hints, 0.1F, false);
-    platform::HudStaticFormattingDiagnostics expected = initial;
     ++expected.objective_rebuilds;
     ARPG_REQUIRE(renderer.hud_model().room.remaining_targets == 1U);
     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);

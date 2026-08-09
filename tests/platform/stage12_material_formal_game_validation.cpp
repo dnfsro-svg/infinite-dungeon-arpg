@@ -1088,7 +1088,9 @@ bool write_integration_render_snapshot(
     }
 
     const platform::DungeonRenderStatus runtime_status{};
-    const platform::ControlHints control_hints{};
+    platform::ControlHints control_hints{};
+    platform::refresh_control_hints(
+        control_hints, arpg::settings::default_settings());
     renderer.observe_presented_hud_frame(snapshot.death.has_value()
             ? platform::HudPresentedFrame::death_overlay
             : platform::HudPresentedFrame::normal,

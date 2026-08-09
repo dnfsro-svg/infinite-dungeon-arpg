@@ -299,6 +299,7 @@ void HudViewModelProjector::build(HudViewModel& output,
     output.diagnostics.truncated_texts += cached_objective_truncations_;
 
     if (!control_hints_ready_
+        || control_hints_initialized_ != hints.initialized
         || control_hints_revision_ != hints.revision) {
         cached_movement_hint_ = {};
         cached_control_hint_lines_ = {};
@@ -306,6 +307,7 @@ void HudViewModelProjector::build(HudViewModel& output,
         build_control_hints(cached_movement_hint_, cached_control_hint_lines_,
             diagnostics, hints);
         cached_control_hint_truncations_ = diagnostics.truncated_texts;
+        control_hints_initialized_ = hints.initialized;
         control_hints_revision_ = hints.revision;
         control_hints_ready_ = true;
         increment_saturating(

@@ -6,28 +6,41 @@ endif()
 
 file(READ "${HUD_NOTICE_SOURCE}" SOURCE)
 
-foreach(FORBIDDEN IN ITEMS
-        "hints.secondary"
-        "std::memcmp"
-        "memcmp("
+string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" CODE "${SOURCE}")
+string(REGEX REPLACE "//[^\r\n]*" "" CODE "${CODE}")
+string(REGEX REPLACE "[ \t\r\n]+" " " NORMALIZED_CODE "${CODE}")
+
+foreach(FORBIDDEN_REGEX IN ITEMS
+        "hints[ \t\r\n]*\\.[ \t\r\n]*(primary|secondary)"
+        "(std::)?strstr[ \t\r\n]*\\("
+        "(std::)?strchr[ \t\r\n]*\\("
+        "(std::)?memcmp[ \t\r\n]*\\("
+        "(std::)?string_view"
+        "\\.[ \t\r\n]*find[ \t\r\n]*\\("
         "\"Interact\""
         "\"Inventory\""
         "\"Passive Tree\"")
-    string(FIND "${SOURCE}" "${FORBIDDEN}" FOUND)
-    if(NOT FOUND EQUAL -1)
+    string(REGEX MATCH "${FORBIDDEN_REGEX}" FOUND "${CODE}")
+    if(FOUND)
         message(FATAL_ERROR
-            "HUD notice display-text parsing is forbidden: ${FORBIDDEN}")
+            "HUD notice display-text parsing is forbidden: ${FORBIDDEN_REGEX}")
     endif()
 endforeach()
 
-foreach(REQUIRED IN ITEMS
-        "control_hint_key_label(hints, action)"
-        "settings::SettingAction::interact"
-        "settings::SettingAction::inventory"
-        "settings::SettingAction::passive_tree")
-    string(FIND "${SOURCE}" "${REQUIRED}" FOUND)
-    if(FOUND EQUAL -1)
+set(REQUIRED_FORMAT_CALL
+    "format_notice(notice, \"%s %s\", control_hint_key_label(hints, action), suffix);")
+string(FIND "${NORMALIZED_CODE}" "${REQUIRED_FORMAT_CALL}" FOUND)
+if(FOUND EQUAL -1)
+    message(FATAL_ERROR
+        "HUD notice action formatter must consume control_hint_key_label")
+endif()
+
+foreach(REQUIRED_ACTION IN ITEMS interact inventory passive_tree)
+    set(REQUIRED_CALL_REGEX
+        "add_action_notice\\([^;]*hints,[ \t\r\n]*settings::SettingAction::${REQUIRED_ACTION},")
+    string(REGEX MATCH "${REQUIRED_CALL_REGEX}" FOUND "${CODE}")
+    if(NOT FOUND)
         message(FATAL_ERROR
-            "HUD notice structured binding token missing: ${REQUIRED}")
+            "HUD notice structured action call missing: ${REQUIRED_ACTION}")
     endif()
 endforeach()

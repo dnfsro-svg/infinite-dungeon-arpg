@@ -39,7 +39,8 @@ platform::DungeonRenderStatus saved_equipment_receipt(
 
 platform::ControlHints control_hints() noexcept {
     platform::ControlHints hints{};
-    hints.revision = 1U;
+    platform::refresh_control_hints(
+        hints, arpg::settings::default_settings());
     return hints;
 }
 
