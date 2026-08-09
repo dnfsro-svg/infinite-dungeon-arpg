@@ -1082,7 +1082,11 @@ bool same_receipt(const platform::LootPickupReceipt& left,
         && left.base_id == right.base_id
         && left.item_level == right.item_level
         && left.rarity == right.rarity
-        && left.source == right.source;
+        && left.source == right.source
+        && left.position.x == right.position.x
+        && left.position.y == right.position.y
+        && left.position.z == right.position.z
+        && left.slot == right.slot;
 }
 
 bool replace_ground_before_publish(persistence::SaveFaultPoint point,
@@ -1190,6 +1194,8 @@ arpg::test::Failure synchronous_pickup_publishes_exact_committed_receipt()
     const InstalledPickupGround ground =
         install_pickup_ground_at_active_spawn(runtime, before, item);
     ARPG_REQUIRE(ground.valid);
+    const auto captured_ground = arpg::test::ground_items(
+        *runtime.session())[ground.ordinal];
 
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
@@ -1205,6 +1211,10 @@ arpg::test::Failure synchronous_pickup_publishes_exact_committed_receipt()
     ARPG_REQUIRE(receipt.item_level == item.item_level);
     ARPG_REQUIRE(receipt.rarity == item.rarity);
     ARPG_REQUIRE(receipt.source == dungeon::GroundItemSource::monster_drop);
+    ARPG_REQUIRE(receipt.position.x == captured_ground.position.x);
+    ARPG_REQUIRE(receipt.position.y == captured_ground.position.y);
+    ARPG_REQUIRE(receipt.position.z == captured_ground.position.z);
+    ARPG_REQUIRE(receipt.slot == items::ItemSlot::chest);
     return {};
 }
 
@@ -2768,4 +2778,12 @@ arpg::test::TestSuite dungeon_runtime_suite() noexcept {
 arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept {
     return arpg::test::make_suite(
         "dungeon_runtime_v10_migration", kV10MigrationCases);
+}
+
+arpg::test::TestSuite loot_suction_runtime_origin_suite() noexcept {
+    static constexpr arpg::test::TestCase kOriginCases[] = {
+        {"committed pickup receipt preserves origin and slot",
+            &synchronous_pickup_publishes_exact_committed_receipt},
+    };
+    return arpg::test::make_suite("loot_suction_runtime_origin", kOriginCases);
 }

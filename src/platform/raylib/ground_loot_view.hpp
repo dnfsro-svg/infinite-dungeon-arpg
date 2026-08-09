@@ -75,6 +75,8 @@ struct GroundLootView final {
     items::ItemSlot slot) noexcept;
 [[nodiscard]] MaterialSpriteId ground_loot_rarity_sprite(
     items::ItemRarity rarity, bool abyss) noexcept;
+[[nodiscard]] Rgba8 ground_loot_rarity_color(
+    items::ItemRarity rarity, bool abyss) noexcept;
 
 [[nodiscard]] GroundLootView build_ground_loot_view(
     const dungeon::DungeonRenderSnapshot& snapshot,

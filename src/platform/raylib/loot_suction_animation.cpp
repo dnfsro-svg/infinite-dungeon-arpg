@@ -52,6 +52,55 @@ constexpr float kPi = 3.14159265358979323846F;
     return false;
 }
 
+[[nodiscard]] bool contains_material_origin(
+    const dungeon::DungeonSnapshot& snapshot, items::MaterialId material,
+    combat::Vec3 position) noexcept {
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_material_count),
+        snapshot.ground_materials.size());
+    for (std::size_t index{}; index < count; ++index) {
+        const dungeon::GroundMaterialSnapshot& candidate =
+            snapshot.ground_materials[index];
+        if (candidate.material == material && candidate.position.x == position.x
+                && candidate.position.y == position.y
+                && candidate.position.z == position.z) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool valid_receipt_origin(
+    const LootPickupReceipt& receipt) noexcept {
+    return std::isfinite(receipt.position.x) && std::isfinite(receipt.position.y)
+        && std::isfinite(receipt.position.z)
+        && static_cast<std::size_t>(receipt.slot)
+            < static_cast<std::size_t>(items::ItemSlot::count);
+}
+
+[[nodiscard]] bool material_origin_valid(
+    const dungeon::MaterialPickupReceipt& receipt,
+    std::size_t material_index) noexcept {
+    return material_index < receipt.representative_origins.size()
+        && (receipt.origin_valid_mask & (std::uint16_t{1U} << material_index))
+            != 0U;
+}
+
+[[nodiscard]] LootSuctionFlight equipment_flight(
+    combat::Vec3 position, items::ItemSlot slot, items::ItemRarity rarity,
+    dungeon::GroundItemSource source) noexcept {
+    const bool abyss = source == dungeon::GroundItemSource::abyss_chest;
+    return {position, {}, ground_loot_item_sprite(slot),
+        ground_loot_rarity_sprite(rarity, abyss),
+        ground_loot_rarity_color(rarity, abyss), 0.0F, true, true};
+}
+
+[[nodiscard]] LootSuctionFlight material_flight(
+    combat::Vec3 position, items::MaterialId material) noexcept {
+    return {position, {}, material_loot_sprite(material),
+        MaterialSpriteId::missing, material_color(material), 0.0F, true, false};
+}
+
 [[nodiscard]] bool same_room(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current) noexcept {
     return previous.room_index == current.room_index
@@ -110,11 +159,13 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
             previous, equipment_receipt.item_id);
         if (item != nullptr && !contains_equipment(current,
                 equipment_receipt.item_id)) {
-            reserve_flight(flights_) = {item->position, {},
-                ground_loot_item_sprite(item->slot),
-                ground_loot_rarity_sprite(item->rarity,
-                    item->source == dungeon::GroundItemSource::abyss_chest),
-                {255U, 255U, 255U, 255U}, 0.0F, true, true};
+            reserve_flight(flights_) = equipment_flight(item->position,
+                item->slot, item->rarity, item->source);
+        } else if (!contains_equipment(current, equipment_receipt.item_id)
+                && valid_receipt_origin(equipment_receipt)) {
+            reserve_flight(flights_) = equipment_flight(
+                equipment_receipt.position, equipment_receipt.slot,
+                equipment_receipt.rarity, equipment_receipt.source);
         }
     }
 
@@ -127,6 +178,7 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
 
     std::array<std::uint64_t, items::kMaterialCount> remaining =
         material_receipt.counts;
+    std::array<bool, items::kMaterialCount> emitted{};
     const std::size_t count = (std::min)(
         static_cast<std::size_t>(previous.ground_material_count),
         previous.ground_materials.size());
@@ -135,13 +187,24 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
             previous.ground_materials[index];
         const std::size_t material_index = items::material_index(material.material);
         if (material_index >= remaining.size() || remaining[material_index] == 0U
-                || contains_material(current, material.ordinal)) {
+                || contains_material(current, material.ordinal)
+                || (material_receipt.room_vacuum && emitted[material_index])) {
             continue;
         }
-        reserve_flight(flights_) = {material.position, {},
-            material_loot_sprite(material.material), MaterialSpriteId::missing,
-            material_color(material.material), 0.0F, true, false};
+        reserve_flight(flights_) = material_flight(material.position,
+            material.material);
+        emitted[material_index] = true;
         --remaining[material_index];
+    }
+    for (std::size_t index{}; index < remaining.size(); ++index) {
+        if (remaining[index] == 0U || emitted[index]
+                || !material_origin_valid(material_receipt, index)) {
+            continue;
+        }
+        const items::MaterialId material = static_cast<items::MaterialId>(index);
+        const combat::Vec3 origin = material_receipt.representative_origins[index];
+        if (contains_material_origin(current, material, origin)) continue;
+        reserve_flight(flights_) = material_flight(origin, material);
     }
 }
 

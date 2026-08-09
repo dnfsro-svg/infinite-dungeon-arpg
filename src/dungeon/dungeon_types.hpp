@@ -195,7 +195,11 @@ struct MaterialPickupReceipt final {
     bool room_vacuum{};
     std::uint64_t commit_generation{};
     std::array<std::uint64_t, items::kMaterialCount> counts{};
+    std::array<combat::Vec3, items::kMaterialCount> representative_origins{};
+    std::uint16_t origin_valid_mask{};
 };
+
+static_assert(items::kMaterialCount <= 16U);
 
 struct ReinforcementReceipt final {
     bool valid{};

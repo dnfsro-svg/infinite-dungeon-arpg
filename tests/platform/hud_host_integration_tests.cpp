@@ -462,6 +462,8 @@ arpg::test::Failure renderer_observes_committed_pickup_receipts_before_notices()
     platform::DungeonRenderStatus baseline = saved_status();
     baseline.loot_pickup = {true, 7U, 70U, 3U, 24U,
         items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
+    baseline.loot_pickup.position = {3.0F, -2.0F, 0.0F};
+    baseline.loot_pickup.slot = items::ItemSlot::chest;
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         current, current, baseline, hints, 0.0F, false);
     ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
@@ -500,6 +502,8 @@ arpg::test::Failure abyss_pickup_cross_room_keeps_purple_context_end_to_end()
     claimed.loot_pickup = {true, next.commit_generation, 0xAB155U,
         3U, 24U, items::ItemRarity::rare,
         dungeon::GroundItemSource::abyss_chest};
+    claimed.loot_pickup.position = {3.0F, -2.0F, 0.0F};
+    claimed.loot_pickup.slot = items::ItemSlot::chest;
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         previous, next, claimed, hints, 0.0F, false);
 

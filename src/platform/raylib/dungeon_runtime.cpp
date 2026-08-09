@@ -48,7 +48,8 @@ struct PickupCandidate final {
                 && item.source == dungeon::GroundItemSource::abyss_chest);
         if (!source_matches) return std::nullopt;
         return PickupCandidate{{true, expected_generation, item.item_id,
-            item.base_id, item.item_level, item.rarity, item.source}, ordinal};
+            item.base_id, item.item_level, item.rarity, item.source,
+            item.position, item.slot}, ordinal};
     }
     return std::nullopt;
 }

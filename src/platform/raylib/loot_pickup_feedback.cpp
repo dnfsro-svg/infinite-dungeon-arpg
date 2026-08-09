@@ -2,6 +2,7 @@
 
 #include "items/item_catalog.hpp"
 
+#include <cmath>
 #include <cstdio>
 
 namespace arpg::platform {
@@ -20,6 +21,10 @@ namespace {
     return receipt.valid && receipt.commit_generation != 0U
         && receipt.item_id != 0U && receipt.item_level != 0U
         && receipt.item_level <= 100U
+        && std::isfinite(receipt.position.x) && std::isfinite(receipt.position.y)
+        && std::isfinite(receipt.position.z)
+        && static_cast<std::size_t>(receipt.slot)
+            < static_cast<std::size_t>(items::ItemSlot::count)
         && rarity_name(receipt.rarity) != nullptr
         && items::base_definition(receipt.base_id) != nullptr
         && (receipt.source == dungeon::GroundItemSource::monster_drop
@@ -32,7 +37,10 @@ namespace {
         && receipt.item_id == 0U && receipt.base_id == 0U
         && receipt.item_level == 0U
         && receipt.rarity == items::ItemRarity::normal
-        && receipt.source == dungeon::GroundItemSource::monster_drop;
+        && receipt.source == dungeon::GroundItemSource::monster_drop
+        && receipt.position.x == 0.0F && receipt.position.y == 0.0F
+        && receipt.position.z == 0.0F
+        && receipt.slot == items::ItemSlot::count;
 }
 
 [[nodiscard]] LootPickupFeedback format_feedback(

@@ -33,6 +33,7 @@ platform::DungeonRenderStatus saved_equipment_receipt(
     status.indicator = platform::SaveIndicator::saved;
     status.loot_pickup = {true, generation, item_id, 3U, 24U,
         items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
+    status.loot_pickup.slot = items::ItemSlot::weapon;
     return status;
 }
 
@@ -242,6 +243,97 @@ arpg::test::Failure combat_renderer_commits_and_clears_loot_suction()
     return {};
 }
 
+arpg::test::Failure committed_receipt_origin_survives_same_step_equipment_pickup()
+    noexcept {
+    constexpr combat::Vec3 kOrigin{6.0F, -2.0F, 0.0F};
+    const dungeon::DungeonSnapshot empty{};
+    auto receipt = saved_equipment_receipt(8U, 88U);
+    receipt.loot_pickup.position = kOrigin;
+    receipt.loot_pickup.slot = items::ItemSlot::helmet;
+
+    platform::CombatRenderer renderer{};
+    renderer.observe_hud(empty, empty, receipt, control_hints(), 0.0F, false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
+
+    platform::LootSuctionState state{};
+    state.observe(empty, empty, {});
+    state.observe(empty, empty, receipt);
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(plan.count == 1U);
+    ARPG_REQUIRE(plan.flights[0].world_position.x == kOrigin.x);
+    ARPG_REQUIRE(plan.flights[0].world_position.y == kOrigin.y);
+    ARPG_REQUIRE(plan.flights[0].sprite
+        == platform::ground_loot_item_sprite(items::ItemSlot::helmet));
+    return {};
+}
+
+arpg::test::Failure committed_receipt_origin_survives_same_step_material_pickup()
+    noexcept {
+    constexpr combat::Vec3 kOrigin{5.0F, 3.0F, 0.0F};
+    const dungeon::DungeonSnapshot empty{};
+    dungeon::DungeonSnapshot current{};
+    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
+    current.material_pickup_receipt.valid = true;
+    current.material_pickup_receipt.commit_generation = 9U;
+    current.material_pickup_receipt.counts[chaos] = 1U;
+    current.material_pickup_receipt.representative_origins[chaos] = kOrigin;
+    current.material_pickup_receipt.origin_valid_mask =
+        static_cast<std::uint16_t>(std::uint16_t{1U} << chaos);
+    platform::DungeonRenderStatus committed{};
+    committed.indicator = platform::SaveIndicator::saved;
+
+    platform::CombatRenderer renderer{};
+    renderer.observe_hud(empty, current, committed, control_hints(), 0.0F,
+        false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
+
+    platform::LootSuctionState state{};
+    state.observe(empty, empty, {});
+    state.observe(empty, current, committed);
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(plan.count == 1U);
+    ARPG_REQUIRE(plan.flights[0].world_position.x == kOrigin.x);
+    ARPG_REQUIRE(plan.flights[0].world_position.y == kOrigin.y);
+    ARPG_REQUIRE(plan.flights[0].sprite
+        == platform::material_loot_sprite(items::MaterialId::chaos));
+    return {};
+}
+
+arpg::test::Failure receipt_fallback_keeps_rare_and_abyss_colors_distinct()
+    noexcept {
+    constexpr combat::Vec3 kOrigin{6.0F, 0.0F, 0.0F};
+    const dungeon::DungeonSnapshot empty{};
+    auto rare = saved_equipment_receipt(10U, 100U);
+    rare.loot_pickup.position = kOrigin;
+    rare.loot_pickup.slot = items::ItemSlot::weapon;
+    rare.loot_pickup.rarity = items::ItemRarity::rare;
+
+    platform::LootSuctionState rare_state{};
+    rare_state.observe(empty, empty, {});
+    rare_state.observe(empty, empty, rare);
+    const auto rare_plan = rare_state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+
+    auto abyss = rare;
+    abyss.loot_pickup.commit_generation = 11U;
+    abyss.loot_pickup.item_id = 101U;
+    abyss.loot_pickup.source = dungeon::GroundItemSource::abyss_chest;
+    platform::LootSuctionState abyss_state{};
+    abyss_state.observe(empty, empty, {});
+    abyss_state.observe(empty, empty, abyss);
+    const auto abyss_plan = abyss_state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+
+    constexpr platform::Rgba8 kWhite{255U, 255U, 255U, 255U};
+    ARPG_REQUIRE(rare_plan.count == 1U);
+    ARPG_REQUIRE(abyss_plan.count == 1U);
+    ARPG_REQUIRE(!same_color(rare_plan.flights[0].color, kWhite));
+    ARPG_REQUIRE(!same_color(abyss_plan.flights[0].color, kWhite));
+    ARPG_REQUIRE(!same_color(rare_plan.flights[0].color,
+        abyss_plan.flights[0].color));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"equipment trajectory to player waist",
         &committed_equipment_disappearance_flies_to_player_waist},
@@ -253,6 +345,12 @@ constexpr arpg::test::TestCase kCases[] = {
         &full_capacity_replaces_most_elapsed_flight_and_allocates_nothing},
     {"combat renderer loot suction lifecycle",
         &combat_renderer_commits_and_clears_loot_suction},
+    {"same-step equipment receipt origin",
+        &committed_receipt_origin_survives_same_step_equipment_pickup},
+    {"same-step material receipt origin",
+        &committed_receipt_origin_survives_same_step_material_pickup},
+    {"receipt fallback rarity colors",
+        &receipt_fallback_keeps_rare_and_abyss_colors_distinct},
 };
 
 }  // namespace

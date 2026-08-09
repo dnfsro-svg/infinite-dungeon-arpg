@@ -1920,6 +1920,28 @@ void DungeonSession::commit_pending_save(
                 pending_save_->next_state.item_ownership.materials[index]
                 - stable_state_.item_ownership.materials[index];
         }
+        for (std::uint16_t ordinal = 0U;
+                ordinal < ground_materials_.size(); ++ordinal) {
+            const GroundMaterial& ground = ground_materials_[ordinal];
+            if (!ground.active || (material_pickup_commit
+                    && ordinal != pickup_ordinal)) {
+                continue;
+            }
+            const std::size_t material_index = items::material_index(
+                ground.material);
+            if (material_index >= published_material_receipt.counts.size()
+                    || published_material_receipt.counts[material_index] == 0U) {
+                continue;
+            }
+            const std::uint16_t bit = static_cast<std::uint16_t>(
+                std::uint16_t{1U} << material_index);
+            if ((published_material_receipt.origin_valid_mask & bit) != 0U) {
+                continue;
+            }
+            published_material_receipt.representative_origins[material_index] =
+                ground.position;
+            published_material_receipt.origin_valid_mask |= bit;
+        }
     }
     if (death_commit && !can_emit(1U)) {
         enter_fault(DungeonFault::event_overflow);

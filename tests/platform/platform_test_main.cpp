@@ -27,6 +27,7 @@ arpg::test::TestSuite passive_tree_view_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept;
+arpg::test::TestSuite loot_suction_runtime_origin_suite() noexcept;
 arpg::test::TestSuite inventory_view_math_suite() noexcept;
 arpg::test::TestSuite death_input_gate_suite() noexcept;
 arpg::test::TestSuite death_overlay_view_suite() noexcept;
@@ -142,6 +143,16 @@ bool cplay021_loot_suction_only() noexcept {
     return enabled;
 }
 
+bool cplay021_loot_suction_runtime_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY021_LOOT_SUCTION_RUNTIME_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -154,11 +165,18 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay021_loot_suction_runtime_only()) {
+        const arpg::test::TestSuite cplay021_runtime_only[] = {
+            loot_suction_runtime_origin_suite(),
+        };
+        return arpg::test::run_suites(cplay021_runtime_only, 1,
+            "CPLAY-021 loot suction runtime origin");
+    }
     if (cplay021_loot_suction_only()) {
         const arpg::test::TestSuite cplay021_only[] = {
             loot_suction_animation_suite(),
         };
-        return arpg::test::run_suites(cplay021_only, 7,
+        return arpg::test::run_suites(cplay021_only, 10,
             "CPLAY-021 bounded loot suction animation");
     }
     if (cplay016_ground_potion_label_only()) {

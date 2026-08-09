@@ -22,6 +22,8 @@ platform::DungeonRenderStatus status_with_receipt(
     status.loot_pickup = {
         true, generation, item_id, 3U, 24U,
         items::ItemRarity::rare, source};
+    status.loot_pickup.position = {3.0F, -2.0F, 0.0F};
+    status.loot_pickup.slot = items::ItemSlot::chest;
     return status;
 }
 
