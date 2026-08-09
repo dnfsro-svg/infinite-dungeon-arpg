@@ -784,6 +784,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot,
     const DungeonRenderStatus& status,
     const MaterialPack& material_pack,
+    const char* inventory_binding_label,
     Font hud_font, bool hud_font_ready) {
     if (!open_) return;
     sync(session, snapshot);
@@ -794,9 +795,11 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         GetScreenWidth(), GetScreenHeight());
     const InventoryTextSafeLayout text_layout = inventory_text_safe_layout(
         GetScreenWidth(), GetScreenHeight());
+    const auto page_title = inventory_page_title(
+        page_, inventory_binding_label);
     if (page_ == InventoryPage::equipment_materials) {
         draw_hud_font_text(hud_font, hud_font_ready,
-            "EQUIPMENT INVENTORY  ·  I / ESC CLOSE",
+            page_title.data(),
             text_layout.page_title.x + 2.0F,
             text_layout.page_title.y + 2.0F,
             ui_typography().page_title_font_size,
@@ -805,7 +808,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             ui_typography().page_title_font_size);
     } else {
         draw_hud_font_text(hud_font, hud_font_ready,
-            u8"技能石背包  ·  I / ESC 关闭",
+            page_title.data(),
             text_layout.page_title.x + 2.0F,
             text_layout.page_title.y + 2.0F, 23.0F,
             ui_text_contrast_style().primary, UiTextAuditPage::skill,

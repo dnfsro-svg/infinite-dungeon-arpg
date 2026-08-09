@@ -173,6 +173,16 @@ bool cplay023_pause_reset_only() noexcept {
     return enabled;
 }
 
+bool cplay027_inventory_binding_label_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY027_INVENTORY_BINDING_LABEL_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -185,6 +195,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay027_inventory_binding_label_only()) {
+        const arpg::test::TestSuite cplay027_only[] = {
+            inventory_view_math_suite(),
+        };
+        return arpg::test::run_suites(cplay027_only, 16,
+            "CPLAY-027 inventory binding label");
+    }
     if (cplay023_pause_reset_only()) {
         const arpg::test::TestSuite cplay023_only[] = {
             pause_host_gate_suite(),
@@ -329,6 +346,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 646,
+    return arpg::test::run_suites(suites, 647,
         "host settings runtime contract");
 }

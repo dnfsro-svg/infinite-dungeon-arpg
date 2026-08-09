@@ -456,6 +456,22 @@ test::Failure full_hd_inventory_and_skill_geometry_scales_by_one_and_a_half()
     return {};
 }
 
+test::Failure inventory_page_titles_follow_the_current_binding() noexcept {
+    const auto equipment = platform::inventory_page_title(
+        platform::InventoryPage::equipment_materials, "Right");
+    const auto skills = platform::inventory_page_title(
+        platform::InventoryPage::skill_stones, "Right");
+    ARPG_REQUIRE(std::string_view(equipment.data())
+        == "Right / ESC  ·  EQUIPMENT INVENTORY");
+    ARPG_REQUIRE(std::string_view(skills.data())
+        == u8"Right / ESC  ·  技能石背包");
+    const auto longest = platform::inventory_page_title(
+        platform::InventoryPage::equipment_materials, "Right Shift");
+    ARPG_REQUIRE(std::string_view(longest.data()).rfind(
+        "Right Shift / ESC", 0U) == 0U);
+    return {};
+}
+
 constexpr test::TestCase kCases[] = {
     {"inventory layouts", &layouts_are_bounded_and_non_overlapping},
     {"inventory visible range", &visible_range_clamps_first_and_last_rows},
@@ -479,6 +495,8 @@ constexpr test::TestCase kCases[] = {
         &inventory_and_skill_text_boxes_use_disjoint_safe_areas},
     {"full-HD inventory and skill scaling",
         &full_hd_inventory_and_skill_geometry_scales_by_one_and_a_half},
+    {"inventory page titles follow binding",
+        &inventory_page_titles_follow_the_current_binding},
 };
 
 }  // namespace

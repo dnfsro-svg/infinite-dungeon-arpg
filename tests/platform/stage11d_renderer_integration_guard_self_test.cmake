@@ -425,7 +425,7 @@ stage11d_expect_moved_ground_observer(task7c_m02_before_stage12_status
     "if (config.stage12_material_runtime_status != nullptr) {\n                const MonsterMaterialDrawRuntimeStatus shooter_draw =" FALSE
     "T7C-M02")
 set(_inventory_overlay_block
-    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && inventory.is_open()) {\n                inventory.draw(*session, current, runtime.render_status(),\n                    renderer.material_pack(), renderer.hud_font(),\n                    renderer.hud_font_ready());\n            }")
+    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && inventory.is_open()) {\n                inventory.draw(*session, current, runtime.render_status(),\n                    renderer.material_pack(), stable_key_label(\n                        settings::binding_for(input_settings,\n                            settings::SettingAction::inventory)),\n                    renderer.hud_font(),\n                    renderer.hud_font_ready());\n            }")
 set(_pause_overlay_block
     "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && pause_menu.screen != PauseScreen::closed) {\n                pause_menu_renderer.draw(pause_menu, renderer.material_pack());\n                pause_cjk_ready = pause_menu_renderer.has_cjk_font();\n            }")
 stage11d_expect_ground_observer_after_block(task7c_m03_after_passive_overlay

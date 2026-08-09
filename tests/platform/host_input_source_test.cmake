@@ -49,6 +49,45 @@ function(require_match_count SOURCE PATTERN EXPECTED LABEL)
     endif()
 endfunction()
 
+string(FIND "${INVENTORY_SOURCE}"
+    "EQUIPMENT INVENTORY  ·  I / ESC CLOSE"
+    LEGACY_INVENTORY_BINDING_TITLE)
+string(FIND "${INVENTORY_SOURCE}"
+    "技能石背包  ·  I / ESC 关闭"
+    LEGACY_SKILL_BINDING_TITLE)
+if(NOT LEGACY_INVENTORY_BINDING_TITLE EQUAL -1
+        OR NOT LEGACY_SKILL_BINDING_TITLE EQUAL -1)
+    message(FATAL_ERROR
+        "inventory page titles must not hard-code the default I binding")
+endif()
+require_match_count("${INVENTORY_SOURCE}"
+    "page_title\\.data\\(\\)" 2
+    "inventory renderer dynamic page-title consumers")
+set(DYNAMIC_INVENTORY_TITLE [=[const auto page_title = inventory_page_title(
+        page_, inventory_binding_label);]=])
+string(FIND "${INVENTORY_SOURCE}" "${DYNAMIC_INVENTORY_TITLE}"
+    DYNAMIC_INVENTORY_TITLE_INDEX)
+if(DYNAMIC_INVENTORY_TITLE_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "inventory renderer must format titles with its binding argument")
+endif()
+set(DYNAMIC_INVENTORY_DRAW [=[inventory.draw(*session, current, runtime.render_status(),
+                    renderer.material_pack(), stable_key_label(
+                        settings::binding_for(input_settings,
+                            settings::SettingAction::inventory)),
+                    renderer.hud_font(),]=])
+string(FIND "${HOST_SOURCE}" "${DYNAMIC_INVENTORY_DRAW}"
+    DYNAMIC_INVENTORY_DRAW_INDEX)
+if(DYNAMIC_INVENTORY_DRAW_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "inventory renderer must receive the applied input_settings binding")
+endif()
+if(ARPG_CPLAY027_INVENTORY_BINDING_LABEL_ONLY)
+    message(STATUS
+        "inventory page titles consume the applied input binding")
+    return()
+endif()
+
 function(host_large_state_construction_valid SOURCE OUT_VALID)
     set(WS "[ \t\r\n]*")
     set(WS1 "[ \t\r\n]+")

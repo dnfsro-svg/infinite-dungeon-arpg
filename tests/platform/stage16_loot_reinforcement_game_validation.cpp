@@ -635,7 +635,7 @@ bool render_inventory_capture(const std::filesystem::path& run,
     static_cast<void>(room->draw(*current, *current, *world, camera,
         runtime.render_status(), 1.0F, false, feedback, false));
     inventory.draw(*runtime.session(), *current, runtime.render_status(),
-        room->material_pack(), room->hud_font(), room->hud_font_ready());
+        room->material_pack(), "I", room->hud_font(), room->hud_font_ready());
     const auto image = run / name;
     const bool exported = export_flushed_frame(image);
     EndDrawing();

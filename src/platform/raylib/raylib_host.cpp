@@ -23,6 +23,7 @@
 #include "pause_menu_renderer.hpp"
 #include "pause_menu_state.hpp"
 #include "pause_menu_view.hpp"
+#include "stable_key_raylib.hpp"
 #include "ui_material.hpp"
 #include "ui_text_bounds_audit.hpp"
 #include "persistence/save_paths.hpp"
@@ -1208,7 +1209,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && !config.stage12_material_icons_only
                 && inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status(),
-                    renderer.material_pack(), renderer.hud_font(),
+                    renderer.material_pack(), stable_key_label(
+                        settings::binding_for(input_settings,
+                            settings::SettingAction::inventory)),
+                    renderer.hud_font(),
                     renderer.hud_font_ready());
             }
             bool pause_cjk_ready = false;
