@@ -16,12 +16,16 @@ struct UiUtf8CopyResult final {
 
 // Malformed input consumes exactly one input byte and writes one ASCII '?',
 // allowing following ASCII and valid UTF-8 bytes to be recovered.
+// source may equal destination exactly. Any other overlapping source and
+// destination ranges are rejected: destination becomes empty, bytes_written
+// is zero, and a nonempty source is reported as truncated.
 [[nodiscard]] UiUtf8CopyResult ui_utf8_copy(
     char* destination, std::size_t capacity, const char* source) noexcept;
 
 // On truncation, writes the longest whole-code-point prefix followed by UTF-8
 // ellipsis '…'. If the destination cannot hold the complete ellipsis, writes
-// an empty NUL-terminated string instead.
+// an empty NUL-terminated string instead. It has the same overlap contract as
+// ui_utf8_copy().
 [[nodiscard]] UiUtf8CopyResult ui_utf8_fit_with_ellipsis(
     char* destination, std::size_t capacity, const char* source) noexcept;
 

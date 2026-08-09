@@ -75,6 +75,14 @@ arpg::test::Failure copy_never_splits_one_to_four_byte_code_points_at_capacity_b
     ARPG_REQUIRE(std::strcmp(buffer, kText) == 0);
     ARPG_REQUIRE(four.bytes_written == 10U);
     ARPG_REQUIRE(!four.truncated);
+
+    char in_place[16] = u8"设置";
+    const auto in_place_copy = platform::ui_utf8_copy(
+        in_place, sizeof(in_place), in_place);
+    ARPG_REQUIRE(std::strcmp(in_place, u8"设置") == 0);
+    ARPG_REQUIRE(in_place_copy.bytes_written == 6U);
+    ARPG_REQUIRE(in_place_copy.input_was_valid);
+    ARPG_REQUIRE(!in_place_copy.truncated);
     return {};
 }
 
@@ -95,6 +103,14 @@ arpg::test::Failure ellipsis_preserves_chinese_utf8_or_returns_empty_when_it_can
     ARPG_REQUIRE(too_small.truncated);
     ARPG_REQUIRE(too_small.bytes_written == 0U);
     ARPG_REQUIRE(buffer[0] == '\0');
+
+    char in_place[16] = u8"设置界面";
+    const auto in_place_result = platform::ui_utf8_fit_with_ellipsis(
+        in_place, 7U, in_place);
+    ARPG_REQUIRE(std::strcmp(in_place, u8"设…") == 0);
+    ARPG_REQUIRE(in_place_result.bytes_written == 6U);
+    ARPG_REQUIRE(in_place_result.input_was_valid);
+    ARPG_REQUIRE(in_place_result.truncated);
     return {};
 }
 
@@ -118,6 +134,52 @@ arpg::test::Failure empty_or_nul_only_destinations_remain_safely_terminated()
     ARPG_REQUIRE(null_destination.bytes_written == 0U);
     ARPG_REQUIRE(null_destination.input_was_valid);
     ARPG_REQUIRE(null_destination.truncated);
+
+    const auto missing_destination = platform::ui_utf8_copy(
+        nullptr, 8U, u8"设置");
+    ARPG_REQUIRE(missing_destination.bytes_written == 0U);
+    ARPG_REQUIRE(missing_destination.input_was_valid);
+    ARPG_REQUIRE(missing_destination.truncated);
+
+    const auto missing_ellipsis_destination =
+        platform::ui_utf8_fit_with_ellipsis(nullptr, 8U, u8"设置界面");
+    ARPG_REQUIRE(missing_ellipsis_destination.bytes_written == 0U);
+    ARPG_REQUIRE(missing_ellipsis_destination.input_was_valid);
+    ARPG_REQUIRE(missing_ellipsis_destination.truncated);
+
+    char source_missing[4]{'x', 'x', 'x', '\0'};
+    const auto missing_source = platform::ui_utf8_copy(
+        source_missing, sizeof(source_missing), nullptr);
+    ARPG_REQUIRE(missing_source.bytes_written == 0U);
+    ARPG_REQUIRE(!missing_source.input_was_valid);
+    ARPG_REQUIRE(!missing_source.truncated);
+    ARPG_REQUIRE(source_missing[0] == '\0');
+
+    source_missing[0] = 'x';
+    const auto missing_ellipsis_source = platform::ui_utf8_fit_with_ellipsis(
+        source_missing, sizeof(source_missing), nullptr);
+    ARPG_REQUIRE(missing_ellipsis_source.bytes_written == 0U);
+    ARPG_REQUIRE(!missing_ellipsis_source.input_was_valid);
+    ARPG_REQUIRE(!missing_ellipsis_source.truncated);
+    ARPG_REQUIRE(source_missing[0] == '\0');
+
+    char partial_overlap[8] = "ABCDE";
+    const auto rejected_overlap = platform::ui_utf8_copy(
+        partial_overlap + 1, sizeof(partial_overlap) - 1U, partial_overlap);
+    ARPG_REQUIRE(partial_overlap[1] == '\0');
+    ARPG_REQUIRE(rejected_overlap.bytes_written == 0U);
+    ARPG_REQUIRE(rejected_overlap.input_was_valid);
+    ARPG_REQUIRE(rejected_overlap.truncated);
+
+    char rejected_ellipsis_overlap[8] = "ABCDE";
+    const auto rejected_ellipsis_overlap_result =
+        platform::ui_utf8_fit_with_ellipsis(rejected_ellipsis_overlap + 1,
+            sizeof(rejected_ellipsis_overlap) - 1U,
+            rejected_ellipsis_overlap);
+    ARPG_REQUIRE(rejected_ellipsis_overlap[1] == '\0');
+    ARPG_REQUIRE(rejected_ellipsis_overlap_result.bytes_written == 0U);
+    ARPG_REQUIRE(rejected_ellipsis_overlap_result.input_was_valid);
+    ARPG_REQUIRE(rejected_ellipsis_overlap_result.truncated);
     return {};
 }
 

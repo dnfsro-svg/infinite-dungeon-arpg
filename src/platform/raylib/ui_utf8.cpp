@@ -1,6 +1,7 @@
 #include "ui_utf8.hpp"
 
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 
 namespace arpg::platform {
@@ -75,6 +76,36 @@ struct DecodedCodePoint final {
     return destination == nullptr || capacity == 0U ? 0U : capacity - 1U;
 }
 
+enum class BufferOverlap : unsigned char {
+    disjoint,
+    exact,
+    partial,
+};
+
+[[nodiscard]] BufferOverlap buffer_overlap(
+    const char* destination, std::size_t capacity, const char* source) noexcept {
+    if (destination == nullptr || capacity == 0U || source == nullptr) {
+        return BufferOverlap::disjoint;
+    }
+    if (destination == source) return BufferOverlap::exact;
+
+    std::uintptr_t source_bytes{1U};
+    for (const char* cursor = source; *cursor != '\0'; ++cursor) {
+        ++source_bytes;
+    }
+    const auto destination_address = reinterpret_cast<std::uintptr_t>(destination);
+    const auto source_address = reinterpret_cast<std::uintptr_t>(source);
+    if (destination_address < source_address) {
+        return source_address - destination_address
+                < static_cast<std::uintptr_t>(capacity)
+            ? BufferOverlap::partial
+            : BufferOverlap::disjoint;
+    }
+    return destination_address - source_address < source_bytes
+        ? BufferOverlap::partial
+        : BufferOverlap::disjoint;
+}
+
 void write_bytes(char* destination, std::size_t& written,
     const char* source, std::size_t length) noexcept {
     for (std::size_t index{}; index < length; ++index) {
@@ -87,6 +118,15 @@ void terminate(char* destination, std::size_t capacity,
     if (destination != nullptr && capacity != 0U) {
         destination[written] = '\0';
     }
+}
+
+[[nodiscard]] UiUtf8CopyResult reject_partial_overlap(
+    char* destination, std::size_t capacity, const char* source) noexcept {
+    UiUtf8CopyResult result{};
+    result.input_was_valid = ui_utf8_is_valid(source);
+    result.truncated = source[0] != '\0';
+    terminate(destination, capacity, 0U);
+    return result;
 }
 
 struct Utf8Scan final {
@@ -189,8 +229,14 @@ UiUtf8CopyResult ui_utf8_copy(
     result.input_was_valid = source != nullptr;
     const std::size_t writable = writable_capacity(destination, capacity);
     std::size_t written{};
-    terminate(destination, capacity, written);
-    if (source == nullptr) return result;
+    if (source == nullptr) {
+        terminate(destination, capacity, written);
+        return result;
+    }
+    if (buffer_overlap(destination, capacity, source)
+        == BufferOverlap::partial) {
+        return reject_partial_overlap(destination, capacity, source);
+    }
 
     for (const char* cursor = source; *cursor != '\0';) {
         const DecodedCodePoint decoded = decode(cursor);
@@ -215,17 +261,21 @@ UiUtf8CopyResult ui_utf8_copy(
 
 UiUtf8CopyResult ui_utf8_fit_with_ellipsis(
     char* destination, std::size_t capacity, const char* source) noexcept {
+    if (buffer_overlap(destination, capacity, source)
+        == BufferOverlap::partial) {
+        return reject_partial_overlap(destination, capacity, source);
+    }
     const std::size_t writable = writable_capacity(destination, capacity);
     Utf8Scan scan = scan_for_capacity(source, writable);
     UiUtf8CopyResult result{};
     result.input_was_valid = scan.input_was_valid;
-    terminate(destination, capacity, 0U);
     if (scan.fits) return ui_utf8_copy(destination, capacity, source);
 
     result.truncated = scan.has_output;
     constexpr char kEllipsis[] = u8"…";
     constexpr std::size_t kEllipsisBytes = sizeof(kEllipsis) - 1U;
     if (destination == nullptr || writable < kEllipsisBytes || source == nullptr) {
+        terminate(destination, capacity, 0U);
         return result;
     }
 
