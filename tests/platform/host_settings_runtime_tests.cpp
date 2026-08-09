@@ -401,7 +401,7 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
         ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
         ARPG_REQUIRE(menu.message != nullptr);
         ARPG_REQUIRE(std::strcmp(menu.message,
-            u8"另一实例保存繁忙") == 0);
+            u8"另一游戏实例正在保存，请稍后重试") == 0);
     }
     {
         MemorySettingsFiles files{};

@@ -16,10 +16,6 @@ enum class UiTextId : std::uint16_t {
     settings_title, settings_audio, settings_display, settings_bindings,
     settings_restore_defaults, settings_apply, settings_cancel,
     settings_saved_prefix, settings_unknown,
-    settings_invalid_binding, settings_invalid, settings_revision_limit,
-    settings_preview_failed, settings_save_failed_retry, settings_save_busy,
-    settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
-    settings_storage_conflict, settings_recovered_defaults,
     hud_health, hud_barrier, hud_experience, hud_level,
     save_saving, save_saved, save_recovered, save_error,
     recovery_title, recovery_invalid_slots,
@@ -27,6 +23,10 @@ enum class UiTextId : std::uint16_t {
     passive_title, passive_points, passive_close,
     debug_ready, debug_unavailable,
     unknown,
+    settings_invalid_binding, settings_invalid, settings_revision_limit,
+    settings_preview_failed, settings_save_failed_retry, settings_save_busy,
+    settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
+    settings_storage_conflict, settings_recovered_defaults,
     count,
 };
 

@@ -13,6 +13,52 @@ namespace {
 
 namespace platform = arpg::platform;
 
+constexpr std::array<platform::UiTextId, 32U> kBaseUiTextIds{{
+    platform::UiTextId::pause_title,
+    platform::UiTextId::pause_continue,
+    platform::UiTextId::pause_settings,
+    platform::UiTextId::pause_quit,
+    platform::UiTextId::settings_title,
+    platform::UiTextId::settings_audio,
+    platform::UiTextId::settings_display,
+    platform::UiTextId::settings_bindings,
+    platform::UiTextId::settings_restore_defaults,
+    platform::UiTextId::settings_apply,
+    platform::UiTextId::settings_cancel,
+    platform::UiTextId::settings_saved_prefix,
+    platform::UiTextId::settings_unknown,
+    platform::UiTextId::hud_health,
+    platform::UiTextId::hud_barrier,
+    platform::UiTextId::hud_experience,
+    platform::UiTextId::hud_level,
+    platform::UiTextId::save_saving,
+    platform::UiTextId::save_saved,
+    platform::UiTextId::save_recovered,
+    platform::UiTextId::save_error,
+    platform::UiTextId::recovery_title,
+    platform::UiTextId::recovery_invalid_slots,
+    platform::UiTextId::inventory_title,
+    platform::UiTextId::equipment_title,
+    platform::UiTextId::item_detail_title,
+    platform::UiTextId::passive_title,
+    platform::UiTextId::passive_points,
+    platform::UiTextId::passive_close,
+    platform::UiTextId::debug_ready,
+    platform::UiTextId::debug_unavailable,
+    platform::UiTextId::unknown,
+}};
+
+constexpr bool base_ui_text_ordinals_are_stable() noexcept {
+    for (std::size_t index = 0U; index < kBaseUiTextIds.size(); ++index) {
+        if (static_cast<std::size_t>(kBaseUiTextIds[index]) != index)
+            return false;
+    }
+    return true;
+}
+
+static_assert(base_ui_text_ordinals_are_stable(),
+    "Base UiTextId ordinals 0-31 are a stable compatibility contract");
+
 void count_text(const char* text, void* context) noexcept {
     auto* const count = static_cast<std::size_t*>(context);
     if (text != nullptr && text[0] != '\0') ++(*count);
@@ -48,7 +94,8 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
             {platform::UiTextId::settings_revision_limit, u8"版本号已达上限"},
             {platform::UiTextId::settings_preview_failed, u8"实时预览失败"},
             {platform::UiTextId::settings_save_failed_retry, u8"设置保存失败，请重试"},
-            {platform::UiTextId::settings_save_busy, u8"另一实例保存繁忙"},
+            {platform::UiTextId::settings_save_busy,
+                u8"另一游戏实例正在保存，请稍后重试"},
             {platform::UiTextId::settings_rollback_failed, u8"设置回滚失败"},
             {platform::UiTextId::settings_saved, u8"设置已保存"},
             {platform::UiTextId::settings_reloaded_elsewhere, u8"另一实例修改已重载"},
