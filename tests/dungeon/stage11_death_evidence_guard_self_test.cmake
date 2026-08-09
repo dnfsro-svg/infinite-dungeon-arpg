@@ -802,19 +802,19 @@ expect_guard_rejection(relocated_early_descent "${VALID_FIXTURE}"
 file(REMOVE "${relocated_early_descent_file}")
 
 expect_capture_replacement_rejection(capture_dark_floor
-    "\$panelDark -lt 500" "\$panelDark -lt 0")
+    "\$panelDark -lt 390" "\$panelDark -lt 0")
 expect_capture_replacement_rejection(capture_accent_floor
     "\$panelAccent -lt 15" "\$panelAccent -lt 0")
 expect_capture_replacement_rejection(capture_authored_floor
-    "\$panelAuthored -lt 3000" "\$panelAuthored -lt 0")
+    "\$panelAuthored -lt 2350" "\$panelAuthored -lt 0")
 expect_capture_replacement_rejection(capture_panel_left
-    "\$panelLeft = 152" "\$panelLeft = 120")
+    "\$panelLeft = 212" "\$panelLeft = 180")
 expect_capture_replacement_rejection(capture_panel_top
-    "\$panelTop = 80" "\$panelTop = 48")
+    "\$panelTop = 112" "\$panelTop = 80")
 expect_capture_replacement_rejection(capture_panel_right
-    "\$panelRightExclusive = 1128" "\$panelRightExclusive = 1160")
+    "\$panelRightExclusive = 1068" "\$panelRightExclusive = 1100")
 expect_capture_replacement_rejection(capture_panel_bottom
-    "\$panelBottomExclusive = 644" "\$panelBottomExclusive = 672")
+    "\$panelBottomExclusive = 612" "\$panelBottomExclusive = 640")
 
 get_property(final_mutation_count GLOBAL PROPERTY STAGE11_MUTATION_COUNT)
 if(NOT final_mutation_count EQUAL 85)

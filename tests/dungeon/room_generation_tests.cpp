@@ -276,6 +276,37 @@ arpg::test::Failure entry_templates_derive_spawns_from_square_bounds() noexcept 
     return {};
 }
 
+arpg::test::Failure early_floor_combat_table_is_frozen() noexcept {
+    using namespace arpg::combat;
+    using namespace arpg::dungeon;
+    using namespace arpg::dungeon::checkpoint;
+    struct Expected final {
+        std::uint64_t depth;
+        std::uint32_t monster_source_damage_bp;
+        std::uint16_t initial_invulnerability_ticks;
+    };
+    constexpr std::array<Expected, 5U> kExpected{{
+        {1U, 3500U, 180U},
+        {2U, 5000U, 180U},
+        {3U, 7000U, 180U},
+        {4U, 10000U, 0U},
+        {90U, 10000U, 0U},
+    }};
+    const EncounterWave wave{};
+    for (const Expected expected : kExpected) {
+        const auto config = make_combat_encounter_config(
+            EntrySide::initial, 1U, expected.depth, wave, true,
+            arpg::abyss::combat_config_for(
+                arpg::abyss::AbyssRuleId::none));
+        ARPG_REQUIRE(config.has_value());
+        ARPG_REQUIRE(config->monster_source_damage_bp
+            == expected.monster_source_damage_bp);
+        ARPG_REQUIRE(config->initial_invulnerability_ticks
+            == expected.initial_invulnerability_ticks);
+    }
+    return {};
+}
+
 arpg::test::Failure non_v1_combat_template_is_rejected() noexcept {
     using namespace arpg::dungeon;
     using namespace arpg::dungeon::checkpoint;
@@ -293,6 +324,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"bias only changes ecology stream", &bias_only_changes_ecology_stream},
     {"entry templates derive spawns from square bounds",
      &entry_templates_derive_spawns_from_square_bounds},
+    {"early floor combat table is frozen",
+     &early_floor_combat_table_is_frozen},
     {"non v1 combat template is rejected", &non_v1_combat_template_is_rejected},
     {"preview uses fixed direction slots and target seeds", &preview_uses_fixed_direction_slots_and_target_seeds},
     {"preview supports zero through four abyss doors", &preview_supports_zero_through_four_abyss_doors},

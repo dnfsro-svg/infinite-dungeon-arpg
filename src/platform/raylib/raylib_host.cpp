@@ -726,13 +726,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory_toggled_this_frame = true;
                 }
             }
-            if (death_gate.forward_gameplay
+            const bool passive_toggle_input_available =
+                runtime.authority_requests_enabled()
+                && !gameplay_rearm_was_required
+                && death_gate.forward_gameplay
                 && pause_menu.screen == PauseScreen::closed
-                && !inventory.is_open() && !inventory_toggled_this_frame
-                && frame_input.keys.passives
-                && passive_overlay_can_toggle(inventory.is_open())
-                && passive_tree_can_open(current)) {
+                && !inventory.is_open()
+                && !inventory_toggled_this_frame
+                && passive_overlay_can_toggle(inventory.is_open());
+            const PassiveTreeToggleAction passive_toggle_action =
+                passive_tree_toggle_action(current,
+                    frame_input.keys.passives,
+                    passive_toggle_input_available);
+            if (passive_toggle_action == PassiveTreeToggleAction::toggle) {
                 passive_overlay_open = !passive_overlay_open;
+            } else if (passive_toggle_action
+                    == PassiveTreeToggleAction::show_full_clear_requirement) {
+                renderer.publish_passive_tree_blocked();
             }
             if ((!inventory.is_open() || !death_gate.forward_gameplay)
                     && death_gate.debug_toggle) {
@@ -757,8 +767,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const bool pause_was_open =
                 pause_screen_before != PauseScreen::closed;
             if (pause_was_open && physical_keys.mouse_left) {
+                const PauseMenuView pause_view =
+                    make_pause_menu_view(pause_menu);
                 const PauseMenuLayout layout = pause_menu_layout(
-                    GetScreenWidth(), GetScreenHeight());
+                    GetScreenWidth(), GetScreenHeight(),
+                    pause_view.row_count);
                 const auto selected = hit_test_pause_row(
                     layout, physical_keys.mouse_position);
                 if (selected.has_value()) pause_menu.selected_row = *selected;

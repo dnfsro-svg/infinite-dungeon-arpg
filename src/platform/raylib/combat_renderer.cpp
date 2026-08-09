@@ -17,11 +17,18 @@ void append_actor_obstacle(LootLabelObstacleSet& obstacles,
     float width, float height) noexcept {
     const ScreenProjection projected = project_combat_position(
         position, camera, width, height);
+    constexpr float kHighestResourceBarOffset = 14.0F;
+    const float obstacle_top = projected.y
+        + monster_presentation_plan(0U, false).resource_bar_offset_y
+            * projected.scale
+        - kHighestResourceBarOffset + camera_offset.y;
+    const float obstacle_bottom = projected.y
+        + 14.0F * projected.scale + camera_offset.y;
     static_cast<void>(obstacles.append({
         projected.x - 75.0F * projected.scale + camera_offset.x,
-        projected.y - 119.0F * projected.scale + camera_offset.y,
+        obstacle_top,
         150.0F * projected.scale,
-        133.0F * projected.scale,
+        obstacle_bottom - obstacle_top,
     }));
 }
 
@@ -355,6 +362,10 @@ void CombatRenderer::set_loot_filter_mode(
 
 void CombatRenderer::update(float frame_seconds) noexcept {
     transition_ = advance_transition(transition_, frame_seconds);
+}
+
+void CombatRenderer::publish_passive_tree_blocked() noexcept {
+    hud_notices_.publish_passive_tree_blocked();
 }
 
 void CombatRenderer::observe_hud(

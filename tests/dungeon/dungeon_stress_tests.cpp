@@ -1198,7 +1198,12 @@ void print_real_input_trace(
 
 arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() noexcept {
     {
-        DungeonSession potion_probe;
+        const DungeonRules potion_rules{};
+        auto potion_state = arpg::dungeon::make_initial_run_state(
+            arpg::dungeon::DungeonSessionConfig{}.root_seed,
+            potion_rules).state;
+        potion_state.current_room.depth = 4U;
+        DungeonSession potion_probe{potion_rules, potion_state};
         StressSummary potion_summary{};
         ARPG_REQUIRE(exercise_health_potion_save_boundary(
             potion_probe, potion_summary));

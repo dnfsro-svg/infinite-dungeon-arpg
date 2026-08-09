@@ -33,9 +33,9 @@ void draw_text(Font font, const char* text, DeathOverlayRect bounds,
         static_cast<float>(font_size), kSpacing, color);
 }
 
-void draw_screen_dimmer() noexcept {
+void draw_screen_dimmer(std::uint8_t alpha) noexcept {
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
-        Color{2, 4, 8, 205});
+        Color{2, 4, 8, alpha});
 }
 
 void draw_panel_fallback(const DeathOverlayLayout& layout) noexcept {
@@ -101,8 +101,8 @@ void DeathOverlayRenderer::draw(
         death_overlay_material_plan(view.visible);
     if (!plan.visible) return;
     const DeathOverlayLayout layout = death_overlay_layout(
-        GetScreenWidth(), GetScreenHeight());
-    draw_screen_dimmer();
+        view, GetScreenWidth(), GetScreenHeight());
+    draw_screen_dimmer(plan.dimmer_alpha);
     if (!material_pack.draw_nine_slice(
             plan.panel, rectangle(layout.panel), plan.panel_border_pixels)) {
         draw_panel_fallback(layout);
@@ -117,7 +117,8 @@ void DeathOverlayRenderer::draw(
     for (std::size_t index = 0U; index < view.line_count; ++index) {
         const DeathOverlayRect bounds = layout.line_bounds[index];
         draw_text(draw_font, view.lines[index].text.data(), bounds,
-            layout.body_font_size,
+            view.lines[index].heading
+                ? layout.heading_font_size : layout.body_font_size,
             view.lines[index].heading ? ui_text_contrast_style().danger
                                       : ui_text_contrast_style().primary);
     }

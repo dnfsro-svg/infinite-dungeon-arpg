@@ -63,6 +63,23 @@ bool passive_tree_can_open(const dungeon::DungeonSnapshot& snapshot) noexcept {
         && !snapshot.passive_save_pending;
 }
 
+PassiveTreeToggleAction passive_tree_toggle_action(
+    const dungeon::DungeonSnapshot& snapshot,
+    bool pressed,
+    bool gameplay_input_available) noexcept {
+    if (!pressed || !gameplay_input_available) {
+        return PassiveTreeToggleAction::none;
+    }
+    if (passive_tree_can_open(snapshot)) {
+        return PassiveTreeToggleAction::toggle;
+    }
+    return snapshot.has_active_room
+            && snapshot.phase == dungeon::RoomPhase::combat
+            && snapshot.remaining_targets != 0U
+        ? PassiveTreeToggleAction::show_full_clear_requirement
+        : PassiveTreeToggleAction::none;
+}
+
 PassiveNodeProjection project_passive_node(passives::PassiveNodeId node,
     float width, float height) noexcept {
     if (node >= passives::kPassiveNodeCount || !valid_viewport(width, height)) {

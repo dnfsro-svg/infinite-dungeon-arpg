@@ -27,6 +27,7 @@ public:
         const DungeonRenderStatus& status,
         const ControlHints& hints,
         bool recovery_required) noexcept;
+    void publish_passive_tree_blocked() noexcept;
     void publish_loot_pickup(const HudText96&, bool abyss) noexcept;
     void update(float frame_seconds, bool paused) noexcept;
     void clear_room_context() noexcept;

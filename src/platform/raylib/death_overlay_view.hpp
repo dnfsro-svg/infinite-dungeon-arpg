@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 namespace arpg::platform {
 
@@ -44,6 +45,7 @@ struct DeathOverlayLayout final {
     std::array<DeathOverlayRect, kDeathOverlayLineCapacity> line_bounds{};
     DeathOverlayRect prompt{};
     int title_font_size{};
+    int heading_font_size{};
     int body_font_size{};
     int prompt_font_size{};
 };
@@ -53,6 +55,7 @@ struct DeathOverlayMaterialPlan final {
     MaterialSpriteId panel{MaterialSpriteId::ui_warning_modal};
     MaterialSpriteId title_plate{MaterialSpriteId::ui_label_plate};
     float panel_border_pixels{32.0F};
+    std::uint8_t dimmer_alpha{232U};
 };
 
 [[nodiscard]] DeathOverlayView build_death_overlay_view(
@@ -62,6 +65,7 @@ struct DeathOverlayMaterialPlan final {
     const dungeon::DungeonSnapshot& snapshot) noexcept;
 
 [[nodiscard]] DeathOverlayLayout death_overlay_layout(
+    const DeathOverlayView& view,
     int screen_width,
     int screen_height) noexcept;
 

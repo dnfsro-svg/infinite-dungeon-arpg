@@ -160,6 +160,9 @@ HostFrameInput map_host_frame_input(
     const settings::SettingsData& settings_data,
     const PhysicalKeySnapshot& snapshot) noexcept {
     HostFrameInput input{};
+    input.keys.focus_lost = snapshot.focus_lost;
+    if (snapshot.focus_lost) return input;
+
     const int left = down(snapshot, settings::binding_for(
         settings_data, settings::SettingAction::move_left)) ? 1 : 0;
     const int right = down(snapshot, settings::binding_for(

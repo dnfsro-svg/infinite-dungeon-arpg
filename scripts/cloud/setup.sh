@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-for tool in cmake ninja g++; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "Error: required tool '$tool' was not found in PATH." >&2
-    exit 1
+echo "[cloud] preparing C++ toolchain"
+
+if command -v apt-get >/dev/null 2>&1; then
+  APT=(apt-get)
+  if command -v sudo >/dev/null 2>&1; then
+    APT=(sudo -n apt-get)
   fi
-done
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -- "$script_dir/../.." && pwd)"
-cd "$repo_root"
+  "${APT[@]}" update
+  DEBIAN_FRONTEND=noninteractive "${APT[@]}" install -y --no-install-recommends \
+    build-essential \
+    clang \
+    clang-format \
+    clang-tidy \
+    cmake \
+    git \
+    ninja-build \
+    pkg-config \
+    python3 \
+    python3-pip
+fi
 
-cmake --preset linux-gcc-core-debug --fresh
-cmake --build --preset linux-gcc-core-debug
-ctest --preset linux-gcc-core-debug --no-tests=error
+cmake --version
+git --version
+python3 --version
+
+echo "[cloud] environment ready"

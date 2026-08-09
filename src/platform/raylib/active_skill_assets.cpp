@@ -94,6 +94,21 @@ float active_skill_material_draw_scale(
         * kBasePlayerOpaqueHeight / actor_opaque_height;
 }
 
+float active_skill_material_effect_scale(
+    skills::ActiveSkillId id, float projection_scale) noexcept {
+    if (projection_scale <= 0.0F) return 0.0F;
+    switch (id) {
+    case skills::ActiveSkillId::draw_slash:
+        return 0.72F * projection_scale;
+    case skills::ActiveSkillId::storm_swords:
+        return 0.70F * projection_scale;
+    case skills::ActiveSkillId::none:
+    case skills::ActiveSkillId::count:
+        return 0.0F;
+    }
+    return 0.0F;
+}
+
 bool active_skill_assets_ready() noexcept {
     if (!atlas_matches_manifest(
             MaterialAtlasId::skill_draw_slash, 1254, 1254)

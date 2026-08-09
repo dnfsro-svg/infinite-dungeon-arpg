@@ -193,6 +193,13 @@ bool CombatWorld::resolve_player_attack_hit(
     if (!resolved_packet.has_value()) return false;
 
     if (!hit_latch.insert(dummy.monster_ordinal)) return false;
+    if (room_monster_field_ != nullptr) {
+        dummy.engagement_latch = 1U;
+        if (dummy.ai_phase == MonsterAiPhase::idle) {
+            dummy.ai_phase = MonsterAiPhase::move;
+            dummy.ai_ticks = 0U;
+        }
+    }
     const DamagePacket& packet = *resolved_packet;
     const std::size_t physical_index = arpg::modifiers::damage_index(
         arpg::modifiers::DamageType::physical);

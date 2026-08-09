@@ -436,6 +436,32 @@ arpg::test::Failure abyss_fury_scales_final_chilling_contact_and_projectile() no
     return {};
 }
 
+arpg::test::Failure early_floor_damage_composes_with_abyss_once() noexcept {
+    CombatEncounterConfig contact = encounter_for(
+        MonsterId::chaos_chaser, 0.0F);
+    contact.monster_source_damage_bp = 3500U;
+    contact.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_fury);
+    CombatWorld contact_world{contact};
+    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(
+        contact_world, 0U);
+    const int contact_before = contact_world.snapshot().player.hp;
+    arpg::test::CombatWorldTestAccess::simulate_monster(contact_world, 0U);
+    ARPG_REQUIRE(contact_before - contact_world.snapshot().player.hp == 7);
+
+    CombatEncounterConfig hazard = encounter_for(
+        MonsterId::chaos_hazard, 0.0F);
+    hazard.monster_source_damage_bp = 3500U;
+    hazard.abyss = contact.abyss;
+    CombatWorld hazard_world{hazard};
+    hazard_world.tick({});
+    ARPG_REQUIRE(hazard_world.snapshot().hazard_count == 1U);
+    ARPG_REQUIRE(hazard_world.snapshot().hazards[0].damage.amount[
+        arpg::modifiers::damage_index(
+            arpg::modifiers::DamageType::chaos)] == 5);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
@@ -453,6 +479,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss fury composes frenzy once", &abyss_fury_composes_with_frenzy_once},
     {"abyss fury scales final chilling damage",
      &abyss_fury_scales_final_chilling_contact_and_projectile},
+    {"early floor damage composes with abyss once",
+     &early_floor_damage_composes_with_abyss_once},
 };
 
 }  // namespace

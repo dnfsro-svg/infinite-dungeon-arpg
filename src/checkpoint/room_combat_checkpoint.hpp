@@ -303,7 +303,7 @@ struct MonsterCombatCheckpoint final {
     std::uint16_t max_shield_ticks{};
     std::uint16_t shield_recharge_ticks{};
     std::uint16_t break_window_ticks{};
-    std::uint16_t owner_transient_counter{};
+    std::uint16_t engagement_latch{};
     std::uint16_t burning_ground_ticks{};
     std::uint16_t blink_assault_ticks{};
     bool blink_empowered{};

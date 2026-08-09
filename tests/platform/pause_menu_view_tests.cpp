@@ -228,7 +228,27 @@ test::Failure root_and_quit_views_have_complete_content() noexcept {
     ARPG_REQUIRE(std::strcmp(root.rows[1].data(), "Settings") == 0);
     ARPG_REQUIRE(std::strcmp(root.rows[2].data(), "Quit Game") == 0);
     ARPG_REQUIRE(root.message == state.message);
+    ARPG_REQUIRE(root.footer != nullptr);
+    ARPG_REQUIRE(std::strcmp(root.footer,
+        "Arrow keys navigate | Enter select | Esc back | R Reset Room") == 0);
 
+    ARPG_REQUIRE(settings::assign_or_swap(state.draft,
+        settings::SettingAction::light_attack, settings::StableKey::r));
+    const auto draft_only_rebound_root =
+        platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(draft_only_rebound_root.footer != nullptr);
+    ARPG_REQUIRE(std::strcmp(draft_only_rebound_root.footer,
+        "Arrow keys navigate | Enter select | Esc back | R Reset Room") == 0);
+
+    ARPG_REQUIRE(settings::assign_or_swap(state.committed,
+        settings::SettingAction::light_attack, settings::StableKey::r));
+    const auto committed_rebound_root =
+        platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(committed_rebound_root.footer != nullptr);
+    ARPG_REQUIRE(std::strcmp(committed_rebound_root.footer,
+        "Arrow keys navigate | Enter select | Esc back") == 0);
+
+    state.committed = settings::default_settings();
     state.screen = platform::PauseScreen::quit_confirm;
     state.selected_row = 0U;
     const auto quit = platform::make_pause_menu_view(state);
@@ -237,6 +257,35 @@ test::Failure root_and_quit_views_have_complete_content() noexcept {
     ARPG_REQUIRE(quit.selected_row == 0U);
     ARPG_REQUIRE(std::strcmp(quit.rows[0].data(), "Quit Game") == 0);
     ARPG_REQUIRE(std::strcmp(quit.rows[1].data(), "Back") == 0);
+    ARPG_REQUIRE(quit.footer != nullptr);
+    ARPG_REQUIRE(std::strcmp(quit.footer,
+        "Arrow keys navigate | Enter select | Esc back") == 0);
+    return {};
+}
+
+test::Failure root_layout_is_compact_and_legible_at_reference_viewport() noexcept {
+    const platform::PauseMenuLayout layout =
+        platform::pause_menu_layout(1280, 720, 3U);
+    const Rectangle viewport{0.0F, 0.0F, 1280.0F, 720.0F};
+
+    ARPG_REQUIRE(layout.visible_row_count == 3U);
+    ARPG_REQUIRE(inside(layout.panel, viewport));
+    ARPG_REQUIRE(layout.panel.width >= 560.0F);
+    ARPG_REQUIRE(layout.panel.width <= 680.0F);
+    ARPG_REQUIRE(layout.panel.height >= 320.0F);
+    ARPG_REQUIRE(layout.panel.height <= 400.0F);
+    ARPG_REQUIRE(layout.title_font_size >= 30.0F);
+    ARPG_REQUIRE(layout.row_font_size >= 24.0F);
+    ARPG_REQUIRE(layout.footer_font_size >= 18.0F);
+    for (std::size_t row = 0U; row < layout.visible_row_count; ++row) {
+        ARPG_REQUIRE(inside(layout.rows[row], layout.panel));
+        ARPG_REQUIRE(layout.rows[row].height >= 44.0F);
+        if (row != 0U) {
+            ARPG_REQUIRE(separated(layout.rows[row - 1U], layout.rows[row]));
+        }
+    }
+    ARPG_REQUIRE(layout.rows[2].y + layout.rows[2].height + 24.0F
+        <= layout.footer.y);
     return {};
 }
 
@@ -451,6 +500,8 @@ constexpr test::TestCase kCases[] = {
     {"layout has exact 1024 golden geometry", &layout_has_exact_1024_golden_geometry},
     {"full-HD layout scales physical pixels",
         &full_hd_layout_scales_panel_and_rows_by_one_and_a_half},
+    {"root layout is compact and legible",
+        &root_layout_is_compact_and_legible_at_reference_viewport},
     {"hit test is half open", &hit_test_uses_half_open_rows_only},
     {"root and quit content", &root_and_quit_views_have_complete_content},
     {"settings draft and committed content", &settings_view_shows_all_draft_and_committed_values},

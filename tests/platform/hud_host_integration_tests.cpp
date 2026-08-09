@@ -394,6 +394,44 @@ arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
     return {};
 }
 
+arpg::test::Failure ground_loot_labels_avoid_highest_monster_resource_bar()
+    noexcept {
+    dungeon::DungeonSnapshot previous = snapshot();
+    previous.combat.emplace();
+    previous.combat->player.position = {8.0F, 0.0F, 0.0F};
+    previous.combat->monsters[0].active = true;
+    previous.combat->monsters[0].generation = 5U;
+    previous.combat->monsters[0].position = {0.0F, 0.0F, 0.0F};
+    previous.combat->monster_count = 1U;
+
+    dungeon::DungeonRenderSnapshot world{};
+    world.has_active_room = true;
+    world.has_combat = true;
+    world.combat = *previous.combat;
+    world.health_potion_count = 1U;
+    world.health_potions[0] = {0U, 1U, {0.0F, 0.0F, 1.5F}};
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view(
+            previous.combat->player.position, 1280.0F, 720.0F);
+
+    const platform::CombatRenderPlan plan = platform::make_combat_render_plan(
+        previous, world, false, 0.0F, camera, {},
+        settings::LootFilterMode::show_all, 1280.0F, 720.0F);
+
+    ARPG_REQUIRE(plan.material_loot.count == 1U);
+    const platform::ScreenProjection actor =
+        platform::project_combat_position(
+            world.combat.monsters[0].position, camera, 1280.0F, 720.0F);
+    const platform::LootLabelRect highest_resource_bar{
+        actor.x - 27.0F * actor.scale,
+        actor.y - 128.0F * actor.scale - 14.0F,
+        54.0F * actor.scale,
+        5.0F};
+    ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+        plan.material_loot.labels[0].rect, highest_resource_bar));
+    return {};
+}
+
 arpg::test::Failure renderer_uses_draft_only_on_the_settings_screen() noexcept {
     settings::SettingsData live = settings::default_settings();
     live.loot_filter_mode = settings::LootFilterMode::magic_or_better;
@@ -493,6 +531,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"static HUD text cache invalidates by fragment", &static_text_cache_rebuilds_only_changed_fragments},
     {"ground loot render plan reuses view and orders stages",
         &ground_loot_render_plan_reuses_one_view_and_orders_stages},
+    {"ground loot avoids highest monster resource bar",
+        &ground_loot_labels_avoid_highest_monster_resource_bar},
     {"renderer draft is settings-only",
         &renderer_uses_draft_only_on_the_settings_screen},
     {"renderer observes committed pickup receipt",

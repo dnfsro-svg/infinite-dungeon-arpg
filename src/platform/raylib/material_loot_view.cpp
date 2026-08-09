@@ -11,7 +11,8 @@
 namespace arpg::platform {
 namespace {
 
-constexpr float kLabelWidth = 190.0F;
+constexpr float kMaterialLabelWidth = 190.0F;
+constexpr float kHealthPotionLabelWidth = 72.0F;
 constexpr float kLabelHeight = 23.0F;
 constexpr float kLabelGap = 13.0F;
 constexpr float kPlacementGap = 3.0F;
@@ -182,8 +183,12 @@ void append_unique_slot(PlacementGrid& grid, LootLabelRect slot) noexcept {
     PlacementGrid grid{};
     if (view.count == 0U) return grid;
 
-    const float label_width = view.labels[0].rect.width;
-    const float label_height = view.labels[0].rect.height;
+    float label_width{};
+    float label_height{};
+    for (std::size_t index = 0U; index < view.count; ++index) {
+        label_width = (std::max)(label_width, view.labels[index].rect.width);
+        label_height = (std::max)(label_height, view.labels[index].rect.height);
+    }
     const float minimum_x = kGroundLootSafetyInset;
     const float minimum_y = kGroundLootSafetyInset;
     const float maximum_x = usable_screen_extent(width)
@@ -306,7 +311,11 @@ void mark_anchor_exclusion_slots(const PlacementGrid& grid,
             ++diagnostics->candidate_probe_count;
         }
         if (occupancy_test(occupancy, slot)) continue;
-        const LootLabelRect candidate = grid.slots[slot];
+        LootLabelRect candidate = grid.slots[slot];
+        candidate.x += (candidate.width - label.rect.width) * 0.5F;
+        candidate.y += (candidate.height - label.rect.height) * 0.5F;
+        candidate.width = label.rect.width;
+        candidate.height = label.rect.height;
         const std::uint8_t priority = candidate_direction_priority(
             label.rect, candidate);
         const float x_distance = candidate.x - label.rect.x;
@@ -328,7 +337,12 @@ void mark_anchor_exclusion_slots(const PlacementGrid& grid,
         best_distance = distance;
     }
     if (best_slot == grid.count) return false;
-    label.rect = grid.slots[best_slot];
+    LootLabelRect destination = grid.slots[best_slot];
+    destination.x += (destination.width - label.rect.width) * 0.5F;
+    destination.y += (destination.height - label.rect.height) * 0.5F;
+    destination.width = label.rect.width;
+    destination.height = label.rect.height;
+    label.rect = destination;
     return true;
 }
 
@@ -543,8 +557,9 @@ MaterialLootView build_material_loot_view_internal(
         label.ordinal = material.ordinal;
         label.anchor_x = projection.x;
         label.anchor_y = projection.y;
-        label.rect = {projection.x - kLabelWidth * 0.5F,
-            projection.y - kLabelGap - kLabelHeight, kLabelWidth, kLabelHeight};
+        label.rect = {projection.x - kMaterialLabelWidth * 0.5F,
+            projection.y - kLabelGap - kLabelHeight,
+            kMaterialLabelWidth, kLabelHeight};
         clamp_rect(label.rect, width, height);
         label.text_color = material_color(material.material);
         label.sprite = material_loot_sprite(material.material);
@@ -571,8 +586,9 @@ MaterialLootView build_material_loot_view_internal(
         label.ordinal = potion.claim_ordinal;
         label.anchor_x = projection.x;
         label.anchor_y = projection.y;
-        label.rect = {projection.x - kLabelWidth * 0.5F,
-            projection.y - kLabelGap - kLabelHeight, kLabelWidth, kLabelHeight};
+        label.rect = {projection.x - kHealthPotionLabelWidth * 0.5F,
+            projection.y - kLabelGap - kLabelHeight,
+            kHealthPotionLabelWidth, kLabelHeight};
         clamp_rect(label.rect, width, height);
         label.text_color = {255U, 48U, 48U, 255U};
         label.sprite = MaterialSpriteId::health_potion;

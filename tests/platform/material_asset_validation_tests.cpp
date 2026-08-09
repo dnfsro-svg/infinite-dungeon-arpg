@@ -26,6 +26,7 @@ using arpg::platform::MaterialAtlasId;
 using arpg::platform::MaterialFrameDefinition;
 using arpg::platform::MaterialManifestDefinition;
 using arpg::platform::MaterialCompositeParameters;
+using arpg::platform::MaterialCompositeMode;
 using arpg::platform::MaterialPackState;
 using arpg::platform::MaterialSpriteId;
 
@@ -47,6 +48,7 @@ struct FakeMaterialTextures final {
     std::array<unsigned int, kDrawCapacity> drawn_material_ids{};
     std::array<Rectangle, kDrawCapacity> drawn_sources{};
     std::array<Rectangle, kDrawCapacity> drawn_destinations{};
+    std::array<Vector2, kDrawCapacity> drawn_origins{};
     std::array<arpg::platform::MaterialScreenQuad,
         kDrawCapacity> drawn_quads{};
     std::array<float, kDrawCapacity> drawn_rotations{};
@@ -124,7 +126,7 @@ void fake_shutdown_material_pipeline() noexcept {
 }
 
 void fake_draw_material(Texture2D color, Texture2D material,
-    Rectangle source, Rectangle destination, Vector2, float rotation,
+    Rectangle source, Rectangle destination, Vector2 origin, float rotation,
     Color tint,
     MaterialCompositeParameters parameters) noexcept {
     if (g_fake_material_textures == nullptr
@@ -135,6 +137,7 @@ void fake_draw_material(Texture2D color, Texture2D material,
     g_fake_material_textures->drawn_material_ids[index] = material.id;
     g_fake_material_textures->drawn_sources[index] = source;
     g_fake_material_textures->drawn_destinations[index] = destination;
+    g_fake_material_textures->drawn_origins[index] = origin;
     g_fake_material_textures->drawn_rotations[index] = rotation;
     g_fake_material_textures->drawn_tints[index] = tint;
     g_fake_material_textures->composites[index] = parameters;
@@ -310,6 +313,19 @@ arpg::test::Failure material_pack_loads_and_draws_color_material_pairs() noexcep
     ARPG_REQUIRE(fake.composites[0].roughness_strength > 0.0F);
     ARPG_REQUIRE(fake.composites[0].metalness_strength > 0.0F);
     ARPG_REQUIRE(fake.composites[0].emissive_strength > 0.0F);
+    const std::size_t loads_before_emissive = fake.load_count;
+    ARPG_REQUIRE(pack.draw_frame_emissive(
+        MaterialAtlasId::water_bulwark,
+        {0.0F, 0.0F, 96.0F, 96.0F}, {48.0F, 93.0F},
+        {100.0F, 100.0F}, false, 0.70F));
+    ARPG_REQUIRE(fake.draw_count == 2U);
+    ARPG_REQUIRE(fake.drawn_color_ids[1] == fake.drawn_color_ids[0]);
+    ARPG_REQUIRE(fake.drawn_material_ids[1] == fake.drawn_material_ids[0]);
+    ARPG_REQUIRE(fake.composites[1].mode
+        == MaterialCompositeMode::emissive_only);
+    ARPG_REQUIRE(fake.composites[1].emissive_mask_start == 0.08F);
+    ARPG_REQUIRE(fake.composites[1].emissive_mask_end == 0.24F);
+    ARPG_REQUIRE(fake.load_count == loads_before_emissive);
     pack.unload();
     ARPG_REQUIRE(fake.unload_count
         == atlas_count_for_ecology(MaterialEcology::water) * 2U);
@@ -349,7 +365,8 @@ arpg::test::Failure material_pack_records_successful_item_sprite_draws() noexcep
     return {};
 }
 
-arpg::test::Failure transformed_sprite_draw_forwards_rotation_and_tint() noexcept {
+arpg::test::Failure transformed_sprite_draw_forwards_rotation_tint_and_safe_flip()
+    noexcept {
     FakeMaterialTextures fake{};
     const MaterialManifestDefinition manifest =
         arpg::platform::default_material_manifest();
@@ -364,7 +381,7 @@ arpg::test::Failure transformed_sprite_draw_forwards_rotation_and_tint() noexcep
     }
     g_fake_material_textures = &fake;
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
-    ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    ARPG_REQUIRE(pack.load(MaterialEcology::chaos));
     const Color tint{113U, 97U, 83U, 211U};
     ARPG_REQUIRE(pack.draw_transformed(MaterialSpriteId::item_weapon,
         {100.0F, 100.0F}, false, 0.25F, 270.0F, tint));
@@ -374,6 +391,29 @@ arpg::test::Failure transformed_sprite_draw_forwards_rotation_and_tint() noexcep
     ARPG_REQUIRE(fake.drawn_tints[0U].g == tint.g);
     ARPG_REQUIRE(fake.drawn_tints[0U].b == tint.b);
     ARPG_REQUIRE(fake.drawn_tints[0U].a == tint.a);
+
+    constexpr Rectangle expected_flipped_source{
+        512.0F, 256.0F, -256.0F, 256.0F};
+    ARPG_REQUIRE(pack.draw_transformed(
+        MaterialSpriteId::chaos_anomaly_condenser,
+        {120.0F, 100.0F}, true, 0.55F, 0.0F));
+    ARPG_REQUIRE(pack.draw(MaterialSpriteId::chaos_anomaly_condenser,
+        {140.0F, 100.0F}, true, 0.55F));
+    ARPG_REQUIRE(pack.draw_frame(MaterialAtlasId::chaos_environment,
+        {512.0F, 256.0F, 256.0F, 256.0F}, {123.0F, 236.0F},
+        {160.0F, 100.0F}, true, 0.55F));
+    ARPG_REQUIRE(fake.draw_count == 4U);
+    for (const std::size_t index : {1U, 2U, 3U}) {
+        ARPG_REQUIRE(std::memcmp(&fake.drawn_sources[index],
+            &expected_flipped_source, sizeof(Rectangle)) == 0);
+    }
+    constexpr float expected_mirrored_anchor_x = (256.0F - 123.0F) * 0.55F;
+    ARPG_REQUIRE(arpg::test::near(
+        fake.drawn_origins[1U].x, expected_mirrored_anchor_x));
+    ARPG_REQUIRE(arpg::test::near(fake.drawn_destinations[2U].x,
+        140.0F - expected_mirrored_anchor_x));
+    ARPG_REQUIRE(arpg::test::near(fake.drawn_destinations[3U].x,
+        160.0F - expected_mirrored_anchor_x));
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};
@@ -419,6 +459,15 @@ arpg::test::Failure atlas_region_draw_forwards_exact_destination() noexcept {
         {0.001F, 0.001F}, {0.001F, 0.0F}};
     ARPG_REQUIRE(pack.draw_frame_quad(
         MaterialAtlasId::water_room_background, source, subpixel_quad));
+    const Rectangle double_flipped_source{
+        1504.0F, 1088.0F, -640.0F, -320.0F};
+    ARPG_REQUIRE(pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, double_flipped_source, quad));
+    ARPG_REQUIRE(fake.draw_count == 4U);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_sources[3U],
+        &double_flipped_source, sizeof(Rectangle)) == 0);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_quads[3U],
+        &quad, sizeof(quad)) == 0);
     const arpg::platform::MaterialScreenQuad zero_area_quad{
         {0.0F, 0.0F}, {1.0F, 1.0F}, {2.0F, 2.0F}, {1.0F, 1.0F}};
     ARPG_REQUIRE(!pack.draw_frame_quad(
@@ -431,7 +480,7 @@ arpg::test::Failure atlas_region_draw_forwards_exact_destination() noexcept {
         {0.0F, 0.0F}, {0.0F, 1.0F}, {4.0F, 5.0F}, {1.0F, 4.0F}};
     ARPG_REQUIRE(!pack.draw_frame_quad(
         MaterialAtlasId::water_room_background, source, bow_tie_quad));
-    ARPG_REQUIRE(fake.draw_count == 3U);
+    ARPG_REQUIRE(fake.draw_count == 4U);
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};
@@ -453,31 +502,56 @@ arpg::test::Failure material_pack_nine_slice_preserves_panel_corners() noexcept 
     g_fake_material_textures = &fake;
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
     ARPG_REQUIRE(pack.load(MaterialEcology::fire));
-    ARPG_REQUIRE(pack.draw_nine_slice(
+    const auto centerpiece_count = [&](const std::size_t begin) noexcept {
+        std::size_t count{};
+        for (std::size_t index = begin; index < fake.draw_count; ++index) {
+            const Rectangle source = fake.drawn_sources[index];
+            const Rectangle destination = fake.drawn_destinations[index];
+            if (arpg::test::near(source.width, 64.0F)
+                    && arpg::test::near(source.height, 64.0F)
+                    && arpg::test::near(destination.width, 64.0F)
+                    && arpg::test::near(destination.height, 64.0F)) {
+                ++count;
+            }
+        }
+        return count;
+    };
+    const auto preserves_aspect_ratios = [&](const std::size_t begin) noexcept {
+        for (std::size_t index = begin; index < fake.draw_count; ++index) {
+            const Rectangle source = fake.drawn_sources[index];
+            const Rectangle destination = fake.drawn_destinations[index];
+            const bool pure_background_sample = source.width == 1.0F
+                && source.height == 1.0F;
+            if (!pure_background_sample
+                    && !arpg::test::near(source.width / source.height,
+                        destination.width / destination.height)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    constexpr std::array plain_panels{
+        MaterialSpriteId::ui_inventory_panel_equipment,
         MaterialSpriteId::ui_inventory_panel_grid,
-        {10.0F, 20.0F, 800.0F, 600.0F}, 32.0F));
-    ARPG_REQUIRE(fake.draw_count > 9U);
+        MaterialSpriteId::ui_inventory_panel_detail,
+        MaterialSpriteId::ui_pause_panel,
+    };
+    for (const MaterialSpriteId panel : plain_panels) {
+        const std::size_t before = fake.draw_count;
+        ARPG_REQUIRE(pack.draw_nine_slice(
+            panel, {10.0F, 20.0F, 800.0F, 600.0F}, 32.0F));
+        ARPG_REQUIRE(fake.draw_count > before + 8U);
+        ARPG_REQUIRE(preserves_aspect_ratios(before));
+        ARPG_REQUIRE(centerpiece_count(before) == 0U);
+    }
     ARPG_REQUIRE(pack.sprite_draw_count(
         MaterialSpriteId::ui_inventory_panel_grid) == 1U);
-    std::size_t preserved_centerpieces{};
-    for (std::size_t index{}; index < fake.draw_count; ++index) {
-        const Rectangle source = fake.drawn_sources[index];
-        const Rectangle destination = fake.drawn_destinations[index];
-        const bool pure_background_sample = source.width == 1.0F
-            && source.height == 1.0F;
-        if (!pure_background_sample) {
-            ARPG_REQUIRE(arpg::test::near(
-                source.width / source.height,
-                destination.width / destination.height));
-        }
-        if (arpg::test::near(source.width, 64.0F)
-                && arpg::test::near(source.height, 64.0F)
-                && arpg::test::near(destination.width, 64.0F)
-                && arpg::test::near(destination.height, 64.0F)) {
-            ++preserved_centerpieces;
-        }
-    }
-    ARPG_REQUIRE(preserved_centerpieces == 1U);
+
+    const std::size_t before_hud = fake.draw_count;
+    ARPG_REQUIRE(pack.draw_nine_slice(MaterialSpriteId::ui_hud_panel,
+        {10.0F, 20.0F, 800.0F, 600.0F}, 32.0F));
+    ARPG_REQUIRE(preserves_aspect_ratios(before_hud));
+    ARPG_REQUIRE(centerpiece_count(before_hud) == 1U);
 
     const MaterialFrameDefinition* const warning_frame =
         arpg::platform::find_material_frame(
@@ -495,18 +569,7 @@ arpg::test::Failure material_pack_nine_slice_preserves_panel_corners() noexcept 
         warning_frame->source.x + 64.0F));
     ARPG_REQUIRE(arpg::test::near(warning_background.y,
         warning_frame->source.y + 64.0F));
-    std::size_t warning_centerpieces{};
-    for (std::size_t index = before_warning; index < fake.draw_count; ++index) {
-        const Rectangle source = fake.drawn_sources[index];
-        const Rectangle destination = fake.drawn_destinations[index];
-        if (arpg::test::near(source.width, 64.0F)
-                && arpg::test::near(source.height, 64.0F)
-                && arpg::test::near(destination.width, 64.0F)
-                && arpg::test::near(destination.height, 64.0F)) {
-            ++warning_centerpieces;
-        }
-    }
-    ARPG_REQUIRE(warning_centerpieces == 0U);
+    ARPG_REQUIRE(centerpiece_count(before_warning) == 0U);
     const std::size_t before_label = fake.draw_count;
     ARPG_REQUIRE(pack.draw_region_fit(MaterialSpriteId::ui_label_plate,
         {4.0F, 30.0F, 120.0F, 67.0F},
@@ -1378,8 +1441,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_loads_and_draws_color_material_pairs},
     {"records successful item sprite draws",
         &material_pack_records_successful_item_sprite_draws},
-    {"transformed sprite draw forwards rotation and tint",
-        &transformed_sprite_draw_forwards_rotation_and_tint},
+    {"sprite draws forward rotation tint and raylib safe flip",
+        &transformed_sprite_draw_forwards_rotation_tint_and_safe_flip},
     {"atlas region draw forwards exact destination",
         &atlas_region_draw_forwards_exact_destination},
     {"nine slice preserves authored panel corners",

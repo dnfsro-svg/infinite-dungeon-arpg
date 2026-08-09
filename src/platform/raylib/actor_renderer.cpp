@@ -407,7 +407,7 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, const CombatCameraView& camera,
     float width, float height,
     std::uint64_t tick, std::size_t label_lane,
-    Font hud_font, bool hud_font_ready) noexcept {
+    Font hud_font, bool hud_font_ready, bool draw_debug) noexcept {
     const ScreenProjection projected = project_combat_position(
         position, camera, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
@@ -418,10 +418,10 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     const float scale = projected.scale;
     const float x = projected.x;
     const float y = projected.y;
-    // Keep each monster's complete information block in a stable screen lane.
-    // Close combat naturally stacks actors; placing every label at the actor's
-    // feet made role and phase names unreadable precisely when they mattered.
-    const float label_offset = static_cast<float>(label_lane % 4U)
+    const MonsterPresentationPlan presentation =
+        monster_presentation_plan(label_lane, draw_debug);
+    const float label_offset = static_cast<float>(
+        presentation.debug_label_lane)
         * 54.0F * viewport_scale;
     const float role_y = y - 120.0F * scale - label_offset;
     const float phase_y = role_y
@@ -438,12 +438,15 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     }
     const MonsterBarVisualPlan bar_visual = make_monster_bar_visual_plan(monster);
     const float bar_width = 54.0F * scale;
-    for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
-        const MonsterBarPlan& bar = bar_visual.bars[index];
-        if (!bar.visible) continue;
-        draw_bar(x - bar_width * .5F,
-            role_y - 8.0F - static_cast<float>(index) * 7.0F,
-            bar_width, bar.ratio, hud_palette_color(bar.palette_id));
+    if (presentation.resource_bars_visible) {
+        for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
+            const MonsterBarPlan& bar = bar_visual.bars[index];
+            if (!bar.visible) continue;
+            draw_bar(x - bar_width * .5F,
+                y + presentation.resource_bar_offset_y * scale
+                    - static_cast<float>(index) * 7.0F,
+                bar_width, bar.ratio, hud_palette_color(bar.palette_id));
+        }
     }
     for (std::size_t index = 0U; index < affix_count; ++index) {
         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
@@ -455,19 +458,23 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
                     * static_cast<float>(text_style.affix_font_size + 2),
             text_style.affix_font_size, to_color(badge.color));
     }
-    draw_scene_label(hud_font, hud_font_ready, visual.role_label,
-        x - bar_width * .5F, role_y, text_style.role_font_size,
-        Color{248, 246, 238, 255});
-    draw_scene_label(hud_font, hud_font_ready,
-        monster_phase_name(monster.ai_phase), x - bar_width * .5F,
-        phase_y, text_style.phase_font_size, Color{205, 218, 237, 255});
+    if (presentation.role_label_visible) {
+        draw_scene_label(hud_font, hud_font_ready, visual.role_label,
+            x - bar_width * .5F, role_y, text_style.role_font_size,
+            Color{248, 246, 238, 255});
+    }
+    if (presentation.phase_label_visible) {
+        draw_scene_label(hud_font, hud_font_ready,
+            monster_phase_name(monster.ai_phase), x - bar_width * .5F,
+            phase_y, text_style.phase_font_size, Color{205, 218, 237, 255});
+    }
 }
 
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, const CombatCameraView& camera,
     float width, float height,
     const CombatFeedback& feedback, std::uint64_t tick, std::size_t label_lane,
-    Font hud_font, bool hud_font_ready) noexcept {
+    Font hud_font, bool hud_font_ready, bool draw_debug) noexcept {
     const ScreenProjection projected = project_combat_position(
         position, camera, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
@@ -508,7 +515,7 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     }
 
     draw_monster_presentation(monster, position, ecology, camera, width, height,
-        tick, label_lane, hud_font, hud_font_ready);
+        tick, label_lane, hud_font, hud_font_ready, draw_debug);
 }
 
 }  // namespace
@@ -637,12 +644,13 @@ bool CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                 draw_monster_presentation(monster, item.position, current.ecology,
                     camera, width, height, current_combat.tick,
                     item.monster_index,
-                    hud_renderer_.hud_font(), hud_renderer_.font_ready());
+                    hud_renderer_.hud_font(), hud_renderer_.font_ready(),
+                    draw_debug);
             } else {
                 draw_monster_silhouette(monster, item.position, current.ecology,
                     camera, width, height, feedback, current_combat.tick,
                     item.monster_index, hud_renderer_.hud_font(),
-                    hud_renderer_.font_ready());
+                    hud_renderer_.font_ready(), draw_debug);
             }
         }
     }

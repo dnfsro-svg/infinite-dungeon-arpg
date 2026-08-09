@@ -497,6 +497,8 @@ struct CombatEncounterConfig final {
     bool reset_player_health{true};
     PlayerCombatBuild player_build{};
     std::uint64_t evasion_seed{};
+    std::uint32_t monster_source_damage_bp{10000U};
+    std::uint16_t initial_invulnerability_ticks{};
     abyss::AbyssCombatConfig abyss{};
     bool fire_room_obstacles{};
 };

@@ -76,6 +76,11 @@ arpg::test::Failure basis_point_scaling_has_locked_integer_edges() noexcept {
     ARPG_REQUIRE(scale_basis_points(
         (std::numeric_limits<int>::max)(), 65535U)
         == (std::numeric_limits<int>::max)());
+    ARPG_REQUIRE(compose_damage_basis_points(3500U, 14500U) == 5075U);
+    ARPG_REQUIRE(compose_damage_basis_points(
+        (std::numeric_limits<std::uint32_t>::max)(),
+        (std::numeric_limits<std::uint32_t>::max)())
+        == (std::numeric_limits<std::uint32_t>::max)());
     return {};
 }
 

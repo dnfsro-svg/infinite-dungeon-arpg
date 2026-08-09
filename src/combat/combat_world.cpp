@@ -24,6 +24,17 @@ namespace arpg::combat {
 
 namespace {
 
+constexpr float kMonsterEngagementRadius = 10.0F;
+constexpr float kMonsterEngagementRadiusSquared =
+    kMonsterEngagementRadius * kMonsterEngagementRadius;
+
+[[nodiscard]] bool outside_monster_engagement_radius(
+    const MonsterRuntime& monster, Vec3 player_position) noexcept {
+    const float dx = monster.position.x - player_position.x;
+    const float dy = monster.position.y - player_position.y;
+    return dx * dx + dy * dy > kMonsterEngagementRadiusSquared;
+}
+
 const MonsterAffixTierValues* affix_values(
     const MonsterAffixSet& affixes, MonsterAffixId id) noexcept {
     for (std::size_t index = 0; index < affixes.count
@@ -670,6 +681,26 @@ void CombatWorld::tick(MovementInput movement) noexcept {
             }
             continue;
         }
+        if (room_monster_field_ != nullptr
+            && monster.engagement_latch == 0U) {
+            const bool active_phase =
+                monster.ai_phase != MonsterAiPhase::idle
+                && monster.ai_phase != MonsterAiPhase::move;
+            const bool active_affix =
+                monster.affix_warning != MonsterAffixWarning::none
+                || monster.blink_empowered;
+            if (monster.reaction != ReactionState::idle || active_phase
+                || active_affix
+                || !outside_monster_engagement_radius(
+                    monster, player_.position)) {
+                monster.engagement_latch = 1U;
+            } else {
+                monster.ai_phase = MonsterAiPhase::idle;
+                monster.ai_ticks = 0U;
+                monster.velocity = Vec3{};
+                continue;
+            }
+        }
         const Vec3 previous_position = monster.position;
         tick_monster_affix_resources(monster);
         tick_active_affixes(index, monster);
@@ -870,6 +901,8 @@ void CombatWorld::initialize_runtime() noexcept {
         static_cast<void>(load_wave(
             encounter_config_.wave, encounter_config_.reset_player_health));
     }
+    player_.invulnerability_ticks =
+        encounter_config_.initial_invulnerability_ticks;
 
     attack_ = AttackRuntime{};
     active_skill_ = ActiveSkillRuntime{};
@@ -1189,6 +1222,12 @@ bool CombatWorld::player_defeated() const noexcept {
     return death_snapshot_.has_value() || player_.hp == 0;
 }
 
+std::uint32_t CombatWorld::monster_damage_basis_points() const noexcept {
+    return compose_damage_basis_points(
+        encounter_config_.monster_source_damage_bp,
+        encounter_config_.abyss.monster_damage_bp);
+}
+
 const std::optional<CombatDeathSnapshot>&
 CombatWorld::death_snapshot() const noexcept {
     return death_snapshot_;
@@ -1357,7 +1396,7 @@ void CombatWorld::defeat_monster(
         damage.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
             death->damage;
         damage = scale_monster_outgoing_damage(
-            damage, encounter_config_.abyss.monster_damage_bp);
+            damage, monster_damage_basis_points());
         if (spawn_hazard(owner, HazardKind::death_blast, position,
                          death->radius, death->interval_ticks, 1U, 1U,
                          damage, true)) {
@@ -1454,7 +1493,7 @@ bool CombatWorld::apply_monster_ordinal_hit(
         static_cast<std::int64_t>((std::numeric_limits<int>::min)()),
         static_cast<std::int64_t>((std::numeric_limits<int>::max)())));
     packet = scale_monster_outgoing_damage(
-        packet, encounter_config_.abyss.monster_damage_bp);
+        packet, monster_damage_basis_points());
 
     if (!apply_player_damage(packet, DamageDelivery::direct,
                              PlayerDamageSource{source_kind, monster_id, 0U},
@@ -1474,7 +1513,7 @@ bool CombatWorld::apply_monster_ordinal_hit(
     }
 
     const int corrosion_damage = scale_basis_points(
-        values.corrosion_damage, encounter_config_.abyss.monster_damage_bp);
+        values.corrosion_damage, monster_damage_basis_points());
     if (corrosion_damage > player_.status.corrosion_damage_per_second) {
         player_.status.corrosion_damage_per_second = corrosion_damage;
         player_.status.corrosion_ticks = values.corrosion_ticks;
@@ -1640,7 +1679,7 @@ bool CombatWorld::trigger_chain_lightning(
     damage.amount[modifiers::damage_index(modifiers::DamageType::lightning)] =
         values->damage;
     damage = scale_monster_outgoing_damage(
-        damage, encounter_config_.abyss.monster_damage_bp);
+        damage, monster_damage_basis_points());
     if (!spawn_hazard(owner_ordinal, HazardKind::chain_lightning, center,
                       values->radius,
                       static_cast<std::uint16_t>(values->interval_ticks + 1U),
@@ -1672,7 +1711,7 @@ void CombatWorld::tick_active_affixes(
             damage.amount[modifiers::damage_index(modifiers::DamageType::fire)] =
                 burning->damage;
             damage = scale_monster_outgoing_damage(
-                damage, encounter_config_.abyss.monster_damage_bp);
+                damage, monster_damage_basis_points());
             static_cast<void>(spawn_hazard(owner, HazardKind::burning,
                 monster.position, burning->radius, 0U, burning->duration_ticks,
                 30U, damage));

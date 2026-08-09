@@ -12,6 +12,7 @@ using arpg::dungeon::RoomPhase;
 using arpg::passives::PassiveNodeId;
 using arpg::platform::PassiveNodeVisualState;
 using arpg::platform::PassiveOverlayInputGate;
+using arpg::platform::PassiveTreeToggleAction;
 
 arpg::test::Failure overlay_only_opens_for_clean_awaiting_exit() noexcept {
     DungeonSnapshot snapshot{};
@@ -22,6 +23,28 @@ arpg::test::Failure overlay_only_opens_for_clean_awaiting_exit() noexcept {
     snapshot.passive_save_pending = false;
     snapshot.phase = RoomPhase::combat;
     ARPG_REQUIRE(!arpg::platform::passive_tree_can_open(snapshot));
+    return {};
+}
+
+arpg::test::Failure combat_toggle_reports_full_clear_gate_only_for_live_input()
+    noexcept {
+    DungeonSnapshot combat{};
+    combat.has_active_room = true;
+    combat.phase = RoomPhase::combat;
+    combat.remaining_targets = 7U;
+
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, true, true)
+        == PassiveTreeToggleAction::show_full_clear_requirement);
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, false, true) == PassiveTreeToggleAction::none);
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, true, false) == PassiveTreeToggleAction::none);
+
+    combat.phase = RoomPhase::awaiting_exit;
+    combat.remaining_targets = 0U;
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, true, true) == PassiveTreeToggleAction::toggle);
     return {};
 }
 
@@ -114,6 +137,8 @@ arpg::test::Failure overlay_captures_all_gameplay_input() noexcept {
 
 const arpg::test::TestCase kCases[] = {
     {"opens only for clean exit", &overlay_only_opens_for_clean_awaiting_exit},
+    {"combat toggle reports full-clear gate",
+        &combat_toggle_reports_full_clear_gate_only_for_live_input},
     {"projects and hits nodes", &node_projection_and_hit_test_are_stable},
     {"keeps landmarks distinct", &distinct_landmarks_keep_distinct_projections},
     {"separates route nodes and hits each", &route_nodes_have_unique_projections_and_hit_themselves},

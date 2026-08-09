@@ -26,6 +26,8 @@ struct ActiveSkillAtlasFrame final {
     skills::ActiveSkillId id, std::size_t frame_index) noexcept;
 [[nodiscard]] float active_skill_material_draw_scale(
     skills::ActiveSkillId id, float projection_scale) noexcept;
+[[nodiscard]] float active_skill_material_effect_scale(
+    skills::ActiveSkillId id, float projection_scale) noexcept;
 [[nodiscard]] bool active_skill_assets_ready() noexcept;
 
 }  // namespace arpg::platform

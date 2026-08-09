@@ -91,6 +91,46 @@ bool v10_migration_only() noexcept {
     return enabled;
 }
 
+bool active_skill_view_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_ACTIVE_SKILL_VIEW_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool cplay014_pause_menu_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY014_PAUSE_MENU_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool cplay015_passive_feedback_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY015_PASSIVE_FEEDBACK_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool cplay016_ground_potion_label_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY016_GROUND_POTION_LABEL_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -103,6 +143,42 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay016_ground_potion_label_only()) {
+        const arpg::test::TestSuite cplay016_only[] = {
+            hud_host_integration_suite(),
+            material_loot_view_suite(),
+        };
+        return arpg::test::run_suites(cplay016_only, 31,
+            "CPLAY-016 compact ground potion labels");
+    }
+
+    if (cplay015_passive_feedback_only()) {
+        const arpg::test::TestSuite cplay015_only[] = {
+            passive_tree_view_suite(),
+            control_hints_suite(),
+            hud_notice_state_suite(),
+        };
+        return arpg::test::run_suites(cplay015_only, 31,
+            "CPLAY-015 blocked passive tree feedback");
+    }
+
+    if (cplay014_pause_menu_only()) {
+        const arpg::test::TestSuite cplay014_only[] = {
+            pause_menu_view_suite(),
+            material_asset_validation_suite(),
+        };
+        return arpg::test::run_suites(cplay014_only, 53,
+            "CPLAY-014 pause menu visual contract");
+    }
+
+    if (active_skill_view_only()) {
+        const arpg::test::TestSuite active_skill_only[] = {
+            active_skill_view_suite(),
+        };
+        return arpg::test::run_suites(active_skill_only, 11,
+            "active skill HUD numpad labels");
+    }
+
     if (task11_large_room_only()) {
         const arpg::test::TestSuite task11_only[] = {
             large_room_render_plan_suite(),
@@ -183,6 +259,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 632,
+    return arpg::test::run_suites(suites, 643,
         "host settings runtime contract");
 }

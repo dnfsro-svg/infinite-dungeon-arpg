@@ -173,22 +173,14 @@ arpg::test::Failure hud_text_safe_boxes_do_not_intersect_or_cross_panels() noexc
             text.objective_title, layout.objective_panel));
         ARPG_REQUIRE(platform::hud_rect_inside(
             text.objective_hint, layout.objective_panel));
-        ARPG_REQUIRE(platform::hud_rect_inside(
-            text.objective_movement, layout.objective_panel));
+        ARPG_REQUIRE(empty(text.objective_movement));
         for (const platform::HudRect control : text.objective_controls) {
-            ARPG_REQUIRE(platform::hud_rect_inside(
-                control, layout.objective_panel));
+            ARPG_REQUIRE(empty(control));
         }
-        ARPG_REQUIRE(platform::hud_rect_inside(
-            text.objective_diagnostics, layout.objective_panel));
-        const std::array<platform::HudRect, 7U> objective_rows{{
+        ARPG_REQUIRE(empty(text.objective_diagnostics));
+        const std::array<platform::HudRect, 2U> objective_rows{{
             text.objective_title,
             text.objective_hint,
-            text.objective_movement,
-            text.objective_controls[0],
-            text.objective_controls[1],
-            text.objective_controls[2],
-            text.objective_diagnostics,
         }};
         for (std::size_t first{}; first < objective_rows.size(); ++first) {
             for (std::size_t second = first + 1U;
@@ -198,7 +190,7 @@ arpg::test::Failure hud_text_safe_boxes_do_not_intersect_or_cross_panels() noexc
             }
         }
         ARPG_REQUIRE(layout.objective_panel.width >= 620.0F * layout.scale);
-        ARPG_REQUIRE(layout.objective_panel.height <= 164.0F * layout.scale);
+        ARPG_REQUIRE(layout.objective_panel.height <= 56.0F * layout.scale);
         ARPG_REQUIRE(platform::hud_rect_inside(
             text.navigation_title, layout.navigation_panel));
         ARPG_REQUIRE(platform::hud_rect_inside(

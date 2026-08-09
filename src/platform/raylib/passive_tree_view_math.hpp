@@ -27,6 +27,12 @@ enum class PassiveNodeVisualState : std::uint8_t {
     pending,
 };
 
+enum class PassiveTreeToggleAction : std::uint8_t {
+    none,
+    toggle,
+    show_full_clear_requirement,
+};
+
 struct PassiveOverlayInputGate final {
     bool forward_actions{};
     bool forward_movement{};
@@ -35,6 +41,10 @@ struct PassiveOverlayInputGate final {
 
 [[nodiscard]] bool passive_tree_can_open(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
+[[nodiscard]] PassiveTreeToggleAction passive_tree_toggle_action(
+    const dungeon::DungeonSnapshot& snapshot,
+    bool pressed,
+    bool gameplay_input_available) noexcept;
 [[nodiscard]] PassiveNodeProjection project_passive_node(
     passives::PassiveNodeId node, float width, float height) noexcept;
 [[nodiscard]] std::optional<passives::PassiveNodeId> hit_test_passive_node(

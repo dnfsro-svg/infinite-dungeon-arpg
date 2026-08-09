@@ -476,7 +476,11 @@ arpg::test::Failure ordinary_reset_returns_accepted() noexcept {
 
 arpg::test::Failure ordinary_player_defeat_queues_death_retreat() noexcept {
     using namespace arpg;
-    dungeon::DungeonSession session;
+    const dungeon::DungeonRules rules{};
+    auto state = dungeon::make_initial_run_state(
+        dungeon::DungeonSessionConfig{}.root_seed, rules).state;
+    state.current_room.depth = 4U;
+    dungeon::DungeonSession session{rules, state};
     session.tick({});
     while (session.try_pop_event().has_value()) {
     }

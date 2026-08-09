@@ -387,7 +387,7 @@ int main() {
         const arpg::test::TestSuite potion_only[] = {
             dungeon_health_potion_suite(),
         };
-        return arpg::test::run_suites(potion_only, 19,
+        return arpg::test::run_suites(potion_only, 20,
             "task 6 health potion atomic auto-use");
     }
 
@@ -403,7 +403,7 @@ int main() {
         const arpg::test::TestSuite unlock_only[] = {
             dungeon_exit_unlock_suite(),
         };
-        return arpg::test::run_suites(unlock_only, 14,
+        return arpg::test::run_suites(unlock_only, 15,
             "task 6 quarter kill exit unlock");
     }
 
@@ -423,6 +423,6 @@ int main() {
             "task 7 authoritative room drops");
     }
 
-    return arpg::test::run_suites(suites, 363,
+    return arpg::test::run_suites(suites, 365,
         "stage 18 dungeon queries");
 }

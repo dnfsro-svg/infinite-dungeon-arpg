@@ -147,6 +147,10 @@ struct DungeonSessionTestAccess final {
     static bool kill_current_player_through_combat(
         dungeon::DungeonSession& session) noexcept {
         if (!session.combat_.has_value()) return false;
+        // This helper's contract is to force the death path. Entry protection
+        // is covered independently and must not turn death-lifecycle fixtures
+        // into timing tests.
+        session.combat_->player_.invulnerability_ticks = 0U;
         const combat::PlayerDamageSource source{
             combat::PlayerDamageSourceKind::ground_hazard,
             combat::MonsterId::fire_bomber,

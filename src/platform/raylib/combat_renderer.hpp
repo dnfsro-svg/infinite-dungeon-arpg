@@ -140,6 +140,7 @@ public:
     void clear_combat_transients() noexcept;
     void set_loot_filter_mode(settings::LootFilterMode mode) noexcept;
     void update(float frame_seconds) noexcept;
+    void publish_passive_tree_blocked() noexcept;
     void observe_hud(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,

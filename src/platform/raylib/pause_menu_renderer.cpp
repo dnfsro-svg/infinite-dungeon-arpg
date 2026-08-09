@@ -20,17 +20,13 @@ void draw_centered_text(
     Font font,
     const char* text,
     Rectangle bounds,
-    int font_size,
+    float font_size,
     Color color,
     UiTextAuditRole role,
     float minimum_font_size) noexcept {
     constexpr float kSpacing = 1.0F;
-    const float scaled_font_size = scaled_ui_font_size(
-        static_cast<float>(font_size), GetScreenWidth(), GetScreenHeight());
-    minimum_font_size = scaled_ui_font_size(
-        minimum_font_size, GetScreenWidth(), GetScreenHeight());
     const Vector2 measured = MeasureTextEx(
-        font, text, scaled_font_size, kSpacing);
+        font, text, font_size, kSpacing);
     const int text_width = static_cast<int>(measured.x);
     const int x = static_cast<int>(
         bounds.x + (bounds.width - static_cast<float>(text_width)) * 0.5F);
@@ -43,10 +39,10 @@ void draw_centered_text(
         color = style.muted;
     }
     record_ui_text_bounds(UiTextAuditPage::pause, role, font, text,
-        position, scaled_font_size, kSpacing, bounds,
+        position, font_size, kSpacing, bounds,
         minimum_font_size);
     draw_crisp_ui_text(font, text, position,
-        scaled_font_size, kSpacing, color);
+        font_size, kSpacing, color);
 }
 
 }  // namespace
@@ -89,7 +85,7 @@ void draw_pause_menu_with_font(
     const int screen_width = GetScreenWidth();
     const int screen_height = GetScreenHeight();
     const PauseMenuLayout layout = pause_menu_layout(
-        screen_width, screen_height);
+        screen_width, screen_height, view.row_count);
 
     for (std::size_t index = 0U; index < plan.op_count; ++index) {
         const PauseMenuRenderOp op = plan.ops[index];
@@ -109,9 +105,11 @@ void draw_pause_menu_with_font(
                 }
                 break;
             case PauseMenuRenderOpKind::title:
-                draw_centered_text(font, view.title, layout.title, 26,
+                draw_centered_text(font, view.title, layout.title,
+                    layout.title_font_size,
                     ui_text_contrast_style().primary,
-                    UiTextAuditRole::pause_title, 20.0F);
+                    UiTextAuditRole::pause_title,
+                    layout.title_font_size);
                 break;
             case PauseMenuRenderOpKind::row: {
                 const Rectangle bounds = layout.rows[op.row_index];
@@ -134,14 +132,13 @@ void draw_pause_menu_with_font(
                 const UiTextContrastStyle style = ui_text_contrast_style();
                 const float viewport_scale = ui_viewport_scale(
                     screen_width, screen_height);
-                const float row_font_size = scaled_ui_font_size(
-                    ui_typography().kPauseRowFontSize,
-                    screen_width, screen_height);
+                const float row_font_size = layout.row_font_size;
+                const Vector2 measured = MeasureTextEx(font,
+                    view.rows[op.row_index].data(), row_font_size, 0.5F);
                 const Vector2 row_position{
                     bounds.x + 14.0F * viewport_scale,
-                    bounds.y + 2.0F * viewport_scale};
-                const float row_text_width = MeasureTextEx(font,
-                    view.rows[op.row_index].data(), row_font_size, 0.5F).x;
+                    bounds.y + (bounds.height - measured.y) * 0.5F};
+                const float row_text_width = measured.x;
                 DrawRectangleRounded(
                     {bounds.x + 8.0F * viewport_scale,
                      bounds.y + 1.0F * viewport_scale,
@@ -164,9 +161,11 @@ void draw_pause_menu_with_font(
                 break;
             }
             case PauseMenuRenderOpKind::message:
-                draw_centered_text(font, view.message, layout.footer, 16,
+                draw_centered_text(font, view.message, layout.footer,
+                    layout.footer_font_size,
                     Color{255, 139, 139, 255},
-                    UiTextAuditRole::pause_footer, 16.0F);
+                    UiTextAuditRole::pause_footer,
+                    layout.footer_font_size);
                 break;
             case PauseMenuRenderOpKind::footer:
                 if (assets == nullptr || !assets->draw_horizontal_slice(
@@ -181,7 +180,7 @@ void draw_pause_menu_with_font(
                         static_cast<int>(layout.footer.y - 5.0F),
                         Color{75, 86, 104, 220});
                 }
-                if (!plan.has_message) {
+                if (!plan.has_message && view.footer != nullptr) {
                     const UiTextContrastStyle style =
                         ui_text_contrast_style();
                     DrawRectangleRounded(
@@ -189,13 +188,12 @@ void draw_pause_menu_with_font(
                          layout.footer.width - 10.0F,
                          layout.footer.height - 6.0F},
                         0.18F, 4, style.backing);
-                    draw_centered_text(font,
-                        "Arrow keys navigate | Enter select | Esc back",
+                    draw_centered_text(font, view.footer,
                         layout.footer,
-                        static_cast<int>(ui_typography().pause_footer_font_size),
+                        layout.footer_font_size,
                         ui_text_contrast_style().muted,
                         UiTextAuditRole::pause_footer,
-                        ui_typography().pause_footer_font_size);
+                        layout.footer_font_size);
                 }
                 break;
         }

@@ -52,6 +52,32 @@ arpg::test::Failure player_damage_reaches_zero() noexcept {
     return {};
 }
 
+arpg::test::Failure initial_invulnerability_has_exact_boundary() noexcept {
+    CombatEncounterConfig config{};
+    config.wave = {};
+    config.initial_invulnerability_ticks = 180U;
+    CombatWorld world{config};
+    const int initial_hp = world.snapshot().player.hp;
+    ARPG_REQUIRE(world.snapshot().player.invulnerability_ticks == 180U);
+
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, 100, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(world.snapshot().player.hp == initial_hp);
+    tick_n(world, 179);
+    ARPG_REQUIRE(world.snapshot().player.invulnerability_ticks == 1U);
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, 100, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(world.snapshot().player.hp == initial_hp);
+
+    world.tick({});
+    ARPG_REQUIRE(world.snapshot().player.invulnerability_ticks == 0U);
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, 100, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(world.snapshot().player.hp == initial_hp - 100);
+    ARPG_REQUIRE(world.snapshot().player.invulnerability_ticks == 30U);
+    return {};
+}
+
 arpg::test::Failure accepted_hit_emits_payload_and_hurt_started() noexcept {
     CombatWorld world{single_chaser_encounter()};
     drain_events(world);
@@ -294,6 +320,8 @@ arpg::test::Failure percent_health_restore_never_revives_defeated_player() noexc
 
 constexpr arpg::test::TestCase kCases[] = {
     {"damage reaches zero", &player_damage_reaches_zero},
+    {"initial invulnerability exact boundary",
+     &initial_invulnerability_has_exact_boundary},
     {"accepted hit payload and hurt event", &accepted_hit_emits_payload_and_hurt_started},
     {"player defeat event emits once", &player_defeat_event_emits_once},
     {"player defeat latch survives event overflow", &player_defeat_latch_survives_event_overflow},

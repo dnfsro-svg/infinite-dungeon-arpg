@@ -18,6 +18,10 @@ struct PauseMenuLayout final {
     Rectangle title{};
     Rectangle rows[kPauseMenuRowCapacity]{};
     Rectangle footer{};
+    std::size_t visible_row_count{};
+    float title_font_size{};
+    float row_font_size{};
+    float footer_font_size{};
 };
 
 struct PauseMenuView final {
@@ -27,11 +31,17 @@ struct PauseMenuView final {
     std::size_t selected_row{};
     const char* title{};
     const char* message{};
+    const char* footer{};
 };
 
 [[nodiscard]] PauseMenuLayout pause_menu_layout(
     int width,
     int height) noexcept;
+
+[[nodiscard]] PauseMenuLayout pause_menu_layout(
+    int width,
+    int height,
+    std::size_t visible_row_count) noexcept;
 
 [[nodiscard]] PauseMenuView make_pause_menu_view(
     const PauseMenuState& state) noexcept;

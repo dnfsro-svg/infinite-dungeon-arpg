@@ -43,6 +43,10 @@ ActiveSkillHudModel make_active_skill_hud_model(
     for (std::size_t index = 0U; index < result.slots.size(); ++index) {
         ActiveSkillHudSlot& slot = result.slots[index];
         slot.key_number = static_cast<std::uint8_t>(index + 1U);
+        static_cast<void>(std::snprintf(slot.key_label.data(),
+            slot.key_label.size(), "Num%u",
+            static_cast<unsigned>(slot.key_number)));
+        slot.key_label.back() = '\0';
         slot.id = loadout.slots[index].active;
         slot.icon = active_skill_icon_sprite(slot.id);
         slot.empty = slot.id == skills::ActiveSkillId::none;

@@ -536,7 +536,7 @@ bool same_monster_runtime(
         && lhs.max_shield_ticks == rhs.max_shield_ticks
         && lhs.break_window_ticks == rhs.break_window_ticks
         && lhs.hit_stop_ticks == rhs.hit_stop_ticks
-        && lhs.owner_transient_counter == rhs.owner_transient_counter
+        && lhs.engagement_latch == rhs.engagement_latch
         && vec_equal(lhs.attack_target_position, rhs.attack_target_position)
         && vec_equal(lhs.attack_vector, rhs.attack_vector);
 }

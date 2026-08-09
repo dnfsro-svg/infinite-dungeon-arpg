@@ -371,7 +371,7 @@ damage_history_totals(
         && left.max_shield_ticks == right.max_shield_ticks
         && left.shield_recharge_ticks == right.shield_recharge_ticks
         && left.break_window_ticks == right.break_window_ticks
-        && left.owner_transient_counter == right.owner_transient_counter
+        && left.engagement_latch == right.engagement_latch
         && left.burning_ground_ticks == right.burning_ground_ticks
         && left.blink_assault_ticks == right.blink_assault_ticks
         && left.blink_empowered == right.blink_empowered
@@ -711,7 +711,7 @@ damage_history_totals(
             || player.evasion_rate_bp < 0
             || player.evasion_rate_bp > 10000
             || player.hurt_ticks > 12U
-            || player.invulnerability_ticks > 30U
+            || player.invulnerability_ticks > 180U
             || player.status.slow_bp < 0
             || player.status.slow_bp > 10000
             || player.status.corrosion_damage_per_second < 0
@@ -748,6 +748,24 @@ damage_history_totals(
                     > player.damage_reduction_cap[index]) return false;
     }
     return true;
+}
+
+[[nodiscard]] bool valid_entry_protection_provenance(
+    const RoomProgressCheckpoint& room,
+    const DungeonRunState& state) noexcept {
+    constexpr std::uint16_t kNormalInvulnerabilityTicks = 30U;
+    constexpr std::uint64_t kEntryInvulnerabilityTicks = 180U;
+    const std::uint16_t remaining =
+        room.combat.player.invulnerability_ticks;
+    if (remaining <= kNormalInvulnerabilityTicks) return true;
+    if (room.lifecycle != RoomProgressLifecycle::active
+            || state.current_room.depth < 1U
+            || state.current_room.depth > 3U
+            || room.combat.tick >= kEntryInvulnerabilityTicks) {
+        return false;
+    }
+    return remaining == static_cast<std::uint16_t>(
+        kEntryInvulnerabilityTicks - room.combat.tick);
 }
 
 [[nodiscard]] bool valid_attack(const AttackCheckpoint& attack,
@@ -1124,7 +1142,8 @@ bool valid_room_progress_checkpoint_structural(
             || room.combat.fire_crate_count
                 > room.combat.fire_crates.size()
             || !valid_room_combat_checkpoint_structural(
-                room.combat, room.generated_monsters)) {
+                room.combat, room.generated_monsters)
+            || !valid_entry_protection_provenance(room, state)) {
         return false;
     }
     MonsterOrdinal previous_monster = kInvalidMonsterOrdinal;

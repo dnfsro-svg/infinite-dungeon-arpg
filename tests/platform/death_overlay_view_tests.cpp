@@ -115,6 +115,25 @@ arpg::test::Failure hidden_without_death_and_maps_complete_recap() noexcept {
     return {};
 }
 
+arpg::test::Failure same_floor_recap_returns_to_local_entrance() noexcept {
+    auto snapshot = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
+    snapshot.death->checkpoint.target_room.depth =
+        snapshot.death->checkpoint.death_depth;
+
+    const auto view = platform::build_death_overlay_view(snapshot);
+    ARPG_REQUIRE(view.line_count == platform::kDeathOverlayLineCapacity);
+    ARPG_REQUIRE(contains(view, "返回本层入口"));
+    ARPG_REQUIRE(!contains(view, "第 12 层 → 第 12 层"));
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        platform::death_overlay_font_plan(), "返回本层入口"));
+
+    const auto ascii = platform::build_death_overlay_ascii_view(snapshot);
+    ARPG_REQUIRE(ascii.line_count == platform::kDeathOverlayLineCapacity);
+    ARPG_REQUIRE(contains(ascii, "Return to this floor entrance"));
+    ARPG_REQUIRE(!contains(ascii, "Depth 12 -> Depth 12"));
+    return {};
+}
+
 arpg::test::Failure maps_abyss_unknown_and_all_prompt_states() noexcept {
     auto abyss = death_snapshot(checkpoint::DeathSourceKind::unknown, true);
     abyss.death->checkpoint.source_monster_id = 0xFFU;
@@ -333,7 +352,7 @@ arpg::test::Failure layouts_stay_in_bounds_and_clear_of_prompt() noexcept {
         const auto view = platform::build_death_overlay_view(
             death_snapshot(checkpoint::DeathSourceKind::monster_affix));
         const auto layout = platform::death_overlay_layout(
-            viewport.width, viewport.height);
+            view, viewport.width, viewport.height);
         const platform::DeathOverlayRect screen{
             0.0F, 0.0F,
             static_cast<float>(viewport.width),
@@ -352,6 +371,53 @@ arpg::test::Failure layouts_stay_in_bounds_and_clear_of_prompt() noexcept {
             }
         }
     }
+    return {};
+}
+
+arpg::test::Failure desktop_layout_is_compact_and_hierarchical() noexcept {
+    const auto view = platform::build_death_overlay_view(
+        death_snapshot(checkpoint::DeathSourceKind::monster_affix));
+    const auto layout = platform::death_overlay_layout(view, 1280, 720);
+
+    ARPG_REQUIRE(arpg::test::near(layout.panel.x, 180.0F));
+    ARPG_REQUIRE(arpg::test::near(layout.panel.y, 80.0F));
+    ARPG_REQUIRE(arpg::test::near(layout.panel.width, 920.0F));
+    ARPG_REQUIRE(arpg::test::near(layout.panel.height, 560.0F));
+    ARPG_REQUIRE(layout.title_font_size == 32);
+    ARPG_REQUIRE(layout.heading_font_size == 22);
+    ARPG_REQUIRE(layout.body_font_size == 20);
+    ARPG_REQUIRE(layout.prompt_font_size == 24);
+    ARPG_REQUIRE(layout.title_font_size > layout.heading_font_size);
+    ARPG_REQUIRE(layout.heading_font_size > layout.body_font_size);
+    ARPG_REQUIRE(layout.prompt_font_size >= layout.body_font_size);
+
+    for (std::size_t index = 0U; index < view.line_count; ++index) {
+        const float required_height = static_cast<float>(
+            (view.lines[index].heading
+                    ? layout.heading_font_size : layout.body_font_size)
+                + 4);
+        ARPG_REQUIRE(layout.line_bounds[index].height >= required_height);
+    }
+    return {};
+}
+
+arpg::test::Failure layout_uses_each_line_column_metadata() noexcept {
+    platform::DeathOverlayView view{};
+    view.visible = true;
+    view.line_count = 4U;
+    view.lines[0].column = platform::DeathOverlayColumn::right;
+    view.lines[1].column = platform::DeathOverlayColumn::left;
+    view.lines[2].column = platform::DeathOverlayColumn::full;
+    view.lines[3].column = platform::DeathOverlayColumn::right;
+
+    const auto layout = platform::death_overlay_layout(view, 1280, 720);
+    const float panel_center = layout.panel.x + layout.panel.width * 0.5F;
+    ARPG_REQUIRE(layout.line_bounds[0].x >= panel_center);
+    ARPG_REQUIRE(layout.line_bounds[1].x < panel_center);
+    ARPG_REQUIRE(layout.line_bounds[2].width > layout.line_bounds[0].width);
+    ARPG_REQUIRE(arpg::test::near(
+        layout.line_bounds[0].y, layout.line_bounds[1].y));
+    ARPG_REQUIRE(layout.line_bounds[3].y > layout.line_bounds[0].y);
     return {};
 }
 
@@ -412,17 +478,24 @@ arpg::test::Failure death_overlay_material_plan_selects_authored_ui() noexcept {
     ARPG_REQUIRE(visible.title_plate
         == platform::MaterialSpriteId::ui_label_plate);
     ARPG_REQUIRE(arpg::test::near(visible.panel_border_pixels, 32.0F));
+    ARPG_REQUIRE(visible.dimmer_alpha == 232U);
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
     {"hidden and complete recap mapping", &hidden_without_death_and_maps_complete_recap},
+    {"same floor returns to local entrance",
+        &same_floor_recap_returns_to_local_entrance},
     {"abyss unknown and prompt states", &maps_abyss_unknown_and_all_prompt_states},
     {"all source ids have Chinese names", &all_source_catalog_ids_have_stable_chinese_names},
     {"wide source ids never alias", &wide_catalog_ids_never_alias_valid_entries},
     {"ASCII fallback maps complete recap", &ascii_fallback_maps_complete_recap_and_prompts},
     {"font plan covers overlay text", &font_plan_covers_all_overlay_text_and_ascii},
     {"layouts fit supported windows", &layouts_stay_in_bounds_and_clear_of_prompt},
+    {"desktop layout is compact and hierarchical",
+        &desktop_layout_is_compact_and_hierarchical},
+    {"layout uses line column metadata",
+        &layout_uses_each_line_column_metadata},
     {"worst case values fit compact columns", &worst_case_values_fit_compact_columns},
     {"death overlay selects authored UI materials",
         &death_overlay_material_plan_selects_authored_ui},

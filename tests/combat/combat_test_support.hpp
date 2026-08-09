@@ -255,6 +255,20 @@ struct CombatWorldTestAccess final {
         world.apply_monster_direct_hit(slot, packet, source_position, feedback);
     }
 
+    [[nodiscard]] static bool resolve_player_attack_hit(
+        combat::CombatWorld& world,
+        std::size_t slot,
+        const combat::PlayerAttackHitSpec& spec) noexcept {
+        combat::MonsterOrdinalSet hit_latch{};
+        return world.resolve_player_attack_hit(slot, spec, hit_latch);
+    }
+
+    [[nodiscard]] static std::uint16_t monster_engagement_latch(
+        const combat::CombatWorld& world, std::size_t slot) noexcept {
+        return slot < world.monsters_.slots_.size()
+            ? world.monsters_.slots_[slot].engagement_latch : 0U;
+    }
+
     static void defeat_monster(
         combat::CombatWorld& world,
         std::size_t slot,

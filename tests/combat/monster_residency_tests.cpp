@@ -21,6 +21,22 @@ namespace {
 using namespace arpg::combat;
 namespace fixture = arpg::test::room_field_fixture;
 
+[[nodiscard]] std::unique_ptr<RoomMonsterField> single_monster_field(
+    MonsterId id,
+    Vec3 spawn,
+    MonsterAffixSet affixes = {}) noexcept {
+    auto field = std::make_unique<RoomMonsterField>();
+    RoomMonsterPlan& plan = field->plan_storage_for_construction();
+    fixture::populate_plan(plan, 1U);
+    plan.monsters[0].id = id;
+    plan.monsters[0].affixes = affixes;
+    plan.monsters[0].initial_position = spawn;
+    arpg::dungeon::RoomMonsterPlanBuildResult result{};
+    result.density.total_count = 1U;
+    if (field->seal_plan(result) != RoomMonsterFieldFault::none) return {};
+    return field;
+}
+
 [[nodiscard]] bool same_persisted_runtime_fields(
     const MonsterRuntime& value,
     const MonsterRuntime& expected) noexcept {
@@ -72,7 +88,7 @@ namespace fixture = arpg::test::room_field_fixture;
         && value.shield_recharge_ticks == expected.shield_recharge_ticks
         && value.break_window_ticks == expected.break_window_ticks
         && value.hit_stop_ticks == expected.hit_stop_ticks
-        && value.owner_transient_counter == expected.owner_transient_counter
+        && value.engagement_latch == expected.engagement_latch
         && value.burning_ground_ticks == expected.burning_ground_ticks
         && value.blink_assault_ticks == expected.blink_assault_ticks
         && value.blink_empowered == expected.blink_empowered
@@ -110,7 +126,7 @@ void mutate_every_persistent_field(
     runtime.shield_recharge_ticks = 17U;
     runtime.break_window_ticks = 29U;
     runtime.hit_stop_ticks = 5U;
-    runtime.owner_transient_counter = 7U;
+    runtime.engagement_latch = 1U;
     runtime.burning_ground_ticks = 53U;
     runtime.blink_assault_ticks = 59U;
     runtime.blink_empowered = true;
@@ -652,6 +668,234 @@ arpg::test::Failure empty_blueprint_still_disables_legacy_fire_geometry()
     return {};
 }
 
+arpg::test::Failure room_resident_uses_sticky_ten_meter_engagement()
+    noexcept {
+    const Vec3 spawn = fixture::cell_center(0U, 0U);
+    MonsterAffixSet affixes{};
+    affixes.values[0] = {
+        MonsterAffixId::blink_assault, MonsterAffixTier::m1};
+    affixes.count = 1U;
+    auto field = single_monster_field(
+        MonsterId::chaos_chaser, spawn, affixes);
+    ARPG_REQUIRE(field != nullptr);
+
+    CombatEncounterConfig config{};
+    config.player_spawn = {spawn.x + 10.01F, spawn.y, 0.0F};
+    config.initial_invulnerability_ticks = 1000U;
+    CombatWorld world{config, std::move(field), {}};
+    ARPG_REQUIRE(world.active_monster_count() == 1U);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 0U);
+    const CombatSnapshot before = world.snapshot();
+
+    arpg::test::tick_n(world, 480);
+    const CombatSnapshot dormant = world.snapshot();
+    ARPG_REQUIRE(world.active_monster_count() == 1U);
+    ARPG_REQUIRE(dormant.monster_count == 1U);
+    ARPG_REQUIRE(dormant.monsters[0].ai_phase == MonsterAiPhase::idle);
+    ARPG_REQUIRE(dormant.monsters[0].position.x
+        == before.monsters[0].position.x);
+    ARPG_REQUIRE(dormant.monsters[0].position.y
+        == before.monsters[0].position.y);
+    ARPG_REQUIRE(dormant.monsters[0].velocity.x == 0.0F);
+    ARPG_REQUIRE(dormant.monsters[0].velocity.y == 0.0F);
+    ARPG_REQUIRE(dormant.monsters[0].affix_warning
+        == MonsterAffixWarning::none);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 0U);
+
+    arpg::test::CombatWorldTestAccess::set_player_position(
+        world, {spawn.x + 9.99F, spawn.y, 0.0F});
+    world.tick({});
+    ARPG_REQUIRE(world.snapshot().monsters[0].ai_phase
+        != MonsterAiPhase::idle);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 1U);
+
+    arpg::test::CombatWorldTestAccess::set_player_position(
+        world, {spawn.x + 20.0F, spawn.y, 0.0F});
+    world.tick({});
+    ARPG_REQUIRE(world.active_monster_count() == 1U);
+    ARPG_REQUIRE(world.snapshot().monsters[0].ai_phase
+        != MonsterAiPhase::idle);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 1U);
+    return {};
+}
+
+arpg::test::Failure front_armor_hit_wakes_distant_room_resident() noexcept {
+    const Vec3 spawn = fixture::cell_center(0U, 0U);
+    auto field = single_monster_field(MonsterId::water_bulwark, spawn);
+    ARPG_REQUIRE(field != nullptr);
+
+    CombatEncounterConfig config{};
+    config.player_spawn = {spawn.x + 12.0F, spawn.y, 0.0F};
+    CombatWorld world{config, std::move(field), {}};
+    const CombatSnapshot before = world.snapshot();
+    ARPG_REQUIRE(before.monsters[0].armor == ArmorState::armored);
+    ARPG_REQUIRE(before.monsters[0].reaction == ReactionState::idle);
+    ARPG_REQUIRE(before.monsters[0].ai_phase == MonsterAiPhase::idle);
+
+    PlayerAttackHitSpec hit{};
+    hit.source = AttackId::j1;
+    hit.base_physical = 1;
+    hit.break_damage = 1;
+    hit.impact = ImpactKind::light_hitstun;
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::resolve_player_attack_hit(
+        world, 0U, hit));
+    const CombatSnapshot after = world.snapshot();
+    ARPG_REQUIRE(after.monsters[0].reaction == ReactionState::idle);
+    ARPG_REQUIRE(after.monsters[0].armor == ArmorState::armored);
+    ARPG_REQUIRE(after.monsters[0].ai_phase == MonsterAiPhase::move);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 1U);
+    return {};
+}
+
+arpg::test::Failure old_unlatched_move_state_sleeps_when_distant() noexcept {
+    const Vec3 spawn = fixture::cell_center(0U, 0U);
+    auto field = single_monster_field(MonsterId::chaos_chaser, spawn);
+    ARPG_REQUIRE(field != nullptr);
+
+    CombatEncounterConfig config{};
+    config.player_spawn = {spawn.x + 20.0F, spawn.y, 0.0F};
+    CombatWorld world{config, std::move(field), {}};
+    auto old_save = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    ARPG_REQUIRE(old_save != nullptr);
+    ARPG_REQUIRE(world.capture_room_checkpoint(*old_save));
+    ARPG_REQUIRE(old_save->monster_count == 1U);
+    old_save->monsters[0].reaction =
+        arpg::checkpoint::ReactionState::idle;
+    old_save->monsters[0].ai_phase =
+        arpg::checkpoint::MonsterAiPhase::move;
+    old_save->monsters[0].ai_ticks = 0U;
+    old_save->monsters[0].velocity = {-0.5F, 0.25F, 0.0F};
+    old_save->monsters[0].engagement_latch = 0U;
+    ARPG_REQUIRE(world.restore_room_checkpoint(*old_save));
+    const CombatSnapshot before = world.snapshot();
+    ARPG_REQUIRE(before.monsters[0].ai_phase == MonsterAiPhase::move);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 0U);
+
+    world.tick({});
+    const CombatSnapshot after = world.snapshot();
+    ARPG_REQUIRE(after.monsters[0].ai_phase == MonsterAiPhase::idle);
+    ARPG_REQUIRE(after.monsters[0].position.x
+        == before.monsters[0].position.x);
+    ARPG_REQUIRE(after.monsters[0].position.y
+        == before.monsters[0].position.y);
+    ARPG_REQUIRE(after.monsters[0].velocity.x == 0.0F);
+    ARPG_REQUIRE(after.monsters[0].velocity.y == 0.0F);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 0U);
+    return {};
+}
+
+arpg::test::Failure old_unlatched_attack_phase_becomes_engaged() noexcept {
+    const Vec3 spawn = fixture::cell_center(0U, 0U);
+    auto field = single_monster_field(MonsterId::chaos_chaser, spawn);
+    ARPG_REQUIRE(field != nullptr);
+
+    CombatEncounterConfig config{};
+    config.player_spawn = {spawn.x + 20.0F, spawn.y, 0.0F};
+    CombatWorld world{config, std::move(field), {}};
+    auto old_save = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    ARPG_REQUIRE(old_save != nullptr);
+    ARPG_REQUIRE(world.capture_room_checkpoint(*old_save));
+    ARPG_REQUIRE(old_save->monster_count == 1U);
+    old_save->monsters[0].reaction =
+        arpg::checkpoint::ReactionState::idle;
+    old_save->monsters[0].ai_phase =
+        arpg::checkpoint::MonsterAiPhase::telegraph;
+    old_save->monsters[0].ai_ticks = 5U;
+    old_save->monsters[0].engagement_latch = 0U;
+    ARPG_REQUIRE(world.restore_room_checkpoint(*old_save));
+    world.tick({});
+    const CombatSnapshot after = world.snapshot();
+    ARPG_REQUIRE(after.monsters[0].ai_phase == MonsterAiPhase::telegraph);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 1U);
+    return {};
+}
+
+arpg::test::Failure old_blink_warning_keeps_unlatched_resident_engaged()
+    noexcept {
+    const Vec3 spawn = fixture::cell_center(0U, 0U);
+    MonsterAffixSet affixes{};
+    affixes.values[0] = {
+        MonsterAffixId::blink_assault, MonsterAffixTier::m1};
+    affixes.count = 1U;
+    auto field = single_monster_field(
+        MonsterId::chaos_chaser, spawn, affixes);
+    ARPG_REQUIRE(field != nullptr);
+
+    CombatEncounterConfig config{};
+    config.player_spawn = {spawn.x + 20.0F, spawn.y, 0.0F};
+    CombatWorld world{config, std::move(field), {}};
+    auto old_save = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    ARPG_REQUIRE(old_save != nullptr);
+    ARPG_REQUIRE(world.capture_room_checkpoint(*old_save));
+    ARPG_REQUIRE(old_save->monster_count == 1U);
+    old_save->monsters[0].reaction =
+        arpg::checkpoint::ReactionState::idle;
+    old_save->monsters[0].ai_phase =
+        arpg::checkpoint::MonsterAiPhase::move;
+    old_save->monsters[0].ai_ticks = 0U;
+    old_save->monsters[0].engagement_latch = 0U;
+    old_save->monsters[0].affix_warning =
+        arpg::checkpoint::MonsterAffixWarning::blink;
+    old_save->monsters[0].affix_warning_ticks = 5U;
+    ARPG_REQUIRE(world.restore_room_checkpoint(*old_save));
+
+    world.tick({});
+    const CombatSnapshot after = world.snapshot();
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 1U);
+    ARPG_REQUIRE(after.monsters[0].affix_warning
+        == MonsterAffixWarning::blink);
+    ARPG_REQUIRE(after.monsters[0].affix_warning_ticks == 4U);
+    return {};
+}
+
+arpg::test::Failure old_blink_empower_keeps_unlatched_resident_engaged()
+    noexcept {
+    const Vec3 spawn = fixture::cell_center(0U, 0U);
+    MonsterAffixSet affixes{};
+    affixes.values[0] = {
+        MonsterAffixId::blink_assault, MonsterAffixTier::m1};
+    affixes.count = 1U;
+    auto field = single_monster_field(
+        MonsterId::chaos_chaser, spawn, affixes);
+    ARPG_REQUIRE(field != nullptr);
+
+    CombatEncounterConfig config{};
+    config.player_spawn = {spawn.x + 20.0F, spawn.y, 0.0F};
+    CombatWorld world{config, std::move(field), {}};
+    auto old_save = std::make_unique<arpg::checkpoint::RoomCombatCheckpoint>();
+    ARPG_REQUIRE(old_save != nullptr);
+    ARPG_REQUIRE(world.capture_room_checkpoint(*old_save));
+    ARPG_REQUIRE(old_save->monster_count == 1U);
+    old_save->monsters[0].reaction =
+        arpg::checkpoint::ReactionState::idle;
+    old_save->monsters[0].ai_phase =
+        arpg::checkpoint::MonsterAiPhase::move;
+    old_save->monsters[0].ai_ticks = 0U;
+    old_save->monsters[0].engagement_latch = 0U;
+    old_save->monsters[0].affix_warning =
+        arpg::checkpoint::MonsterAffixWarning::none;
+    old_save->monsters[0].affix_warning_ticks = 0U;
+    old_save->monsters[0].blink_empowered = true;
+    ARPG_REQUIRE(world.restore_room_checkpoint(*old_save));
+
+    world.tick({});
+    const CombatSnapshot after = world.snapshot();
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_engagement_latch(
+        world, 0U) == 1U);
+    ARPG_REQUIRE(after.monsters[0].blink_empowered);
+    ARPG_REQUIRE(after.monsters[0].ai_phase != MonsterAiPhase::idle);
+    return {};
+}
+
 arpg::test::Failure defeat_ledger_overflow_sets_hard_fault() noexcept {
     auto field = std::make_unique<RoomMonsterField>();
     ARPG_REQUIRE(fixture::seal_test_plan(*field, 1125U)
@@ -711,6 +955,18 @@ constexpr arpg::test::TestCase kCases[] = {
         &blueprint_obstacles_replace_legacy_fire_geometry},
     {"empty blueprint disables legacy fire geometry",
         &empty_blueprint_still_disables_legacy_fire_geometry},
+    {"room resident uses sticky ten meter engagement",
+        &room_resident_uses_sticky_ten_meter_engagement},
+    {"front armor hit wakes distant room resident",
+        &front_armor_hit_wakes_distant_room_resident},
+    {"old unlatched move state sleeps when distant",
+        &old_unlatched_move_state_sleeps_when_distant},
+    {"old unlatched attack phase becomes engaged",
+        &old_unlatched_attack_phase_becomes_engaged},
+    {"old blink warning keeps unlatched resident engaged",
+        &old_blink_warning_keeps_unlatched_resident_engaged},
+    {"old blink empower keeps unlatched resident engaged",
+        &old_blink_empower_keeps_unlatched_resident_engaged},
     {"defeat ledger overflow sets hard fault",
         &defeat_ledger_overflow_sets_hard_fault},
 };

@@ -1144,6 +1144,7 @@ void DungeonSession::construct_cleared_abyss_room() noexcept {
     const auto navigation_config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(abyss::AbyssRuleId::none),
@@ -1354,6 +1355,7 @@ void DungeonSession::construct_normal_room() noexcept {
     const auto config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(abyss::AbyssRuleId::none),
@@ -1396,6 +1398,7 @@ void DungeonSession::construct_started_abyss_room() noexcept {
     const auto config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(selection->rule),
@@ -1586,6 +1589,7 @@ bool DungeonSession::prepare_abyss_start() noexcept {
     const auto combat_config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(selection->rule),

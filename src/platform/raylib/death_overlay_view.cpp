@@ -279,9 +279,13 @@ DeathOverlayView build_death_overlay_view(
         death.death_was_abyss ? "深渊房" : "普通房");
     add_line(view, DeathOverlayColumn::full, text);
     add_source_line(view, death);
-    std::snprintf(text, sizeof(text), "第 %llu 层 → 第 %llu 层",
-        static_cast<unsigned long long>(death.death_depth),
-        static_cast<unsigned long long>(death.target_room.depth));
+    if (death.death_depth == death.target_room.depth) {
+        std::snprintf(text, sizeof(text), "%s", "返回本层入口");
+    } else {
+        std::snprintf(text, sizeof(text), "第 %llu 层 → 第 %llu 层",
+            static_cast<unsigned long long>(death.death_depth),
+            static_cast<unsigned long long>(death.target_room.depth));
+    }
     add_line(view, DeathOverlayColumn::full, text);
 
     add_line(view, DeathOverlayColumn::left, "最后一击", true);
@@ -361,9 +365,13 @@ DeathOverlayView build_death_overlay_ascii_view(
         death.death_was_abyss ? "ABYSS" : "NORMAL");
     add_line(view, DeathOverlayColumn::full, text);
     add_ascii_source_line(view, death);
-    std::snprintf(text, sizeof(text), "Depth %llu -> Depth %llu",
-        static_cast<unsigned long long>(death.death_depth),
-        static_cast<unsigned long long>(death.target_room.depth));
+    if (death.death_depth == death.target_room.depth) {
+        std::snprintf(text, sizeof(text), "%s", "Return to this floor entrance");
+    } else {
+        std::snprintf(text, sizeof(text), "Depth %llu -> Depth %llu",
+            static_cast<unsigned long long>(death.death_depth),
+            static_cast<unsigned long long>(death.target_room.depth));
+    }
     add_line(view, DeathOverlayColumn::full, text);
 
     add_line(view, DeathOverlayColumn::left, "Last hit", true);
@@ -430,59 +438,64 @@ DeathOverlayView build_death_overlay_ascii_view(
 }
 
 DeathOverlayLayout death_overlay_layout(
+    const DeathOverlayView& view,
     int screen_width,
     int screen_height) noexcept {
     const float width = static_cast<float>((std::max)(screen_width, 1));
     const float height = static_cast<float>((std::max)(screen_height, 1));
-    const bool compact = width < 1000.0F || height < 600.0F;
+    const bool compact = width < 1200.0F || height < 680.0F;
     const float margin = compact ? 14.0F : 48.0F;
     const float panel_width = (std::min)(width - margin * 2.0F,
-        compact ? 772.0F : 1040.0F);
+        compact ? 772.0F : 920.0F);
     const float panel_height = (std::min)(height - margin * 2.0F,
-        compact ? 422.0F : 624.0F);
+        compact ? 422.0F : 560.0F);
     const float panel_x = (width - panel_width) * 0.5F;
     const float panel_y = (height - panel_height) * 0.5F;
 
     DeathOverlayLayout layout{};
     layout.panel = make_rect(panel_x, panel_y, panel_width, panel_height);
-    layout.title_font_size = compact ? 28 : 36;
-    layout.body_font_size = compact ? 15 : 18;
-    layout.prompt_font_size = compact ? 22 : 26;
+    layout.title_font_size = compact ? 28 : 32;
+    layout.heading_font_size = compact ? 17 : 22;
+    layout.body_font_size = compact ? 15 : 20;
+    layout.prompt_font_size = compact ? 20 : 24;
     layout.title = make_rect(panel_x + 24.0F, panel_y + 16.0F,
         panel_width - 48.0F, static_cast<float>(layout.title_font_size + 6));
 
     const float full_x = panel_x + 28.0F;
     const float full_width = panel_width - 56.0F;
     const float full_y = panel_y + (compact ? 54.0F : 66.0F);
-    const float full_step = compact ? 24.0F : 30.0F;
+    const float full_step = compact ? 22.0F : 28.0F;
     const float column_gap = compact ? 18.0F : 32.0F;
     const float column_width = (full_width - column_gap) * 0.5F;
-    const float column_y = panel_y + (compact ? 136.0F : 174.0F);
-    const float column_step = compact ? 20.0F : 27.0F;
+    const float column_y = panel_y + (compact ? 122.0F : 156.0F);
+    const float column_step = compact ? 21.0F : 26.0F;
     std::size_t full_index = 0U;
     std::size_t left_index = 0U;
     std::size_t right_index = 0U;
-    for (std::size_t index = 0U; index < layout.line_bounds.size(); ++index) {
-        DeathOverlayColumn column = DeathOverlayColumn::right;
-        if (index < 3U) column = DeathOverlayColumn::full;
-        else if (index < 14U) column = DeathOverlayColumn::left;
+    const std::size_t line_count = (std::min)(
+        view.line_count, layout.line_bounds.size());
+    for (std::size_t index = 0U; index < line_count; ++index) {
+        const DeathOverlayColumn column = view.lines[index].column;
+        const int line_font_size = view.lines[index].heading
+            ? layout.heading_font_size : layout.body_font_size;
+        const float line_height = static_cast<float>(line_font_size + 4);
         if (column == DeathOverlayColumn::full) {
             layout.line_bounds[index] = make_rect(full_x,
                 full_y + full_step * static_cast<float>(full_index++),
-                full_width, static_cast<float>(layout.body_font_size + 4));
+                full_width, line_height);
         } else if (column == DeathOverlayColumn::left) {
             layout.line_bounds[index] = make_rect(full_x,
                 column_y + column_step * static_cast<float>(left_index++),
-                column_width, static_cast<float>(layout.body_font_size + 4));
+                column_width, line_height);
         } else {
             layout.line_bounds[index] = make_rect(
                 full_x + column_width + column_gap,
                 column_y + column_step * static_cast<float>(right_index++),
-                column_width, static_cast<float>(layout.body_font_size + 4));
+                column_width, line_height);
         }
     }
     layout.prompt = make_rect(panel_x + 28.0F,
-        panel_y + panel_height - (compact ? 45.0F : 58.0F),
+        panel_y + panel_height - (compact ? 42.0F : 48.0F),
         panel_width - 56.0F,
         static_cast<float>(layout.prompt_font_size + 8));
     return layout;

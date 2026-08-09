@@ -41,6 +41,31 @@ arpg::test::Failure monster_labels_keep_a_readable_size_and_outline() noexcept {
     return {};
 }
 
+arpg::test::Failure monster_presentation_keeps_normal_bars_and_gates_debug_labels()
+    noexcept {
+    const auto normal_lane_zero =
+        arpg::platform::monster_presentation_plan(0U, false);
+    const auto normal_lane_three =
+        arpg::platform::monster_presentation_plan(3U, false);
+    const auto debug_lane_three =
+        arpg::platform::monster_presentation_plan(3U, true);
+
+    ARPG_REQUIRE(normal_lane_zero.resource_bars_visible);
+    ARPG_REQUIRE(normal_lane_three.resource_bars_visible);
+    ARPG_REQUIRE(!normal_lane_zero.role_label_visible);
+    ARPG_REQUIRE(!normal_lane_zero.phase_label_visible);
+    ARPG_REQUIRE(normal_lane_zero.resource_bar_offset_y < 0.0F);
+    ARPG_REQUIRE(normal_lane_zero.resource_bar_offset_y
+        == normal_lane_three.resource_bar_offset_y);
+
+    ARPG_REQUIRE(debug_lane_three.resource_bars_visible);
+    ARPG_REQUIRE(debug_lane_three.role_label_visible);
+    ARPG_REQUIRE(debug_lane_three.phase_label_visible);
+    ARPG_REQUIRE(debug_lane_three.resource_bar_offset_y
+        == normal_lane_zero.resource_bar_offset_y);
+    return {};
+}
+
 bool same_color(arpg::platform::Rgba8 lhs, arpg::platform::Rgba8 rhs) noexcept {
     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a;
 }
@@ -281,6 +306,8 @@ arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled()
 
 constexpr arpg::test::TestCase kCases[] = {
     {"monster labels retain readable text treatment", &monster_labels_keep_a_readable_size_and_outline},
+    {"normal monster bars and debug label gate",
+     &monster_presentation_keeps_normal_bars_and_gates_debug_labels},
     {"unique monster labels and ecology accent",
      &all_monster_roles_have_unique_labels_and_ecology_accent},
     {"priority monster warnings", &priority_phases_expose_warning_visuals},
