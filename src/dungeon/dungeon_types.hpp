@@ -327,6 +327,7 @@ struct PendingSave final {
     std::optional<combat::CombatDeathSnapshot> death_snapshot{};
     std::optional<ReinforcementReceipt> reinforcement_receipt{};
     std::optional<PendingHealthPotionClaim> health_potion_claim{};
+    MaterialPickupReceipt material_pickup_receipt{};
 };
 
 struct PendingSaveResult final {

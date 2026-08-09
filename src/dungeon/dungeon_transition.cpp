@@ -1457,6 +1457,7 @@ RequestResult DungeonSession::request_material_pickup(
             phase_,
             ordinal,
         });
+        freeze_pending_material_pickup_receipt(false);
         phase_ = RoomPhase::committing;
         return RequestResult::accepted;
     } catch (const std::bad_alloc&) {
@@ -1910,38 +1911,34 @@ void DungeonSession::commit_pending_save(
     if (reward_commit) published_reward = *pending_abyss_reward_;
     MaterialPickupReceipt published_material_receipt{};
     if (material_pickup_commit || clear_commit) {
-        published_material_receipt.valid = true;
-        published_material_receipt.room_vacuum = clear_commit;
-        published_material_receipt.commit_generation =
-            pending_save_->next_state.commit_generation;
+        const MaterialPickupReceipt& pending_receipt =
+            pending_save_->material_pickup_receipt;
+        bool receipt_matches = pending_receipt.valid
+            && pending_receipt.room_vacuum == clear_commit
+            && pending_receipt.commit_generation
+                == pending_save_->next_state.commit_generation;
         for (std::size_t index = 0U;
-                index < published_material_receipt.counts.size(); ++index) {
-            published_material_receipt.counts[index] =
+                index < pending_receipt.counts.size(); ++index) {
+            const std::uint64_t expected_count =
                 pending_save_->next_state.item_ownership.materials[index]
                 - stable_state_.item_ownership.materials[index];
-        }
-        for (std::uint16_t ordinal = 0U;
-                ordinal < ground_materials_.size(); ++ordinal) {
-            const GroundMaterial& ground = ground_materials_[ordinal];
-            if (!ground.active || (material_pickup_commit
-                    && ordinal != pickup_ordinal)) {
-                continue;
-            }
-            const std::size_t material_index = items::material_index(
-                ground.material);
-            if (material_index >= published_material_receipt.counts.size()
-                    || published_material_receipt.counts[material_index] == 0U) {
-                continue;
-            }
             const std::uint16_t bit = static_cast<std::uint16_t>(
-                std::uint16_t{1U} << material_index);
-            if ((published_material_receipt.origin_valid_mask & bit) != 0U) {
-                continue;
-            }
-            published_material_receipt.representative_origins[material_index] =
-                ground.position;
-            published_material_receipt.origin_valid_mask |= bit;
+                std::uint16_t{1U} << index);
+            const combat::Vec3 origin =
+                pending_receipt.representative_origins[index];
+            receipt_matches = receipt_matches
+                && pending_receipt.counts[index] == expected_count
+                && (expected_count == 0U
+                    || ((pending_receipt.origin_valid_mask & bit) != 0U
+                        && std::isfinite(origin.x)
+                        && std::isfinite(origin.y)
+                        && std::isfinite(origin.z)));
         }
+        if (!receipt_matches) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+            return;
+        }
+        published_material_receipt = pending_receipt;
     }
     if (death_commit && !can_emit(1U)) {
         enter_fault(DungeonFault::event_overflow);

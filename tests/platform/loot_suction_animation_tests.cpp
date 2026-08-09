@@ -166,6 +166,43 @@ arpg::test::Failure material_receipt_only_flies_disappeared_matching_ordinals()
     return {};
 }
 
+arpg::test::Failure room_vacuum_flies_each_disappeared_material_ordinal()
+    noexcept {
+    constexpr combat::Vec3 kFirstOrigin{3.0F, 1.0F, 0.0F};
+    constexpr combat::Vec3 kSecondOrigin{7.0F, 2.0F, 0.0F};
+    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+
+    dungeon::DungeonSnapshot previous{};
+    previous.room_index = 7U;
+    previous.room_instance_generation = 11U;
+    append(previous, material(3U, items::MaterialId::chaos, kFirstOrigin));
+    append(previous, material(5U, items::MaterialId::chaos, kSecondOrigin));
+    dungeon::DungeonSnapshot current{};
+    current.room_index = 7U;
+    current.room_instance_generation = 11U;
+    current.material_pickup_receipt.valid = true;
+    current.material_pickup_receipt.room_vacuum = true;
+    current.material_pickup_receipt.commit_generation = 2U;
+    current.material_pickup_receipt.counts[chaos] = 2U;
+    current.material_pickup_receipt.representative_origins[chaos] =
+        kFirstOrigin;
+    current.material_pickup_receipt.origin_valid_mask =
+        static_cast<std::uint16_t>(std::uint16_t{1U} << chaos);
+    platform::DungeonRenderStatus committed{};
+    committed.indicator = platform::SaveIndicator::saved;
+
+    state.observe(previous, current, committed);
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(state.active_count() == 2U);
+    ARPG_REQUIRE(plan.count == 2U);
+    ARPG_REQUIRE(plan.flights[0].world_position.x == kFirstOrigin.x);
+    ARPG_REQUIRE(plan.flights[1].world_position.x == kSecondOrigin.x);
+    return {};
+}
+
 arpg::test::Failure pause_freezes_and_arrival_reclaims_with_pulse() noexcept {
     platform::LootSuctionState state{};
     dungeon::DungeonSnapshot empty{};
@@ -340,6 +377,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"failed or still present equipment", &failed_or_unremoved_equipment_never_starts_flight},
     {"duplicate equipment receipt", &same_equipment_receipt_is_not_duplicated},
     {"material only disappeared ordinals", &material_receipt_only_flies_disappeared_matching_ordinals},
+    {"room vacuum flies each disappeared material ordinal",
+        &room_vacuum_flies_each_disappeared_material_ordinal},
     {"pause and arrival pulse", &pause_freezes_and_arrival_reclaims_with_pulse},
     {"full capacity replacement and zero allocation",
         &full_capacity_replaces_most_elapsed_flight_and_allocates_nothing},

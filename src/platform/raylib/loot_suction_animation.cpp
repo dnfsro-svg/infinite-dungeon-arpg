@@ -187,8 +187,7 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
             previous.ground_materials[index];
         const std::size_t material_index = items::material_index(material.material);
         if (material_index >= remaining.size() || remaining[material_index] == 0U
-                || contains_material(current, material.ordinal)
-                || (material_receipt.room_vacuum && emitted[material_index])) {
+                || contains_material(current, material.ordinal)) {
             continue;
         }
         reserve_flight(flights_) = material_flight(material.position,

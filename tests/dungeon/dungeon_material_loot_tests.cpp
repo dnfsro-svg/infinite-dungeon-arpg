@@ -440,6 +440,7 @@ arpg::test::Failure direct_material_pickup_publishes_origin_only_on_commit()
     noexcept {
     constexpr std::uint16_t kOrdinal = 6U;
     constexpr arpg::combat::Vec3 kOrigin{14.0F, -3.0F, 0.0F};
+    constexpr arpg::combat::Vec3 kPostRequestMutation{21.0F, 5.0F, 0.0F};
     DungeonSession session{DungeonRules{}, material_state(45U, 3U, 27U)};
     arpg::test::set_player_position(session, kOrigin);
     arpg::test::install_ground_material(
@@ -461,6 +462,8 @@ arpg::test::Failure direct_material_pickup_publishes_origin_only_on_commit()
     ARPG_REQUIRE(session.request_material_pickup(kOrdinal)
         == arpg::dungeon::RequestResult::accepted);
     const auto committed = *session.pending_save();
+    arpg::test::set_ground_material_position(
+        session, kOrdinal, kPostRequestMutation);
     ARPG_REQUIRE(resolve_committed(session));
     const auto& receipt = session.snapshot().material_pickup_receipt;
     const std::size_t chaos = arpg::items::material_index(MaterialId::chaos);
@@ -514,6 +517,10 @@ arpg::test::Failure direct_material_pickup_publishes_origin_only_on_commit()
     const auto vacuum_commit = *vacuum.pending_save();
     ARPG_REQUIRE(vacuum_commit.kind
         == arpg::dungeon::PendingSaveKind::room_clear);
+    arpg::test::set_ground_material_position(
+        vacuum, 6U, kPostRequestMutation);
+    arpg::test::set_ground_material_position(
+        vacuum, 7U, kPostRequestMutation);
     ARPG_REQUIRE(resolve_committed(vacuum));
 
     const auto& vacuum_receipt = vacuum.snapshot().material_pickup_receipt;
