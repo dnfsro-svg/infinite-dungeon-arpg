@@ -32,6 +32,8 @@ constexpr const char* kPauseFooter =
     "Arrow keys navigate | Enter select | Esc back";
 constexpr const char* kPauseRootResetFooter =
     "Arrow keys navigate | Enter select | Esc back | R Reset Room";
+constexpr const char* kSettingsFooter =
+    "Up/Down navigate | Left/Right adjust | Enter activate | Esc back";
 
 template <typename... Arguments>
 void write_row(
@@ -199,7 +201,7 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
             return view;
         case PauseScreen::settings:
             view.title = "SETTINGS";
-            view.footer = kPauseFooter;
+            view.footer = kSettingsFooter;
             view.row_count = kPauseMenuRowCapacity;
             view.selected_row = clamp_selected_row(
                 state.selected_row, view.row_count);

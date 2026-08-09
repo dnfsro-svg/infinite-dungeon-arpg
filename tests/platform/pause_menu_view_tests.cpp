@@ -296,6 +296,9 @@ test::Failure settings_view_shows_all_draft_and_committed_values() noexcept {
     ARPG_REQUIRE(view.row_count == 21U);
     ARPG_REQUIRE(view.selected_row == 12U);
     ARPG_REQUIRE(view.message == state.message);
+    ARPG_REQUIRE(view.footer != nullptr);
+    ARPG_REQUIRE(std::strcmp(view.footer,
+        "Up/Down navigate | Left/Right adjust | Enter activate | Esc back") == 0);
     constexpr const char* kRows[] = {
         "Master: 55% (saved 100%)",
         "SFX: 60% (saved 100%)",
