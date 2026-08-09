@@ -307,8 +307,7 @@ active_skill_loadout_command_after_click(
         if (selection.selected_slot < state.slots.size()
                 && selection.selected_slot != index
                 && state.slots[selection.selected_slot].active
-                    != skills::ActiveSkillId::none
-                && state.slots[index].active != skills::ActiveSkillId::none) {
+                    != skills::ActiveSkillId::none) {
             return ActiveSkillLoadoutCommand{
                 ActiveSkillLoadoutActionKind::swap,
                 static_cast<std::uint8_t>(selection.selected_slot),

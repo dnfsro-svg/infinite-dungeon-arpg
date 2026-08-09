@@ -153,6 +153,16 @@ bool cplay021_loot_suction_runtime_only() noexcept {
     return enabled;
 }
 
+bool cplay022_skill_empty_slot_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY022_SKILL_EMPTY_SLOT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -165,6 +175,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay022_skill_empty_slot_only()) {
+        const arpg::test::TestSuite cplay022_only[] = {
+            active_skill_loadout_view_suite(),
+        };
+        return arpg::test::run_suites(cplay022_only, 6,
+            "CPLAY-022 occupied active skill to empty slot");
+    }
     if (cplay021_loot_suction_runtime_only()) {
         const arpg::test::TestSuite cplay021_runtime_only[] = {
             loot_suction_runtime_origin_suite(),
@@ -295,6 +312,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 643,
+    return arpg::test::run_suites(suites, 644,
         "host settings runtime contract");
 }
