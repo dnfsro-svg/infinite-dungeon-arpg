@@ -62,6 +62,7 @@ arpg::test::TestSuite stage12_actor_render_suite() noexcept;
 arpg::test::TestSuite stage12_material_render_suite() noexcept;
 arpg::test::TestSuite large_room_render_plan_suite() noexcept;
 arpg::test::TestSuite ui_text_catalog_suite() noexcept;
+arpg::test::TestSuite ui_utf8_suite() noexcept;
 
 namespace {
 
@@ -280,8 +281,9 @@ int main() {
     if (full_chinese_ui_foundation_only()) {
         const arpg::test::TestSuite full_chinese_ui_foundation[] = {
             ui_text_catalog_suite(),
+            ui_utf8_suite(),
         };
-        return arpg::test::run_suites(full_chinese_ui_foundation, 5,
+        return arpg::test::run_suites(full_chinese_ui_foundation, 11,
             "full Chinese UI foundation");
     }
     if (cplay038_save_directory_only()) {
