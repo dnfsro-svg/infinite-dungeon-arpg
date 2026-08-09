@@ -1,5 +1,7 @@
 #include "loot_suction_animation.hpp"
 
+#include "dungeon/room_drop_state.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -101,6 +103,13 @@ constexpr float kPi = 3.14159265358979323846F;
         MaterialSpriteId::missing, material_color(material), 0.0F, true, false};
 }
 
+[[nodiscard]] LootSuctionFlight health_potion_flight(
+    combat::Vec3 position) noexcept {
+    return {position, {}, MaterialSpriteId::health_potion,
+        MaterialSpriteId::missing, {255U, 48U, 48U, 255U},
+        0.0F, true, false};
+}
+
 [[nodiscard]] bool same_room(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current) noexcept {
     return previous.room_index == current.room_index
@@ -126,17 +135,25 @@ constexpr float kPi = 3.14159265358979323846F;
 
 }  // namespace
 
+void LootSuctionState::attach_empty_baseline() noexcept {
+    attached_ = true;
+}
+
 void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
     const DungeonRenderStatus& status) noexcept {
     const LootPickupReceipt& equipment_receipt = status.loot_pickup;
     const dungeon::MaterialPickupReceipt& material_receipt =
         current.material_pickup_receipt;
+    const dungeon::HealthPotionPickupReceipt& health_potion_receipt =
+        current.health_potion_pickup_receipt;
     if (!attached_) {
         attached_ = true;
         equipment_generation_ = equipment_receipt.commit_generation;
         equipment_item_id_ = equipment_receipt.item_id;
         material_generation_ = material_receipt.commit_generation;
+        health_potion_generation_ =
+            health_potion_receipt.commit_generation;
         return;
     }
 
@@ -147,6 +164,11 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
         }
         if (material_receipt.commit_generation > material_generation_) {
             material_generation_ = material_receipt.commit_generation;
+        }
+        if (health_potion_receipt.commit_generation
+                > health_potion_generation_) {
+            health_potion_generation_ =
+                health_potion_receipt.commit_generation;
         }
         return;
     }
@@ -169,41 +191,77 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
         }
     }
 
-    if (!material_receipt.valid
-            || material_receipt.commit_generation <= material_generation_) {
+    const bool unchanged_room = same_room(previous, current);
+    if (material_receipt.commit_generation > material_generation_) {
+        material_generation_ = material_receipt.commit_generation;
+        if (material_receipt.valid && unchanged_room) {
+            std::array<std::uint64_t, items::kMaterialCount> remaining =
+                material_receipt.counts;
+            std::array<bool, items::kMaterialCount> emitted{};
+            const std::size_t count = (std::min)(
+                static_cast<std::size_t>(previous.ground_material_count),
+                previous.ground_materials.size());
+            for (std::size_t index{}; index < count; ++index) {
+                const dungeon::GroundMaterialSnapshot& material =
+                    previous.ground_materials[index];
+                const std::size_t material_index =
+                    items::material_index(material.material);
+                if (material_index >= remaining.size()
+                        || remaining[material_index] == 0U
+                        || contains_material(current, material.ordinal)) {
+                    continue;
+                }
+                reserve_flight(flights_) = material_flight(material.position,
+                    material.material);
+                emitted[material_index] = true;
+                --remaining[material_index];
+            }
+            for (std::size_t index{}; index < remaining.size(); ++index) {
+                if (remaining[index] == 0U || emitted[index]
+                        || !material_origin_valid(material_receipt, index)) {
+                    continue;
+                }
+                const items::MaterialId material =
+                    static_cast<items::MaterialId>(index);
+                const combat::Vec3 origin =
+                    material_receipt.representative_origins[index];
+                if (contains_material_origin(current, material, origin)) {
+                    continue;
+                }
+                reserve_flight(flights_) = material_flight(origin, material);
+            }
+        }
+    }
+
+    if (health_potion_receipt.commit_generation
+            <= health_potion_generation_) {
         return;
     }
-    material_generation_ = material_receipt.commit_generation;
-    if (!same_room(previous, current)) return;
-
-    std::array<std::uint64_t, items::kMaterialCount> remaining =
-        material_receipt.counts;
-    std::array<bool, items::kMaterialCount> emitted{};
-    const std::size_t count = (std::min)(
-        static_cast<std::size_t>(previous.ground_material_count),
-        previous.ground_materials.size());
-    for (std::size_t index{}; index < count; ++index) {
-        const dungeon::GroundMaterialSnapshot& material =
-            previous.ground_materials[index];
-        const std::size_t material_index = items::material_index(material.material);
-        if (material_index >= remaining.size() || remaining[material_index] == 0U
-                || contains_material(current, material.ordinal)) {
-            continue;
-        }
-        reserve_flight(flights_) = material_flight(material.position,
-            material.material);
-        emitted[material_index] = true;
-        --remaining[material_index];
+    health_potion_generation_ = health_potion_receipt.commit_generation;
+    if (!health_potion_receipt.valid || !unchanged_room
+            || health_potion_receipt.consumed_count == 0U
+            || health_potion_receipt.consumed_count
+                > health_potion_receipt.sources.size()) {
+        return;
     }
-    for (std::size_t index{}; index < remaining.size(); ++index) {
-        if (remaining[index] == 0U || emitted[index]
-                || !material_origin_valid(material_receipt, index)) {
-            continue;
+    for (std::size_t index = 0U;
+            index < health_potion_receipt.consumed_count; ++index) {
+        const dungeon::GroundHealthPotionSnapshot& source =
+            health_potion_receipt.sources[index];
+        if (source.spawn_ordinal
+                >= dungeon::kAuthoritativeHealthPotionCapacity
+                || source.claim_ordinal != dungeon::health_potion_claim_ordinal(
+                    source.spawn_ordinal)
+                || !std::isfinite(source.position.x)
+                || !std::isfinite(source.position.y)
+                || !std::isfinite(source.position.z)) {
+            return;
         }
-        const items::MaterialId material = static_cast<items::MaterialId>(index);
-        const combat::Vec3 origin = material_receipt.representative_origins[index];
-        if (contains_material_origin(current, material, origin)) continue;
-        reserve_flight(flights_) = material_flight(origin, material);
+    }
+    for (std::size_t index = 0U;
+            index < health_potion_receipt.consumed_count; ++index) {
+        reserve_flight(flights_) = health_potion_flight(
+            health_potion_receipt.sources[index].position);
     }
 }
 
@@ -249,6 +307,7 @@ void LootSuctionState::clear() noexcept {
     equipment_generation_ = 0U;
     equipment_item_id_ = 0U;
     material_generation_ = 0U;
+    health_potion_generation_ = 0U;
     destination_pulse_seconds_ = 0.0F;
     attached_ = false;
 }

@@ -44,6 +44,8 @@ struct HealthPotionPickupReceipt final {
     std::uint16_t consumed_count{};
     std::uint64_t commit_generation{};
     int restored_hp{};
+    std::array<GroundHealthPotionSnapshot,
+        kPendingHealthPotionClaimCapacity> sources{};
 };
 
 struct PendingHealthPotionClaim final {

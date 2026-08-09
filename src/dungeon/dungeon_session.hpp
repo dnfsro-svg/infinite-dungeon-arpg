@@ -65,6 +65,7 @@ public:
         value_.reinforcement_receipt.reset();
         value_.health_potion_claim.reset();
         value_.material_pickup_receipt = {};
+        value_.health_potion_pickup_receipt = {};
         engaged_ = true;
         return value_;
     }
@@ -255,6 +256,8 @@ private:
     [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
     void vacuum_room_materials() noexcept;
     void freeze_pending_material_pickup_receipt(bool room_vacuum) noexcept;
+    [[nodiscard]] bool freeze_pending_health_potion_pickup_receipt(
+        bool room_clear) noexcept;
     [[nodiscard]] bool has_ground_materials() const noexcept;
     void prepare_room_unlock() noexcept;
     void prepare_room_clear() noexcept;
@@ -294,7 +297,8 @@ private:
         const noexcept;
     [[nodiscard]] bool pending_health_potion_cache_consistent() const noexcept;
     void apply_committed_health_potions(
-        const PendingHealthPotionClaim& claim, bool room_clear) noexcept;
+        const PendingHealthPotionClaim& claim, bool room_clear,
+        HealthPotionPickupReceipt receipt) noexcept;
     [[nodiscard]] PlayerBuildResult build_for(
         const checkpoint::DungeonRunState& state,
         const items::EquipmentState* equipment_override = nullptr) const noexcept;

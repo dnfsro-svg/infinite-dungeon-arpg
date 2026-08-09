@@ -36,6 +36,7 @@ struct LootSuctionPlan final {
 
 class LootSuctionState final {
 public:
+    void attach_empty_baseline() noexcept;
     void observe(const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
         const DungeonRenderStatus& status) noexcept;
@@ -50,6 +51,7 @@ private:
     std::uint64_t equipment_generation_{};
     std::uint64_t equipment_item_id_{};
     std::uint64_t material_generation_{};
+    std::uint64_t health_potion_generation_{};
     float destination_pulse_seconds_{};
     bool attached_{};
 };

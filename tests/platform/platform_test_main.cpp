@@ -347,7 +347,7 @@ int main() {
         const arpg::test::TestSuite cplay021_only[] = {
             loot_suction_animation_suite(),
         };
-        return arpg::test::run_suites(cplay021_only, 11,
+        return arpg::test::run_suites(cplay021_only, 12,
             "CPLAY-021 bounded loot suction animation");
     }
     if (cplay016_ground_potion_label_only()) {
@@ -466,6 +466,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 653,
+    return arpg::test::run_suites(suites, 654,
         "host settings runtime contract");
 }

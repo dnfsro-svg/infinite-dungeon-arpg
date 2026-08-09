@@ -20,6 +20,7 @@
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -2512,6 +2513,14 @@ void DungeonSession::prepare_room_clear() noexcept {
                 : DungeonFault::invalid_item_state);
             return;
         }
+        if (phase_ != RoomPhase::faulted && pending_save_.has_value()
+                && !freeze_pending_health_potion_pickup_receipt(true)) {
+            pending_save_.reset();
+            enter_fault(started_abyss
+                ? DungeonFault::invalid_abyss_state
+                : DungeonFault::invalid_item_state);
+            return;
+        }
         if (started_abyss && pending_save_.has_value()
                 && pending_save_->health_potion_claim.has_value()) {
             pending_save_->resume_phase = RoomPhase::combat;
@@ -2560,6 +2569,40 @@ void DungeonSession::freeze_pending_material_pickup_receipt(
         receipt.representative_origins[material_index] = ground.position;
         receipt.origin_valid_mask |= bit;
     }
+}
+
+bool DungeonSession::freeze_pending_health_potion_pickup_receipt(
+    bool room_clear) noexcept {
+    if (!pending_save_.has_value()) return false;
+    HealthPotionPickupReceipt& receipt =
+        pending_save_->health_potion_pickup_receipt;
+    receipt = {};
+    if (!pending_save_->health_potion_claim.has_value()) return true;
+    const PendingHealthPotionClaim& claim =
+        *pending_save_->health_potion_claim;
+    if (claim.count == 0U || claim.count > receipt.sources.size()) {
+        return false;
+    }
+    receipt.valid = true;
+    receipt.room_clear = room_clear;
+    receipt.consumed_count = claim.count;
+    receipt.commit_generation = pending_save_->next_state.commit_generation;
+    for (std::uint8_t index = 0U; index < claim.count; ++index) {
+        const std::uint16_t spawn = claim.spawn_ordinals[index];
+        if (spawn >= ground_health_potions_.size()) return false;
+        const GroundHealthPotion& ground = ground_health_potions_[spawn];
+        const std::uint16_t claim_ordinal =
+            health_potion_claim_ordinal(spawn);
+        if (!ground.active || ground.spawn_ordinal != spawn
+                || ground.claim_ordinal != claim_ordinal
+                || !std::isfinite(ground.position.x)
+                || !std::isfinite(ground.position.y)
+                || !std::isfinite(ground.position.z)) {
+            return false;
+        }
+        receipt.sources[index] = {spawn, claim_ordinal, ground.position};
+    }
+    return true;
 }
 
 void DungeonSession::publish_room_clear() noexcept {

@@ -277,6 +277,9 @@ arpg::test::Failure combat_renderer_commits_and_clears_loot_suction()
 
     renderer.clear_combat_transients();
     ARPG_REQUIRE(renderer.loot_suction_active_count() == 0U);
+    renderer.observe_hud(current, current, saved_equipment_receipt(1U, 42U),
+        control_hints(), 0.0F, false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 0U);
     return {};
 }
 
@@ -371,6 +374,93 @@ arpg::test::Failure receipt_fallback_keeps_rare_and_abyss_colors_distinct()
     return {};
 }
 
+arpg::test::Failure committed_health_potions_fly_exact_sources_once()
+    noexcept {
+    constexpr combat::Vec3 kFirstOrigin{4.0F, -1.0F, 0.0F};
+    constexpr combat::Vec3 kSecondOrigin{7.0F, 2.0F, 0.0F};
+    dungeon::DungeonSnapshot previous{};
+    previous.room_index = 5U;
+    previous.room_instance_generation = 9U;
+    dungeon::DungeonSnapshot current = previous;
+    auto& receipt = current.health_potion_pickup_receipt;
+    receipt.valid = true;
+    receipt.room_clear = true;
+    receipt.consumed_count = 2U;
+    receipt.commit_generation = 12U;
+    receipt.restored_hp = 500;
+    receipt.sources[0] = {2U, dungeon::health_potion_claim_ordinal(2U),
+        kFirstOrigin};
+    receipt.sources[1] = {1124U,
+        dungeon::health_potion_claim_ordinal(1124U),
+        kSecondOrigin};
+    platform::DungeonRenderStatus saved{};
+    saved.indicator = platform::SaveIndicator::saved;
+
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot baseline = previous;
+    state.observe(baseline, baseline, {});
+    state.observe(previous, current, saved);
+    state.observe(previous, current, saved);
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(plan.count == 2U);
+    ARPG_REQUIRE(plan.flights[0].world_position.x == kFirstOrigin.x);
+    ARPG_REQUIRE(plan.flights[1].world_position.x == kSecondOrigin.x);
+    ARPG_REQUIRE(plan.flights[0].sprite
+        == platform::MaterialSpriteId::health_potion);
+    ARPG_REQUIRE(plan.flights[1].sprite
+        == platform::MaterialSpriteId::health_potion);
+    ARPG_REQUIRE(!plan.flights[0].equipment);
+
+    platform::CombatRenderer renderer{};
+    // Multiple fixed steps can leave both renderer snapshots carrying the
+    // newly committed transient receipt.  The first renderer observation
+    // must not consume that generation as an old baseline.
+    renderer.observe_hud(current, current, saved, control_hints(), 0.0F,
+        false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 2U);
+
+    platform::LootSuctionState failed{};
+    failed.observe(baseline, baseline, {});
+    saved.indicator = platform::SaveIndicator::error;
+    failed.observe(previous, current, saved);
+    saved.indicator = platform::SaveIndicator::saved;
+    failed.observe(previous, current, saved);
+    ARPG_REQUIRE(failed.active_count() == 0U);
+
+    platform::LootSuctionState crossed_room{};
+    crossed_room.observe(baseline, baseline, {});
+    current.room_instance_generation = 10U;
+    crossed_room.observe(previous, current, saved);
+    ARPG_REQUIRE(crossed_room.active_count() == 0U);
+    previous = current;
+    crossed_room.observe(previous, current, saved);
+    ARPG_REQUIRE(crossed_room.active_count() == 0U);
+
+    platform::LootSuctionState malformed{};
+    malformed.observe(baseline, baseline, {});
+    current.room_instance_generation = previous.room_instance_generation;
+    current.health_potion_pickup_receipt.consumed_count = 2U;
+    ++current.health_potion_pickup_receipt.sources[1].claim_ordinal;
+    malformed.observe(previous, current, saved);
+    ARPG_REQUIRE(malformed.active_count() == 0U);
+
+    --current.health_potion_pickup_receipt.sources[1].claim_ordinal;
+    platform::LootSuctionState oversized{};
+    oversized.observe(baseline, baseline, {});
+    current.health_potion_pickup_receipt.consumed_count = 5U;
+    oversized.observe(previous, current, saved);
+    ARPG_REQUIRE(oversized.active_count() == 0U);
+
+    current.health_potion_pickup_receipt.consumed_count = 2U;
+    platform::LootSuctionState cleared{};
+    cleared.observe(current, current, saved);
+    cleared.clear();
+    cleared.observe(current, current, saved);
+    cleared.observe(current, current, saved);
+    ARPG_REQUIRE(cleared.active_count() == 0U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"equipment trajectory to player waist",
         &committed_equipment_disappearance_flies_to_player_waist},
@@ -390,6 +480,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &committed_receipt_origin_survives_same_step_material_pickup},
     {"receipt fallback rarity colors",
         &receipt_fallback_keeps_rare_and_abyss_colors_distinct},
+    {"committed health potion sources",
+        &committed_health_potions_fly_exact_sources_once},
 };
 
 }  // namespace

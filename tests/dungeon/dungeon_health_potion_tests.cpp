@@ -613,11 +613,13 @@ dead_player_or_death_snapshot_never_requests_or_consumes_potion() noexcept {
 
 arpg::test::Failure
 committed_pickup_heals_caps_removes_and_publishes_exact_receipt() noexcept {
+    constexpr arpg::combat::Vec3 kUnclaimedOrigin{90.0F, 1.0F, 0.0F};
+    constexpr arpg::combat::Vec3 kConsumedOrigin{20.0F, -3.0F, 0.0F};
     DungeonSession session{DungeonRules{}, potion_state(107U)};
     arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
     arpg::test::set_player_health(session, 750, 1000);
-    install_potion(session, 9U);
-    install_potion(session, 2U);
+    install_potion(session, 9U, kUnclaimedOrigin);
+    install_potion(session, 2U, kConsumedOrigin);
     const std::uint64_t generation_before =
         session.snapshot().commit_generation;
     const std::uint64_t allocations_before_request =
@@ -628,6 +630,17 @@ committed_pickup_heals_caps_removes_and_publishes_exact_receipt() noexcept {
         == allocations_before_request);
     const auto pending = session.pending_save();
     ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(!pending->health_potion_pickup_receipt.room_clear);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.consumed_count == 1U);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.sources[0].spawn_ordinal
+        == 2U);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.sources[0].claim_ordinal
+        == arpg::dungeon::health_potion_claim_ordinal(2U));
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.sources[0].position.x
+        == kConsumedOrigin.x);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.sources[0].position.y
+        == kConsumedOrigin.y);
     ARPG_REQUIRE(session.snapshot().combat->player.hp == 750);
     ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 2U);
     ARPG_REQUIRE(!session.snapshot().health_potion_pickup_receipt.valid);
@@ -654,6 +667,14 @@ committed_pickup_heals_caps_removes_and_publishes_exact_receipt() noexcept {
     ARPG_REQUIRE(!committed.health_potion_pickup_receipt.room_clear);
     ARPG_REQUIRE(committed.health_potion_pickup_receipt.restored_hp == 250);
     ARPG_REQUIRE(committed.health_potion_pickup_receipt.consumed_count == 1U);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.sources[0].spawn_ordinal
+        == 2U);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.sources[0].claim_ordinal
+        == arpg::dungeon::health_potion_claim_ordinal(2U));
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.sources[0].position.x
+        == kConsumedOrigin.x);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.sources[0].position.y
+        == kConsumedOrigin.y);
     ARPG_REQUIRE(committed.health_potion_pickup_receipt.commit_generation
         == generation_before + 1U);
     ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(session),
@@ -1180,13 +1201,19 @@ abyss_clear_health_retry_gates_all_public_mutation_entries() noexcept {
 arpg::test::Failure
 clear_batch_selects_only_until_health_is_strictly_above_75_percent()
     noexcept {
+    constexpr std::array<arpg::combat::Vec3, 4U> kOrigins{{
+        {90.0F, 9.0F, 0.0F},
+        {20.0F, 2.0F, 0.0F},
+        {60.0F, 6.0F, 0.0F},
+        {30.0F, 3.0F, 0.0F},
+    }};
     DungeonSession session{DungeonRules{}, potion_state(303U)};
     arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
     arpg::test::set_player_health(session, 1, 1000);
-    install_potion(session, 9U);
-    install_potion(session, 2U);
-    install_potion(session, 6U);
-    install_potion(session, 3U);
+    install_potion(session, 9U, kOrigins[0]);
+    install_potion(session, 2U, kOrigins[1]);
+    install_potion(session, 6U, kOrigins[2]);
+    install_potion(session, 3U, kOrigins[3]);
     arpg::test::prepare_room_clear(session);
     const auto pending = session.pending_save();
     ARPG_REQUIRE(pending.has_value());
@@ -1196,6 +1223,15 @@ clear_batch_selects_only_until_health_is_strictly_above_75_percent()
     ARPG_REQUIRE(pending->health_potion_claim->spawn_ordinals[0] == 2U);
     ARPG_REQUIRE(pending->health_potion_claim->spawn_ordinals[1] == 3U);
     ARPG_REQUIRE(pending->health_potion_claim->spawn_ordinals[2] == 6U);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.room_clear);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.consumed_count == 3U);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.sources[0].spawn_ordinal
+        == 2U);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.sources[1].spawn_ordinal
+        == 3U);
+    ARPG_REQUIRE(pending->health_potion_pickup_receipt.sources[2].spawn_ordinal
+        == 6U);
     ARPG_REQUIRE(session.snapshot().combat->player.hp == 1);
     ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 4U);
     ARPG_REQUIRE(!session.snapshot().health_potion_pickup_receipt.valid);
@@ -1214,6 +1250,12 @@ clear_batch_selects_only_until_health_is_strictly_above_75_percent()
     ARPG_REQUIRE(committed.health_potion_pickup_receipt.room_clear);
     ARPG_REQUIRE(committed.health_potion_pickup_receipt.consumed_count == 3U);
     ARPG_REQUIRE(committed.health_potion_pickup_receipt.restored_hp == 750);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.sources[0].position.x
+        == kOrigins[1].x);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.sources[1].position.x
+        == kOrigins[3].x);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.sources[2].position.x
+        == kOrigins[2].x);
     ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(session),
         arpg::dungeon::health_potion_claim_ordinal(2U)));
     ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(session),

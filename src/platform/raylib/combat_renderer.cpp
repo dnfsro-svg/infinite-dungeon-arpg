@@ -395,6 +395,7 @@ void CombatRenderer::clear_combat_transients() noexcept {
     has_last_event_ = false;
     monster_presenter_.reset();
     loot_suction_.clear();
+    loot_suction_requires_snapshot_baseline_ = true;
 }
 
 void CombatRenderer::set_loot_filter_mode(
@@ -426,12 +427,19 @@ void CombatRenderer::observe_hud(
     if (unsafe_to_play) {
         loot_suction_.clear();
         loot_suction_.observe(current, current, runtime_status);
+        loot_suction_requires_snapshot_baseline_ = false;
     } else {
         loot_suction_.update(frame_seconds, paused);
-        // The renderer may first observe the exact frame that commits a
-        // pickup.  Attach a receipt-free baseline before processing it.
-        loot_suction_.observe(previous, previous, {});
-        loot_suction_.observe(previous, current, runtime_status);
+        if (loot_suction_requires_snapshot_baseline_) {
+            loot_suction_.observe(current, current, runtime_status);
+            loot_suction_requires_snapshot_baseline_ = false;
+        } else {
+            // A renderer can first observe a frame after multiple fixed
+            // steps.  Both snapshots may already carry the new transient
+            // receipt, so attach without consuming its generation.
+            loot_suction_.attach_empty_baseline();
+            loot_suction_.observe(previous, current, runtime_status);
+        }
     }
     const LootPickupFeedback pickup_feedback =
         loot_pickup_feedback_.observe(runtime_status);

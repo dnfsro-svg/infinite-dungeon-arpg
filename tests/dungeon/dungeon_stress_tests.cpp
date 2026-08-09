@@ -368,6 +368,16 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
         }
     }
     for (std::size_t index = 0U;
+            index < lhs.health_potion_pickup_receipt.sources.size(); ++index) {
+        const auto& left = lhs.health_potion_pickup_receipt.sources[index];
+        const auto& right = rhs.health_potion_pickup_receipt.sources[index];
+        if (left.spawn_ordinal != right.spawn_ordinal
+                || left.claim_ordinal != right.claim_ordinal
+                || !same_vec(left.position, right.position)) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U;
             index < lhs.ground_health_potion_count; ++index) {
         if (!same_ground_health_potion(
                 lhs.ground_health_potions[index],

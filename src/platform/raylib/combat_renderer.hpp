@@ -227,6 +227,7 @@ private:
     LootPickupFeedbackState loot_pickup_feedback_{};
     MaterialPickupFeedbackState material_pickup_feedback_{};
     LootSuctionState loot_suction_{};
+    bool loot_suction_requires_snapshot_baseline_{};
     MaterialPack material_pack_{};
     MonsterMaterialPresenter monster_presenter_{};
     std::array<MonsterMaterialDrawRuntimeStatus,

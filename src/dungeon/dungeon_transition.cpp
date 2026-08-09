@@ -780,10 +780,16 @@ bool DungeonSession::pending_health_potion_cache_consistent() const noexcept {
     const bool clear = kind == PendingSaveKind::room_clear
         || kind == PendingSaveKind::abyss_clear;
     const bool has_claim = pending_save_->health_potion_claim.has_value();
+    const HealthPotionPickupReceipt& frozen_receipt =
+        pending_save_->health_potion_pickup_receipt;
     if (pickup != has_claim && !clear) return false;
     if (!pickup && !clear) return !has_claim;
     if (!has_claim) {
-        return !clear || !has_claimable_health_potion();
+        return (!clear || !has_claimable_health_potion())
+            && !frozen_receipt.valid
+            && frozen_receipt.consumed_count == 0U
+            && frozen_receipt.commit_generation == 0U
+            && frozen_receipt.restored_hp == 0;
     }
     if (!combat_.has_value()) return false;
 
@@ -791,6 +797,13 @@ bool DungeonSession::pending_health_potion_cache_consistent() const noexcept {
         *pending_save_->health_potion_claim;
     if (claim.count == 0U
             || claim.count > kPendingHealthPotionClaimCapacity) {
+        return false;
+    }
+    if (!frozen_receipt.valid || frozen_receipt.room_clear != clear
+            || frozen_receipt.consumed_count != claim.count
+            || frozen_receipt.commit_generation
+                != pending_save_->next_state.commit_generation
+            || frozen_receipt.restored_hp != 0) {
         return false;
     }
     const combat::CombatSnapshot snapshot = combat_->snapshot();
@@ -806,15 +819,36 @@ bool DungeonSession::pending_health_potion_cache_consistent() const noexcept {
             return false;
         }
         const GroundHealthPotion& ground = ground_health_potions_[spawn];
+        const GroundHealthPotionSnapshot& source =
+            frozen_receipt.sources[index];
         const std::uint16_t claim_ordinal =
             health_potion_claim_ordinal(spawn);
         if (!ground.active || ground.spawn_ordinal != spawn
                 || ground.claim_ordinal != claim_ordinal
+                || source.spawn_ordinal != spawn
+                || source.claim_ordinal != claim_ordinal
+                || source.position.x != ground.position.x
+                || source.position.y != ground.position.y
+                || source.position.z != ground.position.z
+                || !std::isfinite(source.position.x)
+                || !std::isfinite(source.position.y)
+                || !std::isfinite(source.position.z)
                 || room_drop_state_.secondary_claimed(claim_ordinal)
                 || (legacy_secondary_claim_representable(claim_ordinal)
                     && !bit_is_set(pending_save_->next_state.item_ownership
                             .material_claimed_drop_bits,
                         claim_ordinal))) {
+            return false;
+        }
+    }
+    for (std::size_t index = claim.count;
+            index < frozen_receipt.sources.size(); ++index) {
+        const GroundHealthPotionSnapshot& source =
+            frozen_receipt.sources[index];
+        if (source.spawn_ordinal != 0U || source.claim_ordinal != 0U
+                || source.position.x != 0.0F
+                || source.position.y != 0.0F
+                || source.position.z != 0.0F) {
             return false;
         }
     }
@@ -1526,16 +1560,23 @@ RequestResult DungeonSession::request_health_potion_pickup(
     pending.health_potion_claim = PendingHealthPotionClaim{
         {{spawn_ordinal, 0U, 0U, 0U}}, 1U,
         snapshot.player.hp, snapshot.player.max_hp};
+    if (!freeze_pending_health_potion_pickup_receipt(false)) {
+        pending_save_.reset();
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
     phase_ = RoomPhase::committing;
     return RequestResult::accepted;
 }
 
 void DungeonSession::apply_committed_health_potions(
-    const PendingHealthPotionClaim& claim, bool room_clear) noexcept {
-    HealthPotionPickupReceipt receipt{};
+    const PendingHealthPotionClaim& claim, bool room_clear,
+    HealthPotionPickupReceipt receipt) noexcept {
     receipt.valid = true;
     receipt.room_clear = room_clear;
     receipt.commit_generation = stable_state_.commit_generation;
+    receipt.restored_hp = 0;
+    receipt.consumed_count = 0U;
     for (std::uint8_t index = 0U; index < claim.count; ++index) {
         receipt.restored_hp += combat_->restore_player_health_percent(
             kHealthPotionRestoreBp);
@@ -1830,6 +1871,8 @@ void DungeonSession::commit_pending_save(
     const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
     std::optional<PendingHealthPotionClaim> committed_health_claim =
         pending_save_->health_potion_claim;
+    HealthPotionPickupReceipt published_health_potion_receipt =
+        pending_save_->health_potion_pickup_receipt;
     if (committed_health_claim.has_value() && !combat_.has_value()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
@@ -1974,11 +2017,28 @@ void DungeonSession::commit_pending_save(
         }
     }
     if (committed_health_claim.has_value()) {
+        if (!published_health_potion_receipt.valid
+                || published_health_potion_receipt.consumed_count
+                    != committed_health_claim->count
+                || published_health_potion_receipt.commit_generation
+                    != pending_save_->next_state.commit_generation) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+            return;
+        }
         for (std::uint8_t index = 0U;
                 index < committed_health_claim->count; ++index) {
+            const GroundHealthPotionSnapshot& source =
+                published_health_potion_receipt.sources[index];
+            const std::uint16_t spawn =
+                committed_health_claim->spawn_ordinals[index];
             const std::uint16_t ordinal = secondary_drop_ordinal(
-                committed_health_claim->spawn_ordinals[index]);
-            if (!room_drop_state_.can_mark_secondary_claimed(ordinal)) {
+                spawn);
+            if (source.spawn_ordinal != spawn
+                    || source.claim_ordinal != ordinal
+                    || !std::isfinite(source.position.x)
+                    || !std::isfinite(source.position.y)
+                    || !std::isfinite(source.position.z)
+                    || !room_drop_state_.can_mark_secondary_claimed(ordinal)) {
                 enter_fault(DungeonFault::save_receipt_mismatch);
                 return;
             }
@@ -2088,7 +2148,8 @@ void DungeonSession::commit_pending_save(
         }
         if (committed_health_claim.has_value()) {
             apply_committed_health_potions(
-                *committed_health_claim, true);
+                *committed_health_claim, true,
+                published_health_potion_receipt);
         }
         // prepare_room_clear reserved the publication slot. While committing,
         // tick() is frozen and no other dungeon-event producer can consume them.
@@ -2148,7 +2209,8 @@ void DungeonSession::commit_pending_save(
         return;
     }
     if (health_potion_pickup_commit) {
-        apply_committed_health_potions(*committed_health_claim, false);
+        apply_committed_health_potions(*committed_health_claim, false,
+            published_health_potion_receipt);
         phase_ = resume_phase;
         return;
     }
