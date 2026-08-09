@@ -1,6 +1,7 @@
 #include "passive_tree_view_math.hpp"
 
 #include "passives/passive_tree_catalog.hpp"
+#include "passives/passive_tree_rules.hpp"
 
 #include <algorithm>
 
@@ -113,9 +114,6 @@ PassiveNodeVisualState passive_node_visual_state(
     passives::PassiveNodeId node) noexcept {
     if (node >= passives::kPassiveNodeCount) return PassiveNodeVisualState::locked;
     if (snapshot.passive_save_pending) return PassiveNodeVisualState::pending;
-    if (snapshot.passive_tree_error != passives::PassiveTreeError::none) {
-        return PassiveNodeVisualState::rejected;
-    }
     if (node_is_allocated(snapshot.passive_tree, node)) {
         return PassiveNodeVisualState::allocated;
     }
@@ -124,6 +122,61 @@ PassiveNodeVisualState passive_node_visual_state(
             && snapshot.progression.unspent_passive_points > 0U
             && has_allocated_neighbor(snapshot.passive_tree, candidate)
         ? PassiveNodeVisualState::available : PassiveNodeVisualState::locked;
+}
+
+const char* passive_node_action_text(
+    const dungeon::DungeonSnapshot& snapshot,
+    passives::PassiveNodeId node) noexcept {
+    if (node >= passives::kPassiveNodeCount) return "Node unavailable";
+    if (snapshot.passive_save_pending) return "Saving passive tree...";
+    if (node_is_allocated(snapshot.passive_tree, node)) {
+        if (node == 0U) return "Starting node is permanent";
+        passives::PassiveTreeState tree = snapshot.passive_tree;
+        progression::ProgressionState progression_state = snapshot.progression;
+        const passives::PassiveTreeResult refund = passives::refund_node(
+            tree, progression_state, node);
+        return refund.error == passives::PassiveTreeError::none
+            ? "Click to refund (autosaves)"
+            : passive_tree_status_view(
+                {false, false, refund.error}).text;
+    }
+    if (!passive_tree_can_open(snapshot)) return "Passive tree unavailable";
+    if (snapshot.progression.unspent_passive_points == 0U) {
+        return "No passive points available";
+    }
+    return has_allocated_neighbor(snapshot.passive_tree,
+               passives::passive_nodes()[node])
+        ? "Click to allocate (autosaves)"
+        : "Allocate an adjacent node first";
+}
+
+PassiveTreeStatusView passive_tree_status_view(
+    PassiveTreeStatusInput input) noexcept {
+    if (input.save_error) {
+        return {"Autosave ERROR", PassiveTreeStatusTone::error};
+    }
+    if (input.saving) {
+        return {"Autosave SAVING", PassiveTreeStatusTone::saving};
+    }
+    switch (input.rule_error) {
+    case passives::PassiveTreeError::none:
+        return {"Autosave READY", PassiveTreeStatusTone::ready};
+    case passives::PassiveTreeError::unknown_node:
+        return {"Unknown passive node", PassiveTreeStatusTone::error};
+    case passives::PassiveTreeError::already_allocated:
+        return {"Node is already allocated", PassiveTreeStatusTone::error};
+    case passives::PassiveTreeError::not_allocated:
+        return {"Node cannot be refunded", PassiveTreeStatusTone::error};
+    case passives::PassiveTreeError::no_points:
+        return {"No passive points available", PassiveTreeStatusTone::error};
+    case passives::PassiveTreeError::not_adjacent:
+        return {"Allocate an adjacent node first", PassiveTreeStatusTone::error};
+    case passives::PassiveTreeError::disconnects_tree:
+        return {"Refund would disconnect the tree", PassiveTreeStatusTone::error};
+    case passives::PassiveTreeError::invalid_state:
+        return {"Passive tree state is invalid", PassiveTreeStatusTone::error};
+    }
+    return {"Passive tree error", PassiveTreeStatusTone::error};
 }
 
 PassiveOverlayInputGate passive_overlay_input_gate(bool overlay_open) noexcept {

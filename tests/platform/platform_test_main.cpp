@@ -223,6 +223,16 @@ bool cplay033_passive_cjk_only() noexcept {
     return enabled;
 }
 
+bool cplay034_passive_feedback_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY034_PASSIVE_FEEDBACK_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -235,6 +245,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay034_passive_feedback_only()) {
+        const arpg::test::TestSuite cplay034_only[] = {
+            passive_tree_view_suite(),
+        };
+        return arpg::test::run_suites(cplay034_only, 8,
+            "CPLAY-034 passive tree node feedback");
+    }
     if (cplay033_passive_cjk_only()) {
         const arpg::test::TestSuite cplay033_only[] = {
             hud_font_suite(),
@@ -313,7 +330,7 @@ int main() {
             control_hints_suite(),
             hud_notice_state_suite(),
         };
-        return arpg::test::run_suites(cplay015_only, 31,
+        return arpg::test::run_suites(cplay015_only, 32,
             "CPLAY-015 blocked passive tree feedback");
     }
 
@@ -414,6 +431,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 649,
+    return arpg::test::run_suites(suites, 650,
         "host settings runtime contract");
 }

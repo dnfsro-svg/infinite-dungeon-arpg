@@ -27,7 +27,6 @@ Color state_color(PassiveNodeVisualState state,
     switch (state) {
     case PassiveNodeVisualState::available: return route_color(node);
     case PassiveNodeVisualState::allocated: return {244, 248, 255, 255};
-    case PassiveNodeVisualState::rejected: return {244, 99, 99, 255};
     case PassiveNodeVisualState::pending: return {255, 190, 79, 255};
     case PassiveNodeVisualState::locked: return {76, 87, 106, 255};
     }
@@ -147,7 +146,7 @@ void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
     const int panel_width = 290;
     const bool detailed = source.type == passives::PassiveNodeType::notable
         || source.type == passives::PassiveNodeType::keystone;
-    const int panel_height = detailed ? 112 : 90;
+    const int panel_height = detailed ? 132 : 90;
     const int x = std::max(16, GetScreenWidth() - panel_width - 24);
     const int y = std::max(76, GetScreenHeight() - panel_height - 26);
     DrawRectangleRounded({static_cast<float>(x), static_cast<float>(y),
@@ -166,14 +165,10 @@ void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
             passive_cost_text(node), static_cast<float>(x + 14),
             static_cast<float>(y + 76), 14.0F,
             Color{255, 174, 150, 255});
-    } else if (passive_node_visual_state(snapshot, node)
-        == PassiveNodeVisualState::allocated) {
-        DrawText("Click to refund (autosaves)", x + 14, y + 72, 13,
-            Color{189, 206, 229, 255});
-    } else {
-        DrawText("Click to allocate (autosaves)", x + 14, y + 72, 13,
-            Color{189, 206, 229, 255});
     }
+    const char* action_text = passive_node_action_text(snapshot, node);
+    DrawText(action_text, x + 14, y + (detailed ? 96 : 72), 13,
+        Color{189, 206, 229, 255});
 }
 
 }  // namespace
@@ -252,13 +247,17 @@ void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
     DrawText(TextFormat("Passive Points %u",
         static_cast<unsigned>(snapshot.progression.unspent_passive_points)),
         40, 68, 18, Color{157, 220, 255, 255});
-    const bool saving = snapshot.passive_save_pending
-        || runtime_status.indicator == SaveIndicator::saving;
-    const bool error = runtime_status.indicator == SaveIndicator::error
-        || snapshot.passive_tree_error != passives::PassiveTreeError::none;
-    DrawText(saving ? "Autosave SAVING" : error ? "Autosave ERROR" : "Autosave READY",
-        40, 94, 16, error ? Color{255, 119, 119, 255}
-            : saving ? Color{255, 201, 98, 255} : Color{156, 224, 183, 255});
+    const PassiveTreeStatusView status = passive_tree_status_view({
+        snapshot.passive_save_pending
+            || runtime_status.indicator == SaveIndicator::saving,
+        runtime_status.indicator == SaveIndicator::error,
+        snapshot.passive_tree_error});
+    DrawText(status.text, 40, 94, 16,
+        status.tone == PassiveTreeStatusTone::error
+            ? Color{255, 119, 119, 255}
+            : status.tone == PassiveTreeStatusTone::saving
+                ? Color{255, 201, 98, 255}
+                : Color{156, 224, 183, 255});
     constexpr int kCloseFontSize = 17;
     constexpr const char* kCloseSuffix = " Close";
     const int binding_width = MeasureText(

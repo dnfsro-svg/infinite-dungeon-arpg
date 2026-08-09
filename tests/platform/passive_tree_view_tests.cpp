@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 
 #include <cmath>
+#include <cstring>
 #include <optional>
 
 namespace {
@@ -114,12 +115,101 @@ arpg::test::Failure visual_state_reports_locked_available_allocated_and_feedback
     ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 21U)
         == PassiveNodeVisualState::locked);
     snapshot.passive_tree_error = arpg::passives::PassiveTreeError::no_points;
+    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 0U)
+        == PassiveNodeVisualState::allocated);
+    snapshot.progression.unspent_passive_points = 0U;
     ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 9U)
-        == PassiveNodeVisualState::rejected);
+        == PassiveNodeVisualState::locked);
     snapshot.passive_tree_error = arpg::passives::PassiveTreeError::none;
+    snapshot.progression.unspent_passive_points = 1U;
     snapshot.passive_save_pending = true;
     ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 9U)
         == PassiveNodeVisualState::pending);
+    return {};
+}
+
+arpg::test::Failure feedback_explains_node_actions_and_rule_failures() noexcept {
+    DungeonSnapshot snapshot{};
+    snapshot.phase = RoomPhase::awaiting_exit;
+    snapshot.progression.earned_passive_points = 2U;
+    snapshot.progression.unspent_passive_points = 1U;
+    snapshot.passive_tree.allocated_bits = (1ULL << 0U) | (1ULL << 8U);
+
+    ARPG_REQUIRE(std::strcmp(arpg::platform::passive_node_action_text(
+        snapshot, 0U), "Starting node is permanent") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::passive_node_action_text(
+        snapshot, 8U), "Click to refund (autosaves)") == 0);
+    snapshot.passive_tree.allocated_bits |= 1ULL << 9U;
+    snapshot.progression.earned_passive_points = 3U;
+    ARPG_REQUIRE(std::strcmp(arpg::platform::passive_node_action_text(
+        snapshot, 8U), "Refund would disconnect the tree") == 0);
+    snapshot.passive_tree.allocated_bits &= ~(1ULL << 9U);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::passive_node_action_text(
+        snapshot, 9U), "Click to allocate (autosaves)") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::passive_node_action_text(
+        snapshot, 21U), "Allocate an adjacent node first") == 0);
+
+    snapshot.passive_tree_error = arpg::passives::PassiveTreeError::not_adjacent;
+    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 0U)
+        == PassiveNodeVisualState::allocated);
+    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 9U)
+        == PassiveNodeVisualState::available);
+    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 21U)
+        == PassiveNodeVisualState::locked);
+    snapshot.passive_tree_error = arpg::passives::PassiveTreeError::none;
+
+    snapshot.progression.unspent_passive_points = 0U;
+    ARPG_REQUIRE(std::strcmp(arpg::platform::passive_node_action_text(
+        snapshot, 9U), "No passive points available") == 0);
+    snapshot.passive_save_pending = true;
+    ARPG_REQUIRE(std::strcmp(arpg::platform::passive_node_action_text(
+        snapshot, 9U), "Saving passive tree...") == 0);
+
+    using arpg::platform::PassiveTreeStatusInput;
+    using arpg::platform::PassiveTreeStatusTone;
+    const auto ready = arpg::platform::passive_tree_status_view({});
+    ARPG_REQUIRE(std::strcmp(ready.text, "Autosave READY") == 0);
+    ARPG_REQUIRE(ready.tone == PassiveTreeStatusTone::ready);
+
+    const auto saving = arpg::platform::passive_tree_status_view(
+        PassiveTreeStatusInput{true, false,
+            arpg::passives::PassiveTreeError::none});
+    ARPG_REQUIRE(std::strcmp(saving.text, "Autosave SAVING") == 0);
+    ARPG_REQUIRE(saving.tone == PassiveTreeStatusTone::saving);
+
+    const auto save_error = arpg::platform::passive_tree_status_view(
+        PassiveTreeStatusInput{true, true,
+            arpg::passives::PassiveTreeError::not_adjacent});
+    ARPG_REQUIRE(std::strcmp(save_error.text, "Autosave ERROR") == 0);
+    ARPG_REQUIRE(save_error.tone == PassiveTreeStatusTone::error);
+
+    struct RuleExpectation final {
+        arpg::passives::PassiveTreeError error{};
+        const char* text{};
+    };
+    constexpr RuleExpectation kRules[] = {
+        {arpg::passives::PassiveTreeError::unknown_node,
+            "Unknown passive node"},
+        {arpg::passives::PassiveTreeError::already_allocated,
+            "Node is already allocated"},
+        {arpg::passives::PassiveTreeError::not_allocated,
+            "Node cannot be refunded"},
+        {arpg::passives::PassiveTreeError::no_points,
+            "No passive points available"},
+        {arpg::passives::PassiveTreeError::not_adjacent,
+            "Allocate an adjacent node first"},
+        {arpg::passives::PassiveTreeError::disconnects_tree,
+            "Refund would disconnect the tree"},
+        {arpg::passives::PassiveTreeError::invalid_state,
+            "Passive tree state is invalid"},
+    };
+    for (const RuleExpectation& expected : kRules) {
+        const auto view = arpg::platform::passive_tree_status_view(
+            PassiveTreeStatusInput{false, false, expected.error});
+        ARPG_REQUIRE(std::strcmp(view.text, expected.text) == 0);
+        ARPG_REQUIRE(view.tone == PassiveTreeStatusTone::error);
+        ARPG_REQUIRE(std::strcmp(view.text, "Autosave ERROR") != 0);
+    }
     return {};
 }
 
@@ -143,6 +233,8 @@ const arpg::test::TestCase kCases[] = {
     {"keeps landmarks distinct", &distinct_landmarks_keep_distinct_projections},
     {"separates route nodes and hits each", &route_nodes_have_unique_projections_and_hit_themselves},
     {"reports visual states", &visual_state_reports_locked_available_allocated_and_feedback},
+    {"explains node actions and rule failures",
+        &feedback_explains_node_actions_and_rule_failures},
     {"captures gameplay input", &overlay_captures_all_gameplay_input},
 };
 
