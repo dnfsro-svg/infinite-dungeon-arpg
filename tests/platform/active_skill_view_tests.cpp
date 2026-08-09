@@ -7,6 +7,7 @@
 #include "skills/active_skill_catalog.hpp"
 #include "skills/skill_loadout.hpp"
 #include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 
 #include <array>
 #include <cstddef>
@@ -193,12 +194,21 @@ arpg::test::Failure hud_labels_skill_slots_as_numpad_keys() noexcept {
         platform::make_active_skill_hud_model(
             skills::default_skill_loadout(), {});
     constexpr std::array<const char*, skills::kActiveSkillSlotCount>
-        kExpectedLabels{{"Num1", "Num2", "Num3", "Num4", "Num5"}};
+        kExpectedLabels{{u8"小键盘1", u8"小键盘2", u8"小键盘3",
+            u8"小键盘4", u8"小键盘5"}};
+
+    static_assert(std::tuple_size<decltype(
+        platform::ActiveSkillHudSlot{}.key_label)>::value >= 16U,
+        "Chinese numpad labels require at least 16 bytes");
 
     for (std::size_t index = 0U; index < view.slots.size(); ++index) {
         ARPG_REQUIRE(SkillKeyLabelContract<
             platform::ActiveSkillHudSlot>::matches(
                 view.slots[index], kExpectedLabels[index]));
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(
+            view.slots[index].key_label.data()));
+        ARPG_REQUIRE(std::strstr(view.slots[index].key_label.data(), "Num")
+            == nullptr);
     }
     return {};
 }
@@ -215,9 +225,18 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
 
     ARPG_REQUIRE(arpg::test::near(view.slots[0U].cooldown_ratio, 0.5F));
     ARPG_REQUIRE(arpg::test::near(view.slots[1U].cooldown_ratio, 1.0F));
+    ARPG_REQUIRE(std::strcmp(view.slots[0U].cooldown_label.data(), u8"2秒")
+        == 0);
+    ARPG_REQUIRE(std::strcmp(view.slots[1U].cooldown_label.data(), u8"30秒")
+        == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(
+        view.slots[0U].cooldown_label.data()));
+    ARPG_REQUIRE(std::strstr(view.slots[0U].cooldown_label.data(), "s")
+        == nullptr);
     for (std::size_t index = 2U; index < view.slots.size(); ++index) {
         ARPG_REQUIRE(arpg::test::near(
             view.slots[index].cooldown_ratio, 0.0F));
+        ARPG_REQUIRE(view.slots[index].cooldown_label[0] == '\0');
     }
     return {};
 }

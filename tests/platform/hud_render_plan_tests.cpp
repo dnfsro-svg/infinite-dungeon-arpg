@@ -51,6 +51,9 @@ arpg::test::Failure health_is_always_the_first_visible_player_bar() noexcept {
     ARPG_REQUIRE(plan.bar_count == 2U);
     ARPG_REQUIRE(plan.bars[0].kind == platform::HudBarKind::health);
     ARPG_REQUIRE(arpg::test::near(plan.bars[0].ratio, 0.75F));
+    ARPG_REQUIRE(std::strcmp(plan.bars[0].label.bytes.data(),
+        u8"生命 75/100") == 0);
+    ARPG_REQUIRE(std::strstr(plan.bars[0].label.bytes.data(), "HP") == nullptr);
     ARPG_REQUIRE(rect_inside(plan.bars[0].bounds, player_layout().player_panel));
     return {};
 }
@@ -71,6 +74,8 @@ arpg::test::Failure barrier_bar_is_visible_only_with_a_positive_maximum() noexce
     ARPG_REQUIRE(visible.bar_count == 3U);
     ARPG_REQUIRE(visible.bars[1].kind == platform::HudBarKind::barrier);
     ARPG_REQUIRE(arpg::test::near(visible.bars[1].ratio, 0.5F));
+    ARPG_REQUIRE(std::strcmp(visible.bars[1].label.bytes.data(),
+        u8"护盾 30/60") == 0);
     ARPG_REQUIRE(rect_inside(visible.bars[1].bounds, player_layout().player_panel));
     return {};
 }
@@ -88,6 +93,9 @@ arpg::test::Failure max_level_experience_uses_the_max_presentation() noexcept {
     ARPG_REQUIRE(plan.bar_count == 2U);
     ARPG_REQUIRE(plan.bars[1].kind == platform::HudBarKind::experience);
     ARPG_REQUIRE(arpg::test::near(plan.bars[1].ratio, 1.0F));
+    ARPG_REQUIRE(std::strcmp(plan.bars[1].label.bytes.data(),
+        u8"经验已满") == 0);
+    ARPG_REQUIRE(std::strstr(plan.bars[1].label.bytes.data(), "XP") == nullptr);
     return {};
 }
 
@@ -99,7 +107,11 @@ arpg::test::Failure player_plan_exposes_level_and_unspent_points_text() noexcept
         model, player_layout(), 0.0F);
 
     ARPG_REQUIRE(std::strcmp(plan.progression_text.bytes.data(),
-        u8"LV 12 · 未分配点 7") == 0);
+        u8"等级 12 · 未分配点 7") == 0);
+    ARPG_REQUIRE(std::strcmp(plan.bars[1].label.bytes.data(),
+        u8"经验 25/100") == 0);
+    ARPG_REQUIRE(std::strstr(plan.progression_text.bytes.data(), "LV")
+        == nullptr);
     return {};
 }
 
@@ -243,17 +255,17 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
         u8"第 1/2 波 · 剩余 3"));
     static_cast<void>(std::snprintf(room.secondary.bytes.data(), room.secondary.bytes.size(),
-        "Pending room experience +18446744073709551615"));
+        u8"待结算经验 +18446744073709551615"));
     static_cast<void>(std::snprintf(room.movement.bytes.data(), room.movement.bytes.size(),
-        "W Move Up  S Move Down  A Move Left  D Move Right"));
+        u8"W 上移  S 下移  A 左移  D 右移"));
     static_cast<void>(std::snprintf(room.controls[0].bytes.data(),
-        room.controls[0].bytes.size(), "J Light Attack  K Jump  L Launcher"));
+        room.controls[0].bytes.size(), u8"J 轻攻击  K 跳跃  L 挑飞"));
     static_cast<void>(std::snprintf(room.controls[1].bytes.data(),
         room.controls[1].bytes.size(),
-        "E Interact  I Inventory  P Passive Tree"));
+        u8"E 交互  I 背包  P 被动树"));
     static_cast<void>(std::snprintf(room.controls[2].bytes.data(),
         room.controls[2].bytes.size(),
-        "F1 Debug  F12 Screenshot  Esc Pause"));
+        u8"F1 调试  F12 截图  Esc 暂停"));
     static_cast<void>(std::snprintf(room.visible_set.text.bytes.data(),
         room.visible_set.text.bytes.size(),
         u8"可见：怪 105/105 环境 73/105 掉落 53/331"));
@@ -264,7 +276,7 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     context.primary_kind = platform::HudNoticeKind::exit_ready;
     context.primary_abyss = true;
     static_cast<void>(std::snprintf(context.primary.bytes.data(), context.primary.bytes.size(),
-        "E to enter exit"));
+        u8"E 进入出口"));
 
     const platform::ObjectivePanelPlan objective =
         platform::make_objective_panel_plan(room, layout);

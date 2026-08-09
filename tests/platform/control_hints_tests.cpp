@@ -4,50 +4,61 @@
 #include "control_hints.hpp"
 #include "platform/settings/settings_types.hpp"
 
-#include <cstring>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace {
 
 namespace platform = arpg::platform;
 namespace settings = arpg::settings;
 
-[[nodiscard]] bool contains(const char* text, const char* needle) noexcept {
-    return std::strstr(text, needle) != nullptr;
-}
-
-arpg::test::Failure defaults_render_every_configurable_action() noexcept {
+arpg::test::Failure revision_zero_initializes_all_structured_bindings()
+    noexcept {
     const settings::SettingsData values = settings::default_settings();
+    ARPG_REQUIRE(values.revision == 0U);
     platform::ControlHints hints{};
+
     platform::refresh_control_hints(hints, values);
 
-    ARPG_REQUIRE(std::strcmp(hints.primary.data(),
-        "W Move Up  S Move Down  A Move Left  D Move Right") == 0);
-    ARPG_REQUIRE(std::strcmp(hints.secondary.data(),
-        "J Light Attack  K Jump  L Launcher  E Interact  I Inventory  P Passive Tree (After Full Clear)  F1 Debug  F12 Screenshot  Esc Pause") == 0);
-    ARPG_REQUIRE(hints.revision == values.revision);
+    ARPG_REQUIRE(hints.initialized);
+    ARPG_REQUIRE(hints.revision == 0U);
+    ARPG_REQUIRE(hints.bindings == values.bindings);
+    for (std::size_t index = 0U; index < hints.bindings.size(); ++index) {
+        const auto action = static_cast<settings::SettingAction>(index);
+        ARPG_REQUIRE(platform::control_hint_binding(hints, action)
+            == values.bindings[index]);
+    }
     return {};
 }
 
-arpg::test::Failure arbitrary_swaps_refresh_the_current_key_labels() noexcept {
+arpg::test::Failure rebound_action_queries_return_current_key_labels()
+    noexcept {
     settings::SettingsData values = settings::default_settings();
     ARPG_REQUIRE(settings::assign_or_swap(values,
-        settings::SettingAction::light_attack, settings::StableKey::q));
+        settings::SettingAction::interact, settings::StableKey::q));
     ARPG_REQUIRE(settings::assign_or_swap(values,
-        settings::SettingAction::move_right, settings::StableKey::j));
+        settings::SettingAction::inventory, settings::StableKey::o));
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::passive_tree, settings::StableKey::t));
     values.revision = 7U;
-
     platform::ControlHints hints{};
+
     platform::refresh_control_hints(hints, values);
 
-    ARPG_REQUIRE(contains(hints.primary.data(), "J Move Right"));
-    ARPG_REQUIRE(contains(hints.secondary.data(), "Q Light Attack"));
-    ARPG_REQUIRE(!contains(hints.secondary.data(), "J Light Attack"));
+    ARPG_REQUIRE(platform::control_hint_binding(
+        hints, settings::SettingAction::interact) == settings::StableKey::q);
+    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
+        hints, settings::SettingAction::interact), "Q") == 0);
+    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
+        hints, settings::SettingAction::inventory), "O") == 0);
+    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
+        hints, settings::SettingAction::passive_tree), "T") == 0);
     ARPG_REQUIRE(hints.revision == 7U);
     return {};
 }
 
-arpg::test::Failure unchanged_revision_does_not_rebuild_and_new_revision_does() noexcept {
+arpg::test::Failure same_revision_preserves_the_complete_cache() noexcept {
     settings::SettingsData values = settings::default_settings();
     values.revision = 3U;
     platform::ControlHints hints{};
@@ -57,47 +68,50 @@ arpg::test::Failure unchanged_revision_does_not_rebuild_and_new_revision_does() 
     ARPG_REQUIRE(settings::assign_or_swap(values,
         settings::SettingAction::jump, settings::StableKey::q));
     platform::refresh_control_hints(hints, values);
-    ARPG_REQUIRE(std::memcmp(&hints, &original, sizeof(hints)) == 0);
 
+    ARPG_REQUIRE(std::memcmp(&hints, &original, sizeof(hints)) == 0);
+    return {};
+}
+
+arpg::test::Failure new_revision_replaces_the_complete_cache() noexcept {
+    settings::SettingsData values = settings::default_settings();
+    values.revision = 3U;
+    platform::ControlHints hints{};
+    platform::refresh_control_hints(hints, values);
+    const auto old_jump = platform::control_hint_binding(
+        hints, settings::SettingAction::jump);
+
+    ARPG_REQUIRE(settings::assign_or_swap(values,
+        settings::SettingAction::jump, settings::StableKey::q));
     values.revision = 4U;
     platform::refresh_control_hints(hints, values);
+
     ARPG_REQUIRE(hints.revision == 4U);
-    ARPG_REQUIRE(contains(hints.secondary.data(), "Q Jump"));
-    ARPG_REQUIRE(!contains(hints.secondary.data(), "K Jump"));
+    ARPG_REQUIRE(hints.bindings == values.bindings);
+    ARPG_REQUIRE(platform::control_hint_binding(
+        hints, settings::SettingAction::jump) == settings::StableKey::q);
+    ARPG_REQUIRE(platform::control_hint_binding(
+        hints, settings::SettingAction::jump) != old_jump);
     return {};
 }
 
-arpg::test::Failure buffers_are_terminated_and_keep_global_labels_fixed() noexcept {
-    settings::SettingsData values = settings::default_settings();
-    values.revision = 11U;
+arpg::test::Failure invalid_actions_return_safe_unknown_values() noexcept {
     platform::ControlHints hints{};
-    platform::refresh_control_hints(hints, values);
+    ARPG_REQUIRE(platform::control_hint_binding(
+        hints, settings::SettingAction::interact) == settings::StableKey::count);
+    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
+        hints, settings::SettingAction::interact), u8"未知") == 0);
+    platform::refresh_control_hints(hints, settings::default_settings());
+    const auto invalid = static_cast<settings::SettingAction>(255U);
 
-    ARPG_REQUIRE(hints.primary.back() == '\0');
-    ARPG_REQUIRE(hints.secondary.back() == '\0');
-    ARPG_REQUIRE(contains(hints.secondary.data(), "F1 Debug"));
-    ARPG_REQUIRE(contains(hints.secondary.data(), "F12 Screenshot"));
-    ARPG_REQUIRE(contains(hints.secondary.data(), "Esc Pause"));
+    ARPG_REQUIRE(platform::control_hint_binding(hints, invalid)
+        == settings::StableKey::count);
+    ARPG_REQUIRE(std::strcmp(
+        platform::control_hint_key_label(hints, invalid), u8"未知") == 0);
     return {};
 }
 
-arpg::test::Failure all_action_labels_are_present_in_the_cached_text() noexcept {
-    const settings::SettingsData values = settings::default_settings();
-    platform::ControlHints hints{};
-    platform::refresh_control_hints(hints, values);
-
-    for (std::size_t index = 0U;
-            index < static_cast<std::size_t>(settings::SettingAction::count);
-            ++index) {
-        const auto action = static_cast<settings::SettingAction>(index);
-        const char* label = settings::action_label(action);
-        ARPG_REQUIRE(contains(hints.primary.data(), label)
-            || contains(hints.secondary.data(), label));
-    }
-    return {};
-}
-
-arpg::test::Failure unchanged_refresh_performs_no_heap_allocation() noexcept {
+arpg::test::Failure unchanged_refresh_and_queries_allocate_nothing() noexcept {
     settings::SettingsData values = settings::default_settings();
     values.revision = 91U;
     platform::ControlHints hints{};
@@ -105,18 +119,25 @@ arpg::test::Failure unchanged_refresh_performs_no_heap_allocation() noexcept {
     const std::uint64_t before = arpg::test::allocation_count();
     for (int iteration = 0; iteration < 10000; ++iteration) {
         platform::refresh_control_hints(hints, values);
+        ARPG_REQUIRE(platform::control_hint_binding(
+            hints, settings::SettingAction::interact)
+            == settings::StableKey::e);
+        ARPG_REQUIRE(platform::control_hint_key_label(
+            hints, settings::SettingAction::interact)[0] == 'E');
     }
     ARPG_REQUIRE(arpg::test::allocation_count() == before);
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"defaults render every action", &defaults_render_every_configurable_action},
-    {"swaps refresh current labels", &arbitrary_swaps_refresh_the_current_key_labels},
-    {"revision refresh policy", &unchanged_revision_does_not_rebuild_and_new_revision_does},
-    {"buffers and global labels", &buffers_are_terminated_and_keep_global_labels_fixed},
-    {"all action labels", &all_action_labels_are_present_in_the_cached_text},
-    {"unchanged refresh no allocation", &unchanged_refresh_performs_no_heap_allocation},
+    {"revision zero initializes structured bindings",
+        &revision_zero_initializes_all_structured_bindings},
+    {"rebound action queries", &rebound_action_queries_return_current_key_labels},
+    {"same revision preserves cache", &same_revision_preserves_the_complete_cache},
+    {"new revision replaces cache", &new_revision_replaces_the_complete_cache},
+    {"invalid actions are safe", &invalid_actions_return_safe_unknown_values},
+    {"unchanged refresh and queries no allocation",
+        &unchanged_refresh_and_queries_allocate_nothing},
 };
 
 }  // namespace

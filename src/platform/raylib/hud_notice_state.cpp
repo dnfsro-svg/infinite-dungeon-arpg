@@ -1,11 +1,9 @@
 #include "hud_notice_state.hpp"
 
 #include "dungeon_view_math.hpp"
+#include "ui_utf8.hpp"
 
 #include <cmath>
-#include <cstdarg>
-#include <cstdio>
-#include <cstring>
 #include <limits>
 
 namespace arpg::platform {
@@ -25,71 +23,13 @@ constexpr std::uint8_t kPassivePointsPriority = 40U;
 constexpr std::uint8_t kInventoryPriority = 30U;
 constexpr std::uint8_t kPassiveTreePriority = 20U;
 
-[[nodiscard]] std::size_t bounded_length(
-    const std::array<char, 160>& text) noexcept {
-    std::size_t length{};
-    while (length < text.size() && text[length] != '\0') {
-        ++length;
-    }
-    return length;
-}
-
-[[nodiscard]] bool action_key(char* output,
-    std::size_t output_size,
-    const ControlHints& hints,
-    const char* action) noexcept {
-    if (output_size == 0U) {
-        return false;
-    }
-    output[0] = '\0';
-    const std::size_t action_length = std::strlen(action);
-    const std::size_t length = bounded_length(hints.secondary);
-    if (action_length == 0U || action_length + 1U > length) {
-        return false;
-    }
-
-    for (std::size_t cursor{}; cursor + action_length <= length; ++cursor) {
-        if (std::memcmp(hints.secondary.data() + cursor,
-                action, action_length) != 0) {
-            continue;
-        }
-        if (cursor == 0U || hints.secondary[cursor - 1U] != ' ') {
-            continue;
-        }
-        std::size_t end = cursor - 1U;
-        while (end > 0U && hints.secondary[end - 1U] == ' ') {
-            --end;
-        }
-        std::size_t begin{};
-        for (std::size_t index = end; index > 1U; --index) {
-            if (hints.secondary[index - 1U] == ' '
-                && hints.secondary[index - 2U] == ' ') {
-                begin = index;
-                break;
-            }
-        }
-        if (begin == end) {
-            return false;
-        }
-        const std::size_t count = end - begin;
-        const std::size_t copied = count < output_size - 1U
-            ? count : output_size - 1U;
-        std::memcpy(output, hints.secondary.data() + begin, copied);
-        output[copied] = '\0';
-        return copied != 0U;
-    }
-    return false;
-}
-
-void format_notice(HudNotice& notice, const char* format, ...) noexcept {
-    va_list arguments;
-    va_start(arguments, format);
-    const int written = std::vsnprintf(notice.text.bytes.data(),
-        notice.text.bytes.size(), format, arguments);
-    va_end(arguments);
-    notice.text.bytes.back() = '\0';
-    notice.text.truncated = written < 0
-        || static_cast<std::size_t>(written) >= notice.text.bytes.size();
+template <typename... Args>
+void format_notice(HudNotice& notice,
+    const char* format,
+    Args... args) noexcept {
+    const UiUtf8CopyResult result = ui_utf8_format(notice.text.bytes.data(),
+        notice.text.bytes.size(), format, args...);
+    notice.text.truncated = result.truncated;
 }
 
 [[nodiscard]] bool is_room_context(HudNoticeKind kind) noexcept {
@@ -203,19 +143,15 @@ void add_action_notice(std::array<HudNotice, 4>& notices,
     HudNoticeKind kind,
     std::uint8_t priority,
     const ControlHints& hints,
-    const char* action,
+    settings::SettingAction action,
     const char* suffix) noexcept {
-    char key[32]{};
-    if (action_key(key, sizeof(key), hints, action)) {
-        HudNotice notice{};
-        notice.kind = kind;
-        notice.priority = priority;
-        notice.seconds_left = kTransientSeconds;
-        format_notice(notice, "%s %s", key, suffix);
-        enqueue(notices, dropped_count, notice);
-        return;
-    }
-    add_transient(notices, dropped_count, kind, priority, suffix);
+    HudNotice notice{};
+    notice.kind = kind;
+    notice.priority = priority;
+    notice.seconds_left = kTransientSeconds;
+    format_notice(notice, "%s %s",
+        control_hint_key_label(hints, action), suffix);
+    enqueue(notices, dropped_count, notice);
 }
 
 void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
@@ -225,7 +161,7 @@ void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
     const AbyssHudValues values = abyss_hud_values(current);
     if (values.confirmation_transition == dungeon::TransitionKind::descent) {
         add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon,
-            kAbyssPriority, hints, "Interact",
+            kAbyssPriority, hints, settings::SettingAction::interact,
             u8"再次交互，放弃剩余奖励并下降");
         return;
     }
@@ -269,7 +205,8 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
         && current.exits_unlocked;
     if (context_changed && exits_unlocked && current.has_hole) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact,
-            kHolePriority, hints, "Interact", u8"进入下一层");
+            kHolePriority, hints, settings::SettingAction::interact,
+            u8"交互：进入下一层");
     }
     if (context_changed && exits_unlocked && has_open_exit(current)) {
         add_transient(notices_, dropped_count_, HudNoticeKind::exit_ready,
@@ -291,7 +228,7 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
         notice.kind = HudNoticeKind::reward;
         notice.priority = kRewardPriority;
         notice.seconds_left = kTransientSeconds;
-        format_notice(notice, u8"奖励 +%llu XP",
+        format_notice(notice, u8"奖励 +%llu 经验",
             static_cast<unsigned long long>(current.last_room_experience));
         enqueue(notices_, dropped_count_, notice);
     }
@@ -322,12 +259,14 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     }
     if (context_changed && current.inventory_count != 0U) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::inventory,
-            kInventoryPriority, hints, "Inventory", u8"打开背包");
+            kInventoryPriority, hints, settings::SettingAction::inventory,
+            u8"打开背包");
     }
     if (context_changed && awaiting_exit
         && current.progression.unspent_passive_points != 0U) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::passive_tree,
-            kPassiveTreePriority, hints, "Passive Tree", u8"打开被动树");
+            kPassiveTreePriority, hints, settings::SettingAction::passive_tree,
+            u8"打开被动树");
     }
 
     last_commit_generation_ = current.commit_generation;

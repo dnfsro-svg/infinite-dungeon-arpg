@@ -11,8 +11,10 @@
 #include "ui_text_contrast.hpp"
 #include "ui_text_renderer.hpp"
 #include "ui_text_bounds_audit.hpp"
+#include "ui_text_catalog.hpp"
 #include "render_layout.hpp"
 #include "ui_material.hpp"
+#include "ui_utf8.hpp"
 
 #include <raylib.h>
 
@@ -130,18 +132,38 @@ PlayerPanelPlan make_player_panel_plan(const PlayerHudModel& player,
     plan.bars[plan.bar_count++] = {
         player_bar_bounds(layout, 26.0F), clamped_ratio(player.hp_ratio),
         HudBarKind::health};
+    static_cast<void>(ui_utf8_format(plan.bars[0].label.bytes.data(),
+        plan.bars[0].label.bytes.size(), u8"%s %d/%d",
+        ui_text(UiTextId::hud_health), player.hp, player.max_hp));
     if (player.max_barrier > 0) {
         plan.bars[plan.bar_count++] = {
             player_bar_bounds(layout, 52.0F), clamped_ratio(player.barrier_ratio),
             HudBarKind::barrier};
+        static_cast<void>(ui_utf8_format(plan.bars[1].label.bytes.data(),
+            plan.bars[1].label.bytes.size(), u8"%s %d/%d",
+            ui_text(UiTextId::hud_barrier), player.barrier,
+            player.max_barrier));
     }
     plan.experience_maxed = player.level >= 100U;
-    plan.bars[plan.bar_count++] = {
+    HudBarPlan& experience_bar = plan.bars[plan.bar_count++];
+    experience_bar = {
         player_bar_bounds(layout, 78.0F),
         plan.experience_maxed ? 1.0F : clamped_ratio(player.experience_ratio),
         HudBarKind::experience};
-    static_cast<void>(std::snprintf(plan.progression_text.bytes.data(),
-        plan.progression_text.bytes.size(), u8"LV %u · 未分配点 %u",
+    if (plan.experience_maxed) {
+        static_cast<void>(ui_utf8_format(experience_bar.label.bytes.data(),
+            experience_bar.label.bytes.size(), "%s",
+            ui_text(UiTextId::hud_experience_maxed)));
+    } else {
+        static_cast<void>(ui_utf8_format(experience_bar.label.bytes.data(),
+            experience_bar.label.bytes.size(), u8"%s %llu/%llu",
+            ui_text(UiTextId::hud_experience),
+            static_cast<unsigned long long>(player.experience),
+            static_cast<unsigned long long>(player.required_experience)));
+    }
+    static_cast<void>(ui_utf8_format(plan.progression_text.bytes.data(),
+        plan.progression_text.bytes.size(), u8"%s %u · 未分配点 %u",
+        ui_text(UiTextId::hud_level),
         static_cast<unsigned>(player.level),
         static_cast<unsigned>(player.unspent_passive_points)));
 
@@ -502,28 +524,8 @@ void HudRenderer::draw(const HudViewModel& view,
                 panel_bounds.width - 16.0F * layout.scale,
                 23.0F * layout.scale}));
 
-        char text[96]{};
         for (std::size_t index = 0U; index < plan.bar_count; ++index) {
             const HudBarPlan& bar = plan.bars[index];
-            switch (bar.kind) {
-            case HudBarKind::health:
-                std::snprintf(text, sizeof(text), u8"生命 HP %d/%d", view.player.hp,
-                    view.player.max_hp);
-                break;
-            case HudBarKind::barrier:
-                std::snprintf(text, sizeof(text), u8"护盾 %d/%d", view.player.barrier,
-                    view.player.max_barrier);
-                break;
-            case HudBarKind::experience:
-                if (plan.experience_maxed) {
-                    std::snprintf(text, sizeof(text), "XP MAX");
-                } else {
-                    std::snprintf(text, sizeof(text), "XP %llu/%llu",
-                        static_cast<unsigned long long>(view.player.experience),
-                        static_cast<unsigned long long>(view.player.required_experience));
-                }
-                break;
-            }
             draw_player_bar(bar, assets);
             std::size_t label_index{};
             if (bar.kind == HudBarKind::barrier) {
@@ -545,10 +547,11 @@ void HudRenderer::draw(const HudViewModel& view,
                 role = UiTextAuditRole::hud_experience;
             }
             record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,
-                text, label_position, style.player_bar_font_size * layout.scale,
+                bar.label.bytes.data(), label_position,
+                style.player_bar_font_size * layout.scale,
                 1.0F, label_container,
                 style.player_bar_font_size * layout.scale, &blocker, 1U);
-            draw_hud_text(draw_font, text, label_position,
+            draw_hud_text(draw_font, bar.label.bytes.data(), label_position,
                 style.player_bar_font_size * layout.scale,
                 palette.text, style.outline_pixels);
         }

@@ -25,6 +25,7 @@ struct HudBarPlan final {
     HudRect bounds{};
     float ratio{};
     HudBarKind kind{HudBarKind::health};
+    HudText96 label{};
 };
 
 struct PlayerPanelPlan final {

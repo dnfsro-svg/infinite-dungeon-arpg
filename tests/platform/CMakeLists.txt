@@ -1903,6 +1903,26 @@ set_tests_properties(
     PROPERTIES LABELS "headless;platform;architecture")
 
 add_test(
+    NAME platform.hud_notice_structured_binding_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake")
+set_tests_properties(
+    platform.hud_notice_structured_binding_source
+    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+
+add_test(
+    NAME platform.hud_notice_structured_binding_source_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
+        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake"
+        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hud-notice-structured-binding-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_self_test.cmake")
+set_tests_properties(
+    platform.hud_notice_structured_binding_source_self_test
+    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
+
+add_test(
     NAME platform.passive_tree_binding_label_source
     COMMAND "${CMAKE_COMMAND}"
         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"

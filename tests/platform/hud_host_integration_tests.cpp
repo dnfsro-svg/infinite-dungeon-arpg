@@ -33,11 +33,10 @@ dungeon::GroundItemSnapshot ground_item(
 }
 
 platform::ControlHints committed_hints(std::uint64_t revision) noexcept {
+    settings::SettingsData values = settings::default_settings();
+    values.revision = revision;
     platform::ControlHints hints{};
-    static constexpr char kPrimary[] = "WASD Move";
-    static_assert(sizeof(kPrimary) <= 160U);
-    std::memcpy(hints.primary.data(), kPrimary, sizeof(kPrimary));
-    hints.revision = revision;
+    platform::refresh_control_hints(hints, values);
     return hints;
 }
 

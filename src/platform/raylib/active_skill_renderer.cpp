@@ -446,15 +446,8 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
                 ui_text_contrast_style().primary);
         }
         if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;
-        const skills::ActiveSkillDefinition* const definition =
-            skills::active_skill_definition(slot.id);
-        if (definition == nullptr) continue;
-        const float seconds = std::ceil(slot.cooldown_ratio
-            * static_cast<float>(definition->cooldown_ticks) / 60.0F);
-        char remaining[12]{};
-        static_cast<void>(std::snprintf(remaining, sizeof(remaining),
-            "%.0fs", seconds));
-        draw_skill_text(hud_font, remaining, bounds.x + 18.0F * scale,
+        draw_skill_text(hud_font, slot.cooldown_label.data(),
+            bounds.x + 18.0F * scale,
             bounds.y + 22.0F * scale, 16.0F * scale,
             ui_text_contrast_style().primary);
     }

@@ -22,6 +22,7 @@ namespace {
 namespace combat = arpg::combat;
 namespace dungeon = arpg::dungeon;
 namespace platform = arpg::platform;
+namespace settings = arpg::settings;
 
 constexpr std::size_t kScenarioCount = 5U;
 constexpr std::size_t kIterations = 100000U;
@@ -79,14 +80,16 @@ void fold_object(std::uint64_t& hash, const Value& value) noexcept {
 }
 
 [[nodiscard]] platform::ControlHints stress_hints() noexcept {
+    settings::SettingsData values = settings::default_settings();
+    static_cast<void>(settings::assign_or_swap(values,
+        settings::SettingAction::interact, settings::StableKey::q));
+    static_cast<void>(settings::assign_or_swap(values,
+        settings::SettingAction::inventory, settings::StableKey::o));
+    static_cast<void>(settings::assign_or_swap(values,
+        settings::SettingAction::passive_tree, settings::StableKey::t));
+    values.revision = 23U;
     platform::ControlHints hints{};
-    static constexpr char kPrimary[] = "W Move Up  S Move Down";
-    static constexpr char kSecondary[] =
-        "J Light Attack  K Jump  L Launcher  Q Interact  O Inventory  "
-        "T Passive Tree";
-    std::memcpy(hints.primary.data(), kPrimary, sizeof(kPrimary));
-    std::memcpy(hints.secondary.data(), kSecondary, sizeof(kSecondary));
-    hints.revision = 23U;
+    platform::refresh_control_hints(hints, values);
     return hints;
 }
 

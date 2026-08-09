@@ -27,6 +27,7 @@ enum class UiTextId : std::uint16_t {
     settings_preview_failed, settings_save_failed_retry, settings_save_busy,
     settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
     settings_storage_conflict, settings_recovered_defaults,
+    hud_experience_maxed,
     count,
 };
 

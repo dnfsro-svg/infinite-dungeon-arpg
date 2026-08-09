@@ -1,8 +1,10 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
 #include "death_overlay_font.hpp"
 #include "hud_font.hpp"
 #include "hud_notice_state.hpp"
+#include "ui_utf8.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -13,18 +15,21 @@ namespace {
 
 namespace dungeon = arpg::dungeon;
 namespace platform = arpg::platform;
+namespace settings = arpg::settings;
 
 constexpr float kTransientSeconds = 3.0F;
 
 platform::ControlHints rebound_hints() noexcept {
+    settings::SettingsData values = settings::default_settings();
+    static_cast<void>(settings::assign_or_swap(values,
+        settings::SettingAction::interact, settings::StableKey::q));
+    static_cast<void>(settings::assign_or_swap(values,
+        settings::SettingAction::inventory, settings::StableKey::o));
+    static_cast<void>(settings::assign_or_swap(values,
+        settings::SettingAction::passive_tree, settings::StableKey::t));
+    values.revision = 17U;
     platform::ControlHints hints{};
-    static constexpr char kSecondary[] =
-        "J Light Attack  K Jump  L Launcher  Q Interact  O Inventory  "
-        "T Passive Tree";
-    static_assert(sizeof(kSecondary) - 1U < 160U);
-    hints.secondary.fill('Z');
-    std::memcpy(hints.secondary.data(), kSecondary, sizeof(kSecondary) - 1U);
-    hints.revision = 17U;
+    platform::refresh_control_hints(hints, values);
     return hints;
 }
 
@@ -297,7 +302,8 @@ arpg::test::Failure save_error_and_recovery_are_persistent_and_state_owned() noe
     return {};
 }
 
-arpg::test::Failure rebound_labels_and_non_terminated_arrays_are_bounded() noexcept {
+arpg::test::Failure rebound_action_notices_are_structured_and_chinese()
+    noexcept {
     const dungeon::DungeonSnapshot previous = baseline_snapshot();
     const platform::ControlHints hints = rebound_hints();
 
@@ -309,6 +315,10 @@ arpg::test::Failure rebound_labels_and_non_terminated_arrays_are_bounded() noexc
     hole_state.observe(previous, hole, saved_status(), hints, false);
     ARPG_REQUIRE(std::strstr(hole_state.view().primary.text.bytes.data(), "Q")
         != nullptr);
+    ARPG_REQUIRE(std::strstr(hole_state.view().primary.text.bytes.data(),
+        u8"交互") != nullptr);
+    ARPG_REQUIRE(std::strstr(hole_state.view().primary.text.bytes.data(),
+        "Interact") == nullptr);
 
     dungeon::DungeonSnapshot inventory = previous;
     inventory.inventory_count = 1U;
@@ -316,6 +326,10 @@ arpg::test::Failure rebound_labels_and_non_terminated_arrays_are_bounded() noexc
     inventory_state.observe(previous, inventory, saved_status(), hints, false);
     ARPG_REQUIRE(std::strstr(inventory_state.view().primary.text.bytes.data(), "O")
         != nullptr);
+    ARPG_REQUIRE(std::strstr(inventory_state.view().primary.text.bytes.data(),
+        u8"背包") != nullptr);
+    ARPG_REQUIRE(std::strstr(inventory_state.view().primary.text.bytes.data(),
+        "Inventory") == nullptr);
 
     dungeon::DungeonSnapshot passive = previous;
     passive.phase = dungeon::RoomPhase::awaiting_exit;
@@ -324,9 +338,43 @@ arpg::test::Failure rebound_labels_and_non_terminated_arrays_are_bounded() noexc
     passive_state.observe(previous, passive, saved_status(), hints, false);
     ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(), "T")
         != nullptr);
+    ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(),
+        u8"被动树") != nullptr);
+    ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(),
+        "Passive Tree") == nullptr);
     ARPG_REQUIRE(hole_state.view().primary.text.bytes.back() == '\0');
     ARPG_REQUIRE(inventory_state.view().primary.text.bytes.back() == '\0');
     ARPG_REQUIRE(passive_state.view().secondary.text.bytes.back() == '\0');
+    return {};
+}
+
+arpg::test::Failure longest_key_notice_is_utf8_safe_and_allocation_free()
+    noexcept {
+    settings::SettingsData values = settings::default_settings();
+    static_cast<void>(settings::assign_or_swap(values,
+        settings::SettingAction::interact, settings::StableKey::arrow_right));
+    values.revision = 19U;
+    platform::ControlHints hints{};
+    platform::refresh_control_hints(hints, values);
+    const dungeon::DungeonSnapshot previous = baseline_snapshot();
+    dungeon::DungeonSnapshot hole = previous;
+    hole.phase = dungeon::RoomPhase::awaiting_exit;
+    hole.exits_unlocked = true;
+    hole.has_hole = true;
+
+    const std::uint64_t before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+        platform::HudNoticeState state{};
+        state.observe(previous, hole, saved_status(), hints, false);
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(
+            state.view().primary.text.bytes.data()));
+        ARPG_REQUIRE(!state.view().primary.text.truncated);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == before);
+    platform::HudNoticeState state{};
+    state.observe(previous, hole, saved_status(), hints, false);
+    ARPG_REQUIRE(std::strstr(state.view().primary.text.bytes.data(),
+        u8"右方向键") != nullptr);
     return {};
 }
 
@@ -359,7 +407,8 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
     current.phase = dungeon::RoomPhase::awaiting_exit;
     current.exits_unlocked = true;
     current.has_hole = true;
-    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"Q 进入下一层"));
+    ARPG_REQUIRE(require_primary(current, saved_status(), false,
+        u8"Q 交互：进入下一层"));
 
     current = previous;
     current.phase = dungeon::RoomPhase::awaiting_exit;
@@ -374,7 +423,8 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
 
     current = previous;
     current.last_room_experience = 25U;
-    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"奖励 +25 XP"));
+    ARPG_REQUIRE(require_primary(current, saved_status(), false,
+        u8"奖励 +25 经验"));
 
     current = previous;
     current.progression.level = 5U;
@@ -572,7 +622,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"room clear edge without commit", &room_clear_edge_does_not_require_commit_or_room_change},
     {"room zero context transition", &room_zero_context_clears_on_next_room},
     {"persistent save and recovery ownership", &save_error_and_recovery_are_persistent_and_state_owned},
-    {"rebound bounded control hints", &rebound_labels_and_non_terminated_arrays_are_bounded},
+    {"rebound structured Chinese notices",
+        &rebound_action_notices_are_structured_and_chinese},
+    {"longest notice key is UTF-8 safe and allocation free",
+        &longest_key_notice_is_utf8_safe_and_allocation_free},
     {"production Chinese notice corpus", &production_visible_notices_are_chinese_first_and_font_covered},
     {"abyss confirmation presented edge once", &abyss_confirmation_between_presented_frames_enqueues_once},
     {"progression presented edges once", &progression_between_presented_frames_enqueues_each_edge_once},

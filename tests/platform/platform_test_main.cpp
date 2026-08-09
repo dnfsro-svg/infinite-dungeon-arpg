@@ -302,8 +302,14 @@ int main() {
         const arpg::test::TestSuite full_chinese_ui_menu_hud[] = {
             pause_menu_state_suite(),
             pause_menu_view_suite(),
+            control_hints_suite(),
+            hud_view_model_suite(),
+            hud_notice_state_suite(),
+            active_skill_view_suite(),
+            hud_render_plan_suite(),
+            hud_host_integration_suite(),
         };
-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 47,
+        return arpg::test::run_suites(full_chinese_ui_menu_hud, 130,
             "full Chinese UI menus and HUD");
     }
     if (cplay038_save_directory_only()) {
@@ -405,7 +411,7 @@ int main() {
             control_hints_suite(),
             hud_notice_state_suite(),
         };
-        return arpg::test::run_suites(cplay015_only, 32,
+        return arpg::test::run_suites(cplay015_only, 33,
             "CPLAY-015 blocked passive tree feedback");
     }
 
@@ -506,6 +512,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 658,
+    return arpg::test::run_suites(suites, 659,
         "host settings runtime contract");
 }

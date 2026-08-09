@@ -8,7 +8,7 @@ namespace {
 
 constexpr const char* kUnknown = u8"未知";
 
-constexpr std::array<const char*, 43U> kUiTexts{{
+constexpr std::array<const char*, 44U> kUiTexts{{
     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
@@ -23,6 +23,7 @@ constexpr std::array<const char*, 43U> kUiTexts{{
     u8"另一游戏实例正在保存，请稍后重试",
     u8"设置回滚失败", u8"设置已保存", u8"另一实例修改已重载",
     u8"设置存储冲突，需重启", u8"设置已恢复默认值",
+    u8"经验已满",
 }};
 
 constexpr std::array<const char*, 18U> kItemBaseNames{{
@@ -90,6 +91,7 @@ constexpr std::array<const char*, 2U> kSkillNames{{
 // shared glyph plan covers it without a second hand-maintained font list.
 constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
+    "上移下移左移右移轻攻击跳跃挑飞交互背包被动树调试截图暂停小键盘秒经验已满"
     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
     "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
     "方向键导航选择返回重置房间上下左右调整请按下可绑定用于的当前空格"

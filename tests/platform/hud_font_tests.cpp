@@ -20,6 +20,7 @@
 namespace {
 
 namespace platform = arpg::platform;
+namespace settings = arpg::settings;
 
 bool same_color(Color lhs, Color rhs) noexcept {
     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
@@ -30,6 +31,8 @@ bool same_color(Color lhs, Color rhs) noexcept {
     const platform::HudViewModel& model) noexcept {
     const platform::HudText96* const texts[] = {
         &model.room.objective, &model.room.secondary,
+        &model.room.movement, &model.room.controls[0],
+        &model.room.controls[1], &model.room.controls[2],
         &model.navigation.primary, &model.navigation.ecology_label,
         &model.navigation.elements[0].label, &model.navigation.elements[1].label,
         &model.navigation.elements[2].label, &model.navigation.elements[3].label,
@@ -47,10 +50,7 @@ bool same_color(Color lhs, Color rhs) noexcept {
 arpg::test::Failure production_view_model_texts_and_player_labels_are_covered() noexcept {
     const platform::HudFontPlan plan = platform::hud_font_plan();
     platform::ControlHints hints{};
-    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
-        "W Move Up"));
-    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
-        "F Interact"));
+    platform::refresh_control_hints(hints, settings::default_settings());
     arpg::dungeon::DungeonSnapshot snapshot{};
     snapshot.depth = 9U;
     snapshot.floor_room_index = 7U;
@@ -94,7 +94,8 @@ arpg::test::Failure production_view_model_texts_and_player_labels_are_covered() 
     ARPG_REQUIRE(model_texts_are_covered(plan, abyss));
 
     constexpr const char* kRendererLabels[] = {
-        u8"生命 HP 1/1", u8"护盾 1/1", "XP MAX",
+        u8"生命 1/1", u8"护盾 1/1", u8"经验已满",
+        u8"等级 100 · 未分配点 0", u8"小键盘5", u8"30秒",
         u8"减速", u8"腐蚀", u8"无敌",
     };
     for (const char* text : kRendererLabels) {

@@ -6,10 +6,11 @@
 #include "dungeon_view_math.hpp"
 #include "hud_notice_state.hpp"
 #include "progression/progression_rules.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_utf8.hpp"
 
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <limits>
 
 namespace arpg::platform {
@@ -20,11 +21,9 @@ void format_text(HudText96& output,
     HudBuildDiagnostics& diagnostics,
     const char* format,
     Args... args) noexcept {
-    const int written = std::snprintf(
+    const UiUtf8CopyResult result = ui_utf8_format(
         output.bytes.data(), output.bytes.size(), format, args...);
-    output.bytes.back() = '\0';
-    output.truncated = written < 0
-        || static_cast<std::size_t>(written) >= output.bytes.size();
+    output.truncated = result.truncated;
     if (output.truncated) {
         ++diagnostics.truncated_texts;
     }
@@ -205,117 +204,36 @@ void build_navigation(NavigationHudModel& navigation,
     }
 }
 
-[[nodiscard]] std::size_t bounded_hint_length(
-    const std::array<char, 160U>& source) noexcept {
-    std::size_t length{};
-    while (length < source.size() && source[length] != '\0') ++length;
-    return length;
-}
-
-void mark_truncated(HudText96& output,
-    HudBuildDiagnostics& diagnostics) noexcept {
-    if (output.truncated) return;
-    output.truncated = true;
-    ++diagnostics.truncated_texts;
-}
-
-void copy_movement_hint(HudText96& output,
+void build_control_hints(HudText96& movement,
+    std::array<HudText96, 3U>& controls,
     HudBuildDiagnostics& diagnostics,
-    const std::array<char, 160U>& source) noexcept {
-    const std::size_t length = bounded_hint_length(source);
-    const std::size_t copied = std::min(length, output.bytes.size() - 1U);
-    if (copied != 0U) {
-        std::memcpy(output.bytes.data(), source.data(), copied);
-    }
-    output.bytes[copied] = '\0';
-    if (copied != length || length == source.size()) {
-        mark_truncated(output, diagnostics);
-    }
-}
-
-[[nodiscard]] std::size_t text_length(const HudText96& text) noexcept {
-    std::size_t length{};
-    while (length < text.bytes.size() && text.bytes[length] != '\0') ++length;
-    return length;
-}
-
-void split_control_hints(std::array<HudText96, 3U>& output,
-    HudBuildDiagnostics& diagnostics,
-    const std::array<char, 160U>& source) noexcept {
-    constexpr std::size_t kPreferredLineBytes = 42U;
-    const std::size_t source_length = bounded_hint_length(source);
-    std::size_t cursor{};
-    std::size_t line_index{};
-    while (cursor < source_length) {
-        while (cursor < source_length && source[cursor] == ' ') ++cursor;
-        if (cursor == source_length) break;
-
-        const std::size_t token_begin = cursor;
-        while (cursor < source_length) {
-            if (source[cursor] == ' ' && cursor + 1U < source_length
-                && source[cursor + 1U] == ' ') {
-                break;
-            }
-            ++cursor;
-        }
-        std::size_t token_end = cursor;
-        while (token_end > token_begin && source[token_end - 1U] == ' ') {
-            --token_end;
-        }
-        const std::size_t token_length = token_end - token_begin;
-        if (token_length == 0U) continue;
-
-        for (;;) {
-            HudText96& line = output[line_index];
-            const std::size_t line_length = text_length(line);
-            const std::size_t separator = line_length == 0U ? 0U : 2U;
-            const std::size_t required = separator + token_length;
-            if (line_length != 0U
-                && line_length + required > kPreferredLineBytes
-                && line_index + 1U < output.size()) {
-                ++line_index;
-                continue;
-            }
-            if (line_length + required >= line.bytes.size()) {
-                if (line_length != 0U && line_index + 1U < output.size()) {
-                    ++line_index;
-                    continue;
-                }
-                const std::size_t available = line.bytes.size() - 1U
-                    - line_length - separator;
-                std::size_t destination = line_length;
-                if (separator != 0U) {
-                    line.bytes[destination++] = ' ';
-                    line.bytes[destination++] = ' ';
-                }
-                if (available != 0U) {
-                    std::memcpy(line.bytes.data() + destination,
-                        source.data() + token_begin, available);
-                    destination += available;
-                }
-                line.bytes[destination] = '\0';
-                mark_truncated(line, diagnostics);
-                return;
-            }
-
-            std::size_t destination = line_length;
-            if (separator != 0U) {
-                line.bytes[destination++] = ' ';
-                line.bytes[destination++] = ' ';
-            }
-            std::memcpy(line.bytes.data() + destination,
-                source.data() + token_begin, token_length);
-            destination += token_length;
-            line.bytes[destination] = '\0';
-            break;
-        }
-
-        while (cursor < source_length && source[cursor] == ' ') ++cursor;
-    }
-
-    if (source_length == source.size()) {
-        mark_truncated(output[line_index], diagnostics);
-    }
+    const ControlHints& hints) noexcept {
+    using settings::SettingAction;
+    format_text(movement, diagnostics, u8"%s %s  %s %s  %s %s  %s %s",
+        control_hint_key_label(hints, SettingAction::move_up),
+        ui_setting_action_name(SettingAction::move_up),
+        control_hint_key_label(hints, SettingAction::move_down),
+        ui_setting_action_name(SettingAction::move_down),
+        control_hint_key_label(hints, SettingAction::move_left),
+        ui_setting_action_name(SettingAction::move_left),
+        control_hint_key_label(hints, SettingAction::move_right),
+        ui_setting_action_name(SettingAction::move_right));
+    format_text(controls[0], diagnostics, u8"%s %s  %s %s  %s %s",
+        control_hint_key_label(hints, SettingAction::light_attack),
+        ui_setting_action_name(SettingAction::light_attack),
+        control_hint_key_label(hints, SettingAction::jump),
+        ui_setting_action_name(SettingAction::jump),
+        control_hint_key_label(hints, SettingAction::launcher),
+        ui_setting_action_name(SettingAction::launcher));
+    format_text(controls[1], diagnostics, u8"%s %s  %s %s  %s %s",
+        control_hint_key_label(hints, SettingAction::interact),
+        ui_setting_action_name(SettingAction::interact),
+        control_hint_key_label(hints, SettingAction::inventory),
+        ui_setting_action_name(SettingAction::inventory),
+        control_hint_key_label(hints, SettingAction::passive_tree),
+        ui_setting_action_name(SettingAction::passive_tree));
+    format_text(controls[2], diagnostics,
+        u8"F1 调试  F12 截图  Esc 暂停");
 }
 
 void increment_saturating(std::uint64_t& value) noexcept {
@@ -385,9 +303,8 @@ void HudViewModelProjector::build(HudViewModel& output,
         cached_movement_hint_ = {};
         cached_control_hint_lines_ = {};
         HudBuildDiagnostics diagnostics{};
-        copy_movement_hint(cached_movement_hint_, diagnostics, hints.primary);
-        split_control_hints(cached_control_hint_lines_, diagnostics,
-            hints.secondary);
+        build_control_hints(cached_movement_hint_, cached_control_hint_lines_,
+            diagnostics, hints);
         cached_control_hint_truncations_ = diagnostics.truncated_texts;
         control_hints_revision_ = hints.revision;
         control_hints_ready_ = true;

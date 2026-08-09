@@ -2,8 +2,10 @@
 
 #include "skills/active_skill_catalog.hpp"
 #include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace arpg::platform {
@@ -43,10 +45,9 @@ ActiveSkillHudModel make_active_skill_hud_model(
     for (std::size_t index = 0U; index < result.slots.size(); ++index) {
         ActiveSkillHudSlot& slot = result.slots[index];
         slot.key_number = static_cast<std::uint8_t>(index + 1U);
-        static_cast<void>(std::snprintf(slot.key_label.data(),
-            slot.key_label.size(), "Num%u",
+        static_cast<void>(ui_utf8_format(slot.key_label.data(),
+            slot.key_label.size(), u8"小键盘%u",
             static_cast<unsigned>(slot.key_number)));
-        slot.key_label.back() = '\0';
         slot.id = loadout.slots[index].active;
         slot.icon = active_skill_icon_sprite(slot.id);
         slot.empty = slot.id == skills::ActiveSkillId::none;
@@ -59,15 +60,20 @@ ActiveSkillHudModel make_active_skill_hud_model(
             slot.empty = true;
             continue;
         }
-        static_cast<void>(std::snprintf(slot.name.data(), slot.name.size(),
-            "%s", active_skill_hud_name(slot.id, *definition)));
-        slot.name.back() = '\0';
+        static_cast<void>(ui_utf8_copy(slot.name.data(), slot.name.size(),
+            active_skill_hud_name(slot.id, *definition)));
         const std::size_t cooldown_index = static_cast<std::size_t>(slot.id);
         if (cooldown_index < cooldowns.size()) {
             slot.cooldown_ratio = std::clamp(
                 static_cast<float>(cooldowns[cooldown_index])
                     / static_cast<float>(definition->cooldown_ticks),
                 0.0F, 1.0F);
+            if (slot.cooldown_ratio > 0.0F) {
+                const float seconds = std::ceil(slot.cooldown_ratio
+                    * static_cast<float>(definition->cooldown_ticks) / 60.0F);
+                static_cast<void>(ui_utf8_format(slot.cooldown_label.data(),
+                    slot.cooldown_label.size(), u8"%.0f秒", seconds));
+            }
         }
     }
     return result;
