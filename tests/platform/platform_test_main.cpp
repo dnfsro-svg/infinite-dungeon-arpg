@@ -213,6 +213,16 @@ bool cplay032_death_retry_hint_only() noexcept {
     return enabled;
 }
 
+bool cplay033_passive_cjk_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_CPLAY033_PASSIVE_CJK_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -225,6 +235,13 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (cplay033_passive_cjk_only()) {
+        const arpg::test::TestSuite cplay033_only[] = {
+            hud_font_suite(),
+        };
+        return arpg::test::run_suites(cplay033_only, 15,
+            "CPLAY-033 passive tree CJK font");
+    }
     if (cplay032_death_retry_hint_only()) {
         const arpg::test::TestSuite cplay032_only[] = {
             death_overlay_view_suite(),

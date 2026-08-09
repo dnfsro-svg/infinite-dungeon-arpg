@@ -1209,7 +1209,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && passive_overlay_open) {
                 draw_passive_tree_overlay(current, runtime.render_status(),
                     stable_key_label(settings::binding_for(input_settings,
-                        settings::SettingAction::passive_tree)));
+                        settings::SettingAction::passive_tree)),
+                    renderer.hud_font(), renderer.hud_font_ready());
             }
             if (!config.stage12_material_background_only
                 && !config.stage12_material_icons_only

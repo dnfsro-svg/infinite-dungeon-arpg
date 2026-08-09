@@ -3,10 +3,12 @@
 #include "dungeon_runtime.hpp"
 #include "passive_tree_view_math.hpp"
 #include "passives/passive_tree_catalog.hpp"
+#include "ui_text_renderer.hpp"
 
 #include <raylib.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 
 namespace arpg::platform {
@@ -111,8 +113,36 @@ const char* type_label(passives::PassiveNodeType type) noexcept {
     return "NODE";
 }
 
+bool use_passive_tree_hud_font(Font hud_font, bool hud_font_ready) noexcept {
+    return passive_tree_text_draw_mode(hud_font_ready)
+            == PassiveTreeTextDrawMode::hud_font
+        && IsFontValid(hud_font);
+}
+
+float measure_passive_tree_text(Font hud_font, bool hud_font_ready,
+    const char* text, float font_size) noexcept {
+    if (use_passive_tree_hud_font(hud_font, hud_font_ready)) {
+        return MeasureTextEx(hud_font, text, font_size, 0.5F).x;
+    }
+    return static_cast<float>(MeasureText(text,
+        static_cast<int>(std::round(font_size))));
+}
+
+void draw_passive_tree_text(Font hud_font, bool hud_font_ready,
+    const char* text, float x, float y, float font_size, Color color) noexcept {
+    if (use_passive_tree_hud_font(hud_font, hud_font_ready)) {
+        draw_crisp_ui_text(hud_font, text, {x, y}, font_size, 0.5F,
+            color, 1);
+        return;
+    }
+    DrawText(text, static_cast<int>(std::round(x)),
+        static_cast<int>(std::round(y)),
+        static_cast<int>(std::round(font_size)), color);
+}
+
 void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
-    passives::PassiveNodeId node) noexcept {
+    passives::PassiveNodeId node,
+    Font hud_font, bool hud_font_ready) noexcept {
     const passives::PassiveNode& source = passives::passive_nodes()[node];
     const int panel_width = 290;
     const bool detailed = source.type == passives::PassiveNodeType::notable
@@ -128,10 +158,13 @@ void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
         2.0F, route_color(node));
     DrawText(source.name, x + 14, y + 12, 20, RAYWHITE);
     DrawText(type_label(source.type), x + 14, y + 38, 13, route_color(node));
-    DrawText(passive_benefit_text(node),
-        x + 14, y + 56, 14, Color{188, 222, 196, 255});
+    draw_passive_tree_text(hud_font, hud_font_ready,
+        passive_benefit_text(node), static_cast<float>(x + 14),
+        static_cast<float>(y + 56), 14.0F, Color{188, 222, 196, 255});
     if (detailed) {
-        DrawText(passive_cost_text(node), x + 14, y + 76, 14,
+        draw_passive_tree_text(hud_font, hud_font_ready,
+            passive_cost_text(node), static_cast<float>(x + 14),
+            static_cast<float>(y + 76), 14.0F,
             Color{255, 174, 150, 255});
     } else if (passive_node_visual_state(snapshot, node)
         == PassiveNodeVisualState::allocated) {
@@ -145,9 +178,16 @@ void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
 
 }  // namespace
 
+PassiveTreeTextDrawMode passive_tree_text_draw_mode(
+    bool hud_font_ready) noexcept {
+    return hud_font_ready ? PassiveTreeTextDrawMode::hud_font
+                          : PassiveTreeTextDrawMode::fallback;
+}
+
 void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
     const DungeonRenderStatus& runtime_status,
-    const char* passive_tree_binding_label) noexcept {
+    const char* passive_tree_binding_label,
+    Font hud_font, bool hud_font_ready) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{5, 8, 17, 242});
@@ -188,16 +228,22 @@ void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
             const int benefit_font_size = node.type == passives::PassiveNodeType::keystone
                 ? 10 : 9;
             const char* benefit = passive_benefit_text(node.id);
-            DrawText(benefit, static_cast<int>(projection.center.x)
-                    - MeasureText(benefit, benefit_font_size) / 2,
-                static_cast<int>(projection.center.y + projection.radius + 7.0F),
-                benefit_font_size, Color{188, 222, 196, 255});
+            draw_passive_tree_text(hud_font, hud_font_ready, benefit,
+                projection.center.x - measure_passive_tree_text(
+                    hud_font, hud_font_ready, benefit,
+                    static_cast<float>(benefit_font_size)) * 0.5F,
+                projection.center.y + projection.radius + 7.0F,
+                static_cast<float>(benefit_font_size),
+                Color{188, 222, 196, 255});
             if (node.type == passives::PassiveNodeType::keystone) {
                 const char* cost = passive_cost_text(node.id);
-                DrawText(cost, static_cast<int>(projection.center.x)
-                        - MeasureText(cost, benefit_font_size) / 2,
-                    static_cast<int>(projection.center.y + projection.radius + 20.0F),
-                    benefit_font_size, Color{248, 166, 145, 255});
+                draw_passive_tree_text(hud_font, hud_font_ready, cost,
+                    projection.center.x - measure_passive_tree_text(
+                        hud_font, hud_font_ready, cost,
+                        static_cast<float>(benefit_font_size)) * 0.5F,
+                    projection.center.y + projection.radius + 20.0F,
+                    static_cast<float>(benefit_font_size),
+                    Color{248, 166, 145, 255});
             }
         }
     }
@@ -228,7 +274,7 @@ void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
 
     const Vector2 mouse = GetMousePosition();
     if (const auto hovered = hit_test_passive_node({mouse.x, mouse.y}, width, height)) {
-        draw_node_tooltip(snapshot, *hovered);
+        draw_node_tooltip(snapshot, *hovered, hud_font, hud_font_ready);
     }
 }
 

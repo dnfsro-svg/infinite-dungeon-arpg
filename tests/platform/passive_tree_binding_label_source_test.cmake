@@ -21,7 +21,8 @@ if(NOT LEGACY_PASSIVE_CLOSE_LABEL EQUAL -1)
         "passive-tree overlay must not hard-code the default P binding")
 endif()
 
-set(DYNAMIC_PASSIVE_SIGNATURE [=[const char* passive_tree_binding_label) noexcept]=])
+set(DYNAMIC_PASSIVE_SIGNATURE [=[const char* passive_tree_binding_label,
+    Font hud_font, bool hud_font_ready) noexcept]=])
 string(FIND "${PASSIVE_HEADER_CODE}" "${DYNAMIC_PASSIVE_SIGNATURE}"
     DYNAMIC_PASSIVE_HEADER_SIGNATURE_INDEX)
 string(FIND "${PASSIVE_RENDERER_CODE}" "${DYNAMIC_PASSIVE_SIGNATURE}"
@@ -30,6 +31,29 @@ if(DYNAMIC_PASSIVE_HEADER_SIGNATURE_INDEX EQUAL -1
         OR DYNAMIC_PASSIVE_RENDERER_SIGNATURE_INDEX EQUAL -1)
     message(FATAL_ERROR
         "passive-tree renderer must receive the applied binding label")
+endif()
+
+set(PASSIVE_TREE_CJK_MEASURE_CODE
+    [=[MeasureTextEx(hud_font, text, font_size, 0.5F).x]=])
+set(PASSIVE_TREE_CJK_DRAW_CODE
+    [=[draw_crisp_ui_text(hud_font, text, {x, y}, font_size, 0.5F,
+            color, 1);]=])
+string(FIND "${PASSIVE_RENDERER_CODE}" "${PASSIVE_TREE_CJK_MEASURE_CODE}"
+    PASSIVE_TREE_CJK_MEASURE_INDEX)
+string(FIND "${PASSIVE_RENDERER_CODE}" "${PASSIVE_TREE_CJK_DRAW_CODE}"
+    PASSIVE_TREE_CJK_DRAW_INDEX)
+string(REGEX MATCHALL "draw_passive_tree_text\\(" PASSIVE_TREE_CJK_DRAW_CALLS
+    "${PASSIVE_RENDERER_CODE}")
+string(REGEX MATCHALL "measure_passive_tree_text\\("
+    PASSIVE_TREE_CJK_MEASURE_CALLS "${PASSIVE_RENDERER_CODE}")
+list(LENGTH PASSIVE_TREE_CJK_DRAW_CALLS PASSIVE_TREE_CJK_DRAW_CALL_COUNT)
+list(LENGTH PASSIVE_TREE_CJK_MEASURE_CALLS PASSIVE_TREE_CJK_MEASURE_CALL_COUNT)
+if(PASSIVE_TREE_CJK_MEASURE_INDEX EQUAL -1
+        OR PASSIVE_TREE_CJK_DRAW_INDEX EQUAL -1
+        OR PASSIVE_TREE_CJK_DRAW_CALL_COUNT LESS 5
+        OR PASSIVE_TREE_CJK_MEASURE_CALL_COUNT LESS 3)
+    message(FATAL_ERROR
+        "passive-tree benefit and cost text must use the shared CJK font for matching measurement and drawing")
 endif()
 
 set(DYNAMIC_PASSIVE_DRAW_CODE [=[constexpr int kCloseFontSize = 17;
@@ -83,7 +107,8 @@ set(APPLIED_PASSIVE_OVERLAY_BLOCK [=[if (!config.stage12_material_background_onl
                 && passive_overlay_open) {
                 draw_passive_tree_overlay(current, runtime.render_status(),
                     stable_key_label(settings::binding_for(input_settings,
-                        settings::SettingAction::passive_tree)));
+                        settings::SettingAction::passive_tree)),
+                    renderer.hud_font(), renderer.hud_font_ready());
             }]=])
 string(FIND "${HOST_CODE}" "${APPLIED_PASSIVE_OVERLAY_BLOCK}"
     APPLIED_PASSIVE_OVERLAY_BLOCK_INDEX)
