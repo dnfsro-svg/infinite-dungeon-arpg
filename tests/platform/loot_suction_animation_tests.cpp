@@ -176,16 +176,35 @@ arpg::test::Failure pause_freezes_and_arrival_reclaims_with_pulse() noexcept {
     return {};
 }
 
-arpg::test::Failure capacity_is_twelve_and_steady_observation_allocates_nothing()
+arpg::test::Failure full_capacity_replaces_most_elapsed_flight_and_allocates_nothing()
     noexcept {
     platform::LootSuctionState state{};
     dungeon::DungeonSnapshot empty{};
     state.observe(empty, empty, {});
-    for (std::uint64_t index = 1U; index <= 13U; ++index) {
+    for (std::uint64_t index = 1U; index <= 12U; ++index) {
         dungeon::DungeonSnapshot previous{};
-        append(previous, equipment(static_cast<std::uint16_t>(index), index));
+        append(previous, equipment(static_cast<std::uint16_t>(index), index,
+            {static_cast<float>(index), 0.0F, 0.0F}));
         state.observe(previous, empty, saved_equipment_receipt(index, index));
+        state.update(0.01F, false);
     }
+    ARPG_REQUIRE(state.active_count() == 12U);
+    dungeon::DungeonSnapshot latest{};
+    append(latest, equipment(13U, 13U, {13.0F, 0.0F, 0.0F}));
+    state.observe(latest, empty, saved_equipment_receipt(13U, 13U));
+    const auto replacement = state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+    bool has_oldest_origin{};
+    bool has_latest_origin{};
+    for (std::size_t index{}; index < replacement.count; ++index) {
+        has_oldest_origin = has_oldest_origin
+            || replacement.flights[index].world_position.x == 1.0F;
+        has_latest_origin = has_latest_origin
+            || replacement.flights[index].world_position.x == 13.0F;
+    }
+    ARPG_REQUIRE(replacement.count == 12U);
+    ARPG_REQUIRE(!has_oldest_origin);
+    ARPG_REQUIRE(has_latest_origin);
     ARPG_REQUIRE(state.active_count() == 12U);
     const std::uint64_t before = arpg::test::allocation_count();
     for (std::size_t index{}; index < 100000U; ++index) {
@@ -204,7 +223,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"duplicate equipment receipt", &same_equipment_receipt_is_not_duplicated},
     {"material only disappeared ordinals", &material_receipt_only_flies_disappeared_matching_ordinals},
     {"pause and arrival pulse", &pause_freezes_and_arrival_reclaims_with_pulse},
-    {"fixed capacity and zero allocation", &capacity_is_twelve_and_steady_observation_allocates_nothing},
+    {"full capacity replacement and zero allocation",
+        &full_capacity_replaces_most_elapsed_flight_and_allocates_nothing},
 };
 
 }  // namespace

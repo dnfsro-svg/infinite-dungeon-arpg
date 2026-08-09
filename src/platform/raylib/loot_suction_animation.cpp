@@ -63,6 +63,18 @@ constexpr float kPi = 3.14159265358979323846F;
     return clamped * clamped * (3.0F - 2.0F * clamped);
 }
 
+[[nodiscard]] LootSuctionFlight& reserve_flight(
+    std::array<LootSuctionFlight, 12U>& flights) noexcept {
+    LootSuctionFlight* most_elapsed = &flights.front();
+    for (LootSuctionFlight& flight : flights) {
+        if (!flight.active) return flight;
+        if (flight.elapsed_seconds > most_elapsed->elapsed_seconds) {
+            most_elapsed = &flight;
+        }
+    }
+    return *most_elapsed;
+}
+
 }  // namespace
 
 void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
@@ -98,12 +110,9 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
             previous, equipment_receipt.item_id);
         if (item != nullptr && !contains_equipment(current,
                 equipment_receipt.item_id)) {
-            for (LootSuctionFlight& flight : flights_) {
-                if (flight.active) continue;
-                flight = {item->position, {}, ground_loot_item_sprite(item->slot),
-                    {255U, 255U, 255U, 255U}, 0.0F, true, true};
-                break;
-            }
+            reserve_flight(flights_) = {item->position, {},
+                ground_loot_item_sprite(item->slot),
+                {255U, 255U, 255U, 255U}, 0.0F, true, true};
         }
     }
 
@@ -127,13 +136,10 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
                 || contains_material(current, material.ordinal)) {
             continue;
         }
-        for (LootSuctionFlight& flight : flights_) {
-            if (flight.active) continue;
-            flight = {material.position, {}, material_loot_sprite(material.material),
-                material_color(material.material), 0.0F, true, false};
-            --remaining[material_index];
-            break;
-        }
+        reserve_flight(flights_) = {material.position, {},
+            material_loot_sprite(material.material), material_color(material.material),
+            0.0F, true, false};
+        --remaining[material_index];
     }
 }
 
