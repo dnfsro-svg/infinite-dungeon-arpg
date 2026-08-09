@@ -68,8 +68,8 @@ constexpr std::array<const char*, 12U> kMonsterAffixNames{{
 }};
 
 constexpr std::array<const char*, 12U> kMonsterAffixShortNames{{
-    u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多投",
-    u8"灼地", u8"冰寒", u8"链电", u8"腐蚀", u8"闪袭", u8"死爆",
+    u8"强", u8"狂", u8"迅", u8"甲", u8"盾", u8"多射",
+    u8"灼地", u8"寒", u8"连雷", u8"蚀", u8"闪袭", u8"死爆",
 }};
 
 constexpr std::array<const char*, 10U> kSettingActionNames{{
@@ -83,7 +83,7 @@ constexpr std::array<const char*, 2U> kSkillNames{{
 // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
 // its existing death-overlay/HUD corpus in the single catalog visitor so the
 // shared glyph plan covers it without a second hand-maintained font list.
-constexpr std::array<const char*, 65U> kUiDynamicGlyphCoverage{{
+constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
     "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
@@ -119,6 +119,7 @@ constexpr std::array<const char*, 65U> kUiDynamicGlyphCoverage{{
     u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
     u8"设置界面…",
     u8"已拾取：强化石 x1、混沌石 x1",
+    u8"蜕变石",
 }};
 
 template <typename Id, std::size_t Count>

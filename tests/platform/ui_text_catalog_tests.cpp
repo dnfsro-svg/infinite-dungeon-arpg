@@ -2,6 +2,7 @@
 
 #include "allocation_probe.hpp"
 #include "ui_text_catalog.hpp"
+#include "ui_utf8.hpp"
 
 #include <array>
 #include <cstdint>
@@ -15,6 +16,15 @@ namespace platform = arpg::platform;
 void count_text(const char* text, void* context) noexcept {
     auto* const count = static_cast<std::size_t*>(context);
     if (text != nullptr && text[0] != '\0') ++(*count);
+}
+
+std::size_t utf8_codepoint_count(const char* text) noexcept {
+    std::size_t count{};
+    for (const auto* byte = reinterpret_cast<const unsigned char*>(text);
+         *byte != 0U; ++byte) {
+        if ((*byte & 0xC0U) != 0x80U) ++count;
+    }
+    return count;
 }
 
 arpg::test::Failure fixed_messages_are_chinese() noexcept {
@@ -157,15 +167,19 @@ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
         u8"死亡爆破",
     }};
     constexpr std::array<const char*, 12U> kExpectedMonsterAffixShortNames{{
-        u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多投",
-        u8"灼地", u8"冰寒", u8"链电", u8"腐蚀", u8"闪袭", u8"死爆",
+        u8"强", u8"狂", u8"迅", u8"甲", u8"盾", u8"多射",
+        u8"灼地", u8"寒", u8"连雷", u8"蚀", u8"闪袭", u8"死爆",
     }};
     for (std::size_t index{}; index < kExpectedMonsterAffixNames.size(); ++index) {
         const auto id = static_cast<arpg::combat::MonsterAffixId>(index);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_name(id),
             kExpectedMonsterAffixNames[index]) == 0);
-        ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(id),
+        const char* const short_name = platform::ui_monster_affix_short_name(id);
+        ARPG_REQUIRE(std::strcmp(short_name,
             kExpectedMonsterAffixShortNames[index]) == 0);
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(short_name));
+        const std::size_t codepoint_count = utf8_codepoint_count(short_name);
+        ARPG_REQUIRE(codepoint_count >= 1U && codepoint_count <= 2U);
     }
     return {};
 }
@@ -197,7 +211,7 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
 arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
     std::size_t count{};
     platform::visit_ui_text_catalog(&count_text, &count);
-    ARPG_REQUIRE(count == 270U);
+    ARPG_REQUIRE(count == 271U);
     return {};
 }
 
@@ -208,7 +222,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 270U);
+        ARPG_REQUIRE(count == 271U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

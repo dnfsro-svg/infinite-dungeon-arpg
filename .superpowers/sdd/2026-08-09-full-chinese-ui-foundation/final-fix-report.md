@@ -74,5 +74,25 @@ git diff --check
 ## 疑虑与边界
 
 - 无一一映射冲突或阻断项。
-- 怪物短标在 Design 中只有“一至两个汉字”的约束，没有逐项批准字面量；本轮让短标沿用批准完整术语的核心字（如 `强力`、`狂热`、`多投`、`死爆`），没有改 stable ID。
+- 在 `e568b44` 时点，怪物短标按 Design 的“一至两个汉字”约束沿用完整术语核心字；下方用户授权兼容修复已用后续正式计划的精确短标表取代该历史状态，全程没有改 stable ID。
 - Task 4 报告只补记 Stage12 既有 `input_hole_regression=fail`，没有改生产验证逻辑。
+
+## User-authorized compatibility fix
+
+用户在 `e568b44` 后明确授权一次额外窄兼容修复，只处理 scoped re-review 的两个 Important：
+
+1. 真实旧消费者 `material_loot_view` 仍输出“蜕变石”，而正式 catalog 名保持“嬗变石”。先在现有 shared glyph case 增加“蜕变石”覆盖断言，foundation 得到 15 cases / 1 failure，失败精确位于该断言；随后只把真实旧文案 `蜕变石` 加入唯一 `kUiDynamicGlyphCoverage`，没有迁移消费者，也没有在 `shared_ui_font` 增加手工语料。visitor 条目数由 270 增为 271，GREEN 为 15/15。
+2. 先把现有手工短标表改为正式顺序 `强、狂、迅、甲、盾、多射、灼地、寒、连雷、蚀、闪袭、死爆`，并逐项断言合法 UTF-8 及 1–2 个码点；旧 catalog 得到 15 cases / 1 failure，失败精确位于 short-label 字面量比较。随后只替换 `kMonsterAffixShortNames`，GREEN 为 15/15。
+
+实际去重字形数通过临时诊断读取后移除诊断并重新构建：517 -> 517，容量仍为 517 / 640。新增“蜕”同时正式短标移除了旧短标独占码点，因此净变化为 0。
+
+最终新鲜验证：
+
+- `cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2`：通过；
+- foundation：15 cases / 0 failures；
+- CPLAY033：15 cases / 0 failures；
+- lifecycle guard、其 self-test、bundled validator self-test：3/3 passed；
+- `git diff --check`：exit 0；
+- 可用物理内存：6298.4 MiB -> 6281.8 MiB，下降 16.6 MiB，无 OOM 或内存压力。
+
+该兼容修复没有触碰 `material_loot_view`、其他生产文件、菜单或 HUD，也没有修改 stable ID、枚举、玩法、存档或字体所有权。
