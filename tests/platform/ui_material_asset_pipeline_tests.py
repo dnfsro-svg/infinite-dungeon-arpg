@@ -78,7 +78,7 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
         self.assertIn("SIL OPEN FONT LICENSE Version 1.1",
                       license_file.read_text(encoding="utf-8"))
 
-        font_source = (ROOT / "src/platform/raylib/death_overlay_font.cpp").read_text(
+        font_source = (ROOT / "src/platform/raylib/shared_ui_font.cpp").read_text(
             encoding="utf-8")
         app_cmake = (ROOT / "src/app/CMakeLists.txt").read_text(encoding="utf-8")
         formal_cmake = (ROOT / "tests/platform/CMakeLists.txt").read_text(
@@ -89,17 +89,20 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
         self.assertRegex(app_cmake, r"DIRECTORIES[\s\S]*\bfonts\b")
         self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', formal_cmake)
 
-        contract = (ROOT / "src/platform/raylib/death_overlay_font.hpp").read_text(
+        contract = (ROOT / "src/platform/raylib/shared_ui_font.hpp").read_text(
             encoding="utf-8")
         self.assertIn("kUiFontSourceBaseSize = 96", contract)
         self.assertIn("kUiFontMaximumDisplaySize = 39", contract)
         self.assertIn("kUiFontAtlasByteBudget", contract)
+        self.assertIn("kUiFontAtlasInstanceCount = 1U", contract)
+        self.assertIn("LoadFontEx(path, kUiFontSourceBaseSize", font_source)
+        self.assertIn("TEXTURE_FILTER_BILINEAR", font_source)
         for filename in ("hud_renderer.cpp", "pause_menu_renderer.cpp",
                          "death_overlay_renderer.cpp"):
             renderer = (ROOT / "src/platform/raylib" / filename).read_text(
                 encoding="utf-8")
-            self.assertIn("LoadFontEx(path, kUiFontSourceBaseSize", renderer)
-            self.assertIn("TEXTURE_FILTER_BILINEAR", renderer)
+            self.assertNotIn("LoadFontEx(", renderer)
+            self.assertNotIn("UnloadFont(", renderer)
 
     def test_decorated_ui_controls_use_non_stretching_draw_paths(self) -> None:
         hud = (ROOT / "src/platform/raylib/hud_renderer.cpp").read_text(

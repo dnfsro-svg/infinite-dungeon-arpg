@@ -1,12 +1,15 @@
 #include "test_framework.hpp"
 
 #include "death_overlay_font.hpp"
+#include "death_overlay_renderer.hpp"
 #include "dungeon/dungeon_render_snapshot.hpp"
 #include "hud_font.hpp"
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 #include "hud_view_model.hpp"
 #include "passive_tree_renderer.hpp"
+#include "pause_menu_renderer.hpp"
+#include "shared_ui_font.hpp"
 #include "ui_text_contrast.hpp"
 #include "ui_typography.hpp"
 
@@ -258,6 +261,7 @@ arpg::test::Failure ui_typography_scales_to_physical_full_hd_pixels() noexcept {
 }
 
 arpg::test::Failure bundled_font_uses_bounded_high_resolution_glyph_atlas() noexcept {
+    static_assert(platform::kUiFontAtlasInstanceCount == 1U);
     static_assert(platform::kUiFontSourceBaseSize >= 96);
     static_assert(platform::kUiFontMaximumDisplaySize >= 39);
     static_assert(platform::kUiFontSourceBaseSize
@@ -291,12 +295,27 @@ arpg::test::Failure hud_palette_key_colors_are_opaque_and_distinct() noexcept {
 }
 
 arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
+    platform::SharedUiFont shared{};
     platform::HudRenderer renderer{};
     ARPG_REQUIRE(!renderer.font_ready());
+    ARPG_REQUIRE(!shared.ready());
+    ARPG_REQUIRE(shared.atlas_bytes() == 0U);
+    ARPG_REQUIRE(!renderer.initialize(shared));
     renderer.shutdown();
     renderer.shutdown();
     ARPG_REQUIRE(!renderer.font_ready());
+    ARPG_REQUIRE(!shared.ready());
     renderer.draw({}, {});
+
+    platform::DeathOverlayRenderer death{};
+    platform::PauseMenuRenderer pause{};
+    ARPG_REQUIRE(!death.initialize(shared));
+    ARPG_REQUIRE(!pause.initialize(shared));
+    death.shutdown();
+    pause.shutdown();
+    ARPG_REQUIRE(!shared.ready());
+    shared.shutdown();
+    shared.shutdown();
     return {};
 }
 

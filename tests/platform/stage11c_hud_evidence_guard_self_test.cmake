@@ -80,15 +80,17 @@ stage11c_expect_task7c_host_rejection(task7c_m10_notices_lambda_decoy_get_call
 set(_task7c_m25_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         audio.shutdown();
-        renderer.shutdown_resources();
         pause_menu_renderer.shutdown();
+        renderer.shutdown_resources();
+        shared_ui_font.shutdown();
         window.close();]=])
 set(_task7c_m25_dead_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         if (false) {
             audio.shutdown();
-            renderer.shutdown_resources();
             pause_menu_renderer.shutdown();
+            renderer.shutdown_resources();
+            shared_ui_font.shutdown();
             window.close();
         }]=])
 string(REPLACE "${_task7c_m25_shutdown_chain}"
@@ -101,8 +103,9 @@ set(_task7c_m25_conditional_shutdown_chain [=[        validation_runtime->write_
             runtime.clean_shutdown_state(), pause_menu);
         if (config.fullscreen) {
             audio.shutdown();
-            renderer.shutdown_resources();
             pause_menu_renderer.shutdown();
+            renderer.shutdown_resources();
+            shared_ui_font.shutdown();
             window.close();
         }]=])
 string(REPLACE "${_task7c_m25_shutdown_chain}"

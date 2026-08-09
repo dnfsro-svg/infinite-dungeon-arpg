@@ -200,7 +200,7 @@ arpg::test::Failure fallback_font_selection_matches_actual_draw_and_shutdown_own
         platform::make_hud_font_selection_plan(true);
     ARPG_REQUIRE(cjk.draw_mode == platform::HudFontDrawMode::cjk_ready);
     ARPG_REQUIRE(!cjk.use_default_font);
-    ARPG_REQUIRE(cjk.owns_loaded_font);
+    ARPG_REQUIRE(!cjk.owns_loaded_font);
     return {};
 }
 

@@ -74,7 +74,7 @@ arpg::test::Failure plan_codepoints_are_unique() noexcept {
 }
 
 arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept {
-    static_assert(platform::kUiFontAtlasInstanceCount == 3U);
+    static_assert(platform::kUiFontAtlasInstanceCount == 1U);
     static_assert(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
     static_assert(platform::ui_font_atlas_bytes(4096, 4096)
         == 32U * 1024U * 1024U);

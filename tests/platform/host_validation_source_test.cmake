@@ -722,6 +722,7 @@ set_source_files_properties(
     death_overlay_renderer.cpp
     hud_renderer.cpp
     pause_menu_renderer.cpp
+    shared_ui_font.cpp
     window_settings.cpp
     PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
 set_source_files_properties(raylib_host.cpp PROPERTIES
@@ -2875,11 +2876,13 @@ host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
     "${_run_host_direct}"
     "window.initialize(config, committed_settings)"
     "ChangeDirectory("
+    "shared_ui_font.initialize()"
     "SetWindowMinSize(800, 450);"
     "SetExitKey(KEY_NULL);"
     "audio.shutdown();"
-    "renderer.shutdown_resources();"
     "pause_menu_renderer.shutdown();"
+    "renderer.shutdown_resources();"
+    "shared_ui_font.shutdown();"
     "window.close();")
 host_validation_require_canonical_count("Task 9 renderer outer owner"
     "${_run_host_direct}"
@@ -2928,19 +2931,24 @@ host_validation_require_canonical_count("Task 9 catch renderer cleanup"
 host_validation_require_canonical_order("Task 9 renderer exception lifetime"
     "${_run_host_direct}"
     "HostWindowLifetime window{raylib_host_window_backend()};"
+    "SharedUiFont shared_ui_font{};"
     "std::unique_ptr<CombatRenderer> renderer_storage;"
+    "std::unique_ptr<PauseMenuRenderer> pause_menu_renderer_storage;"
     "try {"
     "window.initialize(config, committed_settings)"
+    "shared_ui_font.initialize()"
     "renderer_storage = std::make_unique<CombatRenderer>();"
     "catch (const std::exception& exception) {"
     "if (renderer_storage != nullptr) {
         renderer_storage->shutdown_resources();
     }"
+    "shared_ui_font.shutdown();"
     "return HostExitCode::save_initialization_failed;"
     "catch (...) {"
     "if (renderer_storage != nullptr) {
         renderer_storage->shutdown_resources();
     }"
+    "shared_ui_font.shutdown();"
     "return HostExitCode::save_initialization_failed;")
 set(_task9_lifecycle_scan_root "${SOURCE_ROOT}")
 if(DEFINED TASK9_LIFECYCLE_SCAN_ROOT)
@@ -3278,7 +3286,8 @@ host_validation_require_order("Host initialization" "${_run_host}"
     "if (validation_runtime == nullptr)"
     "return HostExitCode::save_initialization_failed;"
     "window.initialize(config, committed_settings)"
-    "renderer.initialize_resources()"
+    "shared_ui_font.initialize()"
+    "renderer.initialize_resources(shared_ui_font)"
     "validation_runtime->set_render_readiness("
     "hud_resources_ready, renderer.active_skill_assets_ready()")
 host_validation_require_count("Host runtime creation" "${_run_host}"

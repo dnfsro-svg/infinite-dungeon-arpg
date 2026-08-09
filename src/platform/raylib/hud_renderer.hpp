@@ -6,6 +6,7 @@
 #include "ground_loot_view.hpp"
 #include "material_loot_view.hpp"
 #include "material_pack.hpp"
+#include "shared_ui_font.hpp"
 
 #include <raylib.h>
 
@@ -126,7 +127,7 @@ public:
     HudRenderer(const HudRenderer&) = delete;
     HudRenderer& operator=(const HudRenderer&) = delete;
 
-    [[nodiscard]] bool initialize() noexcept;
+    [[nodiscard]] bool initialize(const SharedUiFont&) noexcept;
     void shutdown() noexcept;
     [[nodiscard]] bool font_ready() const noexcept;
     [[nodiscard]] Font hud_font() const noexcept;

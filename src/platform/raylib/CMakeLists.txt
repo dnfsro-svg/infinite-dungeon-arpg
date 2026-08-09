@@ -102,6 +102,7 @@ set_source_files_properties(
     death_overlay_renderer.cpp
     hud_renderer.cpp
     pause_menu_renderer.cpp
+    shared_ui_font.cpp
     window_settings.cpp
     PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
 set_source_files_properties(raylib_host.cpp PROPERTIES

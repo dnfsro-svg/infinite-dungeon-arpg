@@ -54,47 +54,25 @@ void draw_title_plate_fallback(const DeathOverlayLayout& layout) noexcept {
 
 }  // namespace
 
-DeathOverlayRenderer::~DeathOverlayRenderer() noexcept {
-    if (owns_font_ && IsWindowReady()) UnloadFont(font_);
-}
+DeathOverlayRenderer::~DeathOverlayRenderer() noexcept { shutdown(); }
 
-bool DeathOverlayRenderer::initialize() noexcept {
+bool DeathOverlayRenderer::initialize(
+    const SharedUiFont& shared_ui_font) noexcept {
     shutdown();
-    const DeathOverlayFontPlan plan = death_overlay_font_plan();
-    for (std::size_t index = 0U; index < plan.candidate_count; ++index) {
-        const char* path = plan.candidate_paths[index];
-        if (path == nullptr || !FileExists(path)) continue;
-        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
-            plan.codepoints.data(),
-            static_cast<int>(plan.codepoint_count));
-        if (IsFontValid(candidate)
-                && candidate.glyphCount
-                    == static_cast<int>(plan.codepoint_count)) {
-            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
-            font_ = candidate;
-            owns_font_ = true;
-            TraceLog(LOG_INFO, "DEATH OVERLAY: Loaded font %s (%i glyphs)",
-                path, candidate.glyphCount);
-            return true;
-        }
-        if (IsFontValid(candidate)) UnloadFont(candidate);
-    }
-    font_ = GetFontDefault();
-    TraceLog(LOG_WARNING,
-        "DEATH OVERLAY: No complete CJK font found; using readable ASCII fallback");
-    return false;
+    font_ = shared_ui_font.font();
+    font_ready_ = shared_ui_font.ready();
+    return font_ready_;
 }
 
 void DeathOverlayRenderer::shutdown() noexcept {
-    if (owns_font_ && IsWindowReady()) UnloadFont(font_);
     font_ = {};
-    owns_font_ = false;
+    font_ready_ = false;
 }
 
 void DeathOverlayRenderer::draw(
     const dungeon::DungeonSnapshot& snapshot,
     const MaterialPack& material_pack) const noexcept {
-    const DeathOverlayView view = owns_font_
+    const DeathOverlayView view = font_ready_
         ? build_death_overlay_view(snapshot)
         : build_death_overlay_ascii_view(snapshot);
     const DeathOverlayMaterialPlan plan =

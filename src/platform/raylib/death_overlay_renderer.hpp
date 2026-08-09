@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dungeon/dungeon_types.hpp"
+#include "shared_ui_font.hpp"
 
 #include <raylib.h>
 
@@ -15,14 +16,14 @@ public:
     DeathOverlayRenderer(const DeathOverlayRenderer&) = delete;
     DeathOverlayRenderer& operator=(const DeathOverlayRenderer&) = delete;
 
-    [[nodiscard]] bool initialize() noexcept;
+    [[nodiscard]] bool initialize(const SharedUiFont&) noexcept;
     void shutdown() noexcept;
     void draw(const dungeon::DungeonSnapshot& snapshot,
         const MaterialPack& material_pack) const noexcept;
 
 private:
     Font font_{};
-    bool owns_font_{};
+    bool font_ready_{};
 };
 
 }  // namespace arpg::platform

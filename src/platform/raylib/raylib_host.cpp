@@ -385,7 +385,9 @@ RaylibHostConfig make_production_host_config(HostLaunchOptions options) {
 
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
     HostWindowLifetime window{raylib_host_window_backend()};
+    SharedUiFont shared_ui_font{};
     std::unique_ptr<CombatRenderer> renderer_storage;
+    std::unique_ptr<PauseMenuRenderer> pause_menu_renderer_storage;
     try {
         const auto save_directory = config.save_directory.has_value()
             ? config.save_directory : persistence::default_save_directory();
@@ -451,6 +453,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         if (!directory_changed) {
             TraceLog(LOG_WARNING, "failed to use screenshot working directory");
         }
+        if (!shared_ui_font.initialize()) {
+            TraceLog(LOG_ERROR,
+                "Bundled Chinese UI font initialization failed");
+            return HostExitCode::window_initialization_failed;
+        }
         SetWindowMinSize(800, 450);
         SetExitKey(KEY_NULL);
 #ifdef _WIN32
@@ -470,13 +477,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         core::FixedStepRunner fixed_step;
         renderer_storage = std::make_unique<CombatRenderer>();
         CombatRenderer& renderer = *renderer_storage;
-        const bool hud_resources_ready = renderer.initialize_resources();
+        const bool hud_resources_ready =
+            renderer.initialize_resources(shared_ui_font);
         validation_runtime->set_render_readiness(
             hud_resources_ready, renderer.active_skill_assets_ready());
-        const auto pause_menu_renderer_storage =
-            std::make_unique<PauseMenuRenderer>();
+        pause_menu_renderer_storage = std::make_unique<PauseMenuRenderer>();
         PauseMenuRenderer& pause_menu_renderer = *pause_menu_renderer_storage;
-        static_cast<void>(pause_menu_renderer.initialize());
+        static_cast<void>(pause_menu_renderer.initialize(shared_ui_font));
         CombatFeedback feedback;
         const auto audio_storage = std::make_unique<GameAudio>();
         GameAudio& audio = *audio_storage;
@@ -1035,8 +1042,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (!session->write_render_snapshot(world_query, *render_world)) {
                 TraceLog(LOG_ERROR, "failed to publish bounded render snapshot");
                 audio.shutdown();
-                renderer.shutdown_resources();
                 pause_menu_renderer.shutdown();
+                renderer.shutdown_resources();
+                shared_ui_font.shutdown();
                 return HostExitCode::save_initialization_failed;
             }
             if (config.stage12_material_showcase) {
@@ -1180,27 +1188,27 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                             kUiMaterialSprites[index]);
                 }
                 material_status.bundled_font_ready =
-                    renderer.hud_font_ready()
+                    shared_ui_font.ready() && renderer.hud_font_ready()
                     && pause_menu_renderer.has_cjk_font();
-                material_status.bundled_font_glyph_count =
-                    renderer.hud_font_ready()
-                    ? static_cast<std::uint16_t>((std::min)(
-                        renderer.hud_font().glyphCount, 65535))
+                material_status.bundled_font_instance_count =
+                    shared_ui_font.ready()
+                    ? static_cast<std::uint8_t>(kUiFontAtlasInstanceCount)
                     : 0U;
-                const Font runtime_font = renderer.hud_font();
+                material_status.bundled_font_glyph_count =
+                    shared_ui_font.ready()
+                    ? static_cast<std::uint16_t>((std::min)(
+                        shared_ui_font.font().glyphCount, 65535))
+                    : 0U;
+                const Font runtime_font = shared_ui_font.font();
                 material_status.bundled_font_source_base_size =
-                    renderer.hud_font_ready()
+                    shared_ui_font.ready()
                     ? static_cast<std::uint16_t>((std::max)(
                         runtime_font.baseSize, 0))
                     : 0U;
                 material_status.bundled_font_atlas_bytes =
-                    renderer.hud_font_ready()
-                    ? ui_font_atlas_bytes(runtime_font.texture.width,
-                        runtime_font.texture.height)
-                    : 0U;
+                    shared_ui_font.atlas_bytes();
                 material_status.bundled_font_total_atlas_bytes =
-                    material_status.bundled_font_atlas_bytes
-                        * kUiFontAtlasInstanceCount;
+                    material_status.bundled_font_atlas_bytes;
                 material_status.bundled_font_total_atlas_byte_budget =
                     kUiFontTotalAtlasByteBudget;
             }
@@ -1334,21 +1342,30 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         audio.shutdown();
-        renderer.shutdown_resources();
         pause_menu_renderer.shutdown();
+        renderer.shutdown_resources();
+        shared_ui_font.shutdown();
         window.close();
         return HostExitCode::success;
     } catch (const std::exception& exception) {
         TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+        if (pause_menu_renderer_storage != nullptr) {
+            pause_menu_renderer_storage->shutdown();
+        }
         if (renderer_storage != nullptr) {
             renderer_storage->shutdown_resources();
         }
+        shared_ui_font.shutdown();
         return HostExitCode::save_initialization_failed;
     } catch (...) {
         TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
+        if (pause_menu_renderer_storage != nullptr) {
+            pause_menu_renderer_storage->shutdown();
+        }
         if (renderer_storage != nullptr) {
             renderer_storage->shutdown_resources();
         }
+        shared_ui_font.shutdown();
         return HostExitCode::save_initialization_failed;
     }
 }

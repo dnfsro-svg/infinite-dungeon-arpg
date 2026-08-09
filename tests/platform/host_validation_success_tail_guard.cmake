@@ -61,7 +61,7 @@ function(evidence_host_success_tail_is_canonical
     string(REGEX REPLACE "[ \t\r\n]+" "" _success_tail_compact
         "${_success_tail}")
     set(_canonical_tail
-        "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();window.close();returnHostExitCode::success;")
+        "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();pause_menu_renderer.shutdown();renderer.shutdown_resources();shared_ui_font.shutdown();window.close();returnHostExitCode::success;")
     if(NOT _success_tail_compact STREQUAL _canonical_tail)
         set(${OUT_VALID} FALSE PARENT_SCOPE)
         set(${OUT_REASON} "post-loop success tail is not canonical" PARENT_SCOPE)

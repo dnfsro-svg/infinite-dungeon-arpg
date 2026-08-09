@@ -1609,6 +1609,7 @@ foreach ($key in @('manifest','atlas_bytes','full_pack_bytes',
         'hud_ui_draw_mask_1920','inventory_ui_draw_mask_1920',
         'skill_ui_draw_mask_1920','pause_ui_draw_mask_1920',
         'bundled_font_runtime','bundled_font_glyph_count',
+        'bundled_font_instance_count',
         'bundled_font_subset_capacity',
         'bundled_font_source_base_size','bundled_font_max_display_size',
         'bundled_font_atlas_bytes','bundled_font_atlas_byte_budget',
@@ -1698,7 +1699,9 @@ if ($primaryContrast -lt 7.0 -or $secondaryContrast -lt 6.0 -or
 }
 $fontGlyphCount = [uint64]$report.bundled_font_glyph_count
 $fontSubsetCapacity = [uint64]$report.bundled_font_subset_capacity
-if ($fontGlyphCount -eq 0 -or $fontSubsetCapacity -ne 384 -or
+$fontInstanceCount = [uint64]$report.bundled_font_instance_count
+if ($fontInstanceCount -ne 1 -or $fontGlyphCount -eq 0 -or
+        $fontSubsetCapacity -ne 640 -or
         $fontGlyphCount -gt $fontSubsetCapacity) {
     throw 'bundled font glyph subset contract failed'
 }
@@ -1710,6 +1713,7 @@ $fontTotalAtlasBytes = [uint64]$report.bundled_font_total_atlas_bytes
 $fontTotalAtlasBudget = [uint64]$report.bundled_font_total_atlas_byte_budget
 if ($fontSourceBase -lt ($fontMaxDisplay * 2) -or
         $fontAtlasBytes -eq 0 -or $fontAtlasBytes -gt $fontAtlasBudget -or
+        $fontTotalAtlasBytes -ne $fontAtlasBytes -or
         $fontTotalAtlasBytes -gt $fontTotalAtlasBudget) {
     throw 'bundled high-resolution font atlas budget failed'
 }

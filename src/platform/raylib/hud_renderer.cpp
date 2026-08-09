@@ -42,27 +42,6 @@ void draw_bar(float x, float y, float width, float ratio, Color color) noexcept 
     DrawRectangleRec({x + 1.0F, y + 1.0F, (width - 2.0F) * ratio, 3.0F}, color);
 }
 
-bool has_requested_glyphs(Font font,
-    const DeathOverlayFontPlan& plan) noexcept {
-    if (!IsFontValid(font)
-            || font.glyphCount < static_cast<int>(plan.codepoint_count)
-            || font.glyphs == nullptr) {
-        return false;
-    }
-    for (std::size_t requested = 0U; requested < plan.codepoint_count;
-         ++requested) {
-        bool found = false;
-        for (int glyph = 0; glyph < font.glyphCount; ++glyph) {
-            if (font.glyphs[glyph].value == plan.codepoints[requested]) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) return false;
-    }
-    return true;
-}
-
 [[nodiscard]] float clamped_ratio(float ratio) noexcept {
     if (!std::isfinite(ratio)) return 0.0F;
     return std::clamp(ratio, 0.0F, 1.0F);
@@ -402,42 +381,14 @@ HudRenderer::~HudRenderer() noexcept {
     shutdown();
 }
 
-bool HudRenderer::initialize() noexcept {
+bool HudRenderer::initialize(const SharedUiFont& shared_ui_font) noexcept {
     shutdown();
-    const HudFontPlan plan = hud_font_plan();
-    if (!plan.covers_required_text) {
-        TraceLog(LOG_WARNING, "HUD: Shared font plan misses required Chinese text");
-        font_ = GetFontDefault();
-        return false;
-    }
-
-    for (std::size_t index = 0U; index < plan.shared.candidate_count; ++index) {
-        const char* path = plan.shared.candidate_paths[index];
-        if (path == nullptr || !FileExists(path)) continue;
-        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
-            plan.shared.codepoints.data(),
-            static_cast<int>(plan.shared.codepoint_count));
-        if (has_requested_glyphs(candidate, plan.shared)) {
-            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
-            font_ = candidate;
-            font_ready_ = true;
-            TraceLog(LOG_INFO, "HUD: Loaded Chinese font %s (%i glyphs)",
-                path, candidate.glyphCount);
-            return true;
-        }
-        if (IsFontValid(candidate)) UnloadFont(candidate);
-    }
-
-    font_ = GetFontDefault();
-    TraceLog(LOG_WARNING,
-        "HUD: No complete Chinese font found; using default font fallback");
-    return false;
+    font_ = shared_ui_font.font();
+    font_ready_ = shared_ui_font.ready();
+    return font_ready_;
 }
 
 void HudRenderer::shutdown() noexcept {
-    const HudFontSelectionPlan selection =
-        make_hud_font_selection_plan(font_ready_);
-    if (selection.owns_loaded_font && IsWindowReady()) UnloadFont(font_);
     font_ = {};
     font_ready_ = false;
 }

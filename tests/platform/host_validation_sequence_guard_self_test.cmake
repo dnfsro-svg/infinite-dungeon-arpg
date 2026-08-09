@@ -17,23 +17,26 @@ if(DEFINED TASK7C_REVIEW_MUTATION
     set(_task7c_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         audio.shutdown();
-        renderer.shutdown_resources();
         pause_menu_renderer.shutdown();
+        renderer.shutdown_resources();
+        shared_ui_font.shutdown();
         window.close();]=])
     set(_task7c_dead_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         if (false) {
             audio.shutdown();
-            renderer.shutdown_resources();
             pause_menu_renderer.shutdown();
+            renderer.shutdown_resources();
+            shared_ui_font.shutdown();
             window.close();
         }]=])
     set(_task7c_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         if (config.fullscreen) {
             audio.shutdown();
-            renderer.shutdown_resources();
             pause_menu_renderer.shutdown();
+            renderer.shutdown_resources();
+            shared_ui_font.shutdown();
             window.close();
         }]=])
     if(TASK7C_REVIEW_MUTATION STREQUAL dead_shutdown_decoy)
@@ -693,15 +696,17 @@ function(arpg_expect_task7c_sequence_rejection
         set(_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         audio.shutdown();
-        renderer.shutdown_resources();
         pause_menu_renderer.shutdown();
+        renderer.shutdown_resources();
+        shared_ui_font.shutdown();
         window.close();]=])
         set(_dead_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         if (false) {
             audio.shutdown();
-            renderer.shutdown_resources();
             pause_menu_renderer.shutdown();
+            renderer.shutdown_resources();
+            shared_ui_font.shutdown();
             window.close();
         }]=])
         string(REPLACE "${_shutdown_chain}" "${_dead_shutdown_chain}"
@@ -710,15 +715,17 @@ function(arpg_expect_task7c_sequence_rejection
         set(_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         audio.shutdown();
-        renderer.shutdown_resources();
         pause_menu_renderer.shutdown();
+        renderer.shutdown_resources();
+        shared_ui_font.shutdown();
         window.close();]=])
         set(_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
             runtime.clean_shutdown_state(), pause_menu);
         if (config.fullscreen) {
             audio.shutdown();
-            renderer.shutdown_resources();
             pause_menu_renderer.shutdown();
+            renderer.shutdown_resources();
+            shared_ui_font.shutdown();
             window.close();
         }]=])
         string(REPLACE "${_shutdown_chain}" "${_conditional_shutdown_chain}"

@@ -1319,8 +1319,10 @@ bool write_integration_render_snapshot(
     }
     result.working_directory_ready = !working_directory_error;
 
+    platform::SharedUiFont shared_ui_font{};
     platform::CombatRenderer renderer{};
-    result.overlay_resources_initialized = renderer.initialize_resources();
+    result.overlay_resources_initialized = shared_ui_font.initialize()
+        && renderer.initialize_resources(shared_ui_font);
     const platform::MaterialResidencyRequest base_request =
         platform::base_material_residency_request();
     result.renderer_initialized = renderer.material_pipeline_ready()
@@ -1741,7 +1743,8 @@ bool write_integration_render_snapshot(
     std::filesystem::rename(missing_map, held_map, file_error);
     if (!file_error) {
         platform::CombatRenderer fallback_renderer{};
-        static_cast<void>(fallback_renderer.initialize_resources());
+        static_cast<void>(
+            fallback_renderer.initialize_resources(shared_ui_font));
         const bool fallback_core_ready = fallback_renderer.material_pipeline_ready()
             && fallback_renderer.material_pack().residency_satisfied(
                 platform::base_material_residency_request())
@@ -1790,6 +1793,7 @@ bool write_integration_render_snapshot(
     } else {
         result.skill_fallback_ok = false;
     }
+    shared_ui_font.shutdown();
     CloseWindow();
     working_directory_error.clear();
     if (result.working_directory_ready) {
@@ -2212,6 +2216,7 @@ int main(int argc, char** argv) {
         pause_ui_1920_runtime, kPauseNonStretchResources);
     const auto font_runtime_valid = [](const auto& status) noexcept {
         return status.bundled_font_ready
+            && status.bundled_font_instance_count == 1U
             && status.bundled_font_glyph_count > 0U
             && status.bundled_font_glyph_count
                 <= platform::kDeathOverlayCodepointCapacity
@@ -2220,6 +2225,8 @@ int main(int argc, char** argv) {
             && status.bundled_font_atlas_bytes > 0U
             && status.bundled_font_atlas_bytes
                 <= platform::kUiFontAtlasByteBudget
+            && status.bundled_font_total_atlas_bytes
+                == status.bundled_font_atlas_bytes
             && status.bundled_font_total_atlas_bytes
                 <= status.bundled_font_total_atlas_byte_budget;
     };
@@ -2607,6 +2614,8 @@ int main(int argc, char** argv) {
            << "pause_ui_runtime_draws_1920=" << (pause_ui_1920_runtime_ok ? "pass" : "fail") << '\n'
            << "pause_ui_draw_mask_1920=" << ui_draw_mask(pause_ui_1920_runtime) << '\n'
            << "bundled_font_runtime=" << (bundled_font_runtime_ok ? "pass" : "fail") << '\n'
+           << "bundled_font_instance_count=" << static_cast<unsigned>(
+                hud_ui_runtime.bundled_font_instance_count) << '\n'
            << "bundled_font_glyph_count=" << hud_ui_runtime.bundled_font_glyph_count << '\n'
            << "bundled_font_subset_capacity=" << platform::kDeathOverlayCodepointCapacity << '\n'
            << "bundled_font_source_base_size=" << hud_ui_runtime.bundled_font_source_base_size << '\n'

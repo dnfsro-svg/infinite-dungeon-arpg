@@ -2,13 +2,15 @@
 
 #include "ui_text_catalog.hpp"
 
+#include <raylib.h>
+
 #include <array>
 #include <cstddef>
 
 namespace arpg::platform {
 
 inline constexpr std::size_t kUiGlyphCapacity = 640U;
-inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
+inline constexpr std::size_t kUiFontAtlasInstanceCount = 1U;
 inline constexpr std::size_t kUiFontAtlasByteBudget =
     32U * 1024U * 1024U;
 inline constexpr int kUiFontSourceBaseSize = 96;
@@ -32,10 +34,20 @@ struct UiGlyphPlan final {
     bool capacity_exceeded{};
 };
 
-// Task 3 defines only the fixed source plan. Loading and ownership are wired
-// by the renderer/host lifecycle task.
-struct SharedUiFont final {
-    UiGlyphPlan glyph_plan{};
+class SharedUiFont final {
+public:
+    ~SharedUiFont() noexcept;
+    [[nodiscard]] bool initialize() noexcept;
+    void shutdown() noexcept;
+    [[nodiscard]] bool ready() const noexcept;
+    [[nodiscard]] Font font() const noexcept;
+    [[nodiscard]] std::size_t atlas_bytes() const noexcept;
+    [[nodiscard]] const UiGlyphPlan& plan() const noexcept;
+
+private:
+    Font font_{};
+    UiGlyphPlan plan_{};
+    bool ready_{};
 };
 
 using UiGlyphPlanCatalogVisitor = void (*)(UiTextVisitor visitor,

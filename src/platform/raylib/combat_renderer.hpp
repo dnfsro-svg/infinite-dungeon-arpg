@@ -112,7 +112,7 @@ struct HoleProjectedGeometry final {
 
 class CombatRenderer final {
 public:
-    [[nodiscard]] bool initialize_resources() noexcept;
+    [[nodiscard]] bool initialize_resources(const SharedUiFont&) noexcept;
     void shutdown_resources() noexcept;
     [[nodiscard]] bool active_skill_assets_ready() const noexcept;
     [[nodiscard]] bool material_pipeline_ready() const noexcept;

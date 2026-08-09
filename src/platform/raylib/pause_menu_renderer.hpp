@@ -2,6 +2,7 @@
 
 #include "pause_menu_view.hpp"
 #include "material_pack.hpp"
+#include "shared_ui_font.hpp"
 
 #include <raylib.h>
 
@@ -44,15 +45,15 @@ public:
     PauseMenuRenderer(const PauseMenuRenderer&) = delete;
     PauseMenuRenderer& operator=(const PauseMenuRenderer&) = delete;
 
-    [[nodiscard]] bool initialize() noexcept;
+    [[nodiscard]] bool initialize(const SharedUiFont&) noexcept;
     void shutdown() noexcept;
-    [[nodiscard]] bool has_cjk_font() const noexcept { return owns_font_; }
+    [[nodiscard]] bool has_cjk_font() const noexcept { return font_ready_; }
     void draw(const PauseMenuState& state,
         const MaterialPack& material_pack) const noexcept;
 
 private:
     Font font_{};
-    bool owns_font_{};
+    bool font_ready_{};
 };
 
 void draw_pause_menu(const PauseMenuState& state) noexcept;

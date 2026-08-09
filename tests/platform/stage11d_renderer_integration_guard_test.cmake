@@ -9,6 +9,12 @@ set(_combat_header_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.hpp"
 set(_combat_source_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_room_source_path "${SOURCE_ROOT}/src/platform/raylib/room_renderer.cpp")
 set(_hud_source_path "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp")
+set(_death_overlay_source_path
+    "${SOURCE_ROOT}/src/platform/raylib/death_overlay_renderer.cpp")
+set(_pause_menu_source_path
+    "${SOURCE_ROOT}/src/platform/raylib/pause_menu_renderer.cpp")
+set(_shared_ui_font_source_path
+    "${SOURCE_ROOT}/src/platform/raylib/shared_ui_font.cpp")
 set(_host_source_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 set(_runtime_source_path
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
@@ -41,6 +47,9 @@ foreach(_required_path IN ITEMS
         "${_combat_source_path}"
         "${_room_source_path}"
         "${_hud_source_path}"
+        "${_death_overlay_source_path}"
+        "${_pause_menu_source_path}"
+        "${_shared_ui_font_source_path}"
         "${_host_source_path}"
         "${_runtime_source_path}"
         "${_report_source_path}")
@@ -53,6 +62,9 @@ file(READ "${_combat_header_path}" _combat_header)
 file(READ "${_combat_source_path}" _combat_source)
 file(READ "${_room_source_path}" _room_source)
 file(READ "${_hud_source_path}" _hud_source)
+file(READ "${_death_overlay_source_path}" _death_overlay_source)
+file(READ "${_pause_menu_source_path}" _pause_menu_source)
+file(READ "${_shared_ui_font_source_path}" _shared_ui_font_source)
 file(READ "${_host_source_path}" _host_source)
 file(READ "${_runtime_source_path}" _runtime_source)
 file(READ "${_report_source_path}" _report_source)
@@ -66,6 +78,53 @@ function(stage11d_count_token SOURCE TOKEN OUT_COUNT)
     math(EXPR _count "${_removed} / ${_token_length}")
     set(${OUT_COUNT} ${_count} PARENT_SCOPE)
 endfunction()
+
+foreach(_borrower_source IN ITEMS
+        "${_hud_source}"
+        "${_death_overlay_source}"
+        "${_pause_menu_source}")
+    foreach(_owned_font_call IN ITEMS "LoadFontEx(" "UnloadFont(")
+        string(FIND "${_borrower_source}" "${_owned_font_call}"
+            _owned_font_call_position)
+        if(NOT _owned_font_call_position EQUAL -1)
+            message(FATAL_ERROR
+                "Shared UI font guard: renderer borrower contains ${_owned_font_call}")
+        endif()
+    endforeach()
+endforeach()
+foreach(_owned_font_call IN ITEMS "LoadFontEx(" "UnloadFont(")
+    string(FIND "${_shared_ui_font_source}" "${_owned_font_call}"
+        _owned_font_call_position)
+    if(_owned_font_call_position EQUAL -1)
+        message(FATAL_ERROR
+            "Shared UI font guard: SharedUiFont owner is missing ${_owned_font_call}")
+    endif()
+endforeach()
+
+arpg_sanitize_cpp_source("${_host_source}" _shared_font_host_surface)
+string(REGEX REPLACE "[ \t\r\n]+" "" _shared_font_host_normalized
+    "${_shared_font_host_surface}")
+set(_shared_font_host_lifecycle
+    "SharedUiFontshared_ui_font{}"
+    "ChangeDirectory("
+    "shared_ui_font.initialize()"
+    "renderer.initialize_resources(shared_ui_font)"
+    "pause_menu_renderer.initialize(shared_ui_font)"
+    "pause_menu_renderer.shutdown()"
+    "renderer.shutdown_resources()"
+    "shared_ui_font.shutdown()"
+    "window.close()")
+set(_shared_font_previous_position -1)
+foreach(_shared_font_token IN LISTS _shared_font_host_lifecycle)
+    string(FIND "${_shared_font_host_normalized}" "${_shared_font_token}"
+        _shared_font_position)
+    if(_shared_font_position EQUAL -1
+            OR NOT _shared_font_previous_position LESS _shared_font_position)
+        message(FATAL_ERROR
+            "Shared UI font guard: Host lifecycle is missing or out of order at ${_shared_font_token}")
+    endif()
+    set(_shared_font_previous_position ${_shared_font_position})
+endforeach()
 
 function(stage11d_renderer_unconditional_cpp_surface SOURCE OUT_SURFACE)
     arpg_sanitize_cpp_source("${SOURCE}" _logical_source)

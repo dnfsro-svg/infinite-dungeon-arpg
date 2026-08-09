@@ -6,6 +6,27 @@
 namespace arpg::platform {
 namespace {
 
+[[nodiscard]] bool has_requested_glyphs(Font font,
+    const UiGlyphPlan& plan) noexcept {
+    if (!IsFontValid(font)
+            || font.glyphCount != static_cast<int>(plan.codepoint_count)
+            || font.glyphs == nullptr) {
+        return false;
+    }
+    for (std::size_t requested = 0U; requested < plan.codepoint_count;
+         ++requested) {
+        bool found = false;
+        for (int glyph = 0; glyph < font.glyphCount; ++glyph) {
+            if (font.glyphs[glyph].value == plan.codepoints[requested]) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool is_continuation(unsigned char byte) noexcept {
     return byte >= 0x80U && byte <= 0xBFU;
 }
@@ -89,6 +110,69 @@ void add_catalog_text(const char* text, void* context) noexcept {
 }
 
 }  // namespace
+
+SharedUiFont::~SharedUiFont() noexcept {
+    shutdown();
+}
+
+bool SharedUiFont::initialize() noexcept {
+    shutdown();
+    plan_ = ui_glyph_plan();
+    if (plan_.capacity_exceeded || plan_.codepoint_count == 0U
+            || plan_.codepoint_count > plan_.codepoints.size()) {
+        TraceLog(LOG_ERROR, "Shared UI font glyph plan is invalid");
+        return false;
+    }
+
+    for (std::size_t index = 0U; index < plan_.candidate_count; ++index) {
+        const char* const path = plan_.candidate_paths[index];
+        if (path == nullptr || !FileExists(path)) continue;
+        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
+            plan_.codepoints.data(), static_cast<int>(plan_.codepoint_count));
+        const std::size_t candidate_atlas_bytes = ui_font_atlas_bytes(
+            candidate.texture.width, candidate.texture.height);
+        if (has_requested_glyphs(candidate, plan_)
+                && candidate_atlas_bytes > 0U
+                && candidate_atlas_bytes <= kUiFontAtlasByteBudget) {
+            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
+            font_ = candidate;
+            ready_ = true;
+            TraceLog(LOG_INFO,
+                "Shared UI font loaded %s (%i glyphs, %llu atlas bytes)",
+                path, candidate.glyphCount,
+                static_cast<unsigned long long>(candidate_atlas_bytes));
+            return true;
+        }
+        if (IsFontValid(candidate)) UnloadFont(candidate);
+    }
+
+    font_ = {};
+    TraceLog(LOG_ERROR, "Shared UI font has no valid bundled candidate");
+    return false;
+}
+
+void SharedUiFont::shutdown() noexcept {
+    if (ready_ && IsWindowReady() && IsFontValid(font_)) UnloadFont(font_);
+    font_ = {};
+    ready_ = false;
+}
+
+bool SharedUiFont::ready() const noexcept {
+    return ready_;
+}
+
+Font SharedUiFont::font() const noexcept {
+    return font_;
+}
+
+std::size_t SharedUiFont::atlas_bytes() const noexcept {
+    return ready_ ? ui_font_atlas_bytes(
+        font_.texture.width, font_.texture.height) : 0U;
+}
+
+const UiGlyphPlan& SharedUiFont::plan() const noexcept {
+    return plan_;
+}
 
 UiGlyphPlan build_ui_glyph_plan(
     UiGlyphPlanCatalogVisitor visit_catalog) noexcept {

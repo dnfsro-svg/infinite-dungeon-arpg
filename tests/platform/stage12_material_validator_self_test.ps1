@@ -286,6 +286,14 @@ $reportPath = Join-Path $missingBundledFont 'stage12-material-evidence.txt'
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='missing-bundled-font-runtime'; Path=$missingBundledFont }
 
+$multipleBundledFonts = New-Mutation 'multiple-bundled-font-instances'
+$reportPath = Join-Path $multipleBundledFonts 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    'bundled_font_instance_count=\d+', 'bundled_font_instance_count=3' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='multiple-bundled-font-instances'; Path=$multipleBundledFonts }
+
 $emptyFontSubset = New-Mutation 'empty-bundled-font-subset'
 $reportPath = Join-Path $emptyFontSubset 'stage12-material-evidence.txt'
 (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
@@ -306,6 +314,18 @@ $reportPath = Join-Path $oversizeFontAtlas 'stage12-material-evidence.txt'
     'bundled_font_atlas_bytes=\d+', 'bundled_font_atlas_bytes=999999999' |
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='oversize-bundled-font-atlas'; Path=$oversizeFontAtlas }
+
+$duplicatedFontAtlas = New-Mutation 'duplicated-bundled-font-atlas-total'
+$reportPath = Join-Path $duplicatedFontAtlas 'stage12-material-evidence.txt'
+$atlasReport = Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8
+$singleAtlasBytes = [regex]::Match(
+    $atlasReport, '(?m)^bundled_font_atlas_bytes=(\d+)\r?$').Groups[1].Value
+$atlasReport = $atlasReport -replace
+    '(?m)^bundled_font_total_atlas_bytes=\d+\r?$',
+    "bundled_font_total_atlas_bytes=$([uint64]$singleAtlasBytes * 2)"
+$atlasReport | Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='duplicated-bundled-font-atlas-total'; Path=$duplicatedFontAtlas }
 
 $missingResidentPeak = New-Mutation 'missing-resident-peak-bytes'
 $reportPath = Join-Path $missingResidentPeak 'stage12-material-evidence.txt'

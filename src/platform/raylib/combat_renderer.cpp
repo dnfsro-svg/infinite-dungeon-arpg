@@ -283,9 +283,10 @@ std::optional<std::size_t> hud_presented_frame_index(
         ? std::optional<std::size_t>{index} : std::nullopt;
 }
 
-bool CombatRenderer::initialize_resources() noexcept {
-    const bool death_font_ready = death_overlay_.initialize();
-    const bool hud_font_ready = hud_renderer_.initialize();
+bool CombatRenderer::initialize_resources(
+    const SharedUiFont& shared_ui_font) noexcept {
+    const bool death_font_ready = death_overlay_.initialize(shared_ui_font);
+    const bool hud_font_ready = hud_renderer_.initialize(shared_ui_font);
     static_cast<void>(material_pack_.synchronize_residency(
         base_material_residency_request()));
     if (!death_font_ready || !hud_font_ready) {
