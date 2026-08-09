@@ -29,6 +29,10 @@ function(run_parser_case LABEL SOURCE MARKER EXPECT_SUCCESS EXPECTED_BODY
         "if(REQUIRED_CODE EQUAL -1)\n"
         "  message(FATAL_ERROR \"real code missing from code projection\")\n"
         "endif()\n"
+        "string(FIND \"\${CODE}\" \"const auto decimal = 1'000; const auto decimal_zero = 10'000; const auto hex = 0xFF'00;\" DIGIT_SEPARATORS)\n"
+        "if(DIGIT_SEPARATORS EQUAL -1)\n"
+        "  message(FATAL_ERROR \"digit separators containing zero missing from code projection: [\${CODE}]\")\n"
+        "endif()\n"
         "foreach(FORBIDDEN IN ITEMS http://x /*x*/ literal-braces raw-comment fake-marker)\n"
         "  string(FIND \"\${CODE}\" \"\${FORBIDDEN}\" FOUND)\n"
         "  if(NOT FOUND EQUAL -1)\n"
@@ -67,13 +71,16 @@ void target() {
     const char* raw = R"tag({ raw-comment // /* } })tag";
     // } void fake-marker() {
     /* { fake-marker } */
+    const auto decimal = 1'000;
+    const auto decimal_zero = 10'000;
+    const auto hex = 0xFF'00;
     if (ready) { consume(); }
 }
 void after() { reject(); }
 ]=])
 string(REPLACE "\n" "\r\n" POSITIVE_SOURCE "${POSITIVE_SOURCE}")
 set(POSITIVE_EXPECTED
-    "const char* url = \"http://x\"; const char* comment_text = \"/*x*/\"; const char* escaped = \"escaped \\\" quote and } literal-braces\"; const char close = '}'; const char quote = '\\''; const char* raw = R\"tag({ raw-comment // /* } })tag\"; if (ready) { consume(); }")
+    "const char* url = \"http://x\"; const char* comment_text = \"/*x*/\"; const char* escaped = \"escaped \\\" quote and } literal-braces\"; const char close = '}'; const char quote = '\\''; const char* raw = R\"tag({ raw-comment // /* } })tag\"; const auto decimal = 1'000; const auto decimal_zero = 10'000; const auto hex = 0xFF'00; if (ready) { consume(); }")
 run_parser_case(crlf_literals_raw_nested "${POSITIVE_SOURCE}"
     "void target()" TRUE "${POSITIVE_EXPECTED}" "")
 

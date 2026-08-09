@@ -53,7 +53,8 @@ function(_scan_cpp_source SOURCE FUNCTION_MARKER PRESERVED_OUTPUT CODE_OUTPUT)
                 "${PREVIOUS_CHARACTER}")
             string(REGEX MATCH "^[0-9A-Fa-f]$" NEXT_IS_DIGIT
                 "${NEXT_CHARACTER}")
-            if(PREVIOUS_IS_DIGIT AND NEXT_IS_DIGIT)
+            if(NOT PREVIOUS_IS_DIGIT STREQUAL ""
+                    AND NOT NEXT_IS_DIGIT STREQUAL "")
                 set(DIGIT_SEPARATOR TRUE)
             endif()
         endif()
