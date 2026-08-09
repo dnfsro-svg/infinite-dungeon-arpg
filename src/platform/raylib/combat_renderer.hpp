@@ -10,6 +10,7 @@
 #include "hud_notice_state.hpp"
 #include "hud_renderer.hpp"
 #include "loot_pickup_feedback.hpp"
+#include "loot_suction_animation.hpp"
 #include "material_loot_view.hpp"
 #include "material_pack.hpp"
 #include "monster_material_presenter.hpp"
@@ -168,6 +169,7 @@ public:
         hud_static_formatting_diagnostics() const noexcept;
     [[nodiscard]] std::uint64_t hud_presented_frame_count(
         HudPresentedFrame) const noexcept;
+    [[nodiscard]] std::size_t loot_suction_active_count() const noexcept;
     [[nodiscard]] const ActiveSkillHudModel& active_skill_hud_model()
         const noexcept;
     [[nodiscard]] Font hud_font() const noexcept;
@@ -222,6 +224,7 @@ private:
     HudNoticeState hud_notices_{};
     LootPickupFeedbackState loot_pickup_feedback_{};
     MaterialPickupFeedbackState material_pickup_feedback_{};
+    LootSuctionState loot_suction_{};
     MaterialPack material_pack_{};
     MonsterMaterialPresenter monster_presenter_{};
     std::array<MonsterMaterialDrawRuntimeStatus,

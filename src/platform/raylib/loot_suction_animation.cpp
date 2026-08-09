@@ -112,6 +112,8 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
                 equipment_receipt.item_id)) {
             reserve_flight(flights_) = {item->position, {},
                 ground_loot_item_sprite(item->slot),
+                ground_loot_rarity_sprite(item->rarity,
+                    item->source == dungeon::GroundItemSource::abyss_chest),
                 {255U, 255U, 255U, 255U}, 0.0F, true, true};
         }
     }
@@ -137,8 +139,8 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
             continue;
         }
         reserve_flight(flights_) = {material.position, {},
-            material_loot_sprite(material.material), material_color(material.material),
-            0.0F, true, false};
+            material_loot_sprite(material.material), MaterialSpriteId::missing,
+            material_color(material.material), 0.0F, true, false};
         --remaining[material_index];
     }
 }

@@ -20,6 +20,7 @@ struct LootSuctionFlight final {
     combat::Vec3 world_position{};
     LootSuctionPoint center{};
     MaterialSpriteId sprite{MaterialSpriteId::missing};
+    MaterialSpriteId rarity_sprite{MaterialSpriteId::missing};
     Rgba8 color{255U, 255U, 255U, 255U};
     float elapsed_seconds{};
     bool active{};

@@ -158,7 +158,7 @@ int main() {
         const arpg::test::TestSuite cplay021_only[] = {
             loot_suction_animation_suite(),
         };
-        return arpg::test::run_suites(cplay021_only, 6,
+        return arpg::test::run_suites(cplay021_only, 7,
             "CPLAY-021 bounded loot suction animation");
     }
     if (cplay016_ground_potion_label_only()) {

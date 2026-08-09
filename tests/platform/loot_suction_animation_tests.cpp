@@ -1,6 +1,8 @@
 #include "allocation_probe.hpp"
 #include "test_framework.hpp"
 
+#include "combat_renderer.hpp"
+#include "control_hints.hpp"
 #include "loot_suction_animation.hpp"
 
 #include <cstddef>
@@ -32,6 +34,12 @@ platform::DungeonRenderStatus saved_equipment_receipt(
     status.loot_pickup = {true, generation, item_id, 3U, 24U,
         items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
     return status;
+}
+
+platform::ControlHints control_hints() noexcept {
+    platform::ControlHints hints{};
+    hints.revision = 1U;
+    return hints;
 }
 
 dungeon::GroundItemSnapshot equipment(
@@ -78,6 +86,8 @@ arpg::test::Failure committed_equipment_disappearance_flies_to_player_waist()
     ARPG_REQUIRE(start.flights[0].equipment);
     ARPG_REQUIRE(start.flights[0].sprite
         == platform::ground_loot_item_sprite(items::ItemSlot::weapon));
+    ARPG_REQUIRE(start.flights[0].rarity_sprite
+        == platform::ground_loot_rarity_sprite(items::ItemRarity::rare, false));
 
     state.update(0.35F, false);
     const platform::LootSuctionPlan middle = state.build_plan(
@@ -216,6 +226,22 @@ arpg::test::Failure full_capacity_replaces_most_elapsed_flight_and_allocates_not
     return {};
 }
 
+arpg::test::Failure combat_renderer_commits_and_clears_loot_suction()
+    noexcept {
+    platform::CombatRenderer renderer{};
+    dungeon::DungeonSnapshot previous{};
+    append(previous, equipment(1U, 42U));
+    const dungeon::DungeonSnapshot current{};
+
+    renderer.observe_hud(previous, current, saved_equipment_receipt(1U, 42U),
+        control_hints(), 0.0F, false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
+
+    renderer.clear_combat_transients();
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 0U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"equipment trajectory to player waist",
         &committed_equipment_disappearance_flies_to_player_waist},
@@ -225,6 +251,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"pause and arrival pulse", &pause_freezes_and_arrival_reclaims_with_pulse},
     {"full capacity replacement and zero allocation",
         &full_capacity_replaces_most_elapsed_flight_and_allocates_nothing},
+    {"combat renderer loot suction lifecycle",
+        &combat_renderer_commits_and_clears_loot_suction},
 };
 
 }  // namespace
