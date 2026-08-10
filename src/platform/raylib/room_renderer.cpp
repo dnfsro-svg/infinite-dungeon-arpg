@@ -44,7 +44,8 @@ void draw_world_prompt(const char* text, Vector2 anchor,
         {color.r, color.g, color.b, color.a}));
     DrawRectangleRec(layout.backing, raylib_color(style.backing));
     draw_crisp_ui_text(font, text, layout.text_position,
-        font_size, 1.0F, color);
+        font_size * layout.text_scale,
+        1.0F * layout.text_scale, color);
 }
 
 Vector2 lerp(Vector2 from, Vector2 to, float amount) noexcept {

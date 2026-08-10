@@ -473,7 +473,8 @@ arpg::test::Failure world_prompt_style_uses_opaque_high_contrast_inner_backing()
         {236U, 218U, 72U, 255U},
         {154U, 76U, 210U, 255U},
     }};
-    for (const platform::Rgba8 requested : kDoorColors) {
+    for (std::size_t index = 0U; index < kDoorColors.size(); ++index) {
+        const platform::Rgba8 requested = kDoorColors[index];
         const platform::Rgba8 corrected =
             platform::world_prompt_text_color(requested);
         const Color actual{corrected.r, corrected.g,
@@ -481,12 +482,42 @@ arpg::test::Failure world_prompt_style_uses_opaque_high_contrast_inner_backing()
         ARPG_REQUIRE(corrected.a == 255U);
         ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
             actual, backing) >= 4.5F);
+        if (index < 3U) {
+            ARPG_REQUIRE(corrected.r == requested.r);
+            ARPG_REQUIRE(corrected.g == requested.g);
+            ARPG_REQUIRE(corrected.b == requested.b);
+            ARPG_REQUIRE(corrected.a == requested.a);
+        }
     }
     const platform::Rgba8 corrected_chaos =
         platform::world_prompt_text_color(kDoorColors[3]);
     ARPG_REQUIRE(corrected_chaos.r == style.primary.r);
     ARPG_REQUIRE(corrected_chaos.g == style.primary.g);
     ARPG_REQUIRE(corrected_chaos.b == style.primary.b);
+    ARPG_REQUIRE(corrected_chaos.a == style.primary.a);
+
+    constexpr std::array<platform::Rgba8, 4U> kSemanticColors{{
+        {248U, 246U, 238U, 255U},
+        {194U, 229U, 255U, 255U},
+        {255U, 210U, 118U, 255U},
+        {255U, 152U, 152U, 255U},
+    }};
+    for (const platform::Rgba8 expected : kSemanticColors) {
+        const platform::Rgba8 actual =
+            platform::world_prompt_text_color(expected);
+        ARPG_REQUIRE(actual.r == expected.r);
+        ARPG_REQUIRE(actual.g == expected.g);
+        ARPG_REQUIRE(actual.b == expected.b);
+        ARPG_REQUIRE(actual.a == expected.a);
+    }
+    const platform::Rgba8 low_contrast{
+        style.backing.r, style.backing.g, style.backing.b, 31U};
+    const platform::Rgba8 corrected_low =
+        platform::world_prompt_text_color(low_contrast);
+    ARPG_REQUIRE(corrected_low.r == style.primary.r);
+    ARPG_REQUIRE(corrected_low.g == style.primary.g);
+    ARPG_REQUIRE(corrected_low.b == style.primary.b);
+    ARPG_REQUIRE(corrected_low.a == style.primary.a);
     return {};
 }
 

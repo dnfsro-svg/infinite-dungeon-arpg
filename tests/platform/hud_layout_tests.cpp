@@ -260,6 +260,7 @@ arpg::test::Failure world_prompt_backings_fit_supported_viewports() noexcept {
                 {width * 0.36F, 30.0F}, width, height);
         const Rectangle screen{0.0F, 0.0F, width, height};
         ARPG_REQUIRE(layout.visible);
+        ARPG_REQUIRE(layout.text_scale == 1.0F);
         ARPG_REQUIRE(layout.backing.x >= screen.x);
         ARPG_REQUIRE(layout.backing.y >= screen.y);
         ARPG_REQUIRE(layout.backing.x + layout.backing.width
@@ -272,6 +273,29 @@ arpg::test::Failure world_prompt_backings_fit_supported_viewports() noexcept {
             <= layout.backing.x + layout.backing.width);
         ARPG_REQUIRE(layout.text_position.y + layout.measured.y
             <= layout.backing.y + layout.backing.height);
+    }
+
+    constexpr std::array<Vector2, 2U> kOversizedMeasured{{
+        {1600.0F, 30.0F},
+        {120.0F, 900.0F},
+    }};
+    for (const Vector2 measured : kOversizedMeasured) {
+        const platform::WorldPromptLayout layout =
+            platform::world_prompt_layout(
+                {400.0F, 448.0F}, measured, 800.0F, 450.0F);
+        ARPG_REQUIRE(layout.visible);
+        ARPG_REQUIRE(layout.text_scale > 0.0F);
+        ARPG_REQUIRE(layout.text_scale < 1.0F);
+        ARPG_REQUIRE(layout.measured.x <= layout.backing.width);
+        ARPG_REQUIRE(layout.measured.y <= layout.backing.height);
+        ARPG_REQUIRE(layout.text_position.x >= 0.0F);
+        ARPG_REQUIRE(layout.text_position.y >= 0.0F);
+        ARPG_REQUIRE(layout.text_position.x + layout.measured.x <= 800.0F);
+        ARPG_REQUIRE(layout.text_position.y + layout.measured.y <= 450.0F);
+        ARPG_REQUIRE(layout.backing.x >= 0.0F);
+        ARPG_REQUIRE(layout.backing.y >= 0.0F);
+        ARPG_REQUIRE(layout.backing.x + layout.backing.width <= 800.0F);
+        ARPG_REQUIRE(layout.backing.y + layout.backing.height <= 450.0F);
     }
     return {};
 }

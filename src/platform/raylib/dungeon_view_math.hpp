@@ -63,6 +63,7 @@ struct WorldPromptStyle final {
 
 struct WorldPromptLayout final {
     bool visible{};
+    float text_scale{};
     Rectangle backing{};
     Vector2 text_position{};
     Vector2 measured{};

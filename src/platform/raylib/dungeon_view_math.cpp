@@ -316,26 +316,39 @@ WorldPromptLayout world_prompt_layout(
             || !(measured.x > 0.0F) || !(measured.y > 0.0F)) {
         return layout;
     }
-    const float scale = std::clamp((std::min)(
+    const float viewport_scale = std::clamp((std::min)(
         screen_width / 1280.0F, screen_height / 720.0F), 0.625F, 1.5F);
-    const float padding_x = 8.0F * scale;
-    const float padding_y = 5.0F * scale;
-    const float backing_width = (std::min)(
-        screen_width, measured.x + padding_x * 2.0F);
-    const float backing_height = (std::min)(
-        screen_height, measured.y + padding_y * 2.0F);
+    const float padding_x = 8.0F * viewport_scale;
+    const float padding_y = 5.0F * viewport_scale;
+    const float available_width = screen_width - padding_x * 2.0F;
+    const float available_height = screen_height - padding_y * 2.0F;
+    if (!(available_width > 0.0F) || !(available_height > 0.0F)) {
+        return layout;
+    }
+    const float text_scale = (std::min)({
+        1.0F, available_width / measured.x, available_height / measured.y});
+    constexpr float kMinimumReadableTextHeight = 8.0F;
+    if (!(text_scale > 0.0F)
+            || measured.y * text_scale < kMinimumReadableTextHeight) {
+        return layout;
+    }
+    const Vector2 scaled_measured{
+        measured.x * text_scale, measured.y * text_scale};
+    const float backing_width = scaled_measured.x + padding_x * 2.0F;
+    const float backing_height = scaled_measured.y + padding_y * 2.0F;
     const float backing_x = std::clamp(
         anchor.x - backing_width * 0.5F,
         0.0F, screen_width - backing_width);
     const float backing_y = std::clamp(anchor.y,
         0.0F, screen_height - backing_height);
     layout.visible = true;
+    layout.text_scale = text_scale;
     layout.backing = {
         backing_x, backing_y, backing_width, backing_height};
-    layout.measured = measured;
+    layout.measured = scaled_measured;
     layout.text_position = {
-        backing_x + (backing_width - measured.x) * 0.5F,
-        backing_y + (backing_height - measured.y) * 0.5F,
+        backing_x + (backing_width - scaled_measured.x) * 0.5F,
+        backing_y + (backing_height - scaled_measured.y) * 0.5F,
     };
     return layout;
 }

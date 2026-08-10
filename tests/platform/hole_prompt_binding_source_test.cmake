@@ -42,7 +42,7 @@ foreach(REQUIRED_TOKEN IN ITEMS
         "world_prompt_layout( anchor, measured, screen_width, screen_height)"
         "color = raylib_color(world_prompt_text_color( {color.r, color.g, color.b, color.a}))"
         "DrawRectangleRec(layout.backing, raylib_color(style.backing))"
-        "draw_crisp_ui_text(font, text, layout.text_position, font_size, 1.0F, color)")
+        "draw_crisp_ui_text(font, text, layout.text_position, font_size * layout.text_scale, 1.0F * layout.text_scale, color)")
     string(FIND "${WORLD_PROMPT_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
     if(TOKEN_INDEX EQUAL -1)
         message(FATAL_ERROR
@@ -107,6 +107,33 @@ foreach(REQUIRED_TOKEN IN ITEMS "draw_world_prompt(label")
     string(FIND "${ABYSS_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
     if(TOKEN_INDEX EQUAL -1)
         message(FATAL_ERROR "abyss renderer must use the shared world prompt path")
+    endif()
+endforeach()
+
+extract_cpp_function_body("${ROOM_TEXT}"
+    "void CombatRenderer::draw_abyss_overlay(" ABYSS_OVERLAY_BODY ABYSS_OVERLAY_CODE)
+set(ABYSS_SHARED_FONT_CALL
+    "draw_abyss(current, static_cast<float>(GetTime()), world_ui_font_, world_ui_font_ready_)")
+string(FIND "${ABYSS_OVERLAY_BODY}" "${ABYSS_SHARED_FONT_CALL}"
+    ABYSS_SHARED_FONT_INDEX)
+if(ABYSS_SHARED_FONT_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "CombatRenderer abyss overlay must pass its shared CJK font")
+endif()
+string(REGEX MATCHALL "draw_abyss\\(" ABYSS_DRAW_CALLS
+    "${ABYSS_OVERLAY_CODE}")
+list(LENGTH ABYSS_DRAW_CALLS ABYSS_DRAW_CALL_COUNT)
+if(NOT ABYSS_DRAW_CALL_COUNT EQUAL 1)
+    message(FATAL_ERROR
+        "CombatRenderer abyss overlay must contain exactly one live draw call")
+endif()
+foreach(FORBIDDEN_TOKEN IN ITEMS "GetFontDefault(" "if(false)" "if (false)"
+        "if(0)" "if (0)")
+    string(FIND "${ABYSS_OVERLAY_CODE}" "${FORBIDDEN_TOKEN}"
+        FORBIDDEN_INDEX)
+    if(NOT FORBIDDEN_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "CombatRenderer abyss overlay contains a default-font or dead decoy path")
     endif()
 endforeach()
 

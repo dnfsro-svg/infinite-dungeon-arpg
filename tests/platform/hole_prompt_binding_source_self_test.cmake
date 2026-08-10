@@ -54,8 +54,8 @@ run_room_mutant(missing_contrast_correction
     "color = raylib_color(world_prompt_text_color(\n        {color.r, color.g, color.b, color.a}));"
     "color.a = 255U;")
 run_room_mutant(default_text_draw
-    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size, 1.0F, color);"
-    "DrawTextEx(font, text, layout.text_position, font_size, 1.0F, color);")
+    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size * layout.text_scale,\n        1.0F * layout.text_scale, color);"
+    "DrawTextEx(font, text, layout.text_position, font_size * layout.text_scale, 1.0F * layout.text_scale, color);")
 run_room_mutant(legacy_text_measure
     "MeasureTextEx(font, text, font_size, 1.0F)"
     "Vector2{static_cast<float>(MeasureText(text, static_cast<int>(font_size))), font_size}")
@@ -68,8 +68,15 @@ endif()
 run_guard(default_font_owner "${ROOM_ORIGINAL}" "${COMBAT_MUTATED}" FALSE)
 
 run_room_mutant(dead_cjk_decoy
-    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size, 1.0F, color);"
-    "if (false) { draw_crisp_ui_text(font, text, layout.text_position, font_size, 1.0F, color); }")
+    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size * layout.text_scale,\n        1.0F * layout.text_scale, color);"
+    "if (false) { draw_crisp_ui_text(font, text, layout.text_position, font_size * layout.text_scale, 1.0F * layout.text_scale, color); }")
+
+run_room_mutant(abyss_overlay_default_font
+    "draw_abyss(current, static_cast<float>(GetTime()),\n        world_ui_font_, world_ui_font_ready_);"
+    "draw_abyss(current, static_cast<float>(GetTime()),\n        GetFontDefault(), true);")
+run_room_mutant(abyss_overlay_dead_shared_font_decoy
+    "draw_abyss(current, static_cast<float>(GetTime()),\n        world_ui_font_, world_ui_font_ready_);"
+    "if (false) { draw_abyss(current, static_cast<float>(GetTime()), world_ui_font_, world_ui_font_ready_); }\n    draw_abyss(current, static_cast<float>(GetTime()), GetFontDefault(), true);")
 
 if(MISSED_MUTATIONS)
     list(JOIN MISSED_MUTATIONS ", " MISSED_LABELS)
