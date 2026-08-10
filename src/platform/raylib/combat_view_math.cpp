@@ -1,6 +1,7 @@
 #include "combat_view_math.hpp"
 
 #include "combat/room_bounds.hpp"
+#include "ui_text_catalog.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -51,12 +52,12 @@ Rgba8 affix_category_color(combat::MonsterAffixId id) noexcept {
 
 const char* affix_tier_text(combat::MonsterAffixTier tier) noexcept {
     switch (tier) {
-    case combat::MonsterAffixTier::m1: return "M1";
-    case combat::MonsterAffixTier::m2: return "M2";
-    case combat::MonsterAffixTier::m3: return "M3";
-    case combat::MonsterAffixTier::count: return "M1";
+    case combat::MonsterAffixTier::m1: return u8"词缀Ⅰ";
+    case combat::MonsterAffixTier::m2: return u8"词缀Ⅱ";
+    case combat::MonsterAffixTier::m3: return u8"词缀Ⅲ";
+    case combat::MonsterAffixTier::count: return u8"词缀Ⅰ";
     }
-    return "M1";
+    return u8"词缀Ⅰ";
 }
 
 }  // namespace
@@ -224,35 +225,35 @@ MonsterVisual monster_visual(
     switch (id) {
     case combat::MonsterId::fire_bomber:
         visual = {{195U, 65U, 54U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::bomber, "BOMBER", MonsterWarningMode::none};
+            MonsterShapeId::bomber, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::fire_charger:
         visual = {{173U, 79U, 49U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::charger, "CHARGER", MonsterWarningMode::none};
+            MonsterShapeId::charger, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::water_bulwark:
         visual = {{54U, 117U, 173U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::bulwark, "BULWARK", MonsterWarningMode::none};
+            MonsterShapeId::bulwark, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::water_support:
         visual = {{72U, 142U, 190U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::support, "SUPPORT", MonsterWarningMode::none};
+            MonsterShapeId::support, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::lightning_shooter:
         visual = {{191U, 171U, 58U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::shooter, "SHOOTER", MonsterWarningMode::none};
+            MonsterShapeId::shooter, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::lightning_dasher:
         visual = {{209U, 188U, 65U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::dasher, "DASHER", MonsterWarningMode::none};
+            MonsterShapeId::dasher, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::chaos_chaser:
         visual = {{121U, 67U, 173U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::chaser, "CHASER", MonsterWarningMode::none};
+            MonsterShapeId::chaser, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::chaos_hazard:
         visual = {{145U, 70U, 183U, 255U}, visual.accent, visual.warning,
-            MonsterShapeId::hazard_caster, "HAZARD", MonsterWarningMode::none};
+            MonsterShapeId::hazard_caster, ui_monster_name(id), MonsterWarningMode::none};
         break;
     case combat::MonsterId::count:
         break;
@@ -273,6 +274,28 @@ MonsterVisual monster_visual(
     return visual;
 }
 
+const char* monster_phase_label(combat::MonsterAiPhase phase) noexcept {
+    switch (phase) {
+    case combat::MonsterAiPhase::idle: return u8"待机";
+    case combat::MonsterAiPhase::move: return u8"移动";
+    case combat::MonsterAiPhase::telegraph: return u8"预警";
+    case combat::MonsterAiPhase::active: return u8"生效";
+    case combat::MonsterAiPhase::recovery: return u8"恢复";
+    case combat::MonsterAiPhase::cooldown: return u8"冷却";
+    case combat::MonsterAiPhase::defeated: return u8"已击败";
+    }
+    return u8"未知";
+}
+
+const char* debug_world_volume_label(DebugWorldVolumeKind kind) noexcept {
+    switch (kind) {
+    case DebugWorldVolumeKind::assist: return u8"辅助判定";
+    case DebugWorldVolumeKind::attack: return u8"攻击判定";
+    case DebugWorldVolumeKind::hurt: return u8"受击判定";
+    }
+    return u8"未知判定";
+}
+
 MonsterLabelTextStyle monster_label_text_style(float viewport_scale) noexcept {
     const float scale = std::clamp(viewport_scale, 1.0F, 1.5F);
     const int font_size = static_cast<int>(std::ceil(16.0F * scale));
@@ -291,7 +314,7 @@ AffixBadge monster_affix_badge(combat::MonsterAffixInstance affix) noexcept {
         return {"?", affix_tier_text(affix.tier),
             combat::MonsterAffixDanger::low, {224U, 231U, 241U, 255U}};
     }
-    return {definition->short_name.data(), affix_tier_text(affix.tier),
+    return {ui_monster_affix_short_name(affix.id), affix_tier_text(affix.tier),
         definition->danger, affix_category_color(affix.id)};
 }
 

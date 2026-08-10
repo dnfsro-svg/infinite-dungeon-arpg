@@ -4,6 +4,7 @@
 #include "combat_view_math.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "dungeon_view_math.hpp"
+#include "ui_text_catalog.hpp"
 
 #include <array>
 #include <cstring>
@@ -195,15 +196,12 @@ arpg::test::Failure affix_badges_consume_catalog_names_tiers_and_danger() noexce
         MonsterAffixId::chain_lightning, MonsterAffixId::chaos_corrosion,
         MonsterAffixId::blink_assault, MonsterAffixId::death_blast,
     }};
-    constexpr std::array<const char*, 12> kNames{{
-        "MGT", "FRZ", "SWF", "ARM", "SHD", "MULTI", "BURN", "CHILL",
-        "CHAIN", "CORR", "BLINK", "DEATH",
-    }};
     for (std::size_t index = 0U; index < kAffixes.size(); ++index) {
         const auto badge = arpg::platform::monster_affix_badge(
             {kAffixes[index], MonsterAffixTier::m1});
-        ARPG_REQUIRE(std::strcmp(badge.short_name, kNames[index]) == 0);
-        ARPG_REQUIRE(std::strcmp(badge.tier_text, "M1") == 0);
+        ARPG_REQUIRE(std::strcmp(badge.short_name,
+            arpg::platform::ui_monster_affix_short_name(kAffixes[index])) == 0);
+        ARPG_REQUIRE(std::strcmp(badge.tier_text, u8"词缀Ⅰ") == 0);
         ARPG_REQUIRE(badge.danger
             == arpg::combat::monster_affix_definition(kAffixes[index])->danger);
     }
@@ -211,8 +209,8 @@ arpg::test::Failure affix_badges_consume_catalog_names_tiers_and_danger() noexce
         {MonsterAffixId::mighty, MonsterAffixTier::m2});
     const auto tier_three = arpg::platform::monster_affix_badge(
         {MonsterAffixId::death_blast, MonsterAffixTier::m3});
-    ARPG_REQUIRE(std::strcmp(tier_two.tier_text, "M2") == 0);
-    ARPG_REQUIRE(std::strcmp(tier_three.tier_text, "M3") == 0);
+    ARPG_REQUIRE(std::strcmp(tier_two.tier_text, u8"词缀Ⅱ") == 0);
+    ARPG_REQUIRE(std::strcmp(tier_three.tier_text, u8"词缀Ⅲ") == 0);
     ARPG_REQUIRE(tier_three.danger == MonsterAffixDanger::high);
     return {};
 }

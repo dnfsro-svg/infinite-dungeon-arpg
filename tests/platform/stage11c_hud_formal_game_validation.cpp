@@ -1,6 +1,8 @@
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_generation.hpp"
+#include "debug_overlay_renderer.hpp"
 #include "raylib_host.hpp"
+#include "ui_utf8.hpp"
 
 #include <array>
 #include <chrono>
@@ -155,6 +157,41 @@ static_assert(hash_bytes(kFnvFixture.data(), kFnvFixture.size())
         && found->second != "0";
 }
 
+[[nodiscard]] bool debug_overlay_contract_ready() noexcept {
+    dungeon::DungeonSnapshot snapshot{};
+    snapshot.combat.emplace();
+    platform::DebugOverlayDiagnosticsPlan diagnostics{};
+    diagnostics.cjk_font_ready = true;
+    const platform::DebugOverlayView view =
+        platform::make_debug_overlay_view(snapshot,
+            platform::DungeonRenderStatus{}, platform::CombatFeedback{},
+            true, diagnostics);
+    if (view.line_count != 12U) return false;
+    for (const platform::DebugOverlayLine& line : view.lines) {
+        if (line.text[0] == '\0'
+                || !platform::ui_utf8_is_valid(line.text.data())) return false;
+    }
+    constexpr std::array<std::array<int, 2>, 3U> kViewports{{
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto viewport : kViewports) {
+        const platform::DebugOverlayLayout layout =
+            platform::debug_overlay_layout(viewport[0], viewport[1]);
+        const std::size_t expected_columns = viewport[0] < 1280 ? 1U : 2U;
+        if (layout.column_count != expected_columns
+                || layout.backing_color.r != 0x0BU
+                || layout.backing_color.g != 0x10U
+                || layout.backing_color.b != 0x19U
+                || layout.backing_color.a != 255U) return false;
+        for (const Rectangle line : layout.line_bounds) {
+            if (line.x < 0.0F || line.y < 0.0F
+                    || line.x + line.width > viewport[0]
+                    || line.y + line.height > viewport[1]) return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] const std::string& field_or_empty(
     const std::map<std::string, std::string>& values, const char* key) {
     static const std::string empty{};
@@ -232,6 +269,7 @@ static_assert(hash_bytes(kFnvFixture.data(), kFnvFixture.size())
     return field_equals(values, "result", "pass")
         && field_equals(values, "font_ready", "1")
         && field_equals(values, "f1", expect_debug ? "1" : "0")
+        && (!expect_debug || debug_overlay_contract_ready())
         && field_nonzero(values, "production_snapshot_hash")
         && !field_or_empty(values, "objective").empty();
 }

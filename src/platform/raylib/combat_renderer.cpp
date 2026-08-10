@@ -644,8 +644,8 @@ GroundLootView CombatRenderer::draw(
                 hud_model_.diagnostics,
                 hud_notices_.dropped_count(), hud_binding_revision_, last_event_,
                 has_last_event_, hud_renderer_.font_ready());
-        debug_overlay_.draw(current_hud, runtime_status, feedback,
-            audio_ready, diagnostics);
+        debug_overlay_.draw(world_ui_font_, world_ui_font_ready_,
+            current_hud, runtime_status, feedback, audio_ready, diagnostics);
     }
 
     const float overlay_alpha = transition_overlay_alpha(transition_.seconds_left);

@@ -4,6 +4,9 @@
 #include "dungeon_runtime.hpp"
 #include "hud_view_model.hpp"
 
+#include <raylib.h>
+
+#include <array>
 #include <cstdint>
 #include <cstddef>
 
@@ -29,15 +32,42 @@ struct DebugOverlayDiagnosticsPlan final {
     bool cjk_font_ready{};
 };
 
+struct DebugOverlayLine final {
+    std::array<char, 192U> text{};
+    Color color{};
+};
+
+struct DebugOverlayView final {
+    std::array<DebugOverlayLine, 12U> lines{};
+    std::size_t line_count{};
+};
+
+struct DebugOverlayLayout final {
+    std::array<Rectangle, 2U> column_backings{};
+    std::array<Rectangle, 12U> line_bounds{};
+    std::size_t column_count{};
+    float font_size{};
+    float spacing{};
+    Color backing_color{};
+};
+
 [[nodiscard]] DebugOverlayDiagnosticsPlan make_debug_overlay_diagnostics_plan(
     const dungeon::DungeonSnapshot&, const HudBuildDiagnostics&,
     std::uint32_t notice_drops, std::uint64_t binding_revision,
     const combat::CombatEvent&, bool has_last_event,
     bool cjk_font_ready) noexcept;
 
+[[nodiscard]] DebugOverlayView make_debug_overlay_view(
+    const dungeon::DungeonSnapshot&, const DungeonRenderStatus&,
+    const CombatFeedback&, bool audio_ready,
+    const DebugOverlayDiagnosticsPlan&) noexcept;
+[[nodiscard]] DebugOverlayLayout debug_overlay_layout(
+    int screen_width, int screen_height) noexcept;
+
 class DebugOverlayRenderer final {
 public:
-    void draw(const dungeon::DungeonSnapshot&, const DungeonRenderStatus&,
+    void draw(Font shared_ui_font, bool shared_ui_font_ready,
+        const dungeon::DungeonSnapshot&, const DungeonRenderStatus&,
         const CombatFeedback&, bool audio_ready,
         const DebugOverlayDiagnosticsPlan&) const noexcept;
 };

@@ -44,6 +44,7 @@ arpg::test::TestSuite hud_notice_state_suite() noexcept;
 arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
 arpg::test::TestSuite loot_suction_animation_suite() noexcept;
 arpg::test::TestSuite hud_layout_suite() noexcept;
+arpg::test::TestSuite debug_overlay_renderer_suite() noexcept;
 arpg::test::TestSuite hud_font_suite() noexcept;
 arpg::test::TestSuite hud_render_plan_suite() noexcept;
 arpg::test::TestSuite hud_host_integration_suite() noexcept;
@@ -308,11 +309,12 @@ int main() {
             active_skill_view_suite(),
             dungeon_view_math_suite(),
             hud_layout_suite(),
+            debug_overlay_renderer_suite(),
             hud_font_suite(),
             hud_render_plan_suite(),
             hud_host_integration_suite(),
         };
-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 178,
+        return arpg::test::run_suites(full_chinese_ui_menu_hud, 183,
             "full Chinese UI menus and HUD");
     }
     if (cplay038_save_directory_only()) {
@@ -496,6 +498,7 @@ int main() {
         hud_notice_state_suite(),
         loot_pickup_feedback_suite(),
         hud_layout_suite(),
+        debug_overlay_renderer_suite(),
         hud_font_suite(),
         hud_render_plan_suite(),
         hud_host_integration_suite(),
@@ -515,6 +518,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 665,
+    return arpg::test::run_suites(suites, 670,
         "host settings runtime contract");
 }

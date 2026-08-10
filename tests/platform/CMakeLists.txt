@@ -45,6 +45,7 @@ if(TARGET arpg_raylib)
         loot_pickup_feedback_tests.cpp
         loot_suction_animation_tests.cpp
         hud_layout_tests.cpp
+        debug_overlay_renderer_tests.cpp
         hud_font_tests.cpp
         hud_render_plan_tests.cpp
         hud_host_integration_tests.cpp
@@ -1911,6 +1912,25 @@ add_test(
 set_tests_properties(
     platform.task6_recovery_screen_source_guard_self_test
     PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+
+add_test(
+    NAME platform.task7_debug_overlay_source_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/task7_debug_overlay_source_test.cmake")
+set_tests_properties(
+    platform.task7_debug_overlay_source_guard
+    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+
+add_test(
+    NAME platform.task7_debug_overlay_source_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/task7-debug-overlay-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/task7_debug_overlay_source_self_test.cmake")
+set_tests_properties(
+    platform.task7_debug_overlay_source_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
 
 add_test(
     NAME platform.hole_prompt_binding_source

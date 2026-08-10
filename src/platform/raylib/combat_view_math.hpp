@@ -57,7 +57,7 @@ struct MonsterVisual final {
     Rgba8 accent{};
     Rgba8 warning{};
     MonsterShapeId shape{MonsterShapeId::chaser};
-    const char* role_label{"CHASER"};
+    const char* role_label{u8"未知"};
     MonsterWarningMode warning_mode{MonsterWarningMode::none};
     bool priority_warning{};
 };
@@ -79,9 +79,15 @@ struct MonsterPresentationPlan final {
 
 struct AffixBadge final {
     const char* short_name{"?"};
-    const char* tier_text{"M1"};
+    const char* tier_text{u8"词缀Ⅰ"};
     combat::MonsterAffixDanger danger{combat::MonsterAffixDanger::low};
     Rgba8 color{};
+};
+
+enum class DebugWorldVolumeKind : std::uint8_t {
+    assist,
+    attack,
+    hurt,
 };
 
 struct AffixOutline final {
@@ -125,6 +131,10 @@ void sort_actor_draw_items(
     combat::MonsterId id,
     combat::MonsterAiPhase phase,
     dungeon::DungeonElement ecology) noexcept;
+[[nodiscard]] const char* monster_phase_label(
+    combat::MonsterAiPhase phase) noexcept;
+[[nodiscard]] const char* debug_world_volume_label(
+    DebugWorldVolumeKind kind) noexcept;
 [[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
     float viewport_scale) noexcept;
 [[nodiscard]] MonsterPresentationPlan monster_presentation_plan(

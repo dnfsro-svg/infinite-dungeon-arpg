@@ -24,19 +24,6 @@ using namespace combat;
 
 Color to_color(Rgba8 color) noexcept { return {color.r, color.g, color.b, color.a}; }
 
-const char* monster_phase_name(MonsterAiPhase phase) noexcept {
-    switch (phase) {
-    case MonsterAiPhase::idle: return "Idle";
-    case MonsterAiPhase::move: return "Move";
-    case MonsterAiPhase::telegraph: return "Telegraph";
-    case MonsterAiPhase::active: return "Active";
-    case MonsterAiPhase::recovery: return "Recovery";
-    case MonsterAiPhase::cooldown: return "Cooldown";
-    case MonsterAiPhase::defeated: return "Defeated";
-    }
-    return "?";
-}
-
 struct RenderActor final {
     Vec3 position{};
     std::uint8_t monster_index{};
@@ -104,10 +91,7 @@ void draw_scene_label(Font font, bool font_ready, const char* text,
     if (font_ready && IsFontValid(font)) {
         draw_crisp_ui_text(font, text, {x, y},
             static_cast<float>(font_size), 1.0F, color);
-        return;
     }
-    DrawText(text, static_cast<int>(std::round(x)),
-        static_cast<int>(std::round(y)), font_size, color);
 }
 
 void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
@@ -115,18 +99,16 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
     float width, float height, bool foreground,
     Font hud_font, bool hud_font_ready) noexcept {
     constexpr int kCombatTextShadowPixels = 1;
-    static_cast<void>(hud_font_ready);
     const CombatTextStyle text_style = combat_text_style(
         static_cast<int>(width), static_cast<int>(height));
-    const Font draw_font = IsFontValid(hud_font)
-        ? hud_font : GetFontDefault();
     const auto draw_combat_text = [&](const char* text, float center_x,
                                       float y, float font_size,
                                       Color color) noexcept {
+        if (!hud_font_ready || !IsFontValid(hud_font)) return;
         const Vector2 measured = MeasureTextEx(
-            draw_font, text, font_size, text_style.spacing);
+            hud_font, text, font_size, text_style.spacing);
         color.a = 255U;
-        draw_crisp_ui_text(draw_font, text,
+        draw_crisp_ui_text(hud_font, text,
             {center_x - measured.x * 0.5F, y}, font_size,
             text_style.spacing, color, kCombatTextShadowPixels);
     };
@@ -170,7 +152,7 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
                 text_style.damage_font_size, Color{255, 238, 156, 255});
             break;
         case VisualEffectKind::defeat_marker: {
-            constexpr const char* kLabel = "DEFEATED";
+            constexpr const char* kLabel = u8"已击败";
             draw_combat_text(kLabel, projected.x,
                 projected.y - 112.0F - progress * 24.0F,
                 text_style.defeated_font_size, Color{255, 196, 92, 255});
@@ -465,7 +447,7 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     }
     if (presentation.phase_label_visible) {
         draw_scene_label(hud_font, hud_font_ready,
-            monster_phase_name(monster.ai_phase), x - bar_width * .5F,
+            monster_phase_label(monster.ai_phase), x - bar_width * .5F,
             phase_y, text_style.phase_font_size, Color{205, 218, 237, 255});
     }
 }
