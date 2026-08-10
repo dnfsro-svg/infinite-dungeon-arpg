@@ -306,10 +306,13 @@ int main() {
             hud_view_model_suite(),
             hud_notice_state_suite(),
             active_skill_view_suite(),
+            dungeon_view_math_suite(),
+            hud_layout_suite(),
+            hud_font_suite(),
             hud_render_plan_suite(),
             hud_host_integration_suite(),
         };
-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 130,
+        return arpg::test::run_suites(full_chinese_ui_menu_hud, 177,
             "full Chinese UI menus and HUD");
     }
     if (cplay038_save_directory_only()) {
@@ -337,7 +340,7 @@ int main() {
         const arpg::test::TestSuite cplay033_only[] = {
             hud_font_suite(),
         };
-        return arpg::test::run_suites(cplay033_only, 15,
+        return arpg::test::run_suites(cplay033_only, 16,
             "CPLAY-033 passive tree CJK font");
     }
     if (cplay032_death_retry_hint_only()) {
@@ -351,7 +354,7 @@ int main() {
         const arpg::test::TestSuite cplay030_only[] = {
             dungeon_view_math_suite(),
         };
-        return arpg::test::run_suites(cplay030_only, 20,
+        return arpg::test::run_suites(cplay030_only, 22,
             "CPLAY-030 dynamic hole interaction prompt");
     }
     if (cplay028_pause_focus_only()) {
@@ -512,6 +515,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 659,
+    return arpg::test::run_suites(suites, 664,
         "host settings runtime contract");
 }

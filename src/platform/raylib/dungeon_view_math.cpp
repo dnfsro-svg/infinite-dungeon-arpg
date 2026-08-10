@@ -1,8 +1,9 @@
 #include "dungeon_view_math.hpp"
 
+#include "ui_utf8.hpp"
+
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 namespace arpg::platform {
 namespace {
@@ -33,17 +34,17 @@ DoorVisualMode door_visual_mode(
 DoorTheme door_theme(dungeon::ExitDirection direction) noexcept {
     switch (direction) {
     case dungeon::ExitDirection::up:
-        return {dungeon::DungeonElement::fire, "FIRE", "\xE2\x86\x91", kFireFrame};
+        return {dungeon::DungeonElement::fire, u8"火焰", "\xE2\x86\x91", kFireFrame};
     case dungeon::ExitDirection::down:
-        return {dungeon::DungeonElement::water, "WATER", "\xE2\x86\x93", kWaterFrame};
+        return {dungeon::DungeonElement::water, u8"水流", "\xE2\x86\x93", kWaterFrame};
     case dungeon::ExitDirection::left:
-        return {dungeon::DungeonElement::lightning, "LIGHTNING", "\xE2\x86\x90", kLightningFrame};
+        return {dungeon::DungeonElement::lightning, u8"闪电", "\xE2\x86\x90", kLightningFrame};
     case dungeon::ExitDirection::right:
-        return {dungeon::DungeonElement::chaos, "CHAOS", "\xE2\x86\x92", kChaosFrame};
+        return {dungeon::DungeonElement::chaos, u8"混沌", "\xE2\x86\x92", kChaosFrame};
     case dungeon::ExitDirection::none:
-        return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
+        return {dungeon::DungeonElement::chaos, u8"未知", "?", kChaosFrame};
     }
-    return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
+    return {dungeon::DungeonElement::chaos, u8"未知", "?", kChaosFrame};
 }
 
 DoorArrowGeometry door_arrow_geometry(dungeon::ExitDirection direction,
@@ -136,50 +137,49 @@ namespace {
 
 const char* abyss_danger_label(abyss::AbyssDanger danger) noexcept {
     switch (danger) {
-    case abyss::AbyssDanger::low: return "ABYSS LOW";
-    case abyss::AbyssDanger::medium: return "ABYSS MED";
-    case abyss::AbyssDanger::high: return "ABYSS HIGH";
+    case abyss::AbyssDanger::low: return u8"低危";
+    case abyss::AbyssDanger::medium: return u8"中危";
+    case abyss::AbyssDanger::high: return u8"高危";
     }
-    return "ABYSS";
+    return u8"未知";
 }
 
 const char* abyss_rule_label(abyss::AbyssRuleId rule) noexcept {
     switch (rule) {
-    case abyss::AbyssRuleId::thunderstorm: return "THUNDERSTORM";
-    case abyss::AbyssRuleId::hunting_flames: return "HUNTING FLAMES";
-    case abyss::AbyssRuleId::chaos_expansion: return "CHAOS EXPANSION";
-    case abyss::AbyssRuleId::swift_pursuit: return "SWIFT PURSUIT";
-    case abyss::AbyssRuleId::abyss_bulwark: return "ABYSS BULWARK";
-    case abyss::AbyssRuleId::abyss_fury: return "ABYSS FURY";
-    case abyss::AbyssRuleId::heavy_steps: return "HEAVY STEPS";
-    case abyss::AbyssRuleId::exhausted_recovery:
-        return "EXHAUSTED RECOVERY";
-    case abyss::AbyssRuleId::life_sacrifice: return "LIFE SACRIFICE";
-    case abyss::AbyssRuleId::none: return "NO RULE";
+    case abyss::AbyssRuleId::thunderstorm: return u8"雷暴";
+    case abyss::AbyssRuleId::hunting_flames: return u8"猎杀之焰";
+    case abyss::AbyssRuleId::chaos_expansion: return u8"混沌扩张";
+    case abyss::AbyssRuleId::swift_pursuit: return u8"迅捷追猎";
+    case abyss::AbyssRuleId::abyss_bulwark: return u8"深渊壁垒";
+    case abyss::AbyssRuleId::abyss_fury: return u8"深渊狂怒";
+    case abyss::AbyssRuleId::heavy_steps: return u8"沉重脚步";
+    case abyss::AbyssRuleId::exhausted_recovery: return u8"疲惫恢复";
+    case abyss::AbyssRuleId::life_sacrifice: return u8"生命献祭";
+    case abyss::AbyssRuleId::none: return u8"无规则";
     }
-    return "NO RULE";
+    return u8"无规则";
 }
 
 const char* abyss_effect_label(abyss::AbyssRuleId rule) noexcept {
     switch (rule) {
     case abyss::AbyssRuleId::thunderstorm:
-        return "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning";
+        return u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害";
     case abyss::AbyssRuleId::hunting_flames:
-        return "Every 240t: warn 45t/radius 1.0, burn 10% max HP/60t for 180t";
+        return u8"每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害";
     case abyss::AbyssRuleId::chaos_expansion:
-        return "Radius 1.0/2.3/3.6/4.9/6.2 per 180t, 8% max HP chaos/60t";
+        return u8"每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害";
     case abyss::AbyssRuleId::swift_pursuit:
-        return "Monsters: move +15%, cooldown x85%";
+        return u8"怪物：移动速度+15%，冷却时间×85%";
     case abyss::AbyssRuleId::abyss_bulwark:
-        return "Monsters: armor x130%, shield +30% max HP";
+        return u8"怪物：护甲×130%，护盾+30%最大生命";
     case abyss::AbyssRuleId::abyss_fury:
-        return "Monsters: damage and attack speed x145%";
+        return u8"怪物：伤害与攻击速度×145%";
     case abyss::AbyssRuleId::heavy_steps:
-        return "Player: ground move x85%";
+        return u8"玩家：地面移动速度×85%";
     case abyss::AbyssRuleId::exhausted_recovery:
-        return "Player: entry resources and future recovery x70%";
+        return u8"玩家：入场资源及后续恢复×70%";
     case abyss::AbyssRuleId::life_sacrifice:
-        return "Player: max HP x55%";
+        return u8"玩家：最大生命×55%";
     case abyss::AbyssRuleId::none:
         return "";
     }
@@ -205,11 +205,10 @@ AbyssHudValues abyss_hud_values(
     values.confirmation_direction =
         snapshot.abyss_exit_confirmation_direction;
     if (values.confirmation_transition == dungeon::TransitionKind::descent) {
-        values.confirmation_label =
-            "Press E again to abandon remaining rewards and descend";
+        values.confirmation_label = u8"再次交互，放弃剩余奖励并下潜";
     } else {
         values.confirmation_label =
-            "Touch the SAME door again to abandon ALL remaining rewards";
+            u8"离开后再次触碰同一出口以放弃全部剩余奖励";
     }
     return values;
 }
@@ -239,6 +238,17 @@ HoleVisualMode hole_visual_mode(
     return HoleVisualMode::hidden;
 }
 
+const char* hole_visual_label(HoleVisualMode mode) noexcept {
+    switch (mode) {
+    case HoleVisualMode::hidden: return "";
+    case HoleVisualMode::sealed: return u8"封闭";
+    case HoleVisualMode::ready: return u8"可进入";
+    case HoleVisualMode::busy: return u8"保存中";
+    case HoleVisualMode::faulted: return u8"异常";
+    }
+    return u8"异常";
+}
+
 bool player_in_hole_range(
     combat::Vec3 position,
     combat::Vec3 center,
@@ -260,15 +270,74 @@ bool can_prompt_descent(
 }
 
 HoleInteractionPrompt hole_interaction_prompt(
-    const char* interact_binding_label) noexcept {
+    const char* interact_binding_label,
+    HoleInteractionAction action) noexcept {
     HoleInteractionPrompt prompt{};
-    const char* const label = interact_binding_label != nullptr
-            && interact_binding_label[0] != '\0'
-        ? interact_binding_label : "E";
-    static_cast<void>(std::snprintf(
-        prompt.data(), prompt.size(), "%s: DESCEND", label));
-    prompt.back() = '\0';
+    if (interact_binding_label == nullptr
+            || interact_binding_label[0] == '\0') return prompt;
+    static_cast<void>(ui_utf8_format(prompt.data(), prompt.size(),
+        action == HoleInteractionAction::descend
+            ? u8"%s：下潜" : u8"%s：进入下一层",
+        interact_binding_label));
     return prompt;
+}
+
+WorldPromptStyle world_prompt_style() noexcept {
+    return {
+        {0x0BU, 0x10U, 0x19U, 255U},
+        {248U, 246U, 238U, 255U},
+        {194U, 229U, 255U, 255U},
+        {255U, 210U, 118U, 255U},
+        {255U, 152U, 152U, 255U},
+    };
+}
+
+Rgba8 world_prompt_text_color(Rgba8 requested) noexcept {
+    requested.a = 255U;
+    const WorldPromptStyle style = world_prompt_style();
+    const auto luma = [](Rgba8 color) noexcept {
+        return 0.2126F * static_cast<float>(color.r)
+            + 0.7152F * static_cast<float>(color.g)
+            + 0.0722F * static_cast<float>(color.b);
+    };
+    const float requested_luma = luma(requested);
+    const float backing_luma = luma(style.backing);
+    const float lighter = (std::max)(requested_luma, backing_luma);
+    const float darker = (std::min)(requested_luma, backing_luma);
+    return (lighter + 12.75F) / (darker + 12.75F) >= 4.5F
+        ? requested : style.primary;
+}
+
+WorldPromptLayout world_prompt_layout(
+    Vector2 anchor, Vector2 measured,
+    float screen_width, float screen_height) noexcept {
+    WorldPromptLayout layout{};
+    if (!(screen_width > 0.0F) || !(screen_height > 0.0F)
+            || !(measured.x > 0.0F) || !(measured.y > 0.0F)) {
+        return layout;
+    }
+    const float scale = std::clamp((std::min)(
+        screen_width / 1280.0F, screen_height / 720.0F), 0.625F, 1.5F);
+    const float padding_x = 8.0F * scale;
+    const float padding_y = 5.0F * scale;
+    const float backing_width = (std::min)(
+        screen_width, measured.x + padding_x * 2.0F);
+    const float backing_height = (std::min)(
+        screen_height, measured.y + padding_y * 2.0F);
+    const float backing_x = std::clamp(
+        anchor.x - backing_width * 0.5F,
+        0.0F, screen_width - backing_width);
+    const float backing_y = std::clamp(anchor.y,
+        0.0F, screen_height - backing_height);
+    layout.visible = true;
+    layout.backing = {
+        backing_x, backing_y, backing_width, backing_height};
+    layout.measured = measured;
+    layout.text_position = {
+        backing_x + (backing_width - measured.x) * 0.5F,
+        backing_y + (backing_height - measured.y) * 0.5F,
+    };
+    return layout;
 }
 
 Rgba8 ecosystem_tint(dungeon::DungeonElement element) noexcept {
@@ -299,13 +368,13 @@ const char* save_indicator_label(SaveIndicator indicator) noexcept {
     case SaveIndicator::none:
         return "";
     case SaveIndicator::saving:
-        return "SAVING";
+        return u8"保存中";
     case SaveIndicator::saved:
-        return "SAVED";
+        return u8"已保存";
     case SaveIndicator::recovered:
-        return "RECOVERED";
+        return u8"已恢复";
     case SaveIndicator::error:
-        return "SAVE ERROR";
+        return u8"存档错误";
     }
     return "";
 }
@@ -339,39 +408,41 @@ bool dungeon_event_clears_transients(
 const char* room_phase_label(dungeon::RoomPhase phase) noexcept {
     switch (phase) {
     case dungeon::RoomPhase::locked:
-        return "LOCKED";
+        return u8"锁定";
     case dungeon::RoomPhase::combat:
-        return "COMBAT";
+        return u8"战斗中";
     case dungeon::RoomPhase::wave_delay:
-        return "WAVE DELAY";
+        return u8"等待下一波";
     case dungeon::RoomPhase::cleared:
-        return "CLEARED";
+        return u8"已清理";
     case dungeon::RoomPhase::awaiting_exit:
-        return "AWAITING EXIT";
+        return u8"等待离开";
     case dungeon::RoomPhase::committing:
-        return "COMMITTING";
+        return u8"保存中";
     case dungeon::RoomPhase::transitioning:
-        return "TRANSITIONING";
+        return u8"切换房间";
+    case dungeon::RoomPhase::death_pending:
+        return u8"处理撤退中";
     case dungeon::RoomPhase::faulted:
-        return "FAULTED";
+        return u8"异常";
     }
-    return "UNKNOWN";
+    return u8"未知";
 }
 
 const char* exit_direction_label(dungeon::ExitDirection direction) noexcept {
     switch (direction) {
     case dungeon::ExitDirection::up:
-        return "UP";
+        return u8"上方";
     case dungeon::ExitDirection::down:
-        return "DOWN";
+        return u8"下方";
     case dungeon::ExitDirection::left:
-        return "LEFT";
+        return u8"左方";
     case dungeon::ExitDirection::right:
-        return "RIGHT";
+        return u8"右方";
     case dungeon::ExitDirection::none:
-        return "NONE";
+        return u8"无方向";
     }
-    return "UNKNOWN";
+    return u8"未知";
 }
 
 TransitionVisualState transition_after_dungeon_event(

@@ -89,7 +89,7 @@ constexpr std::array<const char*, 2U> kSkillNames{{
 // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
 // its existing death-overlay/HUD corpus in the single catalog visitor so the
 // shared glyph plan covers it without a second hand-maintained font list.
-constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
+constexpr std::array<const char*, 67U> kUiDynamicGlyphCoverage{{
     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
     "上移下移左移右移轻攻击跳跃挑飞交互背包被动树调试截图暂停小键盘秒经验已满"
     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
@@ -130,6 +130,14 @@ constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
     u8"设置界面…",
     u8"已拾取：强化石 x1、混沌石 x1",
     u8"蜕变石",
+    u8"火焰水流闪电混沌未知低危中危高危雷暴猎杀之焰混沌扩张迅捷追猎深渊壁垒深渊狂怒沉重脚步疲惫恢复生命献祭无规则"
+    "每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害"
+    "每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害"
+    "每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害"
+    "怪物：移动速度+15%，冷却时间×85%护甲×130%，护盾+30%伤害与攻击速度×145%"
+    "玩家：地面移动速度×85%入场资源及后续恢复×70%最大生命×55%"
+    "封闭可进入保存中异常已保存已恢复存档错误锁定战斗中等待下一波已清理等待离开切换房间处理撤退中"
+    "上方下方左方右方无方向Q：下潜进入下一层离开后再次触碰同一出口以放弃全部剩余奖励再次交互，放弃剩余奖励并下潜",
 }};
 
 template <typename Id, std::size_t Count>

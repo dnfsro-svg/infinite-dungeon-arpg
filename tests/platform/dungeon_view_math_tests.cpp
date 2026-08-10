@@ -1,8 +1,10 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
 #include "combat_renderer.hpp"
 #include "dungeon_view_math.hpp"
 #include "progression/progression_rules.hpp"
+#include "ui_utf8.hpp"
 
 #include <array>
 #include <cstring>
@@ -65,10 +67,16 @@ arpg::test::Failure door_themes_match_directional_elements() noexcept {
     const DoorTheme down = arpg::platform::door_theme(ExitDirection::down);
     const DoorTheme left = arpg::platform::door_theme(ExitDirection::left);
     const DoorTheme right = arpg::platform::door_theme(ExitDirection::right);
+    const DoorTheme unknown = arpg::platform::door_theme(ExitDirection::none);
     ARPG_REQUIRE(up.element == arpg::dungeon::DungeonElement::fire);
     ARPG_REQUIRE(down.element == arpg::dungeon::DungeonElement::water);
     ARPG_REQUIRE(left.element == arpg::dungeon::DungeonElement::lightning);
     ARPG_REQUIRE(right.element == arpg::dungeon::DungeonElement::chaos);
+    ARPG_REQUIRE(std::strcmp(up.label, u8"火焰") == 0);
+    ARPG_REQUIRE(std::strcmp(down.label, u8"水流") == 0);
+    ARPG_REQUIRE(std::strcmp(left.label, u8"闪电") == 0);
+    ARPG_REQUIRE(std::strcmp(right.label, u8"混沌") == 0);
+    ARPG_REQUIRE(std::strcmp(unknown.label, u8"未知") == 0);
     ARPG_REQUIRE(std::strcmp(up.arrow, "\xE2\x86\x91") == 0);
     ARPG_REQUIRE(std::strcmp(down.arrow, "\xE2\x86\x93") == 0);
     ARPG_REQUIRE(std::strcmp(left.arrow, "\xE2\x86\x90") == 0);
@@ -246,10 +254,10 @@ arpg::test::Failure abyss_hud_uses_committed_snapshot_labels_and_counts() noexce
     snapshot.abyss_unpicked_rewards = 1U;
     const auto values = arpg::platform::abyss_hud_values(snapshot);
     ARPG_REQUIRE(values.visible);
-    ARPG_REQUIRE(std::strcmp(values.danger_label, "ABYSS HIGH") == 0);
-    ARPG_REQUIRE(std::strcmp(values.rule_label, "ABYSS FURY") == 0);
+    ARPG_REQUIRE(std::strcmp(values.danger_label, u8"高危") == 0);
+    ARPG_REQUIRE(std::strcmp(values.rule_label, u8"深渊狂怒") == 0);
     ARPG_REQUIRE(std::strcmp(values.effect_label,
-        "Monsters: damage and attack speed x145%") == 0);
+        u8"怪物：伤害与攻击速度×145%") == 0);
     ARPG_REQUIRE(values.pending_rewards == 2U);
     ARPG_REQUIRE(values.unpicked_rewards == 1U);
     ARPG_REQUIRE(!values.confirmation_visible);
@@ -257,14 +265,58 @@ arpg::test::Failure abyss_hud_uses_committed_snapshot_labels_and_counts() noexce
     snapshot.abyss_danger = arpg::abyss::AbyssDanger::low;
     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::thunderstorm;
     const auto low = arpg::platform::abyss_hud_values(snapshot);
-    ARPG_REQUIRE(std::strcmp(low.danger_label, "ABYSS LOW") == 0);
-    ARPG_REQUIRE(std::strcmp(low.rule_label, "THUNDERSTORM") == 0);
+    ARPG_REQUIRE(std::strcmp(low.danger_label, u8"低危") == 0);
+    ARPG_REQUIRE(std::strcmp(low.rule_label, u8"雷暴") == 0);
     ARPG_REQUIRE(std::strcmp(low.effect_label,
-        "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning") == 0);
+        u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害") == 0);
     snapshot.abyss_danger = arpg::abyss::AbyssDanger::medium;
     ARPG_REQUIRE(std::strcmp(
         arpg::platform::abyss_hud_values(snapshot).danger_label,
-        "ABYSS MED") == 0);
+        u8"中危") == 0);
+    return {};
+}
+
+arpg::test::Failure every_abyss_rule_has_a_chinese_name_and_effect() noexcept {
+    struct Expected final {
+        arpg::abyss::AbyssRuleId rule;
+        const char* name;
+        const char* effect;
+    };
+    constexpr Expected kExpected[] = {
+        {arpg::abyss::AbyssRuleId::thunderstorm, u8"雷暴",
+            u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害"},
+        {arpg::abyss::AbyssRuleId::hunting_flames, u8"猎杀之焰",
+            u8"每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害"},
+        {arpg::abyss::AbyssRuleId::chaos_expansion, u8"混沌扩张",
+            u8"每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害"},
+        {arpg::abyss::AbyssRuleId::swift_pursuit, u8"迅捷追猎",
+            u8"怪物：移动速度+15%，冷却时间×85%"},
+        {arpg::abyss::AbyssRuleId::abyss_bulwark, u8"深渊壁垒",
+            u8"怪物：护甲×130%，护盾+30%最大生命"},
+        {arpg::abyss::AbyssRuleId::abyss_fury, u8"深渊狂怒",
+            u8"怪物：伤害与攻击速度×145%"},
+        {arpg::abyss::AbyssRuleId::heavy_steps, u8"沉重脚步",
+            u8"玩家：地面移动速度×85%"},
+        {arpg::abyss::AbyssRuleId::exhausted_recovery, u8"疲惫恢复",
+            u8"玩家：入场资源及后续恢复×70%"},
+        {arpg::abyss::AbyssRuleId::life_sacrifice, u8"生命献祭",
+            u8"玩家：最大生命×55%"},
+    };
+    DungeonSnapshot snapshot = active_snapshot(1U, 2U);
+    snapshot.is_abyss = true;
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::low;
+    for (const Expected& expected : kExpected) {
+        snapshot.abyss_rule = expected.rule;
+        const auto values = arpg::platform::abyss_hud_values(snapshot);
+        ARPG_REQUIRE(values.visible);
+        ARPG_REQUIRE(std::strcmp(values.rule_label, expected.name) == 0);
+        ARPG_REQUIRE(std::strcmp(values.effect_label, expected.effect) == 0);
+    }
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::none;
+    const auto none = arpg::platform::abyss_hud_values(snapshot);
+    ARPG_REQUIRE(!none.visible);
+    ARPG_REQUIRE(std::strcmp(none.rule_label, u8"无规则") == 0);
+    ARPG_REQUIRE(std::strcmp(none.effect_label, "") == 0);
     return {};
 }
 
@@ -285,14 +337,14 @@ arpg::test::Failure abyss_confirmation_prompt_preserves_transition_and_direction
         == arpg::dungeon::TransitionKind::door);
     ARPG_REQUIRE(values.confirmation_direction == ExitDirection::left);
     ARPG_REQUIRE(std::strcmp(values.confirmation_label,
-        "Touch the SAME door again to abandon ALL remaining rewards") == 0);
+        u8"离开后再次触碰同一出口以放弃全部剩余奖励") == 0);
 
     snapshot.abyss_exit_confirmation_transition =
         arpg::dungeon::TransitionKind::descent;
     snapshot.abyss_exit_confirmation_direction = ExitDirection::none;
     values = arpg::platform::abyss_hud_values(snapshot);
     ARPG_REQUIRE(std::strcmp(values.confirmation_label,
-        "Press E again to abandon remaining rewards and descend") == 0);
+        u8"再次交互，放弃剩余奖励并下潜") == 0);
 
     snapshot.abyss_exit_confirmation_armed = false;
     ARPG_REQUIRE(!arpg::platform::abyss_hud_values(snapshot)
@@ -373,17 +425,66 @@ arpg::test::Failure indicators_and_phase_labels_are_stable() noexcept {
     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
         SaveIndicator::none), "") == 0);
     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
-        SaveIndicator::saving), "SAVING") == 0);
+        SaveIndicator::saving), u8"保存中") == 0);
     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
-        SaveIndicator::saved), "SAVED") == 0);
+        SaveIndicator::saved), u8"已保存") == 0);
     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
-        SaveIndicator::recovered), "RECOVERED") == 0);
+        SaveIndicator::recovered), u8"已恢复") == 0);
     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
-        SaveIndicator::error), "SAVE ERROR") == 0);
-    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
-        RoomPhase::committing), "COMMITTING") == 0);
-    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
-        RoomPhase::faulted), "FAULTED") == 0);
+        SaveIndicator::error), u8"存档错误") == 0);
+
+    struct PhaseExpected final { RoomPhase phase; const char* label; };
+    constexpr PhaseExpected kPhases[] = {
+        {RoomPhase::locked, u8"锁定"},
+        {RoomPhase::combat, u8"战斗中"},
+        {RoomPhase::wave_delay, u8"等待下一波"},
+        {RoomPhase::cleared, u8"已清理"},
+        {RoomPhase::awaiting_exit, u8"等待离开"},
+        {RoomPhase::committing, u8"保存中"},
+        {RoomPhase::transitioning, u8"切换房间"},
+        {RoomPhase::death_pending, u8"处理撤退中"},
+        {RoomPhase::faulted, u8"异常"},
+    };
+    for (const PhaseExpected& expected : kPhases) {
+        ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
+            expected.phase), expected.label) == 0);
+    }
+
+    struct DirectionExpected final {
+        ExitDirection direction;
+        const char* label;
+    };
+    constexpr DirectionExpected kDirections[] = {
+        {ExitDirection::up, u8"上方"},
+        {ExitDirection::down, u8"下方"},
+        {ExitDirection::left, u8"左方"},
+        {ExitDirection::right, u8"右方"},
+        {ExitDirection::none, u8"无方向"},
+    };
+    for (const DirectionExpected& expected : kDirections) {
+        ARPG_REQUIRE(std::strcmp(arpg::platform::exit_direction_label(
+            expected.direction), expected.label) == 0);
+    }
+    return {};
+}
+
+arpg::test::Failure visible_hole_modes_have_explicit_chinese_labels() noexcept {
+    struct Expected final {
+        HoleVisualMode mode;
+        const char* label;
+    };
+    constexpr Expected kExpected[] = {
+        {HoleVisualMode::sealed, u8"封闭"},
+        {HoleVisualMode::ready, u8"可进入"},
+        {HoleVisualMode::busy, u8"保存中"},
+        {HoleVisualMode::faulted, u8"异常"},
+    };
+    ARPG_REQUIRE(std::strcmp(arpg::platform::hole_visual_label(
+        HoleVisualMode::hidden), "") == 0);
+    for (const Expected& expected : kExpected) {
+        ARPG_REQUIRE(std::strcmp(arpg::platform::hole_visual_label(
+            expected.mode), expected.label) == 0);
+    }
     return {};
 }
 
@@ -443,13 +544,13 @@ arpg::test::Failure cleanup_routing_and_labels_are_stable() noexcept {
         DungeonEventKind::room_entered));
     ARPG_REQUIRE(std::strcmp(
         arpg::platform::room_phase_label(RoomPhase::awaiting_exit),
-        "AWAITING EXIT") == 0);
+        u8"等待离开") == 0);
     ARPG_REQUIRE(std::strcmp(
         arpg::platform::exit_direction_label(ExitDirection::left),
-        "LEFT") == 0);
+        u8"左方") == 0);
     ARPG_REQUIRE(std::strcmp(
         arpg::platform::exit_direction_label(ExitDirection::none),
-        "NONE") == 0);
+        u8"无方向") == 0);
     return {};
 }
 
@@ -531,19 +632,29 @@ arpg::test::Failure progression_hud_values_follow_snapshot() noexcept {
 }
 
 arpg::test::Failure hole_prompt_follows_current_interact_binding() noexcept {
-    const auto default_prompt = arpg::platform::hole_interaction_prompt("E");
-    const auto rebound_prompt = arpg::platform::hole_interaction_prompt("Right");
+    using arpg::platform::HoleInteractionAction;
+    const auto descend = arpg::platform::hole_interaction_prompt(
+        "Q", HoleInteractionAction::descend);
+    const auto next_floor = arpg::platform::hole_interaction_prompt(
+        "Q", HoleInteractionAction::next_floor);
     const auto longest_prompt =
-        arpg::platform::hole_interaction_prompt("Right Shift");
-    const auto fallback_prompt = arpg::platform::hole_interaction_prompt(nullptr);
-    const auto empty_fallback_prompt =
-        arpg::platform::hole_interaction_prompt("");
-    ARPG_REQUIRE(std::strcmp(default_prompt.data(), "E: DESCEND") == 0);
-    ARPG_REQUIRE(std::strcmp(rebound_prompt.data(), "Right: DESCEND") == 0);
+        arpg::platform::hole_interaction_prompt(
+            u8"右 Shift", HoleInteractionAction::next_floor);
+    ARPG_REQUIRE(std::strcmp(descend.data(), u8"Q：下潜") == 0);
+    ARPG_REQUIRE(std::strcmp(next_floor.data(), u8"Q：进入下一层") == 0);
     ARPG_REQUIRE(std::strcmp(longest_prompt.data(),
-        "Right Shift: DESCEND") == 0);
-    ARPG_REQUIRE(std::strcmp(fallback_prompt.data(), "E: DESCEND") == 0);
-    ARPG_REQUIRE(std::strcmp(empty_fallback_prompt.data(), "E: DESCEND") == 0);
+        u8"右 Shift：进入下一层") == 0);
+    ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(descend.data()));
+    ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(next_floor.data()));
+    ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(longest_prompt.data()));
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+        const auto prompt = arpg::platform::hole_interaction_prompt(
+            "Q", iteration % 2U == 0U ? HoleInteractionAction::descend
+                                       : HoleInteractionAction::next_floor);
+        ARPG_REQUIRE(prompt.back() == '\0');
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
     return {};
 }
 
@@ -561,10 +672,14 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss door marker preview", &abyss_door_markers_follow_only_directional_preview},
     {"environment hazard snapshot visuals", &environment_hazards_use_snapshot_geometry_and_phase},
     {"abyss HUD snapshot values", &abyss_hud_uses_committed_snapshot_labels_and_counts},
+    {"all abyss rule names and effects",
+        &every_abyss_rule_has_a_chinese_name_and_effect},
     {"abyss confirmation prompt values", &abyss_confirmation_prompt_preserves_transition_and_direction},
     {"ecosystem tints", &ecosystem_tints_are_stable},
     {"abyss pulse bounds", &abyss_pulse_is_bounded_and_periodic},
     {"hole visual modes", &hole_modes_follow_room_phase},
+    {"hole visual Chinese labels",
+        &visible_hole_modes_have_explicit_chinese_labels},
     {"XY hole range", &player_hole_range_uses_xy_radius},
     {"save indicators and labels", &indicators_and_phase_labels_are_stable},
     {"recovery request gate", &recovery_requires_fault_and_n_press},

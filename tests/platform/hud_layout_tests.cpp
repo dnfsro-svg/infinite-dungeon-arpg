@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "dungeon_view_math.hpp"
 #include "hud_layout.hpp"
 #include "hud_renderer.hpp"
 #include "ui_text_contrast.hpp"
@@ -246,6 +247,35 @@ arpg::test::Failure hud_typography_has_readable_minimums_and_contrast() noexcept
     return {};
 }
 
+arpg::test::Failure world_prompt_backings_fit_supported_viewports() noexcept {
+    constexpr std::array<std::array<int, 2>, 3U> kViewports{{
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto viewport : kViewports) {
+        const float width = static_cast<float>(viewport[0]);
+        const float height = static_cast<float>(viewport[1]);
+        const platform::WorldPromptLayout layout =
+            platform::world_prompt_layout(
+                {width * 0.5F, height - 2.0F},
+                {width * 0.36F, 30.0F}, width, height);
+        const Rectangle screen{0.0F, 0.0F, width, height};
+        ARPG_REQUIRE(layout.visible);
+        ARPG_REQUIRE(layout.backing.x >= screen.x);
+        ARPG_REQUIRE(layout.backing.y >= screen.y);
+        ARPG_REQUIRE(layout.backing.x + layout.backing.width
+            <= screen.x + screen.width);
+        ARPG_REQUIRE(layout.backing.y + layout.backing.height
+            <= screen.y + screen.height);
+        ARPG_REQUIRE(layout.text_position.x >= layout.backing.x);
+        ARPG_REQUIRE(layout.text_position.y >= layout.backing.y);
+        ARPG_REQUIRE(layout.text_position.x + layout.measured.x
+            <= layout.backing.x + layout.backing.width);
+        ARPG_REQUIRE(layout.text_position.y + layout.measured.y
+            <= layout.backing.y + layout.backing.height);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"resolution safe layout matrices", &resolution_matrices_are_safe_and_do_not_cover_combat},
     {"notices above abyss confirmation", &notices_remain_above_the_bottom_abyss_confirmation_area},
@@ -256,6 +286,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &hud_text_safe_boxes_do_not_intersect_or_cross_panels},
     {"HUD typography readability",
         &hud_typography_has_readable_minimums_and_contrast},
+    {"world prompt supported viewport bounds",
+        &world_prompt_backings_fit_supported_viewports},
 };
 
 }  // namespace

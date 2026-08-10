@@ -285,6 +285,8 @@ std::optional<std::size_t> hud_presented_frame_index(
 
 bool CombatRenderer::initialize_resources(
     const SharedUiFont& shared_ui_font) noexcept {
+    world_ui_font_ = shared_ui_font.font();
+    world_ui_font_ready_ = shared_ui_font.ready();
     const bool death_font_ready = death_overlay_.initialize(shared_ui_font);
     const bool hud_font_ready = hud_renderer_.initialize(shared_ui_font);
     static_cast<void>(material_pack_.synchronize_residency(
@@ -293,11 +295,13 @@ bool CombatRenderer::initialize_resources(
         TraceLog(LOG_WARNING,
             "HUD overlays are using a fallback font; formal CJK validation will fail");
     }
-    return death_font_ready && hud_font_ready;
+    return death_font_ready && hud_font_ready && world_ui_font_ready_;
 }
 
 void CombatRenderer::shutdown_resources() noexcept {
     material_pack_.unload();
+    world_ui_font_ = {};
+    world_ui_font_ready_ = false;
     hud_renderer_.shutdown();
     death_overlay_.shutdown();
 }

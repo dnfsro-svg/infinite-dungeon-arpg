@@ -243,6 +243,8 @@ private:
     std::uint64_t hud_observation_count_{};
     std::array<std::uint64_t,
         static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
+    Font world_ui_font_{};
+    bool world_ui_font_ready_{};
     settings::LootFilterMode loot_filter_mode_{
         settings::LootFilterMode::show_all};
 };

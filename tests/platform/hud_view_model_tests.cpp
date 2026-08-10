@@ -398,7 +398,9 @@ arpg::test::Failure objective_describes_every_player_visible_room_state() noexce
     snapshot.abyss_unpicked_rewards = 2U;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊") != nullptr);
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS HIGH") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"高危") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊狂怒") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS") == nullptr);
     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
         u8"待领奖励 3") != nullptr);
     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
@@ -453,17 +455,18 @@ arpg::test::Failure context_attaches_notice_priority_without_changing_abyss_valu
     platform::HudNoticeView notice{};
     notice.primary.kind = platform::HudNoticeKind::abyss_abandon;
     static_cast<void>(std::snprintf(notice.primary.text.bytes.data(),
-        notice.primary.text.bytes.size(), "E %s", before.confirmation_label));
+        notice.primary.text.bytes.size(), u8"Q：%s", before.confirmation_label));
     notice.secondary.kind = platform::HudNoticeKind::hole_interact;
     static_cast<void>(std::snprintf(notice.secondary.text.bytes.data(),
-        notice.secondary.text.bytes.size(), "E to descend"));
+        notice.secondary.text.bytes.size(), u8"Q：进入下一层"));
     platform::HudViewModel output{};
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
     platform::attach_notice_view(output, notice);
 
     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
     ARPG_REQUIRE(output.context.secondary_kind == platform::HudNoticeKind::hole_interact);
-    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "Press E again") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(),
+        u8"再次交互，放弃剩余奖励并下潜") != nullptr);
     const auto after = arpg::platform::abyss_hud_values(snapshot);
     ARPG_REQUIRE(after.confirmation_visible == before.confirmation_visible);
     ARPG_REQUIRE(after.confirmation_label == before.confirmation_label);

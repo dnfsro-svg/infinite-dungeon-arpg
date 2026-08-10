@@ -320,6 +320,37 @@ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
     return {};
 }
 
+arpg::test::Failure dungeon_interaction_chinese_text_is_covered_by_shared_font_plan() noexcept {
+    const platform::HudFontPlan plan = platform::hud_font_plan();
+    constexpr const char* kTask5Text[] = {
+        u8"火焰水流闪电混沌未知",
+        u8"低危中危高危",
+        u8"雷暴猎杀之焰混沌扩张迅捷追猎深渊壁垒深渊狂怒沉重脚步疲惫恢复生命献祭无规则",
+        u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害",
+        u8"每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害",
+        u8"每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害",
+        u8"怪物：移动速度+15%，冷却时间×85%",
+        u8"怪物：护甲×130%，护盾+30%最大生命",
+        u8"怪物：伤害与攻击速度×145%",
+        u8"玩家：地面移动速度×85%",
+        u8"玩家：入场资源及后续恢复×70%",
+        u8"玩家：最大生命×55%",
+        u8"封闭可进入保存中异常",
+        u8"已保存已恢复存档错误",
+        u8"锁定战斗中等待下一波已清理等待离开保存中切换房间处理撤退中异常",
+        u8"上方下方左方右方无方向",
+        u8"Q：下潜",
+        u8"Q：进入下一层",
+        u8"离开后再次触碰同一出口以放弃全部剩余奖励",
+        u8"再次交互，放弃剩余奖励并下潜",
+    };
+    ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+    for (const char* text : kTask5Text) {
+        ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+    }
+    return {};
+}
+
 arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noexcept {
     const platform::HudFontPlan font = platform::hud_font_plan();
     constexpr const char* kCombatText = "0123456789-+%DEFEATED";
@@ -348,6 +379,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"ground loot Chinese coverage",
         &ground_loot_labels_are_covered_by_the_hud_owned_font},
     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
+    {"dungeon interaction Chinese coverage",
+        &dungeon_interaction_chinese_text_is_covered_by_shared_font_plan},
     {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
     {"visible-set ViewModel shared font coverage",
         &visible_set_model_text_is_covered_by_shared_font_plan},

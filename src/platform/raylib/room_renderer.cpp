@@ -13,6 +13,7 @@
 #include "room_background_render_plan.hpp"
 #include "ui_text_renderer.hpp"
 #include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 #include "water_room_material_slice.hpp"
 
 #include <raylib.h>
@@ -24,6 +25,27 @@
 
 namespace arpg::platform {
 namespace {
+
+Color raylib_color(Rgba8 color) noexcept {
+    return {color.r, color.g, color.b, color.a};
+}
+
+void draw_world_prompt(const char* text, Vector2 anchor,
+    float font_size, Color color, Font font, bool font_ready,
+    float screen_width, float screen_height) noexcept {
+    if (!font_ready || !IsFontValid(font) || text == nullptr
+            || text[0] == '\0' || !(font_size > 0.0F)) return;
+    const WorldPromptStyle style = world_prompt_style();
+    const Vector2 measured = MeasureTextEx(font, text, font_size, 1.0F);
+    const WorldPromptLayout layout = world_prompt_layout(
+        anchor, measured, screen_width, screen_height);
+    if (!layout.visible) return;
+    color = raylib_color(world_prompt_text_color(
+        {color.r, color.g, color.b, color.a}));
+    DrawRectangleRec(layout.backing, raylib_color(style.backing));
+    draw_crisp_ui_text(font, text, layout.text_position,
+        font_size, 1.0F, color);
+}
 
 Vector2 lerp(Vector2 from, Vector2 to, float amount) noexcept {
     return {
@@ -149,8 +171,8 @@ MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
 
 void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
     const CombatCameraView& camera,
-    float width, float height, const MaterialPack& material_pack, Font hud_font,
-    bool hud_font_ready) noexcept {
+    float width, float height, const MaterialPack& material_pack, Font font,
+    bool font_ready) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
         snapshot.has_active_room, snapshot.exits_unlocked);
     if (mode == DoorVisualMode::hidden) {
@@ -224,21 +246,10 @@ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
         const MonsterLabelTextStyle scene_text = monster_label_text_style(
             ui_viewport_scale(static_cast<int>(width),
                 static_cast<int>(height)));
-        const int label_size = scene_text.role_font_size;
-        const Font label_font = hud_font_ready ? hud_font : GetFontDefault();
-        const Vector2 measured = MeasureTextEx(label_font, visual.label,
-            static_cast<float>(label_size), 1.0F);
-        const Vector2 label_position{
-            projected.x - measured.x * 0.5F,
-            frame.y - static_cast<float>(label_size) - 4.0F};
-        if (hud_font_ready && IsFontValid(label_font)) {
-            draw_crisp_ui_text(label_font, visual.label, label_position,
-                static_cast<float>(label_size), 1.0F, text_color);
-        } else {
-            DrawText(visual.label, static_cast<int>(std::round(label_position.x)),
-                static_cast<int>(std::round(label_position.y)),
-                label_size, text_color);
-        }
+        const float label_size = static_cast<float>(scene_text.role_font_size);
+        draw_world_prompt(visual.label,
+            {projected.x, frame.y - label_size - 14.0F},
+            label_size, text_color, font, font_ready, width, height);
     }
 }
 
@@ -466,7 +477,8 @@ void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
     }
 }
 
-void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
+void draw_abyss(const dungeon::DungeonSnapshot& snapshot,
+    float elapsed_seconds, Font font, bool font_ready) noexcept {
     if (!snapshot.is_abyss) {
         return;
     }
@@ -478,11 +490,14 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
         Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
     const AbyssHudValues values = abyss_hud_values(snapshot);
     if (values.visible) {
-        const char* label = TextFormat("%s  |  %s",
-            values.danger_label, values.rule_label);
-        const int font_size = 20;
-        DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
-            18, font_size, Color{255, 164, 221, 255});
+        std::array<char, 96U> label{};
+        static_cast<void>(ui_utf8_format(label.data(), label.size(),
+            u8"%s｜%s", values.danger_label, values.rule_label));
+        const float screen_width = static_cast<float>(GetScreenWidth());
+        const float screen_height = static_cast<float>(GetScreenHeight());
+        draw_world_prompt(label.data(), {screen_width * 0.5F, 18.0F},
+            20.0F, raylib_color(world_prompt_style().primary),
+            font, font_ready, screen_width, screen_height);
     }
 }
 
@@ -512,7 +527,8 @@ HoleVisualMode render_hole_visual_mode(
 void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
     const MaterialPack& material_pack,
     const CombatCameraView& camera,
-    const char* interact_binding_label) noexcept {
+    const char* interact_binding_label,
+    Font font, bool font_ready) noexcept {
     const HoleVisualMode hole = render_hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
@@ -521,8 +537,8 @@ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
         snapshot.hole.position, camera,
         static_cast<float>(GetScreenWidth()),
         static_cast<float>(GetScreenHeight()));
-    const int x = static_cast<int>(geometry.center.x);
-    const int y = static_cast<int>(geometry.center.y);
+    const float screen_width = static_cast<float>(GetScreenWidth());
+    const float screen_height = static_cast<float>(GetScreenHeight());
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
@@ -536,17 +552,28 @@ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
     }
     DrawEllipseLinesV(geometry.center,
         geometry.radius_x, geometry.radius_y, color);
-    const char* label = hole == HoleVisualMode::sealed ? "SEALED"
-        : hole == HoleVisualMode::ready ? "READY"
-        : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
-    DrawText(label, x - MeasureText(label, 20) / 2, y - 12, 20, color);
+    const char* const label = hole_visual_label(hole);
+    const WorldPromptStyle prompt_style = world_prompt_style();
+    const Color label_color = hole == HoleVisualMode::busy
+        ? raylib_color(prompt_style.warning)
+        : hole == HoleVisualMode::faulted
+            ? raylib_color(prompt_style.danger)
+            : hole == HoleVisualMode::ready
+                ? raylib_color(prompt_style.primary)
+                : raylib_color(prompt_style.secondary);
+    draw_world_prompt(label,
+        {geometry.center.x, geometry.center.y - 12.0F},
+        20.0F, label_color, font, font_ready,
+        screen_width, screen_height);
     if (snapshot.has_combat && hole == HoleVisualMode::ready
         && player_in_hole_range(snapshot.combat.player.position,
             snapshot.hole.position, kHoleInteractionRadius)) {
         const auto prompt = hole_interaction_prompt(
-            interact_binding_label);
-        DrawText(prompt.data(), x - MeasureText(prompt.data(), 26) / 2,
-            y + 36, 26, RAYWHITE);
+            interact_binding_label, HoleInteractionAction::descend);
+        draw_world_prompt(prompt.data(),
+            {geometry.center.x, geometry.center.y + 36.0F},
+            26.0F, raylib_color(world_prompt_style().primary),
+            font, font_ready, screen_width, screen_height);
     }
 }
 
@@ -594,7 +621,8 @@ MaterialResidencyRequest room_background_residency_request(
 
 void CombatRenderer::draw_abyss_overlay(
     const dungeon::DungeonSnapshot& current) const noexcept {
-    draw_abyss(current, static_cast<float>(GetTime()));
+    draw_abyss(current, static_cast<float>(GetTime()),
+        world_ui_font_, world_ui_font_ready_);
 }
 
 RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
@@ -657,9 +685,10 @@ void CombatRenderer::draw_room(
     draw_environment_hazards(current, camera, width, height);
     draw_environment_room_props(
         material_pack_, current, camera, width, height);
-    draw_doors(current, camera, width, height, material_pack_, hud_renderer_.hud_font(),
-        hud_renderer_.font_ready());
-    draw_hole(current, material_pack_, camera, interact_binding_label);
+    draw_doors(current, camera, width, height, material_pack_,
+        world_ui_font_, world_ui_font_ready_);
+    draw_hole(current, material_pack_, camera, interact_binding_label,
+        world_ui_font_, world_ui_font_ready_);
     draw_ground_materials(
         current, material_pack_, camera, width, height);
     draw_ground_items(ground_item_range(current), loot_filter_mode_, material_pack_,

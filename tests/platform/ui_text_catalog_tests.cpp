@@ -294,7 +294,7 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
 arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
     std::size_t count{};
     platform::visit_ui_text_catalog(&count_text, &count);
-    ARPG_REQUIRE(count == 283U);
+    ARPG_REQUIRE(count == 284U);
     return {};
 }
 
@@ -305,7 +305,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 283U);
+        ARPG_REQUIRE(count == 284U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

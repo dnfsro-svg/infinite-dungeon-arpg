@@ -2,6 +2,7 @@
 
 #include "allocation_probe.hpp"
 #include "combat/combat_types.hpp"
+#include "dungeon_view_math.hpp"
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 #include "ui_text_contrast.hpp"
@@ -446,6 +447,49 @@ arpg::test::Failure large_room_hud_rows_are_opaque_and_non_overlapping_at_suppor
     return {};
 }
 
+arpg::test::Failure world_prompt_style_uses_opaque_high_contrast_inner_backing() noexcept {
+    const platform::WorldPromptStyle style = platform::world_prompt_style();
+    ARPG_REQUIRE(style.backing.r == 0x0BU);
+    ARPG_REQUIRE(style.backing.g == 0x10U);
+    ARPG_REQUIRE(style.backing.b == 0x19U);
+    ARPG_REQUIRE(style.backing.a == 255U);
+    const Color backing{style.backing.r, style.backing.g,
+        style.backing.b, style.backing.a};
+    const Color primary{style.primary.r, style.primary.g,
+        style.primary.b, style.primary.a};
+    const Color secondary{style.secondary.r, style.secondary.g,
+        style.secondary.b, style.secondary.a};
+    const Color warning{style.warning.r, style.warning.g,
+        style.warning.b, style.warning.a};
+    const Color danger{style.danger.r, style.danger.g,
+        style.danger.b, style.danger.a};
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(primary, backing) >= 4.5F);
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(secondary, backing) >= 4.5F);
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(warning, backing) >= 4.5F);
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(danger, backing) >= 4.5F);
+    constexpr std::array<platform::Rgba8, 4U> kDoorColors{{
+        {236U, 92U, 54U, 255U},
+        {64U, 156U, 236U, 255U},
+        {236U, 218U, 72U, 255U},
+        {154U, 76U, 210U, 255U},
+    }};
+    for (const platform::Rgba8 requested : kDoorColors) {
+        const platform::Rgba8 corrected =
+            platform::world_prompt_text_color(requested);
+        const Color actual{corrected.r, corrected.g,
+            corrected.b, corrected.a};
+        ARPG_REQUIRE(corrected.a == 255U);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+            actual, backing) >= 4.5F);
+    }
+    const platform::Rgba8 corrected_chaos =
+        platform::world_prompt_text_color(kDoorColors[3]);
+    ARPG_REQUIRE(corrected_chaos.r == style.primary.r);
+    ARPG_REQUIRE(corrected_chaos.g == style.primary.g);
+    ARPG_REQUIRE(corrected_chaos.b == style.primary.b);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"health first", &health_is_always_the_first_visible_player_bar},
     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
@@ -462,6 +506,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"HUD key labels remain readable at 720p", &hud_text_style_keeps_key_labels_readable_at_720p},
     {"large room HUD resolution matrix",
         &large_room_hud_rows_are_opaque_and_non_overlapping_at_supported_resolutions},
+    {"world prompt opaque high contrast backing",
+        &world_prompt_style_uses_opaque_high_contrast_inner_backing},
 };
 
 }  // namespace

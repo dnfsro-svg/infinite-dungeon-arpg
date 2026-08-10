@@ -48,6 +48,26 @@ enum class SaveIndicator : std::uint8_t {
     error,
 };
 
+enum class HoleInteractionAction : std::uint8_t {
+    descend,
+    next_floor,
+};
+
+struct WorldPromptStyle final {
+    Rgba8 backing{};
+    Rgba8 primary{};
+    Rgba8 secondary{};
+    Rgba8 warning{};
+    Rgba8 danger{};
+};
+
+struct WorldPromptLayout final {
+    bool visible{};
+    Rectangle backing{};
+    Vector2 text_position{};
+    Vector2 measured{};
+};
+
 enum class DoorVisualMode : std::uint8_t {
     closed,
     open,
@@ -99,7 +119,7 @@ struct AbyssHudValues final {
 
 inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
 inline constexpr float kHoleInteractionRadius = 3.25F;
-using HoleInteractionPrompt = std::array<char, 32>;
+using HoleInteractionPrompt = std::array<char, 48>;
 
 [[nodiscard]] DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
@@ -119,6 +139,7 @@ using HoleInteractionPrompt = std::array<char, 32>;
     const dungeon::DungeonSnapshot& snapshot) noexcept;
 [[nodiscard]] HoleVisualMode hole_visual_mode(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
+[[nodiscard]] const char* hole_visual_label(HoleVisualMode mode) noexcept;
 [[nodiscard]] bool player_in_hole_range(
     combat::Vec3 position,
     combat::Vec3 center,
@@ -127,7 +148,13 @@ using HoleInteractionPrompt = std::array<char, 32>;
     const dungeon::DungeonSnapshot& snapshot,
     combat::Vec3 player_position) noexcept;
 [[nodiscard]] HoleInteractionPrompt hole_interaction_prompt(
-    const char* interact_binding_label) noexcept;
+    const char* interact_binding_label,
+    HoleInteractionAction action = HoleInteractionAction::descend) noexcept;
+[[nodiscard]] WorldPromptStyle world_prompt_style() noexcept;
+[[nodiscard]] Rgba8 world_prompt_text_color(Rgba8 requested) noexcept;
+[[nodiscard]] WorldPromptLayout world_prompt_layout(
+    Vector2 anchor, Vector2 measured,
+    float screen_width, float screen_height) noexcept;
 [[nodiscard]] Rgba8 ecosystem_tint(
     dungeon::DungeonElement element) noexcept;
 [[nodiscard]] float abyss_pulse_alpha(float elapsed_seconds) noexcept;
