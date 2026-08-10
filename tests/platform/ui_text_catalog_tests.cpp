@@ -69,6 +69,12 @@ constexpr bool pre_task4_ui_text_ordinals_are_stable() noexcept {
 
 static_assert(pre_task4_ui_text_ordinals_are_stable(),
     "Pre-Task4 UiTextId ordinals 0-42 are a stable compatibility contract");
+static_assert(static_cast<std::size_t>(platform::UiTextId::hud_experience_maxed)
+        == 43U,
+    "UiTextId ordinals 0-43 are a stable compatibility contract");
+static_assert(static_cast<std::size_t>(
+        platform::UiTextId::recovery_dual_slot_instruction) == 44U,
+    "Recovery instruction must append after the stable UiTextId range");
 
 void count_text(const char* text, void* context) noexcept {
     auto* const count = static_cast<std::size_t*>(context);
@@ -85,7 +91,7 @@ std::size_t utf8_codepoint_count(const char* text) noexcept {
 }
 
 arpg::test::Failure fixed_messages_are_chinese() noexcept {
-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 44U>
+    constexpr std::array<std::pair<platform::UiTextId, const char*>, 45U>
         kExpectedTexts{{
             {platform::UiTextId::pause_title, u8"暂停"},
             {platform::UiTextId::pause_continue, u8"继续游戏"},
@@ -132,6 +138,8 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
             {platform::UiTextId::debug_unavailable, u8"调试不可用"},
             {platform::UiTextId::unknown, u8"未知"},
             {platform::UiTextId::hud_experience_maxed, u8"经验已满"},
+            {platform::UiTextId::recovery_dual_slot_instruction,
+                u8"两个存档槽均无效。按 N 将其归档并创建新游戏。"},
         }};
     for (const auto& expected : kExpectedTexts) {
         ARPG_REQUIRE(std::strcmp(
@@ -168,7 +176,7 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
 }
 
 arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
-    constexpr std::array<platform::UiTextId, 44U> texts{{
+    constexpr std::array<platform::UiTextId, 45U> texts{{
         platform::UiTextId::pause_title, platform::UiTextId::pause_continue,
         platform::UiTextId::pause_settings, platform::UiTextId::pause_quit,
         platform::UiTextId::settings_title, platform::UiTextId::settings_audio,
@@ -198,6 +206,7 @@ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
         platform::UiTextId::passive_close, platform::UiTextId::debug_ready,
         platform::UiTextId::debug_unavailable, platform::UiTextId::unknown,
         platform::UiTextId::hud_experience_maxed,
+        platform::UiTextId::recovery_dual_slot_instruction,
     }};
     for (const platform::UiTextId id : texts)
         ARPG_REQUIRE(platform::ui_text(id)[0] != '\0');
@@ -294,7 +303,7 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
 arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
     std::size_t count{};
     platform::visit_ui_text_catalog(&count_text, &count);
-    ARPG_REQUIRE(count == 284U);
+    ARPG_REQUIRE(count == 285U);
     return {};
 }
 
@@ -305,7 +314,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 284U);
+        ARPG_REQUIRE(count == 285U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

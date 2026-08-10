@@ -8,7 +8,7 @@ namespace {
 
 constexpr const char* kUnknown = u8"未知";
 
-constexpr std::array<const char*, 44U> kUiTexts{{
+constexpr std::array<const char*, 45U> kUiTexts{{
     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
@@ -24,6 +24,7 @@ constexpr std::array<const char*, 44U> kUiTexts{{
     u8"设置回滚失败", u8"设置已保存", u8"另一实例修改已重载",
     u8"设置存储冲突，需重启", u8"设置已恢复默认值",
     u8"经验已满",
+    u8"两个存档槽均无效。按 N 将其归档并创建新游戏。",
 }};
 
 constexpr std::array<const char*, 18U> kItemBaseNames{{

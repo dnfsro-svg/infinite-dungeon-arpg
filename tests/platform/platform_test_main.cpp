@@ -312,7 +312,7 @@ int main() {
             hud_render_plan_suite(),
             hud_host_integration_suite(),
         };
-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 177,
+        return arpg::test::run_suites(full_chinese_ui_menu_hud, 178,
             "full Chinese UI menus and HUD");
     }
     if (cplay038_save_directory_only()) {
@@ -515,6 +515,6 @@ int main() {
         large_room_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 664,
+    return arpg::test::run_suites(suites, 666,
         "host settings runtime contract");
 }

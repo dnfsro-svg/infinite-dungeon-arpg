@@ -2,8 +2,11 @@
 
 #include "combat/room_bounds.hpp"
 #include "core/fixed_step.hpp"
+#include "dungeon_runtime.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "material_asset_types.hpp"
+
+#include <raylib.h>
 
 #include <cstdint>
 #include <array>
@@ -22,6 +25,28 @@ class SettingsStore;
 }
 
 namespace arpg::platform {
+
+inline constexpr std::size_t kRecoveryScreenErrorTextCapacity = 48U;
+
+struct RecoveryScreenView final {
+    Rectangle panel{};
+    Rectangle title_bounds{};
+    Rectangle message_bounds{};
+    Rectangle error_bounds{};
+    const char* title{};
+    const char* message{};
+    std::array<char, kRecoveryScreenErrorTextCapacity> error_text{};
+    Color panel_color{};
+    Color title_color{};
+    Color message_color{};
+    Color error_color{};
+    float title_font_size{};
+    float message_font_size{};
+    float error_font_size{};
+};
+
+[[nodiscard]] RecoveryScreenView make_recovery_screen_view(
+    const DungeonRenderStatus& status, int width, int height) noexcept;
 
 inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumns{{
     -4.0F, -1.3F, 1.3F, 4.0F,

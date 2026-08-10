@@ -1955,7 +1955,9 @@ function(hud_present_structure_valid SOURCE OUT_VARIABLE)
     set(RECOVERY_PRESENT_PATTERN
         "static_cast[ \t\r\n]*<[ \t\r\n]*void[ \t\r\n]*>[ \t\r\n]*\\([ \t\r\n]*present_frame_and_maybe_capture[ \t\r\n]*\\([ \t\r\n]*${CAPTURE_PATH_ARGUMENT_PATTERN}[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*;")
     string(FIND "${CODE}" "if (runtime.state() == DungeonRuntimeState::recovery_required)" RECOVERY_START)
-    string(FIND "${CODE}" "draw_recovery_screen(runtime.render_status());" RECOVERY_DRAW)
+    set(RECOVERY_SHARED_FONT_DRAW
+        "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
+    string(FIND "${CODE}" "${RECOVERY_SHARED_FONT_DRAW}" RECOVERY_DRAW)
     string(REGEX MATCH "${RECOVERY_PRESENT_PATTERN}"
         RECOVERY_PRESENT_CALL_MATCH "${CODE}")
     set(RECOVERY_PRESENT -1)
@@ -2073,10 +2075,10 @@ hud_present_structure_valid("${NORMAL_NULL_ARGUMENT_SOURCE}"
 if(NORMAL_NULL_ARGUMENT_VALID)
     message(FATAL_ERROR "normal present must retain the capture-path argument")
 endif()
-string(REPLACE "draw_recovery_screen(runtime.render_status());" ""
+string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());" ""
     RECOVERY_PRESENT_BEFORE_DRAW_SOURCE "${HOST_SOURCE}")
 set(RECOVERY_PRESENT_WITH_LATE_DRAW
-    "${RECOVERY_PRESENT_MULTILINE}\n                draw_recovery_screen(runtime.render_status());")
+    "${RECOVERY_PRESENT_MULTILINE}\n                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
 string(REPLACE "${RECOVERY_PRESENT_MULTILINE}"
     "${RECOVERY_PRESENT_WITH_LATE_DRAW}"
     RECOVERY_PRESENT_BEFORE_DRAW_SOURCE
@@ -2088,6 +2090,17 @@ hud_present_structure_valid("${RECOVERY_PRESENT_BEFORE_DRAW_SOURCE}"
     RECOVERY_PRESENT_BEFORE_DRAW_VALID)
 if(RECOVERY_PRESENT_BEFORE_DRAW_VALID)
     message(FATAL_ERROR "recovery present before draw must not validate")
+endif()
+string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
+    "draw_recovery_screen(Font{}, runtime.render_status());"
+    RECOVERY_UNSHARED_FONT_SOURCE "${HOST_SOURCE}")
+if(RECOVERY_UNSHARED_FONT_SOURCE STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "recovery shared-font fixture did not mutate")
+endif()
+hud_present_structure_valid("${RECOVERY_UNSHARED_FONT_SOURCE}"
+    RECOVERY_UNSHARED_FONT_VALID)
+if(RECOVERY_UNSHARED_FONT_VALID)
+    message(FATAL_ERROR "recovery draw must borrow the host SharedUiFont")
 endif()
 set(COMMENT_ONLY_HUD_PRESENT [=[
 // renderer.observe_presented_hud_frame(HudPresentedFrame::recovery);

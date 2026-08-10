@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
 #include "combat_renderer.hpp"
 #include "combat_view_math.hpp"
 #include "control_hints.hpp"
@@ -12,6 +13,7 @@
 #include "raylib_host.hpp"
 #include "skills/active_skill_catalog.hpp"
 #include "skills/skill_loadout.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <array>
 #include <cstring>
@@ -269,6 +271,60 @@ arpg::test::Failure committed_settings_hints_and_revision_are_used_after_apply()
         active.slots[0].cooldown_label.data(), u8"2秒") == 0);
     ARPG_REQUIRE(std::strcmp(
         active.slots[1].cooldown_label.data(), u8"30秒") == 0);
+    return {};
+}
+
+arpg::test::Failure recovery_screen_view_centers_the_catalogued_cjk_message() noexcept {
+    platform::DungeonRenderStatus status = recovery_status();
+    status.error = static_cast<arpg::persistence::SaveError>(7U);
+    constexpr std::array<Vector2, 3U> kScreens{{
+        {800.0F, 450.0F}, {1280.0F, 720.0F}, {1920.0F, 1080.0F},
+    }};
+    for (const Vector2 screen : kScreens) {
+        const platform::RecoveryScreenView view =
+            platform::make_recovery_screen_view(status,
+                static_cast<int>(screen.x), static_cast<int>(screen.y));
+        ARPG_REQUIRE(view.panel.x >= 0.0F);
+        ARPG_REQUIRE(view.panel.y >= 0.0F);
+        ARPG_REQUIRE(view.panel.x + view.panel.width <= screen.x);
+        ARPG_REQUIRE(view.panel.y + view.panel.height <= screen.y);
+        ARPG_REQUIRE(view.panel.x + view.panel.width * 0.5F
+            == screen.x * 0.5F);
+        ARPG_REQUIRE(view.panel.y + view.panel.height * 0.5F
+            == screen.y * 0.5F);
+        ARPG_REQUIRE(view.title_bounds.x >= view.panel.x);
+        ARPG_REQUIRE(view.message_bounds.x >= view.panel.x);
+        ARPG_REQUIRE(view.error_bounds.x >= view.panel.x);
+        ARPG_REQUIRE(view.title_bounds.x + view.title_bounds.width
+            <= view.panel.x + view.panel.width);
+        ARPG_REQUIRE(view.message_bounds.x + view.message_bounds.width
+            <= view.panel.x + view.panel.width);
+        ARPG_REQUIRE(view.error_bounds.x + view.error_bounds.width
+            <= view.panel.x + view.panel.width);
+        ARPG_REQUIRE(view.title_bounds.y >= view.panel.y);
+        ARPG_REQUIRE(view.message_bounds.y >= view.panel.y);
+        ARPG_REQUIRE(view.error_bounds.y >= view.panel.y);
+        ARPG_REQUIRE(view.error_bounds.y + view.error_bounds.height
+            <= view.panel.y + view.panel.height);
+        ARPG_REQUIRE(std::strcmp(view.title, u8"需要恢复存档") == 0);
+        ARPG_REQUIRE(std::strcmp(view.message,
+            u8"两个存档槽均无效。按 N 将其归档并创建新游戏。") == 0);
+        ARPG_REQUIRE(std::strcmp(view.error_text.data(), u8"存档错误 7") == 0);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(view.title_color,
+            view.panel_color) >= 4.5F);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(view.message_color,
+            view.panel_color) >= 4.5F);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(view.error_color,
+            view.panel_color) >= 4.5F);
+    }
+    const std::uint64_t allocation_count_before =
+        arpg::test::allocation_count();
+    for (std::size_t iteration{}; iteration < 10000U; ++iteration) {
+        static_cast<void>(platform::make_recovery_screen_view(status,
+            static_cast<int>(kScreens[iteration % kScreens.size()].x),
+            static_cast<int>(kScreens[iteration % kScreens.size()].y)));
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocation_count_before);
     return {};
 }
 
@@ -583,6 +639,7 @@ arpg::test::Failure abyss_pickup_cross_room_keeps_purple_context_end_to_end()
 constexpr arpg::test::TestCase kCases[] = {
     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
+    {"recovery screen centers catalogued CJK message", &recovery_screen_view_centers_the_catalogued_cjk_message},
     {"presentation frame sentinel is safe", &presentation_frame_sentinel_rejects_invalid_enum_values},
     {"debug diagnostics plan covers F1 counters", &debug_diagnostics_plan_carries_all_f1_only_counters},
     {"fallback font selection owns no default font", &fallback_font_selection_matches_actual_draw_and_shutdown_ownership},

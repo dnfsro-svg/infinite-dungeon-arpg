@@ -24,8 +24,13 @@
 #include "pause_menu_state.hpp"
 #include "pause_menu_view.hpp"
 #include "stable_key_raylib.hpp"
+#include "shared_ui_font.hpp"
 #include "ui_material.hpp"
+#include "ui_text_catalog.hpp"
 #include "ui_text_bounds_audit.hpp"
+#include "ui_text_contrast.hpp"
+#include "ui_text_renderer.hpp"
+#include "ui_utf8.hpp"
 #include "persistence/save_paths.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
@@ -159,14 +164,68 @@ void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
     return cues;
 }
 
-void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
+RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& status,
+    int width, int height) noexcept {
+    constexpr float kBasePanelWidth = 640.0F;
+    constexpr float kBasePanelHeight = 260.0F;
+    constexpr float kMargin = 32.0F;
+    const float screen_width = static_cast<float>((std::max)(width, 0));
+    const float screen_height = static_cast<float>((std::max)(height, 0));
+    const float scale = (std::min)({1.0F,
+        (std::max)(0.0F, screen_width - kMargin * 2.0F) / kBasePanelWidth,
+        (std::max)(0.0F, screen_height - kMargin * 2.0F) / kBasePanelHeight});
+    const UiTextContrastStyle style = ui_text_contrast_style();
+    RecoveryScreenView view{};
+    view.panel = {(screen_width - kBasePanelWidth * scale) * 0.5F,
+        (screen_height - kBasePanelHeight * scale) * 0.5F,
+        kBasePanelWidth * scale, kBasePanelHeight * scale};
+    view.title_bounds = {view.panel.x + 40.0F * scale,
+        view.panel.y + 38.0F * scale, view.panel.width - 80.0F * scale,
+        52.0F * scale};
+    view.message_bounds = {view.panel.x + 40.0F * scale,
+        view.panel.y + 112.0F * scale, view.panel.width - 80.0F * scale,
+        48.0F * scale};
+    view.error_bounds = {view.panel.x + 40.0F * scale,
+        view.panel.y + 186.0F * scale, view.panel.width - 80.0F * scale,
+        34.0F * scale};
+    view.title = ui_text(UiTextId::recovery_title);
+    view.message = ui_text(UiTextId::recovery_dual_slot_instruction);
+    static_cast<void>(ui_utf8_format(view.error_text.data(),
+        view.error_text.size(), "%s %u", ui_text(UiTextId::save_error),
+        static_cast<unsigned>(status.error)));
+    view.panel_color = style.backing;
+    view.title_color = style.danger;
+    view.message_color = style.primary;
+    view.error_color = style.warning;
+    view.title_font_size = 34.0F * scale;
+    view.message_font_size = 20.0F * scale;
+    view.error_font_size = 18.0F * scale;
+    return view;
+}
+
+void draw_recovery_screen(Font font, const DungeonRenderStatus& status) noexcept {
     BeginDrawing();
-    ClearBackground(Color{21, 11, 27, 255});
-    DrawText("SAVE RECOVERY REQUIRED", 48, 70, 32, Color{255, 169, 194, 255});
-    DrawText("Both save slots are invalid. Press N to archive them and create a new run.",
-        48, 122, 18, RAYWHITE);
-    DrawText(TextFormat("Save error %u", static_cast<unsigned>(status.error)),
-        48, 156, 16, Color{255, 202, 126, 255});
+    ClearBackground(Color{12, 8, 18, 255});
+    if (!IsFontValid(font)) return;
+    const RecoveryScreenView view = ::arpg::platform::make_recovery_screen_view(status,
+        GetScreenWidth(), GetScreenHeight());
+    DrawRectangleRounded(view.panel, 0.04F, 8, view.panel_color);
+    DrawRectangleRoundedLinesEx(view.panel, 0.04F, 8, 2.0F,
+        Color{129, 75, 94, 255});
+    const auto draw_centered = [font](const char* text, Rectangle bounds,
+        float font_size, Color color) noexcept {
+        const Vector2 measured = MeasureTextEx(font, text, font_size, 1.0F);
+        draw_crisp_ui_text(font, text, {bounds.x
+                + (bounds.width - measured.x) * 0.5F,
+                bounds.y + (bounds.height - measured.y) * 0.5F},
+            font_size, 1.0F, color);
+    };
+    draw_centered(view.title, view.title_bounds, view.title_font_size,
+        view.title_color);
+    draw_centered(view.message, view.message_bounds, view.message_font_size,
+        view.message_color);
+    draw_centered(view.error_text.data(), view.error_bounds,
+        view.error_font_size, view.error_color);
 }
 
 // Production screenshots intentionally read after EndDrawing presents the frame.
@@ -349,6 +408,11 @@ void apply_stage12_material_showcase_world(
 }
 
 }  // namespace
+
+RecoveryScreenView make_recovery_screen_view(const DungeonRenderStatus& status,
+    int width, int height) noexcept {
+    return make_recovery_screen_view_impl(status, width, height);
+}
 
 dungeon::AutoPickupPolicy loot_pickup_policy(
     settings::LootFilterMode mode) noexcept {
@@ -651,7 +715,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,
                     previous, current, runtime.render_status(), control_hints,
                     GetFrameTime(), true);
-                draw_recovery_screen(runtime.render_status());
+                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());
                 std::optional<std::string> capture_path =
                     validation_capture_path();
                 if (frame_input.keys.f12 || frame_input.keys.v) {
