@@ -4,14 +4,16 @@
 #include "ui_material.hpp"
 #include "ui_text_contrast.hpp"
 #include "ui_text_bounds_audit.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_text_layout.hpp"
 #include "ui_text_renderer.hpp"
 #include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 
 #include <raylib.h>
 
 #include <algorithm>
 #include <cstdio>
-#include <string>
 
 namespace arpg::platform {
 namespace {
@@ -19,50 +21,54 @@ namespace {
 constexpr float kInset = 10.0F;
 constexpr float kGap = 4.0F;
 constexpr std::size_t kColumns = 2U;
+constexpr Color kMaterialTextBacking{5, 9, 16, 255};
+constexpr Color kDangerBacking{29, 15, 18, 255};
+constexpr Color kConfirmBacking{74, 24, 27, 255};
+constexpr Color kCancelBacking{30, 42, 58, 255};
 
 void draw_opaque_material_text_backing(Rectangle bounds) noexcept {
     if (bounds.width <= 0.0F || bounds.height <= 0.0F) return;
-    DrawRectangleRounded(bounds, 0.08F, 4, Color{5, 9, 16, 255});
+    DrawRectangleRounded(bounds, 0.08F, 4, kMaterialTextBacking);
+}
+
+UiTextExtent measure_material_text(const char* text, float font_size,
+    float spacing, void* context) noexcept {
+    if (context == nullptr) return {};
+    const Font font = *static_cast<const Font*>(context);
+    if (!IsFontValid(font)) return {};
+    const Vector2 extent = MeasureTextEx(font, text, font_size, spacing);
+    return {extent.x, extent.y};
 }
 
 void draw_material_text(Font font, bool ready, const char* text,
-    float x, float y, float size, Color color,
-    Rectangle audit_container = {}) noexcept {
-    if (text == nullptr || text[0] == '\0') return;
-    const Font draw_font = ready && IsFontValid(font) ? font : GetFontDefault();
+    Rectangle bounds, float size, float minimum_size, Color color,
+    Color opaque_backing) noexcept {
+    if (!ready || !IsFontValid(font)) return;
+    if (text == nullptr || text[0] == '\0'
+            || bounds.width <= 0.0F || bounds.height <= 0.0F
+            || opaque_backing.a != 255U) {
+        return;
+    }
     const float viewport_scale = ui_viewport_scale(
         GetScreenWidth(), GetScreenHeight());
-    size *= viewport_scale;
+    const float scaled_size = size * viewport_scale;
+    const float scaled_minimum = minimum_size * viewport_scale;
     char fitted[128]{};
-    static_cast<void>(std::snprintf(fitted, sizeof(fitted), "%s", text));
-    fitted[sizeof(fitted) - 1U] = '\0';
-    if (audit_container.width > 0.0F) {
-        std::size_t length = std::char_traits<char>::length(fitted);
-        while (length > 0U
-                && MeasureTextEx(draw_font, fitted, size, 0.5F).x
-                    > audit_container.width - 6.0F) {
-            do {
-                --length;
-            } while (length > 0U
-                && (static_cast<unsigned char>(fitted[length]) & 0xC0U)
-                    == 0x80U);
-            fitted[length] = '\0';
-            if (length + 4U < sizeof(fitted)) {
-                static_cast<void>(std::snprintf(
-                    fitted + length, sizeof(fitted) - length, "..."));
-            }
-        }
-        record_ui_text_bounds(UiTextAuditPage::inventory,
-            UiTextAuditRole::inventory_material_entry, draw_font, fitted,
-            {x, y}, size, 0.5F, audit_container,
-            ui_typography().kInventoryBodyFontSize * viewport_scale);
-    }
-    const UiTextContrastStyle style = ui_text_contrast_style();
+    const UiCenteredTextLayout layout = fit_centered_ui_text(
+        fitted, sizeof(fitted), text, bounds, scaled_size, scaled_minimum,
+        0.5F * viewport_scale, &measure_material_text, &font);
+    if (!layout.drawable) return;
     color.a = 255U;
-    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
-        color = style.muted;
+    if (ui_luma_contrast_ratio(color, opaque_backing) < 4.5F) {
+        color = ui_text_contrast_style().primary;
+        if (ui_luma_contrast_ratio(color, opaque_backing) < 4.5F) return;
     }
-    draw_crisp_ui_text(draw_font, fitted, {x, y}, size, 0.5F, color);
+    record_ui_text_bounds(UiTextAuditPage::inventory,
+        UiTextAuditRole::inventory_material_entry, font, layout.text,
+        layout.position, layout.font_size, layout.spacing, bounds,
+        scaled_minimum);
+    draw_crisp_ui_text(font, layout.text, layout.position,
+        layout.font_size, layout.spacing, color);
 }
 
 bool contains(Rectangle rectangle, Vector2 point) noexcept {
@@ -94,12 +100,7 @@ MaterialSpriteId material_bag_sprite(items::MaterialId id) noexcept {
 }
 
 const char* material_bag_display_name(items::MaterialId id) noexcept {
-    if (id == items::MaterialId::reinforcement_stone) {
-        return "Reinf. Stone";
-    }
-    const items::MaterialDefinition* const definition =
-        items::material_definition(id);
-    return definition == nullptr ? "Invalid" : definition->name.data();
+    return ui_material_name(id);
 }
 
 Rectangle material_bag_text_backing(Rectangle slot, float scale) noexcept {
@@ -270,19 +271,19 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
     const MaterialBagLayout layout = material_bag_layout(width, height);
     const float scale = ui_viewport_scale(width, height);
     if (!layout.contains_all_slots()) return;
+    DrawRectangleRec(layout.panel, kMaterialTextBacking);
     if (!assets.draw_nine_slice(ui_material_sprite(
             UiMaterialElement::inventory_panel_detail), layout.panel)) {
-        DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
+        DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 255});
         DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
             Color{72, 91, 120, 255});
     }
-    draw_material_text(font, font_ready, "MATERIAL BAG",
-        layout.panel.x + 40.0F * scale,
-        layout.panel.y + 8.0F * scale, 18.0F,
-        ui_text_contrast_style().primary,
-        {layout.panel.x + 36.0F * scale,
+    const Rectangle title_bounds{layout.panel.x + 36.0F * scale,
             layout.panel.y + 4.0F * scale,
-            layout.panel.width - 48.0F * scale, 25.0F * scale});
+            layout.panel.width - 48.0F * scale, 25.0F * scale};
+    draw_material_text(font, font_ready, u8"材料袋", title_bounds,
+        18.0F, 12.0F, ui_text_contrast_style().primary,
+        kMaterialTextBacking);
     static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_nw,
         {layout.panel.x + 13.0F, layout.panel.y + 13.0F}, false, 0.16F));
     static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_ne,
@@ -322,23 +323,22 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
         const char* display_name = material_bag_display_name(id);
         if (selected && id == items::MaterialId::directed) {
             switch (directed_category_) {
-            case items::DirectedCategory::damage: display_name = "Damage Core"; break;
-            case items::DirectedCategory::defense: display_name = "Defense Core"; break;
-            case items::DirectedCategory::speed: display_name = "Speed Core"; break;
-            case items::DirectedCategory::element: display_name = "Element Core"; break;
+            case items::DirectedCategory::damage: display_name = u8"伤害核心"; break;
+            case items::DirectedCategory::defense: display_name = u8"防御核心"; break;
+            case items::DirectedCategory::speed: display_name = u8"速度核心"; break;
+            case items::DirectedCategory::element: display_name = u8"元素核心"; break;
             case items::DirectedCategory::count: break;
             }
         }
         const float font_size = ui_typography().kInventoryBodyFontSize;
-        const float display_size = font_size * scale;
+        char display_text[64]{};
+        const UiUtf8CopyResult formatted = ui_utf8_format(
+            display_text, sizeof(display_text), u8"%s x%llu", display_name,
+            static_cast<unsigned long long>(state.materials[index]));
+        if (!formatted.input_was_valid || formatted.truncated) continue;
         draw_material_text(font, font_ready,
-            TextFormat("%s x%llu",
-                display_name,
-                static_cast<unsigned long long>(state.materials[index])),
-            text_container.x + 4.0F * scale,
-            text_container.y
-                + (std::max)(0.0F, (text_container.height - display_size) * 0.5F),
-            font_size, color, text_container);
+            display_text, text_container, font_size, 9.0F, color,
+            kMaterialTextBacking);
     }
 }
 
@@ -348,39 +348,50 @@ void MaterialBagRenderer::draw_reinforcement_confirmation(
     if (!reinforcement_confirmation_item_.has_value()) return;
     const ReinforcementConfirmationLayout layout =
         reinforcement_confirmation_layout(width, height);
+    const float scale = ui_viewport_scale(width, height);
+    DrawRectangleRec(layout.panel, kDangerBacking);
     if (!assets.draw_nine_slice(
             ui_material_sprite(UiMaterialElement::warning_modal),
             layout.panel)) {
-        DrawRectangleRounded(layout.panel, 0.04F, 5, Color{29, 15, 18, 252});
-        DrawRectangleRoundedLinesEx(layout.panel, 0.04F, 5, 2.0F,
-            Color{255, 113, 96, 255});
+        DrawRectangleRounded(layout.panel, 0.04F, 5, kDangerBacking);
     }
+    DrawRectangleLinesEx(layout.panel, 2.0F, Color{255, 113, 96, 255});
+    const Rectangle danger_bounds{layout.panel.x + 14.0F * scale,
+        layout.panel.y + 10.0F * scale,
+        layout.panel.width - 28.0F * scale, 25.0F * scale};
     draw_material_text(font, font_ready,
-        "DANGER: FAILURE DESTROYS EQUIPMENT",
-        layout.panel.x + 22.0F, layout.panel.y + 17.0F, 16.0F,
-        ui_text_contrast_style().danger);
-    draw_material_text(font, font_ready, "Use one Reinforcement Stone?",
-        layout.panel.x + 22.0F, layout.panel.y + 43.0F,
-        ui_typography().kInventoryBodyFontSize,
-        ui_text_contrast_style().primary);
+        u8"危险：强化失败，装备丢失", danger_bounds, 16.0F, 10.0F,
+        ui_text_contrast_style().danger, kDangerBacking);
+    const Rectangle question_bounds{layout.panel.x + 14.0F * scale,
+        layout.panel.y + 38.0F * scale,
+        layout.panel.width - 28.0F * scale, 22.0F * scale};
+    draw_material_text(font, font_ready, u8"确认强化石？", question_bounds,
+        ui_typography().kInventoryBodyFontSize, 9.0F,
+        ui_text_contrast_style().primary, kDangerBacking);
+    DrawRectangleRec(layout.confirm, kConfirmBacking);
     if (!assets.draw_horizontal_slice(ui_material_sprite(
             UiMaterialElement::reinforcement_confirm),
             {4.0F, 22.0F, 120.0F, 84.0F}, 24.0F, layout.confirm)) {
         DrawRectangleRounded(layout.confirm, 0.10F, 4,
-            Color{113, 39, 39, 255});
+            kConfirmBacking);
     }
+    DrawRectangleRoundedLinesEx(layout.confirm, 0.10F, 4, 2.0F,
+        Color{255, 113, 96, 255});
+    DrawRectangleRec(layout.cancel, kCancelBacking);
     if (!assets.draw_horizontal_slice(ui_material_sprite(
             UiMaterialElement::reinforcement_cancel),
             {4.0F, 30.0F, 120.0F, 67.0F}, 24.0F, layout.cancel)) {
         DrawRectangleRounded(layout.cancel, 0.10F, 4,
-            Color{44, 58, 74, 255});
+            kCancelBacking);
     }
-    draw_material_text(font, font_ready, "CONFIRM",
-        layout.confirm.x + 8.0F, layout.confirm.y + 4.0F,
-        ui_typography().kInventoryBodyFontSize, RAYWHITE);
-    draw_material_text(font, font_ready, "CANCEL",
-        layout.cancel.x + 10.0F, layout.cancel.y + 4.0F,
-        ui_typography().kInventoryBodyFontSize, RAYWHITE);
+    DrawRectangleRoundedLinesEx(layout.cancel, 0.10F, 4, 1.0F,
+        Color{112, 145, 180, 255});
+    draw_material_text(font, font_ready, u8"确认", layout.confirm,
+        ui_typography().kInventoryBodyFontSize, 9.0F,
+        ui_text_contrast_style().primary, kConfirmBacking);
+    draw_material_text(font, font_ready, u8"取消", layout.cancel,
+        ui_typography().kInventoryBodyFontSize, 9.0F,
+        ui_text_contrast_style().primary, kCancelBacking);
 }
 
 }  // namespace arpg::platform

@@ -130,7 +130,7 @@ constexpr std::array<const char*, 85U> kUiDynamicGlyphCoverage{{
     u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
     u8"设置界面…",
     u8"已拾取：强化石 x1、混沌石 x1",
-    u8"蜕变石",
+    u8"材料袋",
     // T2-T5 render-ready format samples. Keep each sample independently
     // visitable so coverage cannot pass through an unrelated corpus string.
     u8"基础 [局部] 武器物理伤害 +16",

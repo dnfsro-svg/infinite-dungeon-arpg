@@ -12,6 +12,7 @@
 #include "ui_text_renderer.hpp"
 #include "ui_text_bounds_audit.hpp"
 #include "ui_text_catalog.hpp"
+#include "ui_text_layout.hpp"
 #include "render_layout.hpp"
 #include "ui_material.hpp"
 #include "ui_utf8.hpp"
@@ -425,62 +426,89 @@ Font HudRenderer::hud_font() const noexcept {
 
 void HudRenderer::draw_ground_loot(
     const GroundLootView& view) const noexcept {
-    if (!IsWindowReady()) return;
-    const HudFontSelectionPlan selection =
-        make_hud_font_selection_plan(font_ready_);
-    const Font draw_font = selection.use_default_font
-        ? GetFontDefault() : font_;
-    const HudPalette palette = hud_palette();
-    const HudReadabilityStyle style = hud_readability_style();
+    if (!IsWindowReady() || !font_ready_ || !IsFontValid(font_)) return;
+    const UiTextMeasureFn measure = [](const char* text, float font_size,
+            float spacing, void* context) noexcept -> UiTextExtent {
+        if (context == nullptr) return {};
+        const Font font = *static_cast<const Font*>(context);
+        if (!IsFontValid(font)) return {};
+        const Vector2 extent = MeasureTextEx(font, text, font_size, spacing);
+        return {extent.x, extent.y};
+    };
+    Font measure_font = font_;
+    const Color backing{5, 9, 16, 255};
+    const UiTextContrastStyle style = ui_text_contrast_style();
     for (std::size_t index = 0U; index < view.count; ++index) {
         const GroundLootLabel& label = view.labels[index];
         const Rectangle bounds{label.rect.x, label.rect.y,
             label.rect.width, label.rect.height};
-        const Color text{label.text_color.r, label.text_color.g,
+        Color text{label.text_color.r, label.text_color.g,
             label.text_color.b, label.text_color.a};
         const Color border{label.border_color.r, label.border_color.g,
             label.border_color.b, label.border_color.a};
-        const Color fill = label.abyss
-            ? Fade(palette.chaos, 0.42F)
-            : Fade(palette.text, 0.13F);
-        DrawRectangleRounded(bounds, 0.18F, 6, fill);
+        text.a = 255U;
+        if (ui_luma_contrast_ratio(text, backing) < 4.5F) {
+            text = style.primary;
+            if (ui_luma_contrast_ratio(text, backing) < 4.5F) continue;
+        }
+        DrawRectangleRounded(bounds, 0.18F, 6, backing);
         DrawRectangleLinesEx(bounds, label.abyss ? 2.0F : 1.0F, border);
+        char fitted[kGroundLootTextCapacity]{};
+        const UiCenteredTextLayout layout = fit_centered_ui_text(
+            fitted, sizeof(fitted), label.text.data(), bounds,
+            16.0F, 10.0F, 0.5F, measure,
+            &measure_font);
+        if (!layout.drawable) continue;
         BeginScissorMode(static_cast<int>(bounds.x),
             static_cast<int>(bounds.y),
             (std::max)(0, static_cast<int>(bounds.width)),
             (std::max)(0, static_cast<int>(bounds.height)));
-        draw_hud_text(draw_font, label.text.data(),
-            {bounds.x + 8.0F, bounds.y + 3.0F}, 16.0F, text,
-            style.outline_pixels);
+        draw_crisp_ui_text(font_, layout.text, layout.position,
+            layout.font_size, layout.spacing, text);
         EndScissorMode();
     }
 }
 
 void HudRenderer::draw_material_loot(
     const MaterialLootView& view) const noexcept {
-    if (!IsWindowReady()) return;
-    const HudFontSelectionPlan selection =
-        make_hud_font_selection_plan(font_ready_);
-    const Font draw_font = selection.use_default_font
-        ? GetFontDefault() : font_;
-    const HudReadabilityStyle style = hud_readability_style();
+    if (!IsWindowReady() || !font_ready_ || !IsFontValid(font_)) return;
+    const UiTextMeasureFn measure = [](const char* text, float font_size,
+            float spacing, void* context) noexcept -> UiTextExtent {
+        if (context == nullptr) return {};
+        const Font font = *static_cast<const Font*>(context);
+        if (!IsFontValid(font)) return {};
+        const Vector2 extent = MeasureTextEx(font, text, font_size, spacing);
+        return {extent.x, extent.y};
+    };
+    Font measure_font = font_;
+    const Color backing{5, 9, 16, 255};
+    const UiTextContrastStyle style = ui_text_contrast_style();
     for (std::size_t index = 0U; index < view.count; ++index) {
         const MaterialLootLabel& label = view.labels[index];
         const Rectangle bounds{label.rect.x, label.rect.y,
             label.rect.width, label.rect.height};
-        const Color color{label.text_color.r, label.text_color.g,
+        Color text{label.text_color.r, label.text_color.g,
             label.text_color.b, label.text_color.a};
-        DrawRectangleRounded(bounds, 0.18F, 6,
-            Fade(color, label.emphasized ? 0.31F : 0.15F));
+        text.a = 255U;
+        if (ui_luma_contrast_ratio(text, backing) < 4.5F) {
+            text = style.primary;
+            if (ui_luma_contrast_ratio(text, backing) < 4.5F) continue;
+        }
+        DrawRectangleRounded(bounds, 0.18F, 6, backing);
         DrawRectangleRoundedLinesEx(bounds, 0.18F, 6,
-            label.emphasized ? 2.5F : 1.0F, color);
+            label.emphasized ? 2.5F : 1.0F, text);
+        char fitted[64]{};
+        const UiCenteredTextLayout layout = fit_centered_ui_text(
+            fitted, sizeof(fitted), label.text.data(), bounds,
+            16.0F, 10.0F, 0.5F, measure,
+            &measure_font);
+        if (!layout.drawable) continue;
         BeginScissorMode(static_cast<int>(bounds.x),
             static_cast<int>(bounds.y),
             (std::max)(0, static_cast<int>(bounds.width)),
             (std::max)(0, static_cast<int>(bounds.height)));
-        draw_hud_text(draw_font, label.text.data(),
-            {bounds.x + 8.0F, bounds.y + 3.0F}, 16.0F, color,
-            style.outline_pixels);
+        draw_crisp_ui_text(font_, layout.text, layout.position,
+            layout.font_size, layout.spacing, text);
         EndScissorMode();
     }
 }

@@ -2,11 +2,14 @@
 
 #include "combat/room_bounds.hpp"
 #include "combat_view_math.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_utf8.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace arpg::platform {
 namespace {
@@ -23,6 +26,81 @@ constexpr std::size_t kLabelCapacity = dungeon::kGroundMaterialCapacity
 constexpr std::size_t kOccupancyWordBits = 64U;
 constexpr std::size_t kOccupancyWordCount =
     (kLabelCapacity + kOccupancyWordBits - 1U) / kOccupancyWordBits;
+
+[[nodiscard]] std::size_t remaining_material_kind_count(
+    const std::array<std::uint64_t, items::kMaterialCount>& counts,
+    std::size_t first) noexcept {
+    std::size_t remaining{};
+    for (std::size_t index = first; index < counts.size(); ++index) {
+        if (counts[index] != 0U) ++remaining;
+    }
+    return remaining;
+}
+
+[[nodiscard]] bool append_complete_utf8(HudText96& destination,
+    std::size_t& used, const char* token) noexcept {
+    if (token == nullptr || !ui_utf8_is_valid(token)) return false;
+    const std::size_t token_bytes = std::strlen(token);
+    if (used >= destination.bytes.size()
+            || token_bytes >= destination.bytes.size() - used) {
+        return false;
+    }
+    const UiUtf8CopyResult copied = ui_utf8_copy(
+        destination.bytes.data() + used,
+        destination.bytes.size() - used, token);
+    if (!copied.input_was_valid || copied.truncated
+            || copied.bytes_written != token_bytes) {
+        destination.bytes[used] = '\0';
+        return false;
+    }
+    used += copied.bytes_written;
+    return true;
+}
+
+[[nodiscard]] bool format_material_pickup_text(HudText96& destination,
+    const std::array<std::uint64_t, items::kMaterialCount>& counts,
+    bool& emphasized) noexcept {
+    destination = {};
+    emphasized = false;
+    std::size_t used{};
+    if (!append_complete_utf8(destination, used, u8"已拾取：")) return false;
+
+    for (std::size_t index{}; index < counts.size(); ++index) {
+        if (counts[index] != 0U) {
+            emphasized = emphasized || material_is_emphasized(
+                static_cast<items::MaterialId>(index));
+        }
+    }
+
+    bool has_material{};
+    for (std::size_t index{}; index < counts.size(); ++index) {
+        if (counts[index] == 0U) continue;
+        const items::MaterialId id = static_cast<items::MaterialId>(index);
+        char token[64]{};
+        const UiUtf8CopyResult formatted = ui_utf8_format(token, sizeof(token),
+            has_material ? u8"、%s x%llu" : u8"%s x%llu",
+            ui_material_name(id),
+            static_cast<unsigned long long>(counts[index]));
+        if (!formatted.input_was_valid || formatted.truncated) return false;
+        if (append_complete_utf8(destination, used, token)) {
+            has_material = true;
+            continue;
+        }
+
+        char suffix[32]{};
+        const std::size_t remaining = remaining_material_kind_count(
+            counts, index);
+        const UiUtf8CopyResult suffix_result = ui_utf8_format(
+            suffix, sizeof(suffix), u8"、等%zu种", remaining);
+        if (suffix_result.input_was_valid && !suffix_result.truncated) {
+            static_cast<void>(append_complete_utf8(destination, used, suffix));
+        }
+        break;
+    }
+    destination.bytes.back() = '\0';
+    destination.truncated = false;
+    return has_material;
+}
 
 [[nodiscard]] float usable_screen_extent(float extent) noexcept {
     return std::isfinite(extent)
@@ -417,24 +495,7 @@ Rgba8 material_color(items::MaterialId id) noexcept {
 }
 
 std::string_view material_label(items::MaterialId id) noexcept {
-    switch (id) {
-    case items::MaterialId::transmute: return "蜕变石";
-    case items::MaterialId::augment: return "增幅石";
-    case items::MaterialId::regal: return "富豪石";
-    case items::MaterialId::chaos: return "混沌石";
-    case items::MaterialId::exalt: return "崇高石";
-    case items::MaterialId::annul: return "剥离石";
-    case items::MaterialId::divine: return "神圣石";
-    case items::MaterialId::scour: return "重铸石";
-    case items::MaterialId::directed: return "定向核心";
-    case items::MaterialId::reinforcement_stone: return "强化石";
-    case items::MaterialId::coupon_6: return "+6强化券";
-    case items::MaterialId::coupon_9: return "+9强化券";
-    case items::MaterialId::coupon_12: return "+12强化券";
-    case items::MaterialId::coupon_15: return "+15强化券";
-    case items::MaterialId::count: break;
-    }
-    return "未知材料";
+    return ui_material_name(id);
 }
 
 bool material_is_emphasized(items::MaterialId id) noexcept {
@@ -751,39 +812,11 @@ MaterialPickupFeedback MaterialPickupFeedbackState::observe(
         }
         if (received) {
             seconds_left_ = 2.0F;
-            int written = std::snprintf(material_feedback.text.bytes.data(),
-                material_feedback.text.bytes.size(), "已拾取：");
-            if (written >= 0) {
-                std::size_t used = static_cast<std::size_t>(written);
-                for (std::size_t index = 0U; index < accumulated_.size(); ++index) {
-                    if (accumulated_[index] == 0U) continue;
-                    const items::MaterialId id = static_cast<items::MaterialId>(index);
-                    const std::string_view label = material_label(id);
-                    const int appended = std::snprintf(
-                        material_feedback.text.bytes.data() + used,
-                        material_feedback.text.bytes.size() - used,
-                        "%s%.*s x%llu",
-                        used == sizeof("已拾取：") - 1U ? "" : "、",
-                        static_cast<int>(label.size()), label.data(),
-                        static_cast<unsigned long long>(accumulated_[index]));
-                    if (appended < 0) {
-                        material_feedback = {};
-                        break;
-                    }
-                    if (static_cast<std::size_t>(appended)
-                            >= material_feedback.text.bytes.size() - used) {
-                        material_feedback.text.truncated = true;
-                        break;
-                    }
-                    used += static_cast<std::size_t>(appended);
-                    material_feedback.emphasized = material_feedback.emphasized
-                        || material_is_emphasized(id);
-                }
-                if (material_feedback.text.bytes[0] != '\0') {
-                    material_feedback.text.bytes.back() = '\0';
-                    material_feedback.ready = true;
-                }
-            }
+            material_feedback.ready = format_material_pickup_text(
+                material_feedback.text, accumulated_,
+                material_feedback.emphasized);
+            material_feedback.text.truncated = false;
+            material_feedback.text.bytes.back() = '\0';
         }
     }
     if (potion_receipt.valid && potion_receipt.commit_generation != 0U

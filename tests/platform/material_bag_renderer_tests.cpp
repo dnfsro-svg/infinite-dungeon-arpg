@@ -1,14 +1,35 @@
+#include "allocation_probe.hpp"
 #include "test_framework.hpp"
 
 #include "material_bag_renderer.hpp"
 #include "material_manifest.hpp"
+#include "ui_text_contrast.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_text_layout.hpp"
+#include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <string_view>
 
 namespace {
 
 namespace items = arpg::items;
 namespace platform = arpg::platform;
+
+platform::UiTextExtent measure_material_text(const char* text,
+    float font_size, float, void*) noexcept {
+    std::size_t codepoints{};
+    for (const unsigned char* cursor =
+             reinterpret_cast<const unsigned char*>(text);
+         cursor != nullptr && *cursor != 0U; ++cursor) {
+        if ((*cursor & 0xC0U) != 0x80U) ++codepoints;
+    }
+    return {static_cast<float>(codepoints) * font_size * 0.72F, font_size};
+}
 
 arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
     const platform::MaterialBagLayout layout =
@@ -33,8 +54,130 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
         <= full_hd.slots[0].y + full_hd.slots[0].height);
     ARPG_REQUIRE(text_backing.width >= 185.0F);
 
-    ARPG_REQUIRE(std::string_view{platform::material_bag_display_name(
-        items::MaterialId::reinforcement_stone)} == "Reinf. Stone");
+    constexpr Color kMaterialTextBacking{5, 9, 16, 255};
+    constexpr Color kDangerBacking{29, 15, 18, 255};
+    constexpr Color kConfirmBacking{74, 24, 27, 255};
+    constexpr Color kCancelBacking{30, 42, 58, 255};
+    constexpr auto kContrast = platform::ui_text_contrast_style();
+    constexpr std::array<Color, 5> kOpaqueBackings{{
+        kMaterialTextBacking, kDangerBacking, kDangerBacking,
+        kConfirmBacking, kCancelBacking,
+    }};
+    constexpr std::array<Color, 5> kActualTextColors{{
+        kContrast.primary, kContrast.danger, kContrast.primary,
+        kContrast.primary, kContrast.primary,
+    }};
+    for (std::size_t index{}; index < kOpaqueBackings.size(); ++index) {
+        ARPG_REQUIRE(kOpaqueBackings[index].a == 255U);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+            kActualTextColors[index], kOpaqueBackings[index]) >= 4.5F);
+    }
+
+    constexpr std::array<std::array<int, 2>, 3> kResolutions{{
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto resolution : kResolutions) {
+        const platform::MaterialBagLayout scaled =
+            platform::material_bag_layout(resolution[0], resolution[1]);
+        ARPG_REQUIRE(scaled.contains_all_slots());
+        const float scale = platform::ui_viewport_scale(
+            resolution[0], resolution[1]);
+        for (std::size_t index{}; index < items::kMaterialCount; ++index) {
+            const auto id = static_cast<items::MaterialId>(index);
+            ARPG_REQUIRE(std::string_view{platform::material_bag_display_name(id)}
+                == platform::ui_material_name(id));
+            ARPG_REQUIRE(std::strstr(
+                platform::material_bag_display_name(id), u8"蜕") == nullptr);
+            ARPG_REQUIRE(platform::ui_utf8_is_valid(
+                platform::material_bag_display_name(id)));
+            const Rectangle container = platform::material_bag_text_backing(
+                scaled.slots[index], scale);
+            char source[64]{};
+            const int written = std::snprintf(source, sizeof(source),
+                u8"%s x1", platform::ui_material_name(id));
+            ARPG_REQUIRE(written > 0);
+            ARPG_REQUIRE(static_cast<std::size_t>(written) < sizeof(source));
+            char fitted[64]{};
+            const auto centered = platform::fit_centered_ui_text(
+                fitted, sizeof(fitted), source, container,
+                16.0F * scale, 9.0F * scale, 0.5F * scale,
+                &measure_material_text, nullptr);
+            ARPG_REQUIRE(centered.drawable);
+            ARPG_REQUIRE(!centered.truncated);
+            ARPG_REQUIRE(platform::ui_utf8_is_valid(centered.text));
+            ARPG_REQUIRE(std::fabs(centered.position.x + centered.size.x * 0.5F
+                - (container.x + container.width * 0.5F)) < 0.001F);
+            ARPG_REQUIRE(std::fabs(centered.position.y + centered.size.y * 0.5F
+                - (container.y + container.height * 0.5F)) < 0.001F);
+        }
+        const auto confirmation = platform::reinforcement_confirmation_layout(
+            resolution[0], resolution[1]);
+        ARPG_REQUIRE(confirmation.confirm.x >= confirmation.panel.x);
+        ARPG_REQUIRE(confirmation.cancel.x >= confirmation.panel.x);
+        ARPG_REQUIRE(confirmation.confirm.x + confirmation.confirm.width
+            <= confirmation.panel.x + confirmation.panel.width);
+        ARPG_REQUIRE(confirmation.cancel.x + confirmation.cancel.width
+            <= confirmation.panel.x + confirmation.panel.width);
+
+        const Rectangle danger_bounds{
+            confirmation.panel.x + 14.0F * scale,
+            confirmation.panel.y + 10.0F * scale,
+            confirmation.panel.width - 28.0F * scale, 25.0F * scale};
+        const Rectangle question_bounds{
+            confirmation.panel.x + 14.0F * scale,
+            confirmation.panel.y + 38.0F * scale,
+            confirmation.panel.width - 28.0F * scale, 22.0F * scale};
+        const std::array<const char*, 4> popup_texts{{
+            u8"危险：强化失败，装备丢失", u8"确认强化石？",
+            u8"确认", u8"取消",
+        }};
+        const std::array<Rectangle, 4> popup_bounds{{
+            danger_bounds, question_bounds,
+            confirmation.confirm, confirmation.cancel,
+        }};
+        const std::array<float, 4> popup_sizes{{
+            16.0F, platform::ui_typography().kInventoryBodyFontSize,
+            platform::ui_typography().kInventoryBodyFontSize,
+            platform::ui_typography().kInventoryBodyFontSize,
+        }};
+        const std::array<float, 4> popup_minimum_sizes{{
+            10.0F, 9.0F, 9.0F, 9.0F,
+        }};
+        for (std::size_t index{}; index < popup_texts.size(); ++index) {
+            char popup_fitted[96]{};
+            const auto centered = platform::fit_centered_ui_text(
+                popup_fitted, sizeof(popup_fitted), popup_texts[index],
+                popup_bounds[index], popup_sizes[index] * scale,
+                popup_minimum_sizes[index] * scale, 0.5F * scale,
+                &measure_material_text, nullptr);
+            ARPG_REQUIRE(centered.drawable);
+            ARPG_REQUIRE(!centered.truncated);
+            ARPG_REQUIRE(platform::ui_utf8_is_valid(centered.text));
+            ARPG_REQUIRE(std::fabs(centered.position.x
+                + centered.size.x * 0.5F
+                - (popup_bounds[index].x
+                    + popup_bounds[index].width * 0.5F)) < 0.001F);
+            ARPG_REQUIRE(std::fabs(centered.position.y
+                + centered.size.y * 0.5F
+                - (popup_bounds[index].y
+                    + popup_bounds[index].height * 0.5F)) < 0.001F);
+        }
+    }
+
+    char fitted[32]{};
+    const Rectangle repeated_bounds{0.0F, 0.0F, 180.0F, 30.0F};
+    std::uint64_t checksum{};
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::size_t iteration{}; iteration < 10000U; ++iteration) {
+        const auto centered = platform::fit_centered_ui_text(
+            fitted, sizeof(fitted), u8"材料袋", repeated_bounds,
+            18.0F, 12.0F, 0.5F, &measure_material_text, nullptr);
+        ARPG_REQUIRE(centered.drawable);
+        ARPG_REQUIRE(!centered.truncated);
+        checksum += static_cast<unsigned char>(fitted[0]);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    ARPG_REQUIRE(checksum != 0U);
     return {};
 }
 

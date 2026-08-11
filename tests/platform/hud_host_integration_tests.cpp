@@ -590,7 +590,7 @@ arpg::test::Failure renderer_observes_committed_pickup_receipts_before_notices()
     ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
         == platform::HudNoticeKind::loot_pickup);
     ARPG_REQUIRE(std::strcmp(renderer.hud_notice_view().primary.text.bytes.data(),
-        u8"已拾取：稀有 Ward Coat · i24") == 0);
+        u8"已拾取：稀有 守护外衣 · 物品等级 24") == 0);
 
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         current, current, committed, hints, 1.0F, false);

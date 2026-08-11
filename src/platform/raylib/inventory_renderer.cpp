@@ -1108,34 +1108,29 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         const char* const action = receipt.coupon ? u8"强化券" : u8"强化";
         const Color color = receipt.success ? Color{147, 244, 169, 255}
                                             : Color{255, 145, 118, 255};
+        const Rectangle result_bounds{
+            layout.grid.x + 8.0F * layout.scale,
+            layout.grid.y + 38.0F * layout.scale,
+            layout.grid.width - 16.0F * layout.scale,
+            24.0F * layout.scale};
+        DrawRectangleRec(result_bounds, kInventoryTextBacking);
+        DrawRectangleRoundedLinesEx(result_bounds, 0.12F, 4, 2.0F, color);
+        char result_text[96]{};
         if (receipt.destroyed) {
-            draw_hud_font_text(hud_font, hud_font_ready,
-                TextFormat(u8"%s结果：%s / +%u", action, result,
-                static_cast<unsigned>(receipt.before)),
-                layout.grid.x + 12.0F * layout.scale,
-                layout.grid.y + 42.0F * layout.scale,
-                ui_typography().kInventoryBodyFontSize, color,
-                UiTextAuditPage::inventory, UiTextAuditRole::inventory_status,
-                {layout.grid.x + 8.0F * layout.scale,
-                    layout.grid.y + 38.0F * layout.scale,
-                    layout.grid.width - 16.0F * layout.scale,
-                    24.0F * layout.scale},
-                ui_typography().kInventoryBodyFontSize);
+            static_cast<void>(std::snprintf(result_text, sizeof(result_text),
+                u8"%s结果：失败 / %s / +%u", action, result,
+                static_cast<unsigned>(receipt.before)));
         } else {
-            draw_hud_font_text(hud_font, hud_font_ready,
-                TextFormat(u8"%s结果：%s / +%u → +%u", action, result,
+            static_cast<void>(std::snprintf(result_text, sizeof(result_text),
+                u8"%s结果：%s / +%u → +%u", action, result,
                 static_cast<unsigned>(receipt.before),
-                static_cast<unsigned>(receipt.after)),
-                layout.grid.x + 12.0F * layout.scale,
-                layout.grid.y + 42.0F * layout.scale,
-                ui_typography().kInventoryBodyFontSize, color,
-                UiTextAuditPage::inventory, UiTextAuditRole::inventory_status,
-                {layout.grid.x + 8.0F * layout.scale,
-                    layout.grid.y + 38.0F * layout.scale,
-                    layout.grid.width - 16.0F * layout.scale,
-                    24.0F * layout.scale},
-                ui_typography().kInventoryBodyFontSize);
+                static_cast<unsigned>(receipt.after)));
         }
+        result_text[sizeof(result_text) - 1U] = '\0';
+        draw_centered_hud_font_text(hud_font, hud_font_ready, result_text,
+            result_bounds, ui_typography().kInventoryBodyFontSize,
+            9.0F, color, UiTextAuditPage::inventory,
+            UiTextAuditRole::inventory_status, kInventoryTextBacking);
     }
 
     const items::ItemInstance* const item = selected_item(state);

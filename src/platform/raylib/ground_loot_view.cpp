@@ -3,6 +3,7 @@
 #include "combat/room_bounds.hpp"
 #include "combat_view_math.hpp"
 #include "items/item_catalog.hpp"
+#include "ui_text_catalog.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -19,15 +20,6 @@ constexpr Rgba8 kNormalColor{232U, 232U, 232U, 255U};
 constexpr Rgba8 kMagicColor{96U, 170U, 255U, 255U};
 constexpr Rgba8 kRareColor{255U, 205U, 70U, 255U};
 constexpr Rgba8 kAbyssBorderColor{184U, 96U, 255U, 255U};
-
-[[nodiscard]] const char* rarity_name(items::ItemRarity rarity) noexcept {
-    switch (rarity) {
-    case items::ItemRarity::normal: return "普通";
-    case items::ItemRarity::magic: return "魔法";
-    case items::ItemRarity::rare: return "稀有";
-    }
-    return "普通";
-}
 
 [[nodiscard]] Rgba8 rarity_color(items::ItemRarity rarity) noexcept {
     switch (rarity) {
@@ -48,25 +40,18 @@ void format_label_text(GroundLootLabel& label,
     GroundLootViewDiagnostics& diagnostics) noexcept {
     const items::BaseDefinition* const base =
         items::base_definition(item.base_id);
-    const char* const rarity = rarity_name(item.rarity);
-    const char* const base_name = base == nullptr
-        ? "未知装备" : base->name.data();
-    const int base_name_length = base == nullptr
-        ? static_cast<int>(sizeof("未知装备") - 1U)
-        : static_cast<int>(base->name.size());
     if (base == nullptr) {
         ++diagnostics.invalid_base_count;
     }
 
     const int written = std::snprintf(label.text.data(), label.text.size(),
-        "%s %.*s · i%u", rarity, base_name_length, base_name,
+        u8"%s %s · 物品等级 %u", ui_item_rarity_name(item.rarity),
+        ui_item_base_name(item.base_id),
         static_cast<unsigned>(item.item_level));
     if (written < 0
             || static_cast<std::size_t>(written) >= label.text.size()) {
         ++diagnostics.text_truncation_count;
-        static_cast<void>(std::snprintf(label.text.data(), label.text.size(),
-            "%s #%u · i%u", rarity, static_cast<unsigned>(item.base_id),
-            static_cast<unsigned>(item.item_level)));
+        label.text[0] = '\0';
     }
     label.text.back() = '\0';
 }

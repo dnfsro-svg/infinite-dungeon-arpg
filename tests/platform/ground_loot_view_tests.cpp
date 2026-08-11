@@ -4,6 +4,8 @@
 #include "combat_view_math.hpp"
 #include "ground_loot_view.hpp"
 #include "material_manifest.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_utf8.hpp"
 
 #include <array>
 #include <cstddef>
@@ -154,13 +156,39 @@ arpg::test::Failure text_uses_catalog_chinese_rarity_ilvl_and_fallback() noexcep
         settings::LootFilterMode::show_all, 1280.0F, 720.0F);
     ARPG_REQUIRE(view.count == 2U);
     ARPG_REQUIRE(std::strcmp(
-        view.labels[0].text.data(), "魔法 Striker Gloves · i37") == 0);
+        view.labels[0].text.data(), u8"魔法 突击手套 · 物品等级 37") == 0);
     ARPG_REQUIRE(std::strcmp(
-        view.labels[1].text.data(), "稀有 未知装备 · i99") == 0);
+        view.labels[1].text.data(), u8"稀有 未知 · 物品等级 99") == 0);
     ARPG_REQUIRE(view.labels[0].text.back() == '\0');
     ARPG_REQUIRE(view.labels[1].text.back() == '\0');
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(view.labels[0].text.data()));
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(view.labels[1].text.data()));
     ARPG_REQUIRE(view.diagnostics.invalid_base_count == 1U);
     ARPG_REQUIRE(view.diagnostics.text_truncation_count == 0U);
+
+    for (std::uint8_t base_id = 1U; base_id <= 18U; ++base_id) {
+        auto& catalog_snapshot = scratch_snapshot();
+        auto item = ground_item(base_id,
+            static_cast<items::ItemRarity>(base_id % 3U), base_id);
+        item.item_level = base_id;
+        append(catalog_snapshot, item);
+        const auto catalog_view = platform::build_ground_loot_view(
+            catalog_snapshot, settings::LootFilterMode::show_all,
+            1280.0F, 720.0F);
+        ARPG_REQUIRE(catalog_view.count == 1U);
+        std::array<char, platform::kGroundLootTextCapacity> expected{};
+        const int written = std::snprintf(expected.data(), expected.size(),
+            u8"%s %s · 物品等级 %u",
+            platform::ui_item_rarity_name(item.rarity),
+            platform::ui_item_base_name(base_id),
+            static_cast<unsigned>(base_id));
+        ARPG_REQUIRE(written > 0);
+        ARPG_REQUIRE(static_cast<std::size_t>(written) < expected.size());
+        ARPG_REQUIRE(std::strcmp(
+            catalog_view.labels[0].text.data(), expected.data()) == 0);
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(
+            catalog_view.labels[0].text.data()));
+    }
     return {};
 }
 

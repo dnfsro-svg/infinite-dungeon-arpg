@@ -1,6 +1,7 @@
 #include "loot_pickup_feedback.hpp"
 
 #include "items/item_catalog.hpp"
+#include "ui_text_catalog.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -8,13 +9,14 @@
 namespace arpg::platform {
 namespace {
 
-[[nodiscard]] const char* rarity_name(items::ItemRarity rarity) noexcept {
+[[nodiscard]] bool valid_rarity(items::ItemRarity rarity) noexcept {
     switch (rarity) {
-    case items::ItemRarity::normal: return "普通";
-    case items::ItemRarity::magic: return "魔法";
-    case items::ItemRarity::rare: return "稀有";
+    case items::ItemRarity::normal:
+    case items::ItemRarity::magic:
+    case items::ItemRarity::rare:
+        return true;
     }
-    return nullptr;
+    return false;
 }
 
 [[nodiscard]] bool valid_receipt(const LootPickupReceipt& receipt) noexcept {
@@ -25,7 +27,7 @@ namespace {
         && std::isfinite(receipt.position.z)
         && static_cast<std::size_t>(receipt.slot)
             < static_cast<std::size_t>(items::ItemSlot::count)
-        && rarity_name(receipt.rarity) != nullptr
+        && valid_rarity(receipt.rarity)
         && items::base_definition(receipt.base_id) != nullptr
         && (receipt.source == dungeon::GroundItemSource::monster_drop
             || receipt.source == dungeon::GroundItemSource::abyss_chest);
@@ -46,12 +48,11 @@ namespace {
 [[nodiscard]] LootPickupFeedback format_feedback(
     const LootPickupReceipt& receipt) noexcept {
     LootPickupFeedback feedback{};
-    const items::BaseDefinition* const base =
-        items::base_definition(receipt.base_id);
     const int written = std::snprintf(feedback.text.bytes.data(),
-        feedback.text.bytes.size(), u8"已拾取：%s %.*s · i%u",
-        rarity_name(receipt.rarity), static_cast<int>(base->name.size()),
-        base->name.data(), static_cast<unsigned>(receipt.item_level));
+        feedback.text.bytes.size(), u8"已拾取：%s %s · 物品等级 %u",
+        ui_item_rarity_name(receipt.rarity),
+        ui_item_base_name(receipt.base_id),
+        static_cast<unsigned>(receipt.item_level));
     feedback.text.bytes.back() = '\0';
     feedback.text.truncated = written < 0
         || static_cast<std::size_t>(written) >= feedback.text.bytes.size();

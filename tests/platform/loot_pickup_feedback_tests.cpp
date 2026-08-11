@@ -2,6 +2,8 @@
 #include "test_framework.hpp"
 
 #include "loot_pickup_feedback.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_utf8.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -39,8 +41,14 @@ arpg::test::Failure first_receipt_is_baselined_and_newer_receipt_emits_once()
     ARPG_REQUIRE(!feedback.abyss);
     ARPG_REQUIRE(feedback.item_id == 102U);
     ARPG_REQUIRE(std::strcmp(feedback.text.bytes.data(),
-        u8"已拾取：稀有 Ward Coat · i24") == 0);
+        u8"已拾取：稀有 守护外衣 · 物品等级 24") == 0);
     ARPG_REQUIRE(!feedback.text.truncated);
+    ARPG_REQUIRE(feedback.text.bytes.back() == '\0');
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(feedback.text.bytes.data()));
+    ARPG_REQUIRE(std::strstr(feedback.text.bytes.data(),
+        platform::ui_item_rarity_name(items::ItemRarity::rare)) != nullptr);
+    ARPG_REQUIRE(std::strstr(feedback.text.bytes.data(),
+        platform::ui_item_base_name(3U)) != nullptr);
     ARPG_REQUIRE(!state.observe(current).ready);
     return {};
 }

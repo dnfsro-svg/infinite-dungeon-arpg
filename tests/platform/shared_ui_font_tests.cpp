@@ -58,12 +58,14 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"主动技能石槽"));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"空格"));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"…、"));
-    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"蜕变石"));
+    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"材料袋"));
+    ARPG_REQUIRE(!platform::ui_glyph_plan_has_codepoint(plan, 0x8715));
+    ARPG_REQUIRE(platform::ui_glyph_plan_has_codepoint(plan, 0x888B));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
         plan, u8"挥击 冲击汇总 是 否"));
     ARPG_REQUIRE(!plan.capacity_exceeded);
     ARPG_REQUIRE(plan.codepoint_count > 384U);
-    ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
+    ARPG_REQUIRE(plan.codepoint_count < platform::kUiGlyphCapacity);
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
         u8"装备值 / 按键提示 / 小节点 / 重要节点 / 地面危险 / 来源 / 最终伤害 ×1.12"));

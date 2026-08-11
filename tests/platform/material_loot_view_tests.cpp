@@ -6,6 +6,8 @@
 #include "material_manifest.hpp"
 #include "combat_view_math.hpp"
 #include "combat/room_bounds.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_utf8.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 
 namespace {
@@ -74,10 +77,28 @@ arpg::test::Failure require_rect_near(
 }
 
 arpg::test::Failure labels_and_emphasis_are_player_facing() noexcept {
+    for (std::size_t index{}; index < items::kMaterialCount; ++index) {
+        const auto id = static_cast<items::MaterialId>(index);
+        const std::string_view label = platform::material_label(id);
+        ARPG_REQUIRE(label == platform::ui_material_name(id));
+        ARPG_REQUIRE(label.find(u8"蜕") == std::string_view::npos);
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(label.data()));
+
+        dungeon::DungeonSnapshot snapshot{};
+        snapshot.ground_material_count = 1U;
+        snapshot.ground_materials[0] = {static_cast<std::uint16_t>(index),
+            dungeon::GroundMaterialSource::monster_common, {}, id};
+        const auto view = platform::build_material_loot_view(
+            snapshot, 1280.0F, 720.0F);
+        ARPG_REQUIRE(view.count == 1U);
+        ARPG_REQUIRE(view.labels[0].text == platform::ui_material_name(id));
+    }
+    ARPG_REQUIRE(platform::material_label(items::MaterialId::transmute)
+        == u8"嬗变石");
     ARPG_REQUIRE(platform::material_label(items::MaterialId::coupon_12)
-        == "+12强化券");
+        == u8"+12 强化券");
     ARPG_REQUIRE(platform::material_label(items::MaterialId::reinforcement_stone)
-        == "强化石");
+        == u8"强化石");
     ARPG_REQUIRE(platform::material_is_emphasized(items::MaterialId::exalt));
     ARPG_REQUIRE(platform::material_is_emphasized(items::MaterialId::directed));
     ARPG_REQUIRE(platform::material_is_emphasized(items::MaterialId::coupon_12));
@@ -101,7 +122,7 @@ arpg::test::Failure material_view_ignores_equipment_filter_and_orders_ordinals()
     ARPG_REQUIRE(view.count == 2U);
     ARPG_REQUIRE(view.labels[0].ordinal == 4U);
     ARPG_REQUIRE(view.labels[1].ordinal == 18U);
-    ARPG_REQUIRE(view.labels[0].text == "+12强化券");
+    ARPG_REQUIRE(view.labels[0].text == u8"+12 强化券");
     ARPG_REQUIRE(view.labels[0].emphasized);
     ARPG_REQUIRE(!view.labels[1].emphasized);
     return {};
@@ -159,6 +180,88 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
     ARPG_REQUIRE(mixed.ready);
     ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), "混沌石 x3") != nullptr);
     ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), "定向核心 x1") != nullptr);
+
+    const auto observe_counts = [](const std::array<std::uint64_t,
+            items::kMaterialCount>& counts) noexcept {
+        platform::MaterialPickupFeedbackState state{};
+        dungeon::DungeonSnapshot input{};
+        static_cast<void>(state.observe(input));
+        input.material_pickup_receipt.valid = true;
+        input.material_pickup_receipt.commit_generation = 1U;
+        input.material_pickup_receipt.counts = counts;
+        return state.observe(input);
+    };
+    const auto require_complete = [](const platform::MaterialPickupFeedback& value) {
+        return value.ready && !value.text.truncated
+            && value.text.bytes.back() == '\0'
+            && platform::ui_utf8_is_valid(value.text.bytes.data());
+    };
+
+    std::array<std::uint64_t, items::kMaterialCount> counts{};
+    counts[items::material_index(items::MaterialId::transmute)] = 1U;
+    const auto one = observe_counts(counts);
+    ARPG_REQUIRE(require_complete(one));
+    ARPG_REQUIRE(std::strcmp(one.text.bytes.data(),
+        u8"已拾取：嬗变石 x1") == 0);
+
+    counts[items::material_index(items::MaterialId::augment)] = 2U;
+    const auto two = observe_counts(counts);
+    ARPG_REQUIRE(require_complete(two));
+    ARPG_REQUIRE(std::strcmp(two.text.bytes.data(),
+        u8"已拾取：嬗变石 x1、增幅石 x2") == 0);
+
+    counts.fill(1U);
+    const auto fourteen = observe_counts(counts);
+    ARPG_REQUIRE(require_complete(fourteen));
+    ARPG_REQUIRE(std::strcmp(fourteen.text.bytes.data(),
+        u8"已拾取：嬗变石 x1、增幅石 x1、富豪石 x1、混沌石 x1、崇高石 x1、等9种") == 0);
+
+    counts.fill(0U);
+    counts[items::material_index(items::MaterialId::transmute)] =
+        100000000000ULL;
+    counts[items::material_index(items::MaterialId::augment)] = 1U;
+    counts[items::material_index(items::MaterialId::regal)] = 1U;
+    counts[items::material_index(items::MaterialId::chaos)] = 1U;
+    counts[items::material_index(items::MaterialId::exalt)] = 1U;
+    const auto exact_boundary = observe_counts(counts);
+    ARPG_REQUIRE(require_complete(exact_boundary));
+    ARPG_REQUIRE(std::strlen(exact_boundary.text.bytes.data())
+        == exact_boundary.text.bytes.size() - 1U);
+    ARPG_REQUIRE(std::strcmp(exact_boundary.text.bytes.data(),
+        u8"已拾取：嬗变石 x100000000000、增幅石 x1、富豪石 x1、混沌石 x1、崇高石 x1") == 0);
+
+    counts[items::material_index(items::MaterialId::transmute)] =
+        1000000000000ULL;
+    const auto one_byte_over = observe_counts(counts);
+    ARPG_REQUIRE(require_complete(one_byte_over));
+    ARPG_REQUIRE(std::strcmp(one_byte_over.text.bytes.data(),
+        u8"已拾取：嬗变石 x1000000000000、增幅石 x1、富豪石 x1、混沌石 x1、等1种") == 0);
+
+    counts.fill(0U);
+    counts[items::material_index(items::MaterialId::transmute)] =
+        (std::numeric_limits<std::uint64_t>::max)();
+    const auto long_quantity = observe_counts(counts);
+    ARPG_REQUIRE(require_complete(long_quantity));
+    ARPG_REQUIRE(std::strcmp(long_quantity.text.bytes.data(),
+        u8"已拾取：嬗变石 x18446744073709551615") == 0);
+
+    platform::MaterialPickupFeedbackState allocation_state{};
+    dungeon::DungeonSnapshot allocation_snapshot{};
+    static_cast<void>(allocation_state.observe(allocation_snapshot));
+    allocation_snapshot.material_pickup_receipt.valid = true;
+    allocation_snapshot.material_pickup_receipt.counts[
+        items::material_index(items::MaterialId::chaos)] = 1U;
+    std::uint64_t checksum{};
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::uint64_t generation = 1U; generation <= 10000U; ++generation) {
+        allocation_snapshot.material_pickup_receipt.commit_generation = generation;
+        const auto value = allocation_state.observe(allocation_snapshot);
+        ARPG_REQUIRE(require_complete(value));
+        checksum += static_cast<unsigned char>(value.text.bytes[0]);
+    }
+    const std::uint64_t allocations_after = arpg::test::allocation_count();
+    ARPG_REQUIRE(allocations_after == allocations_before);
+    ARPG_REQUIRE(checksum != 0U);
     return {};
 }
 

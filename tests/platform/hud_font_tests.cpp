@@ -206,13 +206,21 @@ arpg::test::Failure passive_tree_text_selects_shared_font_when_ready() noexcept 
 arpg::test::Failure ground_loot_labels_are_covered_by_the_hud_owned_font() noexcept {
     const platform::HudFontPlan plan = platform::hud_font_plan();
     constexpr const char* kGroundLootText =
-        u8"普通魔法稀有已拾取未知装备生命药恢复";
+        u8"普通魔法稀有已拾取未知装备生命药恢复物品等级"
+        u8"嬗变石增幅石富豪石混沌石崇高石剥离石神圣石重铸石"
+        u8"定向核心强化石强化券材料袋伤害核心防御核心速度核心元素核心"
+        u8"危险：强化失败，装备丢失确认强化石？确认取消";
 
     ARPG_REQUIRE(plan.covers_required_text);
     ARPG_REQUIRE(platform::death_overlay_font_has_codepoint(
         plan.shared, 0x836F));
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
         plan.shared, kGroundLootText));
+    ARPG_REQUIRE(!platform::ui_glyph_plan_has_codepoint(
+        plan.shared, 0x8715));
+    ARPG_REQUIRE(platform::ui_glyph_plan_has_codepoint(
+        plan.shared, 0x888B));
+    ARPG_REQUIRE(plan.shared.codepoint_count < platform::kUiGlyphCapacity);
     return {};
 }
 
