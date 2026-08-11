@@ -24,6 +24,7 @@
 - 材料名称统一为“嬗变石”。迁移最后一个旧消费者后，从共享字形语料删除不可达“蜕变石”，不得同时保留两种写法。
 - 材料拾取聚合缓冲维持 96 bytes。只追加完整条目；剩余材料放不下时输出完整尾缀“、等N种”，绝不留下半个 UTF-8 字符或半条材料。
 - `kUiGlyphCapacity` 保持 640。每次新增语料后读取真实 `ui_glyph_plan().codepoint_count`；若超过 640，立即停止该 Task。先去重/删除不可达字形，未经单图集/32MiB 实测证据不得扩容。
+- 为保持真实计划在 `639/640` 且不牺牲含义，玩家实际展示词汇锁定为：“装备值”“按键提示”“小节点”“重要节点”“地面危险”“来源”；`ModifierOperation::more` 不显示含糊的“更多”，而按实际乘算结果显示“最终<中文数值名> ×N.NN”（例如“最终伤害 ×1.12”）。文档其余位置的“属性/操作/类型”等仅是工程概念，不得原样进入玩家 UI。
 - Windows 构建并行度最大 `--parallel 2`；不得并发运行共享 MSVC target。
 - T0 的 `ui_text_layout_suite` 必须同时加入专用 selector 与默认 full suites；T1–T5 只在既有 `TestCase` 内追加断言，不新增 platform case。新增 architecture guard/self-test 作为独立 CTest，不计入 120/675；否则必须先重新审计并显式更新两个精确计数，禁止静默漂移。
 
@@ -86,7 +87,7 @@ pwsh -NoProfile -File .\tests\platform\full_chinese_inventory_selector.ps1 -Exec
 
 - 保留现有稳定映射字面量，不重命名已确认的 18/14/6/3/24/64/8/12/2 表。
 - 唯一批准的映射收口：第二个主动技能从临时“风暴剑阵”改为现有游戏展示名“极·鬼剑术（暴风式）”，T2 的真实 consumer 必须读取该目录值。
-- 将 T2–T5 的真实中文格式样例纳入唯一 catalog visitor，例如详情属性、合成/强化结果、材料聚合尾缀、被动操作/保存状态、死亡归因。
+- 将 T2–T5 的真实中文格式样例纳入唯一 catalog visitor，例如详情装备值、合成/强化结果、材料聚合尾缀、被动按键提示/保存状态、死亡归因，以及上述容量兼容词汇与“最终伤害 ×1.12”。
 - 本 Task 暂不移除“蜕”；删除动作在 T3 迁移 `material_loot_view` 后与消费者同提交完成。
 
 **TDD**
@@ -118,7 +119,7 @@ pwsh -NoProfile -File .\tests\platform\full_chinese_inventory_selector.ps1 -Exec
 
 - `inventory_page_title()` 的 `EQUIPMENT INVENTORY` 和 `Unknown`。
 - `copy_skill_name()` 从核心英文 `display_name` 改为 `ui_skill_name()`。
-- `stat_name()` 与 tooltip 中 `LOCAL/GLOBAL`、属性、操作、前/后缀、基础/提高/更多/转化。
+- `stat_name()` 与 tooltip 中 `LOCAL/GLOBAL`、装备值、按键提示、前/后缀、基础/提高/转化；`more` 严格按“最终<中文数值名> ×N.NN”显示，不出现英文或“更多”。
 - `inventory_renderer.cpp` 的三栏标题、生命/护盾/防御统计、槽位/品质筛选、空状态、合成、保存锁、强化结果、物品等级、完整构筑差异。
 - 物品名称、槽位、品质、词缀统一从 `ui_text_catalog` 读取，不再读取核心英文 `BaseDefinition::name` 作为玩家文案。
 
@@ -216,7 +217,7 @@ pwsh -NoProfile -File .\tests\platform\full_chinese_inventory_selector.ps1 -Exec
 
 **必须迁移**
 
-- 节点类型：起始/连接/小型/显著/核心。
+- 节点类型：起始/连接/小节点/重要节点/核心。
 - 64 个节点名、所有收益/代价中的元素/属性、标题、点数、关闭提示、保存中/就绪/错误、分配/退款/相邻/断链等操作文案。
 - 移除玩家路径 `DrawText/MeasureText` 默认字体 fallback；共享字体不可用时不绘制玩家文字，由宿主共享字体初始化门禁负责阻止正常进入。
 
@@ -265,7 +266,7 @@ if ($LASTEXITCODE -ne 0) { throw 'passive feedback source guard failed' }
 
 **必须迁移**
 
-- 元素、伤害类型、怪物、危险区、怪物词缀、深渊规则、来源种类、最近伤害、防御、返回入口和保存提示统一中文。
+- 元素、伤害类型、怪物、地面危险、怪物词缀、深渊规则、来源、最近伤害、防御、返回入口和保存提示统一中文。
 - 怪物与词缀从 `ui_text_catalog` 读取；将当前 `dungeon_view_math.cpp` 匿名命名空间内的 `abyss_rule_label(abyss::AbyssRuleId)` 提升为 `dungeon_view_math.hpp` 的只读 `noexcept` 展示接口，死亡页复用该接口，不保留第二份规则名表。
 - `DeathOverlayRenderer` 不得再在字体未就绪时调用 `build_death_overlay_ascii_view()`；字体不可用则 fail-closed 不绘制玩家文案。ASCII helper 若保留，只能用于技术诊断测试，source guard 必须证明 renderer 无调用。
 
