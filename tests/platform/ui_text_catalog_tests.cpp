@@ -27,7 +27,7 @@ constexpr std::array<const char*, 18U> kApprovedInventoryProgressionSamples{{
     u8"强化结果：失败 / 装备丢失",
     // T3: ground loot, bounded material aggregation, and confirmation.
     u8"普通 暗影兜帽 · 物品等级 1",
-    u8"已拾取：强化石 x1、等13种",
+    u8"已拾取：强化石 ×1、等13种",
     u8"危险：强化失败，装备丢失",
     u8"确认强化石？",
     // T4: passive interaction and autosave states.

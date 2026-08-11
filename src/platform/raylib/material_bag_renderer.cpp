@@ -333,7 +333,7 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
         const float font_size = ui_typography().kInventoryBodyFontSize;
         char display_text[64]{};
         const UiUtf8CopyResult formatted = ui_utf8_format(
-            display_text, sizeof(display_text), u8"%s x%llu", display_name,
+            display_text, sizeof(display_text), u8"%s ×%llu", display_name,
             static_cast<unsigned long long>(state.materials[index]));
         if (!formatted.input_was_valid || formatted.truncated) continue;
         draw_material_text(font, font_ready,

@@ -129,7 +129,7 @@ constexpr std::array<const char*, 85U> kUiDynamicGlyphCoverage{{
     u8"可见：怪 105/105 环境 73/105 掉落 53/331",
     u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
     u8"设置界面…",
-    u8"已拾取：强化石 x1、混沌石 x1",
+    u8"已拾取：强化石 ×1、混沌石 ×1",
     u8"材料袋",
     // T2-T5 render-ready format samples. Keep each sample independently
     // visitable so coverage cannot pass through an unrelated corpus string.
@@ -139,7 +139,7 @@ constexpr std::array<const char*, 85U> kUiDynamicGlyphCoverage{{
     u8"强化结果：成功 / +9 → +10",
     u8"强化结果：失败 / 装备丢失",
     u8"普通 暗影兜帽 · 物品等级 1",
-    u8"已拾取：强化石 x1、等13种",
+    u8"已拾取：强化石 ×1、等13种",
     u8"危险：强化失败，装备丢失",
     u8"确认强化石？",
     u8"分配 / 退款 / 相邻 / 断链",

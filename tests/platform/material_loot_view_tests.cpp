@@ -162,7 +162,7 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
         items::material_index(items::MaterialId::chaos)] = 2U;
     auto first = feedback.observe(snapshot);
     ARPG_REQUIRE(first.ready);
-    ARPG_REQUIRE(std::strcmp(first.text.bytes.data(), "已拾取：混沌石 x2") == 0);
+    ARPG_REQUIRE(std::strcmp(first.text.bytes.data(), u8"已拾取：混沌石 ×2") == 0);
 
     snapshot.material_pickup_receipt.commit_generation = 11U;
     snapshot.material_pickup_receipt.counts.fill(0U);
@@ -170,7 +170,7 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
         items::material_index(items::MaterialId::chaos)] = 1U;
     auto repeated = feedback.observe(snapshot);
     ARPG_REQUIRE(repeated.ready);
-    ARPG_REQUIRE(std::strcmp(repeated.text.bytes.data(), "已拾取：混沌石 x3") == 0);
+    ARPG_REQUIRE(std::strcmp(repeated.text.bytes.data(), u8"已拾取：混沌石 ×3") == 0);
 
     snapshot.material_pickup_receipt.commit_generation = 12U;
     snapshot.material_pickup_receipt.counts.fill(0U);
@@ -178,8 +178,8 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
         items::material_index(items::MaterialId::directed)] = 1U;
     const auto mixed = feedback.observe(snapshot);
     ARPG_REQUIRE(mixed.ready);
-    ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), "混沌石 x3") != nullptr);
-    ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), "定向核心 x1") != nullptr);
+    ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), u8"混沌石 ×3") != nullptr);
+    ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), u8"定向核心 ×1") != nullptr);
 
     const auto observe_counts = [](const std::array<std::uint64_t,
             items::kMaterialCount>& counts) noexcept {
@@ -202,19 +202,19 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
     const auto one = observe_counts(counts);
     ARPG_REQUIRE(require_complete(one));
     ARPG_REQUIRE(std::strcmp(one.text.bytes.data(),
-        u8"已拾取：嬗变石 x1") == 0);
+        u8"已拾取：嬗变石 ×1") == 0);
 
     counts[items::material_index(items::MaterialId::augment)] = 2U;
     const auto two = observe_counts(counts);
     ARPG_REQUIRE(require_complete(two));
     ARPG_REQUIRE(std::strcmp(two.text.bytes.data(),
-        u8"已拾取：嬗变石 x1、增幅石 x2") == 0);
+        u8"已拾取：嬗变石 ×1、增幅石 ×2") == 0);
 
     counts.fill(1U);
     const auto fourteen = observe_counts(counts);
     ARPG_REQUIRE(require_complete(fourteen));
     ARPG_REQUIRE(std::strcmp(fourteen.text.bytes.data(),
-        u8"已拾取：嬗变石 x1、增幅石 x1、富豪石 x1、混沌石 x1、崇高石 x1、等9种") == 0);
+        u8"已拾取：嬗变石 ×1、增幅石 ×1、富豪石 ×1、混沌石 ×1、等10种") == 0);
 
     counts.fill(0U);
     counts[items::material_index(items::MaterialId::transmute)] =
@@ -226,16 +226,16 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
     const auto exact_boundary = observe_counts(counts);
     ARPG_REQUIRE(require_complete(exact_boundary));
     ARPG_REQUIRE(std::strlen(exact_boundary.text.bytes.data())
-        == exact_boundary.text.bytes.size() - 1U);
+        == exact_boundary.text.bytes.size() - 2U);
     ARPG_REQUIRE(std::strcmp(exact_boundary.text.bytes.data(),
-        u8"已拾取：嬗变石 x100000000000、增幅石 x1、富豪石 x1、混沌石 x1、崇高石 x1") == 0);
+        u8"已拾取：嬗变石 ×100000000000、增幅石 ×1、富豪石 ×1、混沌石 ×1、等1种") == 0);
 
     counts[items::material_index(items::MaterialId::transmute)] =
         1000000000000ULL;
     const auto one_byte_over = observe_counts(counts);
     ARPG_REQUIRE(require_complete(one_byte_over));
     ARPG_REQUIRE(std::strcmp(one_byte_over.text.bytes.data(),
-        u8"已拾取：嬗变石 x1000000000000、增幅石 x1、富豪石 x1、混沌石 x1、等1种") == 0);
+        u8"已拾取：嬗变石 ×1000000000000、增幅石 ×1、富豪石 ×1、混沌石 ×1、等1种") == 0);
 
     counts.fill(0U);
     counts[items::material_index(items::MaterialId::transmute)] =
@@ -243,7 +243,7 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
     const auto long_quantity = observe_counts(counts);
     ARPG_REQUIRE(require_complete(long_quantity));
     ARPG_REQUIRE(std::strcmp(long_quantity.text.bytes.data(),
-        u8"已拾取：嬗变石 x18446744073709551615") == 0);
+        u8"已拾取：嬗变石 ×18446744073709551615") == 0);
 
     platform::MaterialPickupFeedbackState allocation_state{};
     dungeon::DungeonSnapshot allocation_snapshot{};
@@ -667,7 +667,7 @@ arpg::test::Failure simultaneous_potion_and_material_feedback_preserves_both() n
     const auto material = feedback.observe(snapshot);
     ARPG_REQUIRE(material.ready);
     ARPG_REQUIRE(std::strcmp(material.text.bytes.data(),
-        "已拾取：混沌石 x1") == 0);
+        u8"已拾取：混沌石 ×1") == 0);
     ARPG_REQUIRE(!feedback.observe(snapshot).ready);
     return {};
 }
@@ -790,7 +790,7 @@ arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() n
     published = feedback.observe(snapshot);
     ARPG_REQUIRE(published.ready);
     ARPG_REQUIRE(std::strcmp(
-        published.text.bytes.data(), "已拾取：混沌石 x1") == 0);
+        published.text.bytes.data(), u8"已拾取：混沌石 ×1") == 0);
     ARPG_REQUIRE(!feedback.observe(snapshot).ready);
 
     snapshot.material_pickup_receipt.valid = false;
@@ -808,7 +808,7 @@ arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() n
     published = feedback.observe(snapshot);
     ARPG_REQUIRE(published.ready);
     ARPG_REQUIRE(std::strcmp(
-        published.text.bytes.data(), "已拾取：混沌石 x3") == 0);
+        published.text.bytes.data(), u8"已拾取：混沌石 ×3") == 0);
     ARPG_REQUIRE(!feedback.observe(snapshot).ready);
 
     snapshot.material_pickup_receipt.commit_generation = 12U;
@@ -859,7 +859,7 @@ arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() n
         }
         saw_final_material_total = saw_final_material_total
             || std::strcmp(value.text.bytes.data(),
-                "已拾取：混沌石 x64") == 0;
+                u8"已拾取：混沌石 ×64") == 0;
         return true;
     };
     for (std::size_t index = 0U; index < kReceiptCount; ++index) {

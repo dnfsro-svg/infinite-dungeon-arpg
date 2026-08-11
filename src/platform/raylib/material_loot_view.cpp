@@ -78,10 +78,41 @@ constexpr std::size_t kOccupancyWordCount =
         const items::MaterialId id = static_cast<items::MaterialId>(index);
         char token[64]{};
         const UiUtf8CopyResult formatted = ui_utf8_format(token, sizeof(token),
-            has_material ? u8"、%s x%llu" : u8"%s x%llu",
+            has_material ? u8"、%s ×%llu" : u8"%s ×%llu",
             ui_material_name(id),
             static_cast<unsigned long long>(counts[index]));
         if (!formatted.input_was_valid || formatted.truncated) return false;
+
+        const std::size_t remaining_after = remaining_material_kind_count(
+            counts, index + 1U);
+        if (remaining_after != 0U) {
+            char remaining_suffix[32]{};
+            const UiUtf8CopyResult remaining_suffix_result = ui_utf8_format(
+                remaining_suffix, sizeof(remaining_suffix),
+                u8"、等%zu种", remaining_after);
+            if (!remaining_suffix_result.input_was_valid
+                    || remaining_suffix_result.truncated) {
+                return false;
+            }
+
+            const std::size_t available = destination.bytes.size() - used;
+            const std::size_t token_bytes = std::strlen(token);
+            const std::size_t suffix_bytes = std::strlen(remaining_suffix);
+            const bool token_and_suffix_fit = token_bytes < available
+                && suffix_bytes < available - token_bytes;
+            if (!token_and_suffix_fit) {
+                char suffix[32]{};
+                const UiUtf8CopyResult suffix_result = ui_utf8_format(
+                    suffix, sizeof(suffix), u8"、等%zu种",
+                    remaining_after + 1U);
+                if (!suffix_result.input_was_valid || suffix_result.truncated
+                        || !append_complete_utf8(destination, used, suffix)) {
+                    return false;
+                }
+                break;
+            }
+        }
+
         if (append_complete_utf8(destination, used, token)) {
             has_material = true;
             continue;
@@ -92,8 +123,9 @@ constexpr std::size_t kOccupancyWordCount =
             counts, index);
         const UiUtf8CopyResult suffix_result = ui_utf8_format(
             suffix, sizeof(suffix), u8"、等%zu种", remaining);
-        if (suffix_result.input_was_valid && !suffix_result.truncated) {
-            static_cast<void>(append_complete_utf8(destination, used, suffix));
+        if (!suffix_result.input_was_valid || suffix_result.truncated
+                || !append_complete_utf8(destination, used, suffix)) {
+            return false;
         }
         break;
     }

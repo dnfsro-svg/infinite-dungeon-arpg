@@ -94,7 +94,7 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
                 scaled.slots[index], scale);
             char source[64]{};
             const int written = std::snprintf(source, sizeof(source),
-                u8"%s x1", platform::ui_material_name(id));
+                u8"%s ×1", platform::ui_material_name(id));
             ARPG_REQUIRE(written > 0);
             ARPG_REQUIRE(static_cast<std::size_t>(written) < sizeof(source));
             char fitted[64]{};

@@ -75,7 +75,7 @@ mutate_and_expect(pickup_lambda_decoy "loot_pickup_feedback.cpp" "ui_item_base_n
 mutate_and_expect(material_comment_decoy "material_loot_view.cpp" "ui_utf8_format(token, sizeof(token)," "/* ui_utf8_format(token, sizeof(token), */ std::snprintf(destination.bytes.data(), 2, \"%s\", u8\"嬗变石\");")
 mutate_and_expect(material_preprocessor_decoy "material_loot_view.cpp" "ui_utf8_format(token, sizeof(token)," "#if 0\nui_utf8_format(token, sizeof(token),\n#endif\nstd::snprintf(destination.bytes.data(), 2, \"%s\", u8\"嬗变石\");")
 set(_material_format_statement [=[        const UiUtf8CopyResult formatted = ui_utf8_format(token, sizeof(token),
-            has_material ? u8"、%s x%llu" : u8"%s x%llu",
+            has_material ? u8"、%s ×%llu" : u8"%s ×%llu",
             ui_material_name(id),
             static_cast<unsigned long long>(counts[index]));]=])
 set(_material_lambda_decoy [=[        const auto unused_catalog_format = [&]() {
