@@ -85,7 +85,30 @@ arpg::test::Failure combat_and_transition_views_keep_twelve_localized_utf8_lines
     }
     ARPG_REQUIRE(view_contains(combat_view, u8"根种子"));
     ARPG_REQUIRE(view_contains(combat_view, u8"玩家状态 攻击生效"));
-    ARPG_REQUIRE(view_contains(combat_view, u8"动作 J2 生效"));
+
+    constexpr std::array<combat::AttackId, 4U> kAttacks{{
+        combat::AttackId::j1, combat::AttackId::j2,
+        combat::AttackId::j3, combat::AttackId::air_j,
+    }};
+    constexpr std::array<const char*, 4U> kAttackNames{{
+        u8"轻攻击Ⅰ", u8"轻攻击Ⅱ", u8"轻攻击Ⅲ", u8"空中轻攻击",
+    }};
+    constexpr std::array<const char*, 4U> kOldAttackNames{{
+        "J1", "J2", "J3", u8"空中J",
+    }};
+    for (std::size_t index{}; index < kAttacks.size(); ++index) {
+        snapshot.combat->player.active_attack = kAttacks[index];
+        const platform::DebugOverlayView attack_view =
+            platform::make_debug_overlay_view(snapshot, status, feedback, true,
+                diagnostics_for(snapshot));
+        char expected[64]{};
+        const platform::UiUtf8CopyResult formatted = platform::ui_utf8_format(
+            expected, sizeof(expected), u8"动作 %s 生效", kAttackNames[index]);
+        ARPG_REQUIRE(formatted.input_was_valid);
+        ARPG_REQUIRE(!formatted.truncated);
+        ARPG_REQUIRE(view_contains(attack_view, expected));
+        ARPG_REQUIRE(!view_contains(attack_view, kOldAttackNames[index]));
+    }
 
     constexpr std::array<const char*, 22U> kOldPlayerLabels{{
         "Root", "Room", "Generation", "Saved", "Budget", "Dungeon",

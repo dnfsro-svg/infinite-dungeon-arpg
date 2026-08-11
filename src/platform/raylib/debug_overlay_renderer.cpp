@@ -10,11 +10,11 @@ namespace {
 
 const char* attack_name(combat::AttackId id) noexcept {
     switch (id) {
-    case combat::AttackId::j1: return "J1";
-    case combat::AttackId::j2: return "J2";
-    case combat::AttackId::j3: return "J3";
+    case combat::AttackId::j1: return u8"轻攻击Ⅰ";
+    case combat::AttackId::j2: return u8"轻攻击Ⅱ";
+    case combat::AttackId::j3: return u8"轻攻击Ⅲ";
     case combat::AttackId::launcher: return u8"挑飞";
-    case combat::AttackId::air_j: return u8"空中J";
+    case combat::AttackId::air_j: return u8"空中轻攻击";
     case combat::AttackId::none: return u8"无";
     }
     return u8"未知";
