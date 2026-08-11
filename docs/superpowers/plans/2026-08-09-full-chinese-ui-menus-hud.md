@@ -470,11 +470,8 @@ git commit -m "feat: localize game and launcher titles"
 Run:
 
 ```powershell
-cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2
-$env:ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY='1'
-try { & '.\out\build\windows-msvc-debug\bin\arpg_platform_tests.exe'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } finally { Remove-Item Env:ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY -ErrorAction SilentlyContinue }
-ctest --preset windows-msvc-debug --output-on-failure -R 'platform.pause_menu_state_boundary|platform.pause_menu_host_layout_source|platform.hole_prompt_binding_source'
-git diff --check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+    .\tests\platform\full_chinese_menu_hud_completion_gate.ps1
 ```
 
-Expected: 菜单/HUD 定向 suite 和三个 source guard 全部通过；玩家路径不再包含本计划覆盖的英文文案。随后进入 `2026-08-09-full-chinese-ui-inventory-progression.md`。
+Expected: 菜单/HUD 183 例、完成补充 86 例、Task 1/2/4/5/6/7 source guards/self-tests/parser、launcher units/中文文案守卫/window smoke 全部通过；`arpg_stage11c_hud_formal` 只完成编译链接，不在本门禁中启动正式验证窗口。玩家路径不再包含本计划覆盖的英文文案。随后进入 `2026-08-09-full-chinese-ui-inventory-progression.md`。

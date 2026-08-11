@@ -158,6 +158,16 @@ bool full_chinese_ui_menu_hud_only() noexcept {
     return enabled;
 }
 
+bool full_chinese_ui_menu_hud_completion_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 bool cplay021_loot_suction_only() noexcept {
     char* value = nullptr;
     std::size_t length = 0U;
@@ -316,6 +326,16 @@ int main() {
         };
         return arpg::test::run_suites(full_chinese_ui_menu_hud, 183,
             "full Chinese UI menus and HUD");
+    }
+    if (full_chinese_ui_menu_hud_completion_only()) {
+        const arpg::test::TestSuite completion_supplement[] = {
+            host_input_suite(),
+            host_settings_runtime_suite(),
+            dungeon_runtime_suite(),
+            host_window_lifetime_suite(),
+        };
+        return arpg::test::run_suites(completion_supplement, 86,
+            "full Chinese UI menus and HUD completion supplement");
     }
     if (cplay038_save_directory_only()) {
         const arpg::test::TestSuite cplay038_only[] = {

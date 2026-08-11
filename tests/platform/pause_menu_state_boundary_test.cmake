@@ -14,7 +14,7 @@ function(arpg_pause_preprocessor_is_allowed SANITIZED_SOURCE OUT_ALLOWED OUT_BAD
                 continue()
             endif()
             if(_arpg_line MATCHES
-                    "^[ \t]*#[ \t]*include[ \t]*(\"pause_menu_state\\.hpp\"|\"platform/settings/settings_types\\.hpp\"|<cstddef>|<cstdint>|<optional>|<limits>)[ \t]*$")
+                    "^[ \t]*#[ \t]*include[ \t]*(\"pause_menu_state\\.hpp\"|\"platform/settings/settings_types\\.hpp\"|\"ui_text_catalog\\.hpp\"|<cstddef>|<cstdint>|<optional>|<limits>)[ \t]*$")
                 continue()
             endif()
             set("${OUT_ALLOWED}" FALSE PARENT_SCOPE)
@@ -99,6 +99,9 @@ arpg_expect_pause_boundary(
 arpg_expect_pause_boundary(
     "settings include" FALSE
     [=[ # include "platform/settings/settings_types.hpp"]=])
+arpg_expect_pause_boundary(
+    "UI text catalog include" FALSE
+    [=[#include "ui_text_catalog.hpp"]=])
 arpg_expect_pause_boundary(
     "standard include" FALSE [=[#include <cstddef>]=])
 arpg_expect_pause_boundary(
