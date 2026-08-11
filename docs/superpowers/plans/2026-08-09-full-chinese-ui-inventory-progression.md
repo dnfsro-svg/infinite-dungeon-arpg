@@ -1,5 +1,7 @@
 # Full Chinese Inventory and Progression Implementation Plan
 
+> **已废止，不得继续执行本文件中的旧 Task 1–6。** 当前代码已完成目录映射与怪物标签，旧计划会重复修改已验证范围。后续唯一执行入口是 [2026-08-11-full-chinese-ui-inventory-progression-revised.md](./2026-08-11-full-chinese-ui-inventory-progression-revised.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 汉化背包、装备、材料、强化、被动树、怪物词缀和死亡归因，并让交互按钮居中、数据表对齐、中文名称与稳定内部 ID 完全分离。
