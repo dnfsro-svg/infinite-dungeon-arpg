@@ -386,13 +386,38 @@ MonsterSceneLabelStackLayout monster_scene_label_stack_layout(
     float viewport_width,
     float viewport_height) noexcept {
     MonsterSceneLabelStackLayout layout{};
-    entry_count = std::min(entry_count, entries.size());
-    visible_resource_bar_count = std::min(
-        visible_resource_bar_count, visible_resource_bars.size());
-    if (entry_count == 0U || !std::isfinite(viewport_width)
+    if (entry_count == 0U || entry_count > entries.size()
+            || visible_resource_bar_count > visible_resource_bars.size()
+            || !std::isfinite(projection_scale)
+            || projection_scale <= 0.0F
+            || !std::isfinite(viewport_width)
             || !std::isfinite(viewport_height)
             || viewport_width <= 0.0F || viewport_height <= 0.0F) {
         return layout;
+    }
+
+    const auto finite_nonnegative = [](float value) noexcept {
+        return std::isfinite(value) && value >= 0.0F;
+    };
+    const auto valid_rectangle = [&finite_nonnegative](
+            Rectangle bounds) noexcept {
+        return std::isfinite(bounds.x) && std::isfinite(bounds.y)
+            && finite_nonnegative(bounds.width)
+            && finite_nonnegative(bounds.height);
+    };
+    if (!valid_rectangle(actor_bounds)) return layout;
+    for (std::size_t index = 0U; index < entry_count; ++index) {
+        const MonsterSceneLabelEntry& entry = entries[index];
+        if (!finite_nonnegative(entry.text_size.x)
+                || !finite_nonnegative(entry.text_size.y)
+                || !finite_nonnegative(entry.style.horizontal_padding)
+                || !finite_nonnegative(entry.style.vertical_padding)) {
+            return layout;
+        }
+    }
+    for (std::size_t index = 0U;
+            index < visible_resource_bar_count; ++index) {
+        if (!valid_rectangle(visible_resource_bars[index])) return layout;
     }
 
     constexpr float kMinimumPlateGap = 1.0F;

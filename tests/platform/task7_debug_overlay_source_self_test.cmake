@@ -127,6 +127,27 @@ expect_mutation_rejected(independent_plate_viewport_clamp VIEW_MATH_SOURCE
                 {plate_x, plate_y}, entry.text_size,
                 viewport_width, viewport_height, entry.style);
             plate_y += plate_heights[index] + kMinimumPlateGap;")
+expect_mutation_rejected(reordered_stack_candidates VIEW_MATH_SOURCE
+    "        {exclusion_center_x - stack_width * 0.5F,
+            exclusion.y - kMinimumPlateGap - stack_height - lane_offset},
+        {exclusion_center_x - stack_width * 0.5F,
+            exclusion.y + exclusion.height + kMinimumPlateGap + lane_offset},"
+    "        {exclusion_center_x - stack_width * 0.5F,
+            exclusion.y + exclusion.height + kMinimumPlateGap + lane_offset},
+        {exclusion_center_x - stack_width * 0.5F,
+            exclusion.y - kMinimumPlateGap - stack_height - lane_offset},")
+expect_mutation_rejected(no_safe_candidate_fails_open VIEW_MATH_SOURCE
+    "        layout.visible = true;
+        return layout;
+    }
+    return layout;
+}"
+    "        layout.visible = true;
+        return layout;
+    }
+    layout.visible = true;
+    return layout;
+}")
 
 expect_mutation_rejected(unsafe_affix_textformat ACTOR_SOURCE
     "            static_cast<void>(ui_utf8_format(

@@ -309,6 +309,11 @@ foreach(_token IN ITEMS
         "std::array<float,kMonsterSceneLabelCapacity>plate_widths{};"
         "std::array<float,kMonsterSceneLabelCapacity>plate_heights{};"
         "conststd::array<Vector2,4U>candidates"
+        "entry_count>entries.size()"
+        "visible_resource_bar_count>visible_resource_bars.size()"
+        "!std::isfinite(projection_scale)"
+        "if(!valid_rectangle(actor_bounds))returnlayout;"
+        "if(!valid_rectangle(visible_resource_bars[index]))returnlayout;"
         "if(overlaps(bounds,actor_bounds))returntrue;"
         "index<visible_resource_bar_count"
         "normalized_rectangle(visible_resource_bars[index])"
@@ -316,10 +321,37 @@ foreach(_token IN ITEMS
         "std::clamp(candidate.y,0.0F,viewport_height-stack_height)"
         "layout.bounds={origin.x,origin.y,stack_width,stack_height};"
         "layout.plates[index].backing="
-        "layout.visible=true;")
+        "layout.visible=true;returnlayout;}returnlayout;")
     require_token("${_stack_compact}" "${_token}"
         "Task 7 scene labels must be translated and clamped as one stack")
 endforeach()
+set(_above_candidate
+    "{exclusion_center_x-stack_width*0.5F,exclusion.y-kMinimumPlateGap-stack_height-lane_offset}")
+set(_below_candidate
+    "{exclusion_center_x-stack_width*0.5F,exclusion.y+exclusion.height+kMinimumPlateGap+lane_offset}")
+set(_right_candidate
+    "{exclusion.x+exclusion.width+kMinimumPlateGap,exclusion_center_y-stack_height*0.5F-lane_offset}")
+set(_left_candidate
+    "{exclusion.x-kMinimumPlateGap-stack_width,exclusion_center_y-stack_height*0.5F-lane_offset}")
+string(FIND "${_stack_compact}" "${_above_candidate}" _above_position)
+string(FIND "${_stack_compact}" "${_below_candidate}" _below_position)
+string(FIND "${_stack_compact}" "${_right_candidate}" _right_position)
+string(FIND "${_stack_compact}" "${_left_candidate}" _left_position)
+if(_above_position LESS 0 OR _below_position LESS 0
+        OR _right_position LESS 0 OR _left_position LESS 0
+        OR _above_position GREATER_EQUAL _below_position
+        OR _below_position GREATER_EQUAL _right_position
+        OR _right_position GREATER_EQUAL _left_position)
+    message(FATAL_ERROR
+        "Task 7 scene label candidates must remain above, below, right, left")
+endif()
+string(REGEX MATCHALL "layout[.]visible=true" _visible_writes
+    "${_stack_compact}")
+list(LENGTH _visible_writes _visible_write_count)
+if(NOT _visible_write_count EQUAL 1)
+    message(FATAL_ERROR
+        "Task 7 scene label stack must become visible only after a safe candidate")
+endif()
 string(FIND "${_stack_body}" "scene_label_layout(" _per_plate_clamp)
 if(NOT _per_plate_clamp EQUAL -1)
     message(FATAL_ERROR

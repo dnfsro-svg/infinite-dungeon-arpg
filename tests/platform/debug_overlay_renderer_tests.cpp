@@ -10,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 
 namespace {
 
@@ -242,8 +243,8 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
     constexpr std::array<bool, 2U> kDebugModes{{false, true}};
     constexpr std::array<std::size_t, 4U> kAffixCounts{{0U, 1U, 2U, 3U}};
     constexpr std::array<std::size_t, 3U> kResourceBarCounts{{1U, 2U, 3U}};
-    constexpr std::array<Vector2, 5U> kViewportEdgeActorPositions{{
-        {400.0F, 12.0F},
+    constexpr std::array<Vector2, 5U> kViewportActorPositions{{
+        {400.0F, 225.0F},
         {18.0F, 12.0F},
         {782.0F, 12.0F},
         {18.0F, 446.0F},
@@ -301,7 +302,7 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
                     for (const std::size_t resource_bar_count
                             : kResourceBarCounts) {
                         for (const Vector2 actor_position
-                                : kViewportEdgeActorPositions) {
+                                : kViewportActorPositions) {
                             const platform::ScreenProjection projected{
                                 actor_position.x, actor_position.y,
                                 actor_position.y, projection_scale};
@@ -433,6 +434,75 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
             }
         }
     }
+
+    const auto single_entry_stack = [&affix_style](
+            Rectangle actor_bounds, float projection_scale = 1.0F) noexcept {
+        std::array<platform::MonsterSceneLabelEntry,
+            platform::kMonsterSceneLabelCapacity> entries{};
+        entries[0U] = {{20.0F, 10.0F}, affix_style};
+        const std::array<Rectangle, 3U> no_bars{};
+        return platform::monster_scene_label_stack_layout(
+            entries, 1U, no_bars, 0U, actor_bounds, 0U,
+            projection_scale, 200.0F, 200.0F);
+    };
+    const platform::MonsterSceneLabelStackLayout above =
+        single_entry_stack({80.0F, 80.0F, 40.0F, 40.0F});
+    ARPG_REQUIRE(above.visible);
+    ARPG_REQUIRE(arpg::test::near(above.bounds.x, 84.0F));
+    ARPG_REQUIRE(arpg::test::near(above.bounds.y, 63.0F));
+    const platform::MonsterSceneLabelStackLayout below =
+        single_entry_stack({80.0F, 0.0F, 40.0F, 40.0F});
+    ARPG_REQUIRE(below.visible);
+    ARPG_REQUIRE(arpg::test::near(below.bounds.x, 84.0F));
+    ARPG_REQUIRE(arpg::test::near(below.bounds.y, 41.0F));
+    const platform::MonsterSceneLabelStackLayout right =
+        single_entry_stack({80.0F, 0.0F, 40.0F, 200.0F});
+    ARPG_REQUIRE(right.visible);
+    ARPG_REQUIRE(arpg::test::near(right.bounds.x, 121.0F));
+    ARPG_REQUIRE(arpg::test::near(right.bounds.y, 92.0F));
+    const platform::MonsterSceneLabelStackLayout left =
+        single_entry_stack({80.0F, 0.0F, 120.0F, 200.0F});
+    ARPG_REQUIRE(left.visible);
+    ARPG_REQUIRE(arpg::test::near(left.bounds.x, 47.0F));
+    ARPG_REQUIRE(arpg::test::near(left.bounds.y, 92.0F));
+    const platform::MonsterSceneLabelStackLayout nowhere =
+        single_entry_stack({0.0F, 0.0F, 200.0F, 200.0F});
+    ARPG_REQUIRE(!nowhere.visible);
+    ARPG_REQUIRE(nowhere.plate_count == 0U);
+
+    constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
+    constexpr float kInfinity = std::numeric_limits<float>::infinity();
+    std::array<platform::MonsterSceneLabelEntry,
+        platform::kMonsterSceneLabelCapacity> malformed_entries{};
+    malformed_entries[0U] = {{20.0F, 10.0F}, affix_style};
+    const std::array<Rectangle, 3U> no_bars{};
+    const Rectangle valid_actor{80.0F, 80.0F, 40.0F, 40.0F};
+    const auto malformed_stack = [&](float projection_scale,
+            Rectangle actor_bounds,
+            const std::array<Rectangle, 3U>& bars,
+            std::size_t bar_count) noexcept {
+        return platform::monster_scene_label_stack_layout(
+            malformed_entries, 1U, bars, bar_count, actor_bounds,
+            0U, projection_scale, 200.0F, 200.0F);
+    };
+    malformed_entries[0U].text_size.x = kNaN;
+    ARPG_REQUIRE(!malformed_stack(
+        1.0F, valid_actor, no_bars, 0U).visible);
+    malformed_entries[0U].text_size = {20.0F, 10.0F};
+    malformed_entries[0U].style.horizontal_padding = kInfinity;
+    ARPG_REQUIRE(!malformed_stack(
+        1.0F, valid_actor, no_bars, 0U).visible);
+    malformed_entries[0U] = {{20.0F, 10.0F}, affix_style};
+    ARPG_REQUIRE(!malformed_stack(
+        kNaN, valid_actor, no_bars, 0U).visible);
+    ARPG_REQUIRE(!malformed_stack(
+        kInfinity, valid_actor, no_bars, 0U).visible);
+    ARPG_REQUIRE(!malformed_stack(
+        1.0F, {kNaN, 80.0F, 40.0F, 40.0F}, no_bars, 0U).visible);
+    std::array<Rectangle, 3U> malformed_bars{};
+    malformed_bars[0U] = {80.0F, kInfinity, 40.0F, 5.0F};
+    ARPG_REQUIRE(!malformed_stack(
+        1.0F, valid_actor, malformed_bars, 1U).visible);
 
     constexpr std::array<Color, 5U> kActualFixedSceneLabelColors{{
         {90U, 190U, 255U, 190U},
