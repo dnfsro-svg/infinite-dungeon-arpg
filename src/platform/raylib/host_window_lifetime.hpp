@@ -12,6 +12,8 @@ struct HostWindowBackend final {
     void (*set_config_flags)(unsigned int) noexcept{};
     void (*init_window)(int, int, const char*) noexcept{};
     bool (*is_window_ready)() noexcept{};
+    void* (*detach_ime_context)() noexcept{};
+    void (*restore_ime_context)(void*) noexcept{};
     void (*close_window)() noexcept{};
 };
 
@@ -33,6 +35,8 @@ public:
 private:
     HostWindowBackend backend_{};
     bool ready_{};
+    void* detached_ime_context_{};
+    bool ime_context_detached_{};
 };
 
 [[nodiscard]] HostWindowBackend raylib_host_window_backend() noexcept;

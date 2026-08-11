@@ -1150,7 +1150,7 @@ function(evidence_window_lifetime_boundary_is_valid
     string(REGEX REPLACE "[ \t\r\n]+" "" owner_lexical_compact
         "${owner_lexical}")
     set(wrapper_seam
-        "#include\"host_window_lifetime.hpp\"#include\"raylib_host.hpp\"#include\"window_settings.hpp\"#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindow#include<raylib.h>#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindownamespace{voidset_config_flags_noexcept(unsignedintflags)noexcept{SetConfigFlags(flags);}voidinit_window_noexcept(intwidth,intheight,constchar*title)noexcept{InitWindow(width,height,title);}boolis_window_ready_noexcept()noexcept{returnIsWindowReady();}voidclose_window_noexcept()noexcept{CloseWindow();}}")
+        "#include\"host_window_lifetime.hpp\"#include\"raylib_host.hpp\"#include\"window_settings.hpp\"#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindow#include<raylib.h>#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindow#ifdef_WIN32extern__declspec(dllimport)void*__stdcallImmAssociateContext(void*,void*);#endifnamespace{voidset_config_flags_noexcept(unsignedintflags)noexcept{SetConfigFlags(flags);}voidinit_window_noexcept(intwidth,intheight,constchar*title)noexcept{InitWindow(width,height,title);}boolis_window_ready_noexcept()noexcept{returnIsWindowReady();}void*detach_ime_context_noexcept()noexcept{#ifdef_WIN32void*constwindow=GetWindowHandle();returnwindow!=nullptr?ImmAssociateContext(window,nullptr):nullptr;#elsereturnnullptr;#endif}voidrestore_ime_context_noexcept(void*context)noexcept{#ifdef_WIN32void*constwindow=GetWindowHandle();if(window!=nullptr){static_cast<void>(ImmAssociateContext(window,context));}#elsestatic_cast<void>(context);#endif}voidclose_window_noexcept()noexcept{CloseWindow();}}")
     string(FIND "${owner_lexical_compact}" "${wrapper_seam}"
         wrapper_seam_position)
     evidence_count_literal_occurrences("${owner_lexical_compact}"
@@ -1240,9 +1240,9 @@ function(evidence_window_lifetime_boundary_is_valid
     endforeach()
 
     set(expected_initialize
-        "boolHostWindowLifetime::initialize(constRaylibHostConfig&config,constsettings::SettingsData&settings)noexcept{if(!backend_.set_config_flags||!backend_.init_window||!backend_.is_window_ready||!backend_.close_window){ready_=false;returnfalse;}backend_.set_config_flags(initial_window_flags(settings));backend_.init_window(config.window_width,config.window_height,config.window_title);ready_=backend_.is_window_ready();returnready_;}")
+        "boolHostWindowLifetime::initialize(constRaylibHostConfig&config,constsettings::SettingsData&settings)noexcept{if(!backend_.set_config_flags||!backend_.init_window||!backend_.is_window_ready||!backend_.detach_ime_context||!backend_.restore_ime_context||!backend_.close_window){ready_=false;returnfalse;}backend_.set_config_flags(initial_window_flags(settings));backend_.init_window(config.window_width,config.window_height,config.window_title);ready_=backend_.is_window_ready();if(ready_){detached_ime_context_=backend_.detach_ime_context();ime_context_detached_=true;}returnready_;}")
     set(expected_backend
-        "HostWindowBackendraylib_host_window_backend()noexcept{return{&set_config_flags_noexcept,&init_window_noexcept,&is_window_ready_noexcept,&close_window_noexcept};}")
+        "HostWindowBackendraylib_host_window_backend()noexcept{return{&set_config_flags_noexcept,&init_window_noexcept,&is_window_ready_noexcept,&detach_ime_context_noexcept,&restore_ime_context_noexcept,&close_window_noexcept};}")
     if(NOT initialize_compact STREQUAL expected_initialize
             OR NOT backend_compact STREQUAL expected_backend)
         set(${output} FALSE PARENT_SCOPE)
@@ -1254,6 +1254,10 @@ function(evidence_window_lifetime_boundary_is_valid
         "void init_window_noexcept(")
     set(wrapper_signature_ready
         "bool is_window_ready_noexcept(")
+    set(wrapper_signature_detach
+        "void* detach_ime_context_noexcept(")
+    set(wrapper_signature_restore
+        "void restore_ime_context_noexcept(")
     set(wrapper_signature_close
         "void close_window_noexcept(")
     set(wrapper_expected_set_config
@@ -1262,9 +1266,13 @@ function(evidence_window_lifetime_boundary_is_valid
         "voidinit_window_noexcept(intwidth,intheight,constchar*title)noexcept{InitWindow(width,height,title);}")
     set(wrapper_expected_ready
         "boolis_window_ready_noexcept()noexcept{returnIsWindowReady();}")
+    set(wrapper_expected_detach
+        "void*detach_ime_context_noexcept()noexcept{}")
+    set(wrapper_expected_restore
+        "voidrestore_ime_context_noexcept(void*context)noexcept{}")
     set(wrapper_expected_close
         "voidclose_window_noexcept()noexcept{CloseWindow();}")
-    foreach(wrapper_id IN ITEMS set_config init ready close)
+    foreach(wrapper_id IN ITEMS set_config init ready detach restore close)
         set(signature_variable "wrapper_signature_${wrapper_id}")
         set(expected_variable "wrapper_expected_${wrapper_id}")
         evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(

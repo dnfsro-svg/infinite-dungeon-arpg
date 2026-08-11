@@ -2386,7 +2386,8 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
         OR TASK8C_REVIEW_MUTATION STREQUAL mapping_namespace_decoy)
     set(_task8c_backend_mapping
         "return {&set_config_flags_noexcept, &init_window_noexcept,
-        &is_window_ready_noexcept, &close_window_noexcept};")
+        &is_window_ready_noexcept, &detach_ime_context_noexcept,
+        &restore_ime_context_noexcept, &close_window_noexcept};")
     string(REPLACE "${_task8c_backend_mapping}" "return {};"
         _task8c_mapping_namespace_decoy
         "${_host_window_lifetime_source_active}")
@@ -2405,7 +2406,8 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
         OR TASK8C_REVIEW_MUTATION STREQUAL backend_wrong_namespace_decoy)
     set(_task8c_backend_mapping
         "return {&set_config_flags_noexcept, &init_window_noexcept,
-        &is_window_ready_noexcept, &close_window_noexcept};")
+        &is_window_ready_noexcept, &detach_ime_context_noexcept,
+        &restore_ime_context_noexcept, &close_window_noexcept};")
     string(REPLACE "${_task8c_backend_mapping}" "return {};"
         _task8c_backend_wrong_namespace_decoy
         "${_host_window_lifetime_source_active}")
@@ -2457,6 +2459,56 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
         _task8c_wrapper_ready_false_valid)
     if(_task8c_wrapper_ready_false_valid)
         list(APPEND _task8c_review_mutation_acceptances wrapper_ready_false)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL detach_ime_context_removed)
+    string(REPLACE "        detached_ime_context_ = backend_.detach_ime_context();\n        ime_context_detached_ = true;\n"
+        "" _task8c_detach_ime_context_removed
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_detach_ime_context_removed}"
+        _task8c_detach_ime_context_removed_active
+        _task8c_detach_ime_context_removed_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_detach_ime_context_removed_active}"
+        "${_task8c_detach_ime_context_removed_lexical}"
+        _task8c_detach_ime_context_removed_valid)
+    if(_task8c_detach_ime_context_removed_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            detach_ime_context_removed)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL restore_ime_context_after_close)
+    set(_task8c_restore_before_close [=[    if (ime_context_detached_) {
+        backend_.restore_ime_context(detached_ime_context_);
+        detached_ime_context_ = nullptr;
+        ime_context_detached_ = false;
+    }
+    if (backend_.close_window != nullptr) backend_.close_window();]=])
+    set(_task8c_restore_after_close [=[    if (backend_.close_window != nullptr) backend_.close_window();
+    if (ime_context_detached_) {
+        backend_.restore_ime_context(detached_ime_context_);
+        detached_ime_context_ = nullptr;
+        ime_context_detached_ = false;
+    }]=])
+    string(REPLACE "${_task8c_restore_before_close}"
+        "${_task8c_restore_after_close}" _task8c_restore_ime_context_after_close
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_restore_ime_context_after_close}"
+        _task8c_restore_ime_context_after_close_active
+        _task8c_restore_ime_context_after_close_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_restore_ime_context_after_close_active}"
+        "${_task8c_restore_ime_context_after_close_lexical}"
+        _task8c_restore_ime_context_after_close_valid)
+    if(_task8c_restore_ime_context_after_close_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            restore_ime_context_after_close)
     endif()
 endif()
 if(NOT DEFINED TASK8C_REVIEW_MUTATION
@@ -2784,6 +2836,8 @@ foreach(_task8c_interface_member IN ITEMS
         "void(*set_config_flags)(unsignedint)noexcept{}"
         "void(*init_window)(int,int,constchar*)noexcept{}"
         "bool(*is_window_ready)()noexcept{}"
+        "void*(*detach_ime_context)()noexcept{}"
+        "void(*restore_ime_context)(void*)noexcept{}"
         "void(*close_window)()noexcept{}"
         "classHostWindowLifetimefinal{"
         "explicitHostWindowLifetime(HostWindowBackendbackend)noexcept"
@@ -2795,6 +2849,10 @@ foreach(_task8c_interface_member IN ITEMS
         "~HostWindowLifetime()"
         "HostWindowLifetime(constHostWindowLifetime&)=delete"
         "HostWindowLifetime&operator=(constHostWindowLifetime&)=delete"
+        "HostWindowBackendbackend_{};"
+        "boolready_{};"
+        "void*detached_ime_context_{};"
+        "boolime_context_detached_{};"
         "[[nodiscard]]HostWindowBackendraylib_host_window_backend()noexcept")
     foreach(_task8c_interface_surface IN ITEMS
             "${_task8c_interface_active}" "${_task8c_interface_lexical}")
@@ -2818,7 +2876,8 @@ bool HostWindowLifetime::initialize(
     const RaylibHostConfig& config,
     const settings::SettingsData& settings) noexcept {
     if (!backend_.set_config_flags || !backend_.init_window
-            || !backend_.is_window_ready || !backend_.close_window) {
+            || !backend_.is_window_ready || !backend_.detach_ime_context
+            || !backend_.restore_ime_context || !backend_.close_window) {
         ready_ = false;
         return false;
     }
@@ -2826,6 +2885,10 @@ bool HostWindowLifetime::initialize(
     backend_.init_window(config.window_width, config.window_height,
         config.window_title);
     ready_ = backend_.is_window_ready();
+    if (ready_) {
+        detached_ime_context_ = backend_.detach_ime_context();
+        ime_context_detached_ = true;
+    }
     return ready_;
 }
 ]=])
@@ -2839,6 +2902,11 @@ set(_task8c_close_contract [=[
 void HostWindowLifetime::close() noexcept {
     if (!ready_) return;
     ready_ = false;
+    if (ime_context_detached_) {
+        backend_.restore_ime_context(detached_ime_context_);
+        detached_ime_context_ = nullptr;
+        ime_context_detached_ = false;
+    }
     if (backend_.close_window != nullptr) backend_.close_window();
 }
 ]=])
@@ -2858,7 +2926,8 @@ host_validation_require_exact_surface("Task 8C destructor fallback"
 host_validation_require_canonical_count("Task 8C real raylib backend"
     "${_host_window_lifetime_source_active}"
     "return {&set_config_flags_noexcept, &init_window_noexcept,
-        &is_window_ready_noexcept, &close_window_noexcept};" 1)
+        &is_window_ready_noexcept, &detach_ime_context_noexcept,
+        &restore_ime_context_noexcept, &close_window_noexcept};" 1)
 host_validation_require_canonical_count("Task 8C Host owns one lifetime"
     "${_run_host_direct}"
     "HostWindowLifetime window{raylib_host_window_backend()};" 1)

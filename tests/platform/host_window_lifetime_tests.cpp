@@ -25,6 +25,12 @@ static_assert(std::is_same_v<
     decltype(platform::HostWindowBackend::is_window_ready),
     bool (*)() noexcept>);
 static_assert(std::is_same_v<
+    decltype(platform::HostWindowBackend::detach_ime_context),
+    void* (*)() noexcept>);
+static_assert(std::is_same_v<
+    decltype(platform::HostWindowBackend::restore_ime_context),
+    void (*)(void*) noexcept>);
+static_assert(std::is_same_v<
     decltype(platform::HostWindowBackend::close_window),
     void (*)() noexcept>);
 
@@ -32,6 +38,8 @@ enum class BackendEvent : unsigned char {
     set_flags,
     init_window,
     query_ready,
+    detach_ime_context,
+    restore_ime_context,
     close_window,
 };
 
@@ -41,7 +49,9 @@ struct CountingBackend final {
     int width{};
     int height{};
     const char* title{};
-    std::array<BackendEvent, 4U> events{};
+    void* detached_ime_context{reinterpret_cast<void*>(0x5678U)};
+    void* restored_ime_context{reinterpret_cast<void*>(0x1234U)};
+    std::array<BackendEvent, 6U> events{};
     std::size_t event_count{};
     std::size_t close_count{};
 };
@@ -69,6 +79,16 @@ bool is_window_ready() noexcept {
     return active_backend->is_ready;
 }
 
+void* detach_ime_context() noexcept {
+    record(BackendEvent::detach_ime_context);
+    return active_backend->detached_ime_context;
+}
+
+void restore_ime_context(void* context) noexcept {
+    active_backend->restored_ime_context = context;
+    record(BackendEvent::restore_ime_context);
+}
+
 void close_window() noexcept {
     ++active_backend->close_count;
     record(BackendEvent::close_window);
@@ -77,7 +97,9 @@ void close_window() noexcept {
 [[nodiscard]] platform::HostWindowBackend backend_for(
     CountingBackend& backend) noexcept {
     active_backend = &backend;
-    return {&set_config_flags, &init_window, &is_window_ready, &close_window};
+    return {&set_config_flags, &init_window, &is_window_ready,
+        &detach_ime_context, &restore_ime_context,
+        &close_window};
 }
 
 [[nodiscard]] platform::RaylibHostConfig configured_host() noexcept {
@@ -110,13 +132,15 @@ arpg::test::Failure failed_initialization_leaves_window_unowned() noexcept {
 arpg::test::Failure incomplete_backend_is_rejected_before_any_callback()
     noexcept {
     const settings::SettingsData settings = settings::default_settings();
-    for (std::size_t missing = 0U; missing < 4U; ++missing) {
+    for (std::size_t missing = 0U; missing < 6U; ++missing) {
         CountingBackend backend{true};
         platform::HostWindowBackend callbacks = backend_for(backend);
         if (missing == 0U) callbacks.set_config_flags = nullptr;
         if (missing == 1U) callbacks.init_window = nullptr;
         if (missing == 2U) callbacks.is_window_ready = nullptr;
-        if (missing == 3U) callbacks.close_window = nullptr;
+        if (missing == 3U) callbacks.detach_ime_context = nullptr;
+        if (missing == 4U) callbacks.restore_ime_context = nullptr;
+        if (missing == 5U) callbacks.close_window = nullptr;
         platform::HostWindowLifetime lifetime{callbacks};
 
         ARPG_REQUIRE(!lifetime.initialize(configured_host(), settings));
@@ -126,6 +150,7 @@ arpg::test::Failure incomplete_backend_is_rejected_before_any_callback()
         lifetime.close();
         ARPG_REQUIRE(backend.event_count == 0U);
     }
+
     return {};
 }
 
@@ -140,12 +165,28 @@ arpg::test::Failure explicit_close_is_idempotent_after_ready_initialization()
     ARPG_REQUIRE(backend.width == 960);
     ARPG_REQUIRE(backend.height == 540);
     ARPG_REQUIRE(backend.title == configured_host().window_title);
+    ARPG_REQUIRE(backend.event_count == 4U);
+    ARPG_REQUIRE(backend.events[3] == BackendEvent::detach_ime_context);
     lifetime.close();
     lifetime.close();
     ARPG_REQUIRE(!lifetime.ready());
     ARPG_REQUIRE(backend.close_count == 1U);
-    ARPG_REQUIRE(backend.event_count == 4U);
-    ARPG_REQUIRE(backend.events[3] == BackendEvent::close_window);
+    ARPG_REQUIRE(backend.event_count == 6U);
+    ARPG_REQUIRE(backend.events[4] == BackendEvent::restore_ime_context);
+    ARPG_REQUIRE(backend.events[5] == BackendEvent::close_window);
+    ARPG_REQUIRE(backend.restored_ime_context
+        == backend.detached_ime_context);
+
+    CountingBackend no_previous_context{true};
+    no_previous_context.detached_ime_context = nullptr;
+    platform::HostWindowLifetime no_previous_lifetime{
+        backend_for(no_previous_context)};
+    ARPG_REQUIRE(no_previous_lifetime.initialize(configured_host(), settings));
+    no_previous_lifetime.close();
+    ARPG_REQUIRE(no_previous_context.event_count == 6U);
+    ARPG_REQUIRE(no_previous_context.events[4]
+        == BackendEvent::restore_ime_context);
+    ARPG_REQUIRE(no_previous_context.restored_ime_context == nullptr);
     return {};
 }
 
@@ -167,6 +208,9 @@ arpg::test::Failure destructor_closes_ready_window_on_early_return_and_exception
     CountingBackend early_return_backend{true};
     initialize_then_return(early_return_backend);
     ARPG_REQUIRE(early_return_backend.close_count == 1U);
+    ARPG_REQUIRE(early_return_backend.event_count == 6U);
+    ARPG_REQUIRE(early_return_backend.events[4]
+        == BackendEvent::restore_ime_context);
 
     CountingBackend exception_backend{true};
     try {
@@ -175,6 +219,9 @@ arpg::test::Failure destructor_closes_ready_window_on_early_return_and_exception
         ARPG_REQUIRE(error == 2);
     }
     ARPG_REQUIRE(exception_backend.close_count == 1U);
+    ARPG_REQUIRE(exception_backend.event_count == 6U);
+    ARPG_REQUIRE(exception_backend.events[4]
+        == BackendEvent::restore_ime_context);
     return {};
 }
 

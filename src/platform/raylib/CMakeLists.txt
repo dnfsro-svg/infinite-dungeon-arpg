@@ -110,7 +110,7 @@ set_source_files_properties(raylib_host.cpp PROPERTIES
     COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE)
 
 if(WIN32)
-    target_link_libraries(arpg_raylib PRIVATE user32)
+    target_link_libraries(arpg_raylib PRIVATE user32 imm32)
 endif()
 
 arpg_enable_project_warnings(arpg_raylib)
