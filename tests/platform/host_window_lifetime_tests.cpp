@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <type_traits>
 
 namespace {
@@ -91,13 +92,17 @@ arpg::test::Failure failed_initialization_leaves_window_unowned() noexcept {
     CountingBackend backend{};
     const settings::SettingsData settings = settings::default_settings();
     platform::HostWindowLifetime lifetime{backend_for(backend)};
+    const platform::RaylibHostConfig config{};
 
-    ARPG_REQUIRE(!lifetime.initialize(configured_host(), settings));
+    ARPG_REQUIRE(std::strcmp(config.window_title, u8"无限地城") == 0);
+    ARPG_REQUIRE(!lifetime.initialize(config, settings));
     ARPG_REQUIRE(!lifetime.ready());
     ARPG_REQUIRE(backend.event_count == 3U);
     ARPG_REQUIRE(backend.events[0] == BackendEvent::set_flags);
     ARPG_REQUIRE(backend.events[1] == BackendEvent::init_window);
     ARPG_REQUIRE(backend.events[2] == BackendEvent::query_ready);
+    ARPG_REQUIRE(backend.title == config.window_title);
+    ARPG_REQUIRE(std::strcmp(backend.title, u8"无限地城") == 0);
     ARPG_REQUIRE(backend.close_count == 0U);
     return {};
 }

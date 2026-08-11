@@ -73,7 +73,7 @@ arpg::test::Failure ready_installation_is_accepted() noexcept {
     return {};
 }
 
-arpg::test::Failure missing_game_is_reported() noexcept {
+arpg::test::Failure invalid_launcher_and_missing_game_are_reported() noexcept {
     TemporaryInstallation installation{L"missing game"};
     std::error_code error;
     for (const auto directory : kRequiredAssetDirectories) {
@@ -85,6 +85,15 @@ arpg::test::Failure missing_game_is_reported() noexcept {
     ARPG_REQUIRE(status.state == InstallationState::missing_game_executable);
     ARPG_REQUIRE(status.missing_path == installation.root() / L"arpg_game.exe");
     ARPG_REQUIRE(arpg::launcher::installation_message(status) == L"缺少 arpg_game.exe");
+
+    const InstallationStatus invalid_status{
+        InstallationState::invalid_launcher_path,
+        {},
+        {},
+        installation.launcher_path(),
+    };
+    ARPG_REQUIRE(
+        arpg::launcher::installation_message(invalid_status) == L"启动器路径无效");
     return {};
 }
 
@@ -154,7 +163,8 @@ arpg::test::Failure empty_local_app_data_is_rejected() noexcept {
 arpg::test::TestSuite launcher_core_suite() noexcept {
     static const arpg::test::TestCase cases[] = {
         {"ready installation is accepted", ready_installation_is_accepted},
-        {"missing game is reported", missing_game_is_reported},
+        {"invalid launcher and missing game are reported",
+            invalid_launcher_and_missing_game_are_reported},
         {"missing asset directory is reported", missing_asset_directory_is_reported},
         {"ready installation builds argument-free request", ready_installation_builds_argument_free_request},
         {"long Chinese game path is preserved verbatim", long_chinese_game_path_is_preserved_verbatim},

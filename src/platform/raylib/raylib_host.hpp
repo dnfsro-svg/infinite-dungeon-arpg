@@ -204,7 +204,7 @@ struct Stage12MaterialRuntimeStatus final {
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
-    const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
+    const char* window_title{u8"无限地城"};
     std::optional<std::filesystem::path> save_directory{};
     std::optional<std::filesystem::path> settings_directory{};
     // F12 writes into this caller-owned directory when provided, isolating

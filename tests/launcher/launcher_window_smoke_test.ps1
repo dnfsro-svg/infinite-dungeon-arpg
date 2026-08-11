@@ -1,10 +1,228 @@
 param(
-    [Parameter(Mandatory = $true)]
     [string] $Launcher,
-    [switch] $SelfTestStaleCleanup
+    [switch] $SelfTestStaleCleanup,
+    [switch] $SelfTestChineseCopyGuard
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Assert-Task8SourcePattern {
+    param(
+        [Parameter(Mandatory = $true)][string] $Source,
+        [Parameter(Mandatory = $true)][string] $Pattern,
+        [Parameter(Mandatory = $true)][string] $Contract
+    )
+
+    if (-not [regex]::IsMatch(
+            $Source,
+            $Pattern,
+            [Text.RegularExpressions.RegexOptions]::Singleline -bor
+                [Text.RegularExpressions.RegexOptions]::CultureInvariant)) {
+        throw "Task 8 Chinese-copy guard failed: $Contract"
+    }
+}
+
+function Get-Task8ChineseCopySources {
+    $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+    return [ordered]@{
+        Host = [System.IO.File]::ReadAllText(
+            (Join-Path $sourceRoot 'src\platform\raylib\raylib_host.hpp'),
+            [System.Text.Encoding]::UTF8)
+        Main = [System.IO.File]::ReadAllText(
+            (Join-Path $sourceRoot 'src\launcher\launcher_main.cpp'),
+            [System.Text.Encoding]::UTF8)
+        Renderer = [System.IO.File]::ReadAllText(
+            (Join-Path $sourceRoot 'src\launcher\launcher_renderer.cpp'),
+            [System.Text.Encoding]::UTF8)
+        Core = [System.IO.File]::ReadAllText(
+            (Join-Path $sourceRoot 'src\launcher\launcher_core.cpp'),
+            [System.Text.Encoding]::UTF8)
+        Platform = [System.IO.File]::ReadAllText(
+            (Join-Path $sourceRoot 'src\launcher\launcher_platform_win32.cpp'),
+            [System.Text.Encoding]::UTF8)
+    }
+}
+
+function Assert-Task8ChineseCopyGuard {
+    param(
+        [Parameter(Mandatory = $true)] $Sources,
+        [string[]] $WholeFileAllowlist = @()
+    )
+
+    if ($WholeFileAllowlist.Count -ne 0) {
+        throw 'Task 8 forbids whole-file English allowlists'
+    }
+
+    Assert-Task8SourcePattern $Sources.Host 'const\s+char\*\s+window_title\{u8"无限地城"\};' 'untouched RaylibHostConfig must default to exact UTF-8 无限地城'
+    Assert-Task8SourcePattern $Sources.Main 'constexpr\s+wchar_t\s+kWindowTitle\[\]\s*=\s*L"无限地下城启动器";' 'launcher window title must remain exact 无限地下城启动器'
+    Assert-Task8SourcePattern $Sources.Main 'constexpr\s+wchar_t\s+kWindowClassName\[\]\s*=\s*L"InfiniteDungeonLauncherWindow";' 'internal Win32 class identity is the only allowed launcher class token'
+    Assert-Task8SourcePattern $Sources.Main 'GetEnvironmentVariableW\(\s*L"LOCALAPPDATA"' 'LOCALAPPDATA is allowed only as the exact environment-variable lookup token'
+    Assert-Task8SourcePattern $Sources.Main 'CreateFontW\([^;]+L"Microsoft YaHei UI"\s*\)' 'native fallback font-family token must stay in the font API call'
+    Assert-Task8SourcePattern $Sources.Renderer 'constexpr\s+wchar_t\s+kFontFamily\[\]\s*=\s*L"Microsoft YaHei UI";' 'DirectWrite font-family token must stay an internal identifier'
+    Assert-Task8SourcePattern $Sources.Renderer 'CreateTextFormat\([^;]+L"zh-CN"' 'zh-CN is allowed only as the DirectWrite locale identifier'
+
+    $buttons = @(
+        @{ Layout = 'start'; Label = '开始游戏'; Button = 'start' },
+        @{ Layout = 'verify'; Label = '检查游戏文件'; Button = 'verify' },
+        @{ Layout = 'save'; Label = '打开存档目录'; Button = 'save' },
+        @{ Layout = 'exit'; Label = '退出'; Button = 'exit' }
+    )
+    foreach ($button in $buttons) {
+        $fallbackPattern = 'draw_fallback_button\(\s*device_context,\s*view\.layout\.' +
+            $button.Layout + ',\s*L"' + [regex]::Escape($button.Label) +
+            '",\s*LauncherButton::' + $button.Button + ',\s*view,\s*scale\);'
+        Assert-Task8SourcePattern $Sources.Main $fallbackPattern "native fallback button must be exact Chinese: $($button.Label)"
+
+        $directWritePattern = 'draw_button\(\s*view\.layout\.' + $button.Layout +
+            ',\s*L"' + [regex]::Escape($button.Label) +
+            '",\s*LauncherButton::' + $button.Button + ',\s*view\);'
+        Assert-Task8SourcePattern $Sources.Renderer $directWritePattern "DirectWrite button must be exact Chinese: $($button.Label)"
+    }
+
+    foreach ($source in @($Sources.Main, $Sources.Renderer)) {
+        Assert-Task8SourcePattern $source 'L"无限地下城"' 'launcher product title must be Chinese in both rendering paths'
+        Assert-Task8SourcePattern $source 'L"版本 0\.1\.0 · 单人无限地下城"' 'launcher subtitle must be Chinese in both rendering paths'
+    }
+
+    foreach ($contract in @(
+        @{ Pattern = 'case\s+InstallationState::ready:\s*return\s+L"游戏已就绪";'; Name = 'ready status' },
+        @{ Pattern = 'case\s+InstallationState::invalid_launcher_path:\s*return\s+L"启动器路径无效";'; Name = 'invalid path status' },
+        @{ Pattern = 'case\s+InstallationState::missing_game_executable:\s*return\s+L"缺少 arpg_game\.exe";'; Name = 'missing executable status' },
+        @{ Pattern = 'case\s+InstallationState::missing_asset_directory:\s*return\s+L"缺少资源："\s*\+'; Name = 'missing asset prefix' }
+    )) {
+        Assert-Task8SourcePattern $Sources.Core $contract.Pattern "installation copy must be exact Chinese: $($contract.Name)"
+    }
+    foreach ($pathToken in @(
+        'arpg_game.exe',
+        'assets/fonts',
+        'assets/player',
+        'assets/skills',
+        'assets/stage12',
+        'assets/stage14/audio',
+        'assets/stage15/audio')) {
+        Assert-Task8SourcePattern $Sources.Core ('L"' + [regex]::Escape($pathToken) + '"') "immutable package token must remain exact: $pathToken"
+    }
+    Assert-Task8SourcePattern $Sources.Core 'L"InfiniteDungeon"\s*/\s*L"save"' 'default save path must remain InfiniteDungeon/save'
+
+    foreach ($contract in @(
+        @{ Pattern = 'path_text_\s*=\s*L"安装目录：不可用";'; Name = 'unavailable install path' },
+        @{ Pattern = 'path_text_\s*=\s*L"安装目录："\s*\+\s*full_path_;'; Name = 'dynamic install path prefix' },
+        @{ Pattern = 'set_error\(L"无法创建游戏启动请求"\);'; Name = 'launch request failure' },
+        @{ Pattern = 'set_error\(L"无法解析本地应用数据目录（LOCALAPPDATA）"\);'; Name = 'LOCALAPPDATA failure with technical suffix' },
+        @{ Pattern = 'set_error\(L"无法解析存档目录"\);'; Name = 'save path failure' }
+    )) {
+        Assert-Task8SourcePattern $Sources.Main $contract.Pattern "launcher error/status copy must be exact Chinese: $($contract.Name)"
+    }
+
+    Assert-Task8SourcePattern $Sources.Main 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";' 'renderer API stage and HRESULT must both stay inside Chinese parentheses'
+    if ([regex]::IsMatch($Sources.Main, '渲染失败：[^\r\n]*HRESULT')) {
+        throw 'Task 8 Chinese-copy guard rejected an unparenthesized renderer API stage'
+    }
+    if ([regex]::Matches($Sources.Main, 'renderer_stage_name\s*\(').Count -ne 1) {
+        throw 'Task 8 renderer stage names must flow only through render_failure_message'
+    }
+
+    $stageBody = [regex]::Match(
+        $Sources.Renderer,
+        'std::wstring_view\s+renderer_stage_name\([^\{]+\{(?<Body>.*?)\n\}\s*\n\s*bool\s+LauncherRenderer::initialize',
+        [Text.RegularExpressions.RegexOptions]::Singleline).Groups['Body'].Value
+    if ([string]::IsNullOrEmpty($stageBody)) {
+        throw 'Task 8 could not isolate renderer_stage_name for contextual audit'
+    }
+    $actualStages = @([regex]::Matches($stageBody, 'return\s+L"([^"]+)";') |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+    $allowedStages = @(
+        'CreateGradientStopCollection',
+        'CreateHwndRenderTarget',
+        'CreateLinearGradientBrush',
+        'CreateSolidColorBrush',
+        'CreateTextLayout',
+        'ID2D1HwndRenderTarget::Resize',
+        'ID2D1RenderTarget::EndDraw',
+        'IDWriteTextLayout::SetTrimming',
+        'IDWriteTextLayout::SetWordWrapping',
+        'none',
+        'unknown'
+    ) | Sort-Object
+    if (($actualStages -join "`n") -cne ($allowedStages -join "`n")) {
+        throw 'Task 8 renderer-stage technical allowlist changed'
+    }
+
+    foreach ($contract in @(
+        @{ Pattern = 'message\s*\+=\s*L"（错误代码 ";'; Name = 'numeric error prefix' },
+        @{ Pattern = 'message\s*\+=\s*L"）：";'; Name = 'numeric error suffix' },
+        @{ Pattern = 'failure\(L"无法启动游戏",\s*error_code\)'; Name = 'game launch failure' },
+        @{ Pattern = 'failure\(\s*L"无法创建存档目录",'; Name = 'save create failure' },
+        @{ Pattern = 'failure\(\s*L"无法打开存档目录",'; Name = 'save open failure' },
+        @{ Pattern = 'message\s*\+=\s*L"无法获取系统错误消息";'; Name = 'system message fallback' }
+    )) {
+        Assert-Task8SourcePattern $Sources.Platform $contract.Pattern "Win32 error path must keep a Chinese main message: $($contract.Name)"
+    }
+    Assert-Task8SourcePattern $Sources.Platform 'ShellExecuteW\(\s*nullptr,\s*L"open"' 'open is allowed only as the ShellExecuteW verb'
+
+    $technicalAllowlist = @(
+        @{ File = 'launcher_main.cpp'; Token = 'InfiniteDungeonLauncherWindow'; Reason = 'internal Win32 class identity, never display copy' },
+        @{ File = 'launcher_main.cpp'; Token = 'LOCALAPPDATA'; Reason = 'exact environment variable, shown only after a Chinese explanation' },
+        @{ File = 'launcher_main.cpp/launcher_renderer.cpp'; Token = 'Microsoft YaHei UI'; Reason = 'installed font-family identifier' },
+        @{ File = 'launcher_renderer.cpp'; Token = 'zh-CN'; Reason = 'DirectWrite locale identifier' },
+        @{ File = 'launcher_renderer.cpp'; Token = ($allowedStages -join ','); Reason = 'renderer diagnostic stages, consumed only by the parenthesized formatter' },
+        @{ File = 'launcher_main.cpp'; Token = 'HRESULT 0x'; Reason = 'numeric renderer detail inside Chinese parentheses' },
+        @{ File = 'launcher_core.cpp'; Token = 'arpg_game.exe'; Reason = 'immutable executable name after Chinese copy' },
+        @{ File = 'launcher_core.cpp'; Token = 'assets/fonts,assets/player,assets/skills,assets/stage12,assets/stage14/audio,assets/stage15/audio'; Reason = 'exact immutable package paths after 缺少资源：' },
+        @{ File = 'launcher_core.cpp'; Token = 'InfiniteDungeon/save'; Reason = 'immutable default save-path components, not authored display copy' },
+        @{ File = 'launcher_platform_win32.cpp'; Token = 'open'; Reason = 'ShellExecuteW verb, never display copy' }
+    )
+    foreach ($entry in $technicalAllowlist) {
+        if ([string]::IsNullOrWhiteSpace($entry.File) -or
+            [string]::IsNullOrWhiteSpace($entry.Token) -or
+            [string]::IsNullOrWhiteSpace($entry.Reason)) {
+            throw 'Task 8 technical allowlist entries require file, exact token/category, and reason'
+        }
+    }
+}
+
+function Copy-Task8ChineseCopySources {
+    param([Parameter(Mandatory = $true)] $Sources)
+    $copy = [ordered]@{}
+    foreach ($key in $Sources.Keys) { $copy[$key] = $Sources[$key] }
+    return $copy
+}
+
+function Invoke-Task8ChineseCopyGuardSelfTest {
+    param([Parameter(Mandatory = $true)] $Sources)
+
+    Assert-Task8ChineseCopyGuard $Sources
+    $mutations = @(
+        @{ Name = 'English game title'; File = 'Host'; Needle = 'u8"无限地城"'; Replacement = '"Infinite Dungeon"' },
+        @{ Name = 'English launcher title'; File = 'Main'; Needle = 'L"无限地下城启动器"'; Replacement = 'L"Infinite Dungeon Launcher"' },
+        @{ Name = 'English fallback button'; File = 'Main'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
+        @{ Name = 'English DirectWrite button'; File = 'Renderer'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
+        @{ Name = 'English status prefix'; File = 'Core'; Needle = 'L"游戏已就绪"'; Replacement = 'L"Ready"' },
+        @{ Name = 'unparenthesized renderer stage'; File = 'Main'; Needle = 'return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'; Replacement = 'return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";' }
+    )
+    foreach ($mutation in $mutations) {
+        $mutated = Copy-Task8ChineseCopySources $Sources
+        if (-not $mutated[$mutation.File].Contains($mutation.Needle)) {
+            throw "Task 8 mutation anchor is missing: $($mutation.Name)"
+        }
+        $mutated[$mutation.File] = $mutated[$mutation.File].Replace(
+            $mutation.Needle, $mutation.Replacement)
+        $accepted = $true
+        try { Assert-Task8ChineseCopyGuard $mutated }
+        catch { $accepted = $false }
+        if ($accepted) {
+            throw "Task 8 Chinese-copy guard accepted mutation: $($mutation.Name)"
+        }
+    }
+
+    $acceptedBroadAllowlist = $true
+    try { Assert-Task8ChineseCopyGuard $Sources -WholeFileAllowlist @('launcher_main.cpp') }
+    catch { $acceptedBroadAllowlist = $false }
+    if ($acceptedBroadAllowlist) {
+        throw 'Task 8 Chinese-copy guard accepted a broad-file allowlist attempt'
+    }
+    return $mutations.Count + 1
+}
 
 $LauncherSmokeDirectoryPrefix = 'arpg-launcher-window-smoke-'
 $LauncherSmokeDirectoryPattern = '^arpg-launcher-window-smoke-[0-9a-f]{32}$'
@@ -557,10 +775,20 @@ function Assert-RenderedClientPixels {
     finally { $tooltip.Dispose() }
 }
 
+$task8Sources = Get-Task8ChineseCopySources
+$task8MutationCount = Invoke-Task8ChineseCopyGuardSelfTest $task8Sources
+if ($SelfTestChineseCopyGuard) {
+    Write-Host "Task 8 Chinese-copy guard accepted pristine sources and rejected $task8MutationCount mutations"
+    exit 0
+}
+
 $temporaryRoot = [System.IO.Path]::GetTempPath()
 if ($SelfTestStaleCleanup) {
     Invoke-LauncherSmokeStaleCleanupSelfTest $temporaryRoot
     exit 0
+}
+if ([string]::IsNullOrWhiteSpace($Launcher)) {
+    throw 'Launcher is required unless only a self-test is requested'
 }
 Remove-StaleLauncherSmokeDirectories $temporaryRoot ([DateTime]::UtcNow)
 $source = (Resolve-Path -LiteralPath $Launcher).Path

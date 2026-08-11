@@ -58,7 +58,7 @@ std::wstring render_failure_message(const RendererResult& result) {
         std::size(hresult),
         L"%08X",
         static_cast<unsigned int>(result.hresult));
-    return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";
+    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";
 }
 
 RECT fallback_rectangle(const RectF rectangle, const float scale) noexcept {
@@ -412,7 +412,7 @@ private:
     void open_saves() {
         const std::optional<std::wstring> local_app_data = local_app_data_value();
         if (!local_app_data) {
-            set_error(L"无法解析 LOCALAPPDATA");
+            set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");
             return;
         }
         const std::optional<std::filesystem::path> save_directory =
