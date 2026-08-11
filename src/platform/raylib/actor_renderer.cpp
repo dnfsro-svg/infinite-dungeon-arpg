@@ -52,10 +52,12 @@ void sort_render_actors(std::array<RenderActor, kMonsterCapacity + 1>& actors,
     }
 }
 
-void draw_bar(float x, float y, float width, float ratio, Color color) noexcept {
+void draw_bar(Rectangle bounds, float ratio, Color color) noexcept {
     ratio = std::clamp(ratio, 0.0F, 1.0F);
-    DrawRectangleRec({x, y, width, 5.0F}, Color{20, 23, 31, 230});
-    DrawRectangleRec({x + 1.0F, y + 1.0F, (width - 2.0F) * ratio, 3.0F}, color);
+    DrawRectangleRec(bounds, Color{20, 23, 31, 230});
+    DrawRectangleRec({bounds.x + 1.0F, bounds.y + 1.0F,
+        std::max(0.0F, bounds.width - 2.0F) * ratio,
+        std::max(0.0F, bounds.height - 2.0F)}, color);
 }
 
 [[nodiscard]] float monster_bar_ratio(int value, int maximum) noexcept {
@@ -413,9 +415,6 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     const float label_offset = static_cast<float>(
         presentation.debug_label_lane)
         * 54.0F * viewport_scale;
-    const float role_y = y - 120.0F * scale - label_offset;
-    const float phase_y = role_y
-        + static_cast<float>(text_style.role_font_size) + 2.0F;
     const std::size_t affix_count = std::min<std::size_t>(
         monster.affixes.count, monster.affixes.values.size());
     for (std::size_t index = 0U; index < affix_count; ++index) {
@@ -428,37 +427,63 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     }
     const MonsterBarVisualPlan bar_visual = make_monster_bar_visual_plan(monster);
     const float bar_width = 54.0F * scale;
+    constexpr float kResourceBarHeight = 5.0F;
+    const Rectangle primary_resource_bar{
+        x - bar_width * .5F,
+        y + presentation.resource_bar_offset_y * scale,
+        bar_width,
+        kResourceBarHeight,
+    };
+    const SceneLabelStyle role_label_style =
+        scene_label_style(Color{248, 246, 238, 255});
+    const SceneLabelStyle phase_label_style =
+        scene_label_style(Color{205, 218, 237, 255});
+    const Vector2 role_anchor = monster_role_label_anchor(
+        primary_resource_bar, label_offset, role_label_style);
+    const Vector2 phase_anchor = next_stacked_scene_label_anchor(
+        role_anchor, static_cast<float>(text_style.role_font_size),
+        role_label_style, phase_label_style);
     if (presentation.resource_bars_visible) {
         for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
             const MonsterBarPlan& bar = bar_visual.bars[index];
             if (!bar.visible) continue;
-            draw_bar(x - bar_width * .5F,
-                y + presentation.resource_bar_offset_y * scale
-                    - static_cast<float>(index) * 7.0F,
-                bar_width, bar.ratio, hud_palette_color(bar.palette_id));
+            Rectangle bar_bounds = primary_resource_bar;
+            bar_bounds.y -= static_cast<float>(index) * 7.0F;
+            draw_bar(bar_bounds, bar.ratio,
+                hud_palette_color(bar.palette_id));
         }
     }
+    Vector2 previous_label_anchor = phase_anchor;
+    float previous_label_height =
+        static_cast<float>(text_style.phase_font_size);
+    SceneLabelStyle previous_label_style = phase_label_style;
     for (std::size_t index = 0U; index < affix_count; ++index) {
         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
+        const SceneLabelStyle affix_label_style =
+            scene_label_style(to_color(badge.color));
+        const Vector2 affix_anchor = next_stacked_scene_label_anchor(
+            previous_label_anchor, previous_label_height,
+            previous_label_style, affix_label_style);
         std::array<char, 64U> affix_text{};
         static_cast<void>(ui_utf8_format(affix_text.data(), affix_text.size(),
             u8"%s %s", badge.short_name, badge.tier_text));
         draw_scene_label(hud_font, hud_font_ready, affix_text.data(),
-            x - bar_width * .5F,
-            phase_y + static_cast<float>(text_style.phase_font_size + 2)
-                + static_cast<float>(index)
-                    * static_cast<float>(text_style.affix_font_size + 2),
+            affix_anchor.x, affix_anchor.y,
             text_style.affix_font_size, to_color(badge.color), width, height);
+        previous_label_anchor = affix_anchor;
+        previous_label_height =
+            static_cast<float>(text_style.affix_font_size);
+        previous_label_style = affix_label_style;
     }
     if (presentation.role_label_visible) {
         draw_scene_label(hud_font, hud_font_ready, visual.role_label,
-            x - bar_width * .5F, role_y, text_style.role_font_size,
+            role_anchor.x, role_anchor.y, text_style.role_font_size,
             Color{248, 246, 238, 255}, width, height);
     }
     if (presentation.phase_label_visible) {
         draw_scene_label(hud_font, hud_font_ready,
-            monster_phase_label(monster.ai_phase), x - bar_width * .5F,
-            phase_y, text_style.phase_font_size,
+            monster_phase_label(monster.ai_phase), role_anchor.x,
+            phase_anchor.y, text_style.phase_font_size,
             Color{205, 218, 237, 255}, width, height);
     }
 }

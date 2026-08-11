@@ -235,23 +235,80 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
         platform::monster_presentation_plan(0U, true);
     constexpr float kMonsterX = 400.0F;
     constexpr float kMonsterY = 300.0F;
-    constexpr float kScale = 1.0F;
-    constexpr float kBarWidth = 54.0F;
-    const float role_y = kMonsterY - 120.0F * kScale;
-    const Rectangle resource_bar{
-        kMonsterX - kBarWidth * 0.5F,
-        kMonsterY + lane_zero.resource_bar_offset_y * kScale,
-        kBarWidth,
-        5.0F,
-    };
-    const platform::SceneLabelLayout role_label =
-        platform::scene_label_layout(
-            {kMonsterX - kBarWidth * 0.5F, role_y}, {64.0F, 16.0F},
-            800.0F, 450.0F, scene_style);
-    ARPG_REQUIRE(!rectangles_overlap(role_label.backing, resource_bar));
-    ARPG_REQUIRE(arpg::test::near(
-        role_label.text_position.x, kMonsterX - kBarWidth * 0.5F));
-    ARPG_REQUIRE(arpg::test::near(role_label.text_position.y, role_y));
+    constexpr float kBarBaseWidth = 54.0F;
+    constexpr float kResourceBarHeight = 5.0F;
+    constexpr float kMinimumPlateGap = 1.0F;
+    constexpr std::array<float, 3U> kProjectionScales{{
+        0.70F, 0.85F, 1.0F,
+    }};
+    const platform::MonsterLabelTextStyle monster_text_style =
+        platform::monster_label_text_style(1.0F);
+    for (const float projection_scale : kProjectionScales) {
+        const float bar_width = kBarBaseWidth * projection_scale;
+        const Rectangle resource_bar{
+            kMonsterX - bar_width * 0.5F,
+            kMonsterY
+                + lane_zero.resource_bar_offset_y * projection_scale,
+            bar_width,
+            kResourceBarHeight,
+        };
+        const Vector2 role_anchor = platform::monster_role_label_anchor(
+            resource_bar, 0.0F, scene_style);
+        const Vector2 role_text_size{64.0F,
+            static_cast<float>(monster_text_style.role_font_size)};
+        const platform::SceneLabelLayout role_label =
+            platform::scene_label_layout(
+                role_anchor, role_text_size,
+                800.0F, 450.0F, scene_style);
+        ARPG_REQUIRE(!rectangles_overlap(role_label.backing, resource_bar));
+        ARPG_REQUIRE(role_label.backing.y
+            >= resource_bar.y + resource_bar.height + kMinimumPlateGap);
+        ARPG_REQUIRE(arpg::test::near(
+            role_label.text_position.x, resource_bar.x));
+        ARPG_REQUIRE(arpg::test::near(
+            role_label.text_position.y, role_anchor.y));
+
+        const Vector2 phase_anchor =
+            platform::next_stacked_scene_label_anchor(
+                role_anchor, role_text_size.y, scene_style, scene_style);
+        const Vector2 phase_text_size{64.0F,
+            static_cast<float>(monster_text_style.phase_font_size)};
+        const platform::SceneLabelLayout phase_label =
+            platform::scene_label_layout(
+                phase_anchor, phase_text_size,
+                800.0F, 450.0F, scene_style);
+        std::array<platform::SceneLabelLayout, 2U> affix_labels{};
+        Vector2 previous_anchor = phase_anchor;
+        float previous_text_height = phase_text_size.y;
+        for (std::size_t index = 0U; index < affix_labels.size(); ++index) {
+            const Vector2 affix_anchor =
+                platform::next_stacked_scene_label_anchor(
+                    previous_anchor, previous_text_height,
+                    scene_style, scene_style);
+            affix_labels[index] = platform::scene_label_layout(
+                affix_anchor,
+                {64.0F,
+                    static_cast<float>(monster_text_style.affix_font_size)},
+                800.0F, 450.0F, scene_style);
+            previous_anchor = affix_anchor;
+            previous_text_height =
+                static_cast<float>(monster_text_style.affix_font_size);
+        }
+        const std::array<Rectangle, 4U> stacked_plates{{
+            role_label.backing,
+            phase_label.backing,
+            affix_labels[0U].backing,
+            affix_labels[1U].backing,
+        }};
+        for (std::size_t index = 1U; index < stacked_plates.size(); ++index) {
+            ARPG_REQUIRE(!rectangles_overlap(
+                stacked_plates[index - 1U], stacked_plates[index]));
+            ARPG_REQUIRE(stacked_plates[index].y
+                >= stacked_plates[index - 1U].y
+                    + stacked_plates[index - 1U].height
+                    + kMinimumPlateGap);
+        }
+    }
 
     constexpr std::array<Color, 5U> kActualFixedSceneLabelColors{{
         {90U, 190U, 255U, 190U},
@@ -348,9 +405,19 @@ arpg::test::Failure ten_thousand_view_builds_allocate_nothing() noexcept {
             + static_cast<unsigned char>(view.lines[0].text[0]);
         const platform::SceneLabelStyle style =
             platform::scene_label_style(kSceneColors[index % kSceneColors.size()]);
+        const Rectangle resource_bar{
+            static_cast<float>(index % 800U),
+            static_cast<float>(index % 450U),
+            54.0F,
+            5.0F,
+        };
+        const Vector2 role_anchor = platform::monster_role_label_anchor(
+            resource_bar, 0.0F, style);
+        const Vector2 next_anchor =
+            platform::next_stacked_scene_label_anchor(
+                role_anchor, 18.0F, style, style);
         const platform::SceneLabelLayout label = platform::scene_label_layout(
-            {static_cast<float>(index % 800U),
-                static_cast<float>(index % 450U)},
+            next_anchor,
             {132.0F, 18.0F}, 800.0F, 450.0F, style);
         checksum += static_cast<std::uint64_t>(
             label.backing.width + label.backing.height

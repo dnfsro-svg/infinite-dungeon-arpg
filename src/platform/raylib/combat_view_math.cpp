@@ -348,6 +348,30 @@ SceneLabelLayout scene_label_layout(Vector2 anchor, Vector2 text_size,
     return layout;
 }
 
+Vector2 monster_role_label_anchor(Rectangle primary_resource_bar,
+    float label_lane_offset, SceneLabelStyle style) noexcept {
+    constexpr float kMinimumPlateGap = 1.0F;
+    return {
+        primary_resource_bar.x,
+        primary_resource_bar.y + std::max(0.0F, primary_resource_bar.height)
+            + kMinimumPlateGap + std::max(0.0F, style.vertical_padding)
+            - label_lane_offset,
+    };
+}
+
+Vector2 next_stacked_scene_label_anchor(Vector2 previous_anchor,
+    float previous_text_height, SceneLabelStyle previous_style,
+    SceneLabelStyle next_style) noexcept {
+    constexpr float kMinimumPlateGap = 1.0F;
+    return {
+        previous_anchor.x,
+        previous_anchor.y + std::max(0.0F, previous_text_height)
+            + std::max(0.0F, previous_style.vertical_padding)
+            + kMinimumPlateGap
+            + std::max(0.0F, next_style.vertical_padding),
+    };
+}
+
 MonsterPresentationPlan monster_presentation_plan(
     std::size_t label_lane, bool draw_debug) noexcept {
     return {-128.0F, label_lane % 4U, true, draw_debug, draw_debug};

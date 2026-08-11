@@ -155,6 +155,12 @@ void sort_actor_draw_items(
     Vector2 anchor, Vector2 text_size,
     float viewport_width, float viewport_height,
     SceneLabelStyle style) noexcept;
+[[nodiscard]] Vector2 monster_role_label_anchor(
+    Rectangle primary_resource_bar, float label_lane_offset,
+    SceneLabelStyle style) noexcept;
+[[nodiscard]] Vector2 next_stacked_scene_label_anchor(
+    Vector2 previous_anchor, float previous_text_height,
+    SceneLabelStyle previous_style, SceneLabelStyle next_style) noexcept;
 [[nodiscard]] MonsterPresentationPlan monster_presentation_plan(
     std::size_t label_lane, bool draw_debug) noexcept;
 [[nodiscard]] AffixBadge monster_affix_badge(
