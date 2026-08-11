@@ -458,7 +458,7 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
 
     static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[2U],
         regions, layout.scale, true, &measure_skill_text, nullptr));
-    static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[1U],
+    static_cast<void>(platform::make_active_skill_hud_text_plan(ready_slot,
         regions, layout.scale, true, &measure_skill_text, nullptr));
     static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[0U],
         regions, layout.scale, true, &measure_skill_text, nullptr));
