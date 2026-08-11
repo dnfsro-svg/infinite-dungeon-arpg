@@ -9,7 +9,7 @@ namespace arpg::platform {
 struct DungeonRenderStatus;
 
 enum class PassiveTreeTextDrawMode {
-    fallback,
+    unavailable,
     hud_font,
 };
 

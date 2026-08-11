@@ -9,6 +9,8 @@
 #include "hud_view_model.hpp"
 #include "inventory_view_math.hpp"
 #include "passive_tree_renderer.hpp"
+#include "passive_tree_view_math.hpp"
+#include "passives/passive_tree_catalog.hpp"
 #include "pause_menu_renderer.hpp"
 #include "shared_ui_font.hpp"
 #include "ui_text_contrast.hpp"
@@ -183,15 +185,44 @@ arpg::test::Failure passive_tree_chinese_text_is_covered_by_shared_font_plan()
     noexcept {
     const platform::HudFontPlan plan = platform::hud_font_plan();
     constexpr const char* kPassiveTreeText[] = {
-        u8"收益: +30% Fire damage",
-        u8"代价: -20% Water resistance",
-        u8"收益: 起始节点",
-        u8"收益: 路线连接",
+        u8"被动星图", u8"未分配点：7", u8"P 关闭",
+        u8"起始 / 状态：锁定", u8"连接 / 状态：可分配",
+        u8"小节点 / 状态：已分配", u8"重要节点 / 状态：保存中",
+        u8"核心 / 状态：锁定",
+        u8"收益：最终火焰伤害 ×1.30",
+        u8"收益：最终水流伤害 ×1.25，+24 最大护盾",
+        u8"收益：最终闪电伤害 ×1.25，移动速度/攻击速度 +12%",
+        u8"收益：最终混沌伤害 ×1.30",
+        u8"代价：-20% 水流减伤",
+        u8"代价：最终近战伤害 ×0.85",
+        u8"代价：最终最大生命 ×0.80",
+        u8"代价：最终承受伤害 ×1.15",
+        u8"点击分配并保存", u8"点击退款并保存",
+        u8"请分配相邻节点", u8"退款错误：将断链",
+        u8"保存状态：保存中", u8"保存状态：就绪",
+        u8"保存状态：错误",
     };
     for (const char* text : kPassiveTreeText) {
         ARPG_REQUIRE(platform::death_overlay_font_covers_text(
             plan.shared, text));
     }
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.phase = arpg::dungeon::RoomPhase::awaiting_exit;
+    snapshot.progression.unspent_passive_points = 1U;
+    snapshot.passive_tree.allocated_bits = 1ULL;
+    for (const arpg::passives::PassiveNode& node
+        : arpg::passives::passive_nodes()) {
+        const auto text = platform::passive_node_text_view(
+            snapshot, node.id);
+        ARPG_REQUIRE(text.valid);
+        for (const char* value : {text.name.data(), text.type_state.data(),
+                 text.benefit.data(), text.cost.data(), text.action.data()}) {
+            ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+                plan.shared, value));
+        }
+    }
+    ARPG_REQUIRE(plan.shared.codepoint_count == 639U);
+    ARPG_REQUIRE(plan.shared.codepoint_count < platform::kUiGlyphCapacity);
     return {};
 }
 
@@ -199,7 +230,7 @@ arpg::test::Failure passive_tree_text_selects_shared_font_when_ready() noexcept 
     ARPG_REQUIRE(platform::passive_tree_text_draw_mode(true)
         == platform::PassiveTreeTextDrawMode::hud_font);
     ARPG_REQUIRE(platform::passive_tree_text_draw_mode(false)
-        == platform::PassiveTreeTextDrawMode::fallback);
+        == platform::PassiveTreeTextDrawMode::unavailable);
     return {};
 }
 

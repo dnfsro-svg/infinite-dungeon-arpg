@@ -8,9 +8,11 @@ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/passive_tree_renderer.hpp" PASSIVE_HEADER_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/passive_tree_renderer.cpp" PASSIVE_RENDERER_SOURCE)
+file(READ "${RAYLIB_SOURCE_DIR}/passive_tree_view_math.cpp" PASSIVE_VIEW_SOURCE)
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_CODE)
 arpg_sanitize_cpp_source("${PASSIVE_HEADER_SOURCE}" PASSIVE_HEADER_CODE)
 arpg_sanitize_cpp_source("${PASSIVE_RENDERER_SOURCE}" PASSIVE_RENDERER_CODE)
+arpg_sanitize_cpp_source("${PASSIVE_VIEW_SOURCE}" PASSIVE_VIEW_CODE)
 evidence_sanitize_cpp_for_scan(
     "${PASSIVE_RENDERER_SOURCE}" PASSIVE_RENDERER_POSITIONAL_CODE)
 
@@ -33,66 +35,48 @@ if(DYNAMIC_PASSIVE_HEADER_SIGNATURE_INDEX EQUAL -1
         "passive-tree renderer must receive the applied binding label")
 endif()
 
-set(PASSIVE_TREE_CJK_MEASURE_CODE
-    [=[MeasureTextEx(hud_font, text, font_size, 0.5F).x]=])
-set(PASSIVE_TREE_CJK_DRAW_CODE
-    [=[draw_crisp_ui_text(hud_font, text, {x, y}, font_size, 0.5F,
-            color, 1);]=])
-string(FIND "${PASSIVE_RENDERER_CODE}" "${PASSIVE_TREE_CJK_MEASURE_CODE}"
-    PASSIVE_TREE_CJK_MEASURE_INDEX)
-string(FIND "${PASSIVE_RENDERER_CODE}" "${PASSIVE_TREE_CJK_DRAW_CODE}"
-    PASSIVE_TREE_CJK_DRAW_INDEX)
-string(REGEX MATCHALL "draw_passive_tree_text\\(" PASSIVE_TREE_CJK_DRAW_CALLS
-    "${PASSIVE_RENDERER_CODE}")
-string(REGEX MATCHALL "measure_passive_tree_text\\("
-    PASSIVE_TREE_CJK_MEASURE_CALLS "${PASSIVE_RENDERER_CODE}")
-list(LENGTH PASSIVE_TREE_CJK_DRAW_CALLS PASSIVE_TREE_CJK_DRAW_CALL_COUNT)
-list(LENGTH PASSIVE_TREE_CJK_MEASURE_CALLS PASSIVE_TREE_CJK_MEASURE_CALL_COUNT)
-if(PASSIVE_TREE_CJK_MEASURE_INDEX EQUAL -1
-        OR PASSIVE_TREE_CJK_DRAW_INDEX EQUAL -1
-        OR PASSIVE_TREE_CJK_DRAW_CALL_COUNT LESS 5
-        OR PASSIVE_TREE_CJK_MEASURE_CALL_COUNT LESS 3)
-    message(FATAL_ERROR
-        "passive-tree benefit and cost text must use the shared CJK font for matching measurement and drawing")
-endif()
+foreach(FORBIDDEN_CALL IN ITEMS "DrawText(" "MeasureText(" "GetFontDefault(")
+    string(FIND "${PASSIVE_RENDERER_CODE}" "${FORBIDDEN_CALL}"
+        FORBIDDEN_CALL_INDEX)
+    if(NOT FORBIDDEN_CALL_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "passive-tree text must fail closed on SharedUiFont: ${FORBIDDEN_CALL}")
+    endif()
+endforeach()
 
-set(DYNAMIC_PASSIVE_DRAW_CODE [=[constexpr int kCloseFontSize = 17;
-    constexpr const char* kCloseSuffix =  ;
-    const int binding_width = MeasureText(
-        passive_tree_binding_label, kCloseFontSize);
-    const int close_width = binding_width
-        + MeasureText(kCloseSuffix, kCloseFontSize);
-    const int close_x = (std::max)(38, GetScreenWidth() - 38 - close_width);
-    const Color close_color{201, 213, 232, 255};
-    DrawText(passive_tree_binding_label, close_x, 38, kCloseFontSize,
-        close_color);
-    DrawText(kCloseSuffix, close_x + binding_width, 38, kCloseFontSize,
-        close_color);]=])
-string(FIND "${PASSIVE_RENDERER_CODE}" "${DYNAMIC_PASSIVE_DRAW_CODE}"
-    DYNAMIC_PASSIVE_DRAW_INDEX)
-if(DYNAMIC_PASSIVE_DRAW_INDEX EQUAL -1)
-    message(FATAL_ERROR
-        "passive-tree close label must include Close and right-align its total width")
-endif()
+foreach(REQUIRED_SHARED_FONT_TOKEN IN ITEMS
+        "MeasureTextEx(" "draw_crisp_ui_text("
+        "fit_centered_ui_text(" "layout.font_size" "layout.spacing")
+    string(FIND "${PASSIVE_RENDERER_CODE}" "${REQUIRED_SHARED_FONT_TOKEN}"
+        REQUIRED_SHARED_FONT_INDEX)
+    if(REQUIRED_SHARED_FONT_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "passive-tree text must measure and draw through SharedUiFont: ${REQUIRED_SHARED_FONT_TOKEN}")
+    endif()
+endforeach()
 
-set(RAW_CLOSE_SUFFIX_DECLARATION
-    [=[constexpr const char* kCloseSuffix = " Close";]=])
-string(FIND "${PASSIVE_RENDERER_SOURCE}" "${RAW_CLOSE_SUFFIX_DECLARATION}"
-    RAW_CLOSE_SUFFIX_INDEX)
-if(RAW_CLOSE_SUFFIX_INDEX EQUAL -1)
-    message(FATAL_ERROR
-        "passive-tree close label must contain the Close suffix")
-endif()
-string(LENGTH "${RAW_CLOSE_SUFFIX_DECLARATION}" RAW_CLOSE_SUFFIX_LENGTH)
-string(SUBSTRING "${PASSIVE_RENDERER_POSITIONAL_CODE}"
-    ${RAW_CLOSE_SUFFIX_INDEX} ${RAW_CLOSE_SUFFIX_LENGTH}
-    ACTIVE_CLOSE_SUFFIX_DECLARATION)
-string(FIND "${ACTIVE_CLOSE_SUFFIX_DECLARATION}"
-    "constexpr const char* kCloseSuffix =" ACTIVE_CLOSE_SUFFIX_CODE_INDEX)
-if(NOT ACTIVE_CLOSE_SUFFIX_CODE_INDEX EQUAL 0)
-    message(FATAL_ERROR
-        "the Close suffix declaration must be active C++ code")
-endif()
+foreach(REQUIRED_BINDING_TOKEN IN ITEMS
+        "passive_tree_header_text("
+        "passive_tree_binding_label"
+        "header.close.data(), layout.close"
+        "ui_text(UiTextId::passive_close)")
+    string(FIND "${PASSIVE_RENDERER_CODE}${PASSIVE_VIEW_CODE}"
+        "${REQUIRED_BINDING_TOKEN}" REQUIRED_BINDING_INDEX)
+    if(REQUIRED_BINDING_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "passive-tree close label must combine the live binding with Chinese close text: ${REQUIRED_BINDING_TOKEN}")
+    endif()
+endforeach()
+
+foreach(FORBIDDEN_ENGLISH IN ITEMS " Close" "PASSIVE STAR CHART"
+        "Passive Points" "Autosave")
+    string(FIND "${PASSIVE_RENDERER_SOURCE}${PASSIVE_VIEW_SOURCE}"
+        "${FORBIDDEN_ENGLISH}" FORBIDDEN_ENGLISH_INDEX)
+    if(NOT FORBIDDEN_ENGLISH_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "passive-tree binding/status path still contains player-facing English: ${FORBIDDEN_ENGLISH}")
+    endif()
+endforeach()
 
 string(REGEX MATCHALL "draw_passive_tree_overlay\\(" PASSIVE_OVERLAY_CALLS
     "${HOST_CODE}")
