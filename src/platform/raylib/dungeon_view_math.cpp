@@ -144,6 +144,8 @@ const char* abyss_danger_label(abyss::AbyssDanger danger) noexcept {
     return u8"未知";
 }
 
+}  // namespace
+
 const char* abyss_rule_label(abyss::AbyssRuleId rule) noexcept {
     switch (rule) {
     case abyss::AbyssRuleId::thunderstorm: return u8"雷暴";
@@ -159,6 +161,8 @@ const char* abyss_rule_label(abyss::AbyssRuleId rule) noexcept {
     }
     return u8"无规则";
 }
+
+namespace {
 
 const char* abyss_effect_label(abyss::AbyssRuleId rule) noexcept {
     switch (rule) {

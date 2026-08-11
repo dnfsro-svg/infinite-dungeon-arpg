@@ -1,7 +1,14 @@
 #include "test_framework.hpp"
+#include "allocation_probe.hpp"
 
-#include "death_overlay_view.hpp"
 #include "death_overlay_font.hpp"
+#include "death_overlay_renderer.hpp"
+#include "death_overlay_view.hpp"
+#include "dungeon_view_math.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_text_contrast.hpp"
+#include "ui_text_layout.hpp"
+#include "ui_utf8.hpp"
 
 #include "combat/monster_affix_types.hpp"
 
@@ -77,19 +84,59 @@ bool ascii_only(const char* text) noexcept {
     return true;
 }
 
+bool valid_fixed_view_text(
+    const platform::DeathOverlayView& view) noexcept {
+    if (!platform::ui_utf8_is_valid(view.title.data())
+            || !platform::ui_utf8_is_valid(view.prompt.data())
+            || view.title.back() != '\0'
+            || view.prompt.back() != '\0') {
+        return false;
+    }
+    for (std::size_t index = 0U; index < view.line_count; ++index) {
+        if (!platform::ui_utf8_is_valid(view.lines[index].text.data())
+                || view.lines[index].text.back() != '\0') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool contains_formal_english_token(
+    const platform::DeathOverlayView& view) noexcept {
+    constexpr const char* kForbidden[] = {
+        "DEATH RECAP", "Depth ", "Room ", "Source:", "Last hit",
+        "Recent 5s", "Defense at death", "Return to", "Save failed",
+        "Continue", "PHYSICAL DAMAGE", "FIRE DAMAGE", "WATER DAMAGE",
+        "LIGHTNING DAMAGE", "CHAOS DAMAGE",
+    };
+    for (const char* token : kForbidden) {
+        if (std::strstr(view.title.data(), token) != nullptr
+                || std::strstr(view.prompt.data(), token) != nullptr) {
+            return true;
+        }
+        for (std::size_t index = 0U; index < view.line_count; ++index) {
+            if (std::strstr(view.lines[index].text.data(), token) != nullptr) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 arpg::test::Failure hidden_without_death_and_maps_complete_recap() noexcept {
     dungeon::DungeonSnapshot live{};
     ARPG_REQUIRE(!platform::build_death_overlay_view(live).visible);
 
     const auto view = platform::build_death_overlay_view(
-        death_snapshot(checkpoint::DeathSourceKind::monster_affix));
+        death_snapshot(checkpoint::DeathSourceKind::monster_affix),
+        u8"右 Shift");
     ARPG_REQUIRE(view.visible);
     ARPG_REQUIRE(contains(view, "第 12 层"));
     ARPG_REQUIRE(contains(view, "房间 7"));
     ARPG_REQUIRE(contains(view, "闪电"));
     ARPG_REQUIRE(contains(view, "普通房"));
     ARPG_REQUIRE(contains(view, "怪物词缀"));
-    ARPG_REQUIRE(contains(view, "燃烧地面"));
+    ARPG_REQUIRE(contains(view, "灼烧地面"));
     ARPG_REQUIRE(contains(view, "火焰伤害"));
     ARPG_REQUIRE(contains(view, "原始 123"));
     ARPG_REQUIRE(contains(view, "护盾损失 23"));
@@ -111,7 +158,9 @@ arpg::test::Failure hidden_without_death_and_maps_complete_recap() noexcept {
     ARPG_REQUIRE(contains(view, "电 30.00%/77.00%"));
     ARPG_REQUIRE(contains(view, "混沌 40.00%/78.00%"));
     ARPG_REQUIRE(contains(view, "第 12 层 → 第 11 层"));
-    ARPG_REQUIRE(std::strcmp(view.prompt.data(), "E 继续") == 0);
+    ARPG_REQUIRE(std::strcmp(view.prompt.data(), u8"右 Shift：继续") == 0);
+    ARPG_REQUIRE(valid_fixed_view_text(view));
+    ARPG_REQUIRE(!contains_formal_english_token(view));
     return {};
 }
 
@@ -144,27 +193,34 @@ arpg::test::Failure maps_abyss_unknown_and_all_prompt_states() noexcept {
     auto saving = death_snapshot(checkpoint::DeathSourceKind::projectile);
     saving.death->saving = true;
     saving.death->can_continue = false;
-    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(saving)
+    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(saving, "Q")
         .prompt.data(), "正在记录死亡") == 0);
 
     auto failed = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
     failed.death->continue_failed = true;
-    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(failed)
-        .prompt.data(), "保存失败，E 重试") == 0);
+    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(failed, "Q")
+        .prompt.data(), "保存失败，Q：重试") == 0);
+
+    auto ready = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
+    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(
+        ready, u8"小键盘5").prompt.data(), u8"小键盘5：继续") == 0);
     return {};
 }
 
 arpg::test::Failure all_source_catalog_ids_have_stable_chinese_names() noexcept {
     constexpr const char* kMonsters[] = {
-        "火焰投弹者", "火焰冲锋者", "水之壁垒", "水之支援者",
-        "闪电射手", "闪电突袭者", "混沌追猎者", "混沌灾术师",
+        "烈焰爆破者", "烈焰冲锋者", "水流壁垒", "水流援护者",
+        "雷电射手", "雷电突进者", "混沌追猎者", "混沌危机体",
     };
     for (std::size_t index = 0U; index < std::size(kMonsters); ++index) {
         auto snapshot = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
         snapshot.death->checkpoint.source_monster_id =
             static_cast<std::uint8_t>(index);
+        const auto id = static_cast<arpg::combat::MonsterId>(index);
+        ARPG_REQUIRE(std::strcmp(platform::ui_monster_name(id),
+            kMonsters[index]) == 0);
         ARPG_REQUIRE(contains(platform::build_death_overlay_view(snapshot),
-            kMonsters[index]));
+            platform::ui_monster_name(id)));
     }
 
     constexpr const char* kHazards[] = {
@@ -181,14 +237,17 @@ arpg::test::Failure all_source_catalog_ids_have_stable_chinese_names() noexcept 
 
     constexpr const char* kAffixes[] = {
         "强力", "狂热", "迅捷", "装甲", "护盾", "多重投射",
-        "燃烧地面", "寒冷", "连锁闪电", "混沌腐蚀", "闪现突袭", "死亡爆破",
+        "灼烧地面", "冰寒", "连锁闪电", "混沌腐蚀", "闪烁突袭", "死亡爆破",
     };
     for (std::size_t index = 0U; index < std::size(kAffixes); ++index) {
         auto snapshot = death_snapshot(checkpoint::DeathSourceKind::monster_affix);
         snapshot.death->checkpoint.source_detail_id =
             static_cast<std::uint16_t>(index);
+        const auto id = static_cast<arpg::combat::MonsterAffixId>(index);
+        ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_name(id),
+            kAffixes[index]) == 0);
         ARPG_REQUIRE(contains(platform::build_death_overlay_view(snapshot),
-            kAffixes[index]));
+            platform::ui_monster_affix_name(id)));
     }
 
     constexpr const char* kAbyssRules[] = {
@@ -200,8 +259,85 @@ arpg::test::Failure all_source_catalog_ids_have_stable_chinese_names() noexcept 
         snapshot.death->checkpoint.source_monster_id = 0xFFU;
         snapshot.death->checkpoint.source_detail_id =
             static_cast<std::uint16_t>(index);
+        const auto rule = static_cast<arpg::abyss::AbyssRuleId>(index);
+        ARPG_REQUIRE(std::strcmp(platform::abyss_rule_label(rule),
+            kAbyssRules[index]) == 0);
         ARPG_REQUIRE(contains(platform::build_death_overlay_view(snapshot),
-            kAbyssRules[index]));
+            platform::abyss_rule_label(rule)));
+    }
+    ARPG_REQUIRE(std::strcmp(platform::abyss_rule_label(
+        arpg::abyss::AbyssRuleId::none), u8"无规则") == 0);
+
+    constexpr struct DamageExpectation final {
+        checkpoint::DeathDamageType type;
+        const char* label;
+    } kDamageTypes[] = {
+        {checkpoint::DeathDamageType::physical, u8"物理伤害"},
+        {checkpoint::DeathDamageType::fire, u8"火焰伤害"},
+        {checkpoint::DeathDamageType::water, u8"水流伤害"},
+        {checkpoint::DeathDamageType::lightning, u8"闪电伤害"},
+        {checkpoint::DeathDamageType::chaos, u8"混沌伤害"},
+    };
+    for (const auto& expectation : kDamageTypes) {
+        auto snapshot = death_snapshot(checkpoint::DeathSourceKind::projectile);
+        snapshot.death->checkpoint.damage_type = expectation.type;
+        const auto view = platform::build_death_overlay_view(snapshot);
+        ARPG_REQUIRE(contains(view, u8"投射物"));
+        ARPG_REQUIRE(contains(view, expectation.label));
+        ARPG_REQUIRE(valid_fixed_view_text(view));
+        ARPG_REQUIRE(!contains_formal_english_token(view));
+    }
+
+    constexpr checkpoint::DungeonElement kEcologies[] = {
+        checkpoint::DungeonElement::fire,
+        checkpoint::DungeonElement::water,
+        checkpoint::DungeonElement::lightning,
+        checkpoint::DungeonElement::chaos,
+    };
+    constexpr checkpoint::DeathSourceKind kAllSourceKinds[] = {
+        checkpoint::DeathSourceKind::monster_attack,
+        checkpoint::DeathSourceKind::projectile,
+        checkpoint::DeathSourceKind::ground_hazard,
+        checkpoint::DeathSourceKind::monster_affix,
+        checkpoint::DeathSourceKind::abyss_environment,
+        checkpoint::DeathSourceKind::unknown,
+    };
+    const auto glyph_plan = platform::death_overlay_font_plan();
+    for (const auto ecology : kEcologies) {
+        for (const auto source_kind : kAllSourceKinds) {
+            for (const auto& damage : kDamageTypes) {
+                auto snapshot = death_snapshot(source_kind,
+                    source_kind == checkpoint::DeathSourceKind::abyss_environment);
+                auto& death = snapshot.death->checkpoint;
+                death.death_ecology = ecology;
+                death.damage_type = damage.type;
+                if (source_kind == checkpoint::DeathSourceKind::ground_hazard) {
+                    death.source_detail_id = static_cast<std::uint16_t>(
+                        arpg::combat::HazardKind::death_blast);
+                } else if (source_kind
+                        == checkpoint::DeathSourceKind::monster_affix) {
+                    death.source_detail_id = static_cast<std::uint16_t>(
+                        arpg::combat::MonsterAffixId::death_blast);
+                } else if (source_kind
+                        == checkpoint::DeathSourceKind::abyss_environment) {
+                    death.source_monster_id = 0xFFU;
+                    death.source_detail_id = static_cast<std::uint16_t>(
+                        arpg::abyss::AbyssRuleId::life_sacrifice);
+                }
+                const auto view = platform::build_death_overlay_view(
+                    snapshot, u8"右 Shift");
+                ARPG_REQUIRE(valid_fixed_view_text(view));
+                ARPG_REQUIRE(!contains_formal_english_token(view));
+                ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+                    glyph_plan, view.title.data()));
+                ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+                    glyph_plan, view.prompt.data()));
+                for (std::size_t line = 0U; line < view.line_count; ++line) {
+                    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+                        glyph_plan, view.lines[line].text.data()));
+                }
+            }
+        }
     }
 
     constexpr checkpoint::DeathSourceKind kCatalogKinds[] = {
@@ -317,6 +453,8 @@ arpg::test::Failure font_plan_covers_all_overlay_text_and_ascii() noexcept {
         auto snapshot = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
         snapshot.death->checkpoint.source_monster_id = monster;
         const auto view = platform::build_death_overlay_view(snapshot);
+        ARPG_REQUIRE(valid_fixed_view_text(view));
+        ARPG_REQUIRE(!contains_formal_english_token(view));
         ARPG_REQUIRE(platform::death_overlay_font_covers_text(
             plan, view.title.data()));
         ARPG_REQUIRE(platform::death_overlay_font_covers_text(
@@ -326,6 +464,8 @@ arpg::test::Failure font_plan_covers_all_overlay_text_and_ascii() noexcept {
                 plan, view.lines[index].text.data()));
         }
     }
+    ARPG_REQUIRE(plan.codepoint_count == 639U);
+    ARPG_REQUIRE(plan.codepoint_count < platform::kUiGlyphCapacity);
     return {};
 }
 
@@ -360,6 +500,11 @@ arpg::test::Failure layouts_stay_in_bounds_and_clear_of_prompt() noexcept {
         ARPG_REQUIRE(inside(layout.panel, screen));
         ARPG_REQUIRE(inside(layout.title, layout.panel));
         ARPG_REQUIRE(inside(layout.prompt, layout.panel));
+        const float panel_center = layout.panel.x + layout.panel.width * 0.5F;
+        ARPG_REQUIRE(arpg::test::near(
+            layout.title.x + layout.title.width * 0.5F, panel_center));
+        ARPG_REQUIRE(arpg::test::near(
+            layout.prompt.x + layout.prompt.width * 0.5F, panel_center));
         for (std::size_t index = 0U; index < view.line_count; ++index) {
             const auto bounds = layout.line_bounds[index];
             ARPG_REQUIRE(inside(bounds, layout.panel));
@@ -370,6 +515,16 @@ arpg::test::Failure layouts_stay_in_bounds_and_clear_of_prompt() noexcept {
                 ARPG_REQUIRE(!overlaps(bounds, layout.line_bounds[other]));
             }
         }
+    }
+
+    const platform::DeathOverlayTextStyle style =
+        platform::death_overlay_text_style();
+    ARPG_REQUIRE(style.backing.a == 255U);
+    for (const Color color : {
+             style.primary, style.danger, style.warning, style.error}) {
+        ARPG_REQUIRE(color.a == 255U);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+            color, style.backing) >= 4.5F);
     }
     return {};
 }
@@ -430,6 +585,16 @@ std::size_t utf8_glyph_count(const char* text) noexcept {
     return count;
 }
 
+platform::UiTextExtent measure_death_text_for_test(
+    const char* text, float font_size, float spacing, void*) noexcept {
+    const float glyphs = static_cast<float>(utf8_glyph_count(text));
+    return {
+        glyphs * font_size * 0.55F
+            + (glyphs > 1.0F ? (glyphs - 1.0F) * spacing : 0.0F),
+        font_size,
+    };
+}
+
 arpg::test::Failure worst_case_values_fit_compact_columns() noexcept {
     auto snapshot = death_snapshot(checkpoint::DeathSourceKind::monster_affix);
     auto& death = snapshot.death->checkpoint;
@@ -450,6 +615,7 @@ arpg::test::Failure worst_case_values_fit_compact_columns() noexcept {
     death.damage_reduction_cap.fill((std::numeric_limits<std::int32_t>::max)());
 
     const auto view = platform::build_death_overlay_view(snapshot);
+    ARPG_REQUIRE(valid_fixed_view_text(view));
     for (std::size_t index = 0U; index < view.line_count; ++index) {
         if (view.lines[index].column != platform::DeathOverlayColumn::full) {
             ARPG_REQUIRE(utf8_glyph_count(view.lines[index].text.data()) <= 36U);
@@ -462,6 +628,47 @@ arpg::test::Failure worst_case_values_fit_compact_columns() noexcept {
                 ascii_view.lines[index].text.data()) <= 36U);
         }
     }
+
+    constexpr const char* kLongBinding =
+        u8"右小键盘5右小键盘5右小键盘5右小键盘5"
+        u8"右小键盘5右小键盘5右小键盘5右小键盘5";
+    const auto long_prompt = platform::build_death_overlay_view(
+        snapshot, kLongBinding);
+    ARPG_REQUIRE(valid_fixed_view_text(long_prompt));
+    ARPG_REQUIRE(long_prompt.prompt.back() == '\0');
+
+    const auto compact_layout = platform::death_overlay_layout(
+        long_prompt, 800, 450);
+    const Rectangle prompt_bounds{
+        compact_layout.prompt.x,
+        compact_layout.prompt.y,
+        compact_layout.prompt.width,
+        compact_layout.prompt.height,
+    };
+    std::array<char, platform::kDeathOverlayTextCapacity> fitted{};
+    const auto fit = platform::fit_centered_ui_text(
+        fitted.data(), fitted.size(), long_prompt.prompt.data(), prompt_bounds,
+        static_cast<float>(compact_layout.prompt_font_size), 9.0F, 1.0F,
+        &measure_death_text_for_test, nullptr);
+    ARPG_REQUIRE(fit.drawable);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(fit.text));
+    ARPG_REQUIRE(fit.position.x >= prompt_bounds.x);
+    ARPG_REQUIRE(fit.position.y >= prompt_bounds.y);
+    ARPG_REQUIRE(fit.position.x + fit.size.x
+        <= prompt_bounds.x + prompt_bounds.width);
+    ARPG_REQUIRE(fit.position.y + fit.size.y
+        <= prompt_bounds.y + prompt_bounds.height);
+
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    std::uint64_t checksum{};
+    for (std::size_t iteration = 0U; iteration < 100000U; ++iteration) {
+        const auto generated = platform::build_death_overlay_view(
+            snapshot, u8"右 Shift");
+        checksum += generated.line_count;
+        checksum += static_cast<unsigned char>(generated.prompt[0]);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    ARPG_REQUIRE(checksum != 0U);
     return {};
 }
 

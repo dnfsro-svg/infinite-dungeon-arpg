@@ -398,6 +398,11 @@ arpg::test::Failure hud_palette_key_colors_are_opaque_and_distinct() noexcept {
 }
 
 arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
+    ARPG_REQUIRE(platform::death_overlay_text_draw_mode(true)
+        == platform::DeathOverlayTextDrawMode::shared_ui_font);
+    ARPG_REQUIRE(platform::death_overlay_text_draw_mode(false)
+        == platform::DeathOverlayTextDrawMode::unavailable);
+
     platform::SharedUiFont shared{};
     platform::HudRenderer renderer{};
     ARPG_REQUIRE(!renderer.font_ready());

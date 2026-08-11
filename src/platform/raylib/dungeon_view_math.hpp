@@ -138,6 +138,8 @@ using HoleInteractionPrompt = std::array<char, 48>;
     const combat::HazardSnapshot& hazard) noexcept;
 [[nodiscard]] AbyssHudValues abyss_hud_values(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
+[[nodiscard]] const char* abyss_rule_label(
+    abyss::AbyssRuleId rule) noexcept;
 [[nodiscard]] HoleVisualMode hole_visual_mode(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
 [[nodiscard]] const char* hole_visual_label(HoleVisualMode mode) noexcept;

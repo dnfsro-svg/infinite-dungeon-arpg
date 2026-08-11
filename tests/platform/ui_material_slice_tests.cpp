@@ -149,7 +149,7 @@ arpg::test::Failure death_overlay_uses_independent_material_fallbacks() noexcept
         (std::istreambuf_iterator<char>(combat_input)), {});
     ARPG_REQUIRE(combat_input.good() || combat_input.eof());
     ARPG_REQUIRE(combat.find(
-        "death_overlay_.draw(current_hud, material_pack_)")
+        "death_overlay_.draw(current_hud, material_pack_, interact_binding_label)")
         != std::string::npos);
     return {};
 }

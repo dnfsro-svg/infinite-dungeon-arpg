@@ -59,8 +59,10 @@ struct DeathOverlayMaterialPlan final {
 };
 
 [[nodiscard]] DeathOverlayView build_death_overlay_view(
-    const dungeon::DungeonSnapshot& snapshot) noexcept;
+    const dungeon::DungeonSnapshot& snapshot,
+    const char* continue_binding_label = u8"未知") noexcept;
 
+// ASCII-only technical diagnostic helper. Formal rendering must never call it.
 [[nodiscard]] DeathOverlayView build_death_overlay_ascii_view(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
 

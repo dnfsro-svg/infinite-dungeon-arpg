@@ -653,7 +653,7 @@ GroundLootView CombatRenderer::draw(
         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
             Fade(BLACK, overlay_alpha));
     }
-    death_overlay_.draw(current_hud, material_pack_);
+    death_overlay_.draw(current_hud, material_pack_, interact_binding_label);
     return render_plan.ground_loot;
 }
 
