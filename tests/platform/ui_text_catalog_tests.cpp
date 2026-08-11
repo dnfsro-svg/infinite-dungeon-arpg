@@ -5,6 +5,7 @@
 #include "ui_utf8.hpp"
 
 #include <array>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -12,6 +13,36 @@
 namespace {
 
 namespace platform = arpg::platform;
+
+// Concrete render-ready examples approved for the T2-T5 consumers. Keeping
+// these as separate catalog entries lets the shared visitor prove that future
+// formatted UI does not rely on coincidental characters in an unrelated
+// corpus string.
+constexpr std::array<const char*, 18U> kApprovedInventoryProgressionSamples{{
+    // T2: inventory detail, crafting, and reinforcement results.
+    u8"基础 [局部] 武器物理伤害 +16",
+    u8"T3 前缀 [全局] 火焰伤害 +12%",
+    u8"三合一结果：成功 / 稀有 混沌之眼",
+    u8"强化结果：成功 / +9 → +10",
+    u8"强化结果：失败 / 装备丢失",
+    // T3: ground loot, bounded material aggregation, and confirmation.
+    u8"普通 暗影兜帽 · 物品等级 1",
+    u8"已拾取：强化石 x1、等13种",
+    u8"危险：强化失败，装备丢失",
+    u8"确认强化石？",
+    // T4: passive interaction and autosave states.
+    u8"分配 / 退款 / 相邻 / 断链",
+    u8"保存状态：保存中 / 就绪 / 错误",
+    u8"收益：+30% 火焰伤害 / 代价：-20% 水抗性",
+    // T5: death attribution and the numeric formats used by the recap.
+    u8"致死来源：烈焰爆破者 / 投射物 / 火焰伤害",
+    u8"第 42 层 | 房间 7 | 火焰 | 深渊房",
+    u8"最后一击：原始 42 / 护盾损失 12 / 生命损失 30 / 最终 42",
+    u8"死亡时防御：生命 0/120 / 护盾 0/40 / 护甲 18 / 减伤 12.50%",
+    u8"保存失败，E 重试",
+    // Capacity-compatible vocabulary shared by T2-T5.
+    u8"装备值 / 按键提示 / 小节点 / 重要节点 / 地面危险 / 来源 / 最终伤害 ×1.12",
+}};
 
 constexpr std::array<platform::UiTextId, 43U> kPreTask4UiTextIds{{
     platform::UiTextId::pause_title,
@@ -79,6 +110,27 @@ static_assert(static_cast<std::size_t>(
 void count_text(const char* text, void* context) noexcept {
     auto* const count = static_cast<std::size_t*>(context);
     if (text != nullptr && text[0] != '\0') ++(*count);
+}
+
+struct CatalogAudit final {
+    std::array<bool, kApprovedInventoryProgressionSamples.size()> reached{};
+    std::size_t count{};
+    bool valid_utf8{true};
+};
+
+void audit_catalog_text(const char* text, void* context) noexcept {
+    auto& audit = *static_cast<CatalogAudit*>(context);
+    if (text == nullptr || text[0] == '\0') {
+        audit.valid_utf8 = false;
+        return;
+    }
+    ++audit.count;
+    audit.valid_utf8 = audit.valid_utf8 && platform::ui_utf8_is_valid(text);
+    for (std::size_t index{};
+         index < kApprovedInventoryProgressionSamples.size(); ++index) {
+        if (std::strcmp(text, kApprovedInventoryProgressionSamples[index]) == 0)
+            audit.reached[index] = true;
+    }
 }
 
 std::size_t utf8_codepoint_count(const char* text) noexcept {
@@ -172,6 +224,9 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
 
     ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
         arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+    ARPG_REQUIRE(std::strcmp(platform::ui_skill_name(
+        arpg::skills::ActiveSkillId::storm_swords),
+        u8"极·鬼剑术（暴风式）") == 0);
     return {};
 }
 
@@ -301,9 +356,14 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
 }
 
 arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
-    std::size_t count{};
-    platform::visit_ui_text_catalog(&count_text, &count);
-    ARPG_REQUIRE(count == 285U);
+    CatalogAudit audit{};
+    platform::visit_ui_text_catalog(&audit_catalog_text, &audit);
+    std::printf("[ui-text-catalog] visited=%zu approved=%zu valid_utf8=%d\n",
+        audit.count, kApprovedInventoryProgressionSamples.size(),
+        audit.valid_utf8 ? 1 : 0);
+    ARPG_REQUIRE(audit.valid_utf8);
+    for (const bool reached : audit.reached) ARPG_REQUIRE(reached);
+    ARPG_REQUIRE(audit.count == 303U);
     return {};
 }
 
@@ -314,7 +374,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 285U);
+        ARPG_REQUIRE(count == 303U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

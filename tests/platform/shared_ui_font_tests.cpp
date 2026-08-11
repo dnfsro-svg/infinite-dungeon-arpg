@@ -5,6 +5,7 @@
 #include "ui_text_catalog.hpp"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <type_traits>
 
@@ -60,9 +61,12 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"蜕变石"));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
         plan, u8"挥击 冲击汇总 是 否"));
+    ARPG_REQUIRE(!plan.capacity_exceeded);
     ARPG_REQUIRE(plan.codepoint_count > 384U);
     ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
+    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
+        u8"装备值 / 按键提示 / 小节点 / 重要节点 / 地面危险 / 来源 / 最终伤害 ×1.12"));
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
         platform::death_overlay_font_plan(), u8"混沌之眼"));
     ARPG_REQUIRE(platform::hud_font_plan().covers_required_text);
@@ -89,7 +93,13 @@ arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept 
     static_assert(platform::ui_font_atlas_bytes(4096, 4096)
         == 32U * 1024U * 1024U);
     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+    std::printf(
+        "[ui-glyph-plan] codepoint_count=%zu capacity=%zu atlas_instances=%zu atlas_budget_bytes=%zu\n",
+        plan.codepoint_count, platform::kUiGlyphCapacity,
+        platform::kUiFontAtlasInstanceCount,
+        platform::kUiFontAtlasByteBudget);
     ARPG_REQUIRE(!plan.capacity_exceeded);
+    ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
     for (std::size_t index = 0U; index < 95U; ++index) {
         ARPG_REQUIRE(plan.codepoints[index] == static_cast<int>(32U + index));
     }

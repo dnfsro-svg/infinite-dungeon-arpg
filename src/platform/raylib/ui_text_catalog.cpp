@@ -84,13 +84,13 @@ constexpr std::array<const char*, 10U> kSettingActionNames{{
 }};
 
 constexpr std::array<const char*, 2U> kSkillNames{{
-    u8"拔刀斩", u8"风暴剑阵",
+    u8"拔刀斩", u8"极·鬼剑术（暴风式）",
 }};
 
 // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
-// its existing death-overlay/HUD corpus in the single catalog visitor so the
-// shared glyph plan covers it without a second hand-maintained font list.
-constexpr std::array<const char*, 67U> kUiDynamicGlyphCoverage{{
+// its player-facing corpus in the single catalog visitor so the shared glyph
+// plan covers every renderer without a second hand-maintained font list.
+constexpr std::array<const char*, 85U> kUiDynamicGlyphCoverage{{
     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
     "上移下移左移右移轻攻击跳跃挑飞交互背包被动树调试截图暂停小键盘秒经验已满"
     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
@@ -104,7 +104,7 @@ constexpr std::array<const char*, 67U> kUiDynamicGlyphCoverage{{
     "投弹者冲锋之壁垒支援射手突袭追猎灾术师原生燃烧连锁爆破雷暴"
     "猎杀之焰扩张强力狂热迅捷装甲多重寒冷腐蚀闪现无规则追猎狂怒"
     "沉重脚步疲惫恢复献祭"
-    "装备背包技能石暂停继续设置退出游戏关闭选择操作提示材料条目",
+    "装备背包技能石暂停继续设置退出游戏关闭选择提示材料",
     u8"生命药", u8"第 层 → 第 层",
     u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
     u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
@@ -131,6 +131,26 @@ constexpr std::array<const char*, 67U> kUiDynamicGlyphCoverage{{
     u8"设置界面…",
     u8"已拾取：强化石 x1、混沌石 x1",
     u8"蜕变石",
+    // T2-T5 render-ready format samples. Keep each sample independently
+    // visitable so coverage cannot pass through an unrelated corpus string.
+    u8"基础 [局部] 武器物理伤害 +16",
+    u8"T3 前缀 [全局] 火焰伤害 +12%",
+    u8"三合一结果：成功 / 稀有 混沌之眼",
+    u8"强化结果：成功 / +9 → +10",
+    u8"强化结果：失败 / 装备丢失",
+    u8"普通 暗影兜帽 · 物品等级 1",
+    u8"已拾取：强化石 x1、等13种",
+    u8"危险：强化失败，装备丢失",
+    u8"确认强化石？",
+    u8"分配 / 退款 / 相邻 / 断链",
+    u8"保存状态：保存中 / 就绪 / 错误",
+    u8"收益：+30% 火焰伤害 / 代价：-20% 水抗性",
+    u8"致死来源：烈焰爆破者 / 投射物 / 火焰伤害",
+    u8"第 42 层 | 房间 7 | 火焰 | 深渊房",
+    u8"最后一击：原始 42 / 护盾损失 12 / 生命损失 30 / 最终 42",
+    u8"死亡时防御：生命 0/120 / 护盾 0/40 / 护甲 18 / 减伤 12.50%",
+    u8"保存失败，E 重试",
+    u8"装备值 / 按键提示 / 小节点 / 重要节点 / 地面危险 / 来源 / 最终伤害 ×1.12",
     u8"火焰水流闪电混沌未知低危中危高危雷暴猎杀之焰混沌扩张迅捷追猎深渊壁垒深渊狂怒沉重脚步疲惫恢复生命献祭无规则"
     "每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害"
     "每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害"
