@@ -202,7 +202,7 @@ foreach(_token IN ITEMS
         "ui_item_slot_name(slot)" "ui_item_rarity_name(item.rarity)"
         "ui_item_base_name(item.base_id)" "ui_item_affix_name(roll.affix_id)"
         "ui_material_name(*selected_material)" "draw_detail_row("
-        "u8\"基础 [%s]\"" "u8\"T%u %s %s [%s]\""
+        "u8\"基础 [%s]\"" "u8\"%u级 %s %s [%s]\""
         "u8\"%s ×%.2f\"")
     require_token("${_draw_body}" "${_token}"
         "T2 renderer must consume the live Chinese catalog/layout path")

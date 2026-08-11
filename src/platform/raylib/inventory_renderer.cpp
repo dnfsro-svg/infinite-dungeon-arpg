@@ -1217,7 +1217,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         const std::int32_t affix_raw =
             affix->values[static_cast<std::size_t>(8U - roll.tier)];
         static_cast<void>(std::snprintf(detail_label, sizeof(detail_label),
-            u8"T%u %s %s [%s]", static_cast<unsigned>(roll.tier),
+            u8"%u级 %s %s [%s]", static_cast<unsigned>(roll.tier),
             affix->kind == items::AffixKind::prefix ? u8"前缀" : u8"后缀",
             ui_item_affix_name(roll.affix_id), label.scope));
         format_attribute_value(affix_raw, label);

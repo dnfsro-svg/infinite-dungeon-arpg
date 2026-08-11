@@ -134,7 +134,7 @@ constexpr std::array<const char*, 85U> kUiDynamicGlyphCoverage{{
     // T2-T5 render-ready format samples. Keep each sample independently
     // visitable so coverage cannot pass through an unrelated corpus string.
     u8"基础 [局部] 武器物理伤害 +16",
-    u8"T3 前缀 [全局] 火焰伤害 +12%",
+    u8"3级 前缀 [全局] 火焰伤害 +12%",
     u8"三合一结果：成功 / 稀有 混沌之眼",
     u8"强化结果：成功 / +9 → +10",
     u8"强化结果：失败 / 装备丢失",

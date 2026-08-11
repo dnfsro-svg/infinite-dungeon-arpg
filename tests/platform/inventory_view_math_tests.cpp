@@ -464,8 +464,8 @@ test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
         }
         ARPG_REQUIRE(platform::detail_line_character_capacity(layout) >= 26U);
         constexpr std::array<std::string_view, 5> kLongestLines{{
-            u8"T1 后缀 猎杀 [全局] 闪电减伤上限",
-            u8"T1 前缀 锋利 [全局] 火焰伤害",
+            u8"1级 后缀 猎杀 [全局] 闪电减伤上限",
+            u8"1级 前缀 锋利 [全局] 火焰伤害",
             u8"基础 [全局] 全元素减伤",
             u8"局部攻击速度",
             u8"闪避率",
@@ -492,8 +492,8 @@ test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
         };
         constexpr std::array<ApprovedDetailRow, 4> kApprovedRows{{
             {u8"基础 [全局]", u8"全元素减伤 +12%"},
-            {u8"T1 后缀 猎杀 [全局]", u8"闪电减伤上限 +12%"},
-            {u8"T1 前缀 锋利 [全局]", u8"最终火焰伤害 ×1.12"},
+            {u8"1级 后缀 猎杀 [全局]", u8"闪电减伤上限 +12%"},
+            {u8"1级 前缀 锋利 [全局]", u8"最终火焰伤害 ×1.12"},
             {u8"护甲/减伤/闪避/闪避率", u8"+999/+99%/+999/+99%"},
         }};
         const platform::InventoryDetailRowLayout approved_row =
