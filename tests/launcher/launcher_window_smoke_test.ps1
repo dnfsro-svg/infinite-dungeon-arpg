@@ -22,6 +22,34 @@ function Assert-Task8SourcePattern {
     }
 }
 
+function Test-Task8CppCharacterLiteralStart {
+    param(
+        [Parameter(Mandatory = $true)][string] $Source,
+        [Parameter(Mandatory = $true)][int] $Index
+    )
+
+    if ($Source[$Index] -ne "'") { return $false }
+    if ($Index -eq 0) { return $true }
+
+    $previous = $Source[$Index - 1]
+    if (-not [char]::IsLetterOrDigit($previous) -and $previous -ne '_') {
+        return $true
+    }
+    if ($previous -in @('L', 'u', 'U') -and
+        ($Index -eq 1 -or
+            (-not [char]::IsLetterOrDigit($Source[$Index - 2]) -and
+                $Source[$Index - 2] -ne '_'))) {
+        return $true
+    }
+    if ($Index -ge 2 -and $Source.Substring($Index - 2, 2) -ceq 'u8' -and
+        ($Index -eq 2 -or
+            (-not [char]::IsLetterOrDigit($Source[$Index - 3]) -and
+                $Source[$Index - 3] -ne '_'))) {
+        return $true
+    }
+    return $false
+}
+
 function Remove-Task8CppComments {
     param([Parameter(Mandatory = $true)][string] $Source)
 
@@ -46,7 +74,10 @@ function Remove-Task8CppComments {
                 continue
             }
             if ($character -eq '"') { $state = 'string' }
-            elseif ($character -eq "'") { $state = 'character' }
+            elseif ($character -eq "'" -and
+                (Test-Task8CppCharacterLiteralStart $Source $index)) {
+                $state = 'character'
+            }
             [void] $result.Append($character)
             ++$index
             continue
@@ -68,6 +99,17 @@ function Remove-Task8CppComments {
         }
 
         if ($state -eq 'line_comment') {
+            if ($character -eq '\' -and $next -eq "`r" -and
+                $index + 2 -lt $Source.Length -and $Source[$index + 2] -eq "`n") {
+                [void] $result.Append('   ')
+                $index += 3
+                continue
+            }
+            if ($character -eq '\' -and $next -eq "`n") {
+                [void] $result.Append('  ')
+                $index += 2
+                continue
+            }
             if ($character -eq "`r" -or $character -eq "`n") {
                 [void] $result.Append($character)
                 $state = 'code'
@@ -108,8 +150,8 @@ function Assert-Task8ActiveSource {
 
     if ([regex]::IsMatch(
             $Source,
-            '(?m)^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif)\b')) {
-        throw "Task 8 audited player-copy source cannot use conditional preprocessing: $Name"
+            '(?m)^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif|define|undef)\b')) {
+        throw "Task 8 audited player-copy source cannot use conditional or macro preprocessing: $Name"
     }
     if ([regex]::IsMatch($Source, '(?<![A-Za-z0-9_])(?:u8|u|U|L)?R"')) {
         throw "Task 8 lexical audit does not allow raw string literals: $Name"
@@ -126,13 +168,14 @@ function Assert-Task8ActiveSource {
     }
 }
 
-function Get-Task8CppPrefixedStringLiterals {
+function Get-Task8CppStringLiterals {
     param([Parameter(Mandatory = $true)][string] $Source)
 
     $literals = [System.Collections.Generic.List[string]]::new()
     $index = 0
     while ($index -lt $Source.Length) {
-        if ($Source[$index] -eq "'") {
+        if ($Source[$index] -eq "'" -and
+            (Test-Task8CppCharacterLiteralStart $Source $index)) {
             ++$index
             while ($index -lt $Source.Length) {
                 if ($Source[$index] -eq '\' -and $index + 1 -lt $Source.Length) {
@@ -179,9 +222,7 @@ function Get-Task8CppPrefixedStringLiterals {
         if ($end -ge $Source.Length) {
             throw 'Task 8 lexical audit found an unterminated C++ string literal'
         }
-        if (-not [string]::IsNullOrEmpty($prefix)) {
-            $literals.Add($Source.Substring($prefixStart, $end - $prefixStart + 1))
-        }
+        $literals.Add($Source.Substring($prefixStart, $end - $prefixStart + 1))
         $index = $end + 1
     }
     return $literals
@@ -364,6 +405,15 @@ function Assert-Task8ChineseCopyGuard {
         @{ File = 'Platform'; Literal = 'L"无法获取系统错误消息"'; Count = 1; Reason = 'FormatMessage fallback' }
     )
     $technicalAllowlist = @(
+        @{ File = 'Host'; Literal = '"combat/room_bounds.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Host'; Literal = '"core/fixed_step.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Host'; Literal = '"dungeon_runtime.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Host'; Literal = '"dungeon/dungeon_types.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Host'; Literal = '"material_asset_types.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Main'; Literal = '"launcher_core.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Main'; Literal = '"launcher_layout.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Main'; Literal = '"launcher_platform_win32.hpp"'; Count = 1; Reason = 'compile-time include path' },
+        @{ File = 'Main'; Literal = '"launcher_renderer.hpp"'; Count = 1; Reason = 'compile-time include path' },
         @{ File = 'Main'; Literal = 'L" - "'; Count = 1; Reason = 'window-title diagnostic separator' },
         @{ File = 'Main'; Literal = 'L"，HRESULT 0x"'; Count = 1; Reason = 'parenthesized renderer numeric-detail prefix' },
         @{ File = 'Main'; Literal = 'L"）"'; Count = 1; Reason = 'renderer technical-detail closing punctuation' },
@@ -371,6 +421,7 @@ function Assert-Task8ChineseCopyGuard {
         @{ File = 'Main'; Literal = 'L"InfiniteDungeonLauncherWindow"'; Count = 1; Reason = 'internal Win32 class identity' },
         @{ File = 'Main'; Literal = 'L"LOCALAPPDATA"'; Count = 2; Reason = 'exact environment-variable lookup token' },
         @{ File = 'Main'; Literal = 'L"Microsoft YaHei UI"'; Count = 1; Reason = 'native font-family identifier' },
+        @{ File = 'Renderer'; Literal = '"launcher_renderer.hpp"'; Count = 1; Reason = 'compile-time include path' },
         @{ File = 'Renderer'; Literal = 'L""'; Count = 1; Reason = 'empty DirectWrite buffer fallback' },
         @{ File = 'Renderer'; Literal = 'L"CreateGradientStopCollection"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
         @{ File = 'Renderer'; Literal = 'L"CreateHwndRenderTarget"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
@@ -385,6 +436,7 @@ function Assert-Task8ChineseCopyGuard {
         @{ File = 'Renderer'; Literal = 'L"none"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
         @{ File = 'Renderer'; Literal = 'L"unknown"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
         @{ File = 'Renderer'; Literal = 'L"zh-CN"'; Count = 1; Reason = 'DirectWrite locale identifier' },
+        @{ File = 'Core'; Literal = '"launcher_core.hpp"'; Count = 1; Reason = 'compile-time include path' },
         @{ File = 'Core'; Literal = 'L"\""'; Count = 2; Reason = 'quoted argument-free command-line delimiter' },
         @{ File = 'Core'; Literal = 'L"arpg_game.exe"'; Count = 1; Reason = 'immutable executable name' },
         @{ File = 'Core'; Literal = 'L"assets/fonts"'; Count = 1; Reason = 'immutable package path' },
@@ -395,6 +447,7 @@ function Assert-Task8ChineseCopyGuard {
         @{ File = 'Core'; Literal = 'L"assets/stage15/audio"'; Count = 1; Reason = 'immutable package path' },
         @{ File = 'Core'; Literal = 'L"InfiniteDungeon"'; Count = 1; Reason = 'immutable default save-path component' },
         @{ File = 'Core'; Literal = 'L"save"'; Count = 1; Reason = 'immutable default save-path component' },
+        @{ File = 'Platform'; Literal = '"launcher_platform_win32.hpp"'; Count = 1; Reason = 'compile-time include path' },
         @{ File = 'Platform'; Literal = 'L"（错误代码 "'; Count = 1; Reason = 'Win32 numeric-detail prefix' },
         @{ File = 'Platform'; Literal = 'L"）："'; Count = 1; Reason = 'Win32 numeric-detail separator' },
         @{ File = 'Platform'; Literal = 'L"open"'; Count = 1; Reason = 'ShellExecuteW verb' }
@@ -420,22 +473,22 @@ function Assert-Task8ChineseCopyGuard {
     foreach ($file in $Sources.Keys) {
         $actualCounts = [System.Collections.Generic.Dictionary[string, int]]::new(
             [StringComparer]::Ordinal)
-        foreach ($literal in @(Get-Task8CppPrefixedStringLiterals $Sources[$file])) {
+        foreach ($literal in @(Get-Task8CppStringLiterals $Sources[$file])) {
             if ($actualCounts.ContainsKey($literal)) { ++$actualCounts[$literal] }
             else { $actualCounts.Add($literal, 1) }
         }
         foreach ($literal in $actualCounts.Keys) {
             $key = $file + "`0" + $literal
             if (-not $contractByKey.ContainsKey($key)) {
-                throw "Task 8 found an unaudited active prefixed string literal in ${file}: $literal"
+                throw "Task 8 found an unaudited authored string literal in ${file}: $literal"
             }
             if ($actualCounts[$literal] -ne $contractByKey[$key].Count) {
-                throw "Task 8 active literal count changed in ${file}: $literal actual $($actualCounts[$literal]) expected $($contractByKey[$key].Count)"
+                throw "Task 8 authored literal count changed in ${file}: $literal actual $($actualCounts[$literal]) expected $($contractByKey[$key].Count)"
             }
         }
         foreach ($entry in @($literalContracts | Where-Object { $_.File -ceq $file })) {
             if (-not $actualCounts.ContainsKey($entry.Literal)) {
-                throw "Task 8 required active literal is missing from ${file}: $($entry.Literal)"
+                throw "Task 8 required authored literal is missing from ${file}: $($entry.Literal)"
             }
         }
     }
@@ -497,6 +550,29 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
                 '    }' + $newline +
                 '    draw_fallback_button(' + $newline +
                 '        device_context, view.layout.exit, L"Exit", LauncherButton::exit, view, scale);'
+        },
+        @{
+            Name = 'ordinary English macro with noncanonical dead Chinese decoy'
+            File = 'Main'
+            Needle = 'draw_fallback_button(' + $newline +
+                '        device_context, view.layout.start, L"开始游戏", LauncherButton::start, view, scale);'
+            Replacement = '#define TASK8_WIDEN_IMPL(value) L##value' + $newline +
+                '#define TASK8_WIDEN(value) TASK8_WIDEN_IMPL(value)' + $newline +
+                '    if (1 == 0) {' + $newline +
+                '        draw_fallback_button(' + $newline +
+                '            device_context, view.layout.start, L"开始游戏", LauncherButton::start, view, scale);' + $newline +
+                '    }' + $newline +
+                '    draw_fallback_button(' + $newline +
+                '        device_context, view.layout.start, TASK8_WIDEN("Start Game"), LauncherButton::start, view, scale);' + $newline +
+                '#undef TASK8_WIDEN' + $newline +
+                '#undef TASK8_WIDEN_IMPL'
+        },
+        @{
+            Name = 'ordinary English runtime error while preserving Chinese error'
+            File = 'Main'
+            Needle = 'set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");'
+            Replacement = 'set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");' + $newline +
+                '            set_error(std::filesystem::path{"Launch failed"}.wstring());'
         }
     )
     $acceptedMutations = @()
@@ -521,10 +597,43 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
     if ($acceptedBroadAllowlist) {
         $acceptedMutations += 'broad-file allowlist attempt'
     }
-    if ($acceptedMutations.Count -ne 0) {
-        throw "Task 8 Chinese-copy guard accepted mutations: $($acceptedMutations -join '; ')"
+
+    $validVariants = @(
+        @{
+            Name = 'C++17 digit separator'
+            File = 'Main'
+            Needle = 'constexpr int kLauncherIconId = 101;'
+            Replacement = 'constexpr int kLauncherIconId = 101;' + $newline +
+                "constexpr unsigned int kTask8DigitSeparatorProbe = 1'000U;"
+        },
+        @{
+            Name = 'continued line comment'
+            File = 'Main'
+            Needle = 'constexpr int kLauncherIconId = 101;'
+            Replacement = 'constexpr int kLauncherIconId = 101;' + $newline +
+                '// Task 8 lexical probe continues \' + $newline +
+                'L"Comment-only English"'
+        }
+    )
+    $rejectedValidVariants = @()
+    foreach ($variant in $validVariants) {
+        $mutated = Copy-Task8ChineseCopySources $Sources
+        if (-not $mutated[$variant.File].Contains($variant.Needle)) {
+            throw "Task 8 valid-variant anchor is missing: $($variant.Name)"
+        }
+        $mutated[$variant.File] = $mutated[$variant.File].Replace(
+            $variant.Needle, $variant.Replacement)
+        try { Assert-Task8ChineseCopyGuard $mutated }
+        catch { $rejectedValidVariants += $variant.Name }
     }
-    return $mutations.Count + 1
+
+    if ($acceptedMutations.Count -ne 0 -or $rejectedValidVariants.Count -ne 0) {
+        throw "Task 8 Chinese-copy guard self-test mismatch; accepted mutations: $($acceptedMutations -join '; '); rejected valid variants: $($rejectedValidVariants -join '; ')"
+    }
+    return [pscustomobject]@{
+        MutationCount = $mutations.Count + 1
+        ValidVariantCount = $validVariants.Count
+    }
 }
 
 $LauncherSmokeDirectoryPrefix = 'arpg-launcher-window-smoke-'
@@ -1079,9 +1188,9 @@ function Assert-RenderedClientPixels {
 }
 
 $task8Sources = Get-Task8ChineseCopySources
-$task8MutationCount = Invoke-Task8ChineseCopyGuardSelfTest $task8Sources
+$task8SelfTestResult = Invoke-Task8ChineseCopyGuardSelfTest $task8Sources
 if ($SelfTestChineseCopyGuard) {
-    Write-Host "Task 8 Chinese-copy guard accepted pristine sources and rejected $task8MutationCount mutations"
+    Write-Host "Task 8 Chinese-copy guard accepted pristine sources and $($task8SelfTestResult.ValidVariantCount) lexical variants, and rejected $($task8SelfTestResult.MutationCount) mutations"
     exit 0
 }
 
