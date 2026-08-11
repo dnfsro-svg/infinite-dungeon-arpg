@@ -140,6 +140,102 @@ function Remove-Task8CppComments {
     return $result.ToString()
 }
 
+function Get-Task8CppStructuralSource {
+    param([Parameter(Mandatory = $true)][string] $Source)
+
+    $commentFreeSource = Remove-Task8CppComments $Source
+    $result = [System.Text.StringBuilder]::new($commentFreeSource.Length)
+    $state = 'code'
+    $index = 0
+    while ($index -lt $commentFreeSource.Length) {
+        $character = $commentFreeSource[$index]
+
+        if ($state -eq 'code') {
+            if ($character -eq '"') {
+                if ($index -gt 0 -and $commentFreeSource[$index - 1] -eq 'R') {
+                    throw 'Task 8 structural audit does not support C++ raw string literals'
+                }
+                [void] $result.Append(' ')
+                $state = 'string'
+                ++$index
+                continue
+            }
+            if ($character -eq "'" -and
+                (Test-Task8CppCharacterLiteralStart $commentFreeSource $index)) {
+                [void] $result.Append(' ')
+                $state = 'character'
+                ++$index
+                continue
+            }
+            [void] $result.Append($character)
+            ++$index
+            continue
+        }
+
+        if ($character -eq '\' -and $index + 1 -lt $commentFreeSource.Length) {
+            [void] $result.Append('  ')
+            $index += 2
+            continue
+        }
+        if (($state -eq 'string' -and $character -eq '"') -or
+            ($state -eq 'character' -and $character -eq "'")) {
+            $state = 'code'
+        }
+        [void] $result.Append(' ')
+        ++$index
+    }
+
+    if ($state -ne 'code') {
+        throw "Task 8 structural audit found unterminated C++ $state"
+    }
+    return $result.ToString()
+}
+
+function Get-Task8CppFunctionBody {
+    param(
+        [Parameter(Mandatory = $true)][string] $Source,
+        [Parameter(Mandatory = $true)][string] $SignaturePattern,
+        [Parameter(Mandatory = $true)][string] $Name
+    )
+
+    $structuralSource = Get-Task8CppStructuralSource $Source
+    $signatureMatches = [regex]::Matches(
+        $structuralSource,
+        $SignaturePattern,
+        [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if ($signatureMatches.Count -ne 1) {
+        throw "Task 8 must locate exactly one real $Name signature"
+    }
+
+    $openingBrace = $signatureMatches[0].Index + $signatureMatches[0].Length
+    while ($openingBrace -lt $structuralSource.Length -and
+        [char]::IsWhiteSpace($structuralSource[$openingBrace])) {
+        ++$openingBrace
+    }
+    if ($openingBrace -ge $structuralSource.Length -or
+        $structuralSource[$openingBrace] -ne '{') {
+        throw "Task 8 $Name signature must be followed by a function body"
+    }
+
+    $depth = 0
+    for ($index = $openingBrace; $index -lt $structuralSource.Length; ++$index) {
+        if ($structuralSource[$index] -eq '{') {
+            ++$depth
+            continue
+        }
+        if ($structuralSource[$index] -ne '}') { continue }
+
+        --$depth
+        if ($depth -eq 0) {
+            return $Source.Substring($openingBrace + 1, $index - $openingBrace - 1)
+        }
+        if ($depth -lt 0) {
+            throw "Task 8 $Name function body has an unmatched closing brace"
+        }
+    }
+    throw "Task 8 $Name function body is unterminated"
+}
+
 function Assert-Task8ActiveSource {
     param(
         [Parameter(Mandatory = $true)][string] $Source,
@@ -326,15 +422,10 @@ function Assert-Task8ChineseCopyGuard {
         Assert-Task8SourcePattern $Sources.Main $contract.Pattern "launcher error/status copy must be exact Chinese: $($contract.Name)"
     }
 
-    $renderFailureMatches = [regex]::Matches(
-        $Sources.Main,
-        'std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)\s*\{(?<Body>.*?)\r?\n\}\s*\r?\n\s*RECT\s+fallback_rectangle',
-        [Text.RegularExpressions.RegexOptions]::Singleline -bor
-            [Text.RegularExpressions.RegexOptions]::CultureInvariant)
-    if ($renderFailureMatches.Count -ne 1) {
-        throw 'Task 8 must isolate exactly one render_failure_message function body'
-    }
-    $renderFailureBody = $renderFailureMatches[0].Groups['Body'].Value
+    $renderFailureBody = Get-Task8CppFunctionBody `
+        $Sources.Main `
+        '(?<![A-Za-z0-9_])std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)' `
+        'render_failure_message'
     if ([regex]::Matches($renderFailureBody, '\breturn\b').Count -ne 1) {
         throw 'Task 8 render_failure_message must contain exactly one return statement'
     }
@@ -514,10 +605,56 @@ function Copy-Task8ChineseCopySources {
     return $copy
 }
 
+function Test-Task8CppFunctionBodyExtraction {
+    $newline = [Environment]::NewLine
+    $signaturePattern = 'std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)'
+    $source = @(
+        'const char* signature_decoy = "std::wstring render_failure_message(const RendererResult& result) {";'
+        '/* std::wstring render_failure_message(const RendererResult& result) { */'
+        'std::wstring render_failure_message(const RendererResult& result) {'
+        '    const wchar_t* string_brace = L"}";'
+        "    const char character_brace = '}';"
+        '    // }'
+        '    /* { } */'
+        '    if (result.hresult < 0) {'
+        '        return std::wstring{renderer_stage_name(result.stage)};'
+        '    }'
+        '    return std::wstring{};'
+        '}'
+        'int after_marker() { return 0; }'
+    ) -join $newline
+
+    $body = Get-Task8CppFunctionBody $source $signaturePattern 'render_failure_message probe'
+    if (-not $body.Contains('return std::wstring{};') -or $body.Contains('after_marker')) {
+        throw 'Task 8 function-body extractor did not honor lexical brace boundaries'
+    }
+
+    $duplicateSource = $source + $newline +
+        'std::wstring render_failure_message(const RendererResult& result) { return {}; }'
+    $acceptedDuplicate = $true
+    try { [void] (Get-Task8CppFunctionBody $duplicateSource $signaturePattern 'duplicate probe') }
+    catch { $acceptedDuplicate = $false }
+    if ($acceptedDuplicate) {
+        throw 'Task 8 function-body extractor accepted duplicate real signatures'
+    }
+
+    $unterminatedSource = 'std::wstring render_failure_message(const RendererResult& result) {' +
+        $newline + '    if (result.hresult < 0) {' +
+        $newline + '        return {};' +
+        $newline + '    }'
+    $acceptedUnterminated = $true
+    try { [void] (Get-Task8CppFunctionBody $unterminatedSource $signaturePattern 'unterminated probe') }
+    catch { $acceptedUnterminated = $false }
+    if ($acceptedUnterminated) {
+        throw 'Task 8 function-body extractor accepted an unterminated definition'
+    }
+}
+
 function Invoke-Task8ChineseCopyGuardSelfTest {
     param([Parameter(Mandatory = $true)] $Sources)
 
     Assert-Task8ChineseCopyGuard $Sources
+    Test-Task8CppFunctionBodyExtraction
     $newline = [Environment]::NewLine
     $mutations = @(
         @{ Name = 'English game title'; File = 'Host'; Needle = 'u8"无限地城"'; Replacement = '"Infinite Dungeon"' },
@@ -594,6 +731,16 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
             Replacement = '    [[maybe_unused]] const auto task8_decoy = [&]() -> std::wstring {' + $newline +
                 '        return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";' + $newline +
                 '    };' + $newline +
+                '    return std::wstring{stage};'
+        },
+        @{
+            Name = 'local fallback rectangle creates a false formatter boundary'
+            File = 'Main'
+            Needle = '    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'
+            Replacement = '    if (result.hresult < 0) {' + $newline +
+                '        return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";' + $newline +
+                '}' + $newline +
+                '    RECT fallback_rectangle{};' + $newline +
                 '    return std::wstring{stage};'
         }
     )
