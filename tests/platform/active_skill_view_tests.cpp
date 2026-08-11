@@ -6,6 +6,9 @@
 #include "combat/active_skill_runtime.hpp"
 #include "skills/active_skill_catalog.hpp"
 #include "skills/skill_loadout.hpp"
+#include "ui_text_bounds_audit.hpp"
+#include "ui_text_contrast.hpp"
+#include "ui_text_layout.hpp"
 #include "ui_typography.hpp"
 #include "ui_utf8.hpp"
 
@@ -20,6 +23,25 @@ namespace {
 namespace combat = arpg::combat;
 namespace platform = arpg::platform;
 namespace skills = arpg::skills;
+
+platform::UiTextExtent measure_skill_text(const char* text, float size,
+    float spacing, void*) noexcept {
+    std::size_t count{};
+    for (const unsigned char* cursor =
+             reinterpret_cast<const unsigned char*>(text);
+         cursor != nullptr && *cursor != 0U; ++cursor) {
+        if ((*cursor & 0xC0U) != 0x80U) ++count;
+    }
+    return {count == 0U ? 0.0F
+                        : static_cast<float>(count) * size
+                            + static_cast<float>(count - 1U) * spacing,
+        size};
+}
+
+platform::UiTextExtent fail_skill_text_measure(
+    const char*, float, float, void*) noexcept {
+    return {};
+}
 
 template <typename Slot, typename = void>
 struct SkillKeyLabelContract final {
@@ -238,13 +260,101 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
             view.slots[index].cooldown_ratio, 0.0F));
         ARPG_REQUIRE(view.slots[index].cooldown_label[0] == '\0');
     }
+
+    const platform::ActiveSkillHudLayout layout =
+        platform::active_skill_hud_layout(800, 450);
+    const platform::ActiveSkillHudTextRegions& regions =
+        layout.text_regions[0U];
+    platform::ActiveSkillHudSlot ready_slot = view.slots[1U];
+    ready_slot.cooldown_ratio = 0.0F;
+    ready_slot.cooldown_label[0U] = '\0';
+    const platform::ActiveSkillHudTextPlan empty =
+        platform::make_active_skill_hud_text_plan(view.slots[2U], regions,
+            layout.scale, true, &measure_skill_text, nullptr);
+    const platform::ActiveSkillHudTextPlan ready =
+        platform::make_active_skill_hud_text_plan(ready_slot, regions,
+            layout.scale, true, &measure_skill_text, nullptr);
+    const platform::ActiveSkillHudTextPlan cooling =
+        platform::make_active_skill_hud_text_plan(view.slots[0U], regions,
+            layout.scale, true, &measure_skill_text, nullptr);
+
+    ARPG_REQUIRE(empty.key.visible);
+    ARPG_REQUIRE(!empty.name.visible);
+    ARPG_REQUIRE(!empty.cooldown.visible);
+    ARPG_REQUIRE(ready.key.visible);
+    ARPG_REQUIRE(ready.name.visible);
+    ARPG_REQUIRE(!ready.cooldown.visible);
+    ARPG_REQUIRE(cooling.key.visible);
+    ARPG_REQUIRE(cooling.name.visible);
+    ARPG_REQUIRE(cooling.cooldown.visible);
+    ARPG_REQUIRE(cooling.key.role == platform::UiTextAuditRole::hud_skill_key);
+    ARPG_REQUIRE(cooling.name.role == platform::UiTextAuditRole::hud_skill_name);
+    ARPG_REQUIRE(cooling.cooldown.role
+        == platform::UiTextAuditRole::hud_skill_cooldown);
+
+    for (const platform::ActiveSkillTextPlatePlan* plate :
+         std::array<const platform::ActiveSkillTextPlatePlan*, 3U>{
+             &cooling.key, &cooling.name, &cooling.cooldown}) {
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(plate->text.data()));
+        ARPG_REQUIRE(platform::ui_text_bounds_inside(
+            {plate->position.x, plate->position.y, plate->extent.x,
+                plate->extent.y}, plate->backing));
+        ARPG_REQUIRE(!plate->truncated);
+    }
+    ARPG_REQUIRE(platform::active_skill_text_plate_backing().a == 255U);
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+        platform::ui_text_contrast_style().primary,
+        platform::active_skill_text_plate_backing()) >= 4.5F);
+
+    const auto plan_is_empty = [](const platform::ActiveSkillHudTextPlan& plan)
+        noexcept {
+        return !plan.key.visible && !plan.name.visible && !plan.cooldown.visible;
+    };
+    ARPG_REQUIRE(plan_is_empty(platform::make_active_skill_hud_text_plan(
+        view.slots[0U], regions, layout.scale, false, &measure_skill_text,
+        nullptr)));
+    platform::ActiveSkillHudSlot invalid_utf8 = view.slots[0U];
+    invalid_utf8.name[0U] = static_cast<char>(0xFFU);
+    ARPG_REQUIRE(plan_is_empty(platform::make_active_skill_hud_text_plan(
+        invalid_utf8, regions, layout.scale, true, &measure_skill_text,
+        nullptr)));
+    platform::ActiveSkillHudTextRegions invalid_regions = regions;
+    invalid_regions.name.width = 0.0F;
+    ARPG_REQUIRE(plan_is_empty(platform::make_active_skill_hud_text_plan(
+        view.slots[0U], invalid_regions, layout.scale, true,
+        &measure_skill_text, nullptr)));
+    ARPG_REQUIRE(plan_is_empty(platform::make_active_skill_hud_text_plan(
+        view.slots[0U], regions, layout.scale, true,
+        &fail_skill_text_measure, nullptr)));
+
+    static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[2U],
+        regions, layout.scale, true, &measure_skill_text, nullptr));
+    static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[1U],
+        regions, layout.scale, true, &measure_skill_text, nullptr));
+    static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[0U],
+        regions, layout.scale, true, &measure_skill_text, nullptr));
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {
+        const platform::ActiveSkillHudLayout repeated_layout =
+            platform::active_skill_hud_layout(800, 450);
+        static_cast<void>(platform::make_active_skill_hud_text_plan(
+            view.slots[2U], repeated_layout.text_regions[0U],
+            repeated_layout.scale, true, &measure_skill_text, nullptr));
+        static_cast<void>(platform::make_active_skill_hud_text_plan(
+            view.slots[1U], repeated_layout.text_regions[0U],
+            repeated_layout.scale, true, &measure_skill_text, nullptr));
+        static_cast<void>(platform::make_active_skill_hud_text_plan(
+            view.slots[0U], repeated_layout.text_regions[0U],
+            repeated_layout.scale, true, &measure_skill_text, nullptr));
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
     return {};
 }
 
 arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
     noexcept {
     constexpr std::array<std::array<int, 2>, 3> kViewports{{
-        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto viewport : kViewports) {
         const float scale = platform::ui_viewport_scale(
@@ -252,6 +362,7 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
         const float expected_width = (5.0F * 76.0F + 4.0F * 8.0F) * scale;
         const platform::ActiveSkillHudLayout layout =
             platform::active_skill_hud_layout(viewport[0], viewport[1]);
+        ARPG_REQUIRE(layout.valid);
         ARPG_REQUIRE(arpg::test::near(layout.bounds.width, expected_width));
         ARPG_REQUIRE(arpg::test::near(layout.bounds.x
             + layout.bounds.width * 0.5F,
@@ -263,6 +374,17 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
                 layout.slots[index].width, 76.0F * scale));
             ARPG_REQUIRE(arpg::test::near(
                 layout.slots[index].height, 76.0F * scale));
+            const platform::ActiveSkillHudTextRegions& regions =
+                layout.text_regions[index];
+            ARPG_REQUIRE(platform::ui_text_bounds_inside(regions.visual_bounds,
+                {0.0F, 0.0F, static_cast<float>(viewport[0]),
+                    static_cast<float>(viewport[1])}));
+            ARPG_REQUIRE(platform::ui_text_bounds_separated(
+                regions.key, regions.cooldown));
+            ARPG_REQUIRE(platform::ui_text_bounds_separated(
+                regions.key, regions.name));
+            ARPG_REQUIRE(platform::ui_text_bounds_separated(
+                regions.cooldown, regions.name));
             if (index != 0U) {
                 ARPG_REQUIRE(arpg::test::near(layout.slots[index].x
                     - (layout.slots[index - 1U].x
@@ -270,6 +392,27 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
                 ARPG_REQUIRE(!overlaps(
                     layout.slots[index - 1U], layout.slots[index]));
             }
+        }
+        if (viewport[0] == 800) {
+            ARPG_REQUIRE(arpg::test::near(layout.bounds.x, 194.0F));
+            ARPG_REQUIRE(arpg::test::near(layout.bounds.y, 354.0F));
+            ARPG_REQUIRE(arpg::test::near(layout.bounds.width, 412.0F));
+            ARPG_REQUIRE(arpg::test::near(layout.bounds.height, 76.0F));
+            const platform::ActiveSkillHudTextRegions& regions =
+                layout.text_regions[0U];
+            ARPG_REQUIRE(arpg::test::near(regions.key.y, 334.0F));
+            ARPG_REQUIRE(arpg::test::near(
+                regions.key.y + regions.key.height, 352.0F));
+            ARPG_REQUIRE(arpg::test::near(regions.cooldown.y, 382.0F));
+            ARPG_REQUIRE(arpg::test::near(
+                regions.cooldown.y + regions.cooldown.height, 402.0F));
+            ARPG_REQUIRE(arpg::test::near(regions.name.y, 431.0F));
+            ARPG_REQUIRE(arpg::test::near(
+                regions.name.y + regions.name.height, 449.0F));
+            const Rectangle icon{layout.slots[0U].x + 8.0F,
+                layout.slots[0U].y + 8.0F, 60.0F, 60.0F};
+            ARPG_REQUIRE((regions.cooldown.width * regions.cooldown.height)
+                / (icon.width * icon.height) <= 0.25F);
         }
     }
     return {};

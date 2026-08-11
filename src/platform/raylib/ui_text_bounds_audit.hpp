@@ -38,6 +38,8 @@ enum class UiTextAuditRole : std::uint8_t {
     pause_title,
     pause_row,
     pause_footer,
+    hud_skill_key,
+    hud_skill_cooldown,
     count,
 };
 
