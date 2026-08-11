@@ -8,6 +8,7 @@
 #include "material_animation.hpp"
 #include "ui_text_renderer.hpp"
 #include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 
 #include <raylib.h>
 
@@ -432,8 +433,10 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     }
     for (std::size_t index = 0U; index < affix_count; ++index) {
         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
-        draw_scene_label(hud_font, hud_font_ready,
-            TextFormat("%s %s", badge.short_name, badge.tier_text),
+        std::array<char, 64U> affix_text{};
+        static_cast<void>(ui_utf8_format(affix_text.data(), affix_text.size(),
+            u8"%s %s", badge.short_name, badge.tier_text));
+        draw_scene_label(hud_font, hud_font_ready, affix_text.data(),
             x - bar_width * .5F,
             phase_y + static_cast<float>(text_style.phase_font_size + 2)
                 + static_cast<float>(index)

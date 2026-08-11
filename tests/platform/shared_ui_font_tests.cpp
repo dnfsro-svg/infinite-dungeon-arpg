@@ -58,6 +58,8 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"空格"));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"…、"));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"蜕变石"));
+    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+        plan, u8"挥击 冲击汇总 是 否"));
     ARPG_REQUIRE(plan.codepoint_count > 384U);
     ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));

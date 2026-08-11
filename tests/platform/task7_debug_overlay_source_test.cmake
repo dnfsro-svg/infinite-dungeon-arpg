@@ -43,7 +43,9 @@ function(require_token TEXT TOKEN MESSAGE_TEXT)
 endfunction()
 
 function(reject_dead_branch CODE MESSAGE_TEXT)
-    if("${CODE}" MATCHES "if[ ]*\\([ ]*(false|0)[ ]*\\)")
+    if("${CODE}" MATCHES "if[ ]*\\([ ]*(false|0)[ ]*\\)"
+            OR "${CODE}" MATCHES
+                "if[ ]*\\([^\\)]*&&[ ]*false([^A-Za-z0-9_]|$)")
         message(FATAL_ERROR "${MESSAGE_TEXT} cannot live in a dead branch")
     endif()
 endfunction()
@@ -189,6 +191,18 @@ extract_cpp_function_body("${_actor_source}"
     "void draw_monster_presentation(" _presentation_body _presentation_code)
 require_token("${_presentation_body}" "monster_phase_label(monster.ai_phase)"
     "Task 7 monster presentation must consume the Chinese phase mapping")
+foreach(_token IN ITEMS
+        "std::array<char, 64U> affix_text{}"
+        "ui_utf8_format(affix_text.data(), affix_text.size(), u8\"%s %s\""
+        "draw_scene_label(hud_font, hud_font_ready, affix_text.data()")
+    require_token("${_presentation_body}" "${_token}"
+        "Task 7 affix labels must use a fixed UTF-8 stack buffer")
+endforeach()
+string(FIND "${_presentation_code}" "TextFormat(" _affix_textformat)
+if(NOT _affix_textformat EQUAL -1)
+    message(FATAL_ERROR
+        "Task 7 monster presentation must not use TextFormat")
+endif()
 reject_dead_branch("${_effects_code}" "Task 7 defeat marker")
 reject_dead_branch("${_presentation_code}" "Task 7 monster presentation")
 

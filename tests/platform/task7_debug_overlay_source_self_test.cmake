@@ -61,6 +61,14 @@ function(expect_mutation_rejected LABEL SOURCE_NAME NEEDLE REPLACEMENT)
     run_guard("${LABEL}" FALSE)
 endfunction()
 
+expect_mutation_rejected(unsafe_affix_textformat ACTOR_SOURCE
+    "    for (std::size_t index = 0U; index < affix_count; ++index) {"
+    "    draw_scene_label(hud_font, hud_font_ready,
+        TextFormat(\"%s %s\", u8\"词缀\", u8\"Ⅰ\"),
+        x - bar_width * .5F, phase_y, text_style.affix_font_size,
+        Color{205, 218, 237, 255});
+    for (std::size_t index = 0U; index < affix_count; ++index) {")
+
 expect_mutation_rejected(line_capacity OVERLAY_HEADER
     "std::array<DebugOverlayLine, 12U> lines{};"
     "std::array<DebugOverlayLine, 11U> lines{};")
@@ -88,6 +96,15 @@ expect_mutation_rejected(dead_shared_font_decoy OVERLAY_SOURCE
             {bounds.x, bounds.y + 2.0F}, layout.font_size,
             layout.spacing, view.lines[index].color, 1);"
     "if (false) {
+            draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
+                {bounds.x, bounds.y + 2.0F}, layout.font_size,
+                layout.spacing, view.lines[index].color, 1);
+        }")
+expect_mutation_rejected(compound_false_shared_font_decoy OVERLAY_SOURCE
+    "draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
+            {bounds.x, bounds.y + 2.0F}, layout.font_size,
+            layout.spacing, view.lines[index].color, 1);"
+    "if (shared_ui_font_ready && false) {
             draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
                 {bounds.x, bounds.y + 2.0F}, layout.font_size,
                 layout.spacing, view.lines[index].color, 1);
