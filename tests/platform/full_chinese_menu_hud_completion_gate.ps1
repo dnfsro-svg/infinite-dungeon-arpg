@@ -24,42 +24,103 @@ function Invoke-PlatformSelector {
         [Parameter(Mandatory)]
         [string] $Executable,
         [Parameter(Mandatory)]
-        [string] $Selector
+        [string] $Selector,
+        [Parameter(Mandatory)]
+        [ValidateRange(1, [int]::MaxValue)]
+        [int] $ExpectedCaseCount
     )
 
-    $selectors = @(
-        'ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY',
-        'ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY'
-    )
+    if ($Selector -notmatch '^ARPG_.*_ONLY$') {
+        throw "Invalid focused-test selector: $Selector"
+    }
+
     $saved = @{}
-    foreach ($name in $selectors) {
-        $item = Get-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
-        if ($null -ne $item) {
-            $saved[$name] = $item.Value
-        }
-        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    Get-ChildItem Env: | Where-Object {
+        $_.Name -match '^ARPG_.*_ONLY$'
+    } | ForEach-Object {
+        $saved[$_.Name] = $_.Value
+        Remove-Item -LiteralPath "Env:$($_.Name)"
     }
 
     try {
         Set-Item -LiteralPath "Env:$Selector" -Value '1'
-        Invoke-ArpgNative -FilePath $Executable
+        $output = @(Invoke-ArpgNative -FilePath $Executable)
+        $summaryLines = @($output | ForEach-Object {
+            $_.ToString().TrimEnd()
+        } | Where-Object {
+            $_ -match '^[0-9]+ cases, [0-9]+ failures$'
+        })
+        $expectedSummary = "$ExpectedCaseCount cases, 0 failures"
+        if ($summaryLines.Count -ne 1 `
+                -or $summaryLines[0] -cne $expectedSummary) {
+            throw "Focused selector $Selector expected exact summary '$expectedSummary'; observed '$($summaryLines -join '; ')'"
+        }
+        $output | Write-Output
     }
     finally {
-        foreach ($name in $selectors) {
-            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
-            if ($saved.ContainsKey($name)) {
-                Set-Item -LiteralPath "Env:$name" -Value $saved[$name]
-            }
+        Get-ChildItem Env: | Where-Object {
+            $_.Name -match '^ARPG_.*_ONLY$'
+        } | ForEach-Object {
+            Remove-Item -LiteralPath "Env:$($_.Name)"
+        }
+        foreach ($entry in $saved.GetEnumerator()) {
+            Set-Item -LiteralPath "Env:$($entry.Key)" -Value $entry.Value
         }
     }
 }
 
+function Invoke-ExactCTest {
+    param(
+        [Parameter(Mandatory)]
+        [string] $CTestExecutable,
+        [Parameter(Mandatory)]
+        [string] $Preset,
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $TestNames
+    )
+
+    foreach ($name in $TestNames) {
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            throw 'Exact CTest name cannot be empty'
+        }
+        $exactRegex = '^' + [regex]::Escape($name) + '$'
+        Invoke-ArpgNative -FilePath $CTestExecutable -ArgumentList @(
+            '--preset', $Preset,
+            '--output-on-failure', '--no-tests=error',
+            '-R', $exactRegex,
+            '--parallel', '1'
+        )
+    }
+}
+
+function Invoke-GitDiffChecks {
+    param(
+        [Parameter(Mandatory)]
+        [string] $GitExecutable
+    )
+
+    Invoke-ArpgNative -FilePath $GitExecutable `
+        -ArgumentList @('diff', '--check')
+    Invoke-ArpgNative -FilePath $GitExecutable `
+        -ArgumentList @('diff', '--cached', '--check')
+}
+
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $launcherGuard = Join-Path $root 'tests\launcher\launcher_window_smoke_test.ps1'
+$gateSelfTest = Join-Path $PSScriptRoot `
+    'full_chinese_menu_hud_completion_gate_self_test.ps1'
 $platformTests = Join-Path $root "out\build\$Preset\bin\arpg_platform_tests.exe"
 
 Push-Location $root
 try {
+    Invoke-ArpgNative -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', $gateSelfTest,
+        '-GateScript', $PSCommandPath
+    )
+
     . (Join-Path $root 'scripts\Configure.ps1') -Preset $Preset
 
     Invoke-ArpgNative -FilePath 'cmake.exe' -ArgumentList @(
@@ -73,9 +134,11 @@ try {
     )
 
     Invoke-PlatformSelector -Executable $platformTests `
-        -Selector 'ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY'
+        -Selector 'ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY' `
+        -ExpectedCaseCount 183
     Invoke-PlatformSelector -Executable $platformTests `
-        -Selector 'ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY'
+        -Selector 'ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY' `
+        -ExpectedCaseCount 86
 
     $guardTests = @(
         'platform.pause_menu_state_boundary',
@@ -92,36 +155,21 @@ try {
         'platform.task7_debug_overlay_source_guard',
         'platform.task7_debug_overlay_source_guard_self_test'
     )
-    $guardRegex = '^(' + (($guardTests | ForEach-Object {
-        [regex]::Escape($_)
-    }) -join '|') + ')$'
-    Invoke-ArpgNative -FilePath 'ctest.exe' -ArgumentList @(
-        '--preset', $Preset,
-        '--output-on-failure',
-        '-R', $guardRegex,
-        '--parallel', '1'
-    )
+    Invoke-ExactCTest -CTestExecutable 'ctest.exe' -Preset $Preset `
+        -TestNames $guardTests
 
-    Invoke-ArpgNative -FilePath 'ctest.exe' -ArgumentList @(
-        '--preset', $Preset,
-        '--output-on-failure',
-        '-R', '^launcher\.units$',
-        '--parallel', '1'
-    )
+    Invoke-ExactCTest -CTestExecutable 'ctest.exe' -Preset $Preset `
+        -TestNames @('launcher.units')
     Invoke-ArpgNative -FilePath 'powershell.exe' -ArgumentList @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-File', $launcherGuard,
         '-SelfTestChineseCopyGuard'
     )
-    Invoke-ArpgNative -FilePath 'ctest.exe' -ArgumentList @(
-        '--preset', $Preset,
-        '--output-on-failure',
-        '-R', '^launcher\.window_smoke$',
-        '--parallel', '1'
-    )
+    Invoke-ExactCTest -CTestExecutable 'ctest.exe' -Preset $Preset `
+        -TestNames @('launcher.window_smoke')
 
-    Invoke-ArpgNative -FilePath 'git.exe' -ArgumentList @('diff', '--check')
+    Invoke-GitDiffChecks -GitExecutable 'git.exe'
 }
 finally {
     Pop-Location
