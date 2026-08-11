@@ -15,6 +15,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 #include <utility>
 
@@ -43,6 +44,36 @@ platform::UiTextExtent fail_skill_text_measure(
     return {};
 }
 
+enum class SkillMeasureFailure : std::uint8_t {
+    none,
+    key,
+    name,
+    cooldown,
+};
+
+struct SkillMeasureContext final {
+    SkillMeasureFailure failure{SkillMeasureFailure::none};
+    std::size_t key_calls{};
+    std::size_t name_calls{};
+    std::size_t cooldown_calls{};
+};
+
+platform::UiTextExtent measure_skill_text_by_stage(const char* text,
+    float size, float spacing, void* context) noexcept {
+    SkillMeasureContext& state = *static_cast<SkillMeasureContext*>(context);
+    if (std::strcmp(text, u8"小键盘1") == 0) {
+        ++state.key_calls;
+        if (state.failure == SkillMeasureFailure::key) return {};
+    } else if (std::strcmp(text, u8"拔刀斩") == 0) {
+        ++state.name_calls;
+        if (state.failure == SkillMeasureFailure::name) return {};
+    } else if (std::strcmp(text, u8"2秒") == 0) {
+        ++state.cooldown_calls;
+        if (state.failure == SkillMeasureFailure::cooldown) return {};
+    }
+    return measure_skill_text(text, size, spacing, nullptr);
+}
+
 template <typename Slot, typename = void>
 struct SkillKeyLabelContract final {
     [[nodiscard]] static bool matches(
@@ -65,6 +96,13 @@ bool overlaps(Rectangle left, Rectangle right) noexcept {
         && right.x < left.x + left.width
         && left.y < right.y + right.height
         && right.y < left.y + left.height;
+}
+
+bool same_rectangle(Rectangle left, Rectangle right) noexcept {
+    return arpg::test::near(left.x, right.x)
+        && arpg::test::near(left.y, right.y)
+        && arpg::test::near(left.width, right.width)
+        && arpg::test::near(left.height, right.height);
 }
 
 arpg::test::Failure active_skill_visual_frames_reach_complete_material_timelines()
@@ -292,6 +330,51 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
     ARPG_REQUIRE(cooling.cooldown.role
         == platform::UiTextAuditRole::hud_skill_cooldown);
 
+    constexpr std::array<const char*, skills::kActiveSkillSlotCount>
+        kExpectedKeyLabels{{u8"小键盘1", u8"小键盘2", u8"小键盘3",
+            u8"小键盘4", u8"小键盘5"}};
+    for (std::size_t index = 0U; index < view.slots.size(); ++index) {
+        const platform::ActiveSkillHudTextPlan plan =
+            platform::make_active_skill_hud_text_plan(view.slots[index],
+                layout.text_regions[index], layout.scale, true,
+                &measure_skill_text, nullptr);
+        ARPG_REQUIRE(plan.key.visible);
+        ARPG_REQUIRE(std::strcmp(plan.key.text.data(),
+            view.slots[index].key_label.data()) == 0);
+        ARPG_REQUIRE(std::strcmp(plan.key.text.data(),
+            kExpectedKeyLabels[index]) == 0);
+        ARPG_REQUIRE(!plan.key.truncated);
+        ARPG_REQUIRE(same_rectangle(plan.key.backing,
+            layout.text_regions[index].key));
+    }
+    const platform::ActiveSkillHudTextPlan cooling_thirty =
+        platform::make_active_skill_hud_text_plan(view.slots[1U],
+            layout.text_regions[1U], layout.scale, true, &measure_skill_text,
+            nullptr);
+    for (const platform::ActiveSkillTextPlatePlan* plate :
+         std::array<const platform::ActiveSkillTextPlatePlan*, 2U>{
+             &cooling.name, &cooling_thirty.name}) {
+        ARPG_REQUIRE(plate->visible);
+        ARPG_REQUIRE(!plate->truncated);
+    }
+    ARPG_REQUIRE(std::strcmp(cooling.name.text.data(),
+        view.slots[0U].name.data()) == 0);
+    ARPG_REQUIRE(std::strcmp(cooling.name.text.data(), u8"拔刀斩") == 0);
+    ARPG_REQUIRE(same_rectangle(cooling.name.backing, regions.name));
+    ARPG_REQUIRE(std::strcmp(cooling_thirty.name.text.data(),
+        view.slots[1U].name.data()) == 0);
+    ARPG_REQUIRE(std::strcmp(cooling_thirty.name.text.data(), u8"暴风式") == 0);
+    ARPG_REQUIRE(same_rectangle(cooling_thirty.name.backing,
+        layout.text_regions[1U].name));
+    ARPG_REQUIRE(cooling_thirty.cooldown.visible);
+    ARPG_REQUIRE(std::strcmp(cooling_thirty.cooldown.text.data(),
+        view.slots[1U].cooldown_label.data()) == 0);
+    ARPG_REQUIRE(std::strcmp(cooling_thirty.cooldown.text.data(),
+        u8"30秒") == 0);
+    ARPG_REQUIRE(!cooling_thirty.cooldown.truncated);
+    ARPG_REQUIRE(same_rectangle(cooling_thirty.cooldown.backing,
+        layout.text_regions[1U].cooldown));
+
     for (const platform::ActiveSkillTextPlatePlan* plate :
          std::array<const platform::ActiveSkillTextPlatePlan*, 3U>{
              &cooling.key, &cooling.name, &cooling.cooldown}) {
@@ -327,6 +410,52 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
         view.slots[0U], regions, layout.scale, true,
         &fail_skill_text_measure, nullptr)));
 
+    for (const float ratio : std::array<float, 3U>{
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity()}) {
+        platform::ActiveSkillHudSlot non_finite_ratio = view.slots[0U];
+        non_finite_ratio.cooldown_ratio = ratio;
+        const platform::ActiveSkillHudTextPlan non_finite_plan =
+            platform::make_active_skill_hud_text_plan(non_finite_ratio,
+                regions, layout.scale, true, &measure_skill_text, nullptr);
+        ARPG_REQUIRE(non_finite_plan.key.visible);
+        ARPG_REQUIRE(non_finite_plan.name.visible);
+        ARPG_REQUIRE(!non_finite_plan.cooldown.visible);
+    }
+
+    SkillMeasureContext name_failure{SkillMeasureFailure::name};
+    const platform::ActiveSkillHudTextPlan failed_name =
+        platform::make_active_skill_hud_text_plan(view.slots[0U], regions,
+            layout.scale, true, &measure_skill_text_by_stage, &name_failure);
+    ARPG_REQUIRE(name_failure.key_calls > 0U);
+    ARPG_REQUIRE(name_failure.name_calls > 0U);
+    ARPG_REQUIRE(name_failure.cooldown_calls > 0U);
+    ARPG_REQUIRE(failed_name.key.visible);
+    ARPG_REQUIRE(!failed_name.name.visible);
+    ARPG_REQUIRE(failed_name.cooldown.visible);
+
+    SkillMeasureContext cooldown_failure{SkillMeasureFailure::cooldown};
+    const platform::ActiveSkillHudTextPlan failed_cooldown =
+        platform::make_active_skill_hud_text_plan(view.slots[0U], regions,
+            layout.scale, true, &measure_skill_text_by_stage,
+            &cooldown_failure);
+    ARPG_REQUIRE(cooldown_failure.key_calls > 0U);
+    ARPG_REQUIRE(cooldown_failure.name_calls > 0U);
+    ARPG_REQUIRE(cooldown_failure.cooldown_calls > 0U);
+    ARPG_REQUIRE(failed_cooldown.key.visible);
+    ARPG_REQUIRE(failed_cooldown.name.visible);
+    ARPG_REQUIRE(!failed_cooldown.cooldown.visible);
+
+    SkillMeasureContext key_failure{SkillMeasureFailure::key};
+    const platform::ActiveSkillHudTextPlan failed_key =
+        platform::make_active_skill_hud_text_plan(view.slots[0U], regions,
+            layout.scale, true, &measure_skill_text_by_stage, &key_failure);
+    ARPG_REQUIRE(key_failure.key_calls > 0U);
+    ARPG_REQUIRE(key_failure.name_calls == 0U);
+    ARPG_REQUIRE(key_failure.cooldown_calls == 0U);
+    ARPG_REQUIRE(plan_is_empty(failed_key));
+
     static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[2U],
         regions, layout.scale, true, &measure_skill_text, nullptr));
     static_cast<void>(platform::make_active_skill_hud_text_plan(view.slots[1U],
@@ -337,15 +466,24 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
     for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {
         const platform::ActiveSkillHudLayout repeated_layout =
             platform::active_skill_hud_layout(800, 450);
-        static_cast<void>(platform::make_active_skill_hud_text_plan(
+        const platform::ActiveSkillHudTextPlan repeated_empty =
+            platform::make_active_skill_hud_text_plan(
             view.slots[2U], repeated_layout.text_regions[0U],
-            repeated_layout.scale, true, &measure_skill_text, nullptr));
-        static_cast<void>(platform::make_active_skill_hud_text_plan(
-            view.slots[1U], repeated_layout.text_regions[0U],
-            repeated_layout.scale, true, &measure_skill_text, nullptr));
-        static_cast<void>(platform::make_active_skill_hud_text_plan(
+            repeated_layout.scale, true, &measure_skill_text, nullptr);
+        const platform::ActiveSkillHudTextPlan repeated_ready =
+            platform::make_active_skill_hud_text_plan(
+            ready_slot, repeated_layout.text_regions[0U],
+            repeated_layout.scale, true, &measure_skill_text, nullptr);
+        const platform::ActiveSkillHudTextPlan repeated_cooling =
+            platform::make_active_skill_hud_text_plan(
             view.slots[0U], repeated_layout.text_regions[0U],
-            repeated_layout.scale, true, &measure_skill_text, nullptr));
+            repeated_layout.scale, true, &measure_skill_text, nullptr);
+        ARPG_REQUIRE(repeated_empty.key.visible
+            && !repeated_empty.name.visible && !repeated_empty.cooldown.visible);
+        ARPG_REQUIRE(repeated_ready.key.visible
+            && repeated_ready.name.visible && !repeated_ready.cooldown.visible);
+        ARPG_REQUIRE(repeated_cooling.key.visible
+            && repeated_cooling.name.visible && repeated_cooling.cooldown.visible);
     }
     ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
     return {};
@@ -357,12 +495,12 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto viewport : kViewports) {
-        const float scale = platform::ui_viewport_scale(
-            viewport[0], viewport[1]);
+        const float scale = viewport[0] == 1920 ? 1.5F : 1.0F;
         const float expected_width = (5.0F * 76.0F + 4.0F * 8.0F) * scale;
         const platform::ActiveSkillHudLayout layout =
             platform::active_skill_hud_layout(viewport[0], viewport[1]);
         ARPG_REQUIRE(layout.valid);
+        ARPG_REQUIRE(arpg::test::near(layout.scale, scale));
         ARPG_REQUIRE(arpg::test::near(layout.bounds.width, expected_width));
         ARPG_REQUIRE(arpg::test::near(layout.bounds.x
             + layout.bounds.width * 0.5F,
@@ -376,6 +514,28 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
                 layout.slots[index].height, 76.0F * scale));
             const platform::ActiveSkillHudTextRegions& regions =
                 layout.text_regions[index];
+            ARPG_REQUIRE(arpg::test::near(regions.key.x,
+                layout.slots[index].x + 4.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.key.y,
+                layout.slots[index].y - 20.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.key.width,
+                layout.slots[index].width - 8.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.key.height, 18.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.cooldown.x,
+                layout.slots[index].x + 16.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.cooldown.y,
+                layout.slots[index].y + 28.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.cooldown.width,
+                layout.slots[index].width - 32.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(
+                regions.cooldown.height, 20.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.name.x,
+                layout.slots[index].x + 7.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.name.y,
+                layout.slots[index].y + 77.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.name.width,
+                layout.slots[index].width - 14.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(regions.name.height, 18.0F * scale));
             ARPG_REQUIRE(platform::ui_text_bounds_inside(regions.visual_bounds,
                 {0.0F, 0.0F, static_cast<float>(viewport[0]),
                     static_cast<float>(viewport[1])}));

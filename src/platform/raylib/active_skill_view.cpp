@@ -207,15 +207,14 @@ ActiveSkillHudTextPlan make_active_skill_hud_text_plan(
 
     result.name = make_text_plate_plan(slot.name.data(), regions.name, scale,
         UiTextAuditRole::hud_skill_name, measure, measure_context);
-    if (!result.name.visible) return {};
-    if (slot.cooldown_ratio <= 0.0F || slot.cooldown_label[0U] == '\0') {
+    if (!finite(slot.cooldown_ratio) || slot.cooldown_ratio <= 0.0F
+            || slot.cooldown_label[0U] == '\0') {
         return result;
     }
 
     result.cooldown = make_text_plate_plan(slot.cooldown_label.data(),
         regions.cooldown, scale, UiTextAuditRole::hud_skill_cooldown,
         measure, measure_context);
-    if (!result.cooldown.visible) return {};
     return result;
 }
 
