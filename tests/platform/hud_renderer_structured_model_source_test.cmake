@@ -28,16 +28,39 @@ function(count_substring INPUT NEEDLE OUTPUT)
 endfunction()
 
 function(require_real_code BODY LABEL)
-    string(REGEX MATCH "if[ ]*\\([ ]*(false|0)[ ]*\\)"
+    string(REGEX MATCH "if([ ]+constexpr)?[ ]*\\([ ]*(false|0)[ ]*\\)"
         DEAD_BRANCH "${BODY}")
     if(DEAD_BRANCH)
         message(FATAL_ERROR "${LABEL} must not hide required calls in constant-false code")
     endif()
-    string(REGEX MATCH "auto[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*\\["
-        UNCALLED_LAMBDA "${BODY}")
-    if(UNCALLED_LAMBDA)
-        message(FATAL_ERROR "${LABEL} must not hide required calls in an uncalled lambda")
-    endif()
+endfunction()
+
+function(require_no_uncalled_lambda BODY LABEL)
+    set(REMAINDER "${BODY}")
+    while(TRUE)
+        string(REGEX MATCH
+            "(const[ ]+)?auto([ ]*&&|[ ]*&)?[ ]+([A-Za-z_][A-Za-z0-9_]*)[ ]*=[ ]*\\["
+            LAMBDA_DECLARATION "${REMAINDER}")
+        if(LAMBDA_DECLARATION STREQUAL "")
+            break()
+        endif()
+        set(LAMBDA_NAME "${CMAKE_MATCH_3}")
+        string(LENGTH "${LAMBDA_DECLARATION}" DECLARATION_LENGTH)
+        string(FIND "${REMAINDER}" "${LAMBDA_DECLARATION}"
+            DECLARATION_INDEX)
+        math(EXPR AFTER_DECLARATION
+            "${DECLARATION_INDEX} + ${DECLARATION_LENGTH}")
+        string(SUBSTRING "${REMAINDER}" ${AFTER_DECLARATION} -1
+            AFTER_DECLARATION_TEXT)
+        string(REGEX MATCH
+            "(${LAMBDA_NAME}[ ]*\\(|std::invoke[ ]*\\([ ]*${LAMBDA_NAME})"
+            LAMBDA_INVOKED "${AFTER_DECLARATION_TEXT}")
+        if(LAMBDA_INVOKED STREQUAL "")
+            message(FATAL_ERROR
+                "${LABEL} must not hide required calls in an uncalled lambda")
+        endif()
+        set(REMAINDER "${AFTER_DECLARATION_TEXT}")
+    endwhile()
 endfunction()
 
 file(READ "${HUD_RENDERER_SOURCE}" HUD_SOURCE)
@@ -46,6 +69,8 @@ set(HUD_DRAW_MARKER
 extract_cpp_function_body("${HUD_SOURCE}"
     "${HUD_DRAW_MARKER}"
     HUD_DRAW_BODY HUD_DRAW_CODE)
+require_real_code("${HUD_DRAW_CODE}" "HudRenderer::draw")
+require_no_uncalled_lambda("${HUD_DRAW_CODE}" "HudRenderer::draw")
 set(REQUIRED_BAR_AUDIT
     "record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font, bar.label.bytes.data(), label_position, style.player_bar_font_size * layout.scale, 1.0F, label_container, style.player_bar_font_size * layout.scale, &blocker, 1U);")
 set(REQUIRED_BAR_DRAW
@@ -71,6 +96,7 @@ extract_cpp_function_body("${ACTIVE_SOURCE}"
     "void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,"
     ACTIVE_DRAW_BODY ACTIVE_DRAW_CODE)
 require_real_code("${ACTIVE_DRAW_CODE}" "ActiveSkillRenderer::draw_hud")
+require_no_uncalled_lambda("${ACTIVE_DRAW_CODE}" "ActiveSkillRenderer::draw_hud")
 set(REQUIRED_INVALID_LAYOUT_GUARD "if (!layout.valid) return;")
 string(FIND "${ACTIVE_DRAW_CODE}" "${REQUIRED_INVALID_LAYOUT_GUARD}"
     INVALID_LAYOUT_GUARD_INDEX)
@@ -104,10 +130,33 @@ if(NOT INVALID_LAYOUT_GUARD_INDEX LESS TEXT_PLAN_INDEX)
     message(FATAL_ERROR
         "ActiveSkillRenderer::draw_hud must reject invalid layout before making a text plan")
 endif()
-string(FIND "${ACTIVE_DRAW_CODE}" "material_pack.draw_to(" ARTWORK_DRAW_INDEX)
-if(ARTWORK_DRAW_INDEX EQUAL -1 OR NOT ARTWORK_DRAW_INDEX LESS TEXT_PLAN_INDEX)
+set(LAST_ARTWORK_DRAW_INDEX -1)
+foreach(ARTWORK_DRAW_TOKEN IN ITEMS
+        "material_pack.draw_to( ui_material_sprite(slot_material), bounds);"
+        "DrawRectangleRounded("
+        "DrawRectangleRoundedLinesEx("
+        "DrawCircleLines("
+        "DrawLineEx({center.x"
+        "static_cast<void>(material_pack.draw_to(slot.icon, icon_bounds));"
+        "DrawRectangleRec(cooldown_overlay.bounds, Color{3, 7, 14, 190});"
+        "DrawLineEx({cooldown_overlay.bounds.x")
+    string(FIND "${ACTIVE_DRAW_CODE}" "${ARTWORK_DRAW_TOKEN}"
+        ARTWORK_DRAW_INDEX)
+    if(ARTWORK_DRAW_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "ActiveSkillRenderer::draw_hud must retain its ${ARTWORK_DRAW_TOKEN} artwork path")
+    endif()
+    if(NOT ARTWORK_DRAW_INDEX LESS TEXT_PLAN_INDEX)
+        message(FATAL_ERROR
+            "Active-skill artwork must finish before the text plan is made")
+    endif()
+    if(ARTWORK_DRAW_INDEX GREATER LAST_ARTWORK_DRAW_INDEX)
+        set(LAST_ARTWORK_DRAW_INDEX ${ARTWORK_DRAW_INDEX})
+    endif()
+endforeach()
+if(NOT LAST_ARTWORK_DRAW_INDEX LESS TEXT_PLAN_INDEX)
     message(FATAL_ERROR
-        "Active-skill slot artwork must be drawn before the text plan is made")
+        "The last active-skill artwork draw must precede the text plan")
 endif()
 
 set(LAST_TEXT_DRAW_INDEX ${TEXT_PLAN_INDEX})
@@ -133,6 +182,7 @@ extract_cpp_function_body("${ACTIVE_SOURCE}"
     "void draw_active_skill_text_plate(Font font,"
     ACTIVE_PLATE_BODY ACTIVE_PLATE_CODE)
 require_real_code("${ACTIVE_PLATE_CODE}" "Active-skill text plate helper")
+require_no_uncalled_lambda("${ACTIVE_PLATE_CODE}" "Active-skill text plate helper")
 set(REQUIRED_PLATE_EARLY_RETURN "if (!plan.visible) return;")
 string(FIND "${ACTIVE_PLATE_CODE}" "${REQUIRED_PLATE_EARLY_RETURN}"
     PLATE_EARLY_RETURN_INDEX)
@@ -168,6 +218,7 @@ extract_cpp_function_body("${TEXT_RENDERER_SOURCE}"
     "void draw_crisp_ui_text(Font font, const char* text,"
     TEXT_RENDERER TEXT_RENDERER_CODE)
 require_real_code("${TEXT_RENDERER_CODE}" "draw_crisp_ui_text")
+require_no_uncalled_lambda("${TEXT_RENDERER_CODE}" "draw_crisp_ui_text")
 set(REQUIRED_CONDITIONAL_SHADOW
     "if (shadow_pixels > 0) { DrawTextEx(font, text, shadow, font_size, spacing, style.shadow); }")
 count_substring("${TEXT_RENDERER}" "${REQUIRED_CONDITIONAL_SHADOW}"
@@ -186,6 +237,8 @@ extract_cpp_function_body("${TEXT_AUDIT_SOURCE}"
     TEXT_AUDIT_RECORD TEXT_AUDIT_RECORD_CODE)
 require_real_code("${TEXT_AUDIT_MEASURED_CODE}" "UI text measured bounds")
 require_real_code("${TEXT_AUDIT_RECORD_CODE}" "record_ui_text_bounds")
+require_no_uncalled_lambda("${TEXT_AUDIT_MEASURED_CODE}" "UI text measured bounds")
+require_no_uncalled_lambda("${TEXT_AUDIT_RECORD_CODE}" "record_ui_text_bounds")
 set(TEXT_AUDIT "${TEXT_AUDIT_MEASURED}")
 set(REQUIRED_EFFECTIVE_SHADOW
     "const int effective_shadow = shadow_pixels > 0 ? shadow_pixels : 0;")
@@ -213,6 +266,7 @@ extract_cpp_function_body("${ACTIVE_SOURCE}"
     "[[nodiscard]] UiTextExtent measure_active_skill_text(const char* text,"
     ACTIVE_MEASURE_BODY ACTIVE_MEASURE_CODE)
 require_real_code("${ACTIVE_MEASURE_CODE}" "Active-skill MeasureTextEx adapter")
+require_no_uncalled_lambda("${ACTIVE_MEASURE_CODE}" "Active-skill MeasureTextEx adapter")
 foreach(REQUIRED_MEASURE_CALL IN ITEMS
         "static_cast<const ActiveSkillTextMeasureContext*>(context);"
         "!IsFontValid(measure_context->font)"
@@ -256,12 +310,8 @@ foreach(DRAW_BODY IN ITEMS HUD_DRAW_BODY ACTIVE_DRAW_BODY)
 endforeach()
 
 foreach(DRAW_CODE IN ITEMS HUD_DRAW_CODE ACTIVE_DRAW_CODE)
-    string(REGEX MATCH "if[ ]*\\([ ]*(false|0)[ ]*\\)"
-        DEAD_BRANCH "${${DRAW_CODE}}")
-    if(DEAD_BRANCH)
-        message(FATAL_ERROR
-            "HUD draw function must not hide required calls in a compile-time dead branch")
-    endif()
+    require_real_code("${${DRAW_CODE}}" "HUD draw function")
+    require_no_uncalled_lambda("${${DRAW_CODE}}" "HUD draw function")
     foreach(FORBIDDEN_CODE_REGEX IN ITEMS
             "TextFormat[ ]*\\("
             "(std::)?snprintf[ ]*\\(")

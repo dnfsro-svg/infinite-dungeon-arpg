@@ -247,6 +247,41 @@ replace_required("${ACTIVE_MUTATED}" "legacy_draw(text_plan.key);"
 run_guard(active_skill_key_call_hidden_in_constant_false
     "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
 
+replace_required("${ACTIVE_ORIGINAL}"
+    "draw_active_skill_text_plate(hud_font, text_plan.key);"
+    "legacy_draw(text_plan.key);" ACTIVE_MUTATED
+    "replace live key plate draw for if constexpr decoy")
+set(ACTIVE_CONSTEXPR_FALSE_DECOY
+    "if constexpr (false) { draw_active_skill_text_plate(hud_font, text_plan.key); }\n        ")
+replace_required("${ACTIVE_MUTATED}" "legacy_draw(text_plan.key);"
+    "${ACTIVE_CONSTEXPR_FALSE_DECOY}legacy_draw(text_plan.key);"
+    ACTIVE_MUTATED "insert if constexpr false active-skill key plate decoy")
+run_guard(active_skill_key_call_hidden_in_if_constexpr_false
+    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+
+replace_required("${ACTIVE_ORIGINAL}"
+    "draw_active_skill_text_plate(hud_font, text_plan.key);"
+    "legacy_draw(text_plan.key);" ACTIVE_MUTATED
+    "replace live key plate draw for auto reference lambda decoy")
+set(ACTIVE_AUTO_REF_LAMBDA_DECOY
+    "auto&& hidden = [&]() { draw_active_skill_text_plate(hud_font, text_plan.key); };\n        ")
+replace_required("${ACTIVE_MUTATED}" "legacy_draw(text_plan.key);"
+    "${ACTIVE_AUTO_REF_LAMBDA_DECOY}legacy_draw(text_plan.key);"
+    ACTIVE_MUTATED "insert auto reference uncalled active-skill lambda decoy")
+run_guard(active_skill_key_call_hidden_in_auto_ref_lambda
+    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+
+set(TEXT_PLAN_DRAW_BLOCK
+    "        const ActiveSkillHudTextPlan text_plan = make_active_skill_hud_text_plan(\n            slot, layout.text_regions[index], layout.scale,\n            hud_font_ready && IsFontValid(hud_font),\n            &measure_active_skill_text, &measure_context);\n        draw_active_skill_text_plate(hud_font, text_plan.key);\n        draw_active_skill_text_plate(hud_font, text_plan.cooldown);\n        draw_active_skill_text_plate(hud_font, text_plan.name);\n")
+replace_required("${ACTIVE_ORIGINAL}" "${TEXT_PLAN_DRAW_BLOCK}" ""
+    ACTIVE_MUTATED "remove live text plan and plate draw block")
+replace_required("${ACTIVE_MUTATED}"
+    "        if (!slot.empty) {\n            const float inset ="
+    "${TEXT_PLAN_DRAW_BLOCK}        if (!slot.empty) {\n            const float inset ="
+    ACTIVE_MUTATED "move text plan and plates before icon and cooldown artwork")
+run_guard(active_skill_plan_before_icon_and_cooldown_artwork
+    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+
 if(MISSED_MUTATIONS)
     list(JOIN MISSED_MUTATIONS ", " MISSED_LABELS)
     message(FATAL_ERROR
