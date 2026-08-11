@@ -348,28 +348,178 @@ SceneLabelLayout scene_label_layout(Vector2 anchor, Vector2 text_size,
     return layout;
 }
 
-Vector2 monster_role_label_anchor(Rectangle primary_resource_bar,
-    float label_lane_offset, SceneLabelStyle style) noexcept {
-    constexpr float kMinimumPlateGap = 1.0F;
+MonsterSceneLabelSequence monster_scene_label_sequence(
+    bool draw_debug, std::size_t affix_count) noexcept {
+    MonsterSceneLabelSequence sequence{};
+    if (draw_debug) {
+        sequence.slots[sequence.count++] = {MonsterSceneLabelKind::role, 0U};
+        sequence.slots[sequence.count++] = {MonsterSceneLabelKind::phase, 0U};
+    }
+    affix_count = std::min<std::size_t>(affix_count, 3U);
+    for (std::size_t index = 0U; index < affix_count; ++index) {
+        sequence.slots[sequence.count++] = {
+            MonsterSceneLabelKind::affix, index};
+    }
+    return sequence;
+}
+
+Rectangle monster_actor_label_exclusion(ScreenProjection projected) noexcept {
+    const float scale = std::isfinite(projected.scale)
+        ? std::max(0.0F, projected.scale) : 0.0F;
     return {
-        primary_resource_bar.x,
-        primary_resource_bar.y + std::max(0.0F, primary_resource_bar.height)
-            + kMinimumPlateGap + std::max(0.0F, style.vertical_padding)
-            - label_lane_offset,
+        projected.x - 50.0F * scale,
+        projected.y - 100.0F * scale,
+        100.0F * scale,
+        104.0F * scale,
     };
 }
 
-Vector2 next_stacked_scene_label_anchor(Vector2 previous_anchor,
-    float previous_text_height, SceneLabelStyle previous_style,
-    SceneLabelStyle next_style) noexcept {
+MonsterSceneLabelStackLayout monster_scene_label_stack_layout(
+    const std::array<MonsterSceneLabelEntry,
+        kMonsterSceneLabelCapacity>& entries,
+    std::size_t entry_count,
+    const std::array<Rectangle, 3U>& visible_resource_bars,
+    std::size_t visible_resource_bar_count,
+    Rectangle actor_bounds,
+    std::size_t label_lane,
+    float projection_scale,
+    float viewport_width,
+    float viewport_height) noexcept {
+    MonsterSceneLabelStackLayout layout{};
+    entry_count = std::min(entry_count, entries.size());
+    visible_resource_bar_count = std::min(
+        visible_resource_bar_count, visible_resource_bars.size());
+    if (entry_count == 0U || !std::isfinite(viewport_width)
+            || !std::isfinite(viewport_height)
+            || viewport_width <= 0.0F || viewport_height <= 0.0F) {
+        return layout;
+    }
+
     constexpr float kMinimumPlateGap = 1.0F;
-    return {
-        previous_anchor.x,
-        previous_anchor.y + std::max(0.0F, previous_text_height)
-            + std::max(0.0F, previous_style.vertical_padding)
-            + kMinimumPlateGap
-            + std::max(0.0F, next_style.vertical_padding),
+    const auto nonnegative = [](float value) noexcept {
+        return std::isfinite(value) ? std::max(0.0F, value) : 0.0F;
     };
+    std::array<float, kMonsterSceneLabelCapacity> plate_widths{};
+    std::array<float, kMonsterSceneLabelCapacity> plate_heights{};
+    float stack_width = 0.0F;
+    float stack_height = 0.0F;
+    for (std::size_t index = 0U; index < entry_count; ++index) {
+        const MonsterSceneLabelEntry& entry = entries[index];
+        plate_widths[index] = nonnegative(entry.text_size.x)
+            + nonnegative(entry.style.horizontal_padding) * 2.0F;
+        plate_heights[index] = nonnegative(entry.text_size.y)
+            + nonnegative(entry.style.vertical_padding) * 2.0F;
+        stack_width = std::max(stack_width, plate_widths[index]);
+        stack_height += plate_heights[index];
+        if (index > 0U) stack_height += kMinimumPlateGap;
+    }
+    if (stack_width <= 0.0F || stack_height <= 0.0F
+            || stack_width > viewport_width || stack_height > viewport_height) {
+        return layout;
+    }
+
+    const auto normalized_rectangle = [&nonnegative](Rectangle bounds) noexcept {
+        bounds.x = std::isfinite(bounds.x) ? bounds.x : 0.0F;
+        bounds.y = std::isfinite(bounds.y) ? bounds.y : 0.0F;
+        bounds.width = nonnegative(bounds.width);
+        bounds.height = nonnegative(bounds.height);
+        return bounds;
+    };
+    actor_bounds = normalized_rectangle(actor_bounds);
+    const auto has_area = [](Rectangle bounds) noexcept {
+        return bounds.width > 0.0F && bounds.height > 0.0F;
+    };
+    const auto overlaps = [&has_area](Rectangle lhs, Rectangle rhs) noexcept {
+        return has_area(lhs) && has_area(rhs)
+            && lhs.x < rhs.x + rhs.width && lhs.x + lhs.width > rhs.x
+            && lhs.y < rhs.y + rhs.height && lhs.y + lhs.height > rhs.y;
+    };
+
+    Rectangle exclusion = actor_bounds;
+    bool has_exclusion = has_area(exclusion);
+    const auto include_exclusion = [&exclusion, &has_exclusion,
+                                    &normalized_rectangle, &has_area](
+            Rectangle bounds) noexcept {
+        bounds = normalized_rectangle(bounds);
+        if (!has_area(bounds)) return;
+        if (!has_exclusion) {
+            exclusion = bounds;
+            has_exclusion = true;
+            return;
+        }
+        const float right = std::max(
+            exclusion.x + exclusion.width, bounds.x + bounds.width);
+        const float bottom = std::max(
+            exclusion.y + exclusion.height, bounds.y + bounds.height);
+        exclusion.x = std::min(exclusion.x, bounds.x);
+        exclusion.y = std::min(exclusion.y, bounds.y);
+        exclusion.width = right - exclusion.x;
+        exclusion.height = bottom - exclusion.y;
+    };
+    for (std::size_t index = 0U;
+            index < visible_resource_bar_count; ++index) {
+        include_exclusion(visible_resource_bars[index]);
+    }
+    if (!has_exclusion) return layout;
+
+    const float lane_scale = std::isfinite(projection_scale)
+        ? std::max(0.0F, projection_scale) : 0.0F;
+    const float lane_offset = static_cast<float>(label_lane % 4U)
+        * 54.0F * lane_scale;
+    const float exclusion_center_x = exclusion.x + exclusion.width * 0.5F;
+    const float exclusion_center_y = exclusion.y + exclusion.height * 0.5F;
+    const std::array<Vector2, 4U> candidates{{
+        {exclusion_center_x - stack_width * 0.5F,
+            exclusion.y - kMinimumPlateGap - stack_height - lane_offset},
+        {exclusion_center_x - stack_width * 0.5F,
+            exclusion.y + exclusion.height + kMinimumPlateGap + lane_offset},
+        {exclusion.x + exclusion.width + kMinimumPlateGap,
+            exclusion_center_y - stack_height * 0.5F - lane_offset},
+        {exclusion.x - kMinimumPlateGap - stack_width,
+            exclusion_center_y - stack_height * 0.5F - lane_offset},
+    }};
+    const auto stack_collides = [&](Rectangle bounds) noexcept {
+        if (overlaps(bounds, actor_bounds)) return true;
+        for (std::size_t index = 0U;
+                index < visible_resource_bar_count; ++index) {
+            if (overlaps(bounds,
+                    normalized_rectangle(visible_resource_bars[index]))) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const Vector2 candidate : candidates) {
+        const Vector2 origin{
+            std::clamp(candidate.x, 0.0F, viewport_width - stack_width),
+            std::clamp(candidate.y, 0.0F, viewport_height - stack_height),
+        };
+        const Rectangle stack_bounds{
+            origin.x, origin.y, stack_width, stack_height};
+        if (stack_collides(stack_bounds)) continue;
+
+        layout.bounds = {origin.x, origin.y, stack_width, stack_height};
+        float plate_y = origin.y;
+        for (std::size_t index = 0U; index < entry_count; ++index) {
+            const MonsterSceneLabelEntry& entry = entries[index];
+            const float text_width = nonnegative(entry.text_size.x);
+            const float text_height = nonnegative(entry.text_size.y);
+            const float plate_x = origin.x
+                + (stack_width - plate_widths[index]) * 0.5F;
+            layout.plates[index].backing = {
+                plate_x, plate_y, plate_widths[index], plate_heights[index]};
+            layout.plates[index].text_position = {
+                plate_x + (plate_widths[index] - text_width) * 0.5F,
+                plate_y + (plate_heights[index] - text_height) * 0.5F,
+            };
+            plate_y += plate_heights[index] + kMinimumPlateGap;
+        }
+        layout.plate_count = entry_count;
+        layout.visible = true;
+        return layout;
+    }
+    return layout;
 }
 
 MonsterPresentationPlan monster_presentation_plan(

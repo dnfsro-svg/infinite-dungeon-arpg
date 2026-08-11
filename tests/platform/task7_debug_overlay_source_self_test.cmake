@@ -7,10 +7,10 @@ endif()
 set(_guard "${SOURCE_ROOT}/tests/platform/task7_debug_overlay_source_test.cmake")
 set(_source_dir "${SOURCE_ROOT}/src/platform/raylib")
 set(_names OVERLAY_HEADER OVERLAY_SOURCE DEBUG_SOURCE ACTOR_SOURCE
-    COMBAT_SOURCE VIEW_MATH_SOURCE)
+    COMBAT_SOURCE VIEW_MATH_HEADER VIEW_MATH_SOURCE)
 set(_files debug_overlay_renderer.hpp debug_overlay_renderer.cpp
     debug_renderer.cpp actor_renderer.cpp combat_renderer.cpp
-    combat_view_math.cpp)
+    combat_view_math.hpp combat_view_math.cpp)
 file(REMOVE_RECURSE "${MUTATION_ROOT}")
 file(MAKE_DIRECTORY "${MUTATION_ROOT}")
 
@@ -84,34 +84,57 @@ expect_mutation_rejected(unclamped_world_label_layout DEBUG_SOURCE
             {corners[4].x + 4.0F, corners[4].y - 14.0F}};")
 expect_mutation_rejected(monster_label_text_before_backing ACTOR_SOURCE
     "DrawRectangleRec(layout.backing, style.backing_color);
-        draw_crisp_ui_text(font, text, layout.text_position,
-            static_cast<float>(font_size), 1.0F, style.text_color);"
+    draw_crisp_ui_text(font, text, layout.text_position,
+        static_cast<float>(font_size), 1.0F, style.text_color);"
     "draw_crisp_ui_text(font, text, layout.text_position,
-            static_cast<float>(font_size), 1.0F, style.text_color);
-        DrawRectangleRec(layout.backing, style.backing_color);")
+        static_cast<float>(font_size), 1.0F, style.text_color);
+    DrawRectangleRec(layout.backing, style.backing_color);")
 expect_mutation_rejected(default_monster_label_font ACTOR_SOURCE
     "draw_crisp_ui_text(font, text, layout.text_position,
-            static_cast<float>(font_size), 1.0F, style.text_color);"
+        static_cast<float>(font_size), 1.0F, style.text_color);"
     "DrawTextEx(GetFontDefault(), text, layout.text_position,
-            static_cast<float>(font_size), 1.0F, style.text_color);")
+        static_cast<float>(font_size), 1.0F, style.text_color);")
 expect_mutation_rejected(dead_monster_label_backing ACTOR_SOURCE
     "DrawRectangleRec(layout.backing, style.backing_color);"
-    "if (font_ready && false) {
-            DrawRectangleRec(layout.backing, style.backing_color);
-        }")
-expect_mutation_rejected(missing_monster_label_viewport ACTOR_SOURCE
-    "text_style.role_font_size,
-            Color{248, 246, 238, 255}, width, height);"
-    "text_style.role_font_size,
-            Color{248, 246, 238, 255}, 0.0F, 0.0F);")
+    "if (IsFontValid(font) && false) {
+        DrawRectangleRec(layout.backing, style.backing_color);
+    }")
+
+expect_mutation_rejected(stack_capacity_expansion VIEW_MATH_HEADER
+    "inline constexpr std::size_t kMonsterSceneLabelCapacity = 5U;"
+    "inline constexpr std::size_t kMonsterSceneLabelCapacity = 15U;")
+expect_mutation_rejected(normal_mode_includes_debug_labels ACTOR_SOURCE
+    "monster_scene_label_sequence(draw_debug, affix_count);"
+    "monster_scene_label_sequence(true, affix_count);")
+expect_mutation_rejected(missing_visible_resource_bar_exclusion ACTOR_SOURCE
+    "visible_resource_bars[visible_resource_bar_count++] = bar_bounds;"
+    "static_cast<void>(bar_bounds);")
+expect_mutation_rejected(missing_actor_exclusion ACTOR_SOURCE
+    "monster_actor_label_exclusion(projected),
+            presentation.debug_label_lane, scale, width, height);"
+    "Rectangle{},
+            presentation.debug_label_lane, scale, width, height);")
+expect_mutation_rejected(hardcoded_stack_lane ACTOR_SOURCE
+    "presentation.debug_label_lane, scale, width, height);"
+    "0U, scale, width, height);")
+expect_mutation_rejected(missing_real_text_measurement ACTOR_SOURCE
+    "MeasureTextEx(hud_font, label_texts[index],
+                static_cast<float>(label_font_sizes[index]), 1.0F),"
+    "Vector2{0.0F, 0.0F},")
+expect_mutation_rejected(independent_plate_viewport_clamp VIEW_MATH_SOURCE
+    "            plate_y += plate_heights[index] + kMinimumPlateGap;"
+    "            layout.plates[index] = scene_label_layout(
+                {plate_x, plate_y}, entry.text_size,
+                viewport_width, viewport_height, entry.style);
+            plate_y += plate_heights[index] + kMinimumPlateGap;")
 
 expect_mutation_rejected(unsafe_affix_textformat ACTOR_SOURCE
-    "    for (std::size_t index = 0U; index < affix_count; ++index) {"
-    "    draw_scene_label(hud_font, hud_font_ready,
-        TextFormat(\"%s %s\", u8\"词缀\", u8\"Ⅰ\"),
-        x - bar_width * .5F, phase_y, text_style.affix_font_size,
-        Color{205, 218, 237, 255}, width, height);
-    for (std::size_t index = 0U; index < affix_count; ++index) {")
+    "            static_cast<void>(ui_utf8_format(
+                affix_text.data(), affix_text.size(),
+                u8\"%s %s\", badge.short_name, badge.tier_text));
+            label_texts[index] = affix_text.data();"
+    "            label_texts[index] = TextFormat(
+                \"%s %s\", badge.short_name, badge.tier_text);")
 
 expect_mutation_rejected(line_capacity OVERLAY_HEADER
     "std::array<DebugOverlayLine, 12U> lines{};"

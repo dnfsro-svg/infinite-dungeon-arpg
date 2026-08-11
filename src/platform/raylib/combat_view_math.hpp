@@ -81,6 +81,36 @@ struct SceneLabelLayout final {
     Vector2 text_position{};
 };
 
+inline constexpr std::size_t kMonsterSceneLabelCapacity = 5U;
+
+enum class MonsterSceneLabelKind : std::uint8_t {
+    role,
+    phase,
+    affix,
+};
+
+struct MonsterSceneLabelSlot final {
+    MonsterSceneLabelKind kind{MonsterSceneLabelKind::role};
+    std::size_t affix_index{};
+};
+
+struct MonsterSceneLabelSequence final {
+    std::array<MonsterSceneLabelSlot, kMonsterSceneLabelCapacity> slots{};
+    std::size_t count{};
+};
+
+struct MonsterSceneLabelEntry final {
+    Vector2 text_size{};
+    SceneLabelStyle style{};
+};
+
+struct MonsterSceneLabelStackLayout final {
+    std::array<SceneLabelLayout, kMonsterSceneLabelCapacity> plates{};
+    std::size_t plate_count{};
+    Rectangle bounds{};
+    bool visible{};
+};
+
 struct MonsterPresentationPlan final {
     float resource_bar_offset_y{};
     std::size_t debug_label_lane{};
@@ -155,12 +185,21 @@ void sort_actor_draw_items(
     Vector2 anchor, Vector2 text_size,
     float viewport_width, float viewport_height,
     SceneLabelStyle style) noexcept;
-[[nodiscard]] Vector2 monster_role_label_anchor(
-    Rectangle primary_resource_bar, float label_lane_offset,
-    SceneLabelStyle style) noexcept;
-[[nodiscard]] Vector2 next_stacked_scene_label_anchor(
-    Vector2 previous_anchor, float previous_text_height,
-    SceneLabelStyle previous_style, SceneLabelStyle next_style) noexcept;
+[[nodiscard]] MonsterSceneLabelSequence monster_scene_label_sequence(
+    bool draw_debug, std::size_t affix_count) noexcept;
+[[nodiscard]] Rectangle monster_actor_label_exclusion(
+    ScreenProjection projected) noexcept;
+[[nodiscard]] MonsterSceneLabelStackLayout monster_scene_label_stack_layout(
+    const std::array<MonsterSceneLabelEntry,
+        kMonsterSceneLabelCapacity>& entries,
+    std::size_t entry_count,
+    const std::array<Rectangle, 3U>& visible_resource_bars,
+    std::size_t visible_resource_bar_count,
+    Rectangle actor_bounds,
+    std::size_t label_lane,
+    float projection_scale,
+    float viewport_width,
+    float viewport_height) noexcept;
 [[nodiscard]] MonsterPresentationPlan monster_presentation_plan(
     std::size_t label_lane, bool draw_debug) noexcept;
 [[nodiscard]] AffixBadge monster_affix_badge(
