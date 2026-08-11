@@ -324,15 +324,19 @@ SceneLabelLayout scene_label_layout(Vector2 anchor, Vector2 text_size,
     const float safe_height = std::max(0.0F, viewport_height);
     const float text_width = std::max(0.0F, text_size.x);
     const float text_height = std::max(0.0F, text_size.y);
+    const float horizontal_padding =
+        std::max(0.0F, style.horizontal_padding);
+    const float vertical_padding =
+        std::max(0.0F, style.vertical_padding);
     const float backing_width = std::min(safe_width,
-        text_width + std::max(0.0F, style.horizontal_padding) * 2.0F);
+        text_width + horizontal_padding * 2.0F);
     const float backing_height = std::min(safe_height,
-        text_height + std::max(0.0F, style.vertical_padding) * 2.0F);
+        text_height + vertical_padding * 2.0F);
     SceneLabelLayout layout{};
     layout.backing = {
-        std::clamp(anchor.x - backing_width * 0.5F,
+        std::clamp(anchor.x - horizontal_padding,
             0.0F, std::max(0.0F, safe_width - backing_width)),
-        std::clamp(anchor.y - backing_height * 0.5F,
+        std::clamp(anchor.y - vertical_padding,
             0.0F, std::max(0.0F, safe_height - backing_height)),
         backing_width,
         backing_height,

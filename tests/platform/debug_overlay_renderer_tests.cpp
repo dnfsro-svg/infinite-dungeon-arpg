@@ -50,6 +50,11 @@ namespace platform = arpg::platform;
         && inner.y + inner.height <= static_cast<float>(height);
 }
 
+[[nodiscard]] bool rectangles_overlap(Rectangle lhs, Rectangle rhs) noexcept {
+    return lhs.x < rhs.x + rhs.width && lhs.x + lhs.width > rhs.x
+        && lhs.y < rhs.y + rhs.height && lhs.y + lhs.height > rhs.y;
+}
+
 [[nodiscard]] Color to_color(platform::Rgba8 color) noexcept {
     return {color.r, color.g, color.b, color.a};
 }
@@ -172,8 +177,11 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
         const float width = static_cast<float>(viewport[0]);
         const float height = static_cast<float>(viewport[1]);
         const std::array<Vector2, 5U> anchors{{
-            {0.0F, 0.0F}, {width, 0.0F}, {0.0F, height},
-            {width, height}, {width * 0.5F, height * 0.5F},
+            {0.0F, 0.0F}, {width - text_size.x, 0.0F},
+            {0.0F, height - text_size.y},
+            {width - text_size.x, height - text_size.y},
+            {(width - text_size.x) * 0.5F,
+                (height - text_size.y) * 0.5F},
         }};
         std::array<platform::SceneLabelLayout, 5U> labels{};
         for (std::size_t index = 0U; index < anchors.size(); ++index) {
@@ -208,7 +216,42 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
         ARPG_REQUIRE(arpg::test::near(
             labels[4U].backing.y + labels[4U].backing.height * 0.5F,
             height * 0.5F));
+        ARPG_REQUIRE(arpg::test::near(
+            labels[4U].text_position.x, anchors[4U].x));
+        ARPG_REQUIRE(arpg::test::near(
+            labels[4U].text_position.y, anchors[4U].y));
     }
+
+    const platform::SceneLabelStyle scene_style =
+        platform::scene_label_style(Color{205U, 218U, 237U, 255U});
+    const platform::SceneLabelLayout debug_label =
+        platform::scene_label_layout(
+            {104.0F, 86.0F}, {72.0F, 12.0F}, 800.0F, 450.0F,
+            scene_style);
+    ARPG_REQUIRE(arpg::test::near(debug_label.text_position.x, 104.0F));
+    ARPG_REQUIRE(arpg::test::near(debug_label.text_position.y, 86.0F));
+
+    const platform::MonsterPresentationPlan lane_zero =
+        platform::monster_presentation_plan(0U, true);
+    constexpr float kMonsterX = 400.0F;
+    constexpr float kMonsterY = 300.0F;
+    constexpr float kScale = 1.0F;
+    constexpr float kBarWidth = 54.0F;
+    const float role_y = kMonsterY - 120.0F * kScale;
+    const Rectangle resource_bar{
+        kMonsterX - kBarWidth * 0.5F,
+        kMonsterY + lane_zero.resource_bar_offset_y * kScale,
+        kBarWidth,
+        5.0F,
+    };
+    const platform::SceneLabelLayout role_label =
+        platform::scene_label_layout(
+            {kMonsterX - kBarWidth * 0.5F, role_y}, {64.0F, 16.0F},
+            800.0F, 450.0F, scene_style);
+    ARPG_REQUIRE(!rectangles_overlap(role_label.backing, resource_bar));
+    ARPG_REQUIRE(arpg::test::near(
+        role_label.text_position.x, kMonsterX - kBarWidth * 0.5F));
+    ARPG_REQUIRE(arpg::test::near(role_label.text_position.y, role_y));
 
     constexpr std::array<Color, 5U> kActualFixedSceneLabelColors{{
         {90U, 190U, 255U, 190U},
