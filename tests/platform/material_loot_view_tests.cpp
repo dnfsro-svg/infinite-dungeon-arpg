@@ -643,7 +643,9 @@ arpg::test::Failure health_potion_feedback_only_observes_new_committed_receipts(
     ARPG_REQUIRE(committed.ready);
     ARPG_REQUIRE(committed.emphasized);
     ARPG_REQUIRE(std::strcmp(
-        committed.text.bytes.data(), "生命药恢复 +251 HP") == 0);
+        committed.text.bytes.data(), u8"生命药恢复 +251 生命") == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(committed.text.bytes.data()));
+    ARPG_REQUIRE(!committed.text.truncated);
     ARPG_REQUIRE(!feedback.observe(snapshot).ready);
     return {};
 }
@@ -661,7 +663,7 @@ arpg::test::Failure simultaneous_potion_and_material_feedback_preserves_both() n
     const auto potion = feedback.observe(snapshot);
     ARPG_REQUIRE(potion.ready);
     ARPG_REQUIRE(std::strcmp(
-        potion.text.bytes.data(), "生命药恢复 +250 HP") == 0);
+        potion.text.bytes.data(), u8"生命药恢复 +250 生命") == 0);
     const auto material = feedback.observe(snapshot);
     ARPG_REQUIRE(material.ready);
     ARPG_REQUIRE(std::strcmp(material.text.bytes.data(),
@@ -769,21 +771,21 @@ arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() n
     auto published = feedback.observe(snapshot);
     ARPG_REQUIRE(published.ready);
     ARPG_REQUIRE(std::strcmp(
-        published.text.bytes.data(), "生命药恢复 +250 HP") == 0);
+        published.text.bytes.data(), u8"生命药恢复 +250 生命") == 0);
 
     snapshot.health_potion_pickup_receipt.commit_generation = 11U;
     snapshot.health_potion_pickup_receipt.restored_hp = 251;
     published = feedback.observe(snapshot);
     ARPG_REQUIRE(published.ready);
     ARPG_REQUIRE(std::strcmp(
-        published.text.bytes.data(), "生命药恢复 +251 HP") == 0);
+        published.text.bytes.data(), u8"生命药恢复 +251 生命") == 0);
 
     snapshot.health_potion_pickup_receipt.commit_generation = 12U;
     snapshot.health_potion_pickup_receipt.restored_hp = 252;
     published = feedback.observe(snapshot);
     ARPG_REQUIRE(published.ready);
     ARPG_REQUIRE(std::strcmp(
-        published.text.bytes.data(), "生命药恢复 +252 HP") == 0);
+        published.text.bytes.data(), u8"生命药恢复 +252 生命") == 0);
 
     published = feedback.observe(snapshot);
     ARPG_REQUIRE(published.ready);
@@ -821,7 +823,7 @@ arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() n
     published = feedback.observe(snapshot);
     ARPG_REQUIRE(published.ready);
     ARPG_REQUIRE(std::strcmp(
-        published.text.bytes.data(), "生命药恢复 +254 HP") == 0);
+        published.text.bytes.data(), u8"生命药恢复 +254 生命") == 0);
     ARPG_REQUIRE(!feedback.observe(snapshot).ready);
 
     platform::MaterialPickupFeedbackState sustained{};
@@ -833,13 +835,17 @@ arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() n
     bool saw_final_material_total{};
     const auto record = [&](const platform::MaterialPickupFeedback& value) {
         if (!value.ready) return true;
-        if (std::strncmp(value.text.bytes.data(), "生命药恢复 +",
-                sizeof("生命药恢复 +") - 1U) == 0) {
+        if (!platform::ui_utf8_is_valid(value.text.bytes.data())
+                || value.text.truncated) {
+            return false;
+        }
+        if (std::strncmp(value.text.bytes.data(), u8"生命药恢复 +",
+                sizeof(u8"生命药恢复 +") - 1U) == 0) {
             bool matched{};
             for (std::size_t index = 0U; index < kReceiptCount; ++index) {
                 std::array<char, 96U> expected{};
                 static_cast<void>(std::snprintf(expected.data(), expected.size(),
-                    "生命药恢复 +%zu HP", 1001U + index));
+                    u8"生命药恢复 +%zu 生命", 1001U + index));
                 if (std::strcmp(value.text.bytes.data(), expected.data()) != 0) {
                     continue;
                 }

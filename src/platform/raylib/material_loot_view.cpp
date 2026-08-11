@@ -822,10 +822,13 @@ MaterialPickupFeedback MaterialPickupFeedbackState::observe(
     if (potion_receipt.valid && potion_receipt.commit_generation != 0U
             && potion_receipt.commit_generation > health_potion_generation_) {
         health_potion_generation_ = potion_receipt.commit_generation;
-        std::snprintf(potion_feedback.text.bytes.data(),
-            potion_feedback.text.bytes.size(), "生命药恢复 +%d HP",
+        const UiUtf8CopyResult formatted = ui_utf8_format(
+            potion_feedback.text.bytes.data(),
+            potion_feedback.text.bytes.size(), u8"生命药恢复 +%d 生命",
             potion_receipt.restored_hp);
-        potion_feedback.ready = potion_receipt.restored_hp > 0;
+        potion_feedback.text.truncated = formatted.truncated;
+        potion_feedback.ready = potion_receipt.restored_hp > 0
+            && formatted.input_was_valid && !formatted.truncated;
         potion_feedback.emphasized = potion_feedback.ready;
         if (potion_feedback.ready) seconds_left_ = 2.0F;
     }
