@@ -1,12 +1,17 @@
+#include "allocation_probe.hpp"
 #include "test_framework.hpp"
 
 #include "inventory_view_math.hpp"
+#include "ui_text_layout.hpp"
+#include "ui_utf8.hpp"
 
 #include "items/item_catalog.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <string_view>
 #include <vector>
 
@@ -27,9 +32,55 @@ bool separated(Rectangle left, Rectangle right) noexcept {
         || right.y + right.height <= left.y;
 }
 
+std::size_t codepoint_count(const char* text) noexcept {
+    if (text == nullptr) return 0U;
+    std::size_t count{};
+    for (const auto* cursor = reinterpret_cast<const unsigned char*>(text);
+         *cursor != 0U; ++cursor) {
+        if ((*cursor & 0xC0U) != 0x80U) ++count;
+    }
+    return count;
+}
+
+platform::UiTextExtent linear_measure(const char* text, float font_size,
+    float spacing, void*) noexcept {
+    const std::size_t count = codepoint_count(text);
+    return {
+        static_cast<float>(count) * font_size * 0.5F
+            + static_cast<float>(count == 0U ? 0U : count - 1U) * spacing,
+        font_size,
+    };
+}
+
+platform::UiTextExtent mixed_width_measure(const char* text, float font_size,
+    float spacing, void*) noexcept {
+    if (text == nullptr) return {};
+    float width_units{};
+    std::size_t glyph_count{};
+    const auto* cursor = reinterpret_cast<const unsigned char*>(text);
+    while (*cursor != 0U) {
+        if (*cursor < 0x80U) {
+            width_units += 0.5F;
+            ++cursor;
+        } else {
+            width_units += 1.0F;
+            if ((*cursor & 0xE0U) == 0xC0U) cursor += 2U;
+            else if ((*cursor & 0xF0U) == 0xE0U) cursor += 3U;
+            else cursor += 4U;
+        }
+        ++glyph_count;
+    }
+    return {
+        width_units * font_size
+            + static_cast<float>(glyph_count == 0U ? 0U : glyph_count - 1U)
+                * spacing,
+        font_size,
+    };
+}
+
 test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
-        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto& size : kSizes) {
         const Rectangle viewport{0.0F, 0.0F,
@@ -287,10 +338,11 @@ test::Failure attribute_labels_are_human_readable_and_scoped() noexcept {
     const auto local = platform::item_attribute_label(
         physical->effect, physical->stat, physical->operation,
         items::ItemSlot::weapon, 0xFFU);
-    ARPG_REQUIRE(std::string_view{local.name} == "Weapon physical");
-    ARPG_REQUIRE(std::string_view{local.scope} == "LOCAL");
+    ARPG_REQUIRE(std::string_view{local.name} == u8"武器物理伤害");
+    ARPG_REQUIRE(std::string_view{local.scope} == u8"局部");
     ARPG_REQUIRE(std::string_view{local.suffix} == "%");
-    ARPG_REQUIRE(std::string_view{local.qualifier} == " inc");
+    ARPG_REQUIRE(std::string_view{local.qualifier} == u8"提高");
+    ARPG_REQUIRE(!local.multiplier);
     ARPG_REQUIRE(test::near(platform::item_attribute_display_value(
         physical->values[7], local), 42.0));
 
@@ -303,8 +355,8 @@ test::Failure attribute_labels_are_human_readable_and_scoped() noexcept {
     const auto glove_speed = platform::item_attribute_label(
         attack_speed->effect, attack_speed->stat, attack_speed->operation,
         items::ItemSlot::gloves, 0xFFU);
-    ARPG_REQUIRE(std::string_view{weapon_speed.scope} == "LOCAL");
-    ARPG_REQUIRE(std::string_view{glove_speed.scope} == "GLOBAL");
+    ARPG_REQUIRE(std::string_view{weapon_speed.scope} == u8"局部");
+    ARPG_REQUIRE(std::string_view{glove_speed.scope} == u8"全局");
     ARPG_REQUIRE(std::string_view{weapon_speed.suffix} == "%");
     ARPG_REQUIRE(std::string_view{glove_speed.suffix} == "%");
     ARPG_REQUIRE(test::near(platform::item_attribute_display_value(
@@ -315,8 +367,8 @@ test::Failure attribute_labels_are_human_readable_and_scoped() noexcept {
         modifiers::StatId::max_health,
         modifiers::ModifierOperation::flat,
         items::ItemSlot::helmet, 0xFFU);
-    ARPG_REQUIRE(std::string_view{global.name} == "Maximum health");
-    ARPG_REQUIRE(std::string_view{global.scope} == "GLOBAL");
+    ARPG_REQUIRE(std::string_view{global.name} == u8"最大生命");
+    ARPG_REQUIRE(std::string_view{global.scope} == u8"全局");
     ARPG_REQUIRE(std::string_view{global.suffix}.empty());
     ARPG_REQUIRE(std::string_view{global.qualifier}.empty());
 
@@ -325,14 +377,36 @@ test::Failure attribute_labels_are_human_readable_and_scoped() noexcept {
         modifiers::StatId::fire_damage_reduction_cap,
         modifiers::ModifierOperation::flat,
         items::ItemSlot::accessory, 2U);
-    ARPG_REQUIRE(std::string_view{variant.name} == "Lightning DR cap");
-    ARPG_REQUIRE(std::string_view{variant.scope} == "GLOBAL");
+    ARPG_REQUIRE(std::string_view{variant.name} == u8"闪电减伤上限");
+    ARPG_REQUIRE(std::string_view{variant.scope} == u8"全局");
     ARPG_REQUIRE(std::string_view{variant.suffix} == "%");
     ARPG_REQUIRE(std::string_view{variant.qualifier}.empty());
     ARPG_REQUIRE(test::near(
         platform::item_attribute_display_value(2000, variant), 20.0));
     ARPG_REQUIRE(test::near(
         platform::item_attribute_display_value(46, global), 46.0));
+
+    const auto more = platform::item_attribute_label(
+        items::ItemEffectKind::global_modifier,
+        modifiers::StatId::melee_damage,
+        modifiers::ModifierOperation::more,
+        items::ItemSlot::weapon, 0xFFU);
+    ARPG_REQUIRE(std::string_view{more.name} == u8"最终近战伤害");
+    ARPG_REQUIRE(std::string_view{more.scope} == u8"全局");
+    ARPG_REQUIRE(std::string_view{more.suffix}.empty());
+    ARPG_REQUIRE(std::string_view{more.qualifier}.empty());
+    ARPG_REQUIRE(more.multiplier);
+    ARPG_REQUIRE(test::near(
+        platform::item_attribute_display_value(11200, more), 1.12));
+
+    const auto conversion = platform::item_attribute_label(
+        items::ItemEffectKind::global_modifier,
+        modifiers::StatId::fire_damage,
+        modifiers::ModifierOperation::conversion,
+        items::ItemSlot::weapon, 0xFFU);
+    ARPG_REQUIRE(std::string_view{conversion.name} == u8"火焰伤害");
+    ARPG_REQUIRE(std::string_view{conversion.qualifier} == u8"转化");
+    ARPG_REQUIRE(!conversion.multiplier);
     return {};
 }
 
@@ -361,7 +435,7 @@ test::Failure all_catalog_affixes_use_semantic_value_units() noexcept {
             affix->effect, affix->stat, affix->operation, slot,
             affix->id == 112U ? 3U : 0xFFU);
         ARPG_REQUIRE(label.name != nullptr);
-        ARPG_REQUIRE(std::string_view{label.name} != "Attribute");
+        ARPG_REQUIRE(std::string_view{label.name} != u8"装备值");
         ARPG_REQUIRE((std::string_view{label.suffix} == "%")
             == kPercent[index]);
         const double displayed = platform::item_attribute_display_value(
@@ -376,7 +450,7 @@ test::Failure all_catalog_affixes_use_semantic_value_units() noexcept {
 
 test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
-        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto& size : kSizes) {
         const platform::InventoryLayout layout =
@@ -388,24 +462,82 @@ test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
             ARPG_REQUIRE(inside(rectangle, layout.detail));
             ARPG_REQUIRE(rectangle.width >= 211.0F);
         }
-        ARPG_REQUIRE(platform::detail_line_character_capacity(layout) >= 35U);
+        ARPG_REQUIRE(platform::detail_line_character_capacity(layout) >= 26U);
         constexpr std::array<std::string_view, 5> kLongestLines{{
-            "T1 Suf [GLOBAL] Lightning DR cap +6%",
-            "T1 Pre [GLOBAL] Fire damage +42% inc",
-            "Base [GLOBAL] All element DR +10%",
-            "LocalAtk +999.9%  Weapon +1e+18",
-            "Evasion -1e+18  Chance -99.99%",
+            u8"T1 后缀 猎杀 [全局] 闪电减伤上限",
+            u8"T1 前缀 锋利 [全局] 火焰伤害",
+            u8"基础 [全局] 全元素减伤",
+            u8"局部攻击速度",
+            u8"闪避率",
         }};
         for (const std::string_view line : kLongestLines) {
             ARPG_REQUIRE(platform::detail_text_fits(layout, line));
         }
+        for (std::size_t line = 0U; line < 21U; ++line) {
+            const platform::InventoryDetailRowLayout row =
+                platform::inventory_detail_row_layout(layout, line);
+            ARPG_REQUIRE(row.valid);
+            const Rectangle line_bounds =
+                platform::detail_line_rectangle(layout, line);
+            ARPG_REQUIRE(inside(row.label_bounds, line_bounds));
+            ARPG_REQUIRE(inside(row.value_bounds, line_bounds));
+            ARPG_REQUIRE(row.label_bounds.x + row.label_bounds.width
+                <= row.value_bounds.x);
+            ARPG_REQUIRE(row.gap > 0.0F);
+        }
+
+        struct ApprovedDetailRow final {
+            const char* label;
+            const char* value;
+        };
+        constexpr std::array<ApprovedDetailRow, 4> kApprovedRows{{
+            {u8"基础 [全局]", u8"全元素减伤 +12%"},
+            {u8"T1 后缀 猎杀 [全局]", u8"闪电减伤上限 +12%"},
+            {u8"T1 前缀 锋利 [全局]", u8"最终火焰伤害 ×1.12"},
+            {u8"护甲/减伤/闪避/闪避率", u8"+999/+99%/+999/+99%"},
+        }};
+        const platform::InventoryDetailRowLayout approved_row =
+            platform::inventory_detail_row_layout(layout, 0U);
+        for (const ApprovedDetailRow& text : kApprovedRows) {
+            std::array<char, 128> fitted_label{};
+            std::array<char, 128> fitted_value{};
+            const float preferred = 16.0F * layout.scale;
+            const float minimum = 9.0F * layout.scale;
+            const float spacing = 0.5F * layout.scale;
+            const auto label_fit = platform::fit_centered_ui_text(
+                fitted_label.data(), fitted_label.size(), text.label,
+                approved_row.label_bounds, preferred, minimum, spacing,
+                &mixed_width_measure, nullptr);
+            const auto value_fit = platform::fit_centered_ui_text(
+                fitted_value.data(), fitted_value.size(), text.value,
+                approved_row.value_bounds, preferred, minimum, spacing,
+                &mixed_width_measure, nullptr);
+            ARPG_REQUIRE(label_fit.drawable);
+            ARPG_REQUIRE(value_fit.drawable);
+            ARPG_REQUIRE(!label_fit.truncated);
+            ARPG_REQUIRE(!value_fit.truncated);
+        }
     }
+
+    const platform::InventoryLayout layout =
+        platform::inventory_layout(1280, 720);
+    std::size_t valid_count{};
+    const std::uint64_t before = test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 100000U; ++iteration) {
+        valid_count += platform::inventory_detail_row_layout(
+            layout, iteration % 21U).valid ? 1U : 0U;
+    }
+    const std::uint64_t after = test::allocation_count();
+    std::printf("[inventory-detail-layout] iterations=100000 allocations=%llu\n",
+        static_cast<unsigned long long>(after - before));
+    ARPG_REQUIRE(valid_count == 100000U);
+    ARPG_REQUIRE(after == before);
     return {};
 }
 
 test::Failure inventory_and_skill_text_boxes_use_disjoint_safe_areas() noexcept {
-    constexpr std::array<std::array<int, 2>, 2> kSizes{{
-        {{1280, 720}}, {{1920, 1080}},
+    constexpr std::array<std::array<int, 2>, 3> kSizes{{
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto size : kSizes) {
         const Rectangle viewport{0.0F, 0.0F,
@@ -430,6 +562,54 @@ test::Failure inventory_and_skill_text_boxes_use_disjoint_safe_areas() noexcept 
             skill.support_slots[0]));
         ARPG_REQUIRE(separated(text.inventory_section_title,
             skill.inventory_slots[0]));
+
+        constexpr const char* kLabels[] = {
+            u8"装备 / 材料", u8"技能石", u8"取出",
+        };
+        const Rectangle controls[] = {
+            skill.equipment_page_button,
+            skill.skill_stones_page_button,
+            skill.remove_button,
+        };
+        for (std::size_t index = 0U; index < 3U; ++index) {
+            std::array<char, 64U> fitted{};
+            const float preferred = 18.0F * skill.scale;
+            const auto centered = platform::fit_centered_ui_text(
+                fitted.data(), fitted.size(), kLabels[index], controls[index],
+                preferred, 12.0F * skill.scale, 0.5F * skill.scale,
+                &linear_measure, nullptr);
+            ARPG_REQUIRE(centered.drawable);
+            ARPG_REQUIRE(!centered.truncated);
+            ARPG_REQUIRE(std::strcmp(fitted.data(), kLabels[index]) == 0);
+            ARPG_REQUIRE(test::near(centered.position.x
+                    + centered.size.x * 0.5F,
+                controls[index].x + controls[index].width * 0.5F, 0.01));
+            ARPG_REQUIRE(test::near(centered.position.y
+                    + centered.size.y * 0.5F,
+                controls[index].y + controls[index].height * 0.5F, 0.01));
+        }
+
+        const Rectangle skill_name_bounds[] = {
+            {skill.main_slots[0U].x + 50.0F * skill.scale,
+                skill.main_slots[0U].y + 30.0F * skill.scale,
+                skill.main_slots[0U].width - 58.0F * skill.scale,
+                skill.main_slots[0U].height - 38.0F * skill.scale},
+            {skill.inventory_slots[0U].x + 39.0F * skill.scale,
+                skill.inventory_slots[0U].y + 10.0F * skill.scale,
+                skill.inventory_slots[0U].width - 46.0F * skill.scale,
+                skill.inventory_slots[0U].height - 20.0F * skill.scale},
+        };
+        for (const Rectangle bounds : skill_name_bounds) {
+            std::array<char, 64U> fitted{};
+            const auto name_fit = platform::fit_centered_ui_text(
+                fitted.data(), fitted.size(), u8"极·鬼剑术（暴风式）",
+                bounds, 18.0F * skill.scale, 9.0F * panels.scale,
+                0.5F * panels.scale, &mixed_width_measure, nullptr);
+            ARPG_REQUIRE(name_fit.drawable);
+            ARPG_REQUIRE(!name_fit.truncated);
+            ARPG_REQUIRE(std::strcmp(
+                fitted.data(), u8"极·鬼剑术（暴风式）") == 0);
+        }
     }
     return {};
 }
@@ -458,17 +638,35 @@ test::Failure full_hd_inventory_and_skill_geometry_scales_by_one_and_a_half()
 
 test::Failure inventory_page_titles_follow_the_current_binding() noexcept {
     const auto equipment = platform::inventory_page_title(
-        platform::InventoryPage::equipment_materials, "Right");
+        platform::InventoryPage::equipment_materials, u8"右 Shift");
     const auto skills = platform::inventory_page_title(
-        platform::InventoryPage::skill_stones, "Right");
+        platform::InventoryPage::skill_stones, u8"右 Shift");
     ARPG_REQUIRE(std::string_view(equipment.data())
-        == "Right / ESC  ·  EQUIPMENT INVENTORY");
+        == u8"按键提示：右 Shift / ESC  ·  装备背包");
     ARPG_REQUIRE(std::string_view(skills.data())
-        == u8"Right / ESC  ·  技能石背包");
+        == u8"按键提示：右 Shift / ESC  ·  技能石背包");
+    const auto unknown = platform::inventory_page_title(
+        platform::InventoryPage::equipment_materials, nullptr);
+    ARPG_REQUIRE(std::string_view(unknown.data())
+        == u8"按键提示：未知 / ESC  ·  装备背包");
     const auto longest = platform::inventory_page_title(
-        platform::InventoryPage::equipment_materials, "Right Shift");
+        platform::InventoryPage::equipment_materials, u8"右 Shift");
     ARPG_REQUIRE(std::string_view(longest.data()).rfind(
-        "Right Shift / ESC", 0U) == 0U);
+        u8"按键提示：右 Shift / ESC", 0U) == 0U);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(equipment.data()));
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(skills.data()));
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(unknown.data()));
+
+    const auto extreme = platform::inventory_page_title(
+        platform::InventoryPage::equipment_materials,
+        u8"超长中文绑定名称超长中文绑定名称超长中文绑定名称超长中文绑定名称");
+    const std::string_view extreme_text{extreme.data()};
+    constexpr std::string_view kEquipmentSuffix = u8" / ESC  ·  装备背包";
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(extreme.data()));
+    ARPG_REQUIRE(extreme_text.find(u8"…") != std::string_view::npos);
+    ARPG_REQUIRE(extreme_text.size() >= kEquipmentSuffix.size());
+    ARPG_REQUIRE(extreme_text.substr(
+        extreme_text.size() - kEquipmentSuffix.size()) == kEquipmentSuffix);
     return {};
 }
 

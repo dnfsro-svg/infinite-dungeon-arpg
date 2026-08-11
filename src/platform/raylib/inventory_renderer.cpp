@@ -8,6 +8,8 @@
 #include "ui_material.hpp"
 #include "ui_text_contrast.hpp"
 #include "ui_text_bounds_audit.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_text_layout.hpp"
 #include "ui_text_renderer.hpp"
 #include "ui_typography.hpp"
 
@@ -19,7 +21,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <string>
 
 #include "direct_input_poison.hpp"
 
@@ -32,28 +33,7 @@ namespace {
 constexpr float kCellHeight = 58.0F;
 constexpr float kGridTopInset = 82.0F;
 constexpr float kGridBottomInset = 58.0F;
-
-const char* slot_name(items::ItemSlot slot) noexcept {
-    switch (slot) {
-    case items::ItemSlot::weapon: return "Weapon";
-    case items::ItemSlot::helmet: return "Helmet";
-    case items::ItemSlot::chest: return "Chest";
-    case items::ItemSlot::gloves: return "Gloves";
-    case items::ItemSlot::boots: return "Boots";
-    case items::ItemSlot::accessory: return "Accessory";
-    case items::ItemSlot::count: break;
-    }
-    return "Unknown";
-}
-
-const char* rarity_name(items::ItemRarity rarity) noexcept {
-    switch (rarity) {
-    case items::ItemRarity::normal: return "Normal";
-    case items::ItemRarity::magic: return "Magic";
-    case items::ItemRarity::rare: return "Rare";
-    }
-    return "Unknown";
-}
+constexpr Color kInventoryTextBacking{5, 9, 16, 255};
 
 Color rarity_color(items::ItemRarity rarity) noexcept {
     switch (rarity) {
@@ -69,38 +49,26 @@ bool contains(Rectangle rectangle, Vector2 point) noexcept {
         && point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
 }
 
-void fit_inventory_text(Font font, const char* source, char* output,
-    std::size_t capacity, float width, float size) noexcept {
-    if (output == nullptr || capacity == 0U) return;
-    static_cast<void>(std::snprintf(output, capacity, "%s",
-        source == nullptr ? "" : source));
-    output[capacity - 1U] = '\0';
-    if (!(width > 0.0F)
-            || MeasureTextEx(font, output, size, 0.5F).x <= width) return;
-    std::size_t length = std::char_traits<char>::length(output);
-    while (length > 0U) {
-        do {
-            --length;
-        } while (length > 0U
-            && (static_cast<unsigned char>(output[length]) & 0xC0U) == 0x80U);
-        output[length] = '\0';
-        if (length + 4U >= capacity) continue;
-        static_cast<void>(std::snprintf(
-            output + length, capacity - length, "..."));
-        if (MeasureTextEx(font, output, size, 0.5F).x <= width) return;
-        output[length] = '\0';
-    }
+UiTextExtent measure_inventory_text(const char* text, float font_size,
+    float spacing, void* context) noexcept {
+    if (context == nullptr) return {};
+    const Font font = *static_cast<const Font*>(context);
+    if (!IsFontValid(font)) return {};
+    const Vector2 extent = MeasureTextEx(font, text, font_size, spacing);
+    return {extent.x, extent.y};
 }
 
 void draw_hud_font_text(Font font, bool ready, const char* text,
     float x, float y, float size, Color color,
     UiTextAuditPage audit_page = UiTextAuditPage::count,
     UiTextAuditRole audit_role = UiTextAuditRole::count,
-    Rectangle audit_container = {}, float minimum_size = 0.0F,
+    Rectangle audit_container = Rectangle(), float minimum_size = 0.0F,
     const Rectangle* blockers = nullptr,
-    std::size_t blocker_count = 0U) noexcept {
+    std::size_t blocker_count = 0U,
+    Color opaque_backing = kInventoryTextBacking) noexcept {
+    if (!ready || !IsFontValid(font)) return;
     if (text == nullptr || text[0] == '\0') return;
-    const Font draw_font = ready && IsFontValid(font) ? font : GetFontDefault();
+    if (opaque_backing.a != 255U) return;
     const float viewport_scale = ui_viewport_scale(
         GetScreenWidth(), GetScreenHeight());
     size *= viewport_scale;
@@ -109,21 +77,60 @@ void draw_hud_font_text(Font font, bool ready, const char* text,
     const bool audited = audit_page != UiTextAuditPage::count
         && audit_role != UiTextAuditRole::count
         && audit_container.width > 0.0F && audit_container.height > 0.0F;
-    fit_inventory_text(draw_font, text, fitted, sizeof(fitted),
-        audited ? audit_container.width - 6.0F : 0.0F, size);
-    const char* const final_text = fitted;
+    const Rectangle fit_bounds = audited ? audit_container : Rectangle{
+        x, y, std::max(1.0F, static_cast<float>(GetScreenWidth()) - x),
+        std::max(1.0F, size * 1.5F)};
+    const UiCenteredTextLayout layout = fit_centered_ui_text(
+        fitted, sizeof(fitted), text, fit_bounds, size,
+        minimum_size > 0.0F ? minimum_size : size,
+        0.5F * viewport_scale, &measure_inventory_text, &font);
+    if (!layout.drawable) return;
     const UiTextContrastStyle style = ui_text_contrast_style();
     color.a = 255U;
-    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
-        color = style.muted;
+    if (ui_luma_contrast_ratio(color, opaque_backing) < 4.5F) {
+        color = style.primary;
+        if (ui_luma_contrast_ratio(color, opaque_backing) < 4.5F) return;
     }
-    constexpr float kSpacing = 0.5F;
+    const Vector2 position{std::max(x, fit_bounds.x),
+        std::max(y, fit_bounds.y)};
     if (audited) {
-        record_ui_text_bounds(audit_page, audit_role, draw_font, final_text,
-            {x, y}, size, kSpacing, audit_container, minimum_size,
+        record_ui_text_bounds(audit_page, audit_role, font, layout.text,
+            position, layout.font_size, layout.spacing, audit_container,
+            minimum_size,
             blockers, blocker_count);
     }
-    draw_crisp_ui_text(draw_font, final_text, {x, y}, size, kSpacing, color);
+    draw_crisp_ui_text(font, layout.text, position, layout.font_size,
+        layout.spacing, color);
+}
+
+void draw_centered_hud_font_text(Font font, bool ready, const char* text,
+    Rectangle interaction_bounds, float size, float minimum_size, Color color,
+    UiTextAuditPage audit_page = UiTextAuditPage::count,
+    UiTextAuditRole audit_role = UiTextAuditRole::count,
+    Color opaque_backing = kInventoryTextBacking) noexcept {
+    if (!ready || !IsFontValid(font)) return;
+    if (text == nullptr || text[0] == '\0') return;
+    if (opaque_backing.a != 255U) return;
+    const float scale = ui_viewport_scale(GetScreenWidth(), GetScreenHeight());
+    char fitted[256]{};
+    const UiCenteredTextLayout layout = fit_centered_ui_text(
+        fitted, sizeof(fitted), text, interaction_bounds, size * scale,
+        minimum_size * scale, 0.5F * scale,
+        &measure_inventory_text, &font);
+    if (!layout.drawable) return;
+    color.a = 255U;
+    if (ui_luma_contrast_ratio(color, opaque_backing) < 4.5F) {
+        color = ui_text_contrast_style().primary;
+        if (ui_luma_contrast_ratio(color, opaque_backing) < 4.5F) return;
+    }
+    if (audit_page != UiTextAuditPage::count
+            && audit_role != UiTextAuditRole::count) {
+        record_ui_text_bounds(audit_page, audit_role, font, layout.text,
+            layout.position, layout.font_size, layout.spacing,
+            interaction_bounds, minimum_size * scale);
+    }
+    draw_crisp_ui_text(font, layout.text, layout.position, layout.font_size,
+        layout.spacing, color);
 }
 
 void draw_opaque_skill_text_backing(Rectangle bounds) noexcept {
@@ -134,8 +141,9 @@ void draw_opaque_skill_text_backing(Rectangle bounds) noexcept {
 void draw_panel(Rectangle rectangle, const char* title,
     const MaterialPack& assets, UiMaterialElement element,
     Font font, bool font_ready, Rectangle title_bounds) noexcept {
+    DrawRectangleRec(rectangle, kInventoryTextBacking);
     if (!assets.draw_nine_slice(ui_material_sprite(element), rectangle)) {
-        DrawRectangleRounded(rectangle, 0.025F, 5, Color{8, 12, 20, 247});
+        DrawRectangleRounded(rectangle, 0.025F, 5, Color{8, 12, 20, 255});
         DrawRectangleRoundedLinesEx(rectangle, 0.025F, 5, 1.0F,
             Color{72, 91, 120, 255});
     }
@@ -144,19 +152,19 @@ void draw_panel(Rectangle rectangle, const char* title,
     static_cast<void>(assets.draw_region_fit(
         ui_material_sprite(UiMaterialElement::label_plate),
         {4.0F, 30.0F, 120.0F, 67.0F}, label_bounds));
-    draw_hud_font_text(font, font_ready, title,
-        title_bounds.x + 2.0F, title_bounds.y + 2.0F,
+    draw_centered_hud_font_text(font, font_ready, title, title_bounds,
+        ui_typography().panel_title_font_size,
         ui_typography().panel_title_font_size,
         ui_text_contrast_style().primary, UiTextAuditPage::inventory,
-        UiTextAuditRole::inventory_page_title, title_bounds,
-        ui_typography().panel_title_font_size);
+        UiTextAuditRole::inventory_page_title);
 }
 
 void draw_button(Rectangle rectangle, const char* label,
     bool enabled, const MaterialPack& assets, Font font, bool font_ready,
     bool active = false, bool opaque_label_plate = false) noexcept {
-    const Color fill = !enabled ? Color{42, 45, 52, 255}
-        : active ? Color{42, 104, 139, 255} : Color{28, 47, 67, 255};
+    const InventoryControlTextStyle control = inventory_control_text_style();
+    const Color fill = !enabled ? control.disabled_backing
+        : active ? control.active_backing : control.idle_backing;
     const UiTextContrastStyle text_style = ui_text_contrast_style();
     const Color text = !enabled ? text_style.muted
         : active ? text_style.interaction : text_style.primary;
@@ -164,6 +172,7 @@ void draw_button(Rectangle rectangle, const char* label,
         ? UiMaterialElement::inventory_button_disabled
         : active ? UiMaterialElement::inventory_button_active
                  : UiMaterialElement::inventory_button_idle;
+    DrawRectangleRec(rectangle, fill);
     Rectangle source{4.0F, 40.0F, 120.0F, 47.0F};
     if (element == UiMaterialElement::inventory_button_active) {
         source = {4.0F, 42.0F, 120.0F, 44.0F};
@@ -176,26 +185,20 @@ void draw_button(Rectangle rectangle, const char* label,
         DrawRectangleRoundedLinesEx(rectangle, 0.12F, 4, 1.0F,
             enabled ? Color{90, 151, 190, 255} : Color{65, 68, 75, 255});
     }
-    if (opaque_label_plate) {
-        const float scale = ui_viewport_scale(
-            GetScreenWidth(), GetScreenHeight());
-        draw_opaque_skill_text_backing({rectangle.x + 4.0F * scale,
-            rectangle.y + 3.0F * scale,
-            rectangle.width - 8.0F * scale,
-            rectangle.height - 6.0F * scale});
-    }
-    draw_hud_font_text(font, font_ready, label,
-        rectangle.x + 9.0F, rectangle.y + 5.0F,
+    static_cast<void>(opaque_label_plate);
+    draw_centered_hud_font_text(font, font_ready, label, rectangle,
+        ui_typography().kInventoryBodyFontSize,
         ui_typography().kInventoryBodyFontSize, text,
-        UiTextAuditPage::inventory, UiTextAuditRole::inventory_status,
-        {rectangle.x + 5.0F, rectangle.y + 2.0F,
-            rectangle.width - 10.0F, rectangle.height - 4.0F},
-        ui_typography().kInventoryBodyFontSize);
+        UiTextAuditPage::inventory, UiTextAuditRole::inventory_status, fill);
 }
 
 void draw_inventory_page_button(Rectangle rectangle, const char* label,
     bool active, Font font, bool font_ready,
     const MaterialPack& assets) noexcept {
+    const InventoryControlTextStyle control = inventory_control_text_style();
+    const Color backing = active ? control.active_backing
+                                 : control.idle_backing;
+    DrawRectangleRec(rectangle, backing);
     if (!assets.draw_horizontal_slice(ui_material_sprite(active
             ? UiMaterialElement::inventory_tab_active
             : UiMaterialElement::inventory_tab_idle),
@@ -203,19 +206,17 @@ void draw_inventory_page_button(Rectangle rectangle, const char* label,
                    : Rectangle{4.0F, 34.0F, 120.0F, 59.0F},
             24.0F, rectangle)) {
         DrawRectangleRounded(rectangle, 0.14F, 4,
-            active ? Color{42, 104, 139, 255} : Color{23, 39, 57, 255});
+            backing);
         DrawRectangleRoundedLinesEx(rectangle, 0.14F, 4, 1.0F,
             active ? Color{151, 225, 255, 255} : Color{75, 105, 137, 255});
     }
-    draw_hud_font_text(font, font_ready, label,
-        rectangle.x + 12.0F, rectangle.y + 4.0F,
+    draw_centered_hud_font_text(font, font_ready, label, rectangle,
+        ui_typography().inventory_tab_font_size,
         ui_typography().inventory_tab_font_size,
         active ? ui_text_contrast_style().interaction
                : ui_text_contrast_style().primary,
         UiTextAuditPage::inventory, UiTextAuditRole::inventory_status,
-        {rectangle.x + 6.0F, rectangle.y + 2.0F,
-            rectangle.width - 12.0F, rectangle.height - 4.0F},
-        ui_typography().inventory_tab_font_size);
+        backing);
 }
 
 void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
@@ -226,24 +227,25 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
         GetScreenWidth(), GetScreenHeight());
     const float scale = layout.scale;
+    const float skill_text_scale = scale / ui_viewport_scale(
+        GetScreenWidth(), GetScreenHeight());
     const InventoryTextSafeLayout text_layout = inventory_text_safe_layout(
         GetScreenWidth(), GetScreenHeight());
     const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
         snapshot.skill_loadout, selection,
         snapshot.pending_save_kind.has_value());
+    DrawRectangleRec(layout.panel, kInventoryTextBacking);
     if (!assets.draw_nine_slice(
             ui_material_sprite(UiMaterialElement::skill_panel),
             layout.panel)) {
-        DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
+        DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 255});
         DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
             Color{72, 91, 120, 255});
     }
-    draw_hud_font_text(font, font_ready, u8"主动技能石槽",
-        text_layout.skill_panel_title.x + 2.0F,
-        text_layout.skill_panel_title.y + 2.0F, 23.0F,
+    draw_centered_hud_font_text(font, font_ready, u8"主动技能石槽",
+        text_layout.skill_panel_title, 23.0F, 18.0F,
         ui_text_contrast_style().primary, UiTextAuditPage::skill,
-        UiTextAuditRole::skill_page_title, text_layout.skill_panel_title,
-        18.0F);
+        UiTextAuditRole::skill_page_title);
 
     for (std::size_t index = 0U; index < view.slots.size(); ++index) {
         const ActiveSkillLoadoutSlotView& slot = view.slots[index];
@@ -277,32 +279,25 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             {bounds.x + 50.0F * scale, bounds.y + 3.0F * scale,
                 bounds.width - 54.0F * scale, 24.0F * scale}, 18.0F);
         const Rectangle name_backing{
-            bounds.x + 8.0F * scale,
-            bounds.y + 52.0F * scale,
-            bounds.width - 16.0F * scale,
-            32.0F * scale};
+            bounds.x + 50.0F * scale,
+            bounds.y + 30.0F * scale,
+            bounds.width - 58.0F * scale,
+            bounds.height - 38.0F * scale};
         draw_opaque_skill_text_backing(name_backing);
-        draw_hud_font_text(font, font_ready,
+        draw_centered_hud_font_text(font, font_ready,
             slot.empty ? u8"空主技能槽" : slot.name.data(),
-            name_backing.x + 8.0F * scale,
-            name_backing.y + 4.0F * scale,
-            ui_typography().kSkillDescriptionFontSize,
+            name_backing,
+            ui_typography().kSkillDescriptionFontSize * skill_text_scale,
+            9.0F,
             slot.empty ? ui_text_contrast_style().muted
                        : Color{210, 241, 255, 255},
-            UiTextAuditPage::skill, UiTextAuditRole::skill_description,
-            {name_backing.x + 4.0F * scale,
-                name_backing.y + 2.0F * scale,
-                name_backing.width - 8.0F * scale,
-                name_backing.height - 4.0F * scale},
-            ui_typography().kSkillDescriptionFontSize);
+            UiTextAuditPage::skill, UiTextAuditRole::skill_description);
     }
 
-    draw_hud_font_text(font, font_ready, u8"辅助技能石（只读）",
-        text_layout.support_section_title.x + 2.0F,
-        text_layout.support_section_title.y + 2.0F, 19.0F,
+    draw_centered_hud_font_text(font, font_ready, u8"辅助技能石（只读）",
+        text_layout.support_section_title, 19.0F, 18.0F,
         ui_text_contrast_style().primary, UiTextAuditPage::skill,
-        UiTextAuditRole::skill_description,
-        text_layout.support_section_title, 18.0F);
+        UiTextAuditRole::skill_description);
     for (const Rectangle support : layout.support_slots) {
         if (!assets.draw_region_fit(ui_material_sprite(
                 UiMaterialElement::skill_slot_support),
@@ -326,12 +321,10 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
                 support.height - 20.0F * scale}, 16.0F);
     }
 
-    draw_hud_font_text(font, font_ready, u8"未装备技能石",
-        text_layout.inventory_section_title.x + 2.0F,
-        text_layout.inventory_section_title.y + 2.0F, 19.0F,
+    draw_centered_hud_font_text(font, font_ready, u8"未装备技能石",
+        text_layout.inventory_section_title, 19.0F, 18.0F,
         ui_text_contrast_style().primary, UiTextAuditPage::skill,
-        UiTextAuditRole::skill_description,
-        text_layout.inventory_section_title, 18.0F);
+        UiTextAuditRole::skill_description);
     for (std::size_t index = 0U; index < view.inventory_count; ++index) {
         const ActiveSkillInventoryStoneView& stone = view.inventory[index];
         const Rectangle bounds = layout.inventory_slots[index];
@@ -360,15 +353,10 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             bounds.width - 46.0F * scale,
             bounds.height - 20.0F * scale};
         draw_opaque_skill_text_backing(inventory_name_backing);
-        draw_hud_font_text(font, font_ready, stone.name.data(),
-            inventory_name_backing.x + 5.0F * scale,
-            inventory_name_backing.y + 9.0F * scale, 18.0F,
+        draw_centered_hud_font_text(font, font_ready, stone.name.data(),
+            inventory_name_backing, 18.0F * skill_text_scale, 9.0F,
             ui_text_contrast_style().primary, UiTextAuditPage::skill,
-            UiTextAuditRole::skill_inventory_entry,
-            {inventory_name_backing.x + 3.0F * scale,
-                inventory_name_backing.y + 2.0F * scale,
-                inventory_name_backing.width - 6.0F * scale,
-                inventory_name_backing.height - 4.0F * scale}, 18.0F);
+            UiTextAuditRole::skill_inventory_entry);
     }
     if (view.inventory_count == 0U) {
         draw_hud_font_text(font, font_ready, u8"无",
@@ -383,6 +371,10 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
         && selection.selected_slot < snapshot.skill_loadout.slots.size()
         && snapshot.skill_loadout.slots[selection.selected_slot].active
             != skills::ActiveSkillId::none;
+    const InventoryControlTextStyle control = inventory_control_text_style();
+    const Color remove_backing = removable ? control.remove_backing
+                                           : control.disabled_backing;
+    DrawRectangleRec(layout.remove_button, remove_backing);
     if (!assets.draw_horizontal_slice(ui_material_sprite(removable
             ? UiMaterialElement::inventory_button_active
             : UiMaterialElement::inventory_button_disabled),
@@ -390,27 +382,17 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
                       : Rectangle{4.0F, 41.0F, 120.0F, 46.0F},
             24.0F, layout.remove_button)) {
         DrawRectangleRounded(layout.remove_button, 0.12F, 4,
-            removable ? Color{74, 53, 65, 255} : Color{42, 45, 52, 255});
+            remove_backing);
         DrawRectangleRoundedLinesEx(layout.remove_button, 0.12F, 4, 1.0F,
             removable ? Color{219, 125, 151, 255}
                       : Color{65, 68, 75, 255});
     }
-    const Rectangle remove_text_backing{
-        layout.remove_button.x + 42.0F * scale,
-        layout.remove_button.y + 5.0F * scale,
-        layout.remove_button.width - 84.0F * scale,
-        layout.remove_button.height - 10.0F * scale};
-    draw_opaque_skill_text_backing(remove_text_backing);
-    draw_hud_font_text(font, font_ready, u8"取出",
-        remove_text_backing.x + 18.0F * scale,
-        remove_text_backing.y + 3.0F * scale, 18.0F,
+    draw_centered_hud_font_text(font, font_ready, u8"取出",
+        layout.remove_button, 18.0F, 18.0F,
         removable ? ui_text_contrast_style().interaction
                   : ui_text_contrast_style().muted,
         UiTextAuditPage::skill, UiTextAuditRole::skill_description,
-        {remove_text_backing.x + 2.0F * scale,
-            remove_text_backing.y + 1.0F * scale,
-            remove_text_backing.width - 4.0F * scale,
-            remove_text_backing.height - 2.0F * scale}, 18.0F);
+        remove_backing);
 
     if (view.save_pending) {
         draw_hud_font_text(font, font_ready, u8"正在保存",
@@ -425,6 +407,53 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             ui_typography().kSkillDescriptionFontSize,
             Color{255, 118, 118, 255});
     }
+}
+
+void draw_detail_row(Font font, bool ready, InventoryLayout inventory_layout,
+    std::size_t line, const char* label, const char* value,
+    Color color) noexcept {
+    if (!ready || !IsFontValid(font) || label == nullptr
+            || label[0] == '\0' || value == nullptr || value[0] == '\0') {
+        return;
+    }
+    const InventoryDetailRowLayout row = inventory_detail_row_layout(
+        inventory_layout, line);
+    if (!row.valid) return;
+    const float preferred = ui_typography().kInventoryDetailFontSize
+        * inventory_layout.scale;
+    const float minimum = 9.0F * inventory_layout.scale;
+    char fitted_label[128]{};
+    char fitted_value[96]{};
+    const UiCenteredTextLayout label_layout = fit_centered_ui_text(
+        fitted_label, sizeof(fitted_label), label, row.label_bounds,
+        preferred, minimum, 0.5F * inventory_layout.scale,
+        &measure_inventory_text, &font);
+    const UiCenteredTextLayout value_layout = fit_centered_ui_text(
+        fitted_value, sizeof(fitted_value), value, row.value_bounds,
+        preferred, minimum, 0.5F * inventory_layout.scale,
+        &measure_inventory_text, &font);
+    if (!label_layout.drawable || !value_layout.drawable) return;
+    color.a = 255U;
+    if (ui_luma_contrast_ratio(color, kInventoryTextBacking) < 4.5F) {
+        color = ui_text_contrast_style().muted;
+    }
+    const Vector2 label_position{row.label_bounds.x,
+        label_layout.position.y};
+    const float value_x = row.value_bounds.x + row.value_bounds.width
+        - value_layout.size.x;
+    const Vector2 value_position{value_x, value_layout.position.y};
+    record_ui_text_bounds(UiTextAuditPage::inventory,
+        UiTextAuditRole::inventory_detail, font, label_layout.text,
+        label_position, label_layout.font_size, label_layout.spacing,
+        row.label_bounds, minimum);
+    record_ui_text_bounds(UiTextAuditPage::inventory,
+        UiTextAuditRole::inventory_detail, font, value_layout.text,
+        value_position, value_layout.font_size, value_layout.spacing,
+        row.value_bounds, minimum);
+    draw_crisp_ui_text(font, label_layout.text, label_position,
+        label_layout.font_size, label_layout.spacing, color);
+    draw_crisp_ui_text(font, value_layout.text, value_position,
+        value_layout.font_size, value_layout.spacing, color);
 }
 
 int grid_columns(Rectangle grid, float scale) noexcept {
@@ -788,7 +817,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const MaterialPack& material_pack,
     const char* inventory_binding_label,
     Font hud_font, bool hud_font_ready) {
-    if (!open_) return;
+    if (!open_ || !hud_font_ready || !IsFontValid(hud_font)) return;
     sync(session, snapshot);
     const items::ItemOwnershipState& state = session.item_state();
     const InventoryLayout layout = inventory_layout(GetScreenWidth(), GetScreenHeight());
@@ -799,23 +828,18 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         GetScreenWidth(), GetScreenHeight());
     const auto page_title = inventory_page_title(
         page_, inventory_binding_label);
-    if (page_ == InventoryPage::equipment_materials) {
-        draw_hud_font_text(hud_font, hud_font_ready,
-            page_title.data(),
-            text_layout.page_title.x + 2.0F,
-            text_layout.page_title.y + 2.0F,
-            ui_typography().page_title_font_size,
-            ui_text_contrast_style().primary, UiTextAuditPage::inventory,
-            UiTextAuditRole::inventory_page_title, text_layout.page_title,
-            ui_typography().page_title_font_size);
-    } else {
-        draw_hud_font_text(hud_font, hud_font_ready,
-            page_title.data(),
-            text_layout.page_title.x + 2.0F,
-            text_layout.page_title.y + 2.0F, 23.0F,
-            ui_text_contrast_style().primary, UiTextAuditPage::skill,
-            UiTextAuditRole::skill_page_title, text_layout.page_title, 18.0F);
-    }
+    draw_centered_hud_font_text(hud_font, hud_font_ready,
+        page_title.data(), text_layout.page_title,
+        page_ == InventoryPage::equipment_materials
+            ? ui_typography().page_title_font_size : 23.0F,
+        page_ == InventoryPage::equipment_materials
+            ? ui_typography().page_title_font_size : 18.0F,
+        ui_text_contrast_style().primary,
+        page_ == InventoryPage::equipment_materials
+            ? UiTextAuditPage::inventory : UiTextAuditPage::skill,
+        page_ == InventoryPage::equipment_materials
+            ? UiTextAuditRole::inventory_page_title
+            : UiTextAuditRole::skill_page_title);
     draw_inventory_page_button(skill_layout.equipment_page_button,
         u8"装备 / 材料", page_ == InventoryPage::equipment_materials,
         hud_font, hud_font_ready, material_pack);
@@ -827,13 +851,13 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             material_pack, hud_font, hud_font_ready);
         return;
     }
-    draw_panel(layout.equipment, "EQUIPMENT", material_pack,
+    draw_panel(layout.equipment, ui_text(UiTextId::equipment_title), material_pack,
         UiMaterialElement::inventory_panel_equipment,
         hud_font, hud_font_ready, text_layout.equipment_panel_title);
-    draw_panel(layout.grid, "INVENTORY", material_pack,
+    draw_panel(layout.grid, ui_text(UiTextId::inventory_title), material_pack,
         UiMaterialElement::inventory_panel_grid,
         hud_font, hud_font_ready, text_layout.grid_panel_title);
-    draw_panel(layout.detail, "ITEM DETAIL", material_pack,
+    draw_panel(layout.detail, ui_text(UiTextId::item_detail_title), material_pack,
         UiMaterialElement::inventory_panel_detail,
         hud_font, hud_font_ready, text_layout.detail_panel_title);
     material_bag_.draw(state, material_pack, hud_font, hud_font_ready,
@@ -855,34 +879,27 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
                 Color{75, 100, 133, 255});
         }
         static_cast<void>(material_pack.draw(ground_loot_item_sprite(slot),
-            {rectangle.x + 24.0F, rectangle.y + rectangle.height * 0.5F},
-            false, 0.24F, state.equipment.equipped_ids[index] == 0U
-                ? Fade(WHITE, 0.30F) : WHITE));
+            {rectangle.x + 24.0F * layout.scale,
+                rectangle.y + rectangle.height * 0.5F},
+            false, 0.24F * layout.scale,
+            state.equipment.equipped_ids[index] == 0U
+                 ? Fade(WHITE, 0.30F) : WHITE));
         const std::uint64_t id = state.equipment.equipped_ids[index];
-        if (id == 0U) {
-            draw_hud_font_text(hud_font, hud_font_ready,
-                TextFormat("%s  [empty]", slot_name(slot)),
-                rectangle.x + 45.0F, rectangle.y + 6.0F,
-                ui_typography().kInventoryBodyFontSize,
-                ui_text_contrast_style().primary,
-                UiTextAuditPage::inventory,
-                UiTextAuditRole::inventory_equipment_slot,
-                {rectangle.x + 41.0F, rectangle.y + 3.0F,
-                    rectangle.width - 45.0F, rectangle.height - 6.0F},
-                ui_typography().kInventoryBodyFontSize);
-        } else {
-            draw_hud_font_text(hud_font, hud_font_ready,
-                TextFormat("%s  #%llu", slot_name(slot),
-                static_cast<unsigned long long>(id)),
-                rectangle.x + 45.0F, rectangle.y + 6.0F,
-                ui_typography().kInventoryBodyFontSize,
-                ui_text_contrast_style().primary,
-                UiTextAuditPage::inventory,
-                UiTextAuditRole::inventory_equipment_slot,
-                {rectangle.x + 41.0F, rectangle.y + 3.0F,
-                    rectangle.width - 45.0F, rectangle.height - 6.0F},
-                ui_typography().kInventoryBodyFontSize);
-        }
+        char slot_text[64]{};
+        static_cast<void>(std::snprintf(slot_text, sizeof(slot_text),
+            id == 0U ? u8"%s · 空" : u8"%s · 已装备",
+            ui_item_slot_name(slot)));
+        const Rectangle slot_content{
+            rectangle.x + 41.0F * layout.scale,
+            rectangle.y + 3.0F * layout.scale,
+            rectangle.width - 45.0F * layout.scale,
+            rectangle.height - 6.0F * layout.scale};
+        draw_centered_hud_font_text(hud_font, hud_font_ready, slot_text,
+            slot_content, ui_typography().kInventoryBodyFontSize,
+            ui_typography().kInventoryBodyFontSize,
+            ui_text_contrast_style().primary,
+            UiTextAuditPage::inventory,
+            UiTextAuditRole::inventory_equipment_slot);
     }
     const float scale = layout.scale;
     int stat_y = static_cast<int>(layout.equipment.y + 248.0F * scale);
@@ -901,20 +918,20 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     };
     if (snapshot.combat.has_value()) {
         const combat::PlayerSnapshot& player = snapshot.combat->player;
-        draw_stat(TextFormat("HP %d/%d  Barrier %d/%d", player.hp,
+        draw_stat(TextFormat(u8"生命 %d/%d · 护盾 %d/%d", player.hp,
             player.max_hp, player.barrier, player.max_barrier));
-        draw_stat(TextFormat("Armor %lld (%g%%)",
+        draw_stat(TextFormat(u8"护甲 %lld（减伤 %g%%）",
             static_cast<long long>(player.armor),
             player.armor_reduction_bp / 100.0F));
-        draw_stat(TextFormat("Evasion %lld (%g%%)",
+        draw_stat(TextFormat(u8"闪避 %lld（闪避率 %g%%）",
             static_cast<long long>(player.evasion),
             player.evasion_rate_bp / 100.0F));
-        draw_stat(TextFormat("F %g/%g  W %g/%g%%",
+        draw_stat(TextFormat(u8"火焰 %g/%g · 水流 %g/%g%%",
             player.damage_reduction[0] / 100.0F,
             player.damage_reduction_cap[0] / 100.0F,
             player.damage_reduction[1] / 100.0F,
             player.damage_reduction_cap[1] / 100.0F));
-        draw_stat(TextFormat("L %g/%g  C %g/%g%%",
+        draw_stat(TextFormat(u8"闪电 %g/%g · 混沌 %g/%g%%",
             player.damage_reduction[2] / 100.0F,
             player.damage_reduction_cap[2] / 100.0F,
             player.damage_reduction[3] / 100.0F,
@@ -922,23 +939,25 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     if (current_build_.has_value()) {
         stat_y += 8;
-        draw_stat(TextFormat("Move %g%%  Attack %g%%",
+        draw_stat(TextFormat(u8"移动速度 %g%% · 攻击速度 %g%%",
             current_build_->values.movement_speed / 100.0F,
             current_build_->values.attack_speed / 100.0F));
-        draw_stat(TextFormat("Weapon physical +%lld",
+        draw_stat(TextFormat(u8"武器物理伤害 +%lld",
             static_cast<long long>(current_build_->weapon_physical)));
-        draw_stat(TextFormat("Melee %g%%",
+        draw_stat(TextFormat(u8"近战伤害 %g%%",
             current_build_->values.melee_damage / 100.0F));
     }
 
     const Rectangle slot_button = slot_filter_button(layout.grid, layout.scale);
     const Rectangle rarity_button = rarity_filter_button(
         layout.grid, layout.scale);
-    draw_button(slot_button, TextFormat("Slot: %s",
-        filter_.slot.has_value() ? slot_name(*filter_.slot) : "All"), true,
+    draw_button(slot_button, TextFormat(u8"装备槽：%s",
+        filter_.slot.has_value()
+            ? ui_item_slot_name(*filter_.slot) : u8"全部"), true,
         material_pack, hud_font, hud_font_ready);
-    draw_button(rarity_button, TextFormat("Rarity: %s",
-        filter_.rarity.has_value() ? rarity_name(*filter_.rarity) : "All"), true,
+    draw_button(rarity_button, TextFormat(u8"稀有度：%s",
+        filter_.rarity.has_value()
+            ? ui_item_rarity_name(*filter_.rarity) : u8"全部"), true,
         material_pack, hud_font, hud_font_ready);
     const Rectangle viewport = grid_viewport(layout.grid, layout.scale);
     DrawRectangleRec(viewport, Color{11, 16, 25, 255});
@@ -951,7 +970,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         columns, scroll_rows_, viewport.height, kCellHeight * layout.scale);
     if (visible.count == 0U) {
         draw_hud_font_text(hud_font, hud_font_ready,
-            "No items match this filter.",
+            u8"过滤：无",
             viewport.x + 14.0F * layout.scale,
             viewport.y + 12.0F * layout.scale,
             ui_typography().kInventoryBodyFontSize,
@@ -985,40 +1004,46 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             DrawRectangleRoundedLinesEx(cell, 0.08F, 4,
                 recipe_selected ? 3.0F : 1.0F,
                 recipe_selected ? Color{237, 118, 212, 255}
-                                : rarity_color(item.rarity));
+                                 : rarity_color(item.rarity));
         }
-        draw_hud_font_text(hud_font, hud_font_ready,
-            base == nullptr ? "Invalid" : base->name.data(),
-            cell.x + 7.0F * layout.scale,
-            cell.y + 5.0F * layout.scale,
+        if (base != nullptr) {
+            static_cast<void>(material_pack.draw(
+                ground_loot_item_sprite(base->slot),
+                {cell.x + 21.0F * layout.scale,
+                    cell.y + cell.height * 0.5F},
+                false, 0.20F * layout.scale));
+        }
+        const Rectangle item_name_bounds{
+            cell.x + 40.0F * layout.scale,
+            cell.y + 2.0F * layout.scale,
+            cell.width - 43.0F * layout.scale,
+            24.0F * layout.scale};
+        draw_centered_hud_font_text(hud_font, hud_font_ready,
+            ui_item_base_name(item.base_id), item_name_bounds,
+            ui_typography().kInventoryBodyFontSize,
             ui_typography().kInventoryBodyFontSize, rarity_color(item.rarity),
             UiTextAuditPage::inventory,
-            UiTextAuditRole::inventory_grid_entry,
-            {cell.x + 3.0F * layout.scale,
-                cell.y + 2.0F * layout.scale,
-                cell.width - 6.0F * layout.scale,
-                23.0F * layout.scale},
-            ui_typography().kInventoryBodyFontSize);
-        draw_hud_font_text(hud_font, hud_font_ready,
-            TextFormat("%s  i%u", rarity_name(item.rarity),
-            static_cast<unsigned>(item.item_level)),
-            cell.x + 7.0F * layout.scale,
-            cell.y + 30.0F * layout.scale,
+            UiTextAuditRole::inventory_grid_entry);
+        const Rectangle item_meta_bounds{
+            cell.x + 40.0F * layout.scale,
+            cell.y + 27.0F * layout.scale,
+            cell.width - 43.0F * layout.scale,
+            cell.height - 29.0F * layout.scale};
+        draw_centered_hud_font_text(hud_font, hud_font_ready,
+            TextFormat(u8"%s · 物品等级 %u",
+            ui_item_rarity_name(item.rarity),
+            static_cast<unsigned>(item.item_level)), item_meta_bounds,
+            ui_typography().kInventoryBodyFontSize,
             ui_typography().kInventoryBodyFontSize,
             ui_text_contrast_style().muted,
             UiTextAuditPage::inventory,
-            UiTextAuditRole::inventory_grid_entry,
-            {cell.x + 3.0F * layout.scale,
-                cell.y + 27.0F * layout.scale,
-                cell.width - 6.0F * layout.scale,
-                cell.height - 29.0F * layout.scale},
-            ui_typography().kInventoryBodyFontSize);
+            UiTextAuditRole::inventory_grid_entry);
     }
     EndScissorMode();
     const bool enabled = !snapshot.pending_save_kind.has_value()
         && recipe_ready();
     draw_button(combine_button(layout.grid, layout.scale),
-        TextFormat("Combine (%u/3)",
+        TextFormat(u8"三合一（%u/3）",
         static_cast<unsigned>(recipe_.count)), enabled, material_pack,
         hud_font, hud_font_ready, false, true);
     bool reinforced_recipe_input = false;
@@ -1033,7 +1058,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     if (reinforced_recipe_input) {
         draw_hud_font_text(hud_font, hud_font_ready,
-            "WARNING: Combine removes reinforcement.",
+            u8"危险：三合一取消强化",
             layout.grid.x + 12.0F * layout.scale,
             layout.grid.y + layout.grid.height - 58.0F * layout.scale,
             ui_typography().kInventoryBodyFontSize,
@@ -1047,11 +1072,9 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     if (const auto selected_material = material_bag_.selected_material();
             selected_material.has_value()) {
-        const items::MaterialDefinition* const definition =
-            items::material_definition(*selected_material);
         draw_hud_font_text(hud_font, hud_font_ready,
-            TextFormat("Selected: %s - click an item to use (R-click cancels)",
-            definition == nullptr ? "Invalid" : definition->name.data()),
+            TextFormat(u8"已选择：%s · 选择物品应用（右键取消）",
+            ui_material_name(*selected_material)),
             layout.grid.x + 12.0F * layout.scale,
             layout.grid.y + 42.0F * layout.scale,
             ui_typography().kInventoryBodyFontSize,
@@ -1065,7 +1088,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     if (snapshot.pending_save_kind.has_value()) {
         draw_hud_font_text(hud_font, hud_font_ready,
-            "SAVE PENDING - ACTIONS DISABLED",
+            u8"正在保存，已锁定",
             layout.grid.x + 12.0F * layout.scale,
             layout.grid.y + 42.0F * layout.scale,
             ui_typography().kInventoryBodyFontSize,
@@ -1080,14 +1103,14 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     if (snapshot.reinforcement_receipt.valid) {
         const dungeon::ReinforcementReceipt& receipt =
             snapshot.reinforcement_receipt;
-        const char* const result = receipt.destroyed ? "DESTROYED"
-            : receipt.success ? "SUCCESS" : "FAILED";
-        const char* const action = receipt.coupon ? "Coupon" : "Reinforcement";
+        const char* const result = receipt.destroyed ? u8"装备丢失"
+            : receipt.success ? u8"成功" : u8"失败";
+        const char* const action = receipt.coupon ? u8"强化券" : u8"强化";
         const Color color = receipt.success ? Color{147, 244, 169, 255}
                                             : Color{255, 145, 118, 255};
         if (receipt.destroyed) {
             draw_hud_font_text(hud_font, hud_font_ready,
-                TextFormat("%s %s: +%u -> DESTROYED", action, result,
+                TextFormat(u8"%s结果：%s / +%u", action, result,
                 static_cast<unsigned>(receipt.before)),
                 layout.grid.x + 12.0F * layout.scale,
                 layout.grid.y + 42.0F * layout.scale,
@@ -1100,7 +1123,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
                 ui_typography().kInventoryBodyFontSize);
         } else {
             draw_hud_font_text(hud_font, hud_font_ready,
-                TextFormat("%s %s: +%u -> +%u", action, result,
+                TextFormat(u8"%s结果：%s / +%u → +%u", action, result,
                 static_cast<unsigned>(receipt.before),
                 static_cast<unsigned>(receipt.after)),
                 layout.grid.x + 12.0F * layout.scale,
@@ -1117,16 +1140,13 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
 
     const items::ItemInstance* const item = selected_item(state);
     const Rectangle first_detail_line = detail_line_rectangle(layout, 0U);
-    const int detail_x = static_cast<int>(first_detail_line.x);
-    const int detail_y = static_cast<int>(first_detail_line.y);
     if (item == nullptr) {
-        draw_hud_font_text(hud_font, hud_font_ready,
-            "Click an item to inspect.", static_cast<float>(detail_x) + 2.0F,
-            static_cast<float>(detail_y) + 2.0F,
+        draw_centered_hud_font_text(hud_font, hud_font_ready,
+            u8"选择物品", first_detail_line,
+            ui_typography().kInventoryDetailFontSize,
             ui_typography().kInventoryDetailFontSize,
             ui_text_contrast_style().muted,
-            UiTextAuditPage::inventory, UiTextAuditRole::inventory_detail,
-            first_detail_line, ui_typography().kInventoryDetailFontSize);
+            UiTextAuditPage::inventory, UiTextAuditRole::inventory_detail);
         return;
     }
     const items::BaseDefinition* const base = items::base_definition(item->base_id);
@@ -1137,7 +1157,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         static_cast<int>(detail_bounds.y), static_cast<int>(detail_bounds.width),
         static_cast<int>(detail_bounds.height));
     std::size_t detail_line = 0U;
-    const auto draw_detail_line = [&](const char* text, Color color) noexcept {
+    const auto draw_heading = [&](const char* text, Color color) noexcept {
         const Rectangle line = detail_line_rectangle(layout, detail_line++);
         draw_hud_font_text(hud_font, hud_font_ready, text,
             line.x + 2.0F, line.y + 2.0F,
@@ -1145,13 +1165,42 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             UiTextAuditPage::inventory, UiTextAuditRole::inventory_detail,
             line, ui_typography().kInventoryDetailFontSize);
     };
-    draw_detail_line(TextFormat("%s %s", rarity_name(item->rarity),
-        base->name.data()), rarity_color(item->rarity));
-    draw_detail_line(TextFormat("iLvl %u  Required %u",
-        static_cast<unsigned>(item->item_level),
-        static_cast<unsigned>(item->required_level)), RAYWHITE);
-    draw_detail_line(TextFormat("Reinforcement +%u",
-        static_cast<unsigned>(item->reinforcement)), Color{255, 225, 123, 255});
+    const auto draw_row = [&](const char* label, const char* value,
+                              Color color) noexcept {
+        draw_detail_row(hud_font, hud_font_ready, layout, detail_line++,
+            label, value, color);
+    };
+    char detail_label[160]{};
+    char detail_value[128]{};
+    const auto format_attribute_value = [&](std::int32_t raw_value,
+                                             ItemAttributeLabel label) noexcept {
+        const double displayed = item_attribute_display_value(raw_value, label);
+        if (label.multiplier) {
+            static_cast<void>(std::snprintf(detail_value,
+                sizeof(detail_value), u8"%s ×%.2f", label.name, displayed));
+        } else if (label.qualifier != nullptr && label.qualifier[0] != '\0') {
+            static_cast<void>(std::snprintf(detail_value,
+                sizeof(detail_value), u8"%s %+g%s %s", label.name,
+                displayed, label.suffix, label.qualifier));
+        } else {
+            static_cast<void>(std::snprintf(detail_value,
+                sizeof(detail_value), u8"%s %+g%s", label.name,
+                displayed, label.suffix));
+        }
+        detail_value[sizeof(detail_value) - 1U] = '\0';
+    };
+
+    static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+        u8"%s · %s", ui_item_rarity_name(item->rarity),
+        ui_item_base_name(item->base_id)));
+    draw_row(u8"装备", detail_value, rarity_color(item->rarity));
+    static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+        u8"%u / 需要等级 %u", static_cast<unsigned>(item->item_level),
+        static_cast<unsigned>(item->required_level)));
+    draw_row(u8"物品等级", detail_value, RAYWHITE);
+    static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+        "+%u", static_cast<unsigned>(item->reinforcement)));
+    draw_row(u8"强化", detail_value, Color{255, 225, 123, 255});
     for (std::size_t effect_index = 0U;
          effect_index < base->effect_count; ++effect_index) {
         const items::BaseEffect& effect = base->effects[effect_index];
@@ -1159,9 +1208,10 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             effect.stat, effect.operation, base->slot, 0xFFU);
         const std::int32_t inherent_raw =
             effect.values[base_value_index(item->item_level)];
-        draw_detail_line(TextFormat("Base [%s] %s %+g%s%s", inherent.scope,
-            inherent.name, item_attribute_display_value(inherent_raw, inherent),
-            inherent.suffix, inherent.qualifier), Color{150, 210, 255, 255});
+        static_cast<void>(std::snprintf(detail_label, sizeof(detail_label),
+            u8"基础 [%s]", inherent.scope));
+        format_attribute_value(inherent_raw, inherent);
+        draw_row(detail_label, detail_value, Color{150, 210, 255, 255});
     }
     for (std::size_t index = 0U; index < item->affix_count; ++index) {
         const items::AffixRoll& roll = item->affixes[index];
@@ -1171,53 +1221,71 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             affix->stat, affix->operation, base->slot, roll.variant);
         const std::int32_t affix_raw =
             affix->values[static_cast<std::size_t>(8U - roll.tier)];
-        draw_detail_line(TextFormat("T%u %s [%s] %s %+g%s%s",
-            static_cast<unsigned>(roll.tier),
-            affix->kind == items::AffixKind::prefix ? "Pre" : "Suf",
-            label.scope, label.name,
-            item_attribute_display_value(affix_raw, label),
-            label.suffix, label.qualifier), Color{216, 222, 234, 255});
+        static_cast<void>(std::snprintf(detail_label, sizeof(detail_label),
+            u8"T%u %s %s [%s]", static_cast<unsigned>(roll.tier),
+            affix->kind == items::AffixKind::prefix ? u8"前缀" : u8"后缀",
+            ui_item_affix_name(roll.affix_id), label.scope));
+        format_attribute_value(affix_raw, label);
+        draw_row(detail_label, detail_value, Color{216, 222, 234, 255});
     }
-    draw_detail_line("FULL BUILD DIFFERENCE", Color{242, 183, 255, 255});
+    draw_heading(u8"全部装备变化", Color{242, 183, 255, 255});
     if (!difference_.has_value()) {
-        draw_detail_line("Preview unavailable", Color{255, 126, 126, 255});
+        draw_row(u8"预览", u8"不可用", Color{255, 126, 126, 255});
     } else {
         const BuildDifference& diff = *difference_;
-        draw_detail_line(TextFormat("HP %+g  Barrier %+g",
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g / %+g",
             diff.max_health / static_cast<double>(modifiers::kFixedOne),
-            diff.max_barrier / static_cast<double>(modifiers::kFixedOne)), RAYWHITE);
-        draw_detail_line(TextFormat("Flat P/F/W/L/C %+g/%+g/%+g/%+g/%+g",
+            diff.max_barrier / static_cast<double>(modifiers::kFixedOne)));
+        draw_row(u8"生命 / 护盾", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g/%+g/%+g/%+g/%+g",
             diff.flat_damage[0] / static_cast<double>(modifiers::kFixedOne),
             diff.flat_damage[1] / static_cast<double>(modifiers::kFixedOne),
             diff.flat_damage[2] / static_cast<double>(modifiers::kFixedOne),
             diff.flat_damage[3] / static_cast<double>(modifiers::kFixedOne),
-            diff.flat_damage[4] / static_cast<double>(modifiers::kFixedOne)), RAYWHITE);
-        draw_detail_line(TextFormat("Inc P/F/W/L/C %+g/%+g/%+g/%+g/%+g%%",
+            diff.flat_damage[4] / static_cast<double>(modifiers::kFixedOne)));
+        draw_row(u8"伤害", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g/%+g/%+g/%+g/%+g%%",
             diff.damage_increased[0] / 100.0, diff.damage_increased[1] / 100.0,
             diff.damage_increased[2] / 100.0,
             diff.damage_increased[3] / 100.0,
-            diff.damage_increased[4] / 100.0), RAYWHITE);
-        draw_detail_line(TextFormat("Melee/Knock %+g/%+g%%",
-            diff.melee_damage / 100.0, diff.impulse_scale / 100.0), RAYWHITE);
-        draw_detail_line(TextFormat("Move/Attack %+g/%+g%%",
-            diff.move_speed / 100.0, diff.attack_speed / 100.0), RAYWHITE);
-        draw_detail_line(TextFormat("LocalAtk %+g%%  Weapon %+g",
+            diff.damage_increased[4] / 100.0));
+        draw_row(u8"伤害提高", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g/%+g%%", diff.melee_damage / 100.0,
+            diff.impulse_scale / 100.0));
+        draw_row(u8"近战 / 击退", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g/%+g%%", diff.move_speed / 100.0,
+            diff.attack_speed / 100.0));
+        draw_row(u8"移动 / 攻击", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g%% / %+g",
             diff.local_attack_speed_bp / 100.0,
-            static_cast<double>(diff.weapon_physical)), RAYWHITE);
-        draw_detail_line(TextFormat("Armor %+g/DR %+g%%  Eva %+g/Chance %+g%%",
+            static_cast<double>(diff.weapon_physical)));
+        draw_row(u8"局部攻击 / 武器物理", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g/%+g%%/%+g/%+g%%",
             static_cast<double>(diff.armor), diff.armor_reduction_bp / 100.0,
             static_cast<double>(diff.evasion),
-            diff.evasion_rate_bp / 100.0), RAYWHITE);
-        draw_detail_line(TextFormat("F/W/L/C DR %+g/%+g/%+g/%+g%%",
+            diff.evasion_rate_bp / 100.0));
+        draw_row(u8"护甲/减伤/闪避/闪避率", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g/%+g/%+g/%+g%%",
             diff.damage_reduction[0] / 100.0,
             diff.damage_reduction[1] / 100.0,
             diff.damage_reduction[2] / 100.0,
-            diff.damage_reduction[3] / 100.0), RAYWHITE);
-        draw_detail_line(TextFormat("F/W/L/C cap %+g/%+g/%+g/%+g%%",
+            diff.damage_reduction[3] / 100.0));
+        draw_row(u8"元素减伤", detail_value, RAYWHITE);
+        static_cast<void>(std::snprintf(detail_value, sizeof(detail_value),
+            "%+g/%+g/%+g/%+g%%",
             diff.damage_reduction_cap_bonus[0] / 100.0,
             diff.damage_reduction_cap_bonus[1] / 100.0,
             diff.damage_reduction_cap_bonus[2] / 100.0,
-            diff.damage_reduction_cap_bonus[3] / 100.0), RAYWHITE);
+            diff.damage_reduction_cap_bonus[3] / 100.0));
+        draw_row(u8"元素减伤上限", detail_value, RAYWHITE);
     }
     EndScissorMode();
     material_bag_.draw_reinforcement_confirmation(material_pack,

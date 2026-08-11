@@ -2,6 +2,7 @@
 
 #include "inventory_view_math.hpp"
 #include "skills/skill_loadout.hpp"
+#include "ui_text_catalog.hpp"
 
 #include <array>
 #include <cstddef>
@@ -17,6 +18,12 @@ bool overlaps(Rectangle left, Rectangle right) noexcept {
         && right.x < left.x + left.width
         && left.y < right.y + right.height
         && right.y < left.y + left.height;
+}
+
+bool inside(Rectangle inner, Rectangle outer) noexcept {
+    return inner.x >= outer.x && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height;
 }
 
 Vector2 center(Rectangle rectangle) noexcept {
@@ -40,23 +47,32 @@ arpg::test::Failure view_has_five_main_slots_five_read_only_supports_and_invento
             == skills::kSupportSlotsPerActive);
         for (const bool empty : slot.support_empty) ARPG_REQUIRE(empty);
     }
+    ARPG_REQUIRE(view.slots[0U].empty);
+    ARPG_REQUIRE(view.slots[0U].name[0U] == '\0');
     ARPG_REQUIRE(std::strcmp(
         view.slots[1U].name.data(), u8"极·鬼剑术（暴风式）") == 0);
+    ARPG_REQUIRE(std::strcmp(view.slots[1U].name.data(),
+        platform::ui_skill_name(skills::ActiveSkillId::storm_swords)) == 0);
     ARPG_REQUIRE(view.inventory_count == 1U);
     ARPG_REQUIRE(view.inventory[0U].id == skills::ActiveSkillId::draw_slash);
     ARPG_REQUIRE(std::strcmp(
         view.inventory[0U].name.data(), u8"拔刀斩") == 0);
+    ARPG_REQUIRE(std::strcmp(view.inventory[0U].name.data(),
+        platform::ui_skill_name(skills::ActiveSkillId::draw_slash)) == 0);
     return {};
 }
 
 arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions()
     noexcept {
     constexpr std::array<std::array<int, 2>, 3> kViewports{{
-        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto viewport : kViewports) {
         const platform::ActiveSkillLoadoutLayout layout =
             platform::active_skill_loadout_layout(viewport[0], viewport[1]);
+        const Rectangle viewport_bounds{0.0F, 0.0F,
+            static_cast<float>(viewport[0]), static_cast<float>(viewport[1])};
+        ARPG_REQUIRE(inside(layout.panel, viewport_bounds));
         std::array<Rectangle, 13> hit_regions{};
         std::size_t count = 0U;
         for (const Rectangle rectangle : layout.main_slots) {
@@ -69,11 +85,13 @@ arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions(
         hit_regions[count++] = layout.equipment_page_button;
         hit_regions[count++] = layout.skill_stones_page_button;
         for (std::size_t left = 0U; left < count; ++left) {
+            ARPG_REQUIRE(inside(hit_regions[left], viewport_bounds));
             for (std::size_t right = left + 1U; right < count; ++right) {
                 ARPG_REQUIRE(!overlaps(hit_regions[left], hit_regions[right]));
             }
         }
         for (const Rectangle support : layout.support_slots) {
+            ARPG_REQUIRE(inside(support, viewport_bounds));
             for (std::size_t interactive = 0U;
                  interactive < count; ++interactive) {
                 ARPG_REQUIRE(!overlaps(support, hit_regions[interactive]));

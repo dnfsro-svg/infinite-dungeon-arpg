@@ -169,9 +169,27 @@ struct ItemAttributeLabel final {
     const char* scope{};
     const char* suffix{};
     const char* qualifier{};
+    bool multiplier{};
+};
+
+struct InventoryDetailRowLayout final {
+    Rectangle label_bounds{};
+    Rectangle value_bounds{};
+    float gap{};
+    bool valid{};
+};
+
+struct InventoryControlTextStyle final {
+    Color content_backing{};
+    Color idle_backing{};
+    Color active_backing{};
+    Color disabled_backing{};
+    Color remove_backing{};
 };
 
 [[nodiscard]] InventoryLayout inventory_layout(int width, int height) noexcept;
+[[nodiscard]] InventoryControlTextStyle
+inventory_control_text_style() noexcept;
 [[nodiscard]] std::array<char, 96> inventory_page_title(
     InventoryPage page, const char* inventory_binding_label) noexcept;
 [[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
@@ -234,6 +252,8 @@ void refresh_inventory_view_cache(InventoryViewCache& cache,
 [[nodiscard]] double item_attribute_display_value(
     std::int32_t raw_value, ItemAttributeLabel label) noexcept;
 [[nodiscard]] Rectangle detail_line_rectangle(
+    InventoryLayout layout, std::size_t line) noexcept;
+[[nodiscard]] InventoryDetailRowLayout inventory_detail_row_layout(
     InventoryLayout layout, std::size_t line) noexcept;
 [[nodiscard]] bool detail_content_fits(
     InventoryLayout layout, std::size_t line_count) noexcept;

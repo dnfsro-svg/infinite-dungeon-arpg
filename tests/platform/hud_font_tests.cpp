@@ -7,6 +7,7 @@
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 #include "hud_view_model.hpp"
+#include "inventory_view_math.hpp"
 #include "passive_tree_renderer.hpp"
 #include "pause_menu_renderer.hpp"
 #include "shared_ui_font.hpp"
@@ -138,11 +139,42 @@ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept 
         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
         u8"减速", u8"腐蚀", u8"无敌", u8"拔刀斩",
         u8"极·鬼剑术（暴风式）",
+        u8"按键提示：右 Shift / ESC  ·  装备背包",
+        u8"装备  背包  物品详情",
+        u8"装备槽：全部  稀有度：稀有  三合一（3/3）",
+        u8"过滤：无",
+        u8"基础 [局部] 武器物理伤害 +16",
+        u8"T3 前缀 锋利 [全局] 火焰伤害 +12% 提高",
+        u8"最终近战伤害 ×1.12",
+        u8"全部装备变化 预览不可用",
+        u8"正在保存，已锁定",
+        u8"空中移动 最终空中移动",
+        u8"危险：三合一取消强化",
+        u8"已选择：嬗变石 · 选择物品应用（右键取消）",
     };
 
     ARPG_REQUIRE(plan.covers_required_text);
     for (const char* text : kRequiredText) {
         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+    }
+    for (std::uint8_t raw{};
+         raw < static_cast<std::uint8_t>(arpg::modifiers::StatId::count);
+         ++raw) {
+        const auto stat = static_cast<arpg::modifiers::StatId>(raw);
+        const platform::ItemAttributeLabel normal =
+            platform::item_attribute_label(
+                arpg::items::ItemEffectKind::global_modifier, stat,
+                arpg::modifiers::ModifierOperation::flat,
+                arpg::items::ItemSlot::weapon, 0xFFU);
+        const platform::ItemAttributeLabel final =
+            platform::item_attribute_label(
+                arpg::items::ItemEffectKind::global_modifier, stat,
+                arpg::modifiers::ModifierOperation::more,
+                arpg::items::ItemSlot::weapon, 0xFFU);
+        ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+            plan.shared, normal.name));
+        ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+            plan.shared, final.name));
     }
     return {};
 }
@@ -225,8 +257,8 @@ arpg::test::Failure bundled_noto_sans_sc_is_the_required_runtime_font() noexcept
     constexpr const char* kReadableUiCorpus[] = {
         u8"装备背包 技能石 暂停 继续 设置 退出游戏",
         u8"生命 护盾 目标 深度 生态 火焰 水 闪电 混沌",
-        "EQUIPMENT INVENTORY ITEM DETAIL MATERIAL BAG",
-        "Arrow keys navigate Enter select Esc back",
+        u8"装备 背包 物品详情 材料",
+        u8"方向键导航 Enter 选择 Esc 返回",
     };
     for (const char* text : kReadableUiCorpus) {
         ARPG_REQUIRE(platform::death_overlay_font_covers_text(
@@ -245,6 +277,37 @@ arpg::test::Failure ui_text_uses_one_solid_foreground_without_fake_bold() noexce
     ARPG_REQUIRE(readability.embolden_pixels == 0);
     ARPG_REQUIRE(contrast.primary.a == 255U);
     ARPG_REQUIRE(contrast.secondary.a == 255U);
+    const auto inventory = platform::inventory_control_text_style();
+    const Color kInventoryTextColors[] = {
+        contrast.primary,
+        contrast.secondary,
+        contrast.interaction,
+        contrast.muted,
+        contrast.warning,
+        contrast.danger,
+    };
+    ARPG_REQUIRE(inventory.content_backing.a == 255U);
+    for (const Color color : kInventoryTextColors) {
+        ARPG_REQUIRE(color.a == 255U);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+            color, inventory.content_backing) >= 4.5F);
+    }
+    struct ControlState final {
+        Color text{};
+        Color backing{};
+    };
+    const ControlState states[] = {
+        {contrast.primary, inventory.idle_backing},
+        {contrast.interaction, inventory.active_backing},
+        {contrast.muted, inventory.disabled_backing},
+        {contrast.interaction, inventory.remove_backing},
+    };
+    for (const ControlState state : states) {
+        ARPG_REQUIRE(state.text.a == 255U);
+        ARPG_REQUIRE(state.backing.a == 255U);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+            state.text, state.backing) >= 4.5F);
+    }
     return {};
 }
 

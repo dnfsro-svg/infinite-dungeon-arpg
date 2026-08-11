@@ -1,8 +1,10 @@
 #include "inventory_view_math.hpp"
 
 #include "items/item_catalog.hpp"
-#include "skills/active_skill_catalog.hpp"
+#include "ui_text_catalog.hpp"
+#include "ui_text_layout.hpp"
 #include "ui_typography.hpp"
+#include "ui_utf8.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +27,10 @@ constexpr float kSkillSupportSize = 54.0F;
 constexpr float kSkillSupportGap = 12.0F;
 constexpr float kPageButtonWidth = 136.0F;
 constexpr float kPageButtonHeight = 30.0F;
+constexpr float kDetailTop = 40.0F;
+constexpr float kDetailLineHeight = 20.0F;
+constexpr float kDetailBottomInset = 4.0F;
+constexpr std::size_t kMaximumDetailLineCount = 21U;
 
 bool contains(Rectangle rectangle, Vector2 point) noexcept {
     return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width
@@ -57,11 +63,9 @@ bool same_recipe(const RecipeSelection& left,
 
 void copy_skill_name(std::array<char, 48>& output,
     skills::ActiveSkillId id) noexcept {
-    const skills::ActiveSkillDefinition* const definition =
-        skills::active_skill_definition(id);
-    if (definition == nullptr) return;
+    if (id == skills::ActiveSkillId::none) return;
     static_cast<void>(std::snprintf(output.data(), output.size(), "%s",
-        definition->display_name));
+        ui_skill_name(id)));
     output.back() = '\0';
 }
 
@@ -77,39 +81,88 @@ bool matches_inventory_filter(const items::ItemInstance& item,
 
 const char* stat_name(modifiers::StatId stat) noexcept {
     switch (stat) {
-    case modifiers::StatId::impulse_scale: return "Knockback";
-    case modifiers::StatId::shield: return "Shield";
-    case modifiers::StatId::melee_damage: return "Melee damage";
-    case modifiers::StatId::physical_flat_damage: return "Physical damage";
-    case modifiers::StatId::fire_flat_damage: return "Fire damage";
-    case modifiers::StatId::water_flat_damage: return "Water damage";
-    case modifiers::StatId::lightning_flat_damage: return "Lightning damage";
-    case modifiers::StatId::chaos_flat_damage: return "Chaos damage";
-    case modifiers::StatId::fire_damage: return "Fire damage";
-    case modifiers::StatId::water_damage: return "Water damage";
-    case modifiers::StatId::lightning_damage: return "Lightning damage";
-    case modifiers::StatId::chaos_damage: return "Chaos damage";
-    case modifiers::StatId::fire_damage_reduction: return "Fire DR";
-    case modifiers::StatId::water_damage_reduction: return "Water DR";
-    case modifiers::StatId::lightning_damage_reduction: return "Lightning DR";
-    case modifiers::StatId::chaos_damage_reduction: return "Chaos DR";
-    case modifiers::StatId::fire_damage_reduction_cap: return "Fire DR cap";
-    case modifiers::StatId::water_damage_reduction_cap: return "Water DR cap";
-    case modifiers::StatId::lightning_damage_reduction_cap: return "Lightning DR cap";
-    case modifiers::StatId::chaos_damage_reduction_cap: return "Chaos DR cap";
-    case modifiers::StatId::armor: return "Armor";
-    case modifiers::StatId::evasion: return "Evasion";
-    case modifiers::StatId::max_health: return "Maximum health";
-    case modifiers::StatId::max_health_more: return "Maximum health";
-    case modifiers::StatId::max_barrier: return "Maximum barrier";
-    case modifiers::StatId::damage_taken: return "Damage taken";
-    case modifiers::StatId::move_speed: return "Movement speed";
-    case modifiers::StatId::attack_speed: return "Attack speed";
-    case modifiers::StatId::jump_speed: return "Jump speed";
-    case modifiers::StatId::air_control: return "Air control";
+    case modifiers::StatId::impulse_scale: return u8"击退";
+    case modifiers::StatId::shield: return u8"护盾";
+    case modifiers::StatId::melee_damage: return u8"近战伤害";
+    case modifiers::StatId::physical_flat_damage: return u8"物理伤害";
+    case modifiers::StatId::fire_flat_damage:
+    case modifiers::StatId::fire_damage: return u8"火焰伤害";
+    case modifiers::StatId::water_flat_damage:
+    case modifiers::StatId::water_damage: return u8"水流伤害";
+    case modifiers::StatId::lightning_flat_damage:
+    case modifiers::StatId::lightning_damage: return u8"闪电伤害";
+    case modifiers::StatId::chaos_flat_damage:
+    case modifiers::StatId::chaos_damage: return u8"混沌伤害";
+    case modifiers::StatId::fire_damage_reduction: return u8"火焰减伤";
+    case modifiers::StatId::water_damage_reduction: return u8"水流减伤";
+    case modifiers::StatId::lightning_damage_reduction: return u8"闪电减伤";
+    case modifiers::StatId::chaos_damage_reduction: return u8"混沌减伤";
+    case modifiers::StatId::fire_damage_reduction_cap:
+        return u8"火焰减伤上限";
+    case modifiers::StatId::water_damage_reduction_cap:
+        return u8"水流减伤上限";
+    case modifiers::StatId::lightning_damage_reduction_cap:
+        return u8"闪电减伤上限";
+    case modifiers::StatId::chaos_damage_reduction_cap:
+        return u8"混沌减伤上限";
+    case modifiers::StatId::armor: return u8"护甲";
+    case modifiers::StatId::evasion: return u8"闪避";
+    case modifiers::StatId::max_health:
+    case modifiers::StatId::max_health_more: return u8"最大生命";
+    case modifiers::StatId::max_barrier: return u8"最大护盾";
+    case modifiers::StatId::damage_taken: return u8"承受伤害";
+    case modifiers::StatId::move_speed: return u8"移动速度";
+    case modifiers::StatId::attack_speed: return u8"攻击速度";
+    case modifiers::StatId::jump_speed: return u8"跳跃速度";
+    case modifiers::StatId::air_control: return u8"空中移动";
     case modifiers::StatId::count: break;
     }
-    return "Attribute";
+    return u8"装备值";
+}
+
+const char* final_stat_name(modifiers::StatId stat) noexcept {
+    switch (stat) {
+    case modifiers::StatId::impulse_scale: return u8"最终击退";
+    case modifiers::StatId::shield: return u8"最终护盾";
+    case modifiers::StatId::melee_damage: return u8"最终近战伤害";
+    case modifiers::StatId::physical_flat_damage: return u8"最终物理伤害";
+    case modifiers::StatId::fire_flat_damage:
+    case modifiers::StatId::fire_damage: return u8"最终火焰伤害";
+    case modifiers::StatId::water_flat_damage:
+    case modifiers::StatId::water_damage: return u8"最终水流伤害";
+    case modifiers::StatId::lightning_flat_damage:
+    case modifiers::StatId::lightning_damage: return u8"最终闪电伤害";
+    case modifiers::StatId::chaos_flat_damage:
+    case modifiers::StatId::chaos_damage: return u8"最终混沌伤害";
+    case modifiers::StatId::fire_damage_reduction:
+        return u8"最终火焰减伤";
+    case modifiers::StatId::water_damage_reduction:
+        return u8"最终水流减伤";
+    case modifiers::StatId::lightning_damage_reduction:
+        return u8"最终闪电减伤";
+    case modifiers::StatId::chaos_damage_reduction:
+        return u8"最终混沌减伤";
+    case modifiers::StatId::fire_damage_reduction_cap:
+        return u8"最终火焰减伤上限";
+    case modifiers::StatId::water_damage_reduction_cap:
+        return u8"最终水流减伤上限";
+    case modifiers::StatId::lightning_damage_reduction_cap:
+        return u8"最终闪电减伤上限";
+    case modifiers::StatId::chaos_damage_reduction_cap:
+        return u8"最终混沌减伤上限";
+    case modifiers::StatId::armor: return u8"最终护甲";
+    case modifiers::StatId::evasion: return u8"最终闪避";
+    case modifiers::StatId::max_health:
+    case modifiers::StatId::max_health_more: return u8"最终最大生命";
+    case modifiers::StatId::max_barrier: return u8"最终最大护盾";
+    case modifiers::StatId::damage_taken: return u8"最终承受伤害";
+    case modifiers::StatId::move_speed: return u8"最终移动速度";
+    case modifiers::StatId::attack_speed: return u8"最终攻击速度";
+    case modifiers::StatId::jump_speed: return u8"最终跳跃速度";
+    case modifiers::StatId::air_control: return u8"最终空中移动";
+    case modifiers::StatId::count: break;
+    }
+    return u8"最终装备值";
 }
 
 bool percent_stat(modifiers::StatId stat) noexcept {
@@ -148,18 +201,30 @@ InventoryLayout inventory_layout(int width, int height) noexcept {
         {grid.x + grid.width + gap, top, detail_width, content_height}, scale};
 }
 
+InventoryControlTextStyle inventory_control_text_style() noexcept {
+    return {
+        {5, 9, 16, 255},
+        {18, 28, 40, 255},
+        {12, 34, 48, 255},
+        {22, 25, 31, 255},
+        {36, 16, 24, 255},
+    };
+}
+
 std::array<char, 96> inventory_page_title(
     InventoryPage page, const char* inventory_binding_label) noexcept {
     std::array<char, 96> title{};
-    const char* const binding = inventory_binding_label != nullptr
+    const char* const binding_source = inventory_binding_label != nullptr
             && inventory_binding_label[0] != '\0'
-        ? inventory_binding_label : "Unknown";
+        ? inventory_binding_label : u8"未知";
+    std::array<char, 48> binding{};
+    static_cast<void>(ui_utf8_fit_with_ellipsis(
+        binding.data(), binding.size(), binding_source));
     const char* const format = page == InventoryPage::equipment_materials
-        ? "%s / ESC  ·  EQUIPMENT INVENTORY"
-        : u8"%s / ESC  ·  技能石背包";
-    static_cast<void>(std::snprintf(
-        title.data(), title.size(), format, binding));
-    title.back() = '\0';
+        ? u8"按键提示：%s / ESC  ·  装备背包"
+        : u8"按键提示：%s / ESC  ·  技能石背包";
+    static_cast<void>(ui_utf8_format(
+        title.data(), title.size(), format, binding.data()));
     return title;
 }
 
@@ -168,7 +233,14 @@ ActiveSkillLoadoutLayout active_skill_loadout_layout(
     if (width <= 0 || height <= 0) return {};
     const float screen_width = static_cast<float>(width);
     const float screen_height = static_cast<float>(height);
-    const float scale = ui_viewport_scale(width, height);
+    const float viewport_scale = ui_viewport_scale(width, height);
+    const float unscaled_main_width =
+        static_cast<float>(skills::kActiveSkillSlotCount) * kSkillMainWidth
+        + static_cast<float>(skills::kActiveSkillSlotCount - 1U)
+            * kSkillMainGap;
+    const float width_fit_scale = std::max(0.0F, screen_width - 40.0F)
+        / unscaled_main_width;
+    const float scale = std::min(viewport_scale, width_fit_scale);
     ActiveSkillLoadoutLayout layout{};
     layout.scale = scale;
     layout.panel = {40.0F * scale, 70.0F * scale,
@@ -183,10 +255,7 @@ ActiveSkillLoadoutLayout active_skill_loadout_layout(
         18.0F * scale, kPageButtonWidth * scale, kPageButtonHeight * scale,
     };
 
-    const float main_width = scale * (
-        static_cast<float>(skills::kActiveSkillSlotCount) * kSkillMainWidth
-        + static_cast<float>(skills::kActiveSkillSlotCount - 1U)
-            * kSkillMainGap);
+    const float main_width = scale * unscaled_main_width;
     const float main_x = (screen_width - main_width) * 0.5F;
     const float main_y = layout.panel.y + 62.0F * scale;
     for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
@@ -599,53 +668,60 @@ ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
         || effect == items::ItemEffectKind::local_weapon_physical_increased
         || (effect == items::ItemEffectKind::slot_dependent_attack_speed
             && slot == items::ItemSlot::weapon);
-    const char* name = stat_name(stat);
+    const bool multiplier = operation == modifiers::ModifierOperation::more;
+    const char* name = multiplier ? final_stat_name(stat) : stat_name(stat);
     if (effect == items::ItemEffectKind::local_weapon_physical_flat
         || effect == items::ItemEffectKind::local_weapon_physical_increased) {
-        name = "Weapon physical";
+        name = multiplier ? u8"最终武器物理伤害" : u8"武器物理伤害";
     } else if (effect == items::ItemEffectKind::slot_dependent_attack_speed) {
-        name = "Attack speed";
+        name = multiplier ? u8"最终攻击速度" : u8"攻击速度";
     } else if (effect == items::ItemEffectKind::all_element_damage_reduction) {
-        name = "All element DR";
+        name = multiplier ? u8"最终全元素减伤" : u8"全元素减伤";
     } else if (effect == items::ItemEffectKind::tri_element_damage_reduction) {
-        name = "Fire/Water/Lightning DR";
+        name = multiplier ? u8"最终三元素减伤" : u8"三元素减伤";
     } else if (effect
             == items::ItemEffectKind::variant_element_damage_reduction_cap) {
         switch (variant) {
-        case 0U: name = "Fire DR cap"; break;
-        case 1U: name = "Water DR cap"; break;
-        case 2U: name = "Lightning DR cap"; break;
-        case 3U: name = "Chaos DR cap"; break;
-        default: name = "Element DR cap"; break;
+        case 0U: name = multiplier ? u8"最终火焰减伤上限"
+                                   : u8"火焰减伤上限"; break;
+        case 1U: name = multiplier ? u8"最终水流减伤上限"
+                                   : u8"水流减伤上限"; break;
+        case 2U: name = multiplier ? u8"最终闪电减伤上限"
+                                   : u8"闪电减伤上限"; break;
+        case 3U: name = multiplier ? u8"最终混沌减伤上限"
+                                   : u8"混沌减伤上限"; break;
+        default: name = multiplier ? u8"最终元素减伤上限"
+                                   : u8"元素减伤上限"; break;
         }
     }
     const bool semantic_increased = effect
         == items::ItemEffectKind::local_weapon_physical_increased;
     const bool semantic_percent = semantic_increased
         || effect == items::ItemEffectKind::slot_dependent_attack_speed;
-    const bool percent = semantic_percent
+    const bool percent = !multiplier && (semantic_percent
         || operation != modifiers::ModifierOperation::flat
         || percent_stat(stat)
         || effect == items::ItemEffectKind::all_element_damage_reduction
         || effect == items::ItemEffectKind::tri_element_damage_reduction
         || effect
-            == items::ItemEffectKind::variant_element_damage_reduction_cap;
+            == items::ItemEffectKind::variant_element_damage_reduction_cap);
     const char* qualifier = "";
     if (semantic_increased
         || operation == modifiers::ModifierOperation::increased) {
-        qualifier = " inc";
-    } else if (operation == modifiers::ModifierOperation::more) {
-        qualifier = " more";
+        qualifier = u8"提高";
     } else if (operation == modifiers::ModifierOperation::conversion) {
-        qualifier = " converted";
+        qualifier = u8"转化";
     }
-    return {name, local ? "LOCAL" : "GLOBAL",
-        percent ? "%" : "", qualifier};
+    return {name, local ? u8"局部" : u8"全局",
+        percent ? "%" : "", qualifier, multiplier};
 }
 
 double item_attribute_display_value(std::int32_t raw_value,
     ItemAttributeLabel label) noexcept {
-    return label.suffix != nullptr && label.suffix[0] == '%'
+    return label.multiplier
+        ? static_cast<double>(raw_value)
+            / static_cast<double>(modifiers::kFixedOne)
+        : label.suffix != nullptr && label.suffix[0] == '%'
         ? static_cast<double>(raw_value) / 100.0
         : static_cast<double>(raw_value);
 }
@@ -653,14 +729,25 @@ double item_attribute_display_value(std::int32_t raw_value,
 Rectangle detail_line_rectangle(InventoryLayout layout,
     std::size_t line) noexcept {
     constexpr float kInsetX = 12.0F;
-    constexpr float kDetailTop = 40.0F;
-    constexpr float kLineHeight = 20.0F;
-    const float scale = layout.scale;
-    return {layout.detail.x + kInsetX * scale,
-        layout.detail.y + kDetailTop * scale
-            + static_cast<float>(line) * kLineHeight * scale,
-        std::max(0.0F, layout.detail.width - kInsetX * 2.0F * scale),
-        20.0F * scale};
+    const float required_height = kDetailTop
+        + kDetailLineHeight * static_cast<float>(kMaximumDetailLineCount);
+    const float available_height = std::max(0.0F,
+        layout.detail.height - kDetailBottomInset * layout.scale);
+    const float vertical_scale = std::min(layout.scale,
+        available_height / required_height);
+    return {layout.detail.x + kInsetX * layout.scale,
+        layout.detail.y + kDetailTop * vertical_scale
+            + static_cast<float>(line) * kDetailLineHeight * vertical_scale,
+        std::max(0.0F,
+            layout.detail.width - kInsetX * 2.0F * layout.scale),
+        kDetailLineHeight * vertical_scale};
+}
+
+InventoryDetailRowLayout inventory_detail_row_layout(
+    InventoryLayout layout, std::size_t line) noexcept {
+    const UiLabelValueRowLayout shared = ui_label_value_row_layout(
+        detail_line_rectangle(layout, line), 10.0F * layout.scale);
+    return {shared.label_bounds, shared.value_bounds, shared.gap, shared.valid};
 }
 
 bool detail_content_fits(InventoryLayout layout,
@@ -681,7 +768,11 @@ std::size_t detail_line_character_capacity(InventoryLayout layout) noexcept {
 
 bool detail_text_fits(InventoryLayout layout,
     std::string_view text) noexcept {
-    return text.size() <= detail_line_character_capacity(layout);
+    std::size_t codepoint_count{};
+    for (const unsigned char byte : text) {
+        if ((byte & 0xC0U) != 0x80U) ++codepoint_count;
+    }
+    return codepoint_count <= detail_line_character_capacity(layout);
 }
 
 }  // namespace arpg::platform
