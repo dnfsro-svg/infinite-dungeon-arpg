@@ -29,25 +29,23 @@ function Test-Task8CppCharacterLiteralStart {
     )
 
     if ($Source[$Index] -ne "'") { return $false }
-    if ($Index -eq 0) { return $true }
+    if ($Index -eq 0 -or $Index + 1 -ge $Source.Length -or
+        -not [char]::IsLetterOrDigit($Source[$Index - 1]) -or
+        -not [char]::IsLetterOrDigit($Source[$Index + 1])) {
+        return $true
+    }
 
-    $previous = $Source[$Index - 1]
-    if (-not [char]::IsLetterOrDigit($previous) -and $previous -ne '_') {
-        return $true
+    $tokenStart = $Index - 1
+    while ($tokenStart -gt 0 -and
+        ([char]::IsLetterOrDigit($Source[$tokenStart - 1]) -or
+            $Source[$tokenStart - 1] -in @('_', '.'))) {
+        --$tokenStart
     }
-    if ($previous -in @('L', 'u', 'U') -and
-        ($Index -eq 1 -or
-            (-not [char]::IsLetterOrDigit($Source[$Index - 2]) -and
-                $Source[$Index - 2] -ne '_'))) {
-        return $true
-    }
-    if ($Index -ge 2 -and $Source.Substring($Index - 2, 2) -ceq 'u8' -and
-        ($Index -eq 2 -or
-            (-not [char]::IsLetterOrDigit($Source[$Index - 3]) -and
-                $Source[$Index - 3] -ne '_'))) {
-        return $true
-    }
-    return $false
+    $numericToken = [char]::IsDigit($Source[$tokenStart]) -or
+        ($Source[$tokenStart] -eq '.' -and
+            $tokenStart + 1 -lt $Source.Length -and
+            [char]::IsDigit($Source[$tokenStart + 1]))
+    return -not $numericToken
 }
 
 function Remove-Task8CppComments {
@@ -328,7 +326,22 @@ function Assert-Task8ChineseCopyGuard {
         Assert-Task8SourcePattern $Sources.Main $contract.Pattern "launcher error/status copy must be exact Chinese: $($contract.Name)"
     }
 
-    Assert-Task8SourcePattern $Sources.Main 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";' 'renderer API stage and HRESULT must both stay inside Chinese parentheses'
+    $renderFailureMatches = [regex]::Matches(
+        $Sources.Main,
+        'std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)\s*\{(?<Body>.*?)\r?\n\}\s*\r?\n\s*RECT\s+fallback_rectangle',
+        [Text.RegularExpressions.RegexOptions]::Singleline -bor
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if ($renderFailureMatches.Count -ne 1) {
+        throw 'Task 8 must isolate exactly one render_failure_message function body'
+    }
+    $renderFailureBody = $renderFailureMatches[0].Groups['Body'].Value
+    if ([regex]::Matches($renderFailureBody, '\breturn\b').Count -ne 1) {
+        throw 'Task 8 render_failure_message must contain exactly one return statement'
+    }
+    if ([regex]::IsMatch($renderFailureBody, '\[[^\]\r\n]*\]\s*\(')) {
+        throw 'Task 8 render_failure_message cannot hide its formatter in a lambda'
+    }
+    Assert-Task8SourcePattern $renderFailureBody 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";\s*$' 'render_failure_message actual return must keep API stage and HRESULT inside Chinese parentheses'
     if ([regex]::IsMatch($Sources.Main, '渲染失败：[^\r\n]*HRESULT')) {
         throw 'Task 8 Chinese-copy guard rejected an unparenthesized renderer API stage'
     }
@@ -573,6 +586,15 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
             Needle = 'set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");'
             Replacement = 'set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");' + $newline +
                 '            set_error(std::filesystem::path{"Launch failed"}.wstring());'
+        },
+        @{
+            Name = 'uninvoked lambda decoys renderer failure return'
+            File = 'Main'
+            Needle = '    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'
+            Replacement = '    [[maybe_unused]] const auto task8_decoy = [&]() -> std::wstring {' + $newline +
+                '        return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";' + $newline +
+                '    };' + $newline +
+                '    return std::wstring{stage};'
         }
     )
     $acceptedMutations = @()
@@ -613,6 +635,13 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
             Replacement = 'constexpr int kLauncherIconId = 101;' + $newline +
                 '// Task 8 lexical probe continues \' + $newline +
                 'L"Comment-only English"'
+        },
+        @{
+            Name = 'character literal after return without whitespace'
+            File = 'Main'
+            Needle = 'constexpr int kLauncherIconId = 101;'
+            Replacement = 'constexpr int kLauncherIconId = 101;' + $newline +
+                'constexpr char task8_quote_probe() { return''"''; }'
         }
     )
     $rejectedValidVariants = @()
