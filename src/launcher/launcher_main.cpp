@@ -20,6 +20,10 @@ constexpr wchar_t kWindowClassName[] = L"InfiniteDungeonLauncherWindow";
 constexpr wchar_t kWindowTitle[] = L"无限地下城启动器";
 constexpr int kLauncherIconId = 101;
 
+COLORREF launcher_color_ref(const LauncherColor color) noexcept {
+    return RGB(color.red, color.green, color.blue);
+}
+
 bool contains(const RectF rectangle, const float x, const float y) noexcept {
     return x >= rectangle.left && x < rectangle.right &&
         y >= rectangle.top && y < rectangle.bottom;
@@ -172,6 +176,8 @@ void paint_native_fallback(
     const UINT dpi,
     const std::wstring_view message) noexcept {
     const float scale = static_cast<float>(dpi == 0U ? 96U : dpi) / 96.0F;
+    const LauncherStatusStyle status_style =
+        launcher_status_style(message.empty() && view.status_ready);
     RECT client{};
     if (GetClientRect(window, &client) == FALSE) {
         return;
@@ -181,7 +187,11 @@ void paint_native_fallback(
     DeleteObject(background);
 
     draw_fallback_card(
-        device_context, view.layout.status, scale, RGB(6, 23, 36), RGB(192, 199, 209));
+        device_context,
+        view.layout.status,
+        scale,
+        launcher_color_ref(status_style.backing),
+        launcher_color_ref(status_style.foreground));
     draw_fallback_button(
         device_context, view.layout.start, L"开始游戏", LauncherButton::start, view, scale);
     draw_fallback_button(
@@ -215,7 +225,7 @@ void paint_native_fallback(
         view.layout.status,
         scale,
         18,
-        message.empty() && view.status_ready ? RGB(0, 255, 0) : RGB(255, 0, 0),
+        launcher_color_ref(status_style.foreground),
         DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_fallback_text(
         device_context,

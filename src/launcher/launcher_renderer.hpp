@@ -89,8 +89,8 @@ private:
     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> render_target_;
     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> background_brush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> white_brush_;
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> green_brush_;
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> red_brush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> status_backing_brush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> status_foreground_brush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> silver_brush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> cyan_brush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> button_brush_;

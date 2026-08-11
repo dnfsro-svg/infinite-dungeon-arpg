@@ -1,6 +1,22 @@
 #pragma once
 
+#include <cstdint>
+
 namespace arpg::launcher {
+
+struct LauncherColor {
+    std::uint8_t red;
+    std::uint8_t green;
+    std::uint8_t blue;
+    std::uint8_t alpha;
+};
+
+struct LauncherStatusStyle {
+    LauncherColor backing;
+    LauncherColor foreground;
+};
+
+[[nodiscard]] LauncherStatusStyle launcher_status_style(bool ready) noexcept;
 
 struct RectF {
     float left;

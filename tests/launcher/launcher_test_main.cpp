@@ -11,5 +11,5 @@ int main() {
         launcher_platform_win32_suite(),
     };
 
-    return arpg::test::run_suites(suites, 13, "desktop launcher core");
+    return arpg::test::run_suites(suites, 15, "desktop launcher core");
 }

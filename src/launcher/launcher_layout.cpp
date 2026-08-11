@@ -5,6 +5,14 @@ namespace {
 
 constexpr float kLogicalWidth = 920.0F;
 constexpr float kLogicalHeight = 560.0F;
+constexpr LauncherStatusStyle kReadyStatusStyle{
+    {6U, 42U, 30U, 255U},
+    {184U, 255U, 213U, 255U},
+};
+constexpr LauncherStatusStyle kErrorStatusStyle{
+    {55U, 16U, 24U, 255U},
+    {255U, 207U, 211U, 255U},
+};
 
 constexpr LauncherLayout kDesignLayout{
     {56.0F, 42.0F, 864.0F, 98.0F},
@@ -27,6 +35,10 @@ RectF offset(RectF rectangle, float horizontal, float vertical) noexcept {
 }
 
 }  // namespace
+
+LauncherStatusStyle launcher_status_style(const bool ready) noexcept {
+    return ready ? kReadyStatusStyle : kErrorStatusStyle;
+}
 
 LauncherLayout make_launcher_layout(float width, float height) noexcept {
     if (width < 800.0F || height < 450.0F) {

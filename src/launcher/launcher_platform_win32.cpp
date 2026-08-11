@@ -9,6 +9,19 @@
 #include <vector>
 
 namespace arpg::launcher {
+
+std::wstring format_platform_failure_message(
+    const std::wstring_view operation,
+    const unsigned long error_code,
+    const std::wstring_view system_detail) {
+    static_cast<void>(system_detail);
+    std::wstring message{operation};
+    message += L"（错误代码 ";
+    message += std::to_wstring(error_code);
+    message += L"）";
+    return message;
+}
+
 namespace {
 
 std::wstring format_failure(
@@ -25,24 +38,20 @@ std::wstring format_failure(
         0,
         nullptr);
 
-    std::wstring message{operation};
-    message += L"（错误代码 ";
-    message += std::to_wstring(error_code);
-    message += L"）：";
+    std::wstring detail;
     if (length != 0U && system_message != nullptr) {
-        std::wstring detail{system_message, length};
+        detail.assign(system_message, length);
         LocalFree(system_message);
         while (!detail.empty() &&
             (detail.back() == L'\r' || detail.back() == L'\n' ||
                 detail.back() == L' ')) {
             detail.pop_back();
         }
-        message += detail;
+        if (!detail.empty()) {
+            OutputDebugStringW(detail.c_str());
+        }
     }
-    else {
-        message += L"无法获取系统错误消息";
-    }
-    return message;
+    return format_platform_failure_message(operation, error_code, detail);
 }
 
 PlatformResult failure(

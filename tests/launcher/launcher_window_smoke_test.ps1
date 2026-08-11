@@ -392,6 +392,22 @@ function Assert-Task8ChineseCopyGuard {
         Assert-Task8SourcePattern $source 'L"版本 0\.1\.0 · 单人无限地下城"' 'launcher subtitle must be Chinese in both rendering paths'
     }
 
+    $directWriteRenderBody = Get-Task8CppFunctionBody `
+        $Sources.Renderer `
+        'RendererResult\s+LauncherRenderer::render\s*\(\s*const\s+LauncherView&\s+view\s*\)\s*noexcept' `
+        'LauncherRenderer::render'
+    Assert-Task8SourcePattern $directWriteRenderBody `
+        'const\s+LauncherStatusStyle\s+status_style\s*=\s*launcher_status_style\(\s*view\.status_ready\s*\);.*?const\s+D2D1_ROUNDED_RECT\s+status_shape\s*=\s*rounded_rectangle\(\s*view\.layout\.status\s*\);.*?FillRoundedRectangle\(\s*status_shape\s*,\s*status_backing\s*\);.*?DrawRoundedRectangle\(\s*status_shape\s*,\s*status_foreground\s*,\s*1\.5F\s*\);.*?draw_text\(\s*view\.status_text\s*,\s*status_format_\.Get\(\)\s*,\s*view\.layout\.status\s*,\s*status_foreground\s*,' `
+        'DirectWrite status must fill an opaque palette backing before its border and text'
+
+    $nativeFallbackBody = Get-Task8CppFunctionBody `
+        $Sources.Main `
+        'void\s+paint_native_fallback\s*\([^\)]*const\s+std::wstring_view\s+message\s*\)\s*noexcept' `
+        'paint_native_fallback'
+    Assert-Task8SourcePattern $nativeFallbackBody `
+        'const\s+LauncherStatusStyle\s+status_style\s*=\s*launcher_status_style\(\s*message\.empty\(\)\s*&&\s*view\.status_ready\s*\);.*?draw_fallback_card\(\s*device_context\s*,\s*view\.layout\.status\s*,\s*scale\s*,\s*launcher_color_ref\(\s*status_style\.backing\s*\)\s*,\s*launcher_color_ref\(\s*status_style\.foreground\s*\)\s*\);.*?draw_fallback_text\(\s*device_context\s*,\s*message\.empty\(\)\s*\?\s*view\.status_text\s*:\s*message\s*,\s*view\.layout\.status\s*,.*?launcher_color_ref\(\s*status_style\.foreground\s*\)' `
+        'native fallback status must reuse the opaque high-contrast palette'
+
     foreach ($contract in @(
         @{ Pattern = 'case\s+InstallationState::ready:\s*return\s+L"游戏已就绪";'; Name = 'ready status' },
         @{ Pattern = 'case\s+InstallationState::invalid_launcher_path:\s*return\s+L"启动器路径无效";'; Name = 'invalid path status' },
@@ -433,11 +449,37 @@ function Assert-Task8ChineseCopyGuard {
         throw 'Task 8 render_failure_message cannot hide its formatter in a lambda'
     }
     Assert-Task8SourcePattern $renderFailureBody 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";\s*$' 'render_failure_message actual return must keep API stage and HRESULT inside Chinese parentheses'
+    if ([regex]::Matches(
+            $renderFailureBody,
+            'renderer_stage_name\s*\(\s*result\.stage\s*\)').Count -ne 1) {
+        throw 'Task 8 render_failure_message must obtain its only renderer stage from the real result'
+    }
     if ([regex]::IsMatch($Sources.Main, '渲染失败：[^\r\n]*HRESULT')) {
         throw 'Task 8 Chinese-copy guard rejected an unparenthesized renderer API stage'
     }
     if ([regex]::Matches($Sources.Main, 'renderer_stage_name\s*\(').Count -ne 1) {
         throw 'Task 8 renderer stage names must flow only through render_failure_message'
+    }
+
+    $paintBody = Get-Task8CppFunctionBody `
+        $Sources.Main `
+        'void\s+paint\s*\(\s*\)\s*noexcept' `
+        'WindowController::paint'
+    $rendererFailureHandlerBody = Get-Task8CppFunctionBody `
+        $Sources.Main `
+        'void\s+handle_renderer_failure\s*\(\s*const\s+RendererResult&\s+result\s*\)\s*noexcept' `
+        'WindowController::handle_renderer_failure'
+    foreach ($consumer in @(
+        @{ Body = $paintBody; Name = 'paint fallback' },
+        @{ Body = $rendererFailureHandlerBody; Name = 'window-title failure handler' })) {
+        if ([regex]::Matches(
+                $consumer.Body,
+                'const\s+std::wstring\s+message\s*=\s*render_failure_message\(\s*result\s*\);').Count -ne 1) {
+            throw "Task 8 $($consumer.Name) must call render_failure_message(result) exactly once"
+        }
+    }
+    if ([regex]::Matches($Sources.Main, '\brender_failure_message\s*\(').Count -ne 3) {
+        throw 'Task 8 render_failure_message must have exactly two real failure consumers'
     }
 
     $stageBody = [regex]::Match(
@@ -466,13 +508,29 @@ function Assert-Task8ChineseCopyGuard {
         throw 'Task 8 renderer-stage technical allowlist changed'
     }
 
+    $platformMessageBody = Get-Task8CppFunctionBody `
+        $Sources.Platform `
+        'std::wstring\s+format_platform_failure_message\s*\(\s*const\s+std::wstring_view\s+operation\s*,\s*const\s+unsigned\s+long\s+error_code\s*,\s*const\s+std::wstring_view\s+system_detail\s*\)' `
+        'format_platform_failure_message'
+    if ([regex]::Matches($platformMessageBody, '\breturn\b').Count -ne 1 -or
+        [regex]::Matches($platformMessageBody, '\bsystem_detail\b').Count -ne 1) {
+        throw 'Task 8 platform player formatter must ignore the injected system detail'
+    }
+    Assert-Task8SourcePattern $platformMessageBody `
+        'static_cast<void>\(\s*system_detail\s*\);' `
+        'platform player formatter must explicitly keep system detail diagnostic-only'
+    if ([regex]::IsMatch(
+            $platformMessageBody,
+            '(?:\+=|append\s*\(|push_back\s*\()[^;]*system_detail')) {
+        throw 'Task 8 platform player formatter cannot append dynamic system detail'
+    }
+
     foreach ($contract in @(
         @{ Pattern = 'message\s*\+=\s*L"（错误代码 ";'; Name = 'numeric error prefix' },
-        @{ Pattern = 'message\s*\+=\s*L"）：";'; Name = 'numeric error suffix' },
+        @{ Pattern = 'message\s*\+=\s*L"）";'; Name = 'numeric error suffix' },
         @{ Pattern = 'failure\(L"无法启动游戏",\s*error_code\)'; Name = 'game launch failure' },
         @{ Pattern = 'failure\(\s*L"无法创建存档目录",'; Name = 'save create failure' },
-        @{ Pattern = 'failure\(\s*L"无法打开存档目录",'; Name = 'save open failure' },
-        @{ Pattern = 'message\s*\+=\s*L"无法获取系统错误消息";'; Name = 'system message fallback' }
+        @{ Pattern = 'failure\(\s*L"无法打开存档目录",'; Name = 'save open failure' }
     )) {
         Assert-Task8SourcePattern $Sources.Platform $contract.Pattern "Win32 error path must keep a Chinese main message: $($contract.Name)"
     }
@@ -505,8 +563,7 @@ function Assert-Task8ChineseCopyGuard {
         @{ File = 'Core'; Literal = 'L"缺少资源："'; Count = 1; Reason = 'missing-asset Chinese prefix' },
         @{ File = 'Platform'; Literal = 'L"无法创建存档目录"'; Count = 1; Reason = 'save-directory creation operation' },
         @{ File = 'Platform'; Literal = 'L"无法启动游戏"'; Count = 2; Reason = 'game launch operation and catch fallback' },
-        @{ File = 'Platform'; Literal = 'L"无法打开存档目录"'; Count = 2; Reason = 'save-directory open operation and catch fallback' },
-        @{ File = 'Platform'; Literal = 'L"无法获取系统错误消息"'; Count = 1; Reason = 'FormatMessage fallback' }
+        @{ File = 'Platform'; Literal = 'L"无法打开存档目录"'; Count = 2; Reason = 'save-directory open operation and catch fallback' }
     )
     $technicalAllowlist = @(
         @{ File = 'Host'; Literal = '"combat/room_bounds.hpp"'; Count = 1; Reason = 'compile-time include path' },
@@ -553,7 +610,7 @@ function Assert-Task8ChineseCopyGuard {
         @{ File = 'Core'; Literal = 'L"save"'; Count = 1; Reason = 'immutable default save-path component' },
         @{ File = 'Platform'; Literal = '"launcher_platform_win32.hpp"'; Count = 1; Reason = 'compile-time include path' },
         @{ File = 'Platform'; Literal = 'L"（错误代码 "'; Count = 1; Reason = 'Win32 numeric-detail prefix' },
-        @{ File = 'Platform'; Literal = 'L"）："'; Count = 1; Reason = 'Win32 numeric-detail separator' },
+        @{ File = 'Platform'; Literal = 'L"）"'; Count = 1; Reason = 'Win32 numeric-detail closing punctuation' },
         @{ File = 'Platform'; Literal = 'L"open"'; Count = 1; Reason = 'ShellExecuteW verb' }
     )
 
@@ -742,6 +799,21 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
                 '}' + $newline +
                 '    RECT fallback_rectangle{};' + $newline +
                 '    return std::wstring{stage};'
+        },
+        @{
+            Name = 'dynamic system detail is rejoined to the player message'
+            File = 'Platform'
+            Needle = '    return message;'
+            Replacement = '    message += system_detail;' + $newline +
+                '    return message;'
+        },
+        @{
+            Name = 'DirectWrite status regresses to outline-only rendering'
+            File = 'Renderer'
+            Needle =
+                '    render_target_->FillRoundedRectangle(status_shape, status_backing);'
+            Replacement =
+                '    render_target_->DrawRoundedRectangle(status_shape, status_backing, 1.0F);'
         }
     )
     $acceptedMutations = @()
@@ -758,6 +830,41 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
         if ($accepted) {
             $acceptedMutations += $mutation.Name
         }
+    }
+
+    $disconnectedFormatter = Copy-Task8ChineseCopySources $Sources
+    $formatterStageNeedle =
+        '    const std::wstring_view stage = renderer_stage_name(result.stage);'
+    $formatterStageReplacement = '    const std::wstring_view stage{};'
+    $externalHelperAnchor =
+        'RECT fallback_rectangle(const RectF rectangle, const float scale) noexcept {'
+    $externalHelper = @(
+        ''
+        'std::wstring task8_unlocalized_renderer_failure(const RendererResult& result) {'
+        '    return std::wstring{renderer_stage_name(result.stage)};'
+        '}'
+    ) -join $newline
+    foreach ($anchor in @(
+        $formatterStageNeedle,
+        $externalHelperAnchor,
+        'render_failure_message(result);')) {
+        if (-not $disconnectedFormatter.Main.Contains($anchor)) {
+            throw "Task 8 disconnected-formatter mutation anchor is missing: $anchor"
+        }
+    }
+    $disconnectedFormatter.Main = $disconnectedFormatter.Main.Replace(
+        $formatterStageNeedle, $formatterStageReplacement)
+    $disconnectedFormatter.Main = $disconnectedFormatter.Main.Replace(
+        $externalHelperAnchor,
+        $externalHelper + $newline + $newline + $externalHelperAnchor)
+    $disconnectedFormatter.Main = $disconnectedFormatter.Main.Replace(
+        'render_failure_message(result);',
+        'task8_unlocalized_renderer_failure(result);')
+    $acceptedDisconnectedFormatter = $true
+    try { Assert-Task8ChineseCopyGuard $disconnectedFormatter }
+    catch { $acceptedDisconnectedFormatter = $false }
+    if ($acceptedDisconnectedFormatter) {
+        $acceptedMutations += 'disconnected renderer formatter consumers'
     }
 
     $acceptedBroadAllowlist = $true
@@ -807,7 +914,7 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
         throw "Task 8 Chinese-copy guard self-test mismatch; accepted mutations: $($acceptedMutations -join '; '); rejected valid variants: $($rejectedValidVariants -join '; ')"
     }
     return [pscustomobject]@{
-        MutationCount = $mutations.Count + 1
+        MutationCount = $mutations.Count + 2
         ValidVariantCount = $validVariants.Count
     }
 }
@@ -1212,7 +1319,8 @@ function Get-VerifiedClientBitmap {
     if ($null -ne $lastReadiness) {
         $start = $lastReadiness.StartPixel
         $verify = $lastReadiness.VerifyPixel
-        throw "Launcher client was not ready after 3 captures ($lastFailure): dark=$($lastReadiness.DarkPixels)/$($lastReadiness.SampleCount), disabledStart=RGB($($start.R),$($start.G),$($start.B)), verify=RGB($($verify.R),$($verify.G),$($verify.B)), pureRed=$($lastReadiness.PureRed)"
+        $status = $lastReadiness.StatusBackingPixel
+        throw "Launcher client was not ready after 3 captures ($lastFailure): dark=$($lastReadiness.DarkPixels)/$($lastReadiness.SampleCount), disabledStart=RGB($($start.R),$($start.G),$($start.B)), verify=RGB($($verify.R),$($verify.G),$($verify.B)), errorBacking=RGB($($status.R),$($status.G),$($status.B))"
     }
     throw "Launcher client was not ready after 3 captures: $lastFailure; pixel diagnostics unavailable"
 }
@@ -1234,23 +1342,21 @@ function Get-InitialPixelReadiness {
     $verifyY = Convert-DipToPixels 370 $Dpi
     $startPixel = $Bitmap.GetPixel($startX + [int](20 * $scale), $startY + [int](20 * $scale))
     $verifyPixel = $Bitmap.GetPixel($startX + [int](20 * $scale), $verifyY + [int](20 * $scale))
-    $pureRed = 0
-    for ($y = (Convert-DipToPixels 174 $Dpi); $y -lt (Convert-DipToPixels 226 $Dpi); ++$y) {
-        for ($x = (Convert-DipToPixels 58 $Dpi); $x -lt (Convert-DipToPixels 862 $Dpi); ++$x) {
-            $pixel = $Bitmap.GetPixel($x, $y)
-            if ($pixel.R -ge 220 -and $pixel.G -le 20 -and $pixel.B -le 20) { ++$pureRed }
-        }
-    }
+    $statusBackingPixel = $Bitmap.GetPixel(
+        (Convert-DipToPixels 840 $Dpi),
+        (Convert-DipToPixels 200 $Dpi))
     [pscustomobject]@{
         Ready = ($darkPixels -ge ($sampleCount * 0.55)) -and
             ([math]::Abs($startPixel.R - 85) -le 6) -and ([math]::Abs($startPixel.G - 91) -le 6) -and ([math]::Abs($startPixel.B - 99) -le 6) -and
             ([math]::Abs($verifyPixel.R - 36) -le 6) -and ([math]::Abs($verifyPixel.G - 69) -le 6) -and ([math]::Abs($verifyPixel.B - 94) -le 6) -and
-            ($pureRed -ge 8)
+            ([math]::Abs($statusBackingPixel.R - 55) -le 6) -and
+            ([math]::Abs($statusBackingPixel.G - 16) -le 6) -and
+            ([math]::Abs($statusBackingPixel.B - 24) -le 6)
         DarkPixels = $darkPixels
         SampleCount = $sampleCount
         StartPixel = $startPixel
         VerifyPixel = $verifyPixel
-        PureRed = $pureRed
+        StatusBackingPixel = $statusBackingPixel
     }
 }
 
@@ -1327,6 +1433,11 @@ function Assert-RenderedClientPixels {
         $startX = Convert-DipToPixels 58 $dpi
         $startY = Convert-DipToPixels 260 $dpi
         $verifyY = Convert-DipToPixels 370 $dpi
+        Assert-ColorNear `
+            ($bitmap.GetPixel(
+                (Convert-DipToPixels 840 $dpi),
+                (Convert-DipToPixels 200 $dpi))) `
+            55 16 24 'Error status opaque backing'
 
         $brightXs = @()
         for ($y = $startY; $y -lt ($startY + (Convert-DipToPixels 82 $dpi)); ++$y) {

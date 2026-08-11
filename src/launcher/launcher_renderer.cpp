@@ -20,6 +20,15 @@ D2D1_ROUNDED_RECT rounded_rectangle(const RectF rectangle) noexcept {
     return D2D1::RoundedRect(to_d2d_rectangle(rectangle), 6.0F, 6.0F);
 }
 
+D2D1_COLOR_F to_d2d_color(const LauncherColor color) noexcept {
+    constexpr float kColorScale = 1.0F / 255.0F;
+    return D2D1::ColorF(
+        static_cast<float>(color.red) * kColorScale,
+        static_cast<float>(color.green) * kColorScale,
+        static_cast<float>(color.blue) * kColorScale,
+        static_cast<float>(color.alpha) * kColorScale);
+}
+
 }  // namespace
 
 std::wstring_view renderer_stage_name(const RendererStage stage) noexcept {
@@ -186,10 +195,16 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
         result = create_solid(0xFFFFFF, white_brush_.ReleaseAndGetAddressOf());
     }
     if (SUCCEEDED(result)) {
-        result = create_solid(0x00FF00, green_brush_.ReleaseAndGetAddressOf());
+        const LauncherStatusStyle style = launcher_status_style(true);
+        result = render_target_->CreateSolidColorBrush(
+            to_d2d_color(style.backing),
+            status_backing_brush_.ReleaseAndGetAddressOf());
     }
     if (SUCCEEDED(result)) {
-        result = create_solid(0xFF0000, red_brush_.ReleaseAndGetAddressOf());
+        const LauncherStatusStyle style = launcher_status_style(true);
+        result = render_target_->CreateSolidColorBrush(
+            to_d2d_color(style.foreground),
+            status_foreground_brush_.ReleaseAndGetAddressOf());
     }
     if (SUCCEEDED(result)) {
         result = create_solid(0xC0C7D1, silver_brush_.ReleaseAndGetAddressOf());
@@ -335,15 +350,20 @@ RendererResult LauncherRenderer::render(const LauncherView& view) noexcept {
             DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
-    render_target_->DrawRoundedRectangle(
-        rounded_rectangle(view.layout.status), silver_brush_.Get(), 1.5F);
+    const LauncherStatusStyle status_style = launcher_status_style(view.status_ready);
+    status_backing_brush_->SetColor(to_d2d_color(status_style.backing));
+    status_foreground_brush_->SetColor(to_d2d_color(status_style.foreground));
+    ID2D1Brush* const status_backing = status_backing_brush_.Get();
+    ID2D1Brush* const status_foreground = status_foreground_brush_.Get();
+    const D2D1_ROUNDED_RECT status_shape = rounded_rectangle(view.layout.status);
+    render_target_->FillRoundedRectangle(status_shape, status_backing);
+    render_target_->DrawRoundedRectangle(status_shape, status_foreground, 1.5F);
     if (SUCCEEDED(result)) {
         result = draw_text(
             view.status_text,
             status_format_.Get(),
             view.layout.status,
-            view.status_ready ? static_cast<ID2D1Brush*>(green_brush_.Get())
-                              : static_cast<ID2D1Brush*>(red_brush_.Get()),
+            status_foreground,
             DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
@@ -439,8 +459,8 @@ void LauncherRenderer::discard_device_resources() noexcept {
     button_brush_.Reset();
     cyan_brush_.Reset();
     silver_brush_.Reset();
-    red_brush_.Reset();
-    green_brush_.Reset();
+    status_foreground_brush_.Reset();
+    status_backing_brush_.Reset();
     white_brush_.Reset();
     background_brush_.Reset();
     render_target_.Reset();

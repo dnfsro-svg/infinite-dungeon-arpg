@@ -1,6 +1,9 @@
 #include "launcher_layout.hpp"
 #include "test_framework.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 namespace {
 
 using arpg::launcher::LauncherLayout;
@@ -27,6 +30,29 @@ bool same(RectF first, RectF second) noexcept {
 
 bool same(PixelSize first, PixelSize second) noexcept {
     return first.width == second.width && first.height == second.height;
+}
+
+double linear_channel(const unsigned char channel) noexcept {
+    const double srgb = static_cast<double>(channel) / 255.0;
+    return srgb <= 0.04045
+        ? srgb / 12.92
+        : std::pow((srgb + 0.055) / 1.055, 2.4);
+}
+
+double relative_luminance(const arpg::launcher::LauncherColor color) noexcept {
+    return 0.2126 * linear_channel(color.red) +
+        0.7152 * linear_channel(color.green) +
+        0.0722 * linear_channel(color.blue);
+}
+
+double contrast_ratio(
+    const arpg::launcher::LauncherColor first,
+    const arpg::launcher::LauncherColor second) noexcept {
+    const double lighter =
+        (std::max)(relative_luminance(first), relative_luminance(second));
+    const double darker =
+        (std::min)(relative_luminance(first), relative_luminance(second));
+    return (lighter + 0.05) / (darker + 0.05);
 }
 
 arpg::test::Failure design_size_keeps_every_rect_inside_client_area() noexcept {
@@ -99,6 +125,23 @@ arpg::test::Failure dpi_scaling_preserves_the_fixed_logical_size() noexcept {
     return {};
 }
 
+arpg::test::Failure status_styles_have_opaque_high_contrast_backings() noexcept {
+    const auto ready = arpg::launcher::launcher_status_style(true);
+    const auto error = arpg::launcher::launcher_status_style(false);
+
+    ARPG_REQUIRE(ready.backing.alpha == 255U);
+    ARPG_REQUIRE(error.backing.alpha == 255U);
+    ARPG_REQUIRE(ready.foreground.alpha == 255U);
+    ARPG_REQUIRE(error.foreground.alpha == 255U);
+    ARPG_REQUIRE(contrast_ratio(ready.foreground, ready.backing) >= 4.5);
+    ARPG_REQUIRE(contrast_ratio(error.foreground, error.backing) >= 4.5);
+    ARPG_REQUIRE(
+        ready.backing.red != error.backing.red ||
+        ready.backing.green != error.backing.green ||
+        ready.backing.blue != error.backing.blue);
+    return {};
+}
+
 }  // namespace
 
 arpg::test::TestSuite launcher_layout_suite() noexcept {
@@ -108,6 +151,8 @@ arpg::test::TestSuite launcher_layout_suite() noexcept {
         {"status and path do not overlap actions", status_and_path_do_not_overlap_actions},
         {"undersized client area returns empty layout", undersized_client_area_returns_empty_layout},
         {"dpi scaling preserves the fixed logical size", dpi_scaling_preserves_the_fixed_logical_size},
+        {"status styles have opaque high contrast backings",
+            status_styles_have_opaque_high_contrast_backings},
     };
     return arpg::test::make_suite("launcher_layout", cases);
 }
