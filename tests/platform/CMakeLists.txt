@@ -1976,6 +1976,25 @@ set_tests_properties(
         "headless;platform;architecture;negative;full_chinese_ui")
 
 add_test(
+    NAME platform.full_chinese_inventory_progression_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/full_chinese_inventory_progression_source_test.cmake")
+set_tests_properties(
+    platform.full_chinese_inventory_progression_source
+    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+
+add_test(
+    NAME platform.full_chinese_inventory_progression_source_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/full-chinese-inventory-progression-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/full_chinese_inventory_progression_source_self_test.cmake")
+set_tests_properties(
+    platform.full_chinese_inventory_progression_source_self_test
+    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
+
+add_test(
     NAME platform.task6_recovery_screen_source_guard
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
