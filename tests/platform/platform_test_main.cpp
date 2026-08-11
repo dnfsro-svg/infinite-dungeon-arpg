@@ -64,6 +64,7 @@ arpg::test::TestSuite stage12_material_render_suite() noexcept;
 arpg::test::TestSuite large_room_render_plan_suite() noexcept;
 arpg::test::TestSuite ui_text_catalog_suite() noexcept;
 arpg::test::TestSuite ui_utf8_suite() noexcept;
+arpg::test::TestSuite ui_text_layout_suite() noexcept;
 arpg::test::TestSuite shared_ui_font_suite() noexcept;
 
 namespace {
@@ -163,6 +164,16 @@ bool full_chinese_ui_menu_hud_completion_only() noexcept {
     std::size_t length = 0U;
     const errno_t error = _dupenv_s(&value, &length,
         "ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool full_chinese_ui_inventory_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_FULL_CHINESE_UI_INVENTORY_ONLY");
     const bool enabled = error == 0 && value != nullptr;
     std::free(value);
     return enabled;
@@ -300,6 +311,25 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (full_chinese_ui_inventory_only()) {
+        const arpg::test::TestSuite full_chinese_ui_inventory[] = {
+            ui_text_catalog_suite(),
+            ui_utf8_suite(),
+            shared_ui_font_suite(),
+            inventory_view_math_suite(),
+            active_skill_loadout_view_suite(),
+            ground_loot_view_suite(),
+            loot_pickup_feedback_suite(),
+            material_loot_view_suite(),
+            material_bag_renderer_suite(),
+            passive_tree_view_suite(),
+            death_overlay_view_suite(),
+            hud_font_suite(),
+            ui_text_layout_suite(),
+        };
+        return arpg::test::run_suites(full_chinese_ui_inventory, 120,
+            "full Chinese UI inventory and progression");
+    }
     if (full_chinese_ui_foundation_only()) {
         const arpg::test::TestSuite full_chinese_ui_foundation[] = {
             ui_text_catalog_suite(),
@@ -536,8 +566,9 @@ int main() {
         stage12_actor_render_suite(),
         stage12_material_render_suite(),
         large_room_render_plan_suite(),
+        ui_text_layout_suite(),
     };
 
-    return arpg::test::run_suites(suites, 670,
+    return arpg::test::run_suites(suites, 675,
         "host settings runtime contract");
 }
