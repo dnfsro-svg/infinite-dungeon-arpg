@@ -2087,6 +2087,8 @@ add_test(
     COMMAND "${CMAKE_COMMAND}"
         "-DHUD_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_renderer.cpp"
         "-DACTIVE_SKILL_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/active_skill_renderer.cpp"
+        "-DUI_TEXT_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/ui_text_renderer.cpp"
+        "-DUI_TEXT_BOUNDS_AUDIT_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/ui_text_bounds_audit.cpp"
         "-DDUNGEON_RUNTIME_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/dungeon_runtime_tests.cpp"
         "-DLOOT_SUCTION_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/loot_suction_animation_tests.cpp"
         "-DSTAGE12_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/stage12_material_formal_game_validation.cpp"
@@ -2101,6 +2103,8 @@ add_test(
     COMMAND "${CMAKE_COMMAND}"
         "-DHUD_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_renderer.cpp"
         "-DACTIVE_SKILL_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/active_skill_renderer.cpp"
+        "-DUI_TEXT_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/ui_text_renderer.cpp"
+        "-DUI_TEXT_BOUNDS_AUDIT_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/ui_text_bounds_audit.cpp"
         "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_test.cmake"
         "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hud-renderer-structured-model-mutations"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_self_test.cmake")

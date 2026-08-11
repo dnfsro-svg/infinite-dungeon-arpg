@@ -66,7 +66,8 @@ void reset_ui_text_bounds_audit() noexcept;
 void record_ui_text_bounds(UiTextAuditPage page, UiTextAuditRole role,
     Font font, const char* text, Vector2 position, float font_size,
     float spacing, Rectangle container, float minimum_font_size,
-    const Rectangle* blockers = nullptr, std::size_t blocker_count = 0U)
+    const Rectangle* blockers = nullptr, std::size_t blocker_count = 0U,
+    int shadow_pixels = 2)
     noexcept;
 [[nodiscard]] UiTextBoundsAuditStatus ui_text_bounds_audit_status() noexcept;
 

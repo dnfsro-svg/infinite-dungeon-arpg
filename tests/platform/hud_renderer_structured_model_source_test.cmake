@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 foreach(REQUIRED_INPUT IN ITEMS HUD_RENDERER_SOURCE ACTIVE_SKILL_RENDERER_SOURCE
+        UI_TEXT_RENDERER_SOURCE UI_TEXT_BOUNDS_AUDIT_SOURCE
         DUNGEON_RUNTIME_SOURCE LOOT_SUCTION_SOURCE STAGE12_SOURCE STAGE16_SOURCE)
     if(NOT DEFINED ${REQUIRED_INPUT} OR NOT EXISTS "${${REQUIRED_INPUT}}")
         message(FATAL_ERROR
@@ -24,6 +25,19 @@ function(count_substring INPUT NEEDLE OUTPUT)
         string(SUBSTRING "${REMAINDER}" ${NEXT} -1 REMAINDER)
     endwhile()
     set(${OUTPUT} ${COUNT} PARENT_SCOPE)
+endfunction()
+
+function(require_real_code BODY LABEL)
+    string(REGEX MATCH "if[ ]*\\([ ]*(false|0)[ ]*\\)"
+        DEAD_BRANCH "${BODY}")
+    if(DEAD_BRANCH)
+        message(FATAL_ERROR "${LABEL} must not hide required calls in constant-false code")
+    endif()
+    string(REGEX MATCH "auto[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*\\["
+        UNCALLED_LAMBDA "${BODY}")
+    if(UNCALLED_LAMBDA)
+        message(FATAL_ERROR "${LABEL} must not hide required calls in an uncalled lambda")
+    endif()
 endfunction()
 
 file(READ "${HUD_RENDERER_SOURCE}" HUD_SOURCE)
@@ -56,27 +70,176 @@ file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_SOURCE)
 extract_cpp_function_body("${ACTIVE_SOURCE}"
     "void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,"
     ACTIVE_DRAW_BODY ACTIVE_DRAW_CODE)
-set(REQUIRED_KEY_DRAW
-    "if (!hud_font_ready) continue; draw_skill_text(hud_font, slot.key_label.data(), bounds.x + 5.0F * scale, bounds.y + 3.0F * scale, 16.0F * scale, ui_text_contrast_style().primary); if (!slot.empty) {")
-set(REQUIRED_COOLDOWN_DRAW
-    "if (slot.cooldown_ratio <= 0.0F || slot.empty) continue; draw_skill_text(hud_font, slot.cooldown_label.data(), bounds.x + 18.0F * scale, bounds.y + 22.0F * scale, 16.0F * scale, ui_text_contrast_style().primary);")
-foreach(REQUIRED_CALL IN ITEMS REQUIRED_KEY_DRAW REQUIRED_COOLDOWN_DRAW)
-    count_substring("${ACTIVE_DRAW_BODY}" "${${REQUIRED_CALL}}"
-        REQUIRED_CALL_COUNT)
-    if(NOT REQUIRED_CALL_COUNT EQUAL 1)
+require_real_code("${ACTIVE_DRAW_CODE}" "ActiveSkillRenderer::draw_hud")
+set(REQUIRED_INVALID_LAYOUT_GUARD "if (!layout.valid) return;")
+string(FIND "${ACTIVE_DRAW_CODE}" "${REQUIRED_INVALID_LAYOUT_GUARD}"
+    INVALID_LAYOUT_GUARD_INDEX)
+if(INVALID_LAYOUT_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "ActiveSkillRenderer::draw_hud must reject invalid layout before drawing")
+endif()
+if(NOT INVALID_LAYOUT_GUARD_INDEX EQUAL 0)
+    message(FATAL_ERROR
+        "ActiveSkillRenderer::draw_hud must begin with the invalid-layout guard")
+endif()
+foreach(FIRST_DRAW_TOKEN IN ITEMS
+        "material_pack.draw_to(" "DrawRectangleRounded(" "DrawRectangleRec(")
+    string(FIND "${ACTIVE_DRAW_CODE}" "${FIRST_DRAW_TOKEN}" FIRST_DRAW_INDEX)
+    if(NOT FIRST_DRAW_INDEX EQUAL -1
+            AND NOT INVALID_LAYOUT_GUARD_INDEX LESS FIRST_DRAW_INDEX)
         message(FATAL_ERROR
-            "ActiveSkillRenderer::draw_hud must contain exactly one required model draw call")
+            "ActiveSkillRenderer::draw_hud must reject invalid layout before its first draw")
     endif()
 endforeach()
-foreach(MODEL_TOKEN IN ITEMS
-        "slot.key_label.data()" "slot.cooldown_label.data()")
-    string(REGEX REPLACE "([][+.*()^$?\\\\|])" "\\\\\\1"
-        TOKEN_REGEX "${MODEL_TOKEN}")
-    string(REGEX MATCHALL "${TOKEN_REGEX}" MODEL_USES "${ACTIVE_DRAW_BODY}")
-    list(LENGTH MODEL_USES MODEL_USE_COUNT)
-    if(NOT MODEL_USE_COUNT EQUAL 1)
+
+set(REQUIRED_TEXT_PLAN
+    "const ActiveSkillHudTextPlan text_plan = make_active_skill_hud_text_plan( slot, layout.text_regions[index], layout.scale, hud_font_ready && IsFontValid(hud_font), &measure_active_skill_text, &measure_context);")
+count_substring("${ACTIVE_DRAW_BODY}" "${REQUIRED_TEXT_PLAN}" TEXT_PLAN_COUNT)
+if(NOT TEXT_PLAN_COUNT EQUAL 1)
+    message(FATAL_ERROR
+        "ActiveSkillRenderer::draw_hud must build one shared-font active-skill text plan")
+endif()
+string(FIND "${ACTIVE_DRAW_CODE}" "${REQUIRED_TEXT_PLAN}" TEXT_PLAN_INDEX)
+if(NOT INVALID_LAYOUT_GUARD_INDEX LESS TEXT_PLAN_INDEX)
+    message(FATAL_ERROR
+        "ActiveSkillRenderer::draw_hud must reject invalid layout before making a text plan")
+endif()
+string(FIND "${ACTIVE_DRAW_CODE}" "material_pack.draw_to(" ARTWORK_DRAW_INDEX)
+if(ARTWORK_DRAW_INDEX EQUAL -1 OR NOT ARTWORK_DRAW_INDEX LESS TEXT_PLAN_INDEX)
+    message(FATAL_ERROR
+        "Active-skill slot artwork must be drawn before the text plan is made")
+endif()
+
+set(LAST_TEXT_DRAW_INDEX ${TEXT_PLAN_INDEX})
+foreach(REQUIRED_PLATE_DRAW IN ITEMS
+        "draw_active_skill_text_plate(hud_font, text_plan.key);"
+        "draw_active_skill_text_plate(hud_font, text_plan.cooldown);"
+        "draw_active_skill_text_plate(hud_font, text_plan.name);")
+    count_substring("${ACTIVE_DRAW_BODY}" "${REQUIRED_PLATE_DRAW}"
+        PLATE_DRAW_COUNT)
+    if(NOT PLATE_DRAW_COUNT EQUAL 1)
         message(FATAL_ERROR
-            "ActiveSkillRenderer::draw_hud model text must have one real use")
+            "ActiveSkillRenderer::draw_hud must draw each real active-skill text plan")
+    endif()
+    string(FIND "${ACTIVE_DRAW_CODE}" "${REQUIRED_PLATE_DRAW}" PLATE_DRAW_INDEX)
+    if(NOT PLATE_DRAW_INDEX GREATER LAST_TEXT_DRAW_INDEX)
+        message(FATAL_ERROR
+            "Active-skill key, cooldown, and name plans must draw in order")
+    endif()
+    set(LAST_TEXT_DRAW_INDEX ${PLATE_DRAW_INDEX})
+endforeach()
+
+extract_cpp_function_body("${ACTIVE_SOURCE}"
+    "void draw_active_skill_text_plate(Font font,"
+    ACTIVE_PLATE_BODY ACTIVE_PLATE_CODE)
+require_real_code("${ACTIVE_PLATE_CODE}" "Active-skill text plate helper")
+set(REQUIRED_PLATE_EARLY_RETURN "if (!plan.visible) return;")
+string(FIND "${ACTIVE_PLATE_CODE}" "${REQUIRED_PLATE_EARLY_RETURN}"
+    PLATE_EARLY_RETURN_INDEX)
+if(NOT PLATE_EARLY_RETURN_INDEX EQUAL 0)
+    message(FATAL_ERROR
+        "Active-skill text plate helper must begin by rejecting invisible plans")
+endif()
+set(REQUIRED_PLATE_BACKING
+    "DrawRectangleRec(plan.backing, active_skill_text_plate_backing());")
+set(REQUIRED_PLATE_AUDIT
+    "record_ui_text_bounds(UiTextAuditPage::hud, plan.role, font, plan.text.data(), plan.position, plan.font_size, plan.spacing, plan.backing, plan.font_size, nullptr, 0U, 0);")
+set(REQUIRED_PLATE_TEXT
+    "draw_crisp_ui_text(font, plan.text.data(), plan.position, plan.font_size, plan.spacing, ui_text_contrast_style().primary, 0);")
+set(LAST_PLATE_INDEX -1)
+foreach(REQUIRED_PLATE_CALL IN ITEMS REQUIRED_PLATE_BACKING REQUIRED_PLATE_AUDIT REQUIRED_PLATE_TEXT)
+    count_substring("${ACTIVE_PLATE_BODY}" "${${REQUIRED_PLATE_CALL}}"
+        PLATE_CALL_COUNT)
+    if(NOT PLATE_CALL_COUNT EQUAL 1)
+        message(FATAL_ERROR
+            "Active-skill text plate helper must use exact backing, audit, and zero-shadow text")
+    endif()
+    string(FIND "${ACTIVE_PLATE_CODE}" "${${REQUIRED_PLATE_CALL}}"
+        PLATE_CALL_INDEX)
+    if(NOT PLATE_CALL_INDEX GREATER LAST_PLATE_INDEX)
+        message(FATAL_ERROR
+            "Active-skill text plate must draw backing, then audit, then text")
+    endif()
+    set(LAST_PLATE_INDEX ${PLATE_CALL_INDEX})
+endforeach()
+
+file(READ "${UI_TEXT_RENDERER_SOURCE}" TEXT_RENDERER_SOURCE)
+extract_cpp_function_body("${TEXT_RENDERER_SOURCE}"
+    "void draw_crisp_ui_text(Font font, const char* text,"
+    TEXT_RENDERER TEXT_RENDERER_CODE)
+require_real_code("${TEXT_RENDERER_CODE}" "draw_crisp_ui_text")
+set(REQUIRED_CONDITIONAL_SHADOW
+    "if (shadow_pixels > 0) { DrawTextEx(font, text, shadow, font_size, spacing, style.shadow); }")
+count_substring("${TEXT_RENDERER}" "${REQUIRED_CONDITIONAL_SHADOW}"
+    CONDITIONAL_SHADOW_COUNT)
+if(NOT CONDITIONAL_SHADOW_COUNT EQUAL 1)
+    message(FATAL_ERROR
+        "draw_crisp_ui_text must draw a shadow only when requested")
+endif()
+
+file(READ "${UI_TEXT_BOUNDS_AUDIT_SOURCE}" TEXT_AUDIT_SOURCE)
+extract_cpp_function_body("${TEXT_AUDIT_SOURCE}"
+    "[[nodiscard]] Rectangle measured_bounds(Font font, const char* text,"
+    TEXT_AUDIT_MEASURED TEXT_AUDIT_MEASURED_CODE)
+extract_cpp_function_body("${TEXT_AUDIT_SOURCE}"
+    "void record_ui_text_bounds(UiTextAuditPage page, UiTextAuditRole role,"
+    TEXT_AUDIT_RECORD TEXT_AUDIT_RECORD_CODE)
+require_real_code("${TEXT_AUDIT_MEASURED_CODE}" "UI text measured bounds")
+require_real_code("${TEXT_AUDIT_RECORD_CODE}" "record_ui_text_bounds")
+set(TEXT_AUDIT "${TEXT_AUDIT_MEASURED}")
+set(REQUIRED_EFFECTIVE_SHADOW
+    "const int effective_shadow = shadow_pixels > 0 ? shadow_pixels : 0;")
+set(REQUIRED_AUDIT_SHADOW_USE
+    "style.outline_pixels, effective_shadow")
+foreach(REQUIRED_AUDIT_TOKEN IN ITEMS
+        REQUIRED_EFFECTIVE_SHADOW REQUIRED_AUDIT_SHADOW_USE)
+    count_substring("${TEXT_AUDIT}" "${${REQUIRED_AUDIT_TOKEN}}"
+        AUDIT_TOKEN_COUNT)
+    if(NOT AUDIT_TOKEN_COUNT EQUAL 1)
+        message(FATAL_ERROR
+            "record_ui_text_bounds must measure its explicit shadow size")
+    endif()
+endforeach()
+set(REQUIRED_AUDIT_MEASURE_CALL
+    "font, text, position, font_size, spacing, shadow_pixels);")
+count_substring("${TEXT_AUDIT_RECORD}" "${REQUIRED_AUDIT_MEASURE_CALL}"
+    AUDIT_MEASURE_CALL_COUNT)
+if(NOT AUDIT_MEASURE_CALL_COUNT EQUAL 1)
+    message(FATAL_ERROR
+        "record_ui_text_bounds must pass the explicit shadow to measured bounds")
+endif()
+
+extract_cpp_function_body("${ACTIVE_SOURCE}"
+    "[[nodiscard]] UiTextExtent measure_active_skill_text(const char* text,"
+    ACTIVE_MEASURE_BODY ACTIVE_MEASURE_CODE)
+require_real_code("${ACTIVE_MEASURE_CODE}" "Active-skill MeasureTextEx adapter")
+foreach(REQUIRED_MEASURE_CALL IN ITEMS
+        "static_cast<const ActiveSkillTextMeasureContext*>(context);"
+        "!IsFontValid(measure_context->font)"
+        "MeasureTextEx(measure_context->font, text, font_size, spacing);")
+    count_substring("${ACTIVE_MEASURE_BODY}" "${REQUIRED_MEASURE_CALL}"
+        MEASURE_CALL_COUNT)
+    if(NOT MEASURE_CALL_COUNT EQUAL 1)
+        message(FATAL_ERROR
+            "Active-skill MeasureTextEx adapter must use its real shared-font context")
+    endif()
+endforeach()
+count_substring("${ACTIVE_DRAW_BODY}"
+    "ActiveSkillTextMeasureContext measure_context{hud_font};"
+    MEASURE_CONTEXT_COUNT)
+if(NOT MEASURE_CONTEXT_COUNT EQUAL 1)
+    message(FATAL_ERROR
+        "Active-skill HUD must create one shared-font measure context")
+endif()
+foreach(FORBIDDEN_ACTIVE_TOKEN IN ITEMS
+        "GetFontDefault(" "DrawText(" "TextFormat(" "snprintf(" "std::string")
+    set(ACTIVE_REAL_CODE
+        "${ACTIVE_DRAW_CODE} ${ACTIVE_PLATE_CODE} ${ACTIVE_MEASURE_CODE}")
+    string(FIND "${ACTIVE_REAL_CODE}" "${FORBIDDEN_ACTIVE_TOKEN}"
+        FORBIDDEN_ACTIVE_INDEX)
+    if(NOT FORBIDDEN_ACTIVE_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "ActiveSkillRenderer::draw_hud must not use ${FORBIDDEN_ACTIVE_TOKEN}")
     endif()
 endforeach()
 

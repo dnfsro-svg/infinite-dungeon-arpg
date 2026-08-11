@@ -3,7 +3,6 @@
 #include "ui_text_contrast.hpp"
 #include "ui_text_bounds_audit.hpp"
 #include "ui_text_renderer.hpp"
-#include "ui_typography.hpp"
 
 #include "combat/active_skill_runtime.hpp"
 #include "combat/room_bounds.hpp"
@@ -14,8 +13,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
-#include <string>
 
 namespace arpg::platform {
 namespace {
@@ -39,15 +36,32 @@ constexpr std::size_t kStormGroundSwordCount = 12U;
     return age <= kFlashTicks;
 }
 
-void draw_skill_text(Font font, const char* text,
-    float x, float y, float size, Color color) noexcept {
-    if (text == nullptr || text[0] == '\0') return;
-    const UiTextContrastStyle style = ui_text_contrast_style();
-    color.a = 255U;
-    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
-        color = style.muted;
+struct ActiveSkillTextMeasureContext final {
+    Font font{};
+};
+
+[[nodiscard]] UiTextExtent measure_active_skill_text(const char* text,
+    float font_size, float spacing, void* context) noexcept {
+    const auto* const measure_context =
+        static_cast<const ActiveSkillTextMeasureContext*>(context);
+    if (text == nullptr || measure_context == nullptr
+            || !IsFontValid(measure_context->font)) {
+        return {};
     }
-    draw_crisp_ui_text(font, text, {x, y}, size, 0.5F, color);
+    const Vector2 extent = MeasureTextEx(measure_context->font, text,
+        font_size, spacing);
+    return {extent.x, extent.y};
+}
+
+void draw_active_skill_text_plate(Font font,
+    const ActiveSkillTextPlatePlan& plan) noexcept {
+    if (!plan.visible) return;
+    DrawRectangleRec(plan.backing, active_skill_text_plate_backing());
+    record_ui_text_bounds(UiTextAuditPage::hud, plan.role, font,
+        plan.text.data(), plan.position, plan.font_size, plan.spacing,
+        plan.backing, plan.font_size, nullptr, 0U, 0);
+    draw_crisp_ui_text(font, plan.text.data(), plan.position,
+        plan.font_size, plan.spacing, ui_text_contrast_style().primary, 0);
 }
 
 [[nodiscard]] bool draw_draw_slash(const DrawSlashVisualPlan& plan,
@@ -81,28 +95,6 @@ void draw_skill_text(Font font, const char* text,
             Fade(Color{236, 251, 255, 255}, plan.opacity));
     }
     return true;
-}
-
-void fit_skill_label(Font font, const char* source, char* output,
-    std::size_t capacity, float width, float size) noexcept {
-    if (output == nullptr || capacity == 0U) return;
-    static_cast<void>(std::snprintf(output, capacity, "%s",
-        source == nullptr ? "" : source));
-    output[capacity - 1U] = '\0';
-    if (MeasureTextEx(font, output, size, 0.5F).x <= width) return;
-    std::size_t length = std::char_traits<char>::length(output);
-    while (length > 0U) {
-        do {
-            --length;
-        } while (length > 0U
-            && (static_cast<unsigned char>(output[length]) & 0xC0U) == 0x80U);
-        output[length] = '\0';
-        if (length + 4U >= capacity) continue;
-        static_cast<void>(std::snprintf(output + length,
-            capacity - length, "..."));
-        if (MeasureTextEx(font, output, size, 0.5F).x <= width) return;
-        output[length] = '\0';
-    }
 }
 
 void draw_sword(Vector2 center, float angle, float scale,
@@ -377,7 +369,9 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
     const ActiveSkillHudLayout& layout,
     Font hud_font, bool hud_font_ready,
     const MaterialPack& material_pack) const noexcept {
-    const float scale = ui_viewport_scale(GetScreenWidth(), GetScreenHeight());
+    if (!layout.valid) return;
+    const float scale = layout.scale;
+    ActiveSkillTextMeasureContext measure_context{hud_font};
     for (std::size_t index = 0U; index < model.slots.size(); ++index) {
         const ActiveSkillHudSlot& slot = model.slots[index];
         const Rectangle bounds = layout.slots[index];
@@ -421,35 +415,13 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
                     cooldown_overlay.bounds.y},
                 1.5F, Color{112, 211, 255, 210});
         }
-        if (!hud_font_ready) continue;
-        draw_skill_text(hud_font, slot.key_label.data(),
-            bounds.x + 5.0F * scale,
-            bounds.y + 3.0F * scale, 16.0F * scale,
-            ui_text_contrast_style().primary);
-        if (!slot.empty) {
-            const float name_size =
-                ui_typography().kHudSkillNameFontSize * scale;
-            const Rectangle name_container{bounds.x + 3.0F * scale,
-                bounds.y + bounds.height - 24.0F * scale,
-                bounds.width - 6.0F * scale, 23.0F * scale};
-            char fitted_name[48]{};
-            fit_skill_label(hud_font, slot.name.data(), fitted_name,
-                sizeof(fitted_name),
-                name_container.width - 6.0F * scale, name_size);
-            const Vector2 name_position{name_container.x + 3.0F * scale,
-                name_container.y + 2.0F * scale};
-            record_ui_text_bounds(UiTextAuditPage::hud,
-                UiTextAuditRole::hud_skill_name, hud_font, fitted_name,
-                name_position, name_size, 0.5F, name_container, name_size);
-            draw_skill_text(hud_font, fitted_name, name_position.x,
-                name_position.y, name_size,
-                ui_text_contrast_style().primary);
-        }
-        if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;
-        draw_skill_text(hud_font, slot.cooldown_label.data(),
-            bounds.x + 18.0F * scale,
-            bounds.y + 22.0F * scale, 16.0F * scale,
-            ui_text_contrast_style().primary);
+        const ActiveSkillHudTextPlan text_plan = make_active_skill_hud_text_plan(
+            slot, layout.text_regions[index], layout.scale,
+            hud_font_ready && IsFontValid(hud_font),
+            &measure_active_skill_text, &measure_context);
+        draw_active_skill_text_plate(hud_font, text_plan.key);
+        draw_active_skill_text_plate(hud_font, text_plan.cooldown);
+        draw_active_skill_text_plate(hud_font, text_plan.name);
     }
 }
 

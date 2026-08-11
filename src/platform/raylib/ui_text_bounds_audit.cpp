@@ -13,14 +13,16 @@ namespace {
 UiTextBoundsAuditStatus g_status{};
 
 [[nodiscard]] Rectangle measured_bounds(Font font, const char* text,
-    Vector2 position, float font_size, float spacing) noexcept {
+    Vector2 position, float font_size, float spacing,
+    int shadow_pixels) noexcept {
     position = snap_ui_text_position(position);
     const Vector2 measured = MeasureTextEx(font, text, font_size, spacing);
     const UiTextContrastStyle style = ui_text_contrast_style();
     const float left = static_cast<float>(style.outline_pixels);
     const float top = static_cast<float>(style.outline_pixels);
+    const int effective_shadow = shadow_pixels > 0 ? shadow_pixels : 0;
     const float right = static_cast<float>((std::max)(
-        style.outline_pixels, style.shadow_pixels));
+        style.outline_pixels, effective_shadow));
     const float bottom = right;
     return {position.x - left, position.y - top,
         measured.x + left + right, measured.y + top + bottom};
@@ -56,7 +58,8 @@ bool ui_text_bounds_separated(Rectangle first, Rectangle second) noexcept {
 void record_ui_text_bounds(UiTextAuditPage page, UiTextAuditRole role,
     Font font, const char* text, Vector2 position, float font_size,
     float spacing, Rectangle container, float minimum_font_size,
-    const Rectangle* blockers, std::size_t blocker_count) noexcept {
+    const Rectangle* blockers, std::size_t blocker_count,
+    int shadow_pixels) noexcept {
     const std::size_t page_index = static_cast<std::size_t>(page);
     const std::size_t role_index = static_cast<std::size_t>(role);
     if (page_index >= g_status.pages.size() || role_index >= 64U
@@ -74,7 +77,7 @@ void record_ui_text_bounds(UiTextAuditPage page, UiTextAuditRole role,
     status.sizes_readable = status.sizes_readable && size_readable;
     if (!size_readable) status.failed_size_roles |= role_bit;
     const Rectangle bounds = measured_bounds(
-        font, text, position, font_size, spacing);
+        font, text, position, font_size, spacing, shadow_pixels);
     const bool inside_container = ui_text_bounds_inside(bounds, container);
     bool bounds_safe = inside_container;
     for (std::size_t index{}; index < blocker_count; ++index) {

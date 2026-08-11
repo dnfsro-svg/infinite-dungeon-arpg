@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 foreach(REQUIRED_INPUT IN ITEMS HUD_RENDERER_SOURCE ACTIVE_SKILL_RENDERER_SOURCE
+        UI_TEXT_RENDERER_SOURCE UI_TEXT_BOUNDS_AUDIT_SOURCE
         GUARD_SCRIPT MUTATION_ROOT)
     if(NOT DEFINED ${REQUIRED_INPUT}
             OR ("${${REQUIRED_INPUT}}" STREQUAL "")
@@ -14,6 +15,8 @@ file(REMOVE_RECURSE "${MUTATION_ROOT}")
 file(MAKE_DIRECTORY "${MUTATION_ROOT}")
 file(READ "${HUD_RENDERER_SOURCE}" HUD_ORIGINAL)
 file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_ORIGINAL)
+file(READ "${UI_TEXT_RENDERER_SOURCE}" TEXT_RENDERER_ORIGINAL)
+file(READ "${UI_TEXT_BOUNDS_AUDIT_SOURCE}" TEXT_AUDIT_ORIGINAL)
 set(MISSED_MUTATIONS)
 
 set(DUNGEON_FIXTURE_TEXT
@@ -30,12 +33,24 @@ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
     file(MAKE_DIRECTORY "${ROOT}")
     set(HUD_MUTANT "${ROOT}/hud_renderer.cpp")
     set(ACTIVE_MUTANT "${ROOT}/active_skill_renderer.cpp")
+    set(TEXT_RENDERER_MUTANT "${ROOT}/ui_text_renderer.cpp")
+    set(TEXT_AUDIT_MUTANT "${ROOT}/ui_text_bounds_audit.cpp")
     set(DUNGEON_FIXTURE "${ROOT}/dungeon.cpp")
     set(LOOT_FIXTURE "${ROOT}/loot.cpp")
     set(STAGE12_FIXTURE "${ROOT}/stage12.cpp")
     set(STAGE16_FIXTURE "${ROOT}/stage16.cpp")
     file(WRITE "${HUD_MUTANT}" "${HUD_TEXT}")
     file(WRITE "${ACTIVE_MUTANT}" "${ACTIVE_TEXT}")
+    set(TEXT_RENDERER_TEXT "${TEXT_RENDERER_ORIGINAL}")
+    set(TEXT_AUDIT_TEXT "${TEXT_AUDIT_ORIGINAL}")
+    if(ARGC GREATER 4)
+        set(TEXT_RENDERER_TEXT "${ARGV4}")
+    endif()
+    if(ARGC GREATER 5)
+        set(TEXT_AUDIT_TEXT "${ARGV5}")
+    endif()
+    file(WRITE "${TEXT_RENDERER_MUTANT}" "${TEXT_RENDERER_TEXT}")
+    file(WRITE "${TEXT_AUDIT_MUTANT}" "${TEXT_AUDIT_TEXT}")
     set(CURRENT_DUNGEON_FIXTURE_TEXT "${DUNGEON_FIXTURE_TEXT}")
     set(CURRENT_LOOT_FIXTURE_TEXT "${LOOT_FIXTURE_TEXT}")
     set(CURRENT_STAGE12_FIXTURE_TEXT "${STAGE12_FIXTURE_TEXT}")
@@ -65,6 +80,8 @@ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
         COMMAND "${CMAKE_COMMAND}"
             "-DHUD_RENDERER_SOURCE=${HUD_MUTANT}"
             "-DACTIVE_SKILL_RENDERER_SOURCE=${ACTIVE_MUTANT}"
+            "-DUI_TEXT_RENDERER_SOURCE=${TEXT_RENDERER_MUTANT}"
+            "-DUI_TEXT_BOUNDS_AUDIT_SOURCE=${TEXT_AUDIT_MUTANT}"
             "-DDUNGEON_RUNTIME_SOURCE=${DUNGEON_FIXTURE}"
             "-DLOOT_SUCTION_SOURCE=${LOOT_FIXTURE}"
             "-DSTAGE12_SOURCE=${STAGE12_FIXTURE}"
@@ -81,30 +98,31 @@ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
     endif()
 endfunction()
 
+function(replace_required INPUT MATCH REPLACEMENT OUTPUT LABEL)
+    string(FIND "${INPUT}" "${MATCH}" MATCH_INDEX)
+    if(MATCH_INDEX EQUAL -1)
+        message(FATAL_ERROR "Self-test mutation did not match: ${LABEL}")
+    endif()
+    string(REPLACE "${MATCH}" "${REPLACEMENT}" RESULT "${INPUT}")
+    if(RESULT STREQUAL INPUT)
+        message(FATAL_ERROR "Self-test mutation did not change source: ${LABEL}")
+    endif()
+    set(${OUTPUT} "${RESULT}" PARENT_SCOPE)
+endfunction()
+
 run_guard(clean "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" TRUE)
 
-string(REPLACE "bar.label.bytes.data()" "legacy_bar_label(bar)"
-    HUD_MUTATED "${HUD_ORIGINAL}")
+replace_required("${HUD_ORIGINAL}" "bar.label.bytes.data()"
+    "legacy_bar_label(bar)" HUD_MUTATED "legacy HUD label replacement")
 set(HUD_COMPLETE_DECOY
     "if (false) {\n                record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,\n                    bar.label.bytes.data(), label_position,\n                    style.player_bar_font_size * layout.scale,\n                    1.0F, label_container,\n                    style.player_bar_font_size * layout.scale, &blocker, 1U);\n                draw_hud_text(draw_font, bar.label.bytes.data(), label_position,\n                    style.player_bar_font_size * layout.scale,\n                    palette.text, style.outline_pixels);\n            }\n            ")
-string(REPLACE
+replace_required("${HUD_MUTATED}"
     "record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,"
     "${HUD_COMPLETE_DECOY}record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,"
-    HUD_MUTATED "${HUD_MUTATED}")
+    HUD_MUTATED "HUD dead-branch insertion")
 run_guard(hud_complete_dead_calls_with_live_legacy_path
     "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
 
-string(REPLACE "slot.key_label.data()" "legacy_key_label(slot)"
-    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
-string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
-    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
-set(ACTIVE_COMPLETE_DECOY
-    "if (false) {\n            if (!hud_font_ready) continue;\n            draw_skill_text(hud_font, slot.key_label.data(),\n                bounds.x + 5.0F * scale,\n                bounds.y + 3.0F * scale, 16.0F * scale,\n                ui_text_contrast_style().primary);\n            if (!slot.empty) { }\n            if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;\n            draw_skill_text(hud_font, slot.cooldown_label.data(),\n                bounds.x + 18.0F * scale,\n                bounds.y + 22.0F * scale, 16.0F * scale,\n                ui_text_contrast_style().primary);\n        }\n        ")
-string(REPLACE "if (!hud_font_ready) continue;"
-    "${ACTIVE_COMPLETE_DECOY}if (!hud_font_ready) continue;"
-    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
-run_guard(active_complete_dead_calls_with_live_legacy_path
-    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
 
 macro(run_fixture_reset_mutant LABEL RESET_HINTS RESET_CONTROL_HINTS)
     set(DUNGEON_FIXTURE_OVERRIDE
@@ -131,29 +149,17 @@ run_fixture_reset_mutant(refresh_then_memset_clear
     "std::memset(&hints, 0, sizeof(hints));"
     "std::memset(&control_hints, 0, sizeof(control_hints));")
 
-string(REPLACE "bar.label.bytes.data()" "u8\"生命\""
-    HUD_MUTATED "${HUD_ORIGINAL}")
+replace_required("${HUD_ORIGINAL}" "bar.label.bytes.data()" "u8\"生命\""
+    HUD_MUTATED "HUD hardcoded label replacement")
 set(HUD_DECOY
     "if (false) {\n        static_cast<void>(bar.label.bytes.data());\n        static_cast<void>(bar.label.bytes.data());\n    }\n    ")
-string(REPLACE
+replace_required("${HUD_MUTATED}"
     "const HudLayout& layout, const MaterialPack& assets) const noexcept {\n    if (!IsWindowReady()) return;"
     "const HudLayout& layout, const MaterialPack& assets) const noexcept {\n    ${HUD_DECOY}if (!IsWindowReady()) return;"
-    HUD_MUTATED "${HUD_MUTATED}")
+    HUD_MUTATED "HUD dead-code decoy insertion")
 run_guard(hud_dead_correct_decoy_with_real_hardcode
     "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
 
-string(REPLACE "slot.key_label.data()" "legacy_key_label(slot)"
-    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
-string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
-    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
-set(ACTIVE_DECOY
-    "if (false) {\n        draw_skill_text(hud_font, slot.key_label.data(), 0.0F, 0.0F, 1.0F, WHITE);\n        draw_skill_text(hud_font, slot.cooldown_label.data(), 0.0F, 0.0F, 1.0F, WHITE);\n    }\n    ")
-string(REPLACE
-    "const MaterialPack& material_pack) const noexcept {\n    const float scale"
-    "const MaterialPack& material_pack) const noexcept {\n    ${ACTIVE_DECOY}const float scale"
-    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
-run_guard(active_dead_correct_decoy_with_real_legacy_text
-    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
 
 set(FIXTURE_OVERRIDE
     "void fixture(){ platform::ControlHints initialized{}; platform::refresh_control_hints(initialized, arpg::settings::default_settings()); platform::ControlHints hints{}; renderer.observe_hud(previous, current, status, hints, 0.0F, false); }\n")
@@ -163,38 +169,82 @@ run_guard(refreshes_unused_hints_but_passes_uninitialized
 unset(FIXTURE_OVERRIDE)
 unset(STAGE16_FIXTURE_OVERRIDE)
 
-string(REPLACE "bar.label.bytes.data()" "u8\"生命\""
-    HUD_MUTATED "${HUD_ORIGINAL}")
+replace_required("${HUD_ORIGINAL}" "bar.label.bytes.data()" "u8\"生命\""
+    HUD_MUTATED "HUD ignored-label replacement")
 set(HUD_MUTATED
     "${HUD_MUTATED}\nvoid decoy_bar_label_use(){ bar.label.bytes.data(); }\n")
 run_guard(hud_ignores_bar_label "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
 
-string(REPLACE "slot.key_label.data()" "\"Num1\""
-    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
-set(ACTIVE_MUTATED
-    "${ACTIVE_MUTATED}\nvoid decoy_key_label_use(){ slot.key_label.data(); }\n")
-run_guard(active_hardcodes_num_keycap
+
+replace_required("${ACTIVE_ORIGINAL}" "if (!layout.valid) return;" ""
+    ACTIVE_MUTATED "remove early invalid-layout guard")
+replace_required("${ACTIVE_MUTATED}" "if (!material_drawn) {"
+    "if (!layout.valid) return;\n        if (!material_drawn) {"
+    ACTIVE_MUTATED "move invalid-layout guard after material draw")
+run_guard(invalid_layout_guard_moved_after_first_material_draw
     "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
 
-string(REPLACE "slot.key_label.data()" "legacy_key_label(slot)"
-    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
-set(ACTIVE_MUTATED
-    "${ACTIVE_MUTATED}\nvoid decoy_key_label_use(){ slot.key_label.data(); }\n")
-run_guard(active_ignores_key_label
+foreach(PLATE_NAME IN ITEMS key cooldown name)
+    replace_required("${ACTIVE_ORIGINAL}"
+        "draw_active_skill_text_plate(hud_font, text_plan.${PLATE_NAME});"
+        "static_cast<void>(text_plan.${PLATE_NAME});"
+        ACTIVE_MUTATED "remove active-skill ${PLATE_NAME} plate draw")
+    run_guard(active_skill_${PLATE_NAME}_plate_removed
+        "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+endforeach()
+
+replace_required("${ACTIVE_ORIGINAL}" "plan.position" "Vector2{0.0F, 0.0F}"
+    ACTIVE_MUTATED "replace plan position with fixed offset")
+run_guard(active_skill_plate_uses_fixed_text_offset
     "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
 
-string(REPLACE "slot.cooldown_label.data()" "\"2 seconds\""
-    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
-set(ACTIVE_MUTATED
-    "${ACTIVE_MUTATED}\nvoid decoy_cooldown_use(){ slot.cooldown_label.data(); }\n")
-run_guard(active_hardcodes_seconds
+replace_required("${ACTIVE_ORIGINAL}" "nullptr, 0U, 0);" "nullptr, 0U, 2);"
+    ACTIVE_MUTATED "replace audit zero shadow")
+run_guard(active_skill_plate_audit_uses_shadow
     "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
 
-string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
-    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
-set(ACTIVE_MUTATED
-    "${ACTIVE_MUTATED}\nvoid decoy_cooldown_use(){ slot.cooldown_label.data(); }\n")
-run_guard(active_ignores_cooldown_label
+replace_required("${ACTIVE_ORIGINAL}" "ui_text_contrast_style().primary, 0);"
+    "ui_text_contrast_style().primary, 2);" ACTIVE_MUTATED
+    "replace draw zero shadow")
+run_guard(active_skill_plate_draw_uses_shadow
+    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+
+replace_required("${TEXT_RENDERER_ORIGINAL}" "if (shadow_pixels > 0) {"
+    "if (true) {" TEXT_RENDERER_MUTATED "make shadow draw unconditional")
+run_guard(unconditional_crisp_text_shadow
+    "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" FALSE
+    "${TEXT_RENDERER_MUTATED}")
+
+replace_required("${TEXT_AUDIT_ORIGINAL}"
+    "style.outline_pixels, effective_shadow"
+    "style.outline_pixels, style.shadow_pixels" TEXT_AUDIT_MUTATED
+    "ignore explicit audit shadow")
+run_guard(audit_ignores_explicit_shadow
+    "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" FALSE
+    "${TEXT_RENDERER_ORIGINAL}" "${TEXT_AUDIT_MUTATED}")
+
+replace_required("${ACTIVE_ORIGINAL}"
+    "draw_active_skill_text_plate(hud_font, text_plan.key);"
+    "legacy_draw(text_plan.key);" ACTIVE_MUTATED
+    "replace live active-skill key plate draw")
+set(ACTIVE_LAMBDA_DECOY
+    "auto hidden = [&]() { draw_active_skill_text_plate(hud_font, text_plan.key); };\n        ")
+replace_required("${ACTIVE_MUTATED}" "legacy_draw(text_plan.key);"
+    "${ACTIVE_LAMBDA_DECOY}legacy_draw(text_plan.key);"
+    ACTIVE_MUTATED "insert uncalled active-skill lambda decoy")
+run_guard(active_skill_calls_hidden_in_uncalled_lambda
+    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+
+replace_required("${ACTIVE_ORIGINAL}"
+    "draw_active_skill_text_plate(hud_font, text_plan.key);"
+    "legacy_draw(text_plan.key);" ACTIVE_MUTATED
+    "replace live key plate draw for dead-code decoy")
+set(ACTIVE_FALSE_DECOY
+    "if (false) { draw_active_skill_text_plate(hud_font, text_plan.key); }\n        ")
+replace_required("${ACTIVE_MUTATED}" "legacy_draw(text_plan.key);"
+    "${ACTIVE_FALSE_DECOY}legacy_draw(text_plan.key);" ACTIVE_MUTATED
+    "insert constant-false active-skill key plate decoy")
+run_guard(active_skill_key_call_hidden_in_constant_false
     "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
 
 if(MISSED_MUTATIONS)

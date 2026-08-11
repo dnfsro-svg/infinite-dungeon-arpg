@@ -29,7 +29,9 @@ void draw_crisp_ui_text(Font font, const char* text, Vector2 position,
         foreground.x + shadow_offset,
         foreground.y + shadow_offset,
     };
-    DrawTextEx(font, text, shadow, font_size, spacing, style.shadow);
+    if (shadow_pixels > 0) {
+        DrawTextEx(font, text, shadow, font_size, spacing, style.shadow);
+    }
     DrawTextEx(font, text, foreground, font_size, spacing, color);
 }
 
