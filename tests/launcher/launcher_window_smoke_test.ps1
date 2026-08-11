@@ -22,6 +22,171 @@ function Assert-Task8SourcePattern {
     }
 }
 
+function Remove-Task8CppComments {
+    param([Parameter(Mandatory = $true)][string] $Source)
+
+    $result = [System.Text.StringBuilder]::new($Source.Length)
+    $state = 'code'
+    $index = 0
+    while ($index -lt $Source.Length) {
+        $character = $Source[$index]
+        $next = if ($index + 1 -lt $Source.Length) { $Source[$index + 1] } else { [char]0 }
+
+        if ($state -eq 'code') {
+            if ($character -eq '/' -and $next -eq '/') {
+                [void] $result.Append('  ')
+                $state = 'line_comment'
+                $index += 2
+                continue
+            }
+            if ($character -eq '/' -and $next -eq '*') {
+                [void] $result.Append('  ')
+                $state = 'block_comment'
+                $index += 2
+                continue
+            }
+            if ($character -eq '"') { $state = 'string' }
+            elseif ($character -eq "'") { $state = 'character' }
+            [void] $result.Append($character)
+            ++$index
+            continue
+        }
+
+        if ($state -eq 'string' -or $state -eq 'character') {
+            [void] $result.Append($character)
+            if ($character -eq '\' -and $index + 1 -lt $Source.Length) {
+                [void] $result.Append($Source[$index + 1])
+                $index += 2
+                continue
+            }
+            if (($state -eq 'string' -and $character -eq '"') -or
+                ($state -eq 'character' -and $character -eq "'")) {
+                $state = 'code'
+            }
+            ++$index
+            continue
+        }
+
+        if ($state -eq 'line_comment') {
+            if ($character -eq "`r" -or $character -eq "`n") {
+                [void] $result.Append($character)
+                $state = 'code'
+            }
+            else {
+                [void] $result.Append(' ')
+            }
+            ++$index
+            continue
+        }
+
+        if ($character -eq '*' -and $next -eq '/') {
+            [void] $result.Append('  ')
+            $state = 'code'
+            $index += 2
+            continue
+        }
+        if ($character -eq "`r" -or $character -eq "`n") {
+            [void] $result.Append($character)
+        }
+        else {
+            [void] $result.Append(' ')
+        }
+        ++$index
+    }
+
+    if ($state -eq 'block_comment' -or $state -eq 'string' -or $state -eq 'character') {
+        throw "Task 8 lexical audit found unterminated C++ $state"
+    }
+    return $result.ToString()
+}
+
+function Assert-Task8ActiveSource {
+    param(
+        [Parameter(Mandatory = $true)][string] $Source,
+        [Parameter(Mandatory = $true)][string] $Name
+    )
+
+    if ([regex]::IsMatch(
+            $Source,
+            '(?m)^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif)\b')) {
+        throw "Task 8 audited player-copy source cannot use conditional preprocessing: $Name"
+    }
+    if ([regex]::IsMatch($Source, '(?<![A-Za-z0-9_])(?:u8|u|U|L)?R"')) {
+        throw "Task 8 lexical audit does not allow raw string literals: $Name"
+    }
+    if ([regex]::IsMatch(
+            $Source,
+            '\b(?:if|while)\s*(?:constexpr\s*)?\(\s*(?:false|0)\s*\)',
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant) -or
+        [regex]::IsMatch(
+            $Source,
+            '\bif\s*(?:constexpr\s*)?\([^\)]*(?:&&\s*(?:false|0)|(?:false|0)\s*&&)[^\)]*\)',
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant)) {
+        throw "Task 8 audited player-copy source contains a constant-dead branch: $Name"
+    }
+}
+
+function Get-Task8CppPrefixedStringLiterals {
+    param([Parameter(Mandatory = $true)][string] $Source)
+
+    $literals = [System.Collections.Generic.List[string]]::new()
+    $index = 0
+    while ($index -lt $Source.Length) {
+        if ($Source[$index] -eq "'") {
+            ++$index
+            while ($index -lt $Source.Length) {
+                if ($Source[$index] -eq '\' -and $index + 1 -lt $Source.Length) {
+                    $index += 2
+                    continue
+                }
+                $closed = $Source[$index] -eq "'"
+                ++$index
+                if ($closed) { break }
+            }
+            continue
+        }
+        if ($Source[$index] -ne '"') {
+            ++$index
+            continue
+        }
+
+        $prefix = ''
+        $prefixStart = $index
+        if ($index -ge 2 -and $Source.Substring($index - 2, 2) -ceq 'u8' -and
+            ($index -eq 2 -or
+                (-not [char]::IsLetterOrDigit($Source[$index - 3]) -and
+                    $Source[$index - 3] -ne '_'))) {
+            $prefix = 'u8'
+            $prefixStart = $index - 2
+        }
+        elseif ($index -ge 1 -and $Source[$index - 1] -in @('L', 'u', 'U') -and
+            ($index -eq 1 -or
+                (-not [char]::IsLetterOrDigit($Source[$index - 2]) -and
+                    $Source[$index - 2] -ne '_'))) {
+            $prefix = [string] $Source[$index - 1]
+            $prefixStart = $index - 1
+        }
+
+        $end = $index + 1
+        while ($end -lt $Source.Length) {
+            if ($Source[$end] -eq '\' -and $end + 1 -lt $Source.Length) {
+                $end += 2
+                continue
+            }
+            if ($Source[$end] -eq '"') { break }
+            ++$end
+        }
+        if ($end -ge $Source.Length) {
+            throw 'Task 8 lexical audit found an unterminated C++ string literal'
+        }
+        if (-not [string]::IsNullOrEmpty($prefix)) {
+            $literals.Add($Source.Substring($prefixStart, $end - $prefixStart + 1))
+        }
+        $index = $end + 1
+    }
+    return $literals
+}
+
 function Get-Task8ChineseCopySources {
     $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
     return [ordered]@{
@@ -52,6 +217,14 @@ function Assert-Task8ChineseCopyGuard {
     if ($WholeFileAllowlist.Count -ne 0) {
         throw 'Task 8 forbids whole-file English allowlists'
     }
+
+    $activeSources = [ordered]@{}
+    foreach ($name in $Sources.Keys) {
+        $commentFreeSource = Remove-Task8CppComments $Sources[$name]
+        Assert-Task8ActiveSource $commentFreeSource $name
+        $activeSources[$name] = $commentFreeSource
+    }
+    $Sources = $activeSources
 
     Assert-Task8SourcePattern $Sources.Host 'const\s+char\*\s+window_title\{u8"无限地城"\};' 'untouched RaylibHostConfig must default to exact UTF-8 无限地城'
     Assert-Task8SourcePattern $Sources.Main 'constexpr\s+wchar_t\s+kWindowTitle\[\]\s*=\s*L"无限地下城启动器";' 'launcher window title must remain exact 无限地下城启动器'
@@ -160,23 +333,110 @@ function Assert-Task8ChineseCopyGuard {
     }
     Assert-Task8SourcePattern $Sources.Platform 'ShellExecuteW\(\s*nullptr,\s*L"open"' 'open is allowed only as the ShellExecuteW verb'
 
-    $technicalAllowlist = @(
-        @{ File = 'launcher_main.cpp'; Token = 'InfiniteDungeonLauncherWindow'; Reason = 'internal Win32 class identity, never display copy' },
-        @{ File = 'launcher_main.cpp'; Token = 'LOCALAPPDATA'; Reason = 'exact environment variable, shown only after a Chinese explanation' },
-        @{ File = 'launcher_main.cpp/launcher_renderer.cpp'; Token = 'Microsoft YaHei UI'; Reason = 'installed font-family identifier' },
-        @{ File = 'launcher_renderer.cpp'; Token = 'zh-CN'; Reason = 'DirectWrite locale identifier' },
-        @{ File = 'launcher_renderer.cpp'; Token = ($allowedStages -join ','); Reason = 'renderer diagnostic stages, consumed only by the parenthesized formatter' },
-        @{ File = 'launcher_main.cpp'; Token = 'HRESULT 0x'; Reason = 'numeric renderer detail inside Chinese parentheses' },
-        @{ File = 'launcher_core.cpp'; Token = 'arpg_game.exe'; Reason = 'immutable executable name after Chinese copy' },
-        @{ File = 'launcher_core.cpp'; Token = 'assets/fonts,assets/player,assets/skills,assets/stage12,assets/stage14/audio,assets/stage15/audio'; Reason = 'exact immutable package paths after 缺少资源：' },
-        @{ File = 'launcher_core.cpp'; Token = 'InfiniteDungeon/save'; Reason = 'immutable default save-path components, not authored display copy' },
-        @{ File = 'launcher_platform_win32.cpp'; Token = 'open'; Reason = 'ShellExecuteW verb, never display copy' }
+    $playerLiteralContracts = @(
+        @{ File = 'Host'; Literal = 'u8"无限地城"'; Count = 1; Reason = 'exact game window title' },
+        @{ File = 'Main'; Literal = 'L"安装目录："'; Count = 1; Reason = 'dynamic install-path Chinese prefix' },
+        @{ File = 'Main'; Literal = 'L"安装目录：不可用"'; Count = 1; Reason = 'unavailable install-path state' },
+        @{ File = 'Main'; Literal = 'L"开始游戏"'; Count = 1; Reason = 'native fallback Start button' },
+        @{ File = 'Main'; Literal = 'L"打开存档目录"'; Count = 1; Reason = 'native fallback Save button' },
+        @{ File = 'Main'; Literal = 'L"无法创建游戏启动请求"'; Count = 1; Reason = 'launch-request failure' },
+        @{ File = 'Main'; Literal = 'L"无法解析存档目录"'; Count = 1; Reason = 'save-path failure' },
+        @{ File = 'Main'; Literal = 'L"无法解析本地应用数据目录（LOCALAPPDATA）"'; Count = 1; Reason = 'Chinese error with exact parenthesized environment token' },
+        @{ File = 'Main'; Literal = 'L"无限地下城"'; Count = 1; Reason = 'native fallback product title' },
+        @{ File = 'Main'; Literal = 'L"无限地下城启动器"'; Count = 1; Reason = 'launcher window title' },
+        @{ File = 'Main'; Literal = 'L"检查游戏文件"'; Count = 1; Reason = 'native fallback Verify button' },
+        @{ File = 'Main'; Literal = 'L"渲染失败（"'; Count = 1; Reason = 'renderer failure Chinese main message' },
+        @{ File = 'Main'; Literal = 'L"版本 0.1.0 · 单人无限地下城"'; Count = 1; Reason = 'native fallback subtitle' },
+        @{ File = 'Main'; Literal = 'L"退出"'; Count = 1; Reason = 'native fallback Exit button' },
+        @{ File = 'Renderer'; Literal = 'L"开始游戏"'; Count = 1; Reason = 'DirectWrite Start button' },
+        @{ File = 'Renderer'; Literal = 'L"打开存档目录"'; Count = 1; Reason = 'DirectWrite Save button' },
+        @{ File = 'Renderer'; Literal = 'L"无限地下城"'; Count = 1; Reason = 'DirectWrite product title' },
+        @{ File = 'Renderer'; Literal = 'L"检查游戏文件"'; Count = 1; Reason = 'DirectWrite Verify button' },
+        @{ File = 'Renderer'; Literal = 'L"版本 0.1.0 · 单人无限地下城"'; Count = 1; Reason = 'DirectWrite subtitle' },
+        @{ File = 'Renderer'; Literal = 'L"退出"'; Count = 1; Reason = 'DirectWrite Exit button' },
+        @{ File = 'Core'; Literal = 'L"启动器路径无效"'; Count = 2; Reason = 'invalid installation state and defensive fallback' },
+        @{ File = 'Core'; Literal = 'L"游戏已就绪"'; Count = 1; Reason = 'ready installation state' },
+        @{ File = 'Core'; Literal = 'L"缺少 arpg_game.exe"'; Count = 1; Reason = 'Chinese missing-game state with immutable executable suffix' },
+        @{ File = 'Core'; Literal = 'L"缺少资源："'; Count = 1; Reason = 'missing-asset Chinese prefix' },
+        @{ File = 'Platform'; Literal = 'L"无法创建存档目录"'; Count = 1; Reason = 'save-directory creation operation' },
+        @{ File = 'Platform'; Literal = 'L"无法启动游戏"'; Count = 2; Reason = 'game launch operation and catch fallback' },
+        @{ File = 'Platform'; Literal = 'L"无法打开存档目录"'; Count = 2; Reason = 'save-directory open operation and catch fallback' },
+        @{ File = 'Platform'; Literal = 'L"无法获取系统错误消息"'; Count = 1; Reason = 'FormatMessage fallback' }
     )
-    foreach ($entry in $technicalAllowlist) {
-        if ([string]::IsNullOrWhiteSpace($entry.File) -or
-            [string]::IsNullOrWhiteSpace($entry.Token) -or
+    $technicalAllowlist = @(
+        @{ File = 'Main'; Literal = 'L" - "'; Count = 1; Reason = 'window-title diagnostic separator' },
+        @{ File = 'Main'; Literal = 'L"，HRESULT 0x"'; Count = 1; Reason = 'parenthesized renderer numeric-detail prefix' },
+        @{ File = 'Main'; Literal = 'L"）"'; Count = 1; Reason = 'renderer technical-detail closing punctuation' },
+        @{ File = 'Main'; Literal = 'L"%08X"'; Count = 1; Reason = 'fixed-width hexadecimal formatter' },
+        @{ File = 'Main'; Literal = 'L"InfiniteDungeonLauncherWindow"'; Count = 1; Reason = 'internal Win32 class identity' },
+        @{ File = 'Main'; Literal = 'L"LOCALAPPDATA"'; Count = 2; Reason = 'exact environment-variable lookup token' },
+        @{ File = 'Main'; Literal = 'L"Microsoft YaHei UI"'; Count = 1; Reason = 'native font-family identifier' },
+        @{ File = 'Renderer'; Literal = 'L""'; Count = 1; Reason = 'empty DirectWrite buffer fallback' },
+        @{ File = 'Renderer'; Literal = 'L"CreateGradientStopCollection"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"CreateHwndRenderTarget"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"CreateLinearGradientBrush"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"CreateSolidColorBrush"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"CreateTextLayout"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"ID2D1HwndRenderTarget::Resize"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"ID2D1RenderTarget::EndDraw"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"IDWriteTextLayout::SetTrimming"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"IDWriteTextLayout::SetWordWrapping"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"Microsoft YaHei UI"'; Count = 1; Reason = 'DirectWrite font-family identifier' },
+        @{ File = 'Renderer'; Literal = 'L"none"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"unknown"'; Count = 1; Reason = 'parenthesized renderer diagnostic stage' },
+        @{ File = 'Renderer'; Literal = 'L"zh-CN"'; Count = 1; Reason = 'DirectWrite locale identifier' },
+        @{ File = 'Core'; Literal = 'L"\""'; Count = 2; Reason = 'quoted argument-free command-line delimiter' },
+        @{ File = 'Core'; Literal = 'L"arpg_game.exe"'; Count = 1; Reason = 'immutable executable name' },
+        @{ File = 'Core'; Literal = 'L"assets/fonts"'; Count = 1; Reason = 'immutable package path' },
+        @{ File = 'Core'; Literal = 'L"assets/player"'; Count = 1; Reason = 'immutable package path' },
+        @{ File = 'Core'; Literal = 'L"assets/skills"'; Count = 1; Reason = 'immutable package path' },
+        @{ File = 'Core'; Literal = 'L"assets/stage12"'; Count = 1; Reason = 'immutable package path' },
+        @{ File = 'Core'; Literal = 'L"assets/stage14/audio"'; Count = 1; Reason = 'immutable package path' },
+        @{ File = 'Core'; Literal = 'L"assets/stage15/audio"'; Count = 1; Reason = 'immutable package path' },
+        @{ File = 'Core'; Literal = 'L"InfiniteDungeon"'; Count = 1; Reason = 'immutable default save-path component' },
+        @{ File = 'Core'; Literal = 'L"save"'; Count = 1; Reason = 'immutable default save-path component' },
+        @{ File = 'Platform'; Literal = 'L"（错误代码 "'; Count = 1; Reason = 'Win32 numeric-detail prefix' },
+        @{ File = 'Platform'; Literal = 'L"）："'; Count = 1; Reason = 'Win32 numeric-detail separator' },
+        @{ File = 'Platform'; Literal = 'L"open"'; Count = 1; Reason = 'ShellExecuteW verb' }
+    )
+
+    $literalContracts = @($playerLiteralContracts) + @($technicalAllowlist)
+    $contractByKey = [System.Collections.Generic.Dictionary[string, object]]::new(
+        [StringComparer]::Ordinal)
+    foreach ($entry in $literalContracts) {
+        if (-not $Sources.Contains($entry.File) -or
+            [string]::IsNullOrWhiteSpace($entry.Literal) -or
+            $entry.Count -le 0 -or
             [string]::IsNullOrWhiteSpace($entry.Reason)) {
-            throw 'Task 8 technical allowlist entries require file, exact token/category, and reason'
+            throw 'Task 8 literal allowlist entries require source key, exact literal, positive count, and reason'
+        }
+        $key = $entry.File + "`0" + $entry.Literal
+        if ($contractByKey.ContainsKey($key)) {
+            throw "Task 8 literal allowlist has a duplicate entry: $($entry.File) $($entry.Literal)"
+        }
+        $contractByKey.Add($key, $entry)
+    }
+
+    foreach ($file in $Sources.Keys) {
+        $actualCounts = [System.Collections.Generic.Dictionary[string, int]]::new(
+            [StringComparer]::Ordinal)
+        foreach ($literal in @(Get-Task8CppPrefixedStringLiterals $Sources[$file])) {
+            if ($actualCounts.ContainsKey($literal)) { ++$actualCounts[$literal] }
+            else { $actualCounts.Add($literal, 1) }
+        }
+        foreach ($literal in $actualCounts.Keys) {
+            $key = $file + "`0" + $literal
+            if (-not $contractByKey.ContainsKey($key)) {
+                throw "Task 8 found an unaudited active prefixed string literal in ${file}: $literal"
+            }
+            if ($actualCounts[$literal] -ne $contractByKey[$key].Count) {
+                throw "Task 8 active literal count changed in ${file}: $literal actual $($actualCounts[$literal]) expected $($contractByKey[$key].Count)"
+            }
+        }
+        foreach ($entry in @($literalContracts | Where-Object { $_.File -ceq $file })) {
+            if (-not $actualCounts.ContainsKey($entry.Literal)) {
+                throw "Task 8 required active literal is missing from ${file}: $($entry.Literal)"
+            }
         }
     }
 }
@@ -192,14 +452,54 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
     param([Parameter(Mandatory = $true)] $Sources)
 
     Assert-Task8ChineseCopyGuard $Sources
+    $newline = [Environment]::NewLine
     $mutations = @(
         @{ Name = 'English game title'; File = 'Host'; Needle = 'u8"无限地城"'; Replacement = '"Infinite Dungeon"' },
         @{ Name = 'English launcher title'; File = 'Main'; Needle = 'L"无限地下城启动器"'; Replacement = 'L"Infinite Dungeon Launcher"' },
         @{ Name = 'English fallback button'; File = 'Main'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
         @{ Name = 'English DirectWrite button'; File = 'Renderer'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
         @{ Name = 'English status prefix'; File = 'Core'; Needle = 'L"游戏已就绪"'; Replacement = 'L"Ready"' },
-        @{ Name = 'unparenthesized renderer stage'; File = 'Main'; Needle = 'return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'; Replacement = 'return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";' }
+        @{ Name = 'unparenthesized renderer stage'; File = 'Main'; Needle = 'return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'; Replacement = 'return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";' },
+        @{
+            Name = 'added English error while preserving Chinese error'
+            File = 'Main'
+            Needle = 'set_error(L"无法解析存档目录");'
+            Replacement = 'set_error(L"无法解析存档目录");' + $newline +
+                '            set_error(L"Launch failed");'
+        },
+        @{
+            Name = 'comment decoy preserves Chinese DirectWrite button'
+            File = 'Renderer'
+            Needle = 'result = draw_button(view.layout.exit, L"退出", LauncherButton::exit, view);'
+            Replacement = 'result = draw_button(view.layout.exit, L"Exit", LauncherButton::exit, view);' + $newline +
+                '        /* result = draw_button(view.layout.exit, L"退出", LauncherButton::exit, view); */'
+        },
+        @{
+            Name = 'inactive preprocessor branch preserves Chinese fallback button'
+            File = 'Main'
+            Needle = 'draw_fallback_button(' + $newline +
+                '        device_context, view.layout.verify, L"检查游戏文件", LauncherButton::verify, view, scale);'
+            Replacement = '#if 0' + $newline +
+                '    draw_fallback_button(' + $newline +
+                '        device_context, view.layout.verify, L"检查游戏文件", LauncherButton::verify, view, scale);' + $newline +
+                '#endif' + $newline +
+                '    draw_fallback_button(' + $newline +
+                '        device_context, view.layout.verify, L"Verify", LauncherButton::verify, view, scale);'
+        },
+        @{
+            Name = 'constant-false duplicate preserves Chinese fallback button'
+            File = 'Main'
+            Needle = 'draw_fallback_button(' + $newline +
+                '        device_context, view.layout.exit, L"退出", LauncherButton::exit, view, scale);'
+            Replacement = 'if (false) {' + $newline +
+                '        draw_fallback_button(' + $newline +
+                '            device_context, view.layout.exit, L"退出", LauncherButton::exit, view, scale);' + $newline +
+                '    }' + $newline +
+                '    draw_fallback_button(' + $newline +
+                '        device_context, view.layout.exit, L"Exit", LauncherButton::exit, view, scale);'
+        }
     )
+    $acceptedMutations = @()
     foreach ($mutation in $mutations) {
         $mutated = Copy-Task8ChineseCopySources $Sources
         if (-not $mutated[$mutation.File].Contains($mutation.Needle)) {
@@ -211,7 +511,7 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
         try { Assert-Task8ChineseCopyGuard $mutated }
         catch { $accepted = $false }
         if ($accepted) {
-            throw "Task 8 Chinese-copy guard accepted mutation: $($mutation.Name)"
+            $acceptedMutations += $mutation.Name
         }
     }
 
@@ -219,7 +519,10 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
     try { Assert-Task8ChineseCopyGuard $Sources -WholeFileAllowlist @('launcher_main.cpp') }
     catch { $acceptedBroadAllowlist = $false }
     if ($acceptedBroadAllowlist) {
-        throw 'Task 8 Chinese-copy guard accepted a broad-file allowlist attempt'
+        $acceptedMutations += 'broad-file allowlist attempt'
+    }
+    if ($acceptedMutations.Count -ne 0) {
+        throw "Task 8 Chinese-copy guard accepted mutations: $($acceptedMutations -join '; ')"
     }
     return $mutations.Count + 1
 }
