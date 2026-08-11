@@ -127,11 +127,24 @@ extract_cpp_function_body("${_debug_source}"
     "void draw_projected_aabb(" _aabb_body _aabb_code)
 foreach(_token IN ITEMS
         "shared_ui_font_ready && IsFontValid(shared_ui_font)"
-        "draw_crisp_ui_text(shared_ui_font, label")
+        "scene_label_style(color)"
+        "shared_ui_font, label, 12.0F, 0.5F"
+        "scene_label_layout("
+        "width, height, style"
+        "DrawRectangleRec(layout.backing, style.backing_color)"
+        "draw_crisp_ui_text(shared_ui_font, label, layout.text_position"
+        "style.text_color")
     require_token("${_aabb_body}" "${_token}"
-        "Task 7 world volume labels must use the borrowed SharedUiFont")
+        "Task 7 world volume labels must use clamped backed SharedUiFont text")
 endforeach()
-foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "GetFontDefault(")
+string(FIND "${_aabb_body}" "DrawRectangleRec(" _aabb_backing_index)
+string(FIND "${_aabb_body}" "draw_crisp_ui_text(" _aabb_text_index)
+if(_aabb_backing_index GREATER _aabb_text_index)
+    message(FATAL_ERROR
+        "Task 7 world volume label backing must be drawn before text")
+endif()
+foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "TextFormat("
+        "GetFontDefault(" "LoadFont")
     string(FIND "${_aabb_code}" "${_forbidden}" _found)
     if(NOT _found EQUAL -1)
         message(FATAL_ERROR
@@ -188,6 +201,35 @@ extract_cpp_function_body("${_actor_source}"
 require_token("${_effects_body}" "u8\"已击败\""
     "Task 7 defeat marker must be Chinese")
 extract_cpp_function_body("${_actor_source}"
+    "void draw_scene_label(" _scene_label_body _scene_label_code)
+foreach(_token IN ITEMS
+        "font_ready && IsFontValid(font)"
+        "scene_label_style(color)"
+        "font, text, static_cast<float>(font_size), 1.0F"
+        "scene_label_layout("
+        "viewport_width, viewport_height, style"
+        "DrawRectangleRec(layout.backing, style.backing_color)"
+        "draw_crisp_ui_text(font, text, layout.text_position"
+        "style.text_color")
+    require_token("${_scene_label_body}" "${_token}"
+        "Task 7 monster scene labels must use clamped backed SharedUiFont text")
+endforeach()
+string(FIND "${_scene_label_body}" "DrawRectangleRec(" _scene_backing_index)
+string(FIND "${_scene_label_body}" "draw_crisp_ui_text(" _scene_text_index)
+if(_scene_backing_index GREATER _scene_text_index)
+    message(FATAL_ERROR
+        "Task 7 monster scene label backing must be drawn before text")
+endif()
+foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "TextFormat("
+        "GetFontDefault(" "LoadFont")
+    string(FIND "${_scene_label_code}" "${_forbidden}" _found)
+    if(NOT _found EQUAL -1)
+        message(FATAL_ERROR
+            "Task 7 monster scene label uses a forbidden text/font path: ${_forbidden}")
+    endif()
+endforeach()
+reject_dead_branch("${_scene_label_code}" "Task 7 monster scene label draw")
+extract_cpp_function_body("${_actor_source}"
     "void draw_monster_presentation(" _presentation_body _presentation_code)
 require_token("${_presentation_body}" "monster_phase_label(monster.ai_phase)"
     "Task 7 monster presentation must consume the Chinese phase mapping")
@@ -197,6 +239,16 @@ foreach(_token IN ITEMS
         "draw_scene_label(hud_font, hud_font_ready, affix_text.data()")
     require_token("${_presentation_body}" "${_token}"
         "Task 7 affix labels must use a fixed UTF-8 stack buffer")
+endforeach()
+normalize_cpp_source("${_presentation_body}" _presentation_normalized)
+string(REGEX REPLACE "[ \t\r\n]+" "" _presentation_compact
+    "${_presentation_normalized}")
+foreach(_token IN ITEMS
+        "text_style.affix_font_size,to_color(badge.color),width,height)"
+        "text_style.role_font_size,Color{248,246,238,255},width,height)"
+        "text_style.phase_font_size,Color{205,218,237,255},width,height)")
+    require_token("${_presentation_compact}" "${_token}"
+        "Task 7 monster scene labels must receive the real viewport")
 endforeach()
 string(FIND "${_presentation_code}" "TextFormat(" _affix_textformat)
 if(NOT _affix_textformat EQUAL -1)

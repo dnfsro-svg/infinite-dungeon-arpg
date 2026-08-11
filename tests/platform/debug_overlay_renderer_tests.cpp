@@ -50,6 +50,10 @@ namespace platform = arpg::platform;
         && inner.y + inner.height <= static_cast<float>(height);
 }
 
+[[nodiscard]] Color to_color(platform::Rgba8 color) noexcept {
+    return {color.r, color.g, color.b, color.a};
+}
+
 arpg::test::Failure combat_and_transition_views_keep_twelve_localized_utf8_lines()
     noexcept {
     dungeon::DungeonSnapshot snapshot{};
@@ -157,6 +161,95 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
         for (const Rectangle line : layout.line_bounds) {
             ARPG_REQUIRE(rectangle_inside(line, viewport[0], viewport[1]));
         }
+
+        const platform::SceneLabelStyle scene_style =
+            platform::scene_label_style(Color{205U, 218U, 237U, 255U});
+        ARPG_REQUIRE(scene_style.backing_color.r == 0x0BU);
+        ARPG_REQUIRE(scene_style.backing_color.g == 0x10U);
+        ARPG_REQUIRE(scene_style.backing_color.b == 0x19U);
+        ARPG_REQUIRE(scene_style.backing_color.a == 255U);
+        const Vector2 text_size{132.0F, 18.0F};
+        const float width = static_cast<float>(viewport[0]);
+        const float height = static_cast<float>(viewport[1]);
+        const std::array<Vector2, 5U> anchors{{
+            {0.0F, 0.0F}, {width, 0.0F}, {0.0F, height},
+            {width, height}, {width * 0.5F, height * 0.5F},
+        }};
+        std::array<platform::SceneLabelLayout, 5U> labels{};
+        for (std::size_t index = 0U; index < anchors.size(); ++index) {
+            labels[index] = platform::scene_label_layout(
+                anchors[index], text_size, width, height, scene_style);
+            ARPG_REQUIRE(rectangle_inside(
+                labels[index].backing, viewport[0], viewport[1]));
+            ARPG_REQUIRE(arpg::test::near(
+                labels[index].text_position.x + text_size.x * 0.5F,
+                labels[index].backing.x + labels[index].backing.width * 0.5F));
+            ARPG_REQUIRE(arpg::test::near(
+                labels[index].text_position.y + text_size.y * 0.5F,
+                labels[index].backing.y + labels[index].backing.height * 0.5F));
+            ARPG_REQUIRE(labels[index].backing.width > text_size.x);
+            ARPG_REQUIRE(labels[index].backing.height > text_size.y);
+        }
+        ARPG_REQUIRE(labels[0U].backing.x == 0.0F);
+        ARPG_REQUIRE(labels[0U].backing.y == 0.0F);
+        ARPG_REQUIRE(arpg::test::near(
+            labels[1U].backing.x + labels[1U].backing.width, width));
+        ARPG_REQUIRE(labels[1U].backing.y == 0.0F);
+        ARPG_REQUIRE(labels[2U].backing.x == 0.0F);
+        ARPG_REQUIRE(arpg::test::near(
+            labels[2U].backing.y + labels[2U].backing.height, height));
+        ARPG_REQUIRE(arpg::test::near(
+            labels[3U].backing.x + labels[3U].backing.width, width));
+        ARPG_REQUIRE(arpg::test::near(
+            labels[3U].backing.y + labels[3U].backing.height, height));
+        ARPG_REQUIRE(arpg::test::near(
+            labels[4U].backing.x + labels[4U].backing.width * 0.5F,
+            width * 0.5F));
+        ARPG_REQUIRE(arpg::test::near(
+            labels[4U].backing.y + labels[4U].backing.height * 0.5F,
+            height * 0.5F));
+    }
+
+    constexpr std::array<Color, 5U> kActualFixedSceneLabelColors{{
+        {90U, 190U, 255U, 190U},
+        {255U, 88U, 184U, 230U},
+        {94U, 255U, 173U, 210U},
+        {248U, 246U, 238U, 255U},
+        {205U, 218U, 237U, 255U},
+    }};
+    for (const Color requested : kActualFixedSceneLabelColors) {
+        const platform::SceneLabelStyle style =
+            platform::scene_label_style(requested);
+        ARPG_REQUIRE(style.text_color.a == 255U);
+        ARPG_REQUIRE(style.backing_color.r == 0x0BU);
+        ARPG_REQUIRE(style.backing_color.g == 0x10U);
+        ARPG_REQUIRE(style.backing_color.b == 0x19U);
+        ARPG_REQUIRE(style.backing_color.a == 255U);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+            style.text_color, style.backing_color) >= 4.5F);
+    }
+    constexpr std::array<combat::MonsterAffixId, 12U> kAffixes{{
+        combat::MonsterAffixId::mighty,
+        combat::MonsterAffixId::frenzy,
+        combat::MonsterAffixId::swift,
+        combat::MonsterAffixId::armored,
+        combat::MonsterAffixId::shielding,
+        combat::MonsterAffixId::multishot,
+        combat::MonsterAffixId::burning_ground,
+        combat::MonsterAffixId::chilling,
+        combat::MonsterAffixId::chain_lightning,
+        combat::MonsterAffixId::chaos_corrosion,
+        combat::MonsterAffixId::blink_assault,
+        combat::MonsterAffixId::death_blast,
+    }};
+    for (const combat::MonsterAffixId id : kAffixes) {
+        const platform::AffixBadge badge = platform::monster_affix_badge(
+            {id, combat::MonsterAffixTier::m1});
+        const platform::SceneLabelStyle style =
+            platform::scene_label_style(to_color(badge.color));
+        ARPG_REQUIRE(style.text_color.a == 255U);
+        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+            style.text_color, style.backing_color) >= 4.5F);
     }
 
     dungeon::DungeonSnapshot snapshot{};
@@ -197,6 +290,11 @@ arpg::test::Failure ten_thousand_view_builds_allocate_nothing() noexcept {
     const platform::CombatFeedback feedback{};
     const platform::DebugOverlayDiagnosticsPlan diagnostics =
         diagnostics_for(snapshot);
+    constexpr std::array<Color, 3U> kSceneColors{{
+        {90U, 190U, 255U, 190U},
+        {255U, 88U, 184U, 230U},
+        {205U, 218U, 237U, 255U},
+    }};
     std::uint64_t checksum{};
     const std::uint64_t before = arpg::test::allocation_count();
     for (std::size_t index = 0U; index < 10000U; ++index) {
@@ -205,6 +303,15 @@ arpg::test::Failure ten_thousand_view_builds_allocate_nothing() noexcept {
                 true, diagnostics);
         checksum += view.line_count
             + static_cast<unsigned char>(view.lines[0].text[0]);
+        const platform::SceneLabelStyle style =
+            platform::scene_label_style(kSceneColors[index % kSceneColors.size()]);
+        const platform::SceneLabelLayout label = platform::scene_label_layout(
+            {static_cast<float>(index % 800U),
+                static_cast<float>(index % 450U)},
+            {132.0F, 18.0F}, 800.0F, 450.0F, style);
+        checksum += static_cast<std::uint64_t>(
+            label.backing.width + label.backing.height
+            + label.text_position.x + label.text_position.y);
     }
     const std::uint64_t after = arpg::test::allocation_count();
     ARPG_REQUIRE(checksum != 0U);

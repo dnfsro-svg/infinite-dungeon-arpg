@@ -36,9 +36,15 @@ void draw_projected_aabb(const combat::Aabb& box,
         }
     }
     if (shared_ui_font_ready && IsFontValid(shared_ui_font)) {
-        draw_crisp_ui_text(shared_ui_font, label,
+        const SceneLabelStyle style = scene_label_style(color);
+        const Vector2 measured = MeasureTextEx(
+            shared_ui_font, label, 12.0F, 0.5F);
+        const SceneLabelLayout layout = scene_label_layout(
             {corners[4].x + 4.0F, corners[4].y - 14.0F},
-            12.0F, 0.5F, color, 1);
+            measured, width, height, style);
+        DrawRectangleRec(layout.backing, style.backing_color);
+        draw_crisp_ui_text(shared_ui_font, label, layout.text_position,
+            12.0F, 0.5F, style.text_color, 1);
     }
 }
 

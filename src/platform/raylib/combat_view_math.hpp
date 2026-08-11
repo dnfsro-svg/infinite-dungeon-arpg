@@ -69,6 +69,18 @@ struct MonsterLabelTextStyle final {
     int outline_pixels{2};
 };
 
+struct SceneLabelStyle final {
+    Color text_color{};
+    Color backing_color{};
+    float horizontal_padding{};
+    float vertical_padding{};
+};
+
+struct SceneLabelLayout final {
+    Rectangle backing{};
+    Vector2 text_position{};
+};
+
 struct MonsterPresentationPlan final {
     float resource_bar_offset_y{};
     std::size_t debug_label_lane{};
@@ -137,6 +149,12 @@ void sort_actor_draw_items(
     DebugWorldVolumeKind kind) noexcept;
 [[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
     float viewport_scale) noexcept;
+[[nodiscard]] SceneLabelStyle scene_label_style(
+    Color requested_text_color) noexcept;
+[[nodiscard]] SceneLabelLayout scene_label_layout(
+    Vector2 anchor, Vector2 text_size,
+    float viewport_width, float viewport_height,
+    SceneLabelStyle style) noexcept;
 [[nodiscard]] MonsterPresentationPlan monster_presentation_plan(
     std::size_t label_lane, bool draw_debug) noexcept;
 [[nodiscard]] AffixBadge monster_affix_badge(

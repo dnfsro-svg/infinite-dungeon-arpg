@@ -2,6 +2,7 @@
 
 #include "combat/room_bounds.hpp"
 #include "ui_text_catalog.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -300,6 +301,47 @@ MonsterLabelTextStyle monster_label_text_style(float viewport_scale) noexcept {
     const float scale = std::clamp(viewport_scale, 1.0F, 1.5F);
     const int font_size = static_cast<int>(std::ceil(16.0F * scale));
     return {font_size, font_size, font_size, 0};
+}
+
+SceneLabelStyle scene_label_style(Color requested_text_color) noexcept {
+    SceneLabelStyle style{};
+    style.backing_color = {0x0B, 0x10, 0x19, 255};
+    style.horizontal_padding = 6.0F;
+    style.vertical_padding = 3.0F;
+    requested_text_color.a = 255U;
+    if (ui_luma_contrast_ratio(
+            requested_text_color, style.backing_color) < 4.5F) {
+        requested_text_color = {218U, 226U, 239U, 255U};
+    }
+    style.text_color = requested_text_color;
+    return style;
+}
+
+SceneLabelLayout scene_label_layout(Vector2 anchor, Vector2 text_size,
+    float viewport_width, float viewport_height,
+    SceneLabelStyle style) noexcept {
+    const float safe_width = std::max(0.0F, viewport_width);
+    const float safe_height = std::max(0.0F, viewport_height);
+    const float text_width = std::max(0.0F, text_size.x);
+    const float text_height = std::max(0.0F, text_size.y);
+    const float backing_width = std::min(safe_width,
+        text_width + std::max(0.0F, style.horizontal_padding) * 2.0F);
+    const float backing_height = std::min(safe_height,
+        text_height + std::max(0.0F, style.vertical_padding) * 2.0F);
+    SceneLabelLayout layout{};
+    layout.backing = {
+        std::clamp(anchor.x - backing_width * 0.5F,
+            0.0F, std::max(0.0F, safe_width - backing_width)),
+        std::clamp(anchor.y - backing_height * 0.5F,
+            0.0F, std::max(0.0F, safe_height - backing_height)),
+        backing_width,
+        backing_height,
+    };
+    layout.text_position = {
+        layout.backing.x + (layout.backing.width - text_width) * 0.5F,
+        layout.backing.y + (layout.backing.height - text_height) * 0.5F,
+    };
+    return layout;
 }
 
 MonsterPresentationPlan monster_presentation_plan(

@@ -61,12 +61,56 @@ function(expect_mutation_rejected LABEL SOURCE_NAME NEEDLE REPLACEMENT)
     run_guard("${LABEL}" FALSE)
 endfunction()
 
+expect_mutation_rejected(missing_world_label_backing DEBUG_SOURCE
+    "DrawRectangleRec(layout.backing, style.backing_color);"
+    "static_cast<void>(layout.backing);")
+expect_mutation_rejected(default_world_label_font DEBUG_SOURCE
+    "draw_crisp_ui_text(shared_ui_font, label, layout.text_position,
+            12.0F, 0.5F, style.text_color, 1);"
+    "DrawTextEx(GetFontDefault(), label, layout.text_position,
+            12.0F, 0.5F, style.text_color);")
+expect_mutation_rejected(dead_world_label_backing DEBUG_SOURCE
+    "DrawRectangleRec(layout.backing, style.backing_color);"
+    "if (shared_ui_font_ready && false) {
+            DrawRectangleRec(layout.backing, style.backing_color);
+        }")
+expect_mutation_rejected(unclamped_world_label_layout DEBUG_SOURCE
+    "const SceneLabelLayout layout = scene_label_layout(
+            {corners[4].x + 4.0F, corners[4].y - 14.0F},
+            measured, width, height, style);"
+    "const SceneLabelLayout layout{
+            {corners[4].x + 4.0F, corners[4].y - 14.0F,
+                measured.x, measured.y},
+            {corners[4].x + 4.0F, corners[4].y - 14.0F}};")
+expect_mutation_rejected(monster_label_text_before_backing ACTOR_SOURCE
+    "DrawRectangleRec(layout.backing, style.backing_color);
+        draw_crisp_ui_text(font, text, layout.text_position,
+            static_cast<float>(font_size), 1.0F, style.text_color);"
+    "draw_crisp_ui_text(font, text, layout.text_position,
+            static_cast<float>(font_size), 1.0F, style.text_color);
+        DrawRectangleRec(layout.backing, style.backing_color);")
+expect_mutation_rejected(default_monster_label_font ACTOR_SOURCE
+    "draw_crisp_ui_text(font, text, layout.text_position,
+            static_cast<float>(font_size), 1.0F, style.text_color);"
+    "DrawTextEx(GetFontDefault(), text, layout.text_position,
+            static_cast<float>(font_size), 1.0F, style.text_color);")
+expect_mutation_rejected(dead_monster_label_backing ACTOR_SOURCE
+    "DrawRectangleRec(layout.backing, style.backing_color);"
+    "if (font_ready && false) {
+            DrawRectangleRec(layout.backing, style.backing_color);
+        }")
+expect_mutation_rejected(missing_monster_label_viewport ACTOR_SOURCE
+    "text_style.role_font_size,
+            Color{248, 246, 238, 255}, width, height);"
+    "text_style.role_font_size,
+            Color{248, 246, 238, 255}, 0.0F, 0.0F);")
+
 expect_mutation_rejected(unsafe_affix_textformat ACTOR_SOURCE
     "    for (std::size_t index = 0U; index < affix_count; ++index) {"
     "    draw_scene_label(hud_font, hud_font_ready,
         TextFormat(\"%s %s\", u8\"词缀\", u8\"Ⅰ\"),
         x - bar_width * .5F, phase_y, text_style.affix_font_size,
-        Color{205, 218, 237, 255});
+        Color{205, 218, 237, 255}, width, height);
     for (std::size_t index = 0U; index < affix_count; ++index) {")
 
 expect_mutation_rejected(line_capacity OVERLAY_HEADER

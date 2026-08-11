@@ -88,10 +88,17 @@ void draw_outlined_text(const char* text, int x, int y, int font_size,
 }
 
 void draw_scene_label(Font font, bool font_ready, const char* text,
-    float x, float y, int font_size, Color color) noexcept {
+    float x, float y, int font_size, Color color,
+    float viewport_width, float viewport_height) noexcept {
     if (font_ready && IsFontValid(font)) {
-        draw_crisp_ui_text(font, text, {x, y},
-            static_cast<float>(font_size), 1.0F, color);
+        const SceneLabelStyle style = scene_label_style(color);
+        const Vector2 measured = MeasureTextEx(
+            font, text, static_cast<float>(font_size), 1.0F);
+        const SceneLabelLayout layout = scene_label_layout(
+            {x, y}, measured, viewport_width, viewport_height, style);
+        DrawRectangleRec(layout.backing, style.backing_color);
+        draw_crisp_ui_text(font, text, layout.text_position,
+            static_cast<float>(font_size), 1.0F, style.text_color);
     }
 }
 
@@ -441,17 +448,18 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
             phase_y + static_cast<float>(text_style.phase_font_size + 2)
                 + static_cast<float>(index)
                     * static_cast<float>(text_style.affix_font_size + 2),
-            text_style.affix_font_size, to_color(badge.color));
+            text_style.affix_font_size, to_color(badge.color), width, height);
     }
     if (presentation.role_label_visible) {
         draw_scene_label(hud_font, hud_font_ready, visual.role_label,
             x - bar_width * .5F, role_y, text_style.role_font_size,
-            Color{248, 246, 238, 255});
+            Color{248, 246, 238, 255}, width, height);
     }
     if (presentation.phase_label_visible) {
         draw_scene_label(hud_font, hud_font_ready,
             monster_phase_label(monster.ai_phase), x - bar_width * .5F,
-            phase_y, text_style.phase_font_size, Color{205, 218, 237, 255});
+            phase_y, text_style.phase_font_size,
+            Color{205, 218, 237, 255}, width, height);
     }
 }
 
