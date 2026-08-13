@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-13
 
-**状态：** 已确认，待实施计划
+**状态：** 已确认；实施计划见 `docs/superpowers/plans/2026-08-13-poe2-inventory-layout.md`
 
 **设计方向：** 采用《流放之路 2》主机版的界面骨架与信息层级，保留本项目现有键盘鼠标操作；不复制其美术资源、字体、图标或像素布局。
 
@@ -75,7 +75,7 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 - 内容区左栏参考宽 440；右栏取得其余宽度。三个支持分辨率下右栏始终比左栏宽。
 - 左栏内的装备槽参考尺寸 78×78；以面板实际宽高再做一次不超过 `geometry_scale` 的 fit，绝不越界。
 - 右栏包含筛选行和滚动网格；三个 16:9 支持分辨率均使用三列装备卡片，未来更窄的合法 viewport 才可退化为两列，标准宽高与间距随局部比例缩放。
-- `InventoryShellLayout` 明确提供 `status_bounds`、`action_bounds` 和 `hint_bounds`：状态文字优先取得可用宽度，中间动作按钮保持最小命中尺寸，右侧提示在 800×450 空间不足时先隐藏、再对状态文字做 UTF-8 安全省略，三者不得重叠。
+- `InventoryShellLayout` 明确提供 `slot_filter_bounds`、`rarity_filter_bounds`、`empty_state_bounds`、`status_bounds`、`action_bounds` 和 `hint_bounds`：筛选 draw/hit 使用同一矩形；空态在右栏居中；状态文字优先取得可用宽度，中间动作按钮保持最小命中尺寸，右侧提示在 800×450 空间不足时先隐藏、再对状态文字做 UTF-8 安全省略，三者不得重叠。
 - 所有派生矩形必须有限、宽高为正、完全位于 viewport；任何一步无效时整个 layout `valid=false`。
 
 ### 静态角色区
@@ -101,7 +101,9 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 
 顶部三个页签只归 `InventoryShellLayout::tabs` 所有，不再复用技能石专属的两个页签矩形。`active_skill_loadout_layout` 改为消费壳层的左右内容 bounds，删除自身 page button 坐标；三页 input 和 draw 必须使用同一次计算得到的 shell layout，不能保留第二套页签/内容坐标系。打开背包默认进入装备页；现有正式验证调用 `show_skill_stones_page()` 时仍直接进入技能石页。
 
-材料选择跨页保留，但不自动跳页：选中材料后，底部状态栏显示“已选择：材料名 · 切换到装备页选择目标 · 右键取消”，装备页签同时显示目标提示色。玩家主动切回装备页再单击目标，底层仍发送原有 craft/coupon/reinforcement 请求。这样不制造意外跳转，也保留现有“先材料、后目标”的规则。
+现有动态标题 helper `inventory_page_title()` 保留，但必须改为装备、技能石、材料三路，并分别消费 catalog 的 `equipment_title`、`inventory_page_skill_stones`、`inventory_page_materials`；当前可重绑的 `inventory_binding_label` 继续进入同一个固定容量 UTF-8 格式结果。材料页不得落入技能石标题，`右 Shift` 等长绑定也不得产生半个码点。
+
+材料选择跨页保留，但不自动跳页：选中材料后，底部状态栏使用 catalog 格式“已选择：%s · 切换至装备 · 右键取消”，装备页签同时显示目标提示色。玩家主动切回装备页再单击目标，底层仍发送原有 craft/coupon/reinforcement 请求。这样不制造意外跳转，也保留现有“先材料、后目标”的规则。
 
 材料目标只包括现有装备页右侧网格中的未穿戴装备；左侧已穿戴槽、技能石和材料卡片都不是目标。材料选中期间，材料页右击当前已选中的定向材料卡片仍先循环其定向类别；其它右击才取消材料，不触发配方或技能操作。authority 接受制作请求后保持材料选择，直到玩家取消或该材料数量变为零；请求拒绝时同样保留选择并显示可操作状态；同步发现数量耗尽时沿用现有 `sync_selection` 自动清除。
 
@@ -118,13 +120,15 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 
 对应的居中两级文案：
 
-- `inventory_empty`：**背包中还没有装备** / `击败怪物并拾取掉落后会显示在这里`；
-- `all_equipped`：**所有装备都已穿戴** / `悬停左侧装备查看，单击卸下`；
-- `filter_empty`：**当前筛选没有结果** / `切换装备槽或稀有度筛选`。
+- `inventory_empty`：**背包无装备** / `击败怪物，拾取装备`；
+- `all_equipped`：**无剩余装备** / `左击左方装备取出`；
+- `filter_empty`：**当前过滤无结果** / `切换装备槽及稀有度`。
+
+这三组文案与本轮新增的页签、技能提示、比较标题、筛选格式、材料状态和动作提示全部追加到 `ui_text_catalog`，renderer 只消费 `UiTextId` 或 catalog 格式串。最终批准文案只使用当前共享字体计划已经包含的码点；实现必须用 `ui_glyph_plan_covers_text(plan, text)` 逐条证明且保持精确 `639 < 640`，不得靠扩容、第二字体或未访问的源码字符串通过。
 
 这只解释数据状态，不赠送物品、不修改新存档内容。
 
-空态出现时清除 hover。若持久选中物品不在当前筛选后的可见集合中，只隐藏 tooltip，不清除 `selected_item_id_`；恢复筛选后仍可恢复该选择。这样不会同时显示“无结果”和一个不可见物品的详情，也不会因浏览筛选丢失玩家选择。
+空态、页签变化、滚出当前 viewport 或 resize 都会使旧 hover/frozen source 失效。每帧 frozen 与 selected 都必须从当前页、筛选、可见滚动范围和当前 shell 重新解析 source；解析失败就清除 hover/frozen tooltip presentation，但不清除 `selected_item_id_`。恢复筛选或回到装备页后仍可从新矩形恢复该选择；保存的旧 source 只允许在同一稳定 layout 内维持 corridor，不是跨布局可见性的权威。这样不会同时显示“无结果”和一个不可见物品的详情，也不会因浏览筛选丢失玩家选择。
 
 ## 选中、悬停与配方语义
 
@@ -137,6 +141,8 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 
 同一物品同时是普通选中和配方成员时，品红外框优先，青色以小型详情指示点保留；不会绘制两套重叠边线。
 
+语义优先级固定为：材料目标 > 配方 > 普通选中 > 悬停。悬停 item id 必须进入同一个纯 visual-state builder；renderer 不得只在某条素材 fallback 分支临时画 hover 框。
+
 现有键鼠语义保持：
 
 - 单击背包装备：选中并查看；
@@ -147,7 +153,7 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 - 当前可重绑的背包键与 `Esc`：按现有绑定关闭；顶栏和提示一律消费 `inventory_binding_label`，不得写死 `I`，并以 `右 Shift` 等最长现有标签验证；
 - 材料右击取消、强化确认和技能石的选择/装备/交换/取出行为均保持。
 
-输入处理顺序固定为：强化确认弹窗 > 页签 > tooltip pointer blocker > 未遮挡的材料页定向类别切换 > 其它材料取消 > 材料目标请求 > 当前页 `action_bounds` > 三合一选择 > 双击装备或已穿戴槽操作。指针位于 tooltip 内时，左击关闭 tooltip；右击若有材料选择则取消材料，否则关闭 tooltip；其它输入只阻断下层命中。高优先级路径消费后不得继续落入低优先级动作。材料未选中时，右击装备才恢复为三合一切换。
+输入处理顺序固定为：强化确认弹窗 > 页签 > tooltip pointer blocker > 未遮挡的材料页定向类别切换 > 其它材料取消 > 材料卡片选择 > 材料目标请求 > 当前页 `action_bounds` > 槽位/稀有度筛选 > 技能石内容区选择/装备/交换 > 三合一选择 > 双击装备或已穿戴槽操作 > 非交互背景清除详情。指针位于 tooltip 内时，左击关闭 tooltip；右击若有材料选择则取消材料，否则关闭 tooltip；其它输入只阻断下层命中。高优先级路径消费后不得继续落入低优先级动作。材料未选中时，右击装备才恢复为三合一切换。左击非交互背景只清除物品/tooltip presentation，不清除配方、材料或页签。
 
 本轮不新增键盘焦点导航。所谓“主机版骨架”只指空间层级与信息组织，输入仍以当前键盘鼠标为准。
 
@@ -162,7 +168,11 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 - 悬停只改变展示，不修改选择、不触发请求、不写存档；
 - 无悬停且无选中时不显示详情。
 
-`InventoryRenderer` 可保存一个 presentation-only 的 `hovered_item_id_`，每帧由当前鼠标坐标更新；它不进入 `DungeonSession` 或持久化数据。
+`InventoryRenderer` 只保存一个 presentation-only 的 `InventoryTooltipInteractionState`；hover、corridor freeze、关闭抑制和离开恢复都由纯 `inventory_tooltip_transition(...)` 推进。该状态不进入 `DungeonSession` 或持久化数据。
+
+Tooltip 的比较对象始终是当前展示对象：有可见 hover/corridor freeze 时使用 `frozen_item_id`，否则回退 `selected_item_id_`。comparison cache 的 generation、item id 与 equipment key 都必须以该 presentation item 为准；不得出现“已选 A、悬停 B，但 B 的 tooltip 显示 A 的装备后变化”。
+
+Tooltip 的命中几何与最终绘制必须使用同一个 SharedUiFont 像素测量合同。`draw()` 只缓存上一已呈现帧验证有效的 raylib `Font` POD 句柄（不拥有资源、不创建第二字体或 atlas）；下一帧 `process_input()` 用该句柄和 renderer 的同一测量回调计算 backing/blocker，首帧或字体无效时 fail-closed。`draw()` 再以当帧字体重算同一纯布局；若 `texture.id/baseSize/glyphCount` 身份变化，则清除 tooltip 状态、更新缓存并跳过本帧 tooltip，下一帧才恢复。禁止用默认字体、字符数近似或另一套测量路径补洞。
 
 ### 放置规则
 
@@ -177,11 +187,13 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 
 覆盖静态剪影或其它卡片是有意行为：详情出现时临时遮挡低优先级内容，以换取更大的常驻背包网格。来源矩形、两者之间的安全间隙以及 tooltip 组成一个 `hover_retention_corridor`；指针从来源穿过间隙进入 tooltip 时仍保留同一 hover 对象。tooltip 是顶层 pointer blocker：其矩形内的 hover/click 不得穿透到下层槽位、网格或页签，也不发送玩法请求；离开 retention corridor 后重新解析悬停，避免遮挡下层条目导致 tooltip 跳变。
 
+输入命中严格分两阶段：先用当前 frozen（否则 selected）对象重建 retained tooltip，并检测旧 backing/retention corridor；命中时保持该对象且完全禁止解析被遮挡的下层卡片。只有 retained frame 未阻断指针时，才允许按页面几何命中新的直接 hover candidate。这样 A 的 tooltip 覆盖 B 时，指针进入 A backing 不会先切换成 B。
+
 为避免持久选中 tooltip 长期挡住另一侧控件，左击 tooltip 或任一非交互背景只清除 presentation selection 并关闭 tooltip；若材料已选中，材料页右击当前已选定向材料卡片仍优先切换类别，其它右击优先取消材料，否则右击 tooltip 只关闭 tooltip。关闭后在指针离开当前 tooltip/source retention corridor 前抑制同一 hover 对象重新弹出，防止一帧内闪回。tooltip 不提供玩法按钮或滚动，所有这些状态都不写存档。
 
 ### 信息层级
 
-详情顺序固定为：名称与稀有度、物品等级/需求等级/强化、基础属性、词缀、**装备后变化**。比较区继续使用现有九个语义组；一个组内所有差值均为零时整行不绘制，非零分量使用固定容量的彩色片段分别显示（正差值绿色、负差值珊瑚红），零分量不占位置。这样不会把最坏情况扩成数十个独立行，也不会继续显示 `+0/+0/+0`。若没有任何差异，显示一行“装备后无属性变化”。
+详情顺序固定为：名称与稀有度、物品等级/需求等级/强化、基础属性、词缀、**装备后变化**。比较区继续使用现有九个语义组；一个组内所有差值均为零时整行不绘制，非零分量使用固定容量的彩色片段分别显示（正差值绿色、负差值珊瑚红），零分量不占位置。这样不会把最坏情况扩成数十个独立行，也不会继续显示 `+0/+0/+0`。若没有任何差异，显示一行“装备后无变化”。
 
 `InventoryTooltipView` 至少提供 24 行和每行 8 个固定片段的容量，覆盖当前最多六条词缀、基础属性及九个比较组。行高使用 `max(13.0F, 18.0F * geometry_scale)`，因此最坏 24 行加内边距仍能进入 800×450 的 content viewport。同一语义组的非零片段若不能进入 224px 行宽，必须在固定容量内续行并计入 24 行总量；若当前最坏数据证明 24 行不足，实施任务必须在不分配的前提下提高固定容量，而不能截掉非零片段。详情文字使用现有 UTF-8 fit/ellipsis，始终保持完整码点。最大词缀装备在 800×450 仍须完整显示所有非零核心行；只允许省略全零比较和装饰性说明，绝不裁半行、丢失非零属性或越出背板。
 
@@ -206,17 +218,18 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 
 ## 单一底部状态栏
 
-新增纯展示 `InventoryStatusPresentation`，每帧只选择一条状态，避免相互覆盖。优先级固定为：
+新增纯展示 `InventoryStatusPresentation`，每帧只选择一条状态，避免相互覆盖。运行时的 `SaveIndicator::saved` 和 `reinforcement_receipt` 都会跨帧保留，renderer 不得把它们当成一次性事件直接永久显示；新增易失、固定容量的 `InventoryTransientStatusState`，按 `commit_generation` / `receipt.commit_generation` 去重并只显示 180 个实际背包 draw frame。背包首次打开只记录当前 generation，不重放旧成功或旧回执；关闭时清零该易失状态。优先级固定为：
 
 1. 保存中锁定；
-2. 保存失败/恢复要求，以及真实存在的强化或强化券 receipt；
-3. 已选择材料、等待目标；
-4. 三合一危险或就绪状态；
-5. 当前页面的上下文操作提示。
+2. 保存失败/恢复要求；
+3. 当前 generation 新出现的通用“已保存/已恢复”，或当前 `receipt.commit_generation` 新出现的强化/强化券结果；
+4. 已选择材料、等待目标；
+5. 三合一危险或就绪状态；
+6. 当前页面的上下文操作提示。
 
-普通制作当前没有专属 receipt，不得伪造“制作成功/失败”细节；它只显示既有 pending/saved/error 通用保存状态。若未来需要专属制作结果，必须先增加权威数据合同，不得从 draw 时序猜测。
+普通制作当前没有专属 receipt，不得伪造“制作成功/失败”细节；它只显示既有 pending/error 以及 generation 边沿产生的短暂 saved。强化成功、强化失败、装备丢失和强化券成功四种 receipt 文案都来自 `ui_text_catalog` 的固定 UTF-8 format，不在 renderer 内拼裸中文分支。180 帧结束后必须恢复材料、配方或页面上下文，不能因 runtime 字段保持不变而永久遮挡。若未来需要专属制作结果，必须先增加权威数据合同，不得从 draw 时序猜测。
 
-状态栏左侧显示状态，`action_bounds` 显示当前页面唯一动作，右侧显示简短操作提示。装备页动作是现有“三合一（n/3）”，启用条件仍为配方 ready、无保存 pending 且 authority 可用；技能页动作是“取出”；材料页没有独立动作时隐藏该区域。底板始终 alpha 255；颜色只修饰边线、图标或文字，不以颜色作为唯一状态信号。保存锁定时所有会发 authority request 的控件显示禁用态，但页签切换和查看详情仍允许。
+状态栏左侧显示状态，`action_bounds` 显示当前页面唯一动作，右侧显示简短操作提示。装备页动作是现有“三合一（n/3）”，启用条件仍为配方 ready、无保存 pending 且 authority 可用；技能页动作是“取出”；材料页没有独立动作时隐藏该区域。`InventoryStatusPresentation` 同时给出 `normal/muted/positive/warning/negative` 语义 tone，renderer 只按该字段映射现有调色板，不得再次查看 receipt、输入字段或文本内容猜测颜色。底板始终 alpha 255；颜色只修饰边线、图标或文字，不以颜色作为唯一状态信号。保存锁定时所有会发 authority request 的控件显示禁用态，但页签切换和查看详情仍允许。
 
 ## 视觉语言与无障碍约束
 
@@ -240,7 +253,7 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 - 非零属性差异行的固定容量展示模型；
 - 当前点击/筛选/配方/cache 的既有纯逻辑。
 
-新增的 shell/empty/tooltip/status/diff builder 不调用 raylib 绘制、不访问全局输入且稳态不分配。既有 cache 刷新继续保留 `std::vector` 的受控容量增长，不把它错误纳入逐帧零分配声明。
+新增的 shell/empty/tooltip/status/diff builder 不调用 raylib 绘制、不访问全局输入且稳态不分配。tooltip 的 hover→corridor 冻结→关闭抑制→离开恢复，以及装备页滚轮 gating，分别由纯 `inventory_tooltip_transition(...)` 和 `inventory_grid_scroll_after_wheel(...)` 表达；后者接收 tooltip/confirmation 的 pointer-blocked 状态，禁止滚轮穿透浮层。renderer 私有字段只保存前者的固定状态。既有 cache 刷新继续保留 `std::vector` 的受控容量增长，不把它错误纳入逐帧零分配声明。
 
 ### 渲染与 presentation 状态
 
@@ -250,6 +263,8 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 - 将纯 layout/view 画成现有 material + 图元；
 - 把命中结果转换为既有 runtime request；
 - 在素材绘制后统一叠加语义框和角标。
+
+renderer 持有一个按客户区宽高失效的 `InventoryFrameLayout`，其中包含 shell、技能页和材料页布局。`process_input()` 与 `draw()` 在相同客户区尺寸下只消费这一缓存对象；窗口尺寸变化时一次性重建，禁止 draw/hit 各自重新推导坐标。网格列数、cell height/row stride、两个筛选矩形和六个装备槽 hit-test 都来自该共享合同。
 
 `material_bag_renderer.hpp/.cpp` 接收调用方提供的材料内容 bounds，不再反向调用旧三列 `inventory_layout()` 推导位置。
 
@@ -263,26 +278,27 @@ geometry_scale = clamp(min(width / 1280.0F, height / 720.0F), 0.625F, 1.5F);
 - UTF-8 只通过现有安全 fit/format 写入固定缓冲，不使用裸 `snprintf` 截断玩家可见中文；
 - 素材失败时使用同尺寸图元 fallback，语义 overlay 仍必须绘制；
 - 请求 pending 或 authority disabled 时只禁用动作，不清空选中/筛选/页签；
-- 不改变存档 schema，`hovered_item_id_`、当前页和 tooltip 均为易失 presentation 状态。
+- 不改变存档 schema，`InventoryTooltipInteractionState`、当前页和 frame layout cache 均为易失 presentation 状态。
+- `InventoryTransientStatusState` 同样只属于 renderer：首次 draw 以当前 generation 为基线、后续新 generation 才触发、同一回执只显示一次；每个实际 `draw()` frame 恰推进一次并立即回写 next state，`process_input()` 不消耗 180 帧额度；`open()`/`close()` 重置且不写入 `DungeonSession`。
 
 ## TDD 与验证策略
 
 遵守“尽量不测试”，实施时采用先 RED 后 GREEN 的最小定向证据，不先跑全量：
 
-1. 在既有 `inventory_view_math_tests.cpp` case 内追加 800×450、1280×720、1920×1080 壳层、六槽、三页、tooltip 两侧保证候选、retention corridor、pointer blocker、224px 最坏非零片段续行、空状态、状态优先级、32×40 最小命中、最长中文/`右 Shift` 溢出规则、最小字号和新增纯 builder 10,000 次稳态零分配断言；不增加平台 case 数。
+1. 在既有 `inventory_view_math_tests.cpp` case 内追加 800×450、1280×720、1920×1080 壳层、六槽、三页、tooltip 两侧保证候选、retention corridor、pointer blocker、224px 最坏非零片段续行、空状态、状态优先级、saved/receipt generation 去重与 180-frame 恢复上下文、32×40 最小命中、最长中文/`右 Shift` 溢出规则、最小字号和新增纯 builder 10,000 次稳态零分配断言；不增加平台 case 数。
 2. 在既有 `active_skill_loadout_view_tests.cpp` 和 `material_bag_renderer_tests.cpp` case 内验证新内容 bounds 与现有动作语义；不改 authority 请求规则。
 3. 同步语义改写 `inventory_renderer_source_test.cmake` / `inventory_renderer_source_self_test.cmake` 和 `full_chinese_inventory_progression_source_test.cmake` / `full_chinese_inventory_progression_source_self_test.cmake`。两组都要锁定 SharedUiFont、三页真实接线、同一 layout 的 draw/hit、素材后语义 overlay、唯一状态栏、无常驻详情列，并继续保留中文目录、default-font、dead-branch 和未调用 lambda 的可逆 mutation 防护；不得因为旧 `draw_detail_row` 锚失效而删除整类守卫。
 4. 必要的 Debug `arpg_platform_tests --parallel 2` 增量构建。
 5. 只运行隔离 inventory selector，要求唯一 `120 cases, 0 failures`，再分别运行上述两组精确 guard/self-test。
-6. 定向行为序列必须覆盖：材料页选择→装备页目标→authority 接受/拒绝/耗尽；材料取消后右击恢复配方；hover→移入 blocker 冻结→点击关闭且离开前不闪回→移出后恢复持久选择；技能石选择→交换/取出且仅 authority accepted 后推进。
-7. 代码完成并静态复审后，再构建 Release `arpg_game`，用隔离存档在 800×450、1280×720、1920×1080 截取：三种空态、普通/配方选中、长稀有装备 tooltip、材料目标、保存/强化状态、技能石空态。
+6. 定向行为序列必须覆盖：材料页选择→装备页目标→authority 接受/拒绝/耗尽；材料取消后右击恢复配方；hover→移入 blocker 冻结→左击关闭并清持久选择→同 corridor 不闪回→移出后恢复；无材料右击只关闭 tooltip，有材料右击只取消材料且 tooltip 不关闭/不穿透；技能石选择→交换/取出且仅 authority accepted 后推进。
+7. 代码完成并静态复审后构建 Release。由于正式 `arpg_game` CLI 不接受 width/height，三分辨率证据不依赖普通启动：Stage12 保留现有 host-config 的 1280×720、1920×1080 素材/默认背包基线；Stage16 扩展其 direct-render `Resolution` 驱动链，直接构造装备与材料场景；Stage17 扩展现有 host-config 技能页捕获链。只有 Stage16/17 必须取得精确 800×450、1280×720、1920×1080 客户区；每张截图导出后立即回读 PNG 宽高。Stage16 覆盖三种空态、普通/配方/悬停选中、左右来源与关闭后的 tooltip、材料目标 gold、接受/拒绝/耗尽、真实 receipt 和保存状态；Stage17 覆盖技能石空态/选择/交换/取出；Stage16 还必须输出 tooltip corridor/关闭不闪回 trace、已选 A 后悬停 B 时标题与装备后变化都属于 B 的 comparison trace，以及 saved/receipt 各显示 180 个实际 draw frame、第 181 帧恢复页面上下文且同 generation 不重播的 status trace。缺任一命名场景或 trace 时不得宣称视觉交付完成。
 
-本轮不默认运行 full platform、formal 套件、`scripts/Test.ps1` 或部署；若定向证据暴露跨模块回归，再按根因增加最窄验证。
+本轮不运行 full platform、全量 formal 套件、`scripts/Test.ps1` 或部署；Task 5 只运行上述 Stage12/16/17 三个确定性 producer 及直接对应的 validator。若定向证据暴露跨模块回归，再按根因增加最窄验证。
 
 ## 验收标准
 
 - 装备页视觉结构明确为左角色/装备、右大型背包，不再是三列管理后台式布局。
-- 新存档能明确看到“背包中还没有装备”及获得装备方式，不再只显示“过滤：无”。
+- 新存档能明确看到“背包无装备 / 击败怪物，拾取装备”，不再只显示“过滤：无”。
 - 选中/悬停时详情浮动出现，未检查物品时网格拥有完整宽度。
 - 普通选中、三合一顺序、材料目标和禁用状态在正式素材路径上仍清晰可辨。
 - 三页共享同一页签、内容和底栏坐标；材料不再挤占装备详情。
