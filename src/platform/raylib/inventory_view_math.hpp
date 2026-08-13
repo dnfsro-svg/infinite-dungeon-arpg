@@ -426,6 +426,7 @@ struct InventoryTooltipInteractionInput final {
     bool close_requested{};
     bool clear_persistent_selection_requested{};
     bool background_clear_requested{};
+    bool source_invalidated{};
 };
 
 struct InventoryTooltipInteractionResult final {

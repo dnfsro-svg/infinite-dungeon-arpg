@@ -2,6 +2,7 @@
 #include "test_framework.hpp"
 
 #include "inventory_view_math.hpp"
+#include "ui_text_catalog.hpp"
 #include "ui_text_layout.hpp"
 #include "ui_utf8.hpp"
 
@@ -332,6 +333,88 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     const auto unknown_source = platform::inventory_visible_item_source(shell_1280,
         platform::InventoryPage::equipment, state, source_cache, 999U, 0.0F);
     ARPG_REQUIRE(!unknown_source.valid);
+
+    // Source resolution and tooltip ownership are deliberately separate: an
+    // unavailable source closes hover/frozen presentation but never mutates
+    // the persistent selection owned by the caller.
+    items::ItemOwnershipState source_state{};
+    source_state.items = {make_item(101U, 1U, items::ItemRarity::rare),
+        make_item(102U, 2U, items::ItemRarity::magic)};
+    source_state.equipment.equipped_ids[0] = 101U;
+    platform::InventoryViewCache equipped_cache{};
+    platform::refresh_inventory_view_cache(equipped_cache, source_state, 12U,
+        {}, 101U, {});
+    const auto equipped_source = platform::inventory_visible_item_source(
+        shell_1280, platform::InventoryPage::equipment, source_state,
+        equipped_cache, 101U, 0.0F);
+    ARPG_REQUIRE(equipped_source.valid && !equipped_source.source_is_in_right_panel);
+    ARPG_REQUIRE(equipped_source.bounds.x == shell_1280.equipment_slots[0].x);
+    source_state.equipment.equipped_ids[0] = 0U;
+    platform::InventoryViewCache grid_cache{};
+    platform::refresh_inventory_view_cache(grid_cache, source_state, 13U, {},
+        101U, {});
+    const auto current_grid = platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, source_state, grid_cache, 101U, 0.0F);
+    ARPG_REQUIRE(current_grid.valid && current_grid.source_is_in_right_panel);
+    ARPG_REQUIRE(current_grid.bounds.x == platform::inventory_grid_item_rectangle(
+        shell_1280, 0U, 0.0F).x);
+    const std::uint64_t selected_item_id = 101U;
+    platform::InventoryTooltipInteractionState tooltip_state{};
+    tooltip_state.hovered_item_id = selected_item_id;
+    tooltip_state.frozen_item_id = selected_item_id;
+    tooltip_state.source = current_grid.bounds;
+    tooltip_state.retention_corridor = current_grid.bounds;
+    tooltip_state.visible = true;
+    const auto close_for_invalid = [&tooltip_state, selected_item_id]() noexcept {
+        const auto closed = platform::inventory_tooltip_transition(tooltip_state,
+            {{}, {}, {}, false, {-10.0F, -10.0F}, false, true, false, false});
+        tooltip_state = closed.state;
+        const bool cleared = !tooltip_state.visible
+            && tooltip_state.hovered_item_id == 0U
+            && tooltip_state.frozen_item_id == 0U
+            && selected_item_id == 101U;
+        tooltip_state.suppressed_item_id = 0U;
+        return cleared;
+    };
+    platform::InventoryFilter excluding{items::ItemSlot::helmet, {}};
+    platform::refresh_inventory_view_cache(grid_cache, source_state, 14U, excluding,
+        selected_item_id, {});
+    ARPG_REQUIRE(!platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, source_state, grid_cache,
+        selected_item_id, 0.0F).valid);
+    ARPG_REQUIRE(close_for_invalid());
+    ARPG_REQUIRE(!platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::skill_stones, source_state, grid_cache,
+        selected_item_id, 0.0F).valid);
+    ARPG_REQUIRE(close_for_invalid());
+    ARPG_REQUIRE(!platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::materials, source_state, grid_cache,
+        selected_item_id, 0.0F).valid);
+    ARPG_REQUIRE(close_for_invalid());
+    platform::refresh_inventory_view_cache(grid_cache, source_state, 15U, {},
+        selected_item_id, {});
+    ARPG_REQUIRE(!platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, source_state, grid_cache,
+        selected_item_id, 99.0F).valid);
+    ARPG_REQUIRE(close_for_invalid());
+    ARPG_REQUIRE(!platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, source_state, grid_cache, 404U,
+        0.0F).valid);
+    ARPG_REQUIRE(close_for_invalid());
+    const auto restored_source = platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, source_state, grid_cache,
+        selected_item_id, 0.0F);
+    ARPG_REQUIRE(restored_source.valid);
+    const auto shell_800 = platform::inventory_shell_layout(800, 450);
+    tooltip_state = {selected_item_id, selected_item_id, 0U, restored_source.bounds,
+        restored_source.bounds, true, true};
+    ARPG_REQUIRE(close_for_invalid());
+    const auto resized_source = platform::inventory_visible_item_source(shell_800,
+        platform::InventoryPage::equipment, source_state, grid_cache,
+        selected_item_id, 0.0F);
+    ARPG_REQUIRE(resized_source.valid);
+    ARPG_REQUIRE(resized_source.bounds.x != restored_source.bounds.x
+        || resized_source.bounds.y != restored_source.bounds.y);
     return {};
 }
 
@@ -538,6 +621,191 @@ test::Failure comparison_uses_full_build_fields() noexcept {
             ARPG_REQUIRE(placements == 1U);
         }
     }
+
+    // First observation establishes a baseline. A sticky save or an old
+    // receipt must not replay when the view opens or on later equal frames.
+    platform::InventoryTransientStatusState trace{};
+    platform::InventoryTransientStatusInput trace_input{};
+    trace_input.commit_generation = 20U;
+    trace_input.save_state = platform::InventorySavePresentationState::saved;
+    trace_input.receipt_valid = true;
+    trace_input.receipt_commit_generation = 20U;
+    trace = platform::inventory_transient_status_for_frame(trace, trace_input).next;
+    for (std::size_t frame{}; frame < 300U; ++frame) {
+        const auto repeated = platform::inventory_transient_status_for_frame(
+            trace, trace_input);
+        ARPG_REQUIRE(repeated.presentation.kind
+            == platform::InventoryTransientStatusKind::none);
+        trace = repeated.next;
+    }
+    trace_input.commit_generation = 21U;
+    for (std::size_t frame{}; frame < 180U; ++frame) {
+        const auto saved = platform::inventory_transient_status_for_frame(trace,
+            trace_input);
+        ARPG_REQUIRE(saved.presentation.kind
+            == platform::InventoryTransientStatusKind::saved);
+        trace = saved.next;
+    }
+    ARPG_REQUIRE(platform::inventory_transient_status_for_frame(trace,
+        trace_input).presentation.kind == platform::InventoryTransientStatusKind::none);
+    trace_input.commit_generation = 22U;
+    trace_input.receipt_commit_generation = 22U;
+    trace_input.receipt_success = true;
+    trace_input.receipt_before = 12U;
+    trace_input.receipt_after = 13U;
+    for (std::size_t frame{}; frame < 180U; ++frame) {
+        const auto receipt = platform::inventory_transient_status_for_frame(trace,
+            trace_input);
+        ARPG_REQUIRE(receipt.presentation.kind
+            == platform::InventoryTransientStatusKind::reinforcement_receipt);
+        ARPG_REQUIRE(receipt.presentation.receipt_before == 12U
+            && receipt.presentation.receipt_after == 13U);
+        trace = receipt.next;
+    }
+    trace_input.commit_generation = 23U;
+    trace_input.save_state = platform::InventorySavePresentationState::none;
+    const auto no_replay = platform::inventory_transient_status_for_frame(trace,
+        trace_input);
+    ARPG_REQUIRE(no_replay.presentation.kind == platform::InventoryTransientStatusKind::none);
+    trace = no_replay.next;
+    trace_input.save_state = platform::InventorySavePresentationState::recovered;
+    trace_input.commit_generation = 24U;
+    const auto recovered = platform::inventory_transient_status_for_frame(trace,
+        trace_input);
+    ARPG_REQUIRE(recovered.presentation.kind
+        == platform::InventoryTransientStatusKind::recovered);
+    trace = recovered.next;
+    trace_input.commit_generation = 1U;
+    trace_input.receipt_commit_generation = 1U;
+    const auto rollback = platform::inventory_transient_status_for_frame(trace,
+        trace_input);
+    ARPG_REQUIRE(rollback.presentation.kind == platform::InventoryTransientStatusKind::none
+        && rollback.next.remaining_frames == 0U);
+
+    platform::InventoryTransientStatusState receipt_then_save{};
+    platform::InventoryTransientStatusInput old_receipt{};
+    old_receipt.commit_generation = 10U;
+    old_receipt.receipt_valid = true;
+    old_receipt.receipt_commit_generation = 11U;
+    receipt_then_save = platform::inventory_transient_status_for_frame(
+        receipt_then_save, old_receipt).next;
+    platform::InventoryTransientStatusInput fresh_save{};
+    fresh_save.commit_generation = 12U;
+    fresh_save.save_state = platform::InventorySavePresentationState::saved;
+    const auto saved_after_old_receipt = platform::inventory_transient_status_for_frame(
+        receipt_then_save, fresh_save);
+    ARPG_REQUIRE(saved_after_old_receipt.presentation.kind
+        == platform::InventoryTransientStatusKind::saved);
+
+    const platform::InventoryTransientStatusPresentation receipts[] = {
+        {platform::InventoryTransientStatusKind::reinforcement_receipt,
+            true, false, false, 7U, 8U},
+        {platform::InventoryTransientStatusKind::reinforcement_receipt,
+            false, false, false, 7U, 8U},
+        {platform::InventoryTransientStatusKind::reinforcement_receipt,
+            false, true, false, 7U, 8U},
+        {platform::InventoryTransientStatusKind::reinforcement_receipt,
+            true, false, true, 7U, 8U},
+    };
+    const platform::UiTextId receipt_formats[] = {
+        platform::UiTextId::inventory_reinforcement_success_format,
+        platform::UiTextId::inventory_reinforcement_failure_format,
+        platform::UiTextId::inventory_reinforcement_destroyed_format,
+        platform::UiTextId::inventory_coupon_success_format,
+    };
+    const platform::InventoryStatusTone receipt_tones[] = {
+        platform::InventoryStatusTone::positive,
+        platform::InventoryStatusTone::negative,
+        platform::InventoryStatusTone::negative,
+        platform::InventoryStatusTone::positive,
+    };
+    for (std::size_t index{}; index < 4U; ++index) {
+        platform::InventoryStatusInput receipt_status{};
+        receipt_status.transient = receipts[index];
+        const auto presented = platform::inventory_status_presentation(receipt_status);
+        std::array<char, 128> expected{};
+        if (index == 2U) static_cast<void>(platform::ui_utf8_format(expected.data(),
+            expected.size(), platform::ui_text(receipt_formats[index]), 7U));
+        else static_cast<void>(platform::ui_utf8_format(expected.data(),
+            expected.size(), platform::ui_text(receipt_formats[index]), 7U, 8U));
+        ARPG_REQUIRE(std::string_view(presented.status.data())
+            == std::string_view(expected.data()));
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(presented.status.data()));
+        ARPG_REQUIRE(presented.tone == receipt_tones[index]);
+    }
+    platform::InventoryStatusInput tone_input{};
+    tone_input.save_state = platform::InventorySavePresentationState::saving;
+    ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
+        == platform::InventoryStatusTone::warning);
+    tone_input.save_state = platform::InventorySavePresentationState::error;
+    ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
+        == platform::InventoryStatusTone::negative);
+    tone_input = {};
+    tone_input.selected_material = items::MaterialId::transmute;
+    ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
+        == platform::InventoryStatusTone::warning);
+    tone_input = {};
+    tone_input.recipe_count = 3U; tone_input.recipe_ready = true;
+    ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
+        == platform::InventoryStatusTone::positive);
+    tone_input.reinforced_recipe_input = true;
+    ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
+        == platform::InventoryStatusTone::negative);
+    ARPG_REQUIRE(platform::inventory_status_presentation({}).tone
+        == platform::InventoryStatusTone::muted);
+
+    platform::InventoryTooltipInteractionState interaction{};
+    const Rectangle corridor{10.0F, 10.0F, 80.0F, 40.0F};
+    auto hover = platform::inventory_tooltip_transition(interaction,
+        {55U, corridor, corridor, false, {20.0F, 20.0F}, false, false, false, false});
+    ARPG_REQUIRE(hover.state.visible && !hover.state.source_is_in_right_panel);
+    interaction = hover.state;
+    const auto frozen = platform::inventory_tooltip_transition(interaction,
+        {{}, {}, {}, false, {20.0F, 20.0F}, false, false, false, false});
+    ARPG_REQUIRE(frozen.state.frozen_item_id == 55U);
+    auto invalidated_input = platform::InventoryTooltipInteractionInput{};
+    invalidated_input.pointer = {20.0F, 20.0F};
+    invalidated_input.source_invalidated = true;
+    const auto invalidated = platform::inventory_tooltip_transition(frozen.state,
+        invalidated_input);
+    ARPG_REQUIRE(!invalidated.state.visible && invalidated.state.hovered_item_id == 0U
+        && invalidated.state.frozen_item_id == 0U);
+    const auto closed = platform::inventory_tooltip_transition(frozen.state,
+        {{}, {}, {}, false, {20.0F, 20.0F}, false, true, true, false});
+    ARPG_REQUIRE(!closed.state.visible && closed.state.suppressed_item_id == 55U
+        && closed.clear_persistent_selection && closed.blocks_pointer);
+    const auto suppressed = platform::inventory_tooltip_transition(closed.state,
+        {55U, corridor, corridor, false, {20.0F, 20.0F}, false, false, false, false});
+    ARPG_REQUIRE(!suppressed.state.visible);
+    const auto restored = platform::inventory_tooltip_transition(suppressed.state,
+        {55U, corridor, corridor, true, {200.0F, 200.0F}, false, false, false, false});
+    ARPG_REQUIRE(restored.state.visible && restored.state.source_is_in_right_panel);
+    const auto right_click = platform::inventory_tooltip_transition(restored.state,
+        {{}, {}, {}, false, {20.0F, 20.0F}, false, true, false, false});
+    ARPG_REQUIRE(!right_click.clear_persistent_selection && right_click.blocks_pointer);
+    const auto background = platform::inventory_tooltip_transition(restored.state,
+        {{}, {}, {}, false, {20.0F, 20.0F}, false, false, false, true});
+    ARPG_REQUIRE(background.clear_persistent_selection && background.blocks_pointer);
+    const Vector2 grid_pointer{shell.grid_viewport.x + 1.0F,
+        shell.grid_viewport.y + 1.0F};
+    const float scrolled = platform::inventory_grid_scroll_after_wheel(
+        platform::InventoryPage::equipment, shell, grid_pointer, false, -1.0F,
+        40U, 0.0F);
+    ARPG_REQUIRE(scrolled > 0.0F);
+    for (const platform::InventoryPage page : {platform::InventoryPage::skill_stones,
+            platform::InventoryPage::materials}) {
+        ARPG_REQUIRE(platform::inventory_grid_scroll_after_wheel(page, shell,
+            grid_pointer, false, -1.0F, 40U, 2.0F) == 2.0F);
+    }
+    ARPG_REQUIRE(platform::inventory_grid_scroll_after_wheel(
+        platform::InventoryPage::equipment, shell, {0.0F, 0.0F}, false,
+        -1.0F, 40U, 2.0F) == 2.0F);
+    ARPG_REQUIRE(platform::inventory_grid_scroll_after_wheel(
+        platform::InventoryPage::equipment, shell, grid_pointer, true,
+        -1.0F, 40U, 2.0F) == 2.0F);
+    ARPG_REQUIRE(platform::inventory_grid_scroll_after_wheel(
+        platform::InventoryPage::equipment, shell, grid_pointer, false,
+        0.0F, 40U, 2.0F) == 2.0F);
     return {};
 }
 

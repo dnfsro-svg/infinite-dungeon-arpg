@@ -991,11 +991,13 @@ InventoryTransientStatusFrameResult inventory_transient_status_for_frame(
         return result;
     }
     if (input.commit_generation < state.last_commit_generation
-        || input.receipt_commit_generation < state.last_receipt_generation) {
+        || (input.receipt_valid && input.receipt_commit_generation
+            < state.last_receipt_generation)) {
         state.kind = InventoryTransientStatusKind::none;
         state.remaining_frames = 0U;
         state.last_commit_generation = input.commit_generation;
-        state.last_receipt_generation = input.receipt_commit_generation;
+        if (input.receipt_valid)
+            state.last_receipt_generation = input.receipt_commit_generation;
         result.next = state;
         return result;
     }
@@ -1004,8 +1006,8 @@ InventoryTransientStatusFrameResult inventory_transient_status_for_frame(
         && input.receipt_commit_generation > state.last_receipt_generation;
     state.last_commit_generation = std::max(state.last_commit_generation,
         input.commit_generation);
-    state.last_receipt_generation = std::max(state.last_receipt_generation,
-        input.receipt_commit_generation);
+    if (input.receipt_valid) state.last_receipt_generation = std::max(
+        state.last_receipt_generation, input.receipt_commit_generation);
     if (new_receipt) {
         state.kind = InventoryTransientStatusKind::reinforcement_receipt;
         state.remaining_frames = kInventoryTransientStatusFrameCount;
@@ -1201,6 +1203,13 @@ InventoryTooltipInteractionResult inventory_tooltip_transition(
     const InventoryTooltipInteractionInput& input) noexcept {
     InventoryTooltipInteractionResult result{};
     result.blocks_pointer = state.visible || input.pointer_inside_tooltip;
+    if (input.source_invalidated) {
+        state.hovered_item_id = 0U;
+        state.frozen_item_id = 0U;
+        state.visible = false;
+        result.state = state;
+        return result;
+    }
     const bool in_corridor = finite_rectangle(state.retention_corridor)
         && contains(state.retention_corridor, input.pointer);
     if (input.close_requested || input.background_clear_requested) {
