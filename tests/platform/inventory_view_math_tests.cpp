@@ -95,7 +95,131 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         ARPG_REQUIRE(layout.equipment.width > 0.0F);
         ARPG_REQUIRE(layout.grid.width > 0.0F);
         ARPG_REQUIRE(layout.detail.width > 0.0F);
+
+        // This catches regressions where the shared POE2 shell falls back to
+        // the legacy three-panel layout or lets compact controls overlap.
+        const auto shell = platform::inventory_shell_layout(size[0], size[1]);
+        ARPG_REQUIRE(shell.valid);
+        ARPG_REQUIRE(inside(shell.header, shell.viewport));
+        ARPG_REQUIRE(inside(shell.left_panel, shell.viewport));
+        ARPG_REQUIRE(inside(shell.right_panel, shell.viewport));
+        ARPG_REQUIRE(inside(shell.status_bar, shell.viewport));
+        ARPG_REQUIRE(separated(shell.left_panel, shell.right_panel));
+        ARPG_REQUIRE(shell.right_panel.width > shell.left_panel.width);
+        ARPG_REQUIRE(platform::inventory_grid_columns(shell) == 3);
+        ARPG_REQUIRE(shell.body_font_size >= 12.0F);
+        ARPG_REQUIRE(shell.hint_font_size >= 12.0F);
+        ARPG_REQUIRE(inside(shell.slot_filter_bounds, shell.filter_bar));
+        ARPG_REQUIRE(inside(shell.rarity_filter_bounds, shell.filter_bar));
+        ARPG_REQUIRE(separated(shell.slot_filter_bounds,
+            shell.rarity_filter_bounds));
+        ARPG_REQUIRE(inside(shell.empty_state_bounds, shell.right_panel));
+        ARPG_REQUIRE(inside(shell.status_bounds, shell.status_bar));
+        ARPG_REQUIRE(inside(shell.action_bounds, shell.status_bar));
+        ARPG_REQUIRE(separated(shell.status_bounds, shell.action_bounds));
+        if (shell.hint_visible) {
+            ARPG_REQUIRE(inside(shell.hint_bounds, shell.status_bar));
+            ARPG_REQUIRE(separated(shell.action_bounds, shell.hint_bounds));
+        } else {
+            ARPG_REQUIRE(size[0] == 800 && size[1] == 450);
+        }
+        for (const Rectangle tab : shell.tabs) {
+            ARPG_REQUIRE(tab.width >= 40.0F);
+            ARPG_REQUIRE(tab.height >= 32.0F);
+            ARPG_REQUIRE(inside(tab, shell.viewport));
+        }
+        for (std::size_t left{}; left < shell.tabs.size(); ++left) {
+            for (std::size_t right = left + 1U;
+                 right < shell.tabs.size(); ++right) {
+                ARPG_REQUIRE(separated(shell.tabs[left], shell.tabs[right]));
+            }
+        }
+        for (const Rectangle slot : shell.equipment_slots) {
+            ARPG_REQUIRE(inside(slot, shell.left_panel));
+            ARPG_REQUIRE(slot.width >= 40.0F);
+            ARPG_REQUIRE(slot.height >= 32.0F);
+        }
     }
+    platform::InventoryPointerPriorityInput layered{};
+    layered.tooltip = true;
+    layered.directed_material = true;
+    layered.material_cancel_requested = true;
+    layered.material_select = true;
+    layered.material_target = true;
+    layered.page_action = true;
+    layered.filter = true;
+    layered.skill_content = true;
+    layered.recipe = true;
+    layered.equipment = true;
+    layered.background_clear = true;
+    ARPG_REQUIRE(platform::inventory_pointer_layer(layered)
+        == platform::InventoryPointerLayer::tooltip);
+
+    // The shell builders run once per frame; this catches an accidental
+    // dynamic string/container path after their fixed-capacity contracts pass.
+    items::ItemInstance item{};
+    item.id = 901U;
+    item.base_id = 1U;
+    item.rarity = items::ItemRarity::rare;
+    item.item_level = 1U;
+    item.required_level = 1U;
+    items::ItemOwnershipState ownership{};
+    ownership.items.push_back(item);
+    ownership.equipment.equipped_ids[0] = item.id;
+    platform::InventoryViewCache view_cache{};
+    platform::refresh_inventory_view_cache(view_cache, ownership, 1U, {},
+        item.id, {});
+    const items::ItemOwnershipState empty_state{};
+    platform::InventoryStatusInput status_input{};
+    status_input.recipe_count = 3U;
+    status_input.recipe_ready = true;
+    status_input.authority_enabled = true;
+    platform::InventoryItemVisualInput visual_input{};
+    visual_input.item_id = item.id;
+    visual_input.selected_item_id = item.id;
+    platform::InventoryTransientStatusState transient{};
+    platform::InventoryTransientStatusInput transient_input{};
+    transient_input.commit_generation = 1U;
+    transient_input.save_state = platform::InventorySavePresentationState::saved;
+    const auto warm_shell = platform::inventory_shell_layout(800, 450);
+    const auto warm_view = platform::inventory_tooltip_view(item,
+        platform::BuildDifference{});
+    static_cast<void>(platform::inventory_tooltip_layout(warm_shell,
+        warm_shell.equipment_slots[0], false, warm_view, &linear_measure,
+        nullptr));
+    static_cast<void>(platform::inventory_status_presentation(status_input));
+    const std::uint64_t before = test::allocation_count();
+    for (std::size_t iteration{}; iteration < 10000U; ++iteration) {
+        const auto shell = platform::inventory_shell_layout(800, 450);
+        const auto view = platform::inventory_tooltip_view(item,
+            platform::BuildDifference{});
+        const auto tip = platform::inventory_tooltip_layout(shell,
+            shell.equipment_slots[0], false, view, &linear_measure, nullptr);
+        const auto transition = platform::inventory_tooltip_transition({}, {});
+        const auto empty = platform::inventory_empty_presentation(empty_state, 0U);
+        const auto transient_frame = platform::inventory_transient_status_for_frame(
+            transient, transient_input);
+        transient = transient_frame.next;
+        const auto status = platform::inventory_status_presentation(status_input);
+        const auto visual = platform::inventory_item_visual_state(visual_input);
+        const auto source = platform::inventory_visible_item_source(shell,
+            platform::InventoryPage::equipment, ownership, view_cache, item.id,
+            0.0F);
+        const auto pointer_layer = platform::inventory_pointer_layer(layered);
+        const float scroll = platform::inventory_grid_scroll_after_wheel(
+            platform::InventoryPage::equipment, shell,
+            {shell.grid_viewport.x + 1.0F, shell.grid_viewport.y + 1.0F},
+            false, -1.0F, 40U, 0.0F);
+        ARPG_REQUIRE(shell.valid && tip.valid && view.valid
+            && transient_frame.next.initialized);
+        ARPG_REQUIRE(!transition.state.visible && empty.title != nullptr
+            && status.status[0] != '\0'
+            && visual.outline != platform::InventoryItemOutline::none
+            && source.valid
+            && pointer_layer != platform::InventoryPointerLayer::none
+            && scroll >= 0.0F);
+    }
+    ARPG_REQUIRE(test::allocation_count() == before);
     return {};
 }
 
@@ -146,6 +270,34 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
         platform::filtered_inventory_indices(state, filter);
     ARPG_REQUIRE(indices.size() == 1U);
     ARPG_REQUIRE(indices[0] == 3U);
+
+    items::ItemOwnershipState empty{};
+    const auto empty_presentation = platform::inventory_empty_presentation(
+        empty, 0U);
+    ARPG_REQUIRE(std::string_view(empty_presentation.title) == u8"背包无装备");
+    ARPG_REQUIRE(std::string_view(empty_presentation.hint) == u8"击败怪物，拾取装备");
+
+    items::ItemOwnershipState all_equipped{};
+    all_equipped.items.push_back(make_item(80U, 1U, items::ItemRarity::normal));
+    all_equipped.equipment.equipped_ids[0] = 80U;
+    const auto equipped_presentation = platform::inventory_empty_presentation(
+        all_equipped, 0U);
+    ARPG_REQUIRE(std::string_view(equipped_presentation.title) == u8"无剩余装备");
+    ARPG_REQUIRE(std::string_view(equipped_presentation.hint) == u8"左击左方装备取出");
+
+    const auto filtered_presentation = platform::inventory_empty_presentation(
+        state, 0U);
+    ARPG_REQUIRE(std::string_view(filtered_presentation.title) == u8"当前过滤无结果");
+    ARPG_REQUIRE(std::string_view(filtered_presentation.hint) == u8"切换装备槽及稀有度");
+
+    platform::RecipeSelection recipe{};
+    recipe.ids = {{11U, 13U, 14U}};
+    recipe.count = 3U;
+    const auto visual = platform::inventory_item_visual_state({
+        11U, 11U, 11U, recipe, false, false});
+    ARPG_REQUIRE(visual.outline == platform::InventoryItemOutline::recipe);
+    ARPG_REQUIRE(visual.recipe_ordinal == 1U);
+    ARPG_REQUIRE(visual.selected_indicator);
     return {};
 }
 
@@ -275,6 +427,48 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(difference.evasion_rate_bp
         == modifiers::rating_to_basis_points(candidate.values.evasion)
             - modifiers::rating_to_basis_points(current.values.evasion));
+
+    platform::InventoryStatusInput status_input{};
+    status_input.page = platform::InventoryPage::equipment;
+    status_input.recipe_count = 3U;
+    status_input.recipe_ready = true;
+    status_input.authority_enabled = true;
+    const auto status = platform::inventory_status_presentation(status_input);
+    ARPG_REQUIRE(status.action_kind == platform::InventoryActionKind::combine);
+    ARPG_REQUIRE(status.action_enabled);
+    ARPG_REQUIRE(status.tone == platform::InventoryStatusTone::positive);
+    ARPG_REQUIRE(std::string_view{status.action.data()} == u8"三合一（3/3）");
+
+    platform::InventoryTransientStatusState transient{};
+    platform::InventoryTransientStatusInput baseline_input{};
+    baseline_input.commit_generation = 10U;
+    baseline_input.save_state = platform::InventorySavePresentationState::saved;
+    baseline_input.receipt_valid = true;
+    baseline_input.receipt_commit_generation = 10U;
+    const auto baseline = platform::inventory_transient_status_for_frame(
+        transient, baseline_input);
+    ARPG_REQUIRE(baseline.presentation.kind
+        == platform::InventoryTransientStatusKind::none);
+    platform::InventoryTransientStatusInput receipt_input{};
+    receipt_input.commit_generation = 11U;
+    receipt_input.save_state = platform::InventorySavePresentationState::saved;
+    receipt_input.receipt_valid = true;
+    receipt_input.receipt_success = true;
+    receipt_input.receipt_commit_generation = 11U;
+    receipt_input.receipt_before = 2U;
+    receipt_input.receipt_after = 3U;
+    const auto new_receipt = platform::inventory_transient_status_for_frame(
+        baseline.next, receipt_input);
+    ARPG_REQUIRE(new_receipt.presentation.kind
+        == platform::InventoryTransientStatusKind::reinforcement_receipt);
+
+    const items::ItemInstance tooltip_item = make_item(
+        9001U, 1U, items::ItemRarity::rare);
+    const auto tooltip = platform::inventory_tooltip_view(tooltip_item,
+        difference);
+    ARPG_REQUIRE(tooltip.valid);
+    ARPG_REQUIRE(tooltip.line_count <= tooltip.lines.size());
+    ARPG_REQUIRE(tooltip.line_count > 0U);
     return {};
 }
 
@@ -641,10 +835,14 @@ test::Failure inventory_page_titles_follow_the_current_binding() noexcept {
         platform::InventoryPage::equipment_materials, u8"右 Shift");
     const auto skills = platform::inventory_page_title(
         platform::InventoryPage::skill_stones, u8"右 Shift");
+    const auto materials = platform::inventory_page_title(
+        platform::InventoryPage::materials, u8"右 Shift");
     ARPG_REQUIRE(std::string_view(equipment.data())
         == u8"按键提示：右 Shift / ESC  ·  装备背包");
     ARPG_REQUIRE(std::string_view(skills.data())
         == u8"按键提示：右 Shift / ESC  ·  技能石背包");
+    ARPG_REQUIRE(std::string_view(materials.data())
+        == u8"按键提示：右 Shift / ESC  ·  材料背包");
     const auto unknown = platform::inventory_page_title(
         platform::InventoryPage::equipment_materials, nullptr);
     ARPG_REQUIRE(std::string_view(unknown.data())
@@ -655,6 +853,7 @@ test::Failure inventory_page_titles_follow_the_current_binding() noexcept {
         u8"按键提示：右 Shift / ESC", 0U) == 0U);
     ARPG_REQUIRE(platform::ui_utf8_is_valid(equipment.data()));
     ARPG_REQUIRE(platform::ui_utf8_is_valid(skills.data()));
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(materials.data()));
     ARPG_REQUIRE(platform::ui_utf8_is_valid(unknown.data()));
 
     const auto extreme = platform::inventory_page_title(

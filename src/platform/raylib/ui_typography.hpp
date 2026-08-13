@@ -26,6 +26,8 @@ struct UiTypography final {
     float kHudSkillNameFontSize{16.0F};
     float kInventoryBodyFontSize{16.0F};
     float kInventoryDetailFontSize{16.0F};
+    float inventory_compact_min_font_size{12.0F};
+    float inventory_hint_font_size{14.0F};
     float kSkillDescriptionFontSize{18.0F};
     float kPauseRowFontSize{18.0F};
     float page_title_font_size{24.0F};

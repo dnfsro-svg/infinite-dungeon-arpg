@@ -143,7 +143,7 @@ std::size_t utf8_codepoint_count(const char* text) noexcept {
 }
 
 arpg::test::Failure fixed_messages_are_chinese() noexcept {
-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 45U>
+    constexpr std::array<std::pair<platform::UiTextId, const char*>, 71U>
         kExpectedTexts{{
             {platform::UiTextId::pause_title, u8"暂停"},
             {platform::UiTextId::pause_continue, u8"继续游戏"},
@@ -192,6 +192,32 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
             {platform::UiTextId::hud_experience_maxed, u8"经验已满"},
             {platform::UiTextId::recovery_dual_slot_instruction,
                 u8"两个存档槽均无效。按 N 将其归档并创建新游戏。"},
+            {platform::UiTextId::inventory_page_skill_stones, u8"技能石"},
+            {platform::UiTextId::inventory_page_materials, u8"材料"},
+            {platform::UiTextId::inventory_empty_title, u8"背包无装备"},
+            {platform::UiTextId::inventory_empty_hint, u8"击败怪物，拾取装备"},
+            {platform::UiTextId::inventory_all_equipped_title, u8"无剩余装备"},
+            {platform::UiTextId::inventory_all_equipped_hint, u8"左击左方装备取出"},
+            {platform::UiTextId::inventory_filter_empty_title, u8"当前过滤无结果"},
+            {platform::UiTextId::inventory_filter_empty_hint, u8"切换装备槽及稀有度"},
+            {platform::UiTextId::inventory_skill_empty, u8"暂无未装备主动技能石"},
+            {platform::UiTextId::inventory_skill_equip_hint, u8"选择技能石后点击空槽装备"},
+            {platform::UiTextId::inventory_skill_swap_hint, u8"选择两个技能槽交换"},
+            {platform::UiTextId::inventory_skill_remove_hint, u8"选择已装备技能后可取出"},
+            {platform::UiTextId::inventory_comparison_title, u8"装备后变化"},
+            {platform::UiTextId::inventory_no_change, u8"装备后无变化"},
+            {platform::UiTextId::inventory_material_selected_format, u8"已选择：%s · 切换至装备 · 右键取消"},
+            {platform::UiTextId::inventory_recipe_action_format, u8"三合一（%u/3）"},
+            {platform::UiTextId::inventory_recipe_danger, u8"危险：三合一取消强化"},
+            {platform::UiTextId::inventory_slot_filter_format, u8"装备槽：%s"},
+            {platform::UiTextId::inventory_rarity_filter_format, u8"稀有度：%s"},
+            {platform::UiTextId::inventory_context_hint, u8"左键选择 · 快速左击两次装备 · 右键三合一"},
+            {platform::UiTextId::inventory_action_remove, u8"取出"},
+            {platform::UiTextId::inventory_filter_all, u8"全部"},
+            {platform::UiTextId::inventory_reinforcement_success_format, u8"强化结果：成功 / +%u → +%u"},
+            {platform::UiTextId::inventory_reinforcement_failure_format, u8"强化结果：失败 / +%u → +%u"},
+            {platform::UiTextId::inventory_reinforcement_destroyed_format, u8"强化结果：失败 / 装备丢失 / +%u"},
+            {platform::UiTextId::inventory_coupon_success_format, u8"强化券结果：成功 / +%u → +%u"},
         }};
     for (const auto& expected : kExpectedTexts) {
         ARPG_REQUIRE(std::strcmp(
@@ -363,7 +389,7 @@ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
         audit.valid_utf8 ? 1 : 0);
     ARPG_REQUIRE(audit.valid_utf8);
     for (const bool reached : audit.reached) ARPG_REQUIRE(reached);
-    ARPG_REQUIRE(audit.count == 303U);
+    ARPG_REQUIRE(audit.count == 329U);
     return {};
 }
 
@@ -374,7 +400,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 303U);
+        ARPG_REQUIRE(count == 329U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

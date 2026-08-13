@@ -176,6 +176,46 @@ bool percent_stat(modifiers::StatId stat) noexcept {
         || stat == modifiers::StatId::chaos_damage_reduction_cap;
 }
 
+bool finite_rectangle(Rectangle rectangle) noexcept {
+    return std::isfinite(rectangle.x) && std::isfinite(rectangle.y)
+        && std::isfinite(rectangle.width) && std::isfinite(rectangle.height)
+        && rectangle.width > 0.0F && rectangle.height > 0.0F;
+}
+
+bool intersects(Rectangle left, Rectangle right) noexcept {
+    return left.x < right.x + right.width && right.x < left.x + left.width
+        && left.y < right.y + right.height && right.y < left.y + left.height;
+}
+
+void tooltip_add_segment(InventoryTooltipView& view, const char* text,
+    InventoryTooltipTone tone) noexcept {
+    if (text == nullptr || text[0] == '\0'
+        || view.line_count >= view.lines.size()) return;
+    InventoryTooltipLine& line = view.lines[view.line_count++];
+    line.segment_count = 1U;
+    line.segments[0].tone = tone;
+    static_cast<void>(ui_utf8_copy(line.segments[0].text.data(),
+        line.segments[0].text.size(), text));
+}
+
+void tooltip_add_delta(InventoryTooltipView& view, const char* label,
+    std::int64_t value) noexcept {
+    if (value == 0 || view.line_count >= view.lines.size()) return;
+    InventoryTooltipLine& line = view.lines[view.line_count++];
+    line.segment_count = 1U;
+    line.segments[0].tone = value > 0 ? InventoryTooltipTone::positive
+                                      : InventoryTooltipTone::negative;
+    static_cast<void>(ui_utf8_format(line.segments[0].text.data(),
+        line.segments[0].text.size(), "%s %+lld", label,
+        static_cast<long long>(value)));
+}
+
+InventoryTransientStatusPresentation transient_presentation(
+    const InventoryTransientStatusState& state) noexcept {
+    return {state.kind, state.receipt_success, state.receipt_destroyed,
+        state.receipt_coupon, state.receipt_before, state.receipt_after};
+}
+
 }  // namespace
 
 InventoryLayout inventory_layout(int width, int height) noexcept {
@@ -201,6 +241,130 @@ InventoryLayout inventory_layout(int width, int height) noexcept {
         {grid.x + grid.width + gap, top, detail_width, content_height}, scale};
 }
 
+InventoryShellLayout inventory_shell_layout(int width, int height) noexcept {
+    if (width <= 0 || height <= 0) return {};
+    const float viewport_width = static_cast<float>(width);
+    const float viewport_height = static_cast<float>(height);
+    const float geometry_scale = std::clamp(std::min(
+        viewport_width / 1280.0F, viewport_height / 720.0F),
+        0.625F, 1.5F);
+    const UiTypography type = ui_typography();
+    InventoryShellLayout layout{};
+    layout.viewport = {0.0F, 0.0F, viewport_width, viewport_height};
+    layout.geometry_scale = geometry_scale;
+    layout.body_font_size = std::max(type.inventory_compact_min_font_size,
+        type.kInventoryBodyFontSize * geometry_scale);
+    layout.hint_font_size = std::max(type.inventory_compact_min_font_size,
+        type.inventory_hint_font_size * geometry_scale);
+    const float margin = 12.0F * geometry_scale;
+    const float gap = 10.0F * geometry_scale;
+    const float header_height = std::max(40.0F, 54.0F * geometry_scale);
+    const float status_height = std::max(46.0F, 58.0F * geometry_scale);
+    layout.header = {margin, margin, viewport_width - margin * 2.0F,
+        header_height};
+    layout.status_bar = {margin, viewport_height - margin - status_height,
+        viewport_width - margin * 2.0F, status_height};
+    layout.content = {margin, layout.header.y + layout.header.height + gap,
+        viewport_width - margin * 2.0F,
+        layout.status_bar.y - gap - (layout.header.y + layout.header.height + gap)};
+    if (!finite_rectangle(layout.content) || layout.content.height < 240.0F) {
+        return {};
+    }
+    const float left_width = std::max(180.0F,
+        std::floor(layout.content.width * 0.30F));
+    if (left_width + gap + 180.0F > layout.content.width) return {};
+    layout.left_panel = {layout.content.x, layout.content.y, left_width,
+        layout.content.height};
+    layout.right_panel = {layout.left_panel.x + layout.left_panel.width + gap,
+        layout.content.y, layout.content.width - left_width - gap,
+        layout.content.height};
+    const float tab_height = std::max(32.0F, 36.0F * geometry_scale);
+    const float tab_gap = std::max(4.0F, 6.0F * geometry_scale);
+    const float tab_width = (layout.header.width - tab_gap * 2.0F) / 3.0F;
+    for (std::size_t index{}; index < layout.tabs.size(); ++index) {
+        layout.tabs[index] = {layout.header.x + static_cast<float>(index)
+                * (tab_width + tab_gap),
+            layout.header.y + (layout.header.height - tab_height) * 0.5F,
+            tab_width, tab_height};
+    }
+    const float panel_padding = 10.0F * geometry_scale;
+    const float slot_height = std::max(32.0F, 38.0F * geometry_scale);
+    const float slot_gap = std::max(4.0F, 7.0F * geometry_scale);
+    for (std::size_t index{}; index < layout.equipment_slots.size(); ++index) {
+        layout.equipment_slots[index] = {layout.left_panel.x + panel_padding,
+            layout.left_panel.y + panel_padding + static_cast<float>(index)
+                * (slot_height + slot_gap),
+            layout.left_panel.width - panel_padding * 2.0F, slot_height};
+    }
+    layout.silhouette = {layout.left_panel.x + layout.left_panel.width * 0.25F,
+        layout.equipment_slots.back().y + layout.equipment_slots.back().height
+            + panel_padding,
+        layout.left_panel.width * 0.5F,
+        std::max(0.0F, layout.left_panel.y + layout.left_panel.height
+            - (layout.equipment_slots.back().y
+                + layout.equipment_slots.back().height + panel_padding))};
+    const float filter_height = std::max(36.0F, 42.0F * geometry_scale);
+    layout.filter_bar = {layout.right_panel.x + panel_padding,
+        layout.right_panel.y + panel_padding,
+        layout.right_panel.width - panel_padding * 2.0F, filter_height};
+    const float filter_gap = std::max(6.0F, 8.0F * geometry_scale);
+    const float filter_width = (layout.filter_bar.width - filter_gap) * 0.5F;
+    layout.slot_filter_bounds = {layout.filter_bar.x, layout.filter_bar.y,
+        filter_width, layout.filter_bar.height};
+    layout.rarity_filter_bounds = {layout.slot_filter_bounds.x
+            + layout.slot_filter_bounds.width + filter_gap,
+        layout.filter_bar.y, filter_width, layout.filter_bar.height};
+    layout.grid_viewport = {layout.filter_bar.x,
+        layout.filter_bar.y + layout.filter_bar.height + panel_padding,
+        layout.filter_bar.width,
+        layout.right_panel.y + layout.right_panel.height - panel_padding
+            - (layout.filter_bar.y + layout.filter_bar.height + panel_padding)};
+    layout.empty_state_bounds = layout.grid_viewport;
+    layout.grid_cell_height = std::max(42.0F, 58.0F * geometry_scale);
+    layout.grid_row_stride = layout.grid_cell_height + std::max(4.0F,
+        8.0F * geometry_scale);
+    const float action_width = std::max(112.0F, 144.0F * geometry_scale);
+    layout.action_bounds = {layout.status_bar.x + layout.status_bar.width
+            - action_width - panel_padding,
+        layout.status_bar.y + panel_padding * 0.5F, action_width,
+        layout.status_bar.height - panel_padding};
+    layout.hint_visible = width > 800;
+    const float hint_width = layout.hint_visible
+        ? std::max(120.0F, layout.status_bar.width * 0.27F) : 0.0F;
+    layout.hint_bounds = {layout.action_bounds.x - gap - hint_width,
+        layout.action_bounds.y, hint_width, layout.action_bounds.height};
+    layout.status_bounds = {layout.status_bar.x + panel_padding,
+        layout.action_bounds.y,
+        layout.hint_visible ? layout.hint_bounds.x - gap
+            - (layout.status_bar.x + panel_padding)
+            : layout.action_bounds.x - gap - (layout.status_bar.x + panel_padding),
+        layout.action_bounds.height};
+    layout.valid = finite_rectangle(layout.header)
+        && finite_rectangle(layout.left_panel) && finite_rectangle(layout.right_panel)
+        && finite_rectangle(layout.status_bar) && finite_rectangle(layout.grid_viewport)
+        && layout.status_bounds.width > 0.0F;
+    return layout;
+}
+
+int inventory_grid_columns(InventoryShellLayout layout) noexcept {
+    return layout.valid ? 3 : 0;
+}
+
+Rectangle inventory_grid_item_rectangle(InventoryShellLayout layout,
+    std::size_t filtered_position, float scroll_rows) noexcept {
+    if (!layout.valid || !std::isfinite(scroll_rows)) return {};
+    constexpr int kColumns = 3;
+    const float gap = std::max(4.0F, 8.0F * layout.geometry_scale);
+    const float width = (layout.grid_viewport.width - gap * 2.0F) / 3.0F;
+    if (width <= 0.0F) return {};
+    const std::size_t row = filtered_position / kColumns;
+    const std::size_t column = filtered_position % kColumns;
+    return {layout.grid_viewport.x + static_cast<float>(column) * (width + gap),
+        layout.grid_viewport.y + (static_cast<float>(row) - scroll_rows)
+            * layout.grid_row_stride,
+        width, layout.grid_cell_height};
+}
+
 InventoryControlTextStyle inventory_control_text_style() noexcept {
     return {
         {5, 9, 16, 255},
@@ -220,11 +384,14 @@ std::array<char, 96> inventory_page_title(
     std::array<char, 48> binding{};
     static_cast<void>(ui_utf8_fit_with_ellipsis(
         binding.data(), binding.size(), binding_source));
-    const char* const format = page == InventoryPage::equipment_materials
-        ? u8"按键提示：%s / ESC  ·  装备背包"
-        : u8"按键提示：%s / ESC  ·  技能石背包";
+    const char* const page_title = page == InventoryPage::equipment
+        ? ui_text(UiTextId::equipment_title)
+        : page == InventoryPage::skill_stones
+        ? ui_text(UiTextId::inventory_page_skill_stones)
+        : ui_text(UiTextId::inventory_page_materials);
     static_cast<void>(ui_utf8_format(
-        title.data(), title.size(), format, binding.data()));
+        title.data(), title.size(), u8"按键提示：%s / ESC  ·  %s背包",
+        binding.data(), page_title));
     return title;
 }
 
@@ -532,6 +699,18 @@ std::optional<items::ItemSlot> hit_test_equipped_slot(Vector2 point,
     return std::nullopt;
 }
 
+std::optional<items::ItemSlot> hit_test_equipped_slot(Vector2 point,
+    InventoryShellLayout layout,
+    const items::EquipmentState& equipment) noexcept {
+    if (!layout.valid) return std::nullopt;
+    for (std::size_t index{}; index < layout.equipment_slots.size(); ++index) {
+        if (equipment.equipped_ids[index] == 0U) continue;
+        if (contains(layout.equipment_slots[index], point))
+            return static_cast<items::ItemSlot>(index);
+    }
+    return std::nullopt;
+}
+
 bool inventory_can_open(bool runtime_running,
     bool passive_overlay_open) noexcept {
     return runtime_running && !passive_overlay_open;
@@ -659,6 +838,419 @@ const items::ItemInstance* cached_selected_item(
 
 bool cached_recipe_ready(const InventoryViewCache& cache) noexcept {
     return cache.recipe_ready;
+}
+
+InventoryVisibleItemSource inventory_visible_item_source(
+    InventoryShellLayout shell, InventoryPage page,
+    const items::ItemOwnershipState& state, const InventoryViewCache& cache,
+    std::uint64_t item_id, float scroll_rows) noexcept {
+    if (!shell.valid || page != InventoryPage::equipment || item_id == 0U
+        || !std::isfinite(scroll_rows)) return {};
+    for (std::size_t slot{}; slot < state.equipment.equipped_ids.size(); ++slot) {
+        if (state.equipment.equipped_ids[slot] == item_id)
+            return {item_id, shell.equipment_slots[slot], false, true};
+    }
+    const VisibleGridRange visible = visible_grid_range(cache.filtered_indices.size(),
+        inventory_grid_columns(shell), scroll_rows, shell.grid_viewport.height,
+        shell.grid_row_stride);
+    for (std::size_t position = visible.first;
+         position < visible.first + visible.count; ++position) {
+        const std::size_t index = cache.filtered_indices[position];
+        if (index >= state.items.size() || state.items[index].id != item_id) continue;
+        const Rectangle bounds = inventory_grid_item_rectangle(shell, position,
+            scroll_rows);
+        if (finite_rectangle(bounds) && intersects(bounds, shell.grid_viewport))
+            return {item_id, bounds, true, true};
+    }
+    return {};
+}
+
+InventoryEmptyPresentation inventory_empty_presentation(
+    const items::ItemOwnershipState& state, std::size_t filtered_count) noexcept {
+    if (filtered_count != 0U) return {};
+    if (state.items.empty()) return {InventoryEmptyState::inventory_empty,
+        ui_text(UiTextId::inventory_empty_title),
+        ui_text(UiTextId::inventory_empty_hint)};
+    bool any_unequipped{};
+    for (const items::ItemInstance& item : state.items) {
+        if (!equipped(state.equipment, item.id)) {
+            any_unequipped = true;
+            break;
+        }
+    }
+    if (!any_unequipped) return {InventoryEmptyState::all_equipped,
+        ui_text(UiTextId::inventory_all_equipped_title),
+        ui_text(UiTextId::inventory_all_equipped_hint)};
+    return {InventoryEmptyState::filter_empty,
+        ui_text(UiTextId::inventory_filter_empty_title),
+        ui_text(UiTextId::inventory_filter_empty_hint)};
+}
+
+InventoryStatusPresentation inventory_status_presentation(
+    const InventoryStatusInput& input) noexcept {
+    InventoryStatusPresentation output{};
+    static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
+        ui_text(UiTextId::inventory_context_hint)));
+    static_cast<void>(ui_utf8_copy(output.hint.data(), output.hint.size(),
+        ui_text(UiTextId::inventory_context_hint)));
+    output.tone = InventoryStatusTone::muted;
+    if (input.save_state == InventorySavePresentationState::saving) {
+        static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
+            ui_text(UiTextId::save_saving)));
+        output.tone = InventoryStatusTone::warning;
+        return output;
+    }
+    if (input.save_state == InventorySavePresentationState::error
+        || input.recovery_required) {
+        static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
+            ui_text(UiTextId::save_error)));
+        output.tone = InventoryStatusTone::negative;
+        return output;
+    }
+    if (input.transient.kind == InventoryTransientStatusKind::reinforcement_receipt) {
+        UiTextId format = UiTextId::inventory_reinforcement_success_format;
+        output.tone = InventoryStatusTone::positive;
+        if (!input.transient.receipt_success) {
+            format = input.transient.receipt_destroyed
+                ? UiTextId::inventory_reinforcement_destroyed_format
+                : UiTextId::inventory_reinforcement_failure_format;
+            output.tone = InventoryStatusTone::negative;
+        } else if (input.transient.receipt_coupon) {
+            format = UiTextId::inventory_coupon_success_format;
+        }
+        if (format == UiTextId::inventory_reinforcement_destroyed_format) {
+            static_cast<void>(ui_utf8_format(output.status.data(),
+                output.status.size(), ui_text(format), input.transient.receipt_before));
+        } else {
+            static_cast<void>(ui_utf8_format(output.status.data(),
+                output.status.size(), ui_text(format), input.transient.receipt_before,
+                input.transient.receipt_after));
+        }
+        return output;
+    }
+    if (input.transient.kind == InventoryTransientStatusKind::saved
+        || input.transient.kind == InventoryTransientStatusKind::recovered) {
+        const UiTextId id = input.transient.kind
+                == InventoryTransientStatusKind::saved
+            ? UiTextId::save_saved : UiTextId::save_recovered;
+        static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
+            ui_text(id)));
+        output.tone = InventoryStatusTone::positive;
+        return output;
+    }
+    if (input.selected_material.has_value()) {
+        static_cast<void>(ui_utf8_format(output.status.data(), output.status.size(),
+            ui_text(UiTextId::inventory_material_selected_format),
+            ui_material_name(*input.selected_material)));
+        output.tone = InventoryStatusTone::warning;
+        return output;
+    }
+    if (input.page == InventoryPage::skill_stones && input.active_skill_removable) {
+        static_cast<void>(ui_utf8_copy(output.action.data(), output.action.size(),
+            ui_text(UiTextId::inventory_action_remove)));
+        output.action_kind = InventoryActionKind::remove_active_skill;
+        output.action_visible = true;
+        output.action_enabled = input.authority_enabled;
+        output.tone = InventoryStatusTone::positive;
+        return output;
+    }
+    if (input.recipe_count != 0U) {
+        static_cast<void>(ui_utf8_format(output.action.data(), output.action.size(),
+            ui_text(UiTextId::inventory_recipe_action_format),
+            static_cast<unsigned int>(input.recipe_count)));
+        output.action_kind = InventoryActionKind::combine;
+        output.action_visible = true;
+        output.action_enabled = input.recipe_ready && input.authority_enabled;
+        if (input.reinforced_recipe_input) {
+            static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
+                ui_text(UiTextId::inventory_recipe_danger)));
+            output.tone = InventoryStatusTone::negative;
+        } else {
+            output.tone = input.recipe_ready ? InventoryStatusTone::positive
+                                             : InventoryStatusTone::warning;
+        }
+    }
+    return output;
+}
+
+InventoryTransientStatusFrameResult inventory_transient_status_for_frame(
+    InventoryTransientStatusState state,
+    const InventoryTransientStatusInput& input) noexcept {
+    InventoryTransientStatusFrameResult result{};
+    if (!state.initialized) {
+        state.initialized = true;
+        state.last_commit_generation = input.commit_generation;
+        state.last_receipt_generation = input.receipt_commit_generation;
+        result.next = state;
+        return result;
+    }
+    if (input.commit_generation < state.last_commit_generation
+        || input.receipt_commit_generation < state.last_receipt_generation) {
+        state.kind = InventoryTransientStatusKind::none;
+        state.remaining_frames = 0U;
+        state.last_commit_generation = input.commit_generation;
+        state.last_receipt_generation = input.receipt_commit_generation;
+        result.next = state;
+        return result;
+    }
+    const bool new_commit = input.commit_generation > state.last_commit_generation;
+    const bool new_receipt = input.receipt_valid
+        && input.receipt_commit_generation > state.last_receipt_generation;
+    state.last_commit_generation = std::max(state.last_commit_generation,
+        input.commit_generation);
+    state.last_receipt_generation = std::max(state.last_receipt_generation,
+        input.receipt_commit_generation);
+    if (new_receipt) {
+        state.kind = InventoryTransientStatusKind::reinforcement_receipt;
+        state.remaining_frames = kInventoryTransientStatusFrameCount;
+        state.receipt_success = input.receipt_success;
+        state.receipt_destroyed = input.receipt_destroyed;
+        state.receipt_coupon = input.receipt_coupon;
+        state.receipt_before = input.receipt_before;
+        state.receipt_after = input.receipt_after;
+    } else if (new_commit && input.save_state == InventorySavePresentationState::saved) {
+        state.kind = InventoryTransientStatusKind::saved;
+        state.remaining_frames = kInventoryTransientStatusFrameCount;
+    } else if (new_commit
+            && input.save_state == InventorySavePresentationState::recovered) {
+        state.kind = InventoryTransientStatusKind::recovered;
+        state.remaining_frames = kInventoryTransientStatusFrameCount;
+    }
+    if (state.remaining_frames != 0U) {
+        result.presentation = transient_presentation(state);
+        --state.remaining_frames;
+        if (state.remaining_frames == 0U)
+            state.kind = InventoryTransientStatusKind::none;
+    }
+    result.next = state;
+    return result;
+}
+
+InventoryItemVisualState inventory_item_visual_state(
+    const InventoryItemVisualInput& input) noexcept {
+    InventoryItemVisualState output{};
+    output.selected_indicator = input.item_id != 0U
+        && input.item_id == input.selected_item_id;
+    if (input.item_id == 0U) return output;
+    if (input.material_target_mode) {
+        output.outline = input.material_target_enabled
+            ? InventoryItemOutline::material_target
+            : InventoryItemOutline::disabled_target;
+        return output;
+    }
+    for (std::size_t index{}; index < input.recipe.count; ++index) {
+        if (input.recipe.ids[index] == input.item_id) {
+            output.outline = InventoryItemOutline::recipe;
+            output.recipe_ordinal = static_cast<std::uint8_t>(index + 1U);
+            return output;
+        }
+    }
+    if (output.selected_indicator) {
+        output.outline = InventoryItemOutline::selected;
+    } else if (input.item_id == input.hovered_item_id) {
+        output.outline = InventoryItemOutline::hover;
+    }
+    return output;
+}
+
+InventoryTooltipView inventory_tooltip_view(const items::ItemInstance& item,
+    const std::optional<BuildDifference>& difference) noexcept {
+    InventoryTooltipView view{};
+    if (item.id == 0U || items::base_definition(item.base_id) == nullptr)
+        return view;
+    static_cast<void>(ui_utf8_copy(view.title.data(), view.title.size(),
+        ui_item_base_name(item.base_id)));
+    tooltip_add_segment(view, ui_item_rarity_name(item.rarity),
+        InventoryTooltipTone::rarity);
+    std::array<char, 64> line{};
+    static_cast<void>(ui_utf8_format(line.data(), line.size(), u8"物品等级 %u",
+        static_cast<unsigned int>(item.item_level)));
+    tooltip_add_segment(view, line.data(), InventoryTooltipTone::muted);
+    const std::size_t affix_count = std::min<std::size_t>(item.affix_count,
+        item.affixes.size());
+    for (std::size_t index{}; index < affix_count; ++index) {
+        const items::AffixRoll& roll = item.affixes[index];
+        const auto value = items::affix_roll_value(roll);
+        static_cast<void>(ui_utf8_format(line.data(), line.size(), u8"%s %+d",
+            ui_item_affix_name(roll.affix_id), value.value_or(0)));
+        tooltip_add_segment(view, line.data(), InventoryTooltipTone::primary);
+    }
+    if (difference.has_value()) {
+        const BuildDifference& delta = *difference;
+        tooltip_add_delta(view, u8"生命", delta.max_health);
+        tooltip_add_delta(view, u8"护盾", delta.max_barrier);
+        tooltip_add_delta(view, u8"近战伤害", delta.melee_damage);
+        tooltip_add_delta(view, u8"击退", delta.impulse_scale);
+        tooltip_add_delta(view, u8"移动速度", delta.move_speed);
+        tooltip_add_delta(view, u8"攻击速度", delta.attack_speed);
+        tooltip_add_delta(view, u8"护甲", delta.armor);
+        tooltip_add_delta(view, u8"闪避", delta.evasion);
+        tooltip_add_delta(view, u8"武器物理", delta.weapon_physical);
+        for (std::size_t index{}; index < delta.flat_damage.size(); ++index)
+            tooltip_add_delta(view, u8"元素伤害", delta.flat_damage[index]);
+        for (std::size_t index{}; index < delta.damage_increased.size(); ++index)
+            tooltip_add_delta(view, u8"元素提高", delta.damage_increased[index]);
+        for (std::size_t index{}; index < delta.damage_reduction.size(); ++index)
+            tooltip_add_delta(view, u8"元素减伤", delta.damage_reduction[index]);
+    }
+    view.valid = view.title[0] != '\0' && view.line_count != 0U;
+    return view;
+}
+
+InventoryTooltipLayout inventory_tooltip_layout(InventoryShellLayout shell,
+    Rectangle source, bool source_is_in_right_panel,
+    const InventoryTooltipView& view, UiTextMeasureFn measure,
+    void* measure_context) noexcept {
+    InventoryTooltipLayout output{};
+    if (!shell.valid || !finite_rectangle(source) || !view.valid
+        || measure == nullptr) return output;
+    output.font_size = std::max(12.0F, shell.body_font_size);
+    output.title_font_size = std::max(12.0F, output.font_size + 2.0F);
+    output.line_height = std::max(14.0F, output.font_size * 1.25F);
+    constexpr float kPadding = 10.0F;
+    const float maximum_width = std::min(224.0F, shell.content.width - 2.0F * kPadding);
+    if (maximum_width < 80.0F) return output;
+    const UiTextExtent title_extent = measure(view.title.data(),
+        output.title_font_size, 0.0F, measure_context);
+    if (!std::isfinite(title_extent.width) || !std::isfinite(title_extent.height)
+        || title_extent.width > maximum_width) return output;
+    const float requested_height = kPadding * 2.0F + title_extent.height
+        + output.line_height * (static_cast<float>(view.line_count) + 0.25F);
+    const float backing_height = std::min(requested_height,
+        std::max(48.0F, shell.content.height - kPadding * 2.0F));
+    if (backing_height < kPadding * 2.0F + title_extent.height) return output;
+    const float backing_width = maximum_width + kPadding * 2.0F;
+    float x = source_is_in_right_panel
+        ? source.x - backing_width - kPadding : source.x + source.width + kPadding;
+    x = std::clamp(x, shell.viewport.x + kPadding,
+        shell.viewport.x + shell.viewport.width - backing_width - kPadding);
+    const float y = std::clamp(source.y, shell.content.y + kPadding,
+        shell.content.y + shell.content.height - backing_height - kPadding);
+    output.backing = {x, y, backing_width, backing_height};
+    output.content_bounds = {x + kPadding, y + kPadding, maximum_width,
+        backing_height - kPadding * 2.0F};
+    output.title_position = {output.content_bounds.x,
+        output.content_bounds.y};
+    output.retention_corridor = {std::min(source.x, output.backing.x),
+        std::min(source.y, output.backing.y),
+        std::max(source.x + source.width, output.backing.x + output.backing.width)
+            - std::min(source.x, output.backing.x),
+        std::max(source.y + source.height, output.backing.y + output.backing.height)
+            - std::min(source.y, output.backing.y)};
+    float cursor_x = output.content_bounds.x;
+    float cursor_y = output.content_bounds.y + title_extent.height
+        + output.line_height * 0.25F;
+    for (std::size_t line{}; line < view.line_count; ++line) {
+        const InventoryTooltipLine& logical = view.lines[line];
+        for (std::size_t segment{}; segment < logical.segment_count; ++segment) {
+            const InventoryTooltipSegment& text = logical.segments[segment];
+            const UiTextExtent extent = measure(text.text.data(), output.font_size,
+                0.0F, measure_context);
+            if (!std::isfinite(extent.width) || !std::isfinite(extent.height)
+                || extent.width > output.content_bounds.width
+                || output.placement_count >= output.placements.size()) return {};
+            if (cursor_x != output.content_bounds.x
+                && cursor_x + extent.width > output.content_bounds.x
+                    + output.content_bounds.width) {
+                cursor_x = output.content_bounds.x;
+                cursor_y += output.line_height;
+                ++output.visual_line_count;
+            }
+            if (cursor_y + output.line_height > output.content_bounds.y
+                    + output.content_bounds.height) return {};
+            output.placements[output.placement_count++] = {
+                static_cast<std::uint8_t>(line), static_cast<std::uint8_t>(segment),
+                {cursor_x, cursor_y}};
+            cursor_x += extent.width + 4.0F;
+        }
+        cursor_x = output.content_bounds.x;
+        cursor_y += output.line_height;
+        ++output.visual_line_count;
+    }
+    output.blocks_pointer = true;
+    output.valid = output.placement_count != 0U;
+    return output;
+}
+
+InventoryTooltipInteractionResult inventory_tooltip_transition(
+    InventoryTooltipInteractionState state,
+    const InventoryTooltipInteractionInput& input) noexcept {
+    InventoryTooltipInteractionResult result{};
+    result.blocks_pointer = state.visible || input.pointer_inside_tooltip;
+    const bool in_corridor = finite_rectangle(state.retention_corridor)
+        && contains(state.retention_corridor, input.pointer);
+    if (input.close_requested || input.background_clear_requested) {
+        const std::uint64_t closing = state.frozen_item_id != 0U
+            ? state.frozen_item_id : state.hovered_item_id;
+        state.hovered_item_id = 0U;
+        state.frozen_item_id = 0U;
+        state.visible = false;
+        state.suppressed_item_id = closing;
+        result.clear_persistent_selection = input.background_clear_requested
+            || input.clear_persistent_selection_requested;
+        result.state = state;
+        return result;
+    }
+    const bool candidate_valid = input.hover_candidate_item_id != 0U
+        && finite_rectangle(input.hover_candidate_source);
+    if (state.suppressed_item_id != 0U) {
+        if (candidate_valid && input.hover_candidate_item_id
+                == state.suppressed_item_id && in_corridor) {
+            result.state = state;
+            return result;
+        }
+        if (!in_corridor) state.suppressed_item_id = 0U;
+    }
+    if (candidate_valid && input.hover_candidate_item_id
+            != state.suppressed_item_id) {
+        state.hovered_item_id = input.hover_candidate_item_id;
+        state.frozen_item_id = input.hover_candidate_item_id;
+        state.source = input.hover_candidate_source;
+        state.retention_corridor = input.hover_candidate_corridor;
+        state.source_is_in_right_panel =
+            input.hover_candidate_source_is_in_right_panel;
+        state.visible = true;
+    } else if (state.visible && in_corridor) {
+        state.frozen_item_id = state.hovered_item_id;
+    } else if (!in_corridor) {
+        state.hovered_item_id = 0U;
+        state.frozen_item_id = 0U;
+        state.visible = false;
+    }
+    result.state = state;
+    return result;
+}
+
+float inventory_grid_scroll_after_wheel(InventoryPage page,
+    InventoryShellLayout shell, Vector2 pointer, bool pointer_blocked,
+    float wheel_delta, std::size_t filtered_count,
+    float current_scroll_rows) noexcept {
+    if (!shell.valid || !std::isfinite(wheel_delta)
+        || !std::isfinite(current_scroll_rows) || pointer_blocked
+        || page != InventoryPage::equipment || wheel_delta == 0.0F
+        || !contains(shell.grid_viewport, pointer)) return current_scroll_rows;
+    return clamp_inventory_scroll_rows(filtered_count, inventory_grid_columns(shell),
+        current_scroll_rows - wheel_delta, shell.grid_viewport.height,
+        shell.grid_row_stride);
+}
+
+InventoryPointerLayer inventory_pointer_layer(
+    const InventoryPointerPriorityInput& input) noexcept {
+    if (input.confirmation) return InventoryPointerLayer::confirmation;
+    if (input.tab) return InventoryPointerLayer::tab;
+    if (input.tooltip) return InventoryPointerLayer::tooltip;
+    if (input.directed_material) return InventoryPointerLayer::directed_material;
+    if (input.material_cancel_requested)
+        return InventoryPointerLayer::material_cancel;
+    if (input.material_select) return InventoryPointerLayer::material_select;
+    if (input.material_target) return InventoryPointerLayer::material_target;
+    if (input.page_action) return InventoryPointerLayer::page_action;
+    if (input.filter) return InventoryPointerLayer::filter;
+    if (input.skill_content) return InventoryPointerLayer::skill_content;
+    if (input.recipe) return InventoryPointerLayer::recipe;
+    if (input.equipment) return InventoryPointerLayer::equipment;
+    return input.background_clear ? InventoryPointerLayer::background_clear
+                                  : InventoryPointerLayer::none;
 }
 
 ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
