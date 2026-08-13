@@ -12,6 +12,7 @@ namespace arpg::platform {
 
 struct ActiveSkillHudSlot final {
     std::uint8_t key_number{};
+    std::array<char, 5> key_label{};
     skills::ActiveSkillId id{skills::ActiveSkillId::none};
     MaterialSpriteId icon{MaterialSpriteId::missing};
     std::array<char, 48> name{};

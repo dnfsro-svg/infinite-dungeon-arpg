@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace arpg::platform {
 namespace {
@@ -256,6 +257,18 @@ bool can_prompt_descent(
     return hole_visual_mode(snapshot) == HoleVisualMode::ready
         && player_in_hole_range(
             player_position, kHoleCenter, kHoleInteractionRadius);
+}
+
+HoleInteractionPrompt hole_interaction_prompt(
+    const char* interact_binding_label) noexcept {
+    HoleInteractionPrompt prompt{};
+    const char* const label = interact_binding_label != nullptr
+            && interact_binding_label[0] != '\0'
+        ? interact_binding_label : "E";
+    static_cast<void>(std::snprintf(
+        prompt.data(), prompt.size(), "%s: DESCEND", label));
+    prompt.back() = '\0';
+    return prompt;
 }
 
 Rgba8 ecosystem_tint(dungeon::DungeonElement element) noexcept {

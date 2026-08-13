@@ -148,6 +148,21 @@ InventoryLayout inventory_layout(int width, int height) noexcept {
         {grid.x + grid.width + gap, top, detail_width, content_height}, scale};
 }
 
+std::array<char, 96> inventory_page_title(
+    InventoryPage page, const char* inventory_binding_label) noexcept {
+    std::array<char, 96> title{};
+    const char* const binding = inventory_binding_label != nullptr
+            && inventory_binding_label[0] != '\0'
+        ? inventory_binding_label : "Unknown";
+    const char* const format = page == InventoryPage::equipment_materials
+        ? "%s / ESC  ·  EQUIPMENT INVENTORY"
+        : u8"%s / ESC  ·  技能石背包";
+    static_cast<void>(std::snprintf(
+        title.data(), title.size(), format, binding));
+    title.back() = '\0';
+    return title;
+}
+
 ActiveSkillLoadoutLayout active_skill_loadout_layout(
     int width, int height) noexcept {
     if (width <= 0 || height <= 0) return {};
@@ -307,8 +322,7 @@ active_skill_loadout_command_after_click(
         if (selection.selected_slot < state.slots.size()
                 && selection.selected_slot != index
                 && state.slots[selection.selected_slot].active
-                    != skills::ActiveSkillId::none
-                && state.slots[index].active != skills::ActiveSkillId::none) {
+                    != skills::ActiveSkillId::none) {
             return ActiveSkillLoadoutCommand{
                 ActiveSkillLoadoutActionKind::swap,
                 static_cast<std::uint8_t>(selection.selected_slot),

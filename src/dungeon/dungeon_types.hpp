@@ -195,7 +195,11 @@ struct MaterialPickupReceipt final {
     bool room_vacuum{};
     std::uint64_t commit_generation{};
     std::array<std::uint64_t, items::kMaterialCount> counts{};
+    std::array<combat::Vec3, items::kMaterialCount> representative_origins{};
+    std::uint16_t origin_valid_mask{};
 };
+
+static_assert(items::kMaterialCount <= 16U);
 
 struct ReinforcementReceipt final {
     bool valid{};
@@ -323,6 +327,7 @@ struct PendingSave final {
     std::optional<combat::CombatDeathSnapshot> death_snapshot{};
     std::optional<ReinforcementReceipt> reinforcement_receipt{};
     std::optional<PendingHealthPotionClaim> health_potion_claim{};
+    MaterialPickupReceipt material_pickup_receipt{};
 };
 
 struct PendingSaveResult final {

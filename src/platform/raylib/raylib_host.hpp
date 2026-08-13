@@ -225,11 +225,23 @@ struct HostFrameGateResult final {
     core::FixedStepFrame fixed_step{};
 };
 
+struct HostRoomResetGateInput final {
+    PauseScreen pause_screen{};
+    bool reset_pressed{};
+    bool gameplay_armed{};
+    bool death_allows_gameplay{};
+    bool forward_actions{};
+    bool inventory_allows_room_reset{};
+};
+
 [[nodiscard]] HostFrameGateResult gate_host_frame(
     core::FixedStepRunner& fixed_step,
     bool& pause_latched,
     bool paused,
     double frame_seconds) noexcept;
+
+[[nodiscard]] bool host_requests_room_reset(
+    const HostRoomResetGateInput& input) noexcept;
 
 [[nodiscard]] dungeon::AutoPickupPolicy loot_pickup_policy(
     settings::LootFilterMode mode) noexcept;

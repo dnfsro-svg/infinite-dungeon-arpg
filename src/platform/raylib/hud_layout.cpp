@@ -13,7 +13,7 @@ constexpr float kLogicalMargin = 16.0F;
 constexpr float kPlayerWidth = 420.0F;
 constexpr float kPlayerHeight = 144.0F;
 constexpr float kObjectiveWidth = 704.0F;
-constexpr float kObjectiveHeight = 164.0F;
+constexpr float kObjectiveHeight = 56.0F;
 constexpr float kNavigationWidth = 270.0F;
 constexpr float kNavigationHeight = 160.0F;
 constexpr float kPrimaryNoticeWidth = 600.0F;
@@ -126,14 +126,6 @@ HudTextSafeLayout make_hud_text_safe_layout(
         layout.player_panel.width - 24.0F * scale, 24.0F * scale};
     text.objective_title = inset(layout.objective_panel, 18.0F, 3.0F, 26.0F);
     text.objective_hint = inset(layout.objective_panel, 18.0F, 30.0F, 21.0F);
-    text.objective_movement = inset(
-        layout.objective_panel, 18.0F, 52.0F, 21.0F);
-    for (std::size_t index{}; index < text.objective_controls.size(); ++index) {
-        text.objective_controls[index] = inset(layout.objective_panel, 18.0F,
-            74.0F + static_cast<float>(index) * 22.0F, 21.0F);
-    }
-    text.objective_diagnostics = inset(
-        layout.objective_panel, 18.0F, 140.0F, 21.0F);
     text.navigation_title = inset(layout.navigation_panel, 18.0F, 7.0F, 28.0F);
     text.navigation_ecology = inset(
         layout.navigation_panel, 18.0F, 36.0F, 26.0F);

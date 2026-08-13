@@ -11,12 +11,31 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <type_traits>
+#include <utility>
 
 namespace {
 
 namespace combat = arpg::combat;
 namespace platform = arpg::platform;
 namespace skills = arpg::skills;
+
+template <typename Slot, typename = void>
+struct SkillKeyLabelContract final {
+    [[nodiscard]] static bool matches(
+        const Slot&, const char*) noexcept {
+        return false;
+    }
+};
+
+template <typename Slot>
+struct SkillKeyLabelContract<Slot,
+    std::void_t<decltype(std::declval<const Slot&>().key_label)>> final {
+    [[nodiscard]] static bool matches(
+        const Slot& slot, const char* expected) noexcept {
+        return std::strcmp(slot.key_label.data(), expected) == 0;
+    }
+};
 
 bool overlaps(Rectangle left, Rectangle right) noexcept {
     return left.x < right.x + right.width
@@ -48,6 +67,20 @@ arpg::test::Failure active_skill_visual_frames_reach_complete_material_timelines
     for (std::size_t frame = 20U; frame < 24U; ++frame) {
         ARPG_REQUIRE(storm_frames[frame]);
     }
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 71U) == 7U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 72U) == 8U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 323U) == 15U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 324U) == 16U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 341U) == 19U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 342U) == 20U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 359U) == 23U);
     return {};
 }
 
@@ -152,6 +185,21 @@ arpg::test::Failure hud_projects_exactly_five_numbered_slots_and_catalog_names()
     ARPG_REQUIRE(std::strcmp(
         view.slots[1U].name.data(), u8"暴风式") == 0);
     ARPG_REQUIRE(view.slots[2U].name[0U] == '\0');
+    return {};
+}
+
+arpg::test::Failure hud_labels_skill_slots_as_numpad_keys() noexcept {
+    const platform::ActiveSkillHudModel view =
+        platform::make_active_skill_hud_model(
+            skills::default_skill_loadout(), {});
+    constexpr std::array<const char*, skills::kActiveSkillSlotCount>
+        kExpectedLabels{{"Num1", "Num2", "Num3", "Num4", "Num5"}};
+
+    for (std::size_t index = 0U; index < view.slots.size(); ++index) {
+        ARPG_REQUIRE(SkillKeyLabelContract<
+            platform::ActiveSkillHudSlot>::matches(
+                view.slots[index], kExpectedLabels[index]));
+    }
     return {};
 }
 
@@ -272,7 +320,7 @@ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
     platform::ActiveSkillEffectPlan plan =
         platform::make_active_skill_effect_plan(snapshot, nullptr, false);
     ARPG_REQUIRE(plan.storm_swords.finisher_visible);
-    ARPG_REQUIRE(plan.atlas_frame == 20U);
+    ARPG_REQUIRE(plan.atlas_frame == 16U);
     ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
 
     snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
@@ -363,6 +411,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"active skill material and fallback plans are exclusive and allocation free",
         &material_and_fallback_skill_plans_are_exclusive_and_allocate_nothing},
     {"active skill HUD fixed slots", &hud_projects_exactly_five_numbered_slots_and_catalog_names},
+    {"active skill HUD labels numpad keys",
+        &hud_labels_skill_slots_as_numpad_keys},
     {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
     {"active skill HUD continuous cooldown overlay",
         &hud_cooldown_overlay_keeps_continuous_material_feedback},

@@ -363,15 +363,15 @@ if(NOT formal_source MATCHES "run_raylib_host"
 endif()
 foreach(required_script "LastWriteTimeUtc" "System.Drawing" "GetPixel"
         "nonBackground" "Get-PanelHash" "formal-path-summary.txt"
-        "panelDark[ \t]*-lt[ \t]*500"
+        "panelDark[ \t]*-lt[ \t]*390"
         "panelAccent[ \t]*-lt[ \t]*15"
-        "panelAuthored[ \t]*-lt[ \t]*3000"
+        "panelAuthored[ \t]*-lt[ \t]*2350"
         "greenDelta[ \t]*-ge[ \t]*8"
         "blueDelta[ \t]*-ge[ \t]*8"
-        "panelLeft[ \t]*=[ \t]*152"
-        "panelTop[ \t]*=[ \t]*80"
-        "panelRightExclusive[ \t]*=[ \t]*1128"
-        "panelBottomExclusive[ \t]*=[ \t]*644")
+        "panelLeft[ \t]*=[ \t]*212"
+        "panelTop[ \t]*=[ \t]*112"
+        "panelRightExclusive[ \t]*=[ \t]*1068"
+        "panelBottomExclusive[ \t]*=[ \t]*612")
     if(NOT capture_script MATCHES "${required_script}")
         message(FATAL_ERROR "Capture validator lacks ${required_script}")
     endif()

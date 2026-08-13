@@ -289,10 +289,10 @@ function Assert-DeathPanelVisual([string]$Path, [object]$Frame) {
     try {
         [int]$width = [int]$Frame.width
         [int]$height = [int]$Frame.height
-        $compact = $width -lt 1000 -or $height -lt 600
+        $compact = $width -lt 1200 -or $height -lt 680
         [int]$margin = if ($compact) { 14 } else { 48 }
-        [int]$maximumWidth = if ($compact) { 772 } else { 1040 }
-        [int]$maximumHeight = if ($compact) { 422 } else { 624 }
+        [int]$maximumWidth = if ($compact) { 772 } else { 920 }
+        [int]$maximumHeight = if ($compact) { 422 } else { 560 }
         [int]$panelWidth = [Math]::Min($width - $margin * 2, $maximumWidth)
         [int]$panelHeight = [Math]::Min($height - $margin * 2, $maximumHeight)
         [int]$left = [int](($width - $panelWidth) / 2) + 40

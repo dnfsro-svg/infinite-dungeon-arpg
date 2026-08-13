@@ -324,6 +324,48 @@ arpg::test::Failure committed_partial_unlock_reloads_as_combat() noexcept {
     return {};
 }
 
+arpg::test::Failure checkpoint_enforces_entry_protection_provenance() noexcept {
+    DungeonSession session = make_session();
+    enter_combat(session);
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) arpg::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(saved != nullptr);
+    ARPG_REQUIRE(session.capture_save_checkpoint(*saved, 34U));
+    ARPG_REQUIRE(saved->state.current_room.depth == 1U);
+    ARPG_REQUIRE(saved->room_progress.combat.tick == 0U);
+    ARPG_REQUIRE(saved->room_progress.combat.player.invulnerability_ticks
+        == 180U);
+
+    ARPG_REQUIRE(arpg::checkpoint::valid_room_progress_checkpoint_structural(
+        saved->room_progress, saved->state));
+
+    saved->room_progress.combat.player.invulnerability_ticks = 179U;
+    ARPG_REQUIRE(!arpg::checkpoint::valid_room_progress_checkpoint_structural(
+        saved->room_progress, saved->state));
+    saved->room_progress.combat.player.invulnerability_ticks = 181U;
+    ARPG_REQUIRE(!arpg::checkpoint::valid_room_progress_checkpoint_structural(
+        saved->room_progress, saved->state));
+
+    saved->room_progress.combat.player.invulnerability_ticks = 180U;
+    saved->state.current_room.depth = 4U;
+    ARPG_REQUIRE(!arpg::checkpoint::valid_room_progress_checkpoint_structural(
+        saved->room_progress, saved->state));
+
+    DungeonSession one_tick = make_session();
+    enter_combat(one_tick);
+    one_tick.tick({});
+    ARPG_REQUIRE(one_tick.capture_save_checkpoint(*saved, 35U));
+    ARPG_REQUIRE(saved->room_progress.combat.tick == 1U);
+    ARPG_REQUIRE(saved->room_progress.combat.player.invulnerability_ticks
+        == 179U);
+    ARPG_REQUIRE(arpg::checkpoint::valid_room_progress_checkpoint_structural(
+        saved->room_progress, saved->state));
+    saved->room_progress.combat.player.invulnerability_ticks = 180U;
+    ARPG_REQUIRE(!arpg::checkpoint::valid_room_progress_checkpoint_structural(
+        saved->room_progress, saved->state));
+    return {};
+}
+
 arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
     noexcept {
     static_assert(arpg::dungeon::checkpoint_material_ordinal(0U)
@@ -773,6 +815,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &unlock_indeterminate_faults_without_publication},
     {"committed partial unlock reloads as combat",
         &committed_partial_unlock_reloads_as_combat},
+    {"checkpoint enforces entry protection provenance",
+        &checkpoint_enforces_entry_protection_provenance},
     {"neutral checkpoint slot captures and restores normal room",
         &neutral_checkpoint_slot_captures_and_restores_normal_room},
     {"same tick full defeat commits unlock before clear",

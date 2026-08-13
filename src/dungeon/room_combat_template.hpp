@@ -17,6 +17,7 @@ make_combat_lab_config(
 make_combat_encounter_config(
     checkpoint::EntrySide entry,
     std::uint32_t rules_version,
+    std::uint64_t depth,
     const combat::EncounterWave& wave,
     bool reset_player_health,
     abyss::AbyssCombatConfig abyss_config,

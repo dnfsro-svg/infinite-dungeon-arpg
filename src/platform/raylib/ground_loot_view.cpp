@@ -240,6 +240,11 @@ MaterialSpriteId ground_loot_rarity_sprite(
     return MaterialSpriteId::missing;
 }
 
+Rgba8 ground_loot_rarity_color(
+    items::ItemRarity rarity, bool abyss) noexcept {
+    return abyss ? kAbyssBorderColor : rarity_color(rarity);
+}
+
 GroundLootView build_ground_loot_view(
     const dungeon::DungeonRenderSnapshot& snapshot,
     settings::LootFilterMode mode,

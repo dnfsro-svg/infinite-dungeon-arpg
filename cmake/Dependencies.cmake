@@ -20,6 +20,11 @@ if(NOT TARGET raylib)
     message(FATAL_ERROR "Pinned raylib dependency did not create target raylib")
 endif()
 
+# The host owns F12 capture so it can write after presentation and honor the
+# caller-selected directory.  Disable raylib's second, implicit F12 capture;
+# otherwise every press also writes screenshotNNN.png beside the executable.
+target_compile_definitions(raylib PRIVATE SUPPORT_SCREEN_CAPTURE=0)
+
 get_target_property(ARPG_RAYLIB_TYPE raylib TYPE)
 if(NOT ARPG_RAYLIB_TYPE STREQUAL "STATIC_LIBRARY")
     message(FATAL_ERROR "raylib must be static; detected ${ARPG_RAYLIB_TYPE}")

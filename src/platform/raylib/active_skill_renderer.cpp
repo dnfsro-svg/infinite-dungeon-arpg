@@ -199,9 +199,18 @@ void draw_sword(Vector2 center, float angle, float scale,
         plan.player_position, camera, width, height);
     const bool flip_x = id == skills::ActiveSkillId::draw_slash
         && plan.draw_slash.facing == combat::Facing::left;
-    const float scale = active_skill_material_draw_scale(id, player.scale);
-    return material_pack.draw_frame(frame->atlas, frame->source,
-        frame->foot_anchor, {player.x, player.ground_y}, flip_x, scale, WHITE);
+    const Vector2 foot_position{player.x, player.ground_y};
+    const float actor_scale = active_skill_material_draw_scale(
+        id, player.scale);
+    const bool actor_drawn = material_pack.draw_frame(
+        frame->atlas, frame->source, frame->foot_anchor,
+        foot_position, flip_x, actor_scale, WHITE);
+    if (!actor_drawn) return false;
+    const float effect_scale = active_skill_material_effect_scale(
+        id, player.scale);
+    return material_pack.draw_frame_emissive(
+        frame->atlas, frame->source, frame->foot_anchor,
+        foot_position, flip_x, effect_scale, WHITE);
 }
 
 }  // namespace
@@ -215,13 +224,13 @@ std::size_t active_skill_visual_frame_index(
     if (id != skills::ActiveSkillId::storm_swords) return 0U;
     std::size_t frame{};
     if (elapsed_ticks < 72U) {
-        frame = ticks * 5U / 72U;
+        frame = ticks * 8U / 72U;
     } else if (elapsed_ticks < 324U) {
-        frame = 5U + (ticks - 72U) * 15U / 252U;
+        frame = 8U + (ticks - 72U) * 8U / 252U;
     } else if (elapsed_ticks < 342U) {
-        frame = 20U + (ticks - 324U) * 2U / 18U;
+        frame = 16U + (ticks - 324U) * 4U / 18U;
     } else {
-        frame = 22U + (ticks - 342U) * 2U / 18U;
+        frame = 20U + (ticks - 342U) * 4U / 18U;
     }
     return (std::min<std::size_t>)(23U, frame);
 }
@@ -413,8 +422,8 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
                 1.5F, Color{112, 211, 255, 210});
         }
         if (!hud_font_ready) continue;
-        char key[2]{static_cast<char>('0' + slot.key_number), '\0'};
-        draw_skill_text(hud_font, key, bounds.x + 5.0F * scale,
+        draw_skill_text(hud_font, slot.key_label.data(),
+            bounds.x + 5.0F * scale,
             bounds.y + 3.0F * scale, 16.0F * scale,
             ui_text_contrast_style().primary);
         if (!slot.empty) {

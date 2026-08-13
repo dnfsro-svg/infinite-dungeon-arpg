@@ -131,6 +131,14 @@ checkpoint::DungeonRunState pending_state(
     return state;
 }
 
+checkpoint::DungeonRunState unprotected_combat_state(
+    const std::uint64_t seed) noexcept {
+    checkpoint::DungeonRunState state = dungeon::make_initial_run_state(
+        seed, DungeonRules{}).state;
+    state.current_room.depth = 4U;
+    return state;
+}
+
 bool death_equals(
     const checkpoint::DeathCheckpoint& lhs,
     const checkpoint::DeathCheckpoint& rhs) noexcept {
@@ -622,8 +630,7 @@ arpg::test::Failure abyss_death_receipt_mutations_fail_closed() noexcept {
 }
 
 arpg::test::Failure ordinary_death_prepares_atomic_retreat() noexcept {
-    auto initial = dungeon::make_initial_run_state(
-        0xD34D6U, DungeonRules{}).state;
+    auto initial = unprotected_combat_state(0xD34D6U);
     initial.item_ownership.materials[0] =
         (std::numeric_limits<std::uint64_t>::max)();
     DungeonSession session{DungeonRules{}, std::move(initial)};
@@ -657,12 +664,21 @@ arpg::test::Failure ordinary_death_prepares_atomic_retreat() noexcept {
     ARPG_REQUIRE(snapshot.death->saving);
     ARPG_REQUIRE(!snapshot.death->can_continue);
     ARPG_REQUIRE(snapshot.combat.has_value());
+
+    auto saved = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    ARPG_REQUIRE(saved != nullptr);
+    saved->state.item_ownership.items.reserve(
+        pending->next_state.item_ownership.items.size());
+    ARPG_REQUIRE(session.capture_save_checkpoint(
+        *saved, pending->expected_generation, &pending->next_state));
+    ARPG_REQUIRE(saved->room_progress.lifecycle
+        == checkpoint::RoomProgressLifecycle::death_pending);
     return {};
 }
 
 arpg::test::Failure ordinary_death_receipts_are_bound_to_kind() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34D7U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34D7U)};
     ARPG_REQUIRE(drive_ordinary_death(session));
     const auto pending = *session.pending_save();
     session.resolve_pending_save({SaveDisposition::committed,
@@ -675,8 +691,8 @@ arpg::test::Failure ordinary_death_receipts_are_bound_to_kind() noexcept {
 }
 
 arpg::test::Failure ordinary_death_commits_then_duplicate_faults() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34D8U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34D8U)};
     ARPG_REQUIRE(drive_ordinary_death(session));
     const auto pending = *session.pending_save();
     const dungeon::PendingSaveResult receipt{SaveDisposition::committed,
@@ -696,8 +712,8 @@ arpg::test::Failure ordinary_death_commits_then_duplicate_faults() noexcept {
 }
 
 arpg::test::Failure ordinary_death_not_committed_retries_identically() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34D9U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34D9U)};
     ARPG_REQUIRE(drive_ordinary_death(session));
     const auto first = *session.pending_save();
     std::uint32_t detected = 0U;
@@ -728,8 +744,8 @@ arpg::test::Failure ordinary_death_not_committed_retries_identically() noexcept 
 
 arpg::test::Failure ordinary_death_receipt_fault_matrix() noexcept {
     for (std::uint8_t mutation = 0U; mutation < 4U; ++mutation) {
-        DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-            0xD34DA0U + mutation, DungeonRules{}).state};
+        DungeonSession session{DungeonRules{},
+            unprotected_combat_state(0xD34DA0U + mutation)};
         ARPG_REQUIRE(drive_ordinary_death(session));
         const auto pending = *session.pending_save();
         dungeon::PendingSaveResult receipt{SaveDisposition::committed,
@@ -755,8 +771,7 @@ arpg::test::Failure ordinary_death_receipt_fault_matrix() noexcept {
 
 arpg::test::Failure death_overflows_fault_before_pending_publication() noexcept {
     for (std::uint8_t mutation = 0U; mutation < 3U; ++mutation) {
-        auto state = dungeon::make_initial_run_state(
-            0xD34DB0U + mutation, DungeonRules{}).state;
+        auto state = unprotected_combat_state(0xD34DB0U + mutation);
         if (mutation == 0U) {
             state.commit_generation =
                 (std::numeric_limits<std::uint64_t>::max)();
@@ -780,8 +795,8 @@ arpg::test::Failure death_overflows_fault_before_pending_publication() noexcept 
 }
 
 arpg::test::Failure death_wins_same_tick_and_events_are_exactly_once() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34DC0U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34DC0U)};
     session.tick({});
     arpg::test::EventSummary ignored{};
     arpg::test::drain_all_events(session, ignored);
@@ -814,8 +829,8 @@ arpg::test::Failure death_wins_same_tick_and_events_are_exactly_once() noexcept 
 }
 
 arpg::test::Failure death_event_overflow_publishes_no_pending_save() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34DD0U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34DD0U)};
     session.tick({});
     arpg::test::EventSummary ignored{};
     arpg::test::drain_all_events(session, ignored);
@@ -834,8 +849,8 @@ arpg::test::Failure death_event_overflow_publishes_no_pending_save() noexcept {
 }
 
 arpg::test::Failure first_death_reserves_detected_and_terminal_events() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34DE0U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34DE0U)};
     session.tick({});
     arpg::test::EventSummary ignored{};
     arpg::test::drain_all_events(session, ignored);
@@ -854,8 +869,8 @@ arpg::test::Failure first_death_reserves_detected_and_terminal_events() noexcept
 }
 
 arpg::test::Failure death_commit_consumes_reserved_terminal_slot() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34DE1U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34DE1U)};
     session.tick({});
     arpg::test::EventSummary ignored{};
     arpg::test::drain_all_events(session, ignored);
@@ -876,8 +891,8 @@ arpg::test::Failure death_commit_consumes_reserved_terminal_slot() noexcept {
 }
 
 arpg::test::Failure death_not_committed_and_retry_reserve_terminal_slot() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34DE2U, DungeonRules{}).state};
+    DungeonSession session{
+        DungeonRules{}, unprotected_combat_state(0xD34DE2U)};
     session.tick({});
     arpg::test::EventSummary ignored{};
     arpg::test::drain_all_events(session, ignored);

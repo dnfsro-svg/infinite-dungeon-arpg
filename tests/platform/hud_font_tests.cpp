@@ -6,6 +6,7 @@
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 #include "hud_view_model.hpp"
+#include "passive_tree_renderer.hpp"
 #include "ui_text_contrast.hpp"
 #include "ui_typography.hpp"
 
@@ -139,6 +140,30 @@ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept 
     for (const char* text : kRequiredText) {
         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
     }
+    return {};
+}
+
+arpg::test::Failure passive_tree_chinese_text_is_covered_by_shared_font_plan()
+    noexcept {
+    const platform::HudFontPlan plan = platform::hud_font_plan();
+    constexpr const char* kPassiveTreeText[] = {
+        u8"收益: +30% Fire damage",
+        u8"代价: -20% Water resistance",
+        u8"收益: 起始节点",
+        u8"收益: 路线连接",
+    };
+    for (const char* text : kPassiveTreeText) {
+        ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+            plan.shared, text));
+    }
+    return {};
+}
+
+arpg::test::Failure passive_tree_text_selects_shared_font_when_ready() noexcept {
+    ARPG_REQUIRE(platform::passive_tree_text_draw_mode(true)
+        == platform::PassiveTreeTextDrawMode::hud_font);
+    ARPG_REQUIRE(platform::passive_tree_text_draw_mode(false)
+        == platform::PassiveTreeTextDrawMode::fallback);
     return {};
 }
 
@@ -295,6 +320,10 @@ arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noex
 
 constexpr arpg::test::TestCase kCases[] = {
     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
+    {"passive tree Chinese coverage",
+        &passive_tree_chinese_text_is_covered_by_shared_font_plan},
+    {"passive tree shared font selection",
+        &passive_tree_text_selects_shared_font_when_ready},
     {"ground loot Chinese coverage",
         &ground_loot_labels_are_covered_by_the_hud_owned_font},
     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},

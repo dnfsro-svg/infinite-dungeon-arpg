@@ -303,6 +303,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.material_pickup_receipt.commit_generation
             || lhs.material_pickup_receipt.counts
                 != rhs.material_pickup_receipt.counts
+            || lhs.material_pickup_receipt.origin_valid_mask
+                != rhs.material_pickup_receipt.origin_valid_mask
             || lhs.health_potion_pickup_receipt.valid
                 != rhs.health_potion_pickup_receipt.valid
             || lhs.health_potion_pickup_receipt.room_clear
@@ -354,6 +356,14 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             index < lhs.ground_materials.size(); ++index) {
         if (!same_ground_material(
                 lhs.ground_materials[index], rhs.ground_materials[index])) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U;
+            index < lhs.material_pickup_receipt.representative_origins.size();
+            ++index) {
+        if (!same_vec(lhs.material_pickup_receipt.representative_origins[index],
+                rhs.material_pickup_receipt.representative_origins[index])) {
             return false;
         }
     }
@@ -1198,7 +1208,12 @@ void print_real_input_trace(
 
 arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() noexcept {
     {
-        DungeonSession potion_probe;
+        const DungeonRules potion_rules{};
+        auto potion_state = arpg::dungeon::make_initial_run_state(
+            arpg::dungeon::DungeonSessionConfig{}.root_seed,
+            potion_rules).state;
+        potion_state.current_room.depth = 4U;
+        DungeonSession potion_probe{potion_rules, potion_state};
         StressSummary potion_summary{};
         ARPG_REQUIRE(exercise_health_potion_save_boundary(
             potion_probe, potion_summary));

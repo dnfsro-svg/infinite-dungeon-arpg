@@ -31,7 +31,7 @@ void refresh_control_hints(
         key_for(settings, settings::SettingAction::move_right)));
     static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
         "%s Light Attack  %s Jump  %s Launcher  %s Interact  %s Inventory  "
-        "%s Passive Tree  F1 Debug  F12 Screenshot  Esc Pause",
+        "%s Passive Tree (After Full Clear)  F1 Debug  F12 Screenshot  Esc Pause",
         key_for(settings, settings::SettingAction::light_attack),
         key_for(settings, settings::SettingAction::jump),
         key_for(settings, settings::SettingAction::launcher),

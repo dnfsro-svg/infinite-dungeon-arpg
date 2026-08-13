@@ -52,6 +52,8 @@ struct LootPickupReceipt final {
     std::uint8_t item_level{};
     items::ItemRarity rarity{items::ItemRarity::normal};
     dungeon::GroundItemSource source{dungeon::GroundItemSource::monster_drop};
+    combat::Vec3 position{};
+    items::ItemSlot slot{items::ItemSlot::count};
 };
 
 struct DungeonRenderStatus final {

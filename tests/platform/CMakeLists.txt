@@ -40,6 +40,7 @@ if(TARGET arpg_raylib)
         hud_view_model_tests.cpp
         hud_notice_state_tests.cpp
         loot_pickup_feedback_tests.cpp
+        loot_suction_animation_tests.cpp
         hud_layout_tests.cpp
         hud_font_tests.cpp
         hud_render_plan_tests.cpp
@@ -518,6 +519,15 @@ if(TARGET arpg_raylib)
         platform.pause_menu_state_boundary
         PROPERTIES LABELS "headless;platform;architecture;stage11b")
 endif()
+
+add_test(
+    NAME platform.pause_menu_hit_test_layout_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/pause_menu_host_layout_source_test.cmake")
+set_tests_properties(
+    platform.pause_menu_hit_test_layout_source
+    PROPERTIES LABELS "headless;platform;ui;architecture")
 
 function(arpg_tokenize_dependency_value INPUT_VALUE OUT_TOKENS)
     set(_arpg_token_text "${INPUT_VALUE}")
@@ -1858,6 +1868,33 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/host_input_source_test.cmake")
 set_tests_properties(
     platform.host_input_source
+    PROPERTIES LABELS "headless;platform;architecture")
+
+add_test(
+    NAME platform.hole_prompt_binding_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_test.cmake")
+set_tests_properties(
+    platform.hole_prompt_binding_source
+    PROPERTIES LABELS "headless;platform;architecture")
+
+add_test(
+    NAME platform.passive_tree_binding_label_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/passive_tree_binding_label_source_test.cmake")
+set_tests_properties(
+    platform.passive_tree_binding_label_source
+    PROPERTIES LABELS "headless;platform;architecture")
+
+add_test(
+    NAME platform.passive_tree_feedback_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/passive_tree_feedback_source_test.cmake")
+set_tests_properties(
+    platform.passive_tree_feedback_source
     PROPERTIES LABELS "headless;platform;architecture")
 
 add_test(

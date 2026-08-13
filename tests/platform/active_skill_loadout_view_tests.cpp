@@ -116,6 +116,30 @@ arpg::test::Failure slot_clicks_emit_only_select_remove_and_swap_commands()
     return {};
 }
 
+arpg::test::Failure occupied_slot_then_empty_slot_emits_swap_command()
+    noexcept {
+    const skills::SkillLoadoutState state = skills::default_skill_loadout();
+    const platform::ActiveSkillLoadoutLayout layout =
+        platform::active_skill_loadout_layout(1280, 720);
+    platform::ActiveSkillLoadoutSelection selection{};
+
+    const auto select = platform::active_skill_loadout_command_after_click(
+        state, layout, center(layout.main_slots[0U]), selection, false);
+    ARPG_REQUIRE(select.has_value());
+    ARPG_REQUIRE(select->kind
+        == platform::ActiveSkillLoadoutActionKind::select);
+    ARPG_REQUIRE(selection.selected_slot == 0U);
+
+    const auto move = platform::active_skill_loadout_command_after_click(
+        state, layout, center(layout.main_slots[2U]), selection, false);
+    ARPG_REQUIRE(move.has_value());
+    ARPG_REQUIRE(move->kind == platform::ActiveSkillLoadoutActionKind::swap);
+    ARPG_REQUIRE(move->slot == 0U);
+    ARPG_REQUIRE(move->other_slot == 2U);
+    ARPG_REQUIRE(selection.selected_slot == 0U);
+    return {};
+}
+
 arpg::test::Failure inventory_selection_then_empty_slot_emits_equip_command()
     noexcept {
     skills::SkillLoadoutState state = skills::default_skill_loadout();
@@ -185,6 +209,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"active skill loadout view projection", &view_has_five_main_slots_five_read_only_supports_and_inventory},
     {"active skill loadout non-overlapping layout", &loadout_hit_regions_do_not_overlap_at_supported_resolutions},
     {"active skill loadout slot commands", &slot_clicks_emit_only_select_remove_and_swap_commands},
+    {"active skill loadout occupied to empty swap", &occupied_slot_then_empty_slot_emits_swap_command},
     {"active skill loadout equip command", &inventory_selection_then_empty_slot_emits_equip_command},
     {"active skill support read only and pending disabled", &pending_save_and_support_slots_never_emit_edit_commands},
 };

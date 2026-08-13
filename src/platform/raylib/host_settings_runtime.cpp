@@ -11,8 +11,14 @@ namespace {
 
 constexpr char kSettingsPreviewFailed[] = "Live preview failed";
 constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
+constexpr char kSettingsSaveBusy[] =
+    "Settings save busy in another game instance; try again";
 constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
 constexpr char kSettingsSaved[] = "Settings saved";
+constexpr char kSettingsReloadedElsewhere[] =
+    "Settings changed in another game instance; reloaded";
+constexpr char kSettingsStorageConflict[] =
+    "Settings storage conflict; restart to recover";
 constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
 
 }  // namespace
@@ -98,6 +104,65 @@ bool HostSettingsRuntime::settle(
             *live = saved.settings;
             *input = saved.settings;
             pause_menu->message = kSettingsSaved;
+            break;
+        }
+        if (saved.status == settings::SettingsSaveStatus::busy) {
+            const LiveSettingsResult rollback = rollback_live_settings(
+                previewed, pause_menu->committed, backend);
+            this->live->loot_filter_mode =
+                this->pause_menu->committed.loot_filter_mode;
+            pause_menu->draft.loot_filter_mode =
+                pause_menu->committed.loot_filter_mode;
+            if (rollback == LiveSettingsResult::applied) {
+                *live = pause_menu->committed;
+                pause_menu->message = kSettingsSaveBusy;
+            } else {
+                pause_menu->message = kSettingsRollbackFailed;
+            }
+            break;
+        }
+        if (saved.status == settings::SettingsSaveStatus::storage_conflict) {
+            const LiveSettingsResult rollback = rollback_live_settings(
+                previewed, pause_menu->committed, backend);
+            this->live->loot_filter_mode =
+                this->pause_menu->committed.loot_filter_mode;
+            pause_menu->draft = pause_menu->committed;
+            if (rollback == LiveSettingsResult::applied) {
+                *live = pause_menu->committed;
+                pause_menu->message = kSettingsStorageConflict;
+            } else {
+                pause_menu->message = kSettingsRollbackFailed;
+            }
+            break;
+        }
+        if (saved.status == settings::SettingsSaveStatus::stale_revision) {
+            const settings::SettingsLoadResult reloaded = store->load();
+            const bool loadable =
+                reloaded.status == settings::SettingsLoadStatus::loaded
+                || reloaded.status
+                    == settings::SettingsLoadStatus::recovered_single_slot;
+            if (loadable && apply_live_settings(
+                    previewed, reloaded.settings, backend)
+                    == LiveSettingsResult::applied) {
+                pause_menu->committed = reloaded.settings;
+                pause_menu->draft = reloaded.settings;
+                *live = reloaded.settings;
+                *input = reloaded.settings;
+                pause_menu->message = kSettingsReloadedElsewhere;
+                break;
+            }
+
+            const LiveSettingsResult rollback = rollback_live_settings(
+                previewed, pause_menu->committed, backend);
+            this->live->loot_filter_mode =
+                this->pause_menu->committed.loot_filter_mode;
+            pause_menu->draft = pause_menu->committed;
+            if (rollback == LiveSettingsResult::applied) {
+                *live = pause_menu->committed;
+                pause_menu->message = kSettingsStorageConflict;
+            } else {
+                pause_menu->message = kSettingsRollbackFailed;
+            }
             break;
         }
         const LiveSettingsResult rollback = rollback_live_settings(

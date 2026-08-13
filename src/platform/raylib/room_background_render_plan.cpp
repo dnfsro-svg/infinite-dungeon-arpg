@@ -34,8 +34,7 @@ RoomBackgroundWorldTilePlan room_background_world_tile_plan(
     dungeon::DungeonElement ecology,
     const CombatCameraView& camera) noexcept {
     constexpr std::size_t kTileAxisCount = 10U;
-    constexpr float kSourceTileWidth = 256.0F;
-    constexpr float kSourceTileHeight = 144.0F;
+    constexpr Rectangle kFloorCrop{864.0F, 768.0F, 640.0F, 320.0F};
     const float world_tile_width = combat::room_bounds::width
         / static_cast<float>(kTileAxisCount);
     const float world_tile_depth = combat::room_bounds::depth
@@ -73,10 +72,13 @@ RoomBackgroundWorldTilePlan room_background_world_tile_plan(
                 continue;
             }
             if (plan.count >= plan.tiles.size()) return {};
+            const bool flip_x = column % 2U != 0U;
+            const bool flip_y = row % 2U != 0U;
             plan.tiles[plan.count++] = {
-                {static_cast<float>(column) * kSourceTileWidth,
-                    static_cast<float>(row) * kSourceTileHeight,
-                    kSourceTileWidth, kSourceTileHeight},
+                {flip_x ? kFloorCrop.x + kFloorCrop.width : kFloorCrop.x,
+                    flip_y ? kFloorCrop.y + kFloorCrop.height : kFloorCrop.y,
+                    flip_x ? -kFloorCrop.width : kFloorCrop.width,
+                    flip_y ? -kFloorCrop.height : kFloorCrop.height},
                 {{tile_min_x, tile_min_y, -1.0F},
                     {tile_max_x, tile_max_y, 32.0F}},
                 row,
@@ -95,14 +97,20 @@ ProjectedRoomBackgroundWorldTile project_room_background_world_tile(
     float viewport_height) noexcept {
     ProjectedRoomBackgroundWorldTile result{};
     const combat::Aabb& bounds = tile.world_bounds;
+    const float source_far_x = tile.source.x + tile.source.width;
+    const float source_far_y = tile.source.y + tile.source.height;
+    const float source_min_x = (std::min)(tile.source.x, source_far_x);
+    const float source_min_y = (std::min)(tile.source.y, source_far_y);
     if (!std::isfinite(viewport_width) || !std::isfinite(viewport_height)
             || viewport_width <= 0.0F || viewport_height <= 0.0F
             || !std::isfinite(tile.source.x)
             || !std::isfinite(tile.source.y)
             || !std::isfinite(tile.source.width)
             || !std::isfinite(tile.source.height)
-            || tile.source.x < 0.0F || tile.source.y < 0.0F
-            || tile.source.width <= 0.0F || tile.source.height <= 0.0F
+            || !std::isfinite(source_far_x)
+            || !std::isfinite(source_far_y)
+            || source_min_x < 0.0F || source_min_y < 0.0F
+            || tile.source.width == 0.0F || tile.source.height == 0.0F
             || !std::isfinite(bounds.minimum.x)
             || !std::isfinite(bounds.minimum.y)
             || !std::isfinite(bounds.maximum.x)

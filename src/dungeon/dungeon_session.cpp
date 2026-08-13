@@ -1144,6 +1144,7 @@ void DungeonSession::construct_cleared_abyss_room() noexcept {
     const auto navigation_config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(abyss::AbyssRuleId::none),
@@ -1354,6 +1355,7 @@ void DungeonSession::construct_normal_room() noexcept {
     const auto config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(abyss::AbyssRuleId::none),
@@ -1396,6 +1398,7 @@ void DungeonSession::construct_started_abyss_room() noexcept {
     const auto config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(selection->rule),
@@ -1586,6 +1589,7 @@ bool DungeonSession::prepare_abyss_start() noexcept {
     const auto combat_config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
+        stable_state_.current_room.depth,
         empty_wave,
         true,
         abyss::combat_config_for(selection->rule),
@@ -2497,6 +2501,9 @@ void DungeonSession::prepare_room_clear() noexcept {
             started_abyss ? RoomPhase::cleared : RoomPhase::combat,
         };
         vacuum_room_materials();
+        if (phase_ != RoomPhase::faulted && pending_save_.has_value()) {
+            freeze_pending_material_pickup_receipt(true);
+        }
         if (phase_ != RoomPhase::faulted && pending_save_.has_value()
                 && !append_clear_health_potion_claims(*pending_save_)) {
             pending_save_.reset();
@@ -2518,6 +2525,41 @@ void DungeonSession::prepare_room_clear() noexcept {
     }
     if (phase_ == RoomPhase::faulted || !pending_save_.has_value()) return;
     phase_ = RoomPhase::committing;
+}
+
+void DungeonSession::freeze_pending_material_pickup_receipt(
+    bool room_vacuum) noexcept {
+    if (!pending_save_.has_value()) return;
+    MaterialPickupReceipt& receipt =
+        pending_save_->material_pickup_receipt;
+    receipt = {};
+    receipt.valid = true;
+    receipt.room_vacuum = room_vacuum;
+    receipt.commit_generation = pending_save_->next_state.commit_generation;
+    for (std::size_t index = 0U; index < receipt.counts.size(); ++index) {
+        receipt.counts[index] =
+            pending_save_->next_state.item_ownership.materials[index]
+            - stable_state_.item_ownership.materials[index];
+    }
+    for (std::uint16_t ordinal = 0U;
+            ordinal < ground_materials_.size(); ++ordinal) {
+        const GroundMaterial& ground = ground_materials_[ordinal];
+        if (!ground.active || (!room_vacuum
+                && ordinal != pending_save_->pickup_ordinal)) {
+            continue;
+        }
+        const std::size_t material_index =
+            items::material_index(ground.material);
+        if (material_index >= receipt.counts.size()
+                || receipt.counts[material_index] == 0U) {
+            continue;
+        }
+        const std::uint16_t bit = static_cast<std::uint16_t>(
+            std::uint16_t{1U} << material_index);
+        if ((receipt.origin_valid_mask & bit) != 0U) continue;
+        receipt.representative_origins[material_index] = ground.position;
+        receipt.origin_valid_mask |= bit;
+    }
 }
 
 void DungeonSession::publish_room_clear() noexcept {

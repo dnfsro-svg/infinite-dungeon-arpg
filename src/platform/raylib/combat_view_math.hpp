@@ -6,6 +6,7 @@
 #include "dungeon_view_math.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace arpg::platform {
@@ -68,6 +69,14 @@ struct MonsterLabelTextStyle final {
     int outline_pixels{2};
 };
 
+struct MonsterPresentationPlan final {
+    float resource_bar_offset_y{};
+    std::size_t debug_label_lane{};
+    bool resource_bars_visible{};
+    bool role_label_visible{};
+    bool phase_label_visible{};
+};
+
 struct AffixBadge final {
     const char* short_name{"?"};
     const char* tier_text{"M1"};
@@ -118,6 +127,8 @@ void sort_actor_draw_items(
     dungeon::DungeonElement ecology) noexcept;
 [[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
     float viewport_scale) noexcept;
+[[nodiscard]] MonsterPresentationPlan monster_presentation_plan(
+    std::size_t label_lane, bool draw_debug) noexcept;
 [[nodiscard]] AffixBadge monster_affix_badge(
     combat::MonsterAffixInstance affix) noexcept;
 [[nodiscard]] AffixOutline monster_affix_outline(

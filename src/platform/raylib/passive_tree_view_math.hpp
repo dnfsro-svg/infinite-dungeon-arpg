@@ -23,8 +23,30 @@ enum class PassiveNodeVisualState : std::uint8_t {
     locked,
     available,
     allocated,
-    rejected,
     pending,
+};
+
+enum class PassiveTreeStatusTone : std::uint8_t {
+    ready,
+    saving,
+    error,
+};
+
+struct PassiveTreeStatusInput final {
+    bool saving{};
+    bool save_error{};
+    passives::PassiveTreeError rule_error{passives::PassiveTreeError::none};
+};
+
+struct PassiveTreeStatusView final {
+    const char* text{};
+    PassiveTreeStatusTone tone{PassiveTreeStatusTone::ready};
+};
+
+enum class PassiveTreeToggleAction : std::uint8_t {
+    none,
+    toggle,
+    show_full_clear_requirement,
 };
 
 struct PassiveOverlayInputGate final {
@@ -35,6 +57,10 @@ struct PassiveOverlayInputGate final {
 
 [[nodiscard]] bool passive_tree_can_open(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
+[[nodiscard]] PassiveTreeToggleAction passive_tree_toggle_action(
+    const dungeon::DungeonSnapshot& snapshot,
+    bool pressed,
+    bool gameplay_input_available) noexcept;
 [[nodiscard]] PassiveNodeProjection project_passive_node(
     passives::PassiveNodeId node, float width, float height) noexcept;
 [[nodiscard]] std::optional<passives::PassiveNodeId> hit_test_passive_node(
@@ -42,6 +68,11 @@ struct PassiveOverlayInputGate final {
 [[nodiscard]] PassiveNodeVisualState passive_node_visual_state(
     const dungeon::DungeonSnapshot& snapshot,
     passives::PassiveNodeId node) noexcept;
+[[nodiscard]] const char* passive_node_action_text(
+    const dungeon::DungeonSnapshot& snapshot,
+    passives::PassiveNodeId node) noexcept;
+[[nodiscard]] PassiveTreeStatusView passive_tree_status_view(
+    PassiveTreeStatusInput input) noexcept;
 [[nodiscard]] PassiveOverlayInputGate passive_overlay_input_gate(
     bool overlay_open) noexcept;
 

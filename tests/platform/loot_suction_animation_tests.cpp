@@ -1,0 +1,399 @@
+#include "allocation_probe.hpp"
+#include "test_framework.hpp"
+
+#include "combat_renderer.hpp"
+#include "control_hints.hpp"
+#include "loot_suction_animation.hpp"
+
+#include <cstddef>
+#include <cstdint>
+
+namespace {
+
+namespace combat = arpg::combat;
+namespace dungeon = arpg::dungeon;
+namespace items = arpg::items;
+namespace platform = arpg::platform;
+
+constexpr platform::CombatCameraView kCamera{
+    {}, combat::room_bounds::width, combat::room_bounds::depth};
+constexpr combat::Vec3 kPlayerPosition{0.0F, 0.0F, 0.0F};
+constexpr float kWidth = 1280.0F;
+constexpr float kHeight = 720.0F;
+
+[[nodiscard]] bool same_color(platform::Rgba8 left,
+    platform::Rgba8 right) noexcept {
+    return left.r == right.r && left.g == right.g && left.b == right.b
+        && left.a == right.a;
+}
+
+platform::DungeonRenderStatus saved_equipment_receipt(
+    std::uint64_t generation, std::uint64_t item_id) noexcept {
+    platform::DungeonRenderStatus status{};
+    status.indicator = platform::SaveIndicator::saved;
+    status.loot_pickup = {true, generation, item_id, 3U, 24U,
+        items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
+    status.loot_pickup.slot = items::ItemSlot::weapon;
+    return status;
+}
+
+platform::ControlHints control_hints() noexcept {
+    platform::ControlHints hints{};
+    hints.revision = 1U;
+    return hints;
+}
+
+dungeon::GroundItemSnapshot equipment(
+    std::uint16_t ordinal, std::uint64_t item_id,
+    combat::Vec3 position = {9.0F, 0.0F, 0.0F}) noexcept {
+    return {ordinal, dungeon::GroundItemSource::monster_drop, 0xFFU,
+        position, item_id, 3U, 24U, items::ItemSlot::weapon,
+        items::ItemRarity::rare};
+}
+
+dungeon::GroundMaterialSnapshot material(
+    std::uint16_t ordinal, items::MaterialId id,
+    combat::Vec3 position = {9.0F, 0.0F, 0.0F}) noexcept {
+    return {ordinal, dungeon::GroundMaterialSource::monster_common,
+        position, id};
+}
+
+void append(dungeon::DungeonSnapshot& snapshot,
+    dungeon::GroundItemSnapshot item) noexcept {
+    snapshot.ground_items[snapshot.ground_item_count++] = item;
+}
+
+void append(dungeon::DungeonSnapshot& snapshot,
+    dungeon::GroundMaterialSnapshot item) noexcept {
+    snapshot.ground_materials[snapshot.ground_material_count++] = item;
+}
+
+arpg::test::Failure committed_equipment_disappearance_flies_to_player_waist()
+    noexcept {
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+
+    dungeon::DungeonSnapshot previous{};
+    append(previous, equipment(4U, 42U));
+    dungeon::DungeonSnapshot current{};
+    state.observe(previous, current, saved_equipment_receipt(1U, 42U));
+
+    ARPG_REQUIRE(state.active_count() == 1U);
+    const platform::LootSuctionPlan start = state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(start.count == 1U);
+    ARPG_REQUIRE(start.flights[0].center.x > start.destination.x);
+    ARPG_REQUIRE(start.flights[0].equipment);
+    ARPG_REQUIRE(start.flights[0].sprite
+        == platform::ground_loot_item_sprite(items::ItemSlot::weapon));
+    ARPG_REQUIRE(start.flights[0].rarity_sprite
+        == platform::ground_loot_rarity_sprite(items::ItemRarity::rare, false));
+
+    state.update(0.35F, false);
+    const platform::LootSuctionPlan middle = state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(middle.flights[0].center.x < start.flights[0].center.x);
+    ARPG_REQUIRE(middle.flights[0].center.x > middle.destination.x);
+    ARPG_REQUIRE(middle.flights[0].center.y < start.flights[0].center.y
+        + (middle.destination.y - start.flights[0].center.y) * 0.75F);
+    return {};
+}
+
+arpg::test::Failure failed_or_unremoved_equipment_never_starts_flight()
+    noexcept {
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+
+    dungeon::DungeonSnapshot previous{};
+    append(previous, equipment(1U, 42U));
+    auto failed = saved_equipment_receipt(1U, 42U);
+    failed.indicator = platform::SaveIndicator::error;
+    state.observe(previous, empty, failed);
+    ARPG_REQUIRE(state.active_count() == 0U);
+
+    state.clear();
+    state.observe(empty, empty, {});
+    state.observe(previous, previous, saved_equipment_receipt(1U, 42U));
+    ARPG_REQUIRE(state.active_count() == 0U);
+    return {};
+}
+
+arpg::test::Failure same_equipment_receipt_is_not_duplicated() noexcept {
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+    dungeon::DungeonSnapshot previous{};
+    append(previous, equipment(1U, 42U));
+    const auto receipt = saved_equipment_receipt(1U, 42U);
+    state.observe(previous, empty, receipt);
+    state.observe(previous, empty, receipt);
+    ARPG_REQUIRE(state.active_count() == 1U);
+    return {};
+}
+
+arpg::test::Failure material_receipt_only_flies_disappeared_matching_ordinals()
+    noexcept {
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+
+    dungeon::DungeonSnapshot previous{};
+    previous.room_index = 7U;
+    previous.room_instance_generation = 11U;
+    append(previous, material(3U, items::MaterialId::chaos));
+    append(previous, material(4U, items::MaterialId::exalt));
+    dungeon::DungeonSnapshot current{};
+    current.room_index = 7U;
+    current.room_instance_generation = 11U;
+    append(current, material(4U, items::MaterialId::exalt));
+    current.material_pickup_receipt.valid = true;
+    current.material_pickup_receipt.commit_generation = 1U;
+    current.material_pickup_receipt.counts[
+        items::material_index(items::MaterialId::chaos)] = 1U;
+    platform::DungeonRenderStatus committed{};
+    committed.indicator = platform::SaveIndicator::saved;
+    state.observe(previous, current, committed);
+
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(plan.count == 1U);
+    ARPG_REQUIRE(!plan.flights[0].equipment);
+    ARPG_REQUIRE(plan.flights[0].sprite
+        == platform::material_loot_sprite(items::MaterialId::chaos));
+    ARPG_REQUIRE(same_color(plan.flights[0].color,
+        platform::material_color(items::MaterialId::chaos)));
+    return {};
+}
+
+arpg::test::Failure room_vacuum_flies_each_disappeared_material_ordinal()
+    noexcept {
+    constexpr combat::Vec3 kFirstOrigin{3.0F, 1.0F, 0.0F};
+    constexpr combat::Vec3 kSecondOrigin{7.0F, 2.0F, 0.0F};
+    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+
+    dungeon::DungeonSnapshot previous{};
+    previous.room_index = 7U;
+    previous.room_instance_generation = 11U;
+    append(previous, material(3U, items::MaterialId::chaos, kFirstOrigin));
+    append(previous, material(5U, items::MaterialId::chaos, kSecondOrigin));
+    dungeon::DungeonSnapshot current{};
+    current.room_index = 7U;
+    current.room_instance_generation = 11U;
+    current.material_pickup_receipt.valid = true;
+    current.material_pickup_receipt.room_vacuum = true;
+    current.material_pickup_receipt.commit_generation = 2U;
+    current.material_pickup_receipt.counts[chaos] = 2U;
+    current.material_pickup_receipt.representative_origins[chaos] =
+        kFirstOrigin;
+    current.material_pickup_receipt.origin_valid_mask =
+        static_cast<std::uint16_t>(std::uint16_t{1U} << chaos);
+    platform::DungeonRenderStatus committed{};
+    committed.indicator = platform::SaveIndicator::saved;
+
+    state.observe(previous, current, committed);
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(state.active_count() == 2U);
+    ARPG_REQUIRE(plan.count == 2U);
+    ARPG_REQUIRE(plan.flights[0].world_position.x == kFirstOrigin.x);
+    ARPG_REQUIRE(plan.flights[1].world_position.x == kSecondOrigin.x);
+    return {};
+}
+
+arpg::test::Failure pause_freezes_and_arrival_reclaims_with_pulse() noexcept {
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+    dungeon::DungeonSnapshot previous{};
+    append(previous, equipment(1U, 42U));
+    state.observe(previous, empty, saved_equipment_receipt(1U, 42U));
+    const auto before = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    state.update(0.35F, true);
+    const auto frozen = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(frozen.flights[0].center.x == before.flights[0].center.x);
+    ARPG_REQUIRE(frozen.flights[0].center.y == before.flights[0].center.y);
+
+    state.update(0.45F, false);
+    const auto arrived = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(state.active_count() == 0U);
+    ARPG_REQUIRE(arrived.count == 0U);
+    ARPG_REQUIRE(arrived.destination_pulse > 0.0F);
+    return {};
+}
+
+arpg::test::Failure full_capacity_replaces_most_elapsed_flight_and_allocates_nothing()
+    noexcept {
+    platform::LootSuctionState state{};
+    dungeon::DungeonSnapshot empty{};
+    state.observe(empty, empty, {});
+    for (std::uint64_t index = 1U; index <= 12U; ++index) {
+        dungeon::DungeonSnapshot previous{};
+        append(previous, equipment(static_cast<std::uint16_t>(index), index,
+            {static_cast<float>(index), 0.0F, 0.0F}));
+        state.observe(previous, empty, saved_equipment_receipt(index, index));
+        state.update(0.01F, false);
+    }
+    ARPG_REQUIRE(state.active_count() == 12U);
+    dungeon::DungeonSnapshot latest{};
+    append(latest, equipment(13U, 13U, {13.0F, 0.0F, 0.0F}));
+    state.observe(latest, empty, saved_equipment_receipt(13U, 13U));
+    const auto replacement = state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+    bool has_oldest_origin{};
+    bool has_latest_origin{};
+    for (std::size_t index{}; index < replacement.count; ++index) {
+        has_oldest_origin = has_oldest_origin
+            || replacement.flights[index].world_position.x == 1.0F;
+        has_latest_origin = has_latest_origin
+            || replacement.flights[index].world_position.x == 13.0F;
+    }
+    ARPG_REQUIRE(replacement.count == 12U);
+    ARPG_REQUIRE(!has_oldest_origin);
+    ARPG_REQUIRE(has_latest_origin);
+    ARPG_REQUIRE(state.active_count() == 12U);
+    const std::uint64_t before = arpg::test::allocation_count();
+    for (std::size_t index{}; index < 100000U; ++index) {
+        state.observe(empty, empty, saved_equipment_receipt(13U, 13U));
+        static_cast<void>(state.build_plan(kCamera, kPlayerPosition,
+            kWidth, kHeight));
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == before);
+    return {};
+}
+
+arpg::test::Failure combat_renderer_commits_and_clears_loot_suction()
+    noexcept {
+    platform::CombatRenderer renderer{};
+    dungeon::DungeonSnapshot previous{};
+    append(previous, equipment(1U, 42U));
+    const dungeon::DungeonSnapshot current{};
+
+    renderer.observe_hud(previous, current, saved_equipment_receipt(1U, 42U),
+        control_hints(), 0.0F, false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
+
+    renderer.clear_combat_transients();
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 0U);
+    return {};
+}
+
+arpg::test::Failure committed_receipt_origin_survives_same_step_equipment_pickup()
+    noexcept {
+    constexpr combat::Vec3 kOrigin{6.0F, -2.0F, 0.0F};
+    const dungeon::DungeonSnapshot empty{};
+    auto receipt = saved_equipment_receipt(8U, 88U);
+    receipt.loot_pickup.position = kOrigin;
+    receipt.loot_pickup.slot = items::ItemSlot::helmet;
+
+    platform::CombatRenderer renderer{};
+    renderer.observe_hud(empty, empty, receipt, control_hints(), 0.0F, false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
+
+    platform::LootSuctionState state{};
+    state.observe(empty, empty, {});
+    state.observe(empty, empty, receipt);
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(plan.count == 1U);
+    ARPG_REQUIRE(plan.flights[0].world_position.x == kOrigin.x);
+    ARPG_REQUIRE(plan.flights[0].world_position.y == kOrigin.y);
+    ARPG_REQUIRE(plan.flights[0].sprite
+        == platform::ground_loot_item_sprite(items::ItemSlot::helmet));
+    return {};
+}
+
+arpg::test::Failure committed_receipt_origin_survives_same_step_material_pickup()
+    noexcept {
+    constexpr combat::Vec3 kOrigin{5.0F, 3.0F, 0.0F};
+    const dungeon::DungeonSnapshot empty{};
+    dungeon::DungeonSnapshot current{};
+    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
+    current.material_pickup_receipt.valid = true;
+    current.material_pickup_receipt.commit_generation = 9U;
+    current.material_pickup_receipt.counts[chaos] = 1U;
+    current.material_pickup_receipt.representative_origins[chaos] = kOrigin;
+    current.material_pickup_receipt.origin_valid_mask =
+        static_cast<std::uint16_t>(std::uint16_t{1U} << chaos);
+    platform::DungeonRenderStatus committed{};
+    committed.indicator = platform::SaveIndicator::saved;
+
+    platform::CombatRenderer renderer{};
+    renderer.observe_hud(empty, current, committed, control_hints(), 0.0F,
+        false);
+    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
+
+    platform::LootSuctionState state{};
+    state.observe(empty, empty, {});
+    state.observe(empty, current, committed);
+    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
+    ARPG_REQUIRE(plan.count == 1U);
+    ARPG_REQUIRE(plan.flights[0].world_position.x == kOrigin.x);
+    ARPG_REQUIRE(plan.flights[0].world_position.y == kOrigin.y);
+    ARPG_REQUIRE(plan.flights[0].sprite
+        == platform::material_loot_sprite(items::MaterialId::chaos));
+    return {};
+}
+
+arpg::test::Failure receipt_fallback_keeps_rare_and_abyss_colors_distinct()
+    noexcept {
+    constexpr combat::Vec3 kOrigin{6.0F, 0.0F, 0.0F};
+    const dungeon::DungeonSnapshot empty{};
+    auto rare = saved_equipment_receipt(10U, 100U);
+    rare.loot_pickup.position = kOrigin;
+    rare.loot_pickup.slot = items::ItemSlot::weapon;
+    rare.loot_pickup.rarity = items::ItemRarity::rare;
+
+    platform::LootSuctionState rare_state{};
+    rare_state.observe(empty, empty, {});
+    rare_state.observe(empty, empty, rare);
+    const auto rare_plan = rare_state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+
+    auto abyss = rare;
+    abyss.loot_pickup.commit_generation = 11U;
+    abyss.loot_pickup.item_id = 101U;
+    abyss.loot_pickup.source = dungeon::GroundItemSource::abyss_chest;
+    platform::LootSuctionState abyss_state{};
+    abyss_state.observe(empty, empty, {});
+    abyss_state.observe(empty, empty, abyss);
+    const auto abyss_plan = abyss_state.build_plan(
+        kCamera, kPlayerPosition, kWidth, kHeight);
+
+    constexpr platform::Rgba8 kWhite{255U, 255U, 255U, 255U};
+    ARPG_REQUIRE(rare_plan.count == 1U);
+    ARPG_REQUIRE(abyss_plan.count == 1U);
+    ARPG_REQUIRE(!same_color(rare_plan.flights[0].color, kWhite));
+    ARPG_REQUIRE(!same_color(abyss_plan.flights[0].color, kWhite));
+    ARPG_REQUIRE(!same_color(rare_plan.flights[0].color,
+        abyss_plan.flights[0].color));
+    return {};
+}
+
+constexpr arpg::test::TestCase kCases[] = {
+    {"equipment trajectory to player waist",
+        &committed_equipment_disappearance_flies_to_player_waist},
+    {"failed or still present equipment", &failed_or_unremoved_equipment_never_starts_flight},
+    {"duplicate equipment receipt", &same_equipment_receipt_is_not_duplicated},
+    {"material only disappeared ordinals", &material_receipt_only_flies_disappeared_matching_ordinals},
+    {"room vacuum flies each disappeared material ordinal",
+        &room_vacuum_flies_each_disappeared_material_ordinal},
+    {"pause and arrival pulse", &pause_freezes_and_arrival_reclaims_with_pulse},
+    {"full capacity replacement and zero allocation",
+        &full_capacity_replaces_most_elapsed_flight_and_allocates_nothing},
+    {"combat renderer loot suction lifecycle",
+        &combat_renderer_commits_and_clears_loot_suction},
+    {"same-step equipment receipt origin",
+        &committed_receipt_origin_survives_same_step_equipment_pickup},
+    {"same-step material receipt origin",
+        &committed_receipt_origin_survives_same_step_material_pickup},
+    {"receipt fallback rarity colors",
+        &receipt_fallback_keeps_rare_and_abyss_colors_distinct},
+};
+
+}  // namespace
+
+arpg::test::TestSuite loot_suction_animation_suite() noexcept {
+    return arpg::test::make_suite("loot_suction_animation", kCases);
+}

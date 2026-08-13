@@ -23,7 +23,10 @@ namespace dungeon = arpg::dungeon;
 namespace items = arpg::items;
 namespace platform = arpg::platform;
 
-constexpr float kExpectedLabelWidth = 190.0F;
+constexpr float kExpectedMaterialLabelWidth = 190.0F;
+constexpr float kExpectedPotionLabelWidth = 72.0F;
+constexpr float kMinimumReadablePotionLabelWidth = 66.0F;
+constexpr float kMaximumCompactPotionLabelWidth = 80.0F;
 constexpr float kExpectedLabelHeight = 23.0F;
 constexpr float kExpectedLabelGap = 13.0F;
 constexpr float kExpectedPlacementGap = 3.0F;
@@ -41,9 +44,9 @@ constexpr float kPlacementEpsilon = 0.001F;
 [[nodiscard]] platform::LootLabelRect expected_original_label_rect(
     platform::ScreenProjection projection, float width, float height) noexcept {
     platform::LootLabelRect expected{
-        projection.x - kExpectedLabelWidth * 0.5F,
+        projection.x - kExpectedPotionLabelWidth * 0.5F,
         projection.y - kExpectedLabelGap - kExpectedLabelHeight,
-        kExpectedLabelWidth,
+        kExpectedPotionLabelWidth,
         kExpectedLabelHeight};
     const float usable_width = (std::max)(
         platform::kGroundLootSafetyInset * 2.0F, width);
@@ -205,6 +208,36 @@ arpg::test::Failure health_potion_uses_dedicated_sprite_and_pure_red_label() noe
     ARPG_REQUIRE(frame->atlas == platform::MaterialAtlasId::items_ui);
     ARPG_REQUIRE(frame->source.x == 768.0F);
     ARPG_REQUIRE(frame->source.y == 384.0F);
+    return {};
+}
+
+arpg::test::Failure compact_potion_label_preserves_mixed_material_width() noexcept {
+    dungeon::DungeonSnapshot snapshot{};
+    const arpg::combat::Vec3 top_clamped_position{
+        0.0F, arpg::combat::room_bounds::max_y, 100.0F};
+    snapshot.ground_health_potion_count = 1U;
+    snapshot.ground_health_potions[0] = {0U, 1U, top_clamped_position};
+    snapshot.ground_material_count = 1U;
+    snapshot.ground_materials[0] = {0U,
+        dungeon::GroundMaterialSource::monster_coupon,
+        top_clamped_position, items::MaterialId::coupon_15};
+
+    const platform::MaterialLootView view =
+        platform::build_material_loot_view(snapshot, 1280.0F, 720.0F);
+
+    ARPG_REQUIRE(view.count == 2U);
+    ARPG_REQUIRE(view.labels[0].kind
+        == platform::SecondaryLootKind::material);
+    ARPG_REQUIRE(nearly_equal(
+        view.labels[0].rect.width, kExpectedMaterialLabelWidth));
+    ARPG_REQUIRE(view.labels[1].kind
+        == platform::SecondaryLootKind::health_potion);
+    ARPG_REQUIRE(view.labels[1].rect.width
+        >= kMinimumReadablePotionLabelWidth);
+    ARPG_REQUIRE(view.labels[1].rect.width
+        <= kMaximumCompactPotionLabelWidth);
+    ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+        view.labels[0].rect, view.labels[1].rect));
     return {};
 }
 
@@ -745,6 +778,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"pickup feedback aggregates material counts", &pickup_feedback_aggregates_counts_by_material},
     {"every material uses a unique resource", &every_material_has_a_unique_authored_resource},
     {"health potion uses dedicated sprite and pure-red label", &health_potion_uses_dedicated_sprite_and_pure_red_label},
+    {"compact potion label preserves mixed material width",
+     &compact_potion_label_preserves_mixed_material_width},
     {"overlapping secondary-loot labels are resolved", &overlapping_secondary_loot_labels_are_resolved},
     {"single secondary label preserves original clamped rect", &single_secondary_label_preserves_original_clamped_rect},
     {"identical anchors keep first and prefer upward", &identical_anchors_keep_first_and_prefer_upward},

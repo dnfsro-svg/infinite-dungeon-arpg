@@ -237,9 +237,8 @@ function(host_validation_snapshot_bindings_valid_from_normalized
             "gameplay_controls_physically_released\\([ ]*stage17_physical_keys[ ]*\\)"
             "map_host_frame_input\\([ ]*input_settings,[ ]*stage17_physical_keys[ ]*\\)"
             "host_death_input_gate\\([ ]*death_saving,[ ]*death_pending,[ ]*frame_input[.]keys,[ ]*physical_keys[ ]*\\)"
-            "if[ ]*\\([ ]*pause_was_open[ ]*&&[ ]*physical_keys[.]mouse_left[ ]*\\)"
+            "if[ ]*\\([ ]*pause_was_open[ ]*&&[ ]*![ ]*physical_keys[.]focus_lost[ ]*&&[ ]*physical_keys[.]mouse_left[ ]*\\)"
             "hit_test_pause_row\\([ ]*layout,[ ]*physical_keys[.]mouse_position[ ]*\\)"
-            "![ ]*physical_keys[.]focus_lost"
             "PauseInput[ ]+pause_input[ ]*=[ ]*pause_input_from_snapshot\\([ ]*physical_keys,[ ]*escape_consumed,[ ]*pause_menu[.]screen[ ]*==[ ]*PauseScreen::capture_binding[ ]*\\)")
         host_validation_count_regex("${NORMALIZED_SOURCE}" "${_pattern}"
             _match_count)
@@ -256,9 +255,12 @@ function(host_validation_snapshot_bindings_valid_from_normalized
         _cached_snapshot_count)
     host_validation_count_regex("${NORMALIZED_SOURCE}"
         "pause_input_from_snapshot\\(" _pause_input_call_count)
+    host_validation_count_regex("${NORMALIZED_SOURCE}"
+        "![ ]*physical_keys[.]focus_lost" _focus_gate_count)
     if(NOT _stage17_snapshot_count EQUAL 3
-            OR NOT _cached_snapshot_count EQUAL 6
-            OR NOT _pause_input_call_count EQUAL 1)
+            OR NOT _cached_snapshot_count EQUAL 7
+            OR NOT _pause_input_call_count EQUAL 1
+            OR NOT _focus_gate_count EQUAL 2)
         set("${OUT_VALID}" FALSE PARENT_SCOPE)
         return()
     endif()
@@ -771,6 +773,23 @@ if(DEFINED TASK9_ROUND5_MUTATION
         AND TASK9_ROUND5_MUTATION STREQUAL cmake_extra_lifecycle_allow)
     message(FATAL_ERROR
         "Task 9 lifecycle exemption allowlist mutation was accepted")
+endif()
+if(ARPG_CPLAY028_HOST_VALIDATION_ONLY)
+    host_validation_unconditional_cpp_surface(
+        "${_host_text}" _cplay028_host _cplay028_host_lexical)
+    host_validation_try_extract_namespace_run_host(
+        "${_cplay028_host}" _cplay028_run_host _cplay028_run_host_valid)
+    if(NOT _cplay028_run_host_valid)
+        message(FATAL_ERROR "CPLAY-028 run_raylib_host extraction failed")
+    endif()
+    host_validation_run_host_snapshot_bindings_valid(
+        "${_cplay028_run_host}" _cplay028_bindings_valid)
+    if(NOT _cplay028_bindings_valid)
+        message(FATAL_ERROR
+            "CPLAY-028 focused pause consumers are not bound to the cached snapshot")
+    endif()
+    message(STATUS "focused pause snapshot ownership is valid")
+    return()
 endif()
 if(DEFINED TASK9_CMAKE_CONTRACT_ONLY)
     return()
@@ -3286,7 +3305,7 @@ host_validation_require_count("public cached Stage11D accessor" "${_run_host}"
     "validation_runtime->death_input_snapshot(" 1)
 foreach(_cached_consumer IN ITEMS
         "frame_input.keys, physical_keys)"
-        "pause_was_open && physical_keys.mouse_left"
+        "pause_was_open\n                    && !physical_keys.focus_lost\n                    && physical_keys.mouse_left"
         "!physical_keys.focus_lost"
         "pause_input_from_snapshot(")
     string(FIND "${_run_host}" "${_cached_consumer}" _position)

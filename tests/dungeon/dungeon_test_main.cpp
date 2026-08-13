@@ -30,6 +30,7 @@ arpg::test::TestSuite dungeon_skill_cast_suite() noexcept;
 arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+arpg::test::TestSuite loot_suction_material_origin_suite() noexcept;
 arpg::test::TestSuite dungeon_health_potion_suite() noexcept;
 arpg::test::TestSuite dungeon_exit_unlock_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
@@ -159,6 +160,16 @@ bool stage16_material_loot_only() noexcept {
     std::size_t length = 0U;
     const errno_t error = _dupenv_s(&value, &length,
         "ARPG_STAGE16_MATERIAL_LOOT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool loot_suction_material_origin_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_LOOT_SUCTION_MATERIAL_ORIGIN_ONLY");
     const bool enabled = error == 0 && value != nullptr;
     std::free(value);
     return enabled;
@@ -375,6 +386,14 @@ int main() {
             "stage 16 task 4 material loot");
     }
 
+    if (loot_suction_material_origin_only()) {
+        const arpg::test::TestSuite origin_only[] = {
+            loot_suction_material_origin_suite(),
+        };
+        return arpg::test::run_suites(origin_only, 1,
+            "loot suction material origin publisher");
+    }
+
     if (stage16_crafting_transaction_only()) {
         const arpg::test::TestSuite crafting_only[] = {
             dungeon_crafting_transaction_suite(),
@@ -387,7 +406,7 @@ int main() {
         const arpg::test::TestSuite potion_only[] = {
             dungeon_health_potion_suite(),
         };
-        return arpg::test::run_suites(potion_only, 19,
+        return arpg::test::run_suites(potion_only, 20,
             "task 6 health potion atomic auto-use");
     }
 
@@ -403,7 +422,7 @@ int main() {
         const arpg::test::TestSuite unlock_only[] = {
             dungeon_exit_unlock_suite(),
         };
-        return arpg::test::run_suites(unlock_only, 14,
+        return arpg::test::run_suites(unlock_only, 15,
             "task 6 quarter kill exit unlock");
     }
 
@@ -423,6 +442,6 @@ int main() {
             "task 7 authoritative room drops");
     }
 
-    return arpg::test::run_suites(suites, 363,
+    return arpg::test::run_suites(suites, 365,
         "stage 18 dungeon queries");
 }

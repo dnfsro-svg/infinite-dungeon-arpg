@@ -32,6 +32,16 @@ inline float scale_basis_points(float value, std::uint32_t basis_points) noexcep
     return value * static_cast<float>(basis_points) / 10000.0F;
 }
 
+inline std::uint32_t compose_damage_basis_points(
+    std::uint32_t left,
+    std::uint32_t right) noexcept {
+    const std::uint64_t product = static_cast<std::uint64_t>(left)
+        * static_cast<std::uint64_t>(right);
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        product / 10000U,
+        (std::numeric_limits<std::uint32_t>::max)()));
+}
+
 inline std::uint16_t scale_ticks_ratio(
     std::uint16_t base,
     std::uint32_t numerator,

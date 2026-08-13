@@ -166,6 +166,17 @@ void saturating_increment(std::uint64_t& value) noexcept {
     return nullptr;
 }
 
+[[nodiscard]] Rectangle raylib_sprite_source(
+    Rectangle source, bool flip_x) noexcept {
+    if (flip_x) source.width = -source.width;
+    return source;
+}
+
+[[nodiscard]] float raylib_sprite_anchor_x(
+    float frame_width, float anchor_x, bool flip_x) noexcept {
+    return flip_x ? frame_width - anchor_x : anchor_x;
+}
+
 [[nodiscard]] constexpr bool valid_texture_api(
     MaterialTextureApi texture_api) noexcept {
     return texture_api.load != nullptr && texture_api.valid != nullptr
@@ -194,6 +205,8 @@ struct MaterialShaderState final {
     int channel_map_location{-1};
     int channel_strengths_location{-1};
     int emissive_tint_location{-1};
+    int emissive_only_location{-1};
+    int emissive_mask_range_location{-1};
     bool ready{};
 };
 
@@ -208,6 +221,8 @@ uniform sampler2D materialMap;
 uniform vec3 channelMap;
 uniform vec3 channelStrengths;
 uniform vec3 emissiveTint;
+uniform float emissiveOnly;
+uniform vec2 emissiveMaskRange;
 out vec4 finalColor;
 float packedChannel(vec4 materialSample, float channel) {
     if (channel < 0.5) return materialSample.r;
@@ -227,6 +242,14 @@ void main() {
     float diffuseLight = 1.0 - 0.42 * roughness;
     vec3 metalLight = metalness * (base.rgb * 0.24 + vec3(0.08, 0.10, 0.13));
     vec3 emissiveLight = emissiveTint * emissive;
+    if (emissiveOnly > 0.5) {
+        float effectMask = smoothstep(
+            emissiveMaskRange.x, emissiveMaskRange.y, emissive);
+        vec3 effectColor = base.rgb + emissiveLight;
+        finalColor = vec4(effectColor,
+            base.a * materialSample.a * effectMask);
+        return;
+    }
     finalColor = vec4(base.rgb * diffuseLight + metalLight + emissiveLight,
         base.a * materialSample.a);
 }
@@ -245,10 +268,16 @@ bool initialize_material_pipeline() noexcept {
         g_material_shader.shader, "channelStrengths");
     g_material_shader.emissive_tint_location = GetShaderLocation(
         g_material_shader.shader, "emissiveTint");
+    g_material_shader.emissive_only_location = GetShaderLocation(
+        g_material_shader.shader, "emissiveOnly");
+    g_material_shader.emissive_mask_range_location = GetShaderLocation(
+        g_material_shader.shader, "emissiveMaskRange");
     g_material_shader.ready = g_material_shader.material_map_location >= 0
         && g_material_shader.channel_map_location >= 0
         && g_material_shader.channel_strengths_location >= 0
-        && g_material_shader.emissive_tint_location >= 0;
+        && g_material_shader.emissive_tint_location >= 0
+        && g_material_shader.emissive_only_location >= 0
+        && g_material_shader.emissive_mask_range_location >= 0;
     if (!g_material_shader.ready) {
         UnloadShader(g_material_shader.shader);
         g_material_shader = {};
@@ -273,6 +302,11 @@ void begin_material_composite(Texture2D material,
         static_cast<float>(parameters.emissive_tint.r) / 255.0F,
         static_cast<float>(parameters.emissive_tint.g) / 255.0F,
         static_cast<float>(parameters.emissive_tint.b) / 255.0F};
+    const float emissive_only = parameters.mode
+            == MaterialCompositeMode::emissive_only
+        ? 1.0F : 0.0F;
+    const float emissive_mask_range[2]{parameters.emissive_mask_start,
+        parameters.emissive_mask_end};
     BeginShaderMode(g_material_shader.shader);
     SetShaderValueTexture(g_material_shader.shader,
         g_material_shader.material_map_location, material);
@@ -285,6 +319,12 @@ void begin_material_composite(Texture2D material,
     SetShaderValue(g_material_shader.shader,
         g_material_shader.emissive_tint_location, emissive_tint,
         SHADER_UNIFORM_VEC3);
+    SetShaderValue(g_material_shader.shader,
+        g_material_shader.emissive_only_location, &emissive_only,
+        SHADER_UNIFORM_FLOAT);
+    SetShaderValue(g_material_shader.shader,
+        g_material_shader.emissive_mask_range_location,
+        emissive_mask_range, SHADER_UNIFORM_VEC2);
 }
 
 void draw_material(Texture2D color, Texture2D material, Rectangle source,
@@ -621,12 +661,10 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     const Texture2D& color_texture = color_textures_[index];
     const Texture2D& material_texture = material_textures_[index];
 
-    Rectangle source = frame->source;
-    if (flip_x) {
-        source.x += source.width;
-        source.width = -source.width;
-    }
-    const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
+    const Rectangle source = raylib_sprite_source(frame->source, flip_x);
+    const float anchor_x = raylib_sprite_anchor_x(
+        frame->source.width, frame->foot_anchor.x, flip_x);
+    const Rectangle destination{foot_position.x - anchor_x * scale,
         foot_position.y - frame->foot_anchor.y * scale,
         frame->source.width * scale, frame->source.height * scale};
     texture_api_.draw_material(color_texture, material_texture, source,
@@ -645,15 +683,13 @@ bool MaterialPack::draw_transformed(MaterialSpriteId id,
     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
     if (frame == nullptr || !state_.available(frame->atlas)) return false;
     const std::size_t index = atlas_index(frame->atlas);
-    Rectangle source = frame->source;
-    if (flip_x) {
-        source.x += source.width;
-        source.width = -source.width;
-    }
+    const Rectangle source = raylib_sprite_source(frame->source, flip_x);
     const Rectangle destination{foot_position.x, foot_position.y,
         frame->source.width * scale, frame->source.height * scale};
     const Vector2 origin{
-        frame->foot_anchor.x * scale, frame->foot_anchor.y * scale};
+        raylib_sprite_anchor_x(frame->source.width,
+            frame->foot_anchor.x, flip_x) * scale,
+        frame->foot_anchor.y * scale};
     texture_api_.draw_material(color_textures_[index],
         material_textures_[index], source, destination, origin,
         rotation_degrees, tint, {});
@@ -770,7 +806,12 @@ bool MaterialPack::draw_nine_slice(MaterialSpriteId id,
         {destination.x + destination.width - 32.0F,
             destination.y + (destination.height - 48.0F) * 0.5F,
             32.0F, 48.0F});
-    if (id != MaterialSpriteId::ui_warning_modal) {
+    const bool plain_panel =
+        id == MaterialSpriteId::ui_inventory_panel_equipment
+        || id == MaterialSpriteId::ui_inventory_panel_grid
+        || id == MaterialSpriteId::ui_inventory_panel_detail
+        || id == MaterialSpriteId::ui_pause_panel;
+    if (id != MaterialSpriteId::ui_warning_modal && !plain_panel) {
         draw_part({32.0F, 32.0F, 64.0F, 64.0F},
             {destination.x + (destination.width - 64.0F) * 0.5F,
                 destination.y + (destination.height - 64.0F) * 0.5F,
@@ -895,6 +936,23 @@ std::uint64_t MaterialPack::direct_stretch_draw_count(
 bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
     Vector2 foot_anchor, Vector2 foot_position, bool flip_x, float scale,
     Color tint) const noexcept {
+    return draw_frame_composited(atlas, source, foot_anchor, foot_position,
+        flip_x, scale, tint, {});
+}
+
+bool MaterialPack::draw_frame_emissive(MaterialAtlasId atlas,
+    Rectangle source, Vector2 foot_anchor, Vector2 foot_position,
+    bool flip_x, float scale, Color tint) const noexcept {
+    MaterialCompositeParameters parameters{};
+    parameters.mode = MaterialCompositeMode::emissive_only;
+    return draw_frame_composited(atlas, source, foot_anchor, foot_position,
+        flip_x, scale, tint, parameters);
+}
+
+bool MaterialPack::draw_frame_composited(MaterialAtlasId atlas,
+    Rectangle source, Vector2 foot_anchor, Vector2 foot_position,
+    bool flip_x, float scale, Color tint,
+    MaterialCompositeParameters parameters) const noexcept {
     if (!is_known_atlas(atlas) || !state_.available(atlas)
         || !valid_texture_api(texture_api_) || scale <= 0.0F
         || source.width <= 0.0F || source.height <= 0.0F
@@ -910,16 +968,15 @@ bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
         || source.y + source.height > static_cast<float>(color_texture.height)) {
         return false;
     }
-    if (flip_x) {
-        source.x += source.width;
-        source.width = -source.width;
-    }
-    const Rectangle destination{foot_position.x - foot_anchor.x * scale,
+    const float anchor_x = raylib_sprite_anchor_x(
+        source.width, foot_anchor.x, flip_x);
+    source = raylib_sprite_source(source, flip_x);
+    const Rectangle destination{foot_position.x - anchor_x * scale,
         foot_position.y - foot_anchor.y * scale,
         source.width < 0.0F ? -source.width * scale : source.width * scale,
         source.height * scale};
     texture_api_.draw_material(color_texture, material_texture, source,
-        destination, {0.0F, 0.0F}, 0.0F, tint, {});
+        destination, {0.0F, 0.0F}, 0.0F, tint, parameters);
     return true;
 }
 
@@ -959,13 +1016,20 @@ bool MaterialPack::draw_frame_to(MaterialAtlasId atlas,
 
 bool MaterialPack::draw_frame_quad(MaterialAtlasId atlas,
     Rectangle source, MaterialScreenQuad destination, Color tint) const noexcept {
+    const float source_far_x = source.x + source.width;
+    const float source_far_y = source.y + source.height;
+    const float source_min_x = (std::min)(source.x, source_far_x);
+    const float source_max_x = (std::max)(source.x, source_far_x);
+    const float source_min_y = (std::min)(source.y, source_far_y);
+    const float source_max_y = (std::max)(source.y, source_far_y);
     if (!is_known_atlas(atlas) || !state_.available(atlas)
             || !valid_texture_api(texture_api_)
             || texture_api_.draw_material_quad == nullptr
             || !std::isfinite(source.x) || !std::isfinite(source.y)
             || !std::isfinite(source.width) || !std::isfinite(source.height)
-            || source.x < 0.0F || source.y < 0.0F
-            || source.width <= 0.0F || source.height <= 0.0F
+            || !std::isfinite(source_far_x) || !std::isfinite(source_far_y)
+            || source_min_x < 0.0F || source_min_y < 0.0F
+            || source.width == 0.0F || source.height == 0.0F
             || !valid_material_screen_quad_geometry(destination)
             || destination.top_right.x <= destination.top_left.x
             || destination.bottom_right.x <= destination.bottom_left.x
@@ -978,14 +1042,10 @@ bool MaterialPack::draw_frame_quad(MaterialAtlasId atlas,
     const Texture2D& material_texture = material_textures_[index];
     if (!texture_api_.valid(color_texture)
             || !texture_api_.valid(material_texture)
-            || source.x + source.width
-                > static_cast<float>(color_texture.width)
-            || source.y + source.height
-                > static_cast<float>(color_texture.height)
-            || source.x + source.width
-                > static_cast<float>(material_texture.width)
-            || source.y + source.height
-                > static_cast<float>(material_texture.height)) {
+            || source_max_x > static_cast<float>(color_texture.width)
+            || source_max_y > static_cast<float>(color_texture.height)
+            || source_max_x > static_cast<float>(material_texture.width)
+            || source_max_y > static_cast<float>(material_texture.height)) {
         return false;
     }
     texture_api_.draw_material_quad(color_texture, material_texture, source,

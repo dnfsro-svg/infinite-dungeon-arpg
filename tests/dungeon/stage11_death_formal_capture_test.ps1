@@ -11,10 +11,10 @@ function Get-PanelHash {
     # Hash the opaque authored body, including all body and prompt text.  The
     # title and decorated frame outside this rectangle are translucent and
     # legitimately expose different live-room pixels before and after restart.
-    $panelLeft = 152
-    $panelTop = 80
-    $panelRightExclusive = 1128
-    $panelBottomExclusive = 644
+    $panelLeft = 212
+    $panelTop = 112
+    $panelRightExclusive = 1068
+    $panelBottomExclusive = 612
     $bytes = [byte[]]::new(
         ($panelRightExclusive - $panelLeft) *
         ($panelBottomExclusive - $panelTop) * 3)
@@ -70,8 +70,8 @@ function Test-Capture {
             $panelDark = 0
             $panelAccent = 0
             $panelAuthored = 0
-            for ($y = 48; $y -lt 672; $y += 10) {
-                for ($x = 120; $x -lt 1160; $x += 10) {
+            for ($y = 80; $y -lt 640; $y += 10) {
+                for ($x = 180; $x -lt 1100; $x += 10) {
                     $pixel = $image.GetPixel($x, $y)
                     if ($pixel.R -lt 40 -and $pixel.G -lt 40 -and $pixel.B -lt 50) { $panelDark++ }
                     if ($pixel.R -gt 150 -and $pixel.G -gt 50) { $panelAccent++ }
@@ -86,8 +86,8 @@ function Test-Capture {
                     }
                 }
             }
-            if ($panelDark -lt 500 -or $panelAccent -lt 15 -or
-                    $panelAuthored -lt 3000) {
+            if ($panelDark -lt 390 -or $panelAccent -lt 15 -or
+                    $panelAuthored -lt 2350) {
                 throw "Death panel content missing: $Path dark=$panelDark accent=$panelAccent authored=$panelAuthored"
             }
         }

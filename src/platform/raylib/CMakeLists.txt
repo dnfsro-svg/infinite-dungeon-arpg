@@ -42,6 +42,7 @@ add_library(arpg_raylib STATIC
     hud_view_model.cpp
     hud_notice_state.cpp
     loot_pickup_feedback.cpp
+    loot_suction_animation.cpp
     material_bag_renderer.cpp
     material_loot_view.cpp
     hud_layout.cpp

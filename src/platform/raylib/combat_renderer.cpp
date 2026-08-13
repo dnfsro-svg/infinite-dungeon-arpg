@@ -17,11 +17,18 @@ void append_actor_obstacle(LootLabelObstacleSet& obstacles,
     float width, float height) noexcept {
     const ScreenProjection projected = project_combat_position(
         position, camera, width, height);
+    constexpr float kHighestResourceBarOffset = 14.0F;
+    const float obstacle_top = projected.y
+        + monster_presentation_plan(0U, false).resource_bar_offset_y
+            * projected.scale
+        - kHighestResourceBarOffset + camera_offset.y;
+    const float obstacle_bottom = projected.y
+        + 14.0F * projected.scale + camera_offset.y;
     static_cast<void>(obstacles.append({
         projected.x - 75.0F * projected.scale + camera_offset.x,
-        projected.y - 119.0F * projected.scale + camera_offset.y,
+        obstacle_top,
         150.0F * projected.scale,
-        133.0F * projected.scale,
+        obstacle_bottom - obstacle_top,
     }));
 }
 
@@ -179,6 +186,47 @@ MaterialResidencyRequest world_material_residency_request_impl(
         if (monster.active) require_world_monster_atlas(request, monster.id);
     }
     return request;
+}
+
+Color raylib_color(Rgba8 color) noexcept {
+    return {color.r, color.g, color.b, color.a};
+}
+
+void draw_loot_suction(const LootSuctionPlan& plan,
+    const MaterialPack& material_pack) noexcept {
+    for (std::size_t index{}; index < plan.count; ++index) {
+        const LootSuctionFlight& flight = plan.flights[index];
+        const Vector2 center{flight.center.x, flight.center.y};
+        const Color color = raylib_color(flight.color);
+        if (flight.equipment) {
+            const bool halo_drawn = material_pack.draw(flight.rarity_sprite,
+                center, false, 0.38F);
+            const bool item_drawn = material_pack.draw(flight.sprite,
+                center, false, 0.28F, color);
+            if (!halo_drawn) {
+                DrawCircleLines(static_cast<int>(center.x),
+                    static_cast<int>(center.y), 13.0F, color);
+            }
+            if (!item_drawn) DrawRectangleV(
+                {center.x - 4.0F, center.y - 4.0F}, {8.0F, 8.0F}, color);
+            continue;
+        }
+
+        if (!material_pack.draw(flight.sprite, center, false, 0.24F, color)) {
+            DrawCircleV(center, 5.0F, color);
+        }
+        DrawCircleLines(static_cast<int>(center.x),
+            static_cast<int>(center.y), 7.0F, Fade(color, 0.85F));
+    }
+
+    if (plan.destination_pulse <= 0.0F) return;
+    const Vector2 destination{plan.destination.x, plan.destination.y};
+    const float pulse = std::clamp(plan.destination_pulse, 0.0F, 1.0F);
+    DrawCircleV(destination, 7.0F + 8.0F * (1.0F - pulse),
+        Fade(RAYWHITE, 0.18F * pulse));
+    DrawCircleLines(static_cast<int>(destination.x),
+        static_cast<int>(destination.y), 10.0F + 10.0F * (1.0F - pulse),
+        Fade(RAYWHITE, 0.9F * pulse));
 }
 
 }  // namespace
@@ -346,6 +394,7 @@ void CombatRenderer::clear_combat_transients() noexcept {
     last_event_ = combat::CombatEvent{};
     has_last_event_ = false;
     monster_presenter_.reset();
+    loot_suction_.clear();
 }
 
 void CombatRenderer::set_loot_filter_mode(
@@ -357,6 +406,10 @@ void CombatRenderer::update(float frame_seconds) noexcept {
     transition_ = advance_transition(transition_, frame_seconds);
 }
 
+void CombatRenderer::publish_passive_tree_blocked() noexcept {
+    hud_notices_.publish_passive_tree_blocked();
+}
+
 void CombatRenderer::observe_hud(
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
@@ -365,6 +418,21 @@ void CombatRenderer::observe_hud(
     float frame_seconds,
     bool paused,
     const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
+    const bool room_changed = previous.room_index != current.room_index
+        || previous.room_instance_generation != current.room_instance_generation;
+    const bool unsafe_to_play = room_changed
+        || runtime_status.indicator == SaveIndicator::error
+        || runtime_status.recovery_required || runtime_status.faulted;
+    if (unsafe_to_play) {
+        loot_suction_.clear();
+        loot_suction_.observe(current, current, runtime_status);
+    } else {
+        loot_suction_.update(frame_seconds, paused);
+        // The renderer may first observe the exact frame that commits a
+        // pickup.  Attach a receipt-free baseline before processing it.
+        loot_suction_.observe(previous, previous, {});
+        loot_suction_.observe(previous, current, runtime_status);
+    }
     const LootPickupFeedback pickup_feedback =
         loot_pickup_feedback_.observe(runtime_status);
     if (pickup_feedback.ready) {
@@ -442,6 +510,10 @@ std::uint64_t CombatRenderer::hud_presented_frame_count(
     return index.has_value() ? hud_presented_frame_counts_[*index] : 0U;
 }
 
+std::size_t CombatRenderer::loot_suction_active_count() const noexcept {
+    return loot_suction_.active_count();
+}
+
 const ActiveSkillHudModel& CombatRenderer::active_skill_hud_model()
     const noexcept {
     return active_skill_hud_model_;
@@ -464,7 +536,8 @@ GroundLootView CombatRenderer::draw(
     float interpolation_alpha,
     bool draw_debug,
     const CombatFeedback& feedback,
-    bool audio_ready) noexcept {
+    bool audio_ready,
+    const char* interact_binding_label) noexcept {
     active_skill_draw_status_ = {};
     static_cast<void>(material_pack_.synchronize_residency(
         world_material_residency_request(world, current_hud.skill_loadout)));
@@ -515,7 +588,7 @@ GroundLootView CombatRenderer::draw(
         switch (stage) {
         case CombatRenderStage::room:
             draw_room(world, render_plan.ground_loot,
-                render_plan.material_loot, camera);
+                render_plan.material_loot, camera, interact_binding_label);
             draw_abyss_overlay(current_hud);
             break;
         case CombatRenderStage::actors:
@@ -534,6 +607,8 @@ GroundLootView CombatRenderer::draw(
                 active_skill_draw_status_.base_player_drawn =
                     base_player_drawn;
             }
+            draw_loot_suction(loot_suction_.build_plan(camera,
+                interpolated_player, width, height), material_pack_);
             break;
         case CombatRenderStage::ground_loot_labels:
             hud_renderer_.draw_ground_loot(render_plan.ground_loot);

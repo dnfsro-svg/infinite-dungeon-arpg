@@ -18,6 +18,7 @@ constexpr std::uint8_t kAbyssPriority = 100U;
 constexpr std::uint8_t kHolePriority = 90U;
 constexpr std::uint8_t kExitPriority = 80U;
 constexpr std::uint8_t kRoomClearPriority = 70U;
+constexpr std::uint8_t kPassiveTreeBlockedPriority = 65U;
 constexpr std::uint8_t kRewardPriority = 60U;
 constexpr std::uint8_t kLevelPriority = 50U;
 constexpr std::uint8_t kPassivePointsPriority = 40U;
@@ -349,6 +350,12 @@ void HudNoticeState::publish_loot_pickup(
     notice.text = text;
     notice.abyss = abyss;
     enqueue(notices_, dropped_count_, notice);
+}
+
+void HudNoticeState::publish_passive_tree_blocked() noexcept {
+    add_transient(notices_, dropped_count_, HudNoticeKind::passive_tree,
+        kPassiveTreeBlockedPriority,
+        u8"清理全部怪物后可打开被动树");
 }
 
 void HudNoticeState::update(float frame_seconds, bool paused) noexcept {

@@ -33,6 +33,7 @@ file(READ "${STAGE17_REPORT_SOURCE}" STAGE17_REPORT_SOURCE_TEXT)
 file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage17_runtime.cpp"
     STAGE17_RUNTIME_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/inventory_renderer.cpp" INVENTORY_SOURCE)
+file(READ "${RAYLIB_SOURCE_DIR}/pause_menu_state.cpp" PAUSE_STATE_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/host_input.cpp" INPUT_AUTHORITY_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/../../dungeon/dungeon_session.cpp"
     DUNGEON_SESSION_SOURCE)
@@ -48,6 +49,76 @@ function(require_match_count SOURCE PATTERN EXPECTED LABEL)
             "${LABEL}: expected ${EXPECTED} matches, found ${ACTUAL}")
     endif()
 endfunction()
+
+string(FIND "${INVENTORY_SOURCE}"
+    "EQUIPMENT INVENTORY  ·  I / ESC CLOSE"
+    LEGACY_INVENTORY_BINDING_TITLE)
+string(FIND "${INVENTORY_SOURCE}"
+    "技能石背包  ·  I / ESC 关闭"
+    LEGACY_SKILL_BINDING_TITLE)
+if(NOT LEGACY_INVENTORY_BINDING_TITLE EQUAL -1
+        OR NOT LEGACY_SKILL_BINDING_TITLE EQUAL -1)
+    message(FATAL_ERROR
+        "inventory page titles must not hard-code the default I binding")
+endif()
+require_match_count("${INVENTORY_SOURCE}"
+    "page_title\\.data\\(\\)" 2
+    "inventory renderer dynamic page-title consumers")
+set(DYNAMIC_INVENTORY_TITLE [=[const auto page_title = inventory_page_title(
+        page_, inventory_binding_label);]=])
+string(FIND "${INVENTORY_SOURCE}" "${DYNAMIC_INVENTORY_TITLE}"
+    DYNAMIC_INVENTORY_TITLE_INDEX)
+if(DYNAMIC_INVENTORY_TITLE_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "inventory renderer must format titles with its binding argument")
+endif()
+set(DYNAMIC_INVENTORY_DRAW [=[inventory.draw(*session, current, runtime.render_status(),
+                    renderer.material_pack(), stable_key_label(
+                        settings::binding_for(input_settings,
+                            settings::SettingAction::inventory)),
+                    renderer.hud_font(),]=])
+string(FIND "${HOST_SOURCE}" "${DYNAMIC_INVENTORY_DRAW}"
+    DYNAMIC_INVENTORY_DRAW_INDEX)
+if(DYNAMIC_INVENTORY_DRAW_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "inventory renderer must receive the applied input_settings binding")
+endif()
+if(ARPG_CPLAY027_INVENTORY_BINDING_LABEL_ONLY)
+    message(STATUS
+        "inventory page titles consume the applied input binding")
+    return()
+endif()
+
+set(UNFOCUSED_PAUSE_GATE [=[if (state.screen != PauseScreen::capture_binding
+        && (input.focus_lost || !context.window_focused)) {
+        return PauseCommand::none;
+    }]=])
+string(FIND "${PAUSE_STATE_SOURCE}" "${UNFOCUSED_PAUSE_GATE}"
+    UNFOCUSED_PAUSE_GATE_INDEX)
+if(UNFOCUSED_PAUSE_GATE_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "non-capture pause screens must ignore unfocused input")
+endif()
+string(FIND "${HOST_SOURCE}"
+    "input.focus_lost = snapshot.focus_lost;"
+    PAUSE_FOCUS_SIGNAL_INDEX)
+if(PAUSE_FOCUS_SIGNAL_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause input must retain the physical focus-lost signal")
+endif()
+set(FOCUSED_PAUSE_POINTER_GATE [=[if (pause_was_open
+                    && !physical_keys.focus_lost
+                    && physical_keys.mouse_left) {]=])
+string(FIND "${HOST_SOURCE}" "${FOCUSED_PAUSE_POINTER_GATE}"
+    FOCUSED_PAUSE_POINTER_GATE_INDEX)
+if(FOCUSED_PAUSE_POINTER_GATE_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause pointer hit-testing must require window focus")
+endif()
+if(ARPG_CPLAY028_PAUSE_FOCUS_ONLY)
+    message(STATUS "unfocused pause input is fully gated")
+    return()
+endif()
 
 function(host_large_state_construction_valid SOURCE OUT_VALID)
     set(WS "[ \t\r\n]*")

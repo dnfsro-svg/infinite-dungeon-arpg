@@ -68,7 +68,7 @@ bool monster_persistent_state_matches(
         && runtime.shield_recharge_ticks == state.shield_recharge_ticks
         && runtime.break_window_ticks == state.break_window_ticks
         && runtime.hit_stop_ticks == state.hit_stop_ticks
-        && runtime.owner_transient_counter == state.owner_transient_counter
+        && runtime.engagement_latch == state.engagement_latch
         && runtime.burning_ground_ticks == state.burning_ground_ticks
         && runtime.blink_assault_ticks == state.blink_assault_ticks
         && runtime.blink_empowered == state.blink_empowered
@@ -112,7 +112,7 @@ void store_monster_persistent_state(
     state.shield_recharge_ticks = runtime.shield_recharge_ticks;
     state.break_window_ticks = runtime.break_window_ticks;
     state.hit_stop_ticks = runtime.hit_stop_ticks;
-    state.owner_transient_counter = runtime.owner_transient_counter;
+    state.engagement_latch = runtime.engagement_latch;
     state.burning_ground_ticks = runtime.burning_ground_ticks;
     state.blink_assault_ticks = runtime.blink_assault_ticks;
     state.blink_empowered = runtime.blink_empowered;
@@ -163,7 +163,7 @@ void restore_monster_persistent_state(
     runtime.shield_recharge_ticks = state.shield_recharge_ticks;
     runtime.break_window_ticks = state.break_window_ticks;
     runtime.hit_stop_ticks = state.hit_stop_ticks;
-    runtime.owner_transient_counter = state.owner_transient_counter;
+    runtime.engagement_latch = state.engagement_latch;
     runtime.burning_ground_ticks = state.burning_ground_ticks;
     runtime.blink_assault_ticks = state.blink_assault_ticks;
     runtime.blink_empowered = state.blink_empowered;

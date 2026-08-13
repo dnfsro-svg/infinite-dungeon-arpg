@@ -48,7 +48,8 @@ struct PickupCandidate final {
                 && item.source == dungeon::GroundItemSource::abyss_chest);
         if (!source_matches) return std::nullopt;
         return PickupCandidate{{true, expected_generation, item.item_id,
-            item.base_id, item.item_level, item.rarity, item.source}, ordinal};
+            item.base_id, item.item_level, item.rarity, item.source,
+            item.position, item.slot}, ordinal};
     }
     return std::nullopt;
 }
@@ -205,11 +206,14 @@ bool DungeonRuntime::initialize() noexcept {
     }
 
     save_storage_.reset(new (std::nothrow) persistence::SaveCommitStorage{});
+    persistence::SaveError initialization_error =
+        persistence::SaveError::directory_unavailable;
     if (save_storage_ == nullptr
-            || !save_storage_->initialize(config_.save)) {
+            || !save_storage_->initialize(
+                config_.save, initialization_error)) {
         state_ = DungeonRuntimeState::faulted;
         status_.indicator = SaveIndicator::error;
-        status_.error = persistence::SaveError::directory_unavailable;
+        status_.error = initialization_error;
         return false;
     }
     const persistence::SaveLoadState load_state = save_storage_->load_state();

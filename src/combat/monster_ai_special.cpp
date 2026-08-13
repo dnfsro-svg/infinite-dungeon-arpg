@@ -67,7 +67,7 @@ void CombatWorld::simulate_special_ai(
                 scale_monster_outgoing_damage(
                     scale_monster_affix_damage(
                         definition.contact_damage, monster.affix_profile),
-                    encounter_config_.abyss.monster_damage_bp)));
+                    monster_damage_basis_points())));
         }
         return;
     }

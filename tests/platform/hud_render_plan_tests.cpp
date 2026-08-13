@@ -276,46 +276,27 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     ARPG_REQUIRE(objective.visible);
     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
     ARPG_REQUIRE(objective.secondary.bytes == room.secondary.bytes);
-    ARPG_REQUIRE(objective.movement.bytes == room.movement.bytes);
-    ARPG_REQUIRE(objective.controls[0].bytes == room.controls[0].bytes);
-    ARPG_REQUIRE(objective.controls[1].bytes == room.controls[1].bytes);
-    ARPG_REQUIRE(objective.controls[2].bytes == room.controls[2].bytes);
-    ARPG_REQUIRE(objective.diagnostics.bytes
-        == room.visible_set.text.bytes);
+    ARPG_REQUIRE(objective.movement.bytes[0] == '\0');
+    for (const platform::HudText96& control : objective.controls) {
+        ARPG_REQUIRE(control.bytes[0] == '\0');
+    }
+    ARPG_REQUIRE(objective.diagnostics.bytes[0] == '\0');
     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
 
     const platform::HudTextSafeLayout safe =
         platform::make_hud_text_safe_layout(layout);
     const platform::HudReadabilityStyle style =
         platform::hud_readability_style();
-    const std::array<platform::HudText96, 6U> complete_secondary_lines{{
-        objective.secondary,
-        objective.movement,
-        objective.controls[0],
-        objective.controls[1],
-        objective.controls[2],
-        objective.diagnostics,
-    }};
-    const std::array<platform::HudRect, 6U> complete_secondary_bounds{{
-        safe.objective_hint,
-        safe.objective_movement,
-        safe.objective_controls[0],
-        safe.objective_controls[1],
-        safe.objective_controls[2],
-        safe.objective_diagnostics,
-    }};
     const float preferred = style.objective_secondary_font_size * layout.scale;
-    for (std::size_t index{}; index < complete_secondary_lines.size(); ++index) {
-        const platform::HudTextDrawPlan text = platform::make_hud_text_draw_plan(
-            complete_secondary_lines[index],
-            complete_secondary_bounds[index].width - 20.0F * layout.scale,
+    const platform::HudTextDrawPlan secondary =
+        platform::make_hud_text_draw_plan(objective.secondary,
+            safe.objective_hint.width - 20.0F * layout.scale,
             preferred, style.panel_minimum_font_size * layout.scale,
             &monospace_measure, nullptr);
-        ARPG_REQUIRE(text.visible);
-        ARPG_REQUIRE(!text.truncated);
-        ARPG_REQUIRE(arpg::test::near(text.font_size, preferred));
-        ARPG_REQUIRE(text.text.bytes == complete_secondary_lines[index].bytes);
-    }
+    ARPG_REQUIRE(secondary.visible);
+    ARPG_REQUIRE(!secondary.truncated);
+    ARPG_REQUIRE(arpg::test::near(secondary.font_size, preferred));
+    ARPG_REQUIRE(secondary.text.bytes == objective.secondary.bytes);
     ARPG_REQUIRE(navigation_plan.visible);
     ARPG_REQUIRE(navigation_plan.primary.bytes == navigation.primary.bytes);
     ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));
@@ -431,16 +412,17 @@ arpg::test::Failure large_room_hud_rows_are_opaque_and_non_overlapping_at_suppor
             viewport[0], viewport[1], false);
         const platform::HudTextSafeLayout safe =
             platform::make_hud_text_safe_layout(layout);
-        const std::array<platform::HudRect, 7U> rows{{
+        const std::array<platform::HudRect, 2U> rows{{
             safe.objective_title,
             safe.objective_hint,
-            safe.objective_movement,
-            safe.objective_controls[0],
-            safe.objective_controls[1],
-            safe.objective_controls[2],
-            safe.objective_diagnostics,
         }};
         ARPG_REQUIRE(layout.objective_panel.width >= 704.0F * layout.scale);
+        ARPG_REQUIRE(layout.objective_panel.height <= 56.0F * layout.scale);
+        ARPG_REQUIRE(safe.objective_movement.width == 0.0F);
+        for (const platform::HudRect control : safe.objective_controls) {
+            ARPG_REQUIRE(control.width == 0.0F);
+        }
+        ARPG_REQUIRE(safe.objective_diagnostics.width == 0.0F);
         for (std::size_t first{}; first < rows.size(); ++first) {
             ARPG_REQUIRE(rect_inside(rows[first], layout.objective_panel));
             for (std::size_t second = first + 1U; second < rows.size(); ++second) {

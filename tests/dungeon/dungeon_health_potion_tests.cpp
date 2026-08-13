@@ -3,6 +3,7 @@
 #include "allocation_probe.hpp"
 #include "dungeon_test_support.hpp"
 
+#include "checkpoint/room_progress_checkpoint.hpp"
 #include "dungeon/health_potion_loot.hpp"
 #include "dungeon/material_loot.hpp"
 #include "dungeon/dungeon_progression.hpp"
@@ -522,6 +523,45 @@ potion_auto_use_scans_stable_spawn_order_and_rechecks_after_commit() noexcept {
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->health_potion_claim
         ->spawn_ordinals[0] == 6U);
+    return {};
+}
+
+arpg::test::Failure
+committed_potion_claim_is_not_reused_by_later_death_save() noexcept {
+    DungeonSession session{DungeonRules{}, potion_state(108U, 4U)};
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_player_health(session, 750, 1000);
+    install_potion(session, 3U);
+
+    session.request_nearby_pickups({});
+    ARPG_REQUIRE(session.pending_save().has_value());
+    ARPG_REQUIRE(session.pending_save()->kind
+        == arpg::dungeon::PendingSaveKind::health_potion_pickup);
+    ARPG_REQUIRE(commit_pending_kind(
+        session, arpg::dungeon::PendingSaveKind::health_potion_pickup));
+    ARPG_REQUIRE(!session.pending_save().has_value());
+
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(session));
+    session.tick({});
+    const auto death = session.pending_save();
+    ARPG_REQUIRE(death.has_value());
+    ARPG_REQUIRE(death->kind
+        == arpg::dungeon::PendingSaveKind::death_retreat);
+    ARPG_REQUIRE(!death->health_potion_claim.has_value());
+
+    auto saved = std::make_unique<arpg::checkpoint::SaveCheckpointSlot>();
+    ARPG_REQUIRE(saved != nullptr);
+    saved->state.item_ownership.items.reserve(
+        death->next_state.item_ownership.items.size());
+    ARPG_REQUIRE(session.capture_save_checkpoint(
+        *saved, 2U, &death->next_state));
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        death->expected_generation,
+        death->next_state,
+        death->kind,
+    });
+    ARPG_REQUIRE(session.phase() == arpg::dungeon::RoomPhase::death_pending);
     return {};
 }
 
@@ -1340,6 +1380,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &potion_above_threshold_stays_grounded_but_75_percent_ignores_distance},
     {"potion stable scan and post-commit recheck",
         &potion_auto_use_scans_stable_spawn_order_and_rechecks_after_commit},
+    {"potion claim is not reused by later death",
+        &committed_potion_claim_is_not_reused_by_later_death_save},
     {"dead player and death snapshot reject potion",
         &dead_player_or_death_snapshot_never_requests_or_consumes_potion},
     {"committed potion publishes exact receipt",

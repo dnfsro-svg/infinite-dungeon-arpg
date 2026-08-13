@@ -9,6 +9,11 @@
 
 namespace arpg::platform {
 
+enum class MaterialCompositeMode : std::uint8_t {
+    surface,
+    emissive_only,
+};
+
 struct MaterialCompositeParameters final {
     std::uint8_t roughness_channel{0U};
     std::uint8_t emissive_channel{1U};
@@ -17,6 +22,9 @@ struct MaterialCompositeParameters final {
     float emissive_strength{0.72F};
     float metalness_strength{0.28F};
     Color emissive_tint{72U, 214U, 255U, 255U};
+    MaterialCompositeMode mode{MaterialCompositeMode::surface};
+    float emissive_mask_start{0.08F};
+    float emissive_mask_end{0.24F};
 };
 
 struct MaterialTextureApi final {
@@ -93,6 +101,10 @@ public:
         MaterialAtlasId atlas, Rectangle source, Vector2 foot_anchor,
         Vector2 foot_position, bool flip_x, float scale = 1.0F,
         Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_frame_emissive(
+        MaterialAtlasId atlas, Rectangle source, Vector2 foot_anchor,
+        Vector2 foot_position, bool flip_x, float scale = 1.0F,
+        Color tint = WHITE) const noexcept;
     [[nodiscard]] bool draw_frame_to(
         MaterialAtlasId atlas, Rectangle source, Rectangle destination,
         Color tint = WHITE) const noexcept;
@@ -101,6 +113,10 @@ public:
         MaterialScreenQuad destination, Color tint = WHITE) const noexcept;
 
 private:
+    [[nodiscard]] bool draw_frame_composited(
+        MaterialAtlasId atlas, Rectangle source, Vector2 foot_anchor,
+        Vector2 foot_position, bool flip_x, float scale, Color tint,
+        MaterialCompositeParameters parameters) const noexcept;
     MaterialTextureApi texture_api_{};
     MaterialPackState state_{};
     std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>

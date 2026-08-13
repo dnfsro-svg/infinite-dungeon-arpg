@@ -136,17 +136,27 @@ arpg::test::Failure background_plan_uses_native_source_and_downscale_only() noex
 
 bool same_tile(const arpg::platform::RoomBackgroundWorldTile& tile,
     std::uint8_t row, std::uint8_t column) noexcept {
-    constexpr float kSourceTileWidth = 256.0F;
-    constexpr float kSourceTileHeight = 144.0F;
+    constexpr float kFloorCropLeft = 864.0F;
+    constexpr float kFloorCropTop = 768.0F;
+    constexpr float kFloorCropWidth = 640.0F;
+    constexpr float kFloorCropHeight = 320.0F;
+    const bool flip_x = column % 2U != 0U;
+    const bool flip_y = row % 2U != 0U;
+    const float expected_source_x = flip_x
+        ? kFloorCropLeft + kFloorCropWidth : kFloorCropLeft;
+    const float expected_source_y = flip_y
+        ? kFloorCropTop + kFloorCropHeight : kFloorCropTop;
+    const float expected_source_width = flip_x
+        ? -kFloorCropWidth : kFloorCropWidth;
+    const float expected_source_height = flip_y
+        ? -kFloorCropHeight : kFloorCropHeight;
     const float world_tile_width = arpg::combat::room_bounds::width / 10.0F;
     const float world_tile_depth = arpg::combat::room_bounds::depth / 10.0F;
     return tile.row == row && tile.column == column
-        && arpg::test::near(tile.source.x,
-            static_cast<float>(column) * kSourceTileWidth)
-        && arpg::test::near(tile.source.y,
-            static_cast<float>(row) * kSourceTileHeight)
-        && arpg::test::near(tile.source.width, kSourceTileWidth)
-        && arpg::test::near(tile.source.height, kSourceTileHeight)
+        && arpg::test::near(tile.source.x, expected_source_x)
+        && arpg::test::near(tile.source.y, expected_source_y)
+        && arpg::test::near(tile.source.width, expected_source_width)
+        && arpg::test::near(tile.source.height, expected_source_height)
         && arpg::test::near(tile.world_bounds.minimum.x,
             arpg::combat::room_bounds::min_x
                 + static_cast<float>(column) * world_tile_width)
@@ -296,8 +306,29 @@ arpg::test::Failure world_tile_projection_uses_the_shared_camera_geometry()
             right.destination.bottom_left.x));
         ARPG_REQUIRE(arpg::test::near(left.destination.bottom_right.y,
             right.destination.bottom_left.y));
+        ARPG_REQUIRE(arpg::test::near(
+            plan.tiles[index - 1U].source.x
+                + plan.tiles[index - 1U].source.width,
+            plan.tiles[index].source.x));
     }
     ARPG_REQUIRE(compared_adjacent_tiles);
+
+    bool compared_adjacent_rows = false;
+    for (std::size_t first{}; first < plan.count; ++first) {
+        for (std::size_t second{}; second < plan.count; ++second) {
+            if (plan.tiles[second].column != plan.tiles[first].column
+                    || plan.tiles[second].row
+                        != plan.tiles[first].row + 1U) {
+                continue;
+            }
+            compared_adjacent_rows = true;
+            ARPG_REQUIRE(arpg::test::near(
+                plan.tiles[first].source.y
+                    + plan.tiles[first].source.height,
+                plan.tiles[second].source.y));
+        }
+    }
+    ARPG_REQUIRE(compared_adjacent_rows);
 
     const auto& bounds = plan.tiles[0U].world_bounds;
     const auto back_left = arpg::platform::project_render_world(

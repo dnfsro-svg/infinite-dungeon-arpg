@@ -38,6 +38,7 @@ struct MemorySlots final {
     std::array<std::uint8_t, settings::kSettingsEncodedSize> b{};
     bool has_a{};
     bool has_b{};
+    bool write_lock_held{};
 };
 
 [[nodiscard]] bool slot_is_a(const std::filesystem::path& path) noexcept {
@@ -72,8 +73,26 @@ bool memory_replace(void* context, const std::filesystem::path& path,
     return true;
 }
 
+settings::SettingsWriteLockResult memory_acquire_write_lock(
+    void* context, const std::filesystem::path&) noexcept {
+    auto& slots = *static_cast<MemorySlots*>(context);
+    if (slots.write_lock_held) {
+        return {settings::SettingsWriteLockStatus::busy, nullptr};
+    }
+    slots.write_lock_held = true;
+    return {settings::SettingsWriteLockStatus::acquired, &slots};
+}
+
+void memory_release_write_lock(void* context, void* token) noexcept {
+    auto& slots = *static_cast<MemorySlots*>(context);
+    if (token == &slots) {
+        slots.write_lock_held = false;
+    }
+}
+
 [[nodiscard]] settings::SettingsFileOps memory_ops(MemorySlots& slots) noexcept {
-    return {&slots, &memory_read, &memory_replace};
+    return {&slots, &memory_read, &memory_replace,
+        &memory_acquire_write_lock, &memory_release_write_lock};
 }
 
 [[nodiscard]] std::array<std::uint8_t, settings::kSettingsEncodedSize>

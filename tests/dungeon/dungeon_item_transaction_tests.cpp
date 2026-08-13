@@ -52,6 +52,7 @@ DungeonRunState state_with_items(
     std::initializer_list<ItemInstance> items) {
     DungeonRunState state = arpg::dungeon::make_initial_run_state(
         0x81818181ULL, DungeonRules{}).state;
+    state.current_room.depth = 4U;
     state.item_ownership.items.assign(items.begin(), items.end());
     state.item_ownership.next_item_sequence = 9U;
     return state;

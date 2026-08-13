@@ -247,6 +247,7 @@ private:
         MonsterOrdinal ordinal) const noexcept;
     [[nodiscard]] bool monster_ordinal_alive(
         MonsterOrdinal ordinal) const noexcept;
+    [[nodiscard]] std::uint32_t monster_damage_basis_points() const noexcept;
     void initialize_runtime() noexcept;
 
     void initialize_player() noexcept;

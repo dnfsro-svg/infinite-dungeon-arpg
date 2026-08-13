@@ -26,6 +26,7 @@ struct MemorySettingsFiles final {
     std::filesystem::path path{};
     std::vector<std::uint8_t> bytes{};
     bool fail_replace{};
+    bool write_lock_held{};
 };
 
 bool memory_read(void* context, const std::filesystem::path& path,
@@ -45,9 +46,25 @@ bool memory_replace(void* context, const std::filesystem::path& path,
     return true;
 }
 
+settings::SettingsWriteLockResult memory_acquire_write_lock(
+    void* context, const std::filesystem::path&) noexcept {
+    auto& files = *static_cast<MemorySettingsFiles*>(context);
+    if (files.write_lock_held) {
+        return {settings::SettingsWriteLockStatus::busy, nullptr};
+    }
+    files.write_lock_held = true;
+    return {settings::SettingsWriteLockStatus::acquired, &files};
+}
+
+void memory_release_write_lock(void* context, void* token) noexcept {
+    auto& files = *static_cast<MemorySettingsFiles*>(context);
+    if (token == &files) files.write_lock_held = false;
+}
+
 settings::SettingsStore memory_store(MemorySettingsFiles& files) {
     return settings::SettingsStore{"memory-settings",
-        {&files, &memory_read, &memory_replace}};
+        {&files, &memory_read, &memory_replace,
+            &memory_acquire_write_lock, &memory_release_write_lock}};
 }
 
 struct ApplyRollbackFailureBackend final {
@@ -170,6 +187,49 @@ arpg::test::Failure pause_entry_discards_same_frame_action_and_accumulator()
     return {};
 }
 
+arpg::test::Failure room_reset_gate_keeps_pause_gameplay_frozen() noexcept {
+    core::FixedStepRunner fixed_step{};
+    bool pause_latched = false;
+    const platform::HostFrameGateResult paused = platform::gate_host_frame(
+        fixed_step, pause_latched, true,
+        core::FixedStepRunner::kStepSeconds);
+    ARPG_REQUIRE(!paused.forward_gameplay);
+
+    platform::HostRoomResetGateInput input{};
+    input.pause_screen = platform::PauseScreen::root;
+    input.reset_pressed = true;
+    input.gameplay_armed = true;
+    input.death_allows_gameplay = true;
+    input.forward_actions = paused.forward_gameplay;
+    input.inventory_allows_room_reset = false;
+    ARPG_REQUIRE(platform::host_requests_room_reset(input));
+
+    for (const platform::PauseScreen screen : {
+             platform::PauseScreen::settings,
+             platform::PauseScreen::capture_binding,
+             platform::PauseScreen::quit_confirm,
+         }) {
+        input.pause_screen = screen;
+        ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    }
+
+    input.pause_screen = platform::PauseScreen::closed;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    input.forward_actions = true;
+    input.inventory_allows_room_reset = true;
+    ARPG_REQUIRE(platform::host_requests_room_reset(input));
+
+    input.gameplay_armed = false;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    input.gameplay_armed = true;
+    input.death_allows_gameplay = false;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    input.death_allows_gameplay = true;
+    input.reset_pressed = false;
+    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    return {};
+}
+
 arpg::test::Failure death_continue_uses_fixed_e_from_authoritative_snapshot()
     noexcept {
     settings::SettingsData rebound = settings::default_settings();
@@ -199,6 +259,24 @@ arpg::test::Failure death_continue_uses_fixed_e_from_authoritative_snapshot()
             false, true, fixed_e_input.keys, physical);
     ARPG_REQUIRE(fixed_e_gate.continue_death);
     ARPG_REQUIRE(!fixed_e_gate.exit);
+    return {};
+}
+
+arpg::test::Failure death_continue_rejects_fixed_e_while_focus_is_lost()
+    noexcept {
+    const settings::SettingsData settings_data = settings::default_settings();
+    platform::PhysicalKeySnapshot physical{};
+    physical.pressed[static_cast<std::size_t>(settings::StableKey::e)] = true;
+    physical.focus_lost = true;
+
+    const platform::HostFrameInput input =
+        platform::map_host_frame_input(settings_data, physical);
+    ARPG_REQUIRE(input.keys.focus_lost);
+    ARPG_REQUIRE(!input.keys.e);
+    const platform::DeathInputGate gate = platform::host_death_input_gate(
+        false, true, input.keys, physical);
+    ARPG_REQUIRE(!gate.continue_death);
+    ARPG_REQUIRE(!gate.forward_gameplay);
     return {};
 }
 
@@ -384,8 +462,12 @@ constexpr arpg::test::TestCase kCases[] = {
         &six_hundred_paused_presented_frames_freeze_simulation},
     {"pause entry discards action and accumulator",
         &pause_entry_discards_same_frame_action_and_accumulator},
+    {"room reset gate keeps pause gameplay frozen",
+        &room_reset_gate_keeps_pause_gameplay_frozen},
     {"death continue uses fixed E snapshot",
         &death_continue_uses_fixed_e_from_authoritative_snapshot},
+    {"death continue rejects fixed E while focus lost",
+        &death_continue_rejects_fixed_e_while_focus_is_lost},
     {"corrupt settings notice is deferred",
         &corrupt_settings_notice_is_deferred_until_first_settings},
     {"healthy settings loads have no notice",

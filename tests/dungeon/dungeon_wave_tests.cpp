@@ -628,6 +628,7 @@ arpg::test::Failure visual_overflow_does_not_drop_ledger_experience() noexcept {
 arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcept {
     DungeonRules rules;
     auto state = state_for_seed(0x515151U, rules);
+    state.current_room.depth = 4U;
     state.current_room.has_hole = true;
     const auto reach_awaiting = [](DungeonSession& session) noexcept {
         session.tick({});

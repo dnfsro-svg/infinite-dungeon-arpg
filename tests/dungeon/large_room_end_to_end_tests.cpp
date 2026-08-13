@@ -754,8 +754,9 @@ bool measure_worker_cost(
         return false;
     }
     storage->release_loaded_checkpoints();
-    persistence::SaveCommitWorker worker{*storage};
-    if (!worker.start()) return false;
+    auto worker = std::unique_ptr<persistence::SaveCommitWorker>{
+        new (std::nothrow) persistence::SaveCommitWorker{*storage}};
+    if (worker == nullptr || !worker->start()) return false;
 
     std::array<std::uint64_t, kWorkerCostSampleCount> encode_samples{};
     std::array<std::uint64_t, kWorkerCostSampleCount> write_samples{};
@@ -771,22 +772,23 @@ bool measure_worker_cost(
     for (std::size_t commit_index{}; commit_index < kCommitCount;
             ++commit_index) {
         const std::uint64_t revision = kFinalRevision + commit_index + 1U;
-        const auto lease = worker.acquire_capture_slot(revision,
+        const auto lease = worker->acquire_capture_slot(revision,
             persistence::SaveCommitRequestKind::exact,
             0x11C057U + commit_index);
         if (lease.state != persistence::SaveCommitSubmitState::accepted) {
             return false;
         }
-        persistence::SaveCommitJobSlot* const job = worker.capture_job(lease);
+        persistence::SaveCommitJobSlot* const job =
+            worker->capture_job(lease);
         if (job == nullptr) {
-            worker.cancel_capture(lease);
+            worker->cancel_capture(lease);
             return false;
         }
         try {
             job->checkpoint.state.item_ownership.items.reserve(
                 source.state.item_ownership.items.size());
         } catch (...) {
-            worker.cancel_capture(lease);
+            worker->cancel_capture(lease);
             return false;
         }
         bool migrated = true;
@@ -794,17 +796,17 @@ bool measure_worker_cost(
                 source_size, job->checkpoint, migrated)
                 != persistence::CodecError::none
                 || migrated) {
-            worker.cancel_capture(lease);
+            worker->cancel_capture(lease);
             return false;
         }
         job->checkpoint.persistence_revision = revision;
-        if (worker.submit(lease).state
+        if (worker->submit(lease).state
                 != persistence::SaveCommitSubmitState::accepted) {
-            worker.cancel_capture(lease);
+            worker->cancel_capture(lease);
             return false;
         }
         persistence::SaveCommitCompletion completion{};
-        if (!wait_worker_completion(worker, completion)
+        if (!wait_worker_completion(*worker, completion)
                 || completion.revision != revision
                 || completion.intent != 0x11C057U + commit_index
                 || completion.result.state
@@ -832,7 +834,9 @@ bool measure_worker_cost(
         minimum_readback_operations = (std::min)(
             minimum_readback_operations, cost.readback_operations);
     }
-    worker.stop_and_join();
+    worker->stop_and_join();
+    worker.reset();
+    storage.reset();
 
     auto reloaded = std::unique_ptr<persistence::SaveCommitStorage>{
         new (std::nothrow) persistence::SaveCommitStorage{}};

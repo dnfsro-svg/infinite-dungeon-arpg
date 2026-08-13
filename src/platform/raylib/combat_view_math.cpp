@@ -279,6 +279,11 @@ MonsterLabelTextStyle monster_label_text_style(float viewport_scale) noexcept {
     return {font_size, font_size, font_size, 0};
 }
 
+MonsterPresentationPlan monster_presentation_plan(
+    std::size_t label_lane, bool draw_debug) noexcept {
+    return {-128.0F, label_lane % 4U, true, draw_debug, draw_debug};
+}
+
 AffixBadge monster_affix_badge(combat::MonsterAffixInstance affix) noexcept {
     const combat::MonsterAffixDefinition* const definition =
         combat::monster_affix_definition(affix.id);

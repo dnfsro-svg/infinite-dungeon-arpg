@@ -220,7 +220,7 @@ function(stage11d_expect_stage12_lambda_decoy LABEL)
 endfunction()
 
 set(_passive_overlay_block
-    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && passive_overlay_open) {\n                draw_passive_tree_overlay(current, runtime.render_status());\n            }")
+    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && passive_overlay_open) {\n                draw_passive_tree_overlay(current, runtime.render_status(),\n                    stable_key_label(settings::binding_for(input_settings,\n                        settings::SettingAction::passive_tree)),\n                    renderer.hud_font(), renderer.hud_font_ready());\n            }")
 function(stage11d_run_task7c_scope_mutations)
     stage11d_expect_dead_ground_decoy(task7c_m01_dead_decoy_before_stage17
         "validation_runtime->observe_active_skill_draw(" FALSE "T7C-M01")
@@ -425,7 +425,7 @@ stage11d_expect_moved_ground_observer(task7c_m02_before_stage12_status
     "if (config.stage12_material_runtime_status != nullptr) {\n                const MonsterMaterialDrawRuntimeStatus shooter_draw =" FALSE
     "T7C-M02")
 set(_inventory_overlay_block
-    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && inventory.is_open()) {\n                inventory.draw(*session, current, runtime.render_status(),\n                    renderer.material_pack(), renderer.hud_font(),\n                    renderer.hud_font_ready());\n            }")
+    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && inventory.is_open()) {\n                inventory.draw(*session, current, runtime.render_status(),\n                    renderer.material_pack(), stable_key_label(\n                        settings::binding_for(input_settings,\n                            settings::SettingAction::inventory)),\n                    renderer.hud_font(),\n                    renderer.hud_font_ready());\n            }")
 set(_pause_overlay_block
     "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && pause_menu.screen != PauseScreen::closed) {\n                pause_menu_renderer.draw(pause_menu, renderer.material_pack());\n                pause_cjk_ready = pause_menu_renderer.has_cjk_font();\n            }")
 stage11d_expect_ground_observer_after_block(task7c_m03_after_passive_overlay
@@ -627,9 +627,9 @@ stage11d_replace_required(_combat_renamed_declaration "${_combat}"
 stage11d_replace_required(_combat_renamed "${_combat_renamed_declaration}"
     "render_plan." "frame_plan." local_plan_use_rename)
 set(_renamed_room
-    "            draw_room(world, frame_plan.ground_loot,\n                frame_plan.material_loot, camera);")
+    "            draw_room(world, frame_plan.ground_loot,\n                frame_plan.material_loot, camera, interact_binding_label);")
 set(_formatted_room
-    "            draw_room(\n                world,\n                frame_plan.ground_loot,\n                frame_plan.material_loot, camera); ")
+    "            draw_room(\n                world,\n                frame_plan.ground_loot,\n                frame_plan.material_loot, camera, interact_binding_label); ")
 stage11d_replace_required(_combat_formatted "${_combat_renamed}"
     "${_renamed_room}" "${_formatted_room}" harmless_formatting)
 stage11d_run_guard_case(rename_and_format "${_combat_formatted}" "${_room}"
@@ -642,8 +642,8 @@ set(_alias_declaration
 stage11d_replace_required(_combat_alias "${_combat_renamed}"
     "${_renamed_camera}" "${_alias_declaration}" const_reference_alias)
 stage11d_replace_required(_combat_alias_room "${_combat_alias}"
-    "frame_plan.ground_loot,\n                frame_plan.material_loot, camera);"
-    "shared_ground_loot,\n                frame_plan.material_loot, camera);" alias_room_consumer)
+    "frame_plan.ground_loot,\n                frame_plan.material_loot, camera, interact_binding_label);"
+    "shared_ground_loot,\n                frame_plan.material_loot, camera, interact_binding_label);" alias_room_consumer)
 stage11d_replace_required(_combat_alias_consumers "${_combat_alias_room}"
     "frame_plan.ground_loot);" "shared_ground_loot);" alias_hud_consumer)
 stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_room}"

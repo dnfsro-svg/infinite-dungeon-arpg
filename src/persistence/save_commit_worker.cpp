@@ -13,12 +13,89 @@
 #if defined(_WIN32)
 #define NOMINMAX
 #include <Windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 
 namespace arpg::persistence {
 namespace {
 
 constexpr std::size_t kSlotCount = 2U;
+
+enum class DirectoryLeaseState : std::uint8_t {
+    acquired,
+    busy,
+    failed,
+};
+
+DirectoryLeaseState acquire_directory_lease(
+    const std::filesystem::path& path,
+    std::intptr_t& token) noexcept {
+    token = -1;
+#if defined(_WIN32)
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return DirectoryLeaseState::failed;
+    OVERLAPPED overlapped{};
+    if (LockFileEx(file,
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0U, 1U, 0U, &overlapped) == FALSE) {
+        const DWORD error = GetLastError();
+        static_cast<void>(CloseHandle(file));
+        return error == ERROR_LOCK_VIOLATION
+            ? DirectoryLeaseState::busy : DirectoryLeaseState::failed;
+    }
+    token = reinterpret_cast<std::intptr_t>(file);
+    return DirectoryLeaseState::acquired;
+#else
+    int open_flags = O_CREAT | O_RDWR;
+#if defined(O_CLOEXEC)
+    open_flags |= O_CLOEXEC;
+#endif
+    const int descriptor = ::open(path.c_str(), open_flags, 0600);
+    if (descriptor < 0) return DirectoryLeaseState::failed;
+#if !defined(O_CLOEXEC)
+    if (::fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) {
+        static_cast<void>(::close(descriptor));
+        return DirectoryLeaseState::failed;
+    }
+#endif
+    int result{};
+    do {
+        result = ::flock(descriptor, LOCK_EX | LOCK_NB);
+    } while (result != 0 && errno == EINTR);
+    if (result != 0) {
+        const int error = errno;
+        static_cast<void>(::close(descriptor));
+        return error == EWOULDBLOCK || error == EAGAIN
+            ? DirectoryLeaseState::busy : DirectoryLeaseState::failed;
+    }
+    token = static_cast<std::intptr_t>(descriptor);
+    return DirectoryLeaseState::acquired;
+#endif
+}
+
+void release_directory_lease_token(std::intptr_t& token) noexcept {
+    if (token == -1) return;
+#if defined(_WIN32)
+    const HANDLE file = reinterpret_cast<HANDLE>(token);
+    OVERLAPPED overlapped{};
+    static_cast<void>(UnlockFileEx(file, 0U, 1U, 0U, &overlapped));
+    static_cast<void>(CloseHandle(file));
+#else
+    const int descriptor = static_cast<int>(token);
+    int result{};
+    do {
+        result = ::flock(descriptor, LOCK_UN);
+    } while (result != 0 && errno == EINTR);
+    static_cast<void>(::close(descriptor));
+#endif
+    token = -1;
+}
 
 std::size_t path_allocation_bytes(
     const std::filesystem::path& path) noexcept {
@@ -31,7 +108,16 @@ std::size_t path_allocation_bytes(
 
 }  // namespace
 
+SaveCommitStorage::~SaveCommitStorage() noexcept {
+    release_directory_lease();
+}
+
+void SaveCommitStorage::release_directory_lease() noexcept {
+    release_directory_lease_token(directory_lease_token_);
+}
+
 void SaveCommitStorage::reset_initialization() noexcept {
+    release_directory_lease();
     for (SaveCommitJobSlot& job : jobs_) {
         checkpoint::clear_save_checkpoint_slot(job.checkpoint);
         std::vector<items::ItemInstance>{}.swap(
@@ -250,11 +336,35 @@ SaveCommitDiskState disk_file_state(
 }  // namespace
 
 bool SaveCommitStorage::initialize(const SaveStoreConfig& config) noexcept {
+    SaveError error{SaveError::none};
+    return initialize(config, error);
+}
+
+bool SaveCommitStorage::initialize(
+    const SaveStoreConfig& config, SaveError& error) noexcept {
+    error = SaveError::directory_unavailable;
     try {
         if (initialized_ || config.directory.empty()) return false;
-        std::error_code error;
-        std::filesystem::create_directories(config.directory, error);
-        if (error) return false;
+        std::error_code directory_error;
+        std::filesystem::create_directories(
+            config.directory, directory_error);
+        if (directory_error) return false;
+        const std::filesystem::path lease_path =
+            config.directory / "run.lock";
+        const auto path_within_bound = [](const std::filesystem::path& path) {
+            return path.native().capacity()
+                <= kSaveCommitMaximumPathCodeUnits;
+        };
+        if (!path_within_bound(config.directory)
+                || !path_within_bound(lease_path)) return false;
+        const DirectoryLeaseState lease = acquire_directory_lease(
+            lease_path, directory_lease_token_);
+        if (lease != DirectoryLeaseState::acquired) {
+            if (lease == DirectoryLeaseState::busy) {
+                error = SaveError::directory_busy;
+            }
+            return false;
+        }
         config_ = config;
         slot_paths_[0U] = config.directory / "run_a.sav";
         slot_paths_[1U] = config.directory / "run_b.sav";
@@ -269,10 +379,6 @@ bool SaveCommitStorage::initialize(const SaveStoreConfig& config) noexcept {
                 return false;
             }
         }
-        const auto path_within_bound = [](const std::filesystem::path& path) {
-            return path.native().capacity()
-                <= kSaveCommitMaximumPathCodeUnits;
-        };
         if (!path_within_bound(config_.directory)
                 || !path_within_bound(slot_paths_[0U])
                 || !path_within_bound(slot_paths_[1U])
@@ -369,6 +475,7 @@ bool SaveCommitStorage::initialize(const SaveStoreConfig& config) noexcept {
             return false;
         }
         initialized_ = true;
+        error = SaveError::none;
         return true;
     } catch (...) {
         reset_initialization();

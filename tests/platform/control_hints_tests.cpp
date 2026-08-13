@@ -24,7 +24,7 @@ arpg::test::Failure defaults_render_every_configurable_action() noexcept {
     ARPG_REQUIRE(std::strcmp(hints.primary.data(),
         "W Move Up  S Move Down  A Move Left  D Move Right") == 0);
     ARPG_REQUIRE(std::strcmp(hints.secondary.data(),
-        "J Light Attack  K Jump  L Launcher  E Interact  I Inventory  P Passive Tree  F1 Debug  F12 Screenshot  Esc Pause") == 0);
+        "J Light Attack  K Jump  L Launcher  E Interact  I Inventory  P Passive Tree (After Full Clear)  F1 Debug  F12 Screenshot  Esc Pause") == 0);
     ARPG_REQUIRE(hints.revision == values.revision);
     return {};
 }

@@ -3,6 +3,24 @@
 #include "combat/room_bounds.hpp"
 
 namespace arpg::dungeon {
+namespace {
+
+[[nodiscard]] constexpr std::uint32_t monster_source_damage_bp(
+    const std::uint64_t depth) noexcept {
+    switch (depth) {
+    case 1U: return 3500U;
+    case 2U: return 5000U;
+    case 3U: return 7000U;
+    default: return 10000U;
+    }
+}
+
+[[nodiscard]] constexpr std::uint16_t initial_invulnerability_ticks(
+    const std::uint64_t depth) noexcept {
+    return depth >= 1U && depth <= 3U ? 180U : 0U;
+}
+
+}  // namespace
 
 std::optional<combat::CombatLabConfig> make_combat_lab_config(
     checkpoint::EntrySide entry,
@@ -56,6 +74,7 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
 std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     checkpoint::EntrySide entry,
     std::uint32_t rules_version,
+    std::uint64_t depth,
     const combat::EncounterWave& wave,
     bool reset_player_health,
     abyss::AbyssCombatConfig abyss_config,
@@ -73,6 +92,9 @@ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     config.abyss = abyss_config;
     config.player_build = player_build;
     config.evasion_seed = evasion_seed;
+    config.monster_source_damage_bp = monster_source_damage_bp(depth);
+    config.initial_invulnerability_ticks =
+        initial_invulnerability_ticks(depth);
     config.fire_room_obstacles = fire_room_obstacles;
     return config;
 }

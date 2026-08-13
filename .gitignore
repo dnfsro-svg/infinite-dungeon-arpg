@@ -2,7 +2,13 @@
 /out/
 /build/
 /build-*/
+/stage11b-task10-build/
 /_deps/
+/*build*/
+/out-*/
+/_stage*-quality-*/
+/stage*-*-check/
+/stage*-*-mutations/
 /.vs/
 /CMakeUserPresets.json
 *.suo

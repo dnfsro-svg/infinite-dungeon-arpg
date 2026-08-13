@@ -32,6 +32,7 @@ public:
         const dungeon::DungeonSnapshot& snapshot,
         const DungeonRenderStatus& status,
         const MaterialPack& material_pack,
+        const char* inventory_binding_label,
         Font hud_font, bool hud_font_ready);
 
 private:

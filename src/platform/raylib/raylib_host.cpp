@@ -23,6 +23,7 @@
 #include "pause_menu_renderer.hpp"
 #include "pause_menu_state.hpp"
 #include "pause_menu_view.hpp"
+#include "stable_key_raylib.hpp"
 #include "ui_material.hpp"
 #include "ui_text_bounds_audit.hpp"
 #include "persistence/save_paths.hpp"
@@ -367,7 +368,8 @@ DeathInputGate host_death_input_gate(
     bool death_pending,
     FrameKeyState keys,
     const PhysicalKeySnapshot& physical_keys) noexcept {
-    keys.e = stable_pressed(physical_keys, settings::StableKey::e);
+    keys.e = !physical_keys.focus_lost
+        && stable_pressed(physical_keys, settings::StableKey::e);
     return death_input_gate(death_saving, death_pending, keys);
 }
 
@@ -414,6 +416,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         DungeonRuntime& runtime = *runtime_storage;
         const bool initialized = runtime.initialize();
         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
+            if (runtime.render_status().error
+                    == persistence::SaveError::directory_busy) {
+                TraceLog(LOG_ERROR,
+                    "Save directory is already in use by another game instance");
+            }
             return HostExitCode::save_initialization_failed;
         }
         if ((config.stage12_material_background_only
@@ -726,13 +733,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory_toggled_this_frame = true;
                 }
             }
-            if (death_gate.forward_gameplay
+            const bool passive_toggle_input_available =
+                runtime.authority_requests_enabled()
+                && !gameplay_rearm_was_required
+                && death_gate.forward_gameplay
                 && pause_menu.screen == PauseScreen::closed
-                && !inventory.is_open() && !inventory_toggled_this_frame
-                && frame_input.keys.passives
-                && passive_overlay_can_toggle(inventory.is_open())
-                && passive_tree_can_open(current)) {
+                && !inventory.is_open()
+                && !inventory_toggled_this_frame
+                && passive_overlay_can_toggle(inventory.is_open());
+            const PassiveTreeToggleAction passive_toggle_action =
+                passive_tree_toggle_action(current,
+                    frame_input.keys.passives,
+                    passive_toggle_input_available);
+            if (passive_toggle_action == PassiveTreeToggleAction::toggle) {
                 passive_overlay_open = !passive_overlay_open;
+            } else if (passive_toggle_action
+                    == PassiveTreeToggleAction::show_full_clear_requirement) {
+                renderer.publish_passive_tree_blocked();
             }
             if ((!inventory.is_open() || !death_gate.forward_gameplay)
                     && death_gate.debug_toggle) {
@@ -756,9 +773,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const PauseScreen pause_screen_before = pause_menu.screen;
             const bool pause_was_open =
                 pause_screen_before != PauseScreen::closed;
-            if (pause_was_open && physical_keys.mouse_left) {
+            if (pause_was_open
+                    && !physical_keys.focus_lost
+                    && physical_keys.mouse_left) {
+                const PauseMenuView pause_view =
+                    make_pause_menu_view(pause_menu);
                 const PauseMenuLayout layout = pause_menu_layout(
-                    GetScreenWidth(), GetScreenHeight());
+                    GetScreenWidth(), GetScreenHeight(),
+                    pause_view.row_count);
                 const auto selected = hit_test_pause_row(
                     layout, physical_keys.mouse_position);
                 if (selected.has_value()) pause_menu.selected_row = *selected;
@@ -828,8 +850,15 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && death_gate.forward_gameplay
                 && host_gate.forward_gameplay && !pause_blocks_gameplay
                 && gameplay_armed;
-            if (forward_actions && inventory_gate.forward_room_reset
-                && frame_input.keys.reset) {
+            HostRoomResetGateInput room_reset_gate{};
+            room_reset_gate.pause_screen = pause_screen_before;
+            room_reset_gate.reset_pressed = frame_input.keys.reset;
+            room_reset_gate.gameplay_armed = gameplay_armed;
+            room_reset_gate.death_allows_gameplay = death_gate.forward_gameplay;
+            room_reset_gate.forward_actions = forward_actions;
+            room_reset_gate.inventory_allows_room_reset =
+                inventory_gate.forward_room_reset;
+            if (host_requests_room_reset(room_reset_gate)) {
                 const dungeon::RequestResult reset =
                     session->reset_current_room();
                 if (reset != dungeon::RequestResult::rejected) {
@@ -1043,7 +1072,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     previous, presented_snapshot, *render_world, frame_camera,
                     runtime.render_status(),
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
-                    feedback, audio_ready);
+                    feedback, audio_ready, stable_key_label(
+                        settings::binding_for(input_settings,
+                            settings::SettingAction::interact)));
             }();
             validation_runtime->observe_active_skill_draw(
                 presented_snapshot, renderer.active_skill_draw_status());
@@ -1181,13 +1212,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (!config.stage12_material_background_only
                 && !config.stage12_material_icons_only
                 && passive_overlay_open) {
-                draw_passive_tree_overlay(current, runtime.render_status());
+                draw_passive_tree_overlay(current, runtime.render_status(),
+                    stable_key_label(settings::binding_for(input_settings,
+                        settings::SettingAction::passive_tree)),
+                    renderer.hud_font(), renderer.hud_font_ready());
             }
             if (!config.stage12_material_background_only
                 && !config.stage12_material_icons_only
                 && inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status(),
-                    renderer.material_pack(), renderer.hud_font(),
+                    renderer.material_pack(), stable_key_label(
+                        settings::binding_for(input_settings,
+                            settings::SettingAction::inventory)),
+                    renderer.hud_font(),
                     renderer.hud_font_ready());
             }
             bool pause_cjk_ready = false;

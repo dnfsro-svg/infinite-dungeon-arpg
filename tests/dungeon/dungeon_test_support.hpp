@@ -147,6 +147,10 @@ struct DungeonSessionTestAccess final {
     static bool kill_current_player_through_combat(
         dungeon::DungeonSession& session) noexcept {
         if (!session.combat_.has_value()) return false;
+        // This helper's contract is to force the death path. Entry protection
+        // is covered independently and must not turn death-lifecycle fixtures
+        // into timing tests.
+        session.combat_->player_.invulnerability_ticks = 0U;
         const combat::PlayerDamageSource source{
             combat::PlayerDamageSourceKind::ground_hazard,
             combat::MonsterId::fire_bomber,
@@ -903,6 +907,14 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_materials_;
     }
+    static void set_ground_material_position(
+        dungeon::DungeonSession& session, std::uint16_t ordinal,
+        combat::Vec3 position) noexcept {
+        if (ordinal < session.ground_materials_.size()
+                && session.ground_materials_[ordinal].active) {
+            session.ground_materials_[ordinal].position = position;
+        }
+    }
     static const std::array<dungeon::GroundHealthPotion,
         dungeon::kAuthoritativeHealthPotionCapacity>& ground_health_potions(
         const dungeon::DungeonSession& session) noexcept {
@@ -1197,6 +1209,13 @@ inline void install_ground_material(
         dungeon::GroundMaterialSource::monster_common) noexcept {
     DungeonSessionTestAccess::install_ground_material(
         session, ordinal, material, position, source);
+}
+
+inline void set_ground_material_position(
+    dungeon::DungeonSession& session, std::uint16_t ordinal,
+    combat::Vec3 position) noexcept {
+    DungeonSessionTestAccess::set_ground_material_position(
+        session, ordinal, position);
 }
 
 inline void install_ground_health_potion(

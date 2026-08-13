@@ -394,7 +394,6 @@ test::Failure global_keys_and_mouse_are_binding_independent() noexcept {
     snapshot.mouse_right = true;
     snapshot.mouse_wheel = -3.0F;
     snapshot.down[key_index(settings::StableKey::right_control)] = true;
-    snapshot.focus_lost = true;
     snapshot.mouse_position = {17.0F, 29.0F};
 
     const platform::HostFrameInput input =
@@ -409,10 +408,55 @@ test::Failure global_keys_and_mouse_are_binding_independent() noexcept {
     ARPG_REQUIRE(input.mouse_right_pressed);
     ARPG_REQUIRE(input.mouse_wheel == -3.0F);
     ARPG_REQUIRE(input.control_down);
-    ARPG_REQUIRE(input.keys.focus_lost);
+    ARPG_REQUIRE(!input.keys.focus_lost);
     ARPG_REQUIRE(input.mouse_position.x == 17.0F);
     ARPG_REQUIRE(input.mouse_position.y == 29.0F);
     ARPG_REQUIRE(!input.keys.e);
+    return {};
+}
+
+test::Failure lost_focus_suppresses_all_gameplay_input() noexcept {
+    const settings::SettingsData settings = settings::default_settings();
+    platform::PhysicalKeySnapshot snapshot{};
+    hold(snapshot, settings::StableKey::w);
+    hold(snapshot, settings::StableKey::d);
+    hold(snapshot, settings::StableKey::left_control);
+    press(snapshot, settings::StableKey::j);
+    press(snapshot, settings::StableKey::e);
+    press(snapshot, settings::StableKey::i);
+    press(snapshot, settings::StableKey::p);
+    press(snapshot, settings::StableKey::r);
+    press(snapshot, settings::StableKey::n);
+    snapshot.active_skill_slots[0] = true;
+    snapshot.mouse_left = true;
+    snapshot.mouse_right = true;
+    snapshot.mouse_wheel = 3.0F;
+    snapshot.mouse_position = {17.0F, 29.0F};
+    snapshot.focus_lost = true;
+
+    const platform::HostFrameInput input =
+        platform::map_host_frame_input(settings, snapshot);
+    ARPG_REQUIRE(input.keys.focus_lost);
+    ARPG_REQUIRE(input.movement.x == 0);
+    ARPG_REQUIRE(input.movement.y == 0);
+    ARPG_REQUIRE(!input.keys.movement);
+    ARPG_REQUIRE(!input.keys.attack);
+    ARPG_REQUIRE(!input.keys.e);
+    ARPG_REQUIRE(!input.keys.inventory);
+    ARPG_REQUIRE(!input.keys.passives);
+    ARPG_REQUIRE(!input.keys.reset);
+    ARPG_REQUIRE(!input.keys.recovery);
+    ARPG_REQUIRE(!input.keys.mouse_gameplay);
+    ARPG_REQUIRE(!input.combat_actions[0]);
+    ARPG_REQUIRE(!input.combat_actions[1]);
+    ARPG_REQUIRE(!input.combat_actions[2]);
+    ARPG_REQUIRE(!input.active_skill_slots[0]);
+    ARPG_REQUIRE(!input.mouse_left_pressed);
+    ARPG_REQUIRE(!input.mouse_right_pressed);
+    ARPG_REQUIRE(!input.control_down);
+    ARPG_REQUIRE(input.mouse_wheel == 0.0F);
+    ARPG_REQUIRE(input.mouse_position.x == 0.0F);
+    ARPG_REQUIRE(input.mouse_position.y == 0.0F);
     return {};
 }
 
@@ -528,6 +572,7 @@ constexpr test::TestCase kCases[] = {
     {"swapped logical bindings", &swapped_bindings_drive_the_new_logical_owners},
     {"movement down and action pressed", &movement_uses_down_and_actions_use_pressed},
     {"global input binding independent", &global_keys_and_mouse_are_binding_independent},
+    {"lost focus suppresses gameplay", &lost_focus_suppresses_all_gameplay_input},
     {"R binding wins over reset", &valid_r_binding_wins_over_legacy_room_reset},
     {"N recovery from stable edge", &recovery_n_uses_the_stable_snapshot_edge},
     {"validated binding emits one combat action", &validated_swap_never_emits_two_combat_actions},

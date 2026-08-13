@@ -468,6 +468,27 @@ arpg::test::Failure pickup_feedback_is_reward_priority_and_keeps_abyss_style()
     return {};
 }
 
+arpg::test::Failure blocked_passive_tree_feedback_is_clear_and_transient()
+    noexcept {
+    platform::HudNoticeState state{};
+    state.publish_passive_tree_blocked();
+    const dungeon::DungeonSnapshot previous = baseline_snapshot();
+    dungeon::DungeonSnapshot current = previous;
+    current.progression.unspent_passive_points = 1U;
+    current.inventory_count = 1U;
+    state.observe(previous, current, saved_status(), rebound_hints(), false);
+    const platform::HudNotice notice = state.view().primary;
+    ARPG_REQUIRE(notice.kind == platform::HudNoticeKind::passive_tree);
+    ARPG_REQUIRE(std::strcmp(notice.text.bytes.data(),
+        u8"清理全部怪物后可打开被动树") == 0);
+    ARPG_REQUIRE(arpg::test::near(notice.seconds_left, 3.0F));
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        platform::hud_font_plan().shared, notice.text.bytes.data()));
+    state.update(3.0F, false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::none);
+    return {};
+}
+
 arpg::test::Failure pickup_feedback_survives_room_change_for_full_lifetime()
     noexcept {
     const dungeon::DungeonSnapshot baseline = baseline_snapshot();
@@ -557,6 +578,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"progression presented edges once", &progression_between_presented_frames_enqueues_each_edge_once},
     {"pickup feedback reward priority abyss style",
         &pickup_feedback_is_reward_priority_and_keeps_abyss_style},
+    {"blocked passive tree feedback",
+        &blocked_passive_tree_feedback_is_clear_and_transient},
     {"pickup feedback survives room change",
         &pickup_feedback_survives_room_change_for_full_lifetime},
     {"pickup feedback priority ordering",

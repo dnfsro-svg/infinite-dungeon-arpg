@@ -56,6 +56,17 @@ void add_large_room_hud_codepoints(DeathOverlayFontPlan& plan) noexcept {
     }
 }
 
+void add_passive_tree_codepoints(DeathOverlayFontPlan& plan) noexcept {
+    constexpr int kCodepoints[] = {
+        0x6536, 0x76CA, 0x4EE3, 0x4EF7,
+        0x8D77, 0x59CB, 0x8282, 0x70B9,
+        0x8DEF, 0x7EBF, 0x8FDE, 0x63A5,
+    };
+    for (const int codepoint : kCodepoints) {
+        add_hud_codepoint(plan, codepoint);
+    }
+}
+
 }  // namespace
 
 HudFontPlan hud_font_plan() noexcept {
@@ -64,6 +75,7 @@ HudFontPlan hud_font_plan() noexcept {
     add_ground_loot_codepoints(plan.shared);
     add_active_skill_codepoints(plan.shared);
     add_large_room_hud_codepoints(plan.shared);
+    add_passive_tree_codepoints(plan.shared);
     constexpr const char* kRequiredText[] = {
         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
@@ -86,6 +98,7 @@ HudFontPlan hud_font_plan() noexcept {
         u8"出口尚未开放，战斗仍可继续",
         u8"离开将放弃剩余奖励",
         u8"可见：怪 105/105 环境 73/105 掉落 53/331",
+        u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
     };
     plan.covers_required_text = true;
     for (const char* text : kRequiredText) {

@@ -184,6 +184,17 @@ std::optional<dungeon::DungeonRunState> prepared_state(
             if (!pending || !pending->reinforcement_receipt.has_value()
                     || pending->reinforcement_receipt->success
                     || !pending->reinforcement_receipt->destroyed) continue;
+            auto recipe_second = *target;
+            recipe_second.id = candidate_id + 1U;
+            auto recipe_third = *target;
+            recipe_third.id = candidate_id + 2U;
+            if (!items::validate_item(recipe_second)
+                    || !items::validate_item(recipe_third)) {
+                continue;
+            }
+            state.item_ownership.items.push_back(recipe_second);
+            state.item_ownership.items.push_back(recipe_third);
+            state.item_ownership.next_item_sequence = candidate_id + 3U;
             target_id = candidate_id;
             selected_root = root;
             first_drop_ordinal = first_spawn->spawn_ordinal;
@@ -272,7 +283,7 @@ bool render_world_capture(const std::filesystem::path& run,
     BeginDrawing();
     ClearBackground(BLACK);
     static_cast<void>(room->draw(*current, *current, *world, camera,
-        runtime.render_status(), 1.0F, false, feedback, false));
+        runtime.render_status(), 1.0F, false, feedback, false, "E"));
     const auto image = run / name;
     const bool exported = export_flushed_frame(image);
     EndDrawing();
@@ -527,6 +538,34 @@ Vector2 first_inventory_cell() noexcept {
     return {layout.grid.x + 24.0F, layout.grid.y + 100.0F};
 }
 
+Vector2 inventory_cell(std::size_t filtered_position) noexcept {
+    const platform::InventoryLayout layout = platform::inventory_layout(1280, 720);
+    constexpr std::size_t columns = 2U;
+    const float cell_width = (layout.grid.width - 20.0F * layout.scale)
+        / static_cast<float>(columns);
+    return {
+        layout.grid.x + 24.0F * layout.scale
+            + static_cast<float>(filtered_position % columns) * cell_width,
+        layout.grid.y + (100.0F
+            + static_cast<float>(filtered_position / columns) * 58.0F)
+                * layout.scale,
+    };
+}
+
+platform::HostFrameInput recipe_click(std::size_t filtered_position) noexcept {
+    auto input = click(inventory_cell(filtered_position));
+    input.control_down = true;
+    return input;
+}
+
+Vector2 combine_button_center() noexcept {
+    const platform::InventoryLayout layout = platform::inventory_layout(1280, 720);
+    return {
+        layout.grid.x + layout.grid.width * 0.5F,
+        layout.grid.y + layout.grid.height - 27.0F * layout.scale,
+    };
+}
+
 bool settle_pending_save(platform::DungeonRuntime& runtime) noexcept {
     const auto deadline = std::chrono::steady_clock::now()
         + std::chrono::seconds{10};
@@ -542,6 +581,62 @@ bool settle_pending_save(platform::DungeonRuntime& runtime) noexcept {
         std::this_thread::sleep_for(std::chrono::milliseconds{1});
     }
     return false;
+}
+
+bool inventory_close_clears_material_selection(
+    platform::InventoryRenderer& inventory,
+    platform::DungeonRuntime& runtime) noexcept {
+    const auto* const session = runtime.session();
+    if (session == nullptr || !settle_pending_save(runtime)
+            || runtime.item_state() == nullptr) {
+        return false;
+    }
+    const std::size_t material_index = items::material_index(
+        items::MaterialId::chaos);
+    const auto before = session->snapshot();
+    const std::uint64_t material_before =
+        runtime.item_state()->materials[material_index];
+    const auto bag = platform::material_bag_layout(1280, 720);
+    const bool selection_committed = inventory.process_input(runtime, before,
+        click(center(bag.slots[material_index])));
+    inventory.close();
+    inventory.open(*session, session->snapshot());
+    const bool item_click_committed = inventory.process_input(
+        runtime, session->snapshot(), click(first_inventory_cell()));
+    const auto after = session->snapshot();
+    return !selection_committed && !item_click_committed
+        && !after.pending_save_kind.has_value()
+        && after.commit_generation == before.commit_generation
+        && runtime.item_state() != nullptr
+        && runtime.item_state()->materials[material_index] == material_before;
+}
+
+bool inventory_close_clears_recipe_selection(
+    platform::InventoryRenderer& inventory,
+    platform::DungeonRuntime& runtime) noexcept {
+    const auto* const session = runtime.session();
+    if (session == nullptr || !settle_pending_save(runtime)
+            || runtime.item_state() == nullptr) {
+        return false;
+    }
+    const auto before = session->snapshot();
+    const std::size_t item_count_before = runtime.item_state()->items.size();
+    for (std::size_t filtered_position = 0U;
+            filtered_position < 3U; ++filtered_position) {
+        if (inventory.process_input(runtime, session->snapshot(),
+                recipe_click(filtered_position))) {
+            return false;
+        }
+    }
+    inventory.close();
+    inventory.open(*session, session->snapshot());
+    const bool combine_committed = inventory.process_input(runtime,
+        session->snapshot(), click(combine_button_center()));
+    const auto after = session->snapshot();
+    return !combine_committed && !after.pending_save_kind.has_value()
+        && after.commit_generation == before.commit_generation
+        && runtime.item_state() != nullptr
+        && runtime.item_state()->items.size() == item_count_before;
 }
 
 bool process_item_action(platform::InventoryRenderer& inventory,
@@ -633,9 +728,9 @@ bool render_inventory_capture(const std::filesystem::path& run,
     BeginDrawing();
     ClearBackground(BLACK);
     static_cast<void>(room->draw(*current, *current, *world, camera,
-        runtime.render_status(), 1.0F, false, feedback, false));
+        runtime.render_status(), 1.0F, false, feedback, false, "E"));
     inventory.draw(*runtime.session(), *current, runtime.render_status(),
-        room->material_pack(), room->hud_font(), room->hud_font_ready());
+        room->material_pack(), "I", room->hud_font(), room->hud_font_ready());
     const auto image = run / name;
     const bool exported = export_flushed_frame(image);
     EndDrawing();
@@ -678,7 +773,7 @@ std::optional<ScenarioResult> run_production_scenario(
     platform::DungeonRuntimeConfig config{};
     config.save.directory = save_directory;
     config.new_run_seed = root;
-    const auto runtime = std::make_unique<platform::DungeonRuntime>(config);
+    auto runtime = std::make_unique<platform::DungeonRuntime>(config);
     if (!runtime->initialize() || runtime->state()
             != platform::DungeonRuntimeState::running) {
         std::cerr << "stage16 failure=runtime_initialize state="
@@ -709,6 +804,14 @@ std::optional<ScenarioResult> run_production_scenario(
 
     const auto inventory = std::make_unique<platform::InventoryRenderer>();
     inventory->open(*runtime->session(), runtime->session()->snapshot());
+    if (!inventory_close_clears_material_selection(*inventory, *runtime)) {
+        std::cerr << "stage16 failure=inventory_close_material_selection\n";
+        return std::nullopt;
+    }
+    if (!inventory_close_clears_recipe_selection(*inventory, *runtime)) {
+        std::cerr << "stage16 failure=inventory_close_recipe_selection\n";
+        return std::nullopt;
+    }
     if (!process_item_action(*inventory, *runtime, items::MaterialId::chaos,
             target_id, result.craft) || !result.craft) {
         std::cerr << "stage16 failure=chaos_craft\n";
@@ -751,6 +854,7 @@ std::optional<ScenarioResult> run_production_scenario(
         return std::nullopt;
     }
 
+    runtime.reset();
     const auto restarted = std::make_unique<platform::DungeonRuntime>(config);
     const bool restart_initialized = restarted->initialize();
     const bool restart_running = restarted->state()

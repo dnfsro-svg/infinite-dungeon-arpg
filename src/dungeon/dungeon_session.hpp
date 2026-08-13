@@ -55,6 +55,16 @@ public:
     }
     void reset() noexcept { engaged_ = false; }
     [[nodiscard]] PendingSave& prepare() noexcept {
+        value_.kind = PendingSaveKind::transition;
+        value_.expected_generation = 0U;
+        value_.transition = TransitionKind::none;
+        value_.direction = ExitDirection::none;
+        value_.resume_phase = RoomPhase::awaiting_exit;
+        value_.pickup_ordinal = 0xFFFFU;
+        value_.death_snapshot.reset();
+        value_.reinforcement_receipt.reset();
+        value_.health_potion_claim.reset();
+        value_.material_pickup_receipt = {};
         engaged_ = true;
         return value_;
     }
@@ -244,6 +254,7 @@ private:
         PendingSave& pending) noexcept;
     [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
     void vacuum_room_materials() noexcept;
+    void freeze_pending_material_pickup_receipt(bool room_vacuum) noexcept;
     [[nodiscard]] bool has_ground_materials() const noexcept;
     void prepare_room_unlock() noexcept;
     void prepare_room_clear() noexcept;

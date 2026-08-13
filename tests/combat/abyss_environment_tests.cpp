@@ -114,6 +114,7 @@ arpg::test::Failure chaos_region_exists_when_challenge_begins() noexcept {
 
 arpg::test::Failure chaos_damage_tracks_current_actual_max_hp() noexcept {
     CombatEncounterConfig config{};
+    config.monster_source_damage_bp = 3500U;
     config.abyss = arpg::abyss::combat_config_for(
         arpg::abyss::AbyssRuleId::chaos_expansion);
     config.player_build = build_for_max_hp(1001);
