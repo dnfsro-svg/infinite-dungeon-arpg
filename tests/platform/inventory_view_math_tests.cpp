@@ -697,6 +697,40 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(saved_after_old_receipt.presentation.kind
         == platform::InventoryTransientStatusKind::saved);
 
+    platform::InventoryTransientStatusState old_session{};
+    old_session.initialized = true;
+    old_session.last_commit_generation = 50U;
+    old_session.last_receipt_generation = 50U;
+    old_session.kind = platform::InventoryTransientStatusKind::saved;
+    old_session.remaining_frames = 3U;
+    platform::InventoryTransientStatusInput new_session{};
+    new_session.commit_generation = 1U;
+    const auto new_session_baseline = platform::inventory_transient_status_for_frame(
+        old_session, new_session);
+    ARPG_REQUIRE(new_session_baseline.presentation.kind
+        == platform::InventoryTransientStatusKind::none);
+    ARPG_REQUIRE(new_session_baseline.next.last_receipt_generation == 0U);
+    new_session.commit_generation = 2U;
+    new_session.receipt_valid = true;
+    new_session.receipt_commit_generation = 2U;
+    const auto new_session_receipt = platform::inventory_transient_status_for_frame(
+        new_session_baseline.next, new_session);
+    ARPG_REQUIRE(new_session_receipt.presentation.kind
+        == platform::InventoryTransientStatusKind::reinforcement_receipt);
+
+    platform::InventoryTransientStatusState initial_invalid{};
+    platform::InventoryTransientStatusInput invalid_first{};
+    invalid_first.commit_generation = 1U;
+    invalid_first.receipt_commit_generation = 20U;
+    initial_invalid = platform::inventory_transient_status_for_frame(
+        initial_invalid, invalid_first).next;
+    ARPG_REQUIRE(initial_invalid.last_receipt_generation == 0U);
+    invalid_first.receipt_valid = true;
+    const auto valid_after_invalid = platform::inventory_transient_status_for_frame(
+        initial_invalid, invalid_first);
+    ARPG_REQUIRE(valid_after_invalid.presentation.kind
+        == platform::InventoryTransientStatusKind::reinforcement_receipt);
+
     const platform::InventoryTransientStatusPresentation receipts[] = {
         {platform::InventoryTransientStatusKind::reinforcement_receipt,
             true, false, false, 7U, 8U},

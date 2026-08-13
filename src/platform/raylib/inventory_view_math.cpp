@@ -986,7 +986,8 @@ InventoryTransientStatusFrameResult inventory_transient_status_for_frame(
     if (!state.initialized) {
         state.initialized = true;
         state.last_commit_generation = input.commit_generation;
-        state.last_receipt_generation = input.receipt_commit_generation;
+        state.last_receipt_generation = input.receipt_valid
+            ? input.receipt_commit_generation : 0U;
         result.next = state;
         return result;
     }
@@ -998,6 +999,8 @@ InventoryTransientStatusFrameResult inventory_transient_status_for_frame(
         state.last_commit_generation = input.commit_generation;
         if (input.receipt_valid)
             state.last_receipt_generation = input.receipt_commit_generation;
+        else
+            state.last_receipt_generation = 0U;
         result.next = state;
         return result;
     }
