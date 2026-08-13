@@ -298,6 +298,40 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     ARPG_REQUIRE(visual.outline == platform::InventoryItemOutline::recipe);
     ARPG_REQUIRE(visual.recipe_ordinal == 1U);
     ARPG_REQUIRE(visual.selected_indicator);
+
+    // These independently exercise each precedence boundary: a later visual
+    // layer must not replace an earlier interaction mode.
+    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 0U,
+        {}, false, false}).outline == platform::InventoryItemOutline::hover);
+    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
+        {}, false, false}).outline == platform::InventoryItemOutline::selected);
+    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
+        recipe, true, true}).outline
+        == platform::InventoryItemOutline::material_target);
+    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
+        recipe, true, false}).outline
+        == platform::InventoryItemOutline::disabled_target);
+
+    const auto shell_1280 = platform::inventory_shell_layout(1280, 720);
+    platform::InventoryViewCache source_cache{};
+    platform::refresh_inventory_view_cache(source_cache, state, 8U, {}, 11U, {});
+    const auto grid_source = platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, state, source_cache, 11U, 0.0F);
+    ARPG_REQUIRE(grid_source.valid && grid_source.source_is_in_right_panel);
+    ARPG_REQUIRE(grid_source.bounds.x == platform::inventory_grid_item_rectangle(
+        shell_1280, 0U, 0.0F).x);
+    const auto hidden_by_page = platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::materials, state, source_cache, 11U, 0.0F);
+    ARPG_REQUIRE(!hidden_by_page.valid);
+    items::ItemOwnershipState stale{};
+    stale.equipment.equipped_ids[0] = 999U;
+    platform::InventoryViewCache stale_cache{};
+    platform::refresh_inventory_view_cache(stale_cache, stale, 9U, {}, 999U, {});
+    ARPG_REQUIRE(!platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, stale, stale_cache, 999U, 0.0F).valid);
+    const auto unknown_source = platform::inventory_visible_item_source(shell_1280,
+        platform::InventoryPage::equipment, state, source_cache, 999U, 0.0F);
+    ARPG_REQUIRE(!unknown_source.valid);
     return {};
 }
 
@@ -469,6 +503,41 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(tooltip.valid);
     ARPG_REQUIRE(tooltip.line_count <= tooltip.lines.size());
     ARPG_REQUIRE(tooltip.line_count > 0U);
+
+    // A narrow 224px content region must reserve visual lines before placing
+    // wrapped segments. The old implementation reserved only logical lines.
+    platform::InventoryTooltipView wrapped{};
+    static_cast<void>(platform::ui_utf8_copy(wrapped.title.data(),
+        wrapped.title.size(), u8"装备后变化"));
+    for (std::size_t line{}; line < 6U; ++line) {
+        wrapped.lines[line].segment_count = 2U;
+        for (std::size_t segment{}; segment < 2U; ++segment) {
+            static_cast<void>(platform::ui_utf8_copy(
+                wrapped.lines[line].segments[segment].text.data(),
+                wrapped.lines[line].segments[segment].text.size(),
+                u8"强化结果：成功强化结果：成功强化结果：成功强化"));
+        }
+    }
+    wrapped.line_count = 6U;
+    wrapped.valid = true;
+    const auto shell = platform::inventory_shell_layout(1280, 720);
+    const auto wrapped_layout = platform::inventory_tooltip_layout(shell,
+        shell.equipment_slots[0], false, wrapped, &linear_measure, nullptr);
+    ARPG_REQUIRE(wrapped_layout.valid);
+    ARPG_REQUIRE(wrapped_layout.placement_count == 12U);
+    ARPG_REQUIRE(wrapped_layout.visual_line_count > wrapped.line_count);
+    for (std::size_t line{}; line < wrapped.line_count; ++line) {
+        for (std::size_t segment{}; segment < wrapped.lines[line].segment_count;
+             ++segment) {
+            std::size_t placements{};
+            for (std::size_t index{}; index < wrapped_layout.placement_count;
+                 ++index) {
+                placements += wrapped_layout.placements[index].logical_line == line
+                    && wrapped_layout.placements[index].segment == segment ? 1U : 0U;
+            }
+            ARPG_REQUIRE(placements == 1U);
+        }
+    }
     return {};
 }
 

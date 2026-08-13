@@ -69,20 +69,37 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
         u8"装备值 / 按键提示 / 小节点 / 重要节点 / 地面危险 / 来源 / 最终伤害 ×1.12"));
-    constexpr const char* kInventoryShellTexts[] = {
-        u8"技能石", u8"材料", u8"背包无装备", u8"击败怪物，拾取装备",
-        u8"无剩余装备", u8"左击左方装备取出", u8"当前过滤无结果",
-        u8"切换装备槽及稀有度", u8"暂无未装备主动技能石",
-        u8"选择技能石后点击空槽装备", u8"选择两个技能槽交换",
-        u8"选择已装备技能后可取出", u8"装备后变化", u8"装备后无变化",
-        u8"已选择：%s · 切换至装备 · 右键取消", u8"三合一（%u/3）",
-        u8"危险：三合一取消强化", u8"装备槽：%s", u8"稀有度：%s",
-        u8"左键选择 · 快速左击两次装备 · 右键三合一", u8"取出", u8"全部",
-        u8"强化结果：成功 / +%u → +%u", u8"强化结果：失败 / +%u → +%u",
-        u8"强化结果：失败 / 装备丢失 / +%u", u8"强化券结果：成功 / +%u → +%u",
+    constexpr platform::UiTextId kInventoryShellIds[] = {
+        platform::UiTextId::inventory_page_skill_stones,
+        platform::UiTextId::inventory_page_materials,
+        platform::UiTextId::inventory_empty_title,
+        platform::UiTextId::inventory_empty_hint,
+        platform::UiTextId::inventory_all_equipped_title,
+        platform::UiTextId::inventory_all_equipped_hint,
+        platform::UiTextId::inventory_filter_empty_title,
+        platform::UiTextId::inventory_filter_empty_hint,
+        platform::UiTextId::inventory_skill_empty,
+        platform::UiTextId::inventory_skill_equip_hint,
+        platform::UiTextId::inventory_skill_swap_hint,
+        platform::UiTextId::inventory_skill_remove_hint,
+        platform::UiTextId::inventory_comparison_title,
+        platform::UiTextId::inventory_no_change,
+        platform::UiTextId::inventory_material_selected_format,
+        platform::UiTextId::inventory_recipe_action_format,
+        platform::UiTextId::inventory_recipe_danger,
+        platform::UiTextId::inventory_slot_filter_format,
+        platform::UiTextId::inventory_rarity_filter_format,
+        platform::UiTextId::inventory_context_hint,
+        platform::UiTextId::inventory_action_remove,
+        platform::UiTextId::inventory_filter_all,
+        platform::UiTextId::inventory_reinforcement_success_format,
+        platform::UiTextId::inventory_reinforcement_failure_format,
+        platform::UiTextId::inventory_reinforcement_destroyed_format,
+        platform::UiTextId::inventory_coupon_success_format,
     };
-    for (const char* text : kInventoryShellTexts)
-        ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, text));
+    for (const platform::UiTextId id : kInventoryShellIds)
+        ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
+            platform::ui_text(id)));
     ARPG_REQUIRE(plan.codepoint_count == 639U);
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
         platform::death_overlay_font_plan(), u8"混沌之眼"));

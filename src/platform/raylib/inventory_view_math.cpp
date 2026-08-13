@@ -847,8 +847,14 @@ InventoryVisibleItemSource inventory_visible_item_source(
     if (!shell.valid || page != InventoryPage::equipment || item_id == 0U
         || !std::isfinite(scroll_rows)) return {};
     for (std::size_t slot{}; slot < state.equipment.equipped_ids.size(); ++slot) {
-        if (state.equipment.equipped_ids[slot] == item_id)
+        if (state.equipment.equipped_ids[slot] != item_id) continue;
+        const auto found = std::find_if(state.items.begin(), state.items.end(),
+            [item_id](const items::ItemInstance& item) noexcept {
+                return item.id == item_id;
+            });
+        if (found != state.items.end())
             return {item_id, shell.equipment_slots[slot], false, true};
+        return {};
     }
     const VisibleGridRange visible = visible_grid_range(cache.filtered_indices.size(),
         inventory_grid_columns(shell), scroll_rows, shell.grid_viewport.height,
@@ -1114,8 +1120,26 @@ InventoryTooltipLayout inventory_tooltip_layout(InventoryShellLayout shell,
         output.title_font_size, 0.0F, measure_context);
     if (!std::isfinite(title_extent.width) || !std::isfinite(title_extent.height)
         || title_extent.width > maximum_width) return output;
+    std::size_t visual_lines{};
+    float preview_x{};
+    for (std::size_t line{}; line < view.line_count; ++line) {
+        const InventoryTooltipLine& logical = view.lines[line];
+        for (std::size_t segment{}; segment < logical.segment_count; ++segment) {
+            const UiTextExtent extent = measure(logical.segments[segment].text.data(),
+                output.font_size, 0.0F, measure_context);
+            if (!std::isfinite(extent.width) || !std::isfinite(extent.height)
+                || extent.width > maximum_width) return {};
+            if (preview_x != 0.0F && preview_x + extent.width > maximum_width) {
+                ++visual_lines;
+                preview_x = 0.0F;
+            }
+            preview_x += extent.width + 4.0F;
+        }
+        ++visual_lines;
+        preview_x = 0.0F;
+    }
     const float requested_height = kPadding * 2.0F + title_extent.height
-        + output.line_height * (static_cast<float>(view.line_count) + 0.25F);
+        + output.line_height * (static_cast<float>(visual_lines) + 0.25F);
     const float backing_height = std::min(requested_height,
         std::max(48.0F, shell.content.height - kPadding * 2.0F));
     if (backing_height < kPadding * 2.0F + title_extent.height) return output;
