@@ -1125,13 +1125,10 @@ function(evidence_raylib_lifecycle_source_role
             "src/platform/raylib/combat_renderer.cpp")
         set(source_role ready-1)
     elseif(repo_relative_path STREQUAL
-            "src/platform/raylib/death_overlay_renderer.cpp")
-        set(source_role ready-2)
-    elseif(repo_relative_path STREQUAL
             "src/platform/raylib/hud_renderer.cpp")
-        set(source_role ready-4)
+        set(source_role ready-3)
     elseif(repo_relative_path STREQUAL
-            "src/platform/raylib/pause_menu_renderer.cpp")
+            "src/platform/raylib/shared_ui_font.cpp")
         set(source_role ready-1)
     elseif(repo_relative_path STREQUAL
             "src/platform/raylib/window_settings.cpp")
@@ -1255,7 +1252,8 @@ function(evidence_window_lifetime_boundary_is_valid
     set(wrapper_signature_ready
         "bool is_window_ready_noexcept(")
     set(wrapper_signature_detach
-        "void* detach_ime_context_noexcept(")
+        # evidence_cpp_normalize_token_whitespace removes the space after '*'.
+        "void*detach_ime_context_noexcept(")
     set(wrapper_signature_restore
         "void restore_ime_context_noexcept(")
     set(wrapper_signature_close

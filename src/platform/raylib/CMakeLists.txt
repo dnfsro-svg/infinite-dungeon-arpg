@@ -100,9 +100,7 @@ set_source_files_properties(host_window_lifetime.cpp PROPERTIES
         "ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS;ARPG_ALLOW_RAYLIB_INIT_WINDOW;ARPG_ALLOW_RAYLIB_IS_WINDOW_READY;ARPG_ALLOW_RAYLIB_CLOSE_WINDOW")
 set_source_files_properties(
     combat_renderer.cpp
-    death_overlay_renderer.cpp
     hud_renderer.cpp
-    pause_menu_renderer.cpp
     shared_ui_font.cpp
     window_settings.cpp
     PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
