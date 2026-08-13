@@ -176,6 +176,16 @@ ActiveSkillHudLayout active_skill_hud_layout(
                 || !ui_text_bounds_inside(regions.visual_bounds, viewport)) {
             return {};
         }
+        if (index == 0U) {
+            result.visual_bounds = regions.visual_bounds;
+        } else {
+            result.visual_bounds = rectangle_union(
+                result.visual_bounds, regions.visual_bounds);
+        }
+    }
+    if (!valid_rectangle(result.visual_bounds)
+            || !ui_text_bounds_inside(result.visual_bounds, viewport)) {
+        return {};
     }
     result.valid = true;
     return result;

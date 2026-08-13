@@ -60,6 +60,7 @@ struct ActiveSkillHudTextPlan final {
 
 struct ActiveSkillHudLayout final {
     Rectangle bounds{};
+    Rectangle visual_bounds{};
     std::array<Rectangle, skills::kActiveSkillSlotCount> slots{};
     float scale{};
     bool valid{};

@@ -158,6 +158,11 @@ using HoleInteractionPrompt = std::array<char, 48>;
 [[nodiscard]] WorldPromptLayout world_prompt_layout(
     Vector2 anchor, Vector2 measured,
     float screen_width, float screen_height) noexcept;
+[[nodiscard]] WorldPromptLayout door_world_prompt_layout(
+    Vector2 anchor, Vector2 measured,
+    Rectangle door_bounds, Rectangle hud_blocker,
+    Vector2 screen_offset,
+    float screen_width, float screen_height) noexcept;
 [[nodiscard]] Rgba8 ecosystem_tint(
     dungeon::DungeonElement element) noexcept;
 [[nodiscard]] float abyss_pulse_alpha(float elapsed_seconds) noexcept;

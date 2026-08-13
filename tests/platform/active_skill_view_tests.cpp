@@ -12,6 +12,7 @@
 #include "ui_typography.hpp"
 #include "ui_utf8.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -103,6 +104,16 @@ bool same_rectangle(Rectangle left, Rectangle right) noexcept {
         && arpg::test::near(left.y, right.y)
         && arpg::test::near(left.width, right.width)
         && arpg::test::near(left.height, right.height);
+}
+
+Rectangle rectangle_union(Rectangle first, Rectangle second) noexcept {
+    const float left = (std::min)(first.x, second.x);
+    const float top = (std::min)(first.y, second.y);
+    const float right = (std::max)(
+        first.x + first.width, second.x + second.width);
+    const float bottom = (std::max)(
+        first.y + first.height, second.y + second.height);
+    return {left, top, right - left, bottom - top};
 }
 
 arpg::test::Failure active_skill_visual_frames_reach_complete_material_timelines()
@@ -553,6 +564,20 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
                     layout.slots[index - 1U], layout.slots[index]));
             }
         }
+        Rectangle expected_visual =
+            layout.text_regions.front().visual_bounds;
+        for (std::size_t index = 1U;
+             index < layout.text_regions.size(); ++index) {
+            expected_visual = rectangle_union(
+                expected_visual, layout.text_regions[index].visual_bounds);
+        }
+        ARPG_REQUIRE(same_rectangle(layout.visual_bounds, expected_visual));
+        ARPG_REQUIRE(layout.visual_bounds.x >= 0.0F);
+        ARPG_REQUIRE(layout.visual_bounds.y >= 0.0F);
+        ARPG_REQUIRE(layout.visual_bounds.x + layout.visual_bounds.width
+            <= static_cast<float>(viewport[0]));
+        ARPG_REQUIRE(layout.visual_bounds.y + layout.visual_bounds.height
+            <= static_cast<float>(viewport[1]));
         if (viewport[0] == 800) {
             ARPG_REQUIRE(arpg::test::near(layout.bounds.x, 194.0F));
             ARPG_REQUIRE(arpg::test::near(layout.bounds.y, 354.0F));

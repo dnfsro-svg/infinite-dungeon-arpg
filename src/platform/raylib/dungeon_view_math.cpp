@@ -1,9 +1,11 @@
 #include "dungeon_view_math.hpp"
 
+#include "ui_typography.hpp"
 #include "ui_utf8.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace arpg::platform {
 namespace {
@@ -15,6 +17,42 @@ constexpr Rgba8 kFireFrame{236U, 92U, 54U, 255U};
 constexpr Rgba8 kWaterFrame{64U, 156U, 236U, 255U};
 constexpr Rgba8 kLightningFrame{236U, 218U, 72U, 255U};
 constexpr Rgba8 kChaosFrame{154U, 76U, 210U, 255U};
+
+[[nodiscard]] bool finite(Vector2 value) noexcept {
+    return std::isfinite(value.x) && std::isfinite(value.y);
+}
+
+[[nodiscard]] bool finite(Rectangle value) noexcept {
+    return std::isfinite(value.x) && std::isfinite(value.y)
+        && std::isfinite(value.width) && std::isfinite(value.height)
+        && std::isfinite(value.x + value.width)
+        && std::isfinite(value.y + value.height);
+}
+
+[[nodiscard]] bool has_area(Rectangle value) noexcept {
+    return value.width > 0.0F && value.height > 0.0F;
+}
+
+[[nodiscard]] Rectangle translated(
+    Rectangle value, Vector2 offset) noexcept {
+    value.x += offset.x;
+    value.y += offset.y;
+    return value;
+}
+
+[[nodiscard]] bool overlaps(Rectangle first, Rectangle second) noexcept {
+    return first.x < second.x + second.width
+        && second.x < first.x + first.width
+        && first.y < second.y + second.height
+        && second.y < first.y + first.height;
+}
+
+[[nodiscard]] bool inside(Rectangle inner, Rectangle outer) noexcept {
+    return has_area(inner) && has_area(outer)
+        && inner.x >= outer.x && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height;
+}
 
 }  // namespace
 
@@ -354,6 +392,71 @@ WorldPromptLayout world_prompt_layout(
         backing_x + (backing_width - scaled_measured.x) * 0.5F,
         backing_y + (backing_height - scaled_measured.y) * 0.5F,
     };
+    return layout;
+}
+
+WorldPromptLayout door_world_prompt_layout(
+    Vector2 anchor, Vector2 measured,
+    Rectangle door_bounds, Rectangle hud_blocker,
+    Vector2 screen_offset,
+    float screen_width, float screen_height) noexcept {
+    if (!finite(anchor) || !finite(measured) || !finite(door_bounds)
+            || !finite(hud_blocker) || !finite(screen_offset)
+            || !std::isfinite(screen_width) || !std::isfinite(screen_height)
+            || screen_width <= 0.0F || screen_height <= 0.0F
+            || static_cast<double>(screen_width)
+                > static_cast<double>((std::numeric_limits<int>::max)())
+            || static_cast<double>(screen_height)
+                > static_cast<double>((std::numeric_limits<int>::max)())
+            || !has_area(door_bounds)) {
+        return {};
+    }
+
+    const Rectangle viewport{0.0F, 0.0F, screen_width, screen_height};
+    const Rectangle final_door = translated(door_bounds, screen_offset);
+    if (!finite(final_door) || !overlaps(final_door, viewport)) return {};
+
+    const Vector2 final_anchor{
+        anchor.x + screen_offset.x, anchor.y + screen_offset.y};
+    if (!finite(final_anchor)) return {};
+    WorldPromptLayout layout = world_prompt_layout(
+        final_anchor, measured, screen_width, screen_height);
+    if (!layout.visible || !finite(layout.backing)
+            || !finite(layout.text_position) || !finite(layout.measured)
+            || !inside(layout.backing, viewport)) {
+        return {};
+    }
+
+    if (has_area(hud_blocker)) {
+        const float margin = 12.0F * ui_viewport_scale(
+            static_cast<int>(screen_width), static_cast<int>(screen_height));
+        const Rectangle expanded{
+            hud_blocker.x - margin,
+            hud_blocker.y - margin,
+            hud_blocker.width + margin * 2.0F,
+            hud_blocker.height + margin * 2.0F,
+        };
+        if (!std::isfinite(margin) || margin <= 0.0F
+                || !finite(expanded) || !has_area(expanded)) {
+            return {};
+        }
+        if (overlaps(layout.backing, expanded)) {
+            layout.backing.y = expanded.y - layout.backing.height;
+            layout.text_position.y = layout.backing.y
+                + (layout.backing.height - layout.measured.y) * 0.5F;
+            if (!finite(layout.backing) || !finite(layout.text_position)
+                    || !inside(layout.backing, viewport)
+                    || overlaps(layout.backing, expanded)) {
+                return {};
+            }
+        }
+    }
+
+    layout.backing.x -= screen_offset.x;
+    layout.backing.y -= screen_offset.y;
+    layout.text_position.x -= screen_offset.x;
+    layout.text_position.y -= screen_offset.y;
+    if (!finite(layout.backing) || !finite(layout.text_position)) return {};
     return layout;
 }
 

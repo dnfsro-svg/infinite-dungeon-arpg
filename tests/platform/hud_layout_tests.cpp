@@ -1,11 +1,16 @@
 #include "test_framework.hpp"
+#include "allocation_probe.hpp"
 
+#include "active_skill_view.hpp"
 #include "dungeon_view_math.hpp"
 #include "hud_layout.hpp"
 #include "hud_renderer.hpp"
 #include "ui_text_contrast.hpp"
 
 #include <array>
+#include <cmath>
+#include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -247,6 +252,51 @@ arpg::test::Failure hud_typography_has_readable_minimums_and_contrast() noexcept
     return {};
 }
 
+[[nodiscard]] bool finite(Rectangle rectangle) noexcept {
+    return std::isfinite(rectangle.x) && std::isfinite(rectangle.y)
+        && std::isfinite(rectangle.width) && std::isfinite(rectangle.height)
+        && std::isfinite(rectangle.x + rectangle.width)
+        && std::isfinite(rectangle.y + rectangle.height);
+}
+
+[[nodiscard]] bool inside(Rectangle inner, Rectangle outer) noexcept {
+    return finite(inner) && finite(outer)
+        && inner.width > 0.0F && inner.height > 0.0F
+        && inner.x >= outer.x && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height;
+}
+
+[[nodiscard]] bool overlaps(Rectangle first, Rectangle second) noexcept {
+    return first.x < second.x + second.width
+        && second.x < first.x + first.width
+        && first.y < second.y + second.height
+        && second.y < first.y + first.height;
+}
+
+[[nodiscard]] Rectangle translated(
+    Rectangle rectangle, Vector2 offset) noexcept {
+    rectangle.x += offset.x;
+    rectangle.y += offset.y;
+    return rectangle;
+}
+
+[[nodiscard]] bool centered(Vector2 text_position, Vector2 measured,
+    Rectangle backing) noexcept {
+    return arpg::test::near(text_position.x + measured.x * 0.5F,
+               backing.x + backing.width * 0.5F)
+        && arpg::test::near(text_position.y + measured.y * 0.5F,
+            backing.y + backing.height * 0.5F);
+}
+
+[[nodiscard]] bool same_rectangle(
+    Rectangle first, Rectangle second) noexcept {
+    return arpg::test::near(first.x, second.x)
+        && arpg::test::near(first.y, second.y)
+        && arpg::test::near(first.width, second.width)
+        && arpg::test::near(first.height, second.height);
+}
+
 arpg::test::Failure world_prompt_backings_fit_supported_viewports() noexcept {
     constexpr std::array<std::array<int, 2>, 3U> kViewports{{
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
@@ -273,7 +323,169 @@ arpg::test::Failure world_prompt_backings_fit_supported_viewports() noexcept {
             <= layout.backing.x + layout.backing.width);
         ARPG_REQUIRE(layout.text_position.y + layout.measured.y
             <= layout.backing.y + layout.backing.height);
+
+        constexpr std::array<Vector2, 4U> kShakeOffsets{{
+            {-9.0F, -9.0F}, {-9.0F, 9.0F},
+            {9.0F, -9.0F}, {9.0F, 9.0F},
+        }};
+        const platform::ActiveSkillHudLayout skill =
+            platform::active_skill_hud_layout(viewport[0], viewport[1]);
+        ARPG_REQUIRE(skill.valid);
+
+        const Vector2 measured{48.0F * skill.scale, 16.0F * skill.scale};
+        const Rectangle far_below{width * 0.5F - 92.0F,
+            height + 40.0F, 184.0F, 184.0F};
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {width * 0.5F, height + 15.0F}, measured,
+            far_below, skill.visual_bounds, {}, width, height).visible);
+
+        const Rectangle material_entering{width * 0.5F - 92.0F,
+            height - 12.0F, 184.0F, 184.0F};
+        const Rectangle fallback_still_offscreen{width * 0.5F - 41.0F,
+            height + 2.0F, 82.0F, 70.0F};
+        ARPG_REQUIRE(platform::door_world_prompt_layout(
+            {width * 0.5F, height - 6.0F}, measured,
+            material_entering, skill.visual_bounds, {}, width, height).visible);
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {width * 0.5F, height - 6.0F}, measured,
+            fallback_still_offscreen, skill.visual_bounds, {},
+            width, height).visible);
+
+        const Rectangle visible_door{width * 0.5F - 92.0F,
+            height - 184.0F, 184.0F, 184.0F};
+        for (const Vector2 offset : kShakeOffsets) {
+            const platform::WorldPromptLayout logical =
+                platform::door_world_prompt_layout(
+                    {width * 0.5F, skill.visual_bounds.y + 4.0F},
+                    measured, visible_door, skill.visual_bounds,
+                    offset, width, height);
+            ARPG_REQUIRE(logical.visible);
+            const Rectangle final_backing = translated(logical.backing, offset);
+            const Vector2 final_text{
+                logical.text_position.x + offset.x,
+                logical.text_position.y + offset.y};
+            ARPG_REQUIRE(inside(
+                final_backing, {0.0F, 0.0F, width, height}));
+            ARPG_REQUIRE(!overlaps(final_backing, skill.visual_bounds));
+            ARPG_REQUIRE(final_backing.y + final_backing.height
+                <= skill.visual_bounds.y - 12.0F * skill.scale);
+            ARPG_REQUIRE(centered(final_text, logical.measured, final_backing));
+        }
+
+        const Vector2 upper_offset{9.0F, -9.0F};
+        const Vector2 upper_anchor{width * 0.25F, height * 0.18F};
+        const Rectangle upper_door{
+            width * 0.25F - 41.0F, height * 0.12F, 82.0F, 70.0F};
+        const platform::WorldPromptLayout upper_logical =
+            platform::door_world_prompt_layout(upper_anchor, measured,
+                upper_door, skill.visual_bounds, upper_offset, width, height);
+        const platform::WorldPromptLayout upper_expected =
+            platform::world_prompt_layout(
+                {upper_anchor.x + upper_offset.x,
+                    upper_anchor.y + upper_offset.y},
+                measured, width, height);
+        ARPG_REQUIRE(upper_logical.visible);
+        ARPG_REQUIRE(upper_expected.visible);
+        ARPG_REQUIRE(arpg::test::near(
+            upper_logical.text_scale, upper_expected.text_scale));
+        ARPG_REQUIRE(same_rectangle(
+            translated(upper_logical.backing, upper_offset),
+            upper_expected.backing));
+        ARPG_REQUIRE(arpg::test::near(
+            upper_logical.text_position.x + upper_offset.x,
+            upper_expected.text_position.x));
+        ARPG_REQUIRE(arpg::test::near(
+            upper_logical.text_position.y + upper_offset.y,
+            upper_expected.text_position.y));
+        ARPG_REQUIRE(arpg::test::near(
+            upper_logical.measured.x, upper_expected.measured.x));
+        ARPG_REQUIRE(arpg::test::near(
+            upper_logical.measured.y, upper_expected.measured.y));
+
+        const Vector2 entering_offset{0.0F, -9.0F};
+        const Rectangle enters_after_offset{
+            width * 0.5F - 41.0F, height + 1.0F, 82.0F, 8.0F};
+        ARPG_REQUIRE(platform::door_world_prompt_layout(
+            {width * 0.5F, height + 1.0F}, measured,
+            enters_after_offset, {}, entering_offset, width, height).visible);
+
+        const Rectangle finite_empty_blocker{
+            17.0F, 23.0F, 0.0F, -1.0F};
+        const platform::WorldPromptLayout empty_blocker_layout =
+            platform::door_world_prompt_layout(upper_anchor, measured,
+                upper_door, finite_empty_blocker, upper_offset,
+                width, height);
+        ARPG_REQUIRE(empty_blocker_layout.visible);
+        ARPG_REQUIRE(same_rectangle(
+            translated(empty_blocker_layout.backing, upper_offset),
+            upper_expected.backing));
     }
+
+    constexpr float kNan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+    constexpr std::array<float, 2U> kInvalidScalars{{kNan, kInf}};
+    constexpr Vector2 kMeasured{48.0F, 16.0F};
+    constexpr Rectangle kDoor{500.0F, 500.0F, 184.0F, 184.0F};
+    constexpr Rectangle kBlocker{430.0F, 600.0F, 420.0F, 100.0F};
+    for (const float invalid : kInvalidScalars) {
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {invalid, 300.0F}, kMeasured, kDoor, kBlocker, {},
+            1280.0F, 720.0F).visible);
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {640.0F, 300.0F}, {48.0F, invalid}, kDoor, kBlocker, {},
+            1280.0F, 720.0F).visible);
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {640.0F, 300.0F}, kMeasured,
+            {500.0F, invalid, 184.0F, 184.0F}, kBlocker, {},
+            1280.0F, 720.0F).visible);
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {640.0F, 300.0F}, kMeasured, kDoor,
+            {430.0F, 600.0F, invalid, 100.0F}, {},
+            1280.0F, 720.0F).visible);
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {640.0F, 300.0F}, kMeasured, kDoor, kBlocker,
+            {0.0F, invalid}, 1280.0F, 720.0F).visible);
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {640.0F, 300.0F}, kMeasured, kDoor, kBlocker, {},
+            invalid, 720.0F).visible);
+        ARPG_REQUIRE(!platform::door_world_prompt_layout(
+            {640.0F, 300.0F}, kMeasured, kDoor, kBlocker, {},
+            1280.0F, invalid).visible);
+    }
+    ARPG_REQUIRE(!platform::door_world_prompt_layout(
+        {640.0F, 300.0F}, kMeasured,
+        {500.0F, 500.0F, 0.0F, 184.0F}, kBlocker, {},
+        1280.0F, 720.0F).visible);
+    ARPG_REQUIRE(!platform::door_world_prompt_layout(
+        {640.0F, 300.0F}, kMeasured,
+        {500.0F, 500.0F, -1.0F, 184.0F}, kBlocker, {},
+        1280.0F, 720.0F).visible);
+
+    constexpr std::array<Vector2, 4U> kProbeOffsets{{
+        {-9.0F, -9.0F}, {-9.0F, 9.0F},
+        {9.0F, -9.0F}, {9.0F, 9.0F},
+    }};
+    const platform::ActiveSkillHudLayout probe_skill =
+        platform::active_skill_hud_layout(1280, 720);
+    ARPG_REQUIRE(probe_skill.valid);
+    for (const Vector2 offset : kProbeOffsets) {
+        static_cast<void>(platform::door_world_prompt_layout(
+            {640.0F, probe_skill.visual_bounds.y + 4.0F}, kMeasured,
+            kDoor, probe_skill.visual_bounds, offset, 1280.0F, 720.0F));
+    }
+    std::uint64_t visible_probe_count{};
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {
+        const platform::WorldPromptLayout probe =
+            platform::door_world_prompt_layout(
+                {640.0F, probe_skill.visual_bounds.y + 4.0F}, kMeasured,
+                kDoor, probe_skill.visual_bounds,
+                kProbeOffsets[iteration % kProbeOffsets.size()],
+                1280.0F, 720.0F);
+        visible_probe_count += probe.visible ? 1U : 0U;
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    ARPG_REQUIRE(visible_probe_count == 10'000U);
 
     constexpr std::array<Vector2, 2U> kOversizedMeasured{{
         {1600.0F, 30.0F},
