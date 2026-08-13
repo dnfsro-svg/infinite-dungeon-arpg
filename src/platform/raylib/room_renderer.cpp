@@ -30,15 +30,47 @@ Color raylib_color(Rgba8 color) noexcept {
     return {color.r, color.g, color.b, color.a};
 }
 
+Rectangle material_destination_bounds(MaterialSpriteId id,
+    Vector2 foot_position, float scale) noexcept {
+    if (!(scale > 0.0F) || !std::isfinite(scale)) return {};
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    for (std::size_t index = 0U; index < manifest.frame_count; ++index) {
+        const MaterialFrameDefinition& frame = manifest.frames[index];
+        if (frame.id != id) continue;
+        const Rectangle destination{
+            foot_position.x - frame.foot_anchor.x * scale,
+            foot_position.y - frame.foot_anchor.y * scale,
+            frame.source.width * scale,
+            frame.source.height * scale,
+        };
+        if (!std::isfinite(destination.x) || !std::isfinite(destination.y)
+                || !std::isfinite(destination.width)
+                || !std::isfinite(destination.height)
+                || !std::isfinite(destination.x + destination.width)
+                || !std::isfinite(destination.y + destination.height)
+                || destination.width <= 0.0F
+                || destination.height <= 0.0F) {
+            return {};
+        }
+        return destination;
+    }
+    return {};
+}
+
 void draw_world_prompt(const char* text, Vector2 anchor,
     float font_size, Color color, Font font, bool font_ready,
-    float screen_width, float screen_height) noexcept {
+    float screen_width, float screen_height,
+    const Rectangle* door_bounds = nullptr,
+    Rectangle hud_blocker = {}, Vector2 screen_offset = {}) noexcept {
     if (!font_ready || !IsFontValid(font) || text == nullptr
             || text[0] == '\0' || !(font_size > 0.0F)) return;
     const WorldPromptStyle style = world_prompt_style();
     const Vector2 measured = MeasureTextEx(font, text, font_size, 1.0F);
-    const WorldPromptLayout layout = world_prompt_layout(
-        anchor, measured, screen_width, screen_height);
+    const WorldPromptLayout layout = door_bounds != nullptr
+        ? door_world_prompt_layout(anchor, measured, *door_bounds,
+            hud_blocker, screen_offset, screen_width, screen_height)
+        : world_prompt_layout(
+            anchor, measured, screen_width, screen_height);
     if (!layout.visible) return;
     color = raylib_color(world_prompt_text_color(
         {color.r, color.g, color.b, color.a}));
@@ -173,7 +205,12 @@ MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
 void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
     const CombatCameraView& camera,
     float width, float height, const MaterialPack& material_pack, Font font,
-    bool font_ready) noexcept {
+    bool font_ready, Vector2 screen_offset) noexcept {
+    const ActiveSkillHudLayout active_skill_layout =
+        active_skill_hud_layout(
+            static_cast<int>(width), static_cast<int>(height));
+    const Rectangle hud_blocker = active_skill_layout.valid
+        ? active_skill_layout.visual_bounds : Rectangle{};
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
         snapshot.has_active_room, snapshot.exits_unlocked);
     if (mode == DoorVisualMode::hidden) {
@@ -193,10 +230,18 @@ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
         const float door_height = 70.0F * projected.scale;
         const Rectangle frame{projected.x - door_width * 0.5F,
             projected.ground_y - door_height, door_width, door_height};
-        if (!material_pack.draw(visual.sprite, {projected.x, projected.ground_y},
-                false, 0.72F * projected.scale, body_tint)) {
+        const float material_scale = 0.72F * projected.scale;
+        const Rectangle material_destination = material_destination_bounds(
+            visual.sprite, {projected.x, projected.ground_y}, material_scale);
+        const bool material_drawn = material_pack.draw(visual.sprite,
+            {projected.x, projected.ground_y}, false, material_scale, body_tint);
+        if (!material_drawn) {
             DrawRectangleLinesEx(frame, 5.0F * projected.scale, text_color);
         }
+        const Rectangle door_bounds = material_drawn
+            && material_destination.width > 0.0F
+            && material_destination.height > 0.0F
+            ? material_destination : frame;
         if (visual.draw_lock_marker) {
             const Rectangle lock{frame.x + frame.width - 16.0F * projected.scale,
                 frame.y + 10.0F * projected.scale,
@@ -250,7 +295,8 @@ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
         const float label_size = static_cast<float>(scene_text.role_font_size);
         draw_world_prompt(visual.label,
             {projected.x, frame.y - label_size - 14.0F},
-            label_size, text_color, font, font_ready, width, height);
+            label_size, text_color, font, font_ready, width, height,
+            &door_bounds, hud_blocker, screen_offset);
     }
 }
 
@@ -670,7 +716,8 @@ void CombatRenderer::draw_room(
     const GroundLootView& ground_loot,
     const MaterialLootView& material_loot,
     const CombatCameraView& camera,
-    const char* interact_binding_label) noexcept {
+    const char* interact_binding_label,
+    Vector2 screen_offset) noexcept {
     static_cast<void>(ground_loot);
     static_cast<void>(material_loot);
     const float width = static_cast<float>(GetScreenWidth());
@@ -687,7 +734,7 @@ void CombatRenderer::draw_room(
     draw_environment_room_props(
         material_pack_, current, camera, width, height);
     draw_doors(current, camera, width, height, material_pack_,
-        world_ui_font_, world_ui_font_ready_);
+        world_ui_font_, world_ui_font_ready_, screen_offset);
     draw_hole(current, material_pack_, camera, interact_binding_label,
         world_ui_font_, world_ui_font_ready_);
     draw_ground_materials(

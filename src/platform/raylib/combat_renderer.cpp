@@ -601,7 +601,8 @@ GroundLootView CombatRenderer::draw(
         switch (stage) {
         case CombatRenderStage::room:
             draw_room(world, render_plan.ground_loot,
-                render_plan.material_loot, camera, interact_binding_label);
+                render_plan.material_loot, camera, interact_binding_label,
+                {camera_offset.x, camera_offset.y});
             draw_abyss_overlay(current_hud);
             break;
         case CombatRenderStage::actors:

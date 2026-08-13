@@ -192,7 +192,8 @@ private:
         const GroundLootView& ground_loot,
         const MaterialLootView& material_loot,
         const CombatCameraView& camera,
-        const char* interact_binding_label) noexcept;
+        const char* interact_binding_label,
+        Vector2 screen_offset) noexcept;
     [[nodiscard]] bool draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonRenderSnapshot& current,
