@@ -42,13 +42,19 @@ struct ReinforcementConfirmationLayout final {
     Rectangle cancel{};
 };
 
-[[nodiscard]] MaterialBagLayout material_bag_layout(int width, int height) noexcept;
+[[nodiscard]] MaterialBagLayout material_bag_layout(
+    Rectangle content, float scale) noexcept;
+[[nodiscard]] MaterialBagLayout material_bag_layout(
+    int width, int height) noexcept;
 [[nodiscard]] Rectangle material_bag_detail_bounds(int width, int height) noexcept;
 [[nodiscard]] ReinforcementConfirmationLayout
 reinforcement_confirmation_layout(int width, int height) noexcept;
 
 class MaterialBagRenderer final {
 public:
+    [[nodiscard]] bool process_click(Vector2,
+        const items::ItemOwnershipState&,
+        const MaterialBagLayout&) noexcept;
     [[nodiscard]] bool process_click(Vector2,
         const items::ItemOwnershipState&, int width, int height) noexcept;
     [[nodiscard]] bool select_slot(std::size_t,
@@ -62,9 +68,14 @@ public:
     reinforcement_confirmation_item() const noexcept;
     void sync_selection(const items::ItemOwnershipState&) noexcept;
     [[nodiscard]] bool cycle_directed_category(
+        Vector2, const MaterialBagLayout&) noexcept;
+    [[nodiscard]] bool cycle_directed_category(
         Vector2, int width, int height) noexcept;
     [[nodiscard]] std::optional<items::MaterialId> selected_material() const noexcept;
     [[nodiscard]] items::DirectedCategory directed_category() const noexcept;
+    void draw(const items::ItemOwnershipState&, const MaterialPack&,
+        Font font, bool font_ready, const MaterialBagLayout&,
+        float scale) const noexcept;
     void draw(const items::ItemOwnershipState&, const MaterialPack&,
         Font font, bool font_ready, int width, int height) const noexcept;
     void draw_reinforcement_confirmation(const MaterialPack&,

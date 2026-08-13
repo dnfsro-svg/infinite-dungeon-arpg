@@ -48,6 +48,13 @@ constexpr std::array<const char*, 14U> kMaterialNames{{
     u8"重铸石", u8"定向核心", u8"强化石", u8"+6 强化券", u8"+9 强化券", u8"+12 强化券", u8"+15 强化券",
 }};
 
+constexpr std::array<const char*, 14U> kMaterialDescriptions{{
+    u8"选择物品应用", u8"选择物品应用", u8"选择物品应用", u8"选择物品应用",
+    u8"选择物品应用", u8"选择物品应用", u8"选择物品应用", u8"选择物品应用",
+    u8"选择伤害 / 防御 / 速度 / 元素",
+    u8"强化装备", u8"强化装备", u8"强化装备", u8"强化装备", u8"强化装备",
+}};
+
 constexpr std::array<const char*, 6U> kItemSlotNames{{
     u8"武器", u8"头盔", u8"胸甲", u8"手套", u8"靴子", u8"饰品",
 }};
@@ -202,6 +209,10 @@ const char* ui_material_name(items::MaterialId id) noexcept {
     return value_or_unknown(kMaterialNames, id);
 }
 
+const char* ui_material_description(items::MaterialId id) noexcept {
+    return value_or_unknown(kMaterialDescriptions, id);
+}
+
 const char* ui_item_slot_name(items::ItemSlot id) noexcept {
     return value_or_unknown(kItemSlotNames, id);
 }
@@ -247,6 +258,7 @@ void visit_ui_text_catalog(UiTextVisitor visitor, void* context) noexcept {
     visit_values(kUiTexts, visitor, context);
     visit_values(kItemBaseNames, visitor, context);
     visit_values(kMaterialNames, visitor, context);
+    visit_values(kMaterialDescriptions, visitor, context);
     visit_values(kItemSlotNames, visitor, context);
     visit_values(kItemRarityNames, visitor, context);
     visit_values(kPrefixAffixNames, visitor, context);

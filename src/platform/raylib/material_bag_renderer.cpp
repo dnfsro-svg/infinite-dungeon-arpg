@@ -13,6 +13,7 @@
 #include <raylib.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace arpg::platform {
@@ -83,6 +84,11 @@ bool inside(Rectangle child, Rectangle parent) noexcept {
         && child.y + child.height <= parent.y + parent.height;
 }
 
+bool finite(Rectangle rectangle) noexcept {
+    return std::isfinite(rectangle.x) && std::isfinite(rectangle.y)
+        && std::isfinite(rectangle.width) && std::isfinite(rectangle.height);
+}
+
 }  // namespace
 
 MaterialSpriteId skill_stone_sprite(SkillStoneVisualKind kind) noexcept {
@@ -120,48 +126,59 @@ bool MaterialBagLayout::contains_all_slots() const noexcept {
     return true;
 }
 
-MaterialBagLayout material_bag_layout(int width, int height) noexcept {
+MaterialBagLayout material_bag_layout(
+    Rectangle content, float scale) noexcept {
     MaterialBagLayout result{};
-    const InventoryLayout inventory = inventory_layout(width, height);
-    const float scale = inventory.scale;
-    const float panel_height = 280.0F * scale;
-    result.panel = {inventory.detail.x, inventory.detail.y + inventory.detail.height
-            - (std::min)(inventory.detail.height, panel_height),
-        inventory.detail.width, (std::min)(inventory.detail.height, panel_height)};
-    if (result.panel.width <= kInset * 2.0F * scale
-            || result.panel.height <= 42.0F * scale) {
+    if (!finite(content) || !std::isfinite(scale) || scale <= 0.0F
+            || content.width <= 0.0F || content.height <= 0.0F) {
+        return result;
+    }
+    result.panel = content;
+    const float inset = kInset * scale;
+    const float gap = kGap * scale;
+    const float title_height = 42.0F * scale;
+    if (result.panel.width <= inset * 2.0F
+            || result.panel.height <= title_height + inset) {
         return result;
     }
     const std::size_t rows = (items::kMaterialCount + kColumns - 1U) / kColumns;
     const float cell_width = (result.panel.width
-        - kInset * 2.0F * scale - kGap * scale)
+        - inset * 2.0F - gap)
         / static_cast<float>(kColumns);
-    const float cell_height = (result.panel.height - 42.0F * scale
-        - kInset * scale - kGap * scale
+    const float cell_height = (result.panel.height - title_height
+        - inset - gap
         * static_cast<float>(rows - 1U)) / static_cast<float>(rows);
-    if (cell_width <= 0.0F || cell_height <= 0.0F) return result;
+    if (cell_width < 40.0F || cell_height < 32.0F) return result;
     for (std::size_t index = 0U; index < result.slots.size(); ++index) {
         const std::size_t row = index / kColumns;
         const std::size_t column = index % kColumns;
-        result.slots[index] = {result.panel.x + kInset * scale
+        result.slots[index] = {result.panel.x + inset
                 + static_cast<float>(column)
-                    * (cell_width + kGap * scale),
-            result.panel.y + 33.0F * scale
+                    * (cell_width + gap),
+            result.panel.y + title_height
                 + static_cast<float>(row)
-                    * (cell_height + kGap * scale),
+                    * (cell_height + gap),
             cell_width, cell_height};
     }
     return result;
 }
 
+MaterialBagLayout material_bag_layout(int width, int height) noexcept {
+    const InventoryShellLayout shell = inventory_shell_layout(width, height);
+    return material_bag_layout(shell.right_panel, shell.geometry_scale);
+}
+
 Rectangle material_bag_detail_bounds(int width, int height) noexcept {
     const InventoryLayout inventory = inventory_layout(width, height);
-    const MaterialBagLayout bag = material_bag_layout(width, height);
     constexpr float kDetailTopInset = 36.0F;
     constexpr float kDetailBagGap = 4.0F;
+    constexpr float kLegacyBagHeight = 280.0F;
     const float top = inventory.detail.y + kDetailTopInset * inventory.scale;
+    const float legacy_bag_top = inventory.detail.y + inventory.detail.height
+        - (std::min)(inventory.detail.height,
+            kLegacyBagHeight * inventory.scale);
     const float bottom = (std::max)(
-        top, bag.panel.y - kDetailBagGap * inventory.scale);
+        top, legacy_bag_top - kDetailBagGap * inventory.scale);
     return {inventory.detail.x, top, inventory.detail.width, bottom - top};
 }
 
@@ -234,9 +251,8 @@ void MaterialBagRenderer::sync_selection(
 }
 
 bool MaterialBagRenderer::cycle_directed_category(
-    Vector2 point, int width, int height) noexcept {
+    Vector2 point, const MaterialBagLayout& layout) noexcept {
     if (selected_ != items::MaterialId::directed) return false;
-    const MaterialBagLayout layout = material_bag_layout(width, height);
     const std::size_t index = items::material_index(items::MaterialId::directed);
     if (index >= layout.slots.size() || !contains(layout.slots[index], point)) {
         return false;
@@ -248,13 +264,29 @@ bool MaterialBagRenderer::cycle_directed_category(
     return true;
 }
 
+bool MaterialBagRenderer::cycle_directed_category(
+    Vector2 point, int width, int height) noexcept {
+    const InventoryShellLayout shell = inventory_shell_layout(width, height);
+    const MaterialBagLayout layout = material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
+    return cycle_directed_category(point, layout);
+}
+
 bool MaterialBagRenderer::process_click(Vector2 point,
-    const items::ItemOwnershipState& state, int width, int height) noexcept {
-    const MaterialBagLayout layout = material_bag_layout(width, height);
+    const items::ItemOwnershipState& state,
+    const MaterialBagLayout& layout) noexcept {
     for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
         if (contains(layout.slots[index], point)) return select_slot(index, state);
     }
     return false;
+}
+
+bool MaterialBagRenderer::process_click(Vector2 point,
+    const items::ItemOwnershipState& state, int width, int height) noexcept {
+    const InventoryShellLayout shell = inventory_shell_layout(width, height);
+    const MaterialBagLayout layout = material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
+    return process_click(point, state, layout);
 }
 
 std::optional<items::MaterialId> MaterialBagRenderer::selected_material() const noexcept {
@@ -267,9 +299,7 @@ items::DirectedCategory MaterialBagRenderer::directed_category() const noexcept 
 
 void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
     const MaterialPack& assets, Font font, bool font_ready,
-    int width, int height) const noexcept {
-    const MaterialBagLayout layout = material_bag_layout(width, height);
-    const float scale = ui_viewport_scale(width, height);
+    const MaterialBagLayout& layout, float scale) const noexcept {
     if (!layout.contains_all_slots()) return;
     DrawRectangleRec(layout.panel, kMaterialTextBacking);
     if (!assets.draw_nine_slice(ui_material_sprite(
@@ -336,10 +366,29 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
             display_text, sizeof(display_text), u8"%s ×%llu", display_name,
             static_cast<unsigned long long>(state.materials[index]));
         if (!formatted.input_was_valid || formatted.truncated) continue;
+        const float half_height = text_container.height * 0.5F;
+        const Rectangle name_bounds{text_container.x, text_container.y,
+            text_container.width, half_height};
+        const Rectangle description_bounds{text_container.x,
+            text_container.y + half_height, text_container.width,
+            text_container.height - half_height};
         draw_material_text(font, font_ready,
-            display_text, text_container, font_size, 9.0F, color,
+            display_text, name_bounds, font_size, 12.0F, color,
+            kMaterialTextBacking);
+        draw_material_text(font, font_ready, ui_material_description(id),
+            description_bounds, ui_typography().inventory_hint_font_size,
+            12.0F, ui_text_contrast_style().muted,
             kMaterialTextBacking);
     }
+}
+
+void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
+    const MaterialPack& assets, Font font, bool font_ready,
+    int width, int height) const noexcept {
+    const InventoryShellLayout shell = inventory_shell_layout(width, height);
+    const MaterialBagLayout layout = material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
+    draw(state, assets, font, font_ready, layout, shell.geometry_scale);
 }
 
 void MaterialBagRenderer::draw_reinforcement_confirmation(

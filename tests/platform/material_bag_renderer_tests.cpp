@@ -20,6 +20,18 @@ namespace {
 namespace items = arpg::items;
 namespace platform = arpg::platform;
 
+bool inside(Rectangle child, Rectangle parent) noexcept {
+    return child.width > 0.0F && child.height > 0.0F
+        && child.x >= parent.x && child.y >= parent.y
+        && child.x + child.width <= parent.x + parent.width
+        && child.y + child.height <= parent.y + parent.height;
+}
+
+Vector2 center(Rectangle rectangle) noexcept {
+    return {rectangle.x + rectangle.width * 0.5F,
+        rectangle.y + rectangle.height * 0.5F};
+}
+
 platform::UiTextExtent measure_material_text(const char* text,
     float font_size, float, void*) noexcept {
     std::size_t codepoints{};
@@ -32,15 +44,17 @@ platform::UiTextExtent measure_material_text(const char* text,
 }
 
 arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
-    const platform::MaterialBagLayout layout =
-        platform::material_bag_layout(1280, 720);
+    const auto shell = platform::inventory_shell_layout(1280, 720);
+    const platform::MaterialBagLayout layout = platform::material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
     ARPG_REQUIRE(layout.contains_all_slots());
     ARPG_REQUIRE(layout.slots.size() == items::kMaterialCount);
 
-    const platform::MaterialBagLayout full_hd =
-        platform::material_bag_layout(1920, 1080);
+    const auto full_hd_shell = platform::inventory_shell_layout(1920, 1080);
+    const platform::MaterialBagLayout full_hd = platform::material_bag_layout(
+        full_hd_shell.right_panel, full_hd_shell.geometry_scale);
     ARPG_REQUIRE(full_hd.contains_all_slots());
-    ARPG_REQUIRE(full_hd.slots[0].width >= 240.0F);
+    ARPG_REQUIRE(full_hd.slots[0].width >= 40.0F);
     ARPG_REQUIRE(full_hd.slots[2].x == full_hd.slots[0].x);
     ARPG_REQUIRE(full_hd.slots[2].y > full_hd.slots[0].y);
 
@@ -77,12 +91,17 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto resolution : kResolutions) {
-        const platform::MaterialBagLayout scaled =
-            platform::material_bag_layout(resolution[0], resolution[1]);
-        ARPG_REQUIRE(scaled.contains_all_slots());
-        const float scale = platform::ui_viewport_scale(
+        const auto scaled_shell = platform::inventory_shell_layout(
             resolution[0], resolution[1]);
+        const platform::MaterialBagLayout scaled =
+            platform::material_bag_layout(
+                scaled_shell.right_panel, scaled_shell.geometry_scale);
+        ARPG_REQUIRE(scaled.contains_all_slots());
+        const float scale = scaled_shell.geometry_scale;
         for (std::size_t index{}; index < items::kMaterialCount; ++index) {
+            ARPG_REQUIRE(inside(scaled.slots[index], scaled_shell.right_panel));
+            ARPG_REQUIRE(scaled.slots[index].width >= 40.0F);
+            ARPG_REQUIRE(scaled.slots[index].height >= 32.0F);
             const auto id = static_cast<items::MaterialId>(index);
             ARPG_REQUIRE(std::string_view{platform::material_bag_display_name(id)}
                 == platform::ui_material_name(id));
@@ -181,29 +200,51 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
     return {};
 }
 
-arpg::test::Failure minimum_layout_keeps_detail_above_material_bag() noexcept {
+arpg::test::Failure minimum_layout_keeps_legacy_detail_and_shell_bag_valid() noexcept {
+    const auto legacy = platform::inventory_layout(800, 450);
+    const auto shell = platform::inventory_shell_layout(800, 450);
     const platform::MaterialBagLayout bag =
-        platform::material_bag_layout(800, 450);
+        platform::material_bag_layout(
+            shell.right_panel, shell.geometry_scale);
     const Rectangle detail = platform::material_bag_detail_bounds(800, 450);
     ARPG_REQUIRE(bag.contains_all_slots());
     ARPG_REQUIRE(detail.height > 0.0F);
-    ARPG_REQUIRE(detail.y + detail.height <= bag.panel.y);
+    ARPG_REQUIRE(inside(detail, legacy.detail));
+    for (const Rectangle slot : bag.slots)
+        ARPG_REQUIRE(inside(slot, shell.right_panel));
     return {};
 }
 
 arpg::test::Failure selected_material_requires_an_owned_material_slot() noexcept {
     items::ItemOwnershipState state{};
-    state.materials[items::material_index(items::MaterialId::chaos)] = 4U;
+    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
+    const std::size_t exalt = items::material_index(items::MaterialId::exalt);
+    const std::size_t directed = items::material_index(items::MaterialId::directed);
+    state.materials[chaos] = 4U;
+    state.materials[directed] = 2U;
+    const auto shell = platform::inventory_shell_layout(1280, 720);
+    const auto layout = platform::material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
     platform::MaterialBagRenderer renderer{};
     ARPG_REQUIRE(!renderer.selected_material().has_value());
-    ARPG_REQUIRE(renderer.select_slot(
-        items::material_index(items::MaterialId::chaos), state));
+    ARPG_REQUIRE(renderer.process_click(center(layout.slots[chaos]),
+        state, layout));
     ARPG_REQUIRE(renderer.selected_material()
         == items::MaterialId::chaos);
-    ARPG_REQUIRE(!renderer.select_slot(
-        items::material_index(items::MaterialId::exalt), state));
+    ARPG_REQUIRE(!renderer.process_click(center(layout.slots[exalt]),
+        state, layout));
     ARPG_REQUIRE(renderer.selected_material()
         == items::MaterialId::chaos);
+
+    ARPG_REQUIRE(renderer.process_click(center(layout.slots[directed]),
+        state, layout));
+    ARPG_REQUIRE(renderer.selected_material() == items::MaterialId::directed);
+    ARPG_REQUIRE(renderer.directed_category() == items::DirectedCategory::damage);
+    ARPG_REQUIRE(renderer.cycle_directed_category(
+        center(layout.slots[directed]), layout));
+    ARPG_REQUIRE(renderer.directed_category() == items::DirectedCategory::defense);
+    ARPG_REQUIRE(renderer.selected_material() == items::MaterialId::directed);
+    ARPG_REQUIRE(state.materials[directed] == 2U);
     return {};
 }
 
@@ -262,7 +303,7 @@ arpg::test::Failure material_bag_and_skill_stones_use_authored_icon_resources() 
 
 constexpr arpg::test::TestCase kCases[] = {
     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
-    {"minimum layout separates detail and bag", &minimum_layout_keeps_detail_above_material_bag},
+    {"minimum layout keeps legacy detail and shell bag valid", &minimum_layout_keeps_legacy_detail_and_shell_bag_valid},
     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
     {"material bag selection cancels", &selected_material_can_be_cancelled_without_changing_counts},
     {"reinforcement requires destroy confirmation", &reinforcement_stone_requires_explicit_destroy_confirmation},

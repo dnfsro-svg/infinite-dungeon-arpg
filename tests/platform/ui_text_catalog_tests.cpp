@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "allocation_probe.hpp"
+#include "shared_ui_font.hpp"
 #include "ui_text_catalog.hpp"
 #include "ui_utf8.hpp"
 
@@ -43,6 +44,16 @@ constexpr std::array<const char*, 18U> kApprovedInventoryProgressionSamples{{
     // Capacity-compatible vocabulary shared by T2-T5.
     u8"装备值 / 按键提示 / 小节点 / 重要节点 / 地面危险 / 来源 / 最终伤害 ×1.12",
 }};
+
+constexpr std::array<const char*, arpg::items::kMaterialCount>
+    kExpectedMaterialDescriptions{{
+        u8"选择物品应用", u8"选择物品应用", u8"选择物品应用",
+        u8"选择物品应用", u8"选择物品应用", u8"选择物品应用",
+        u8"选择物品应用", u8"选择物品应用",
+        u8"选择伤害 / 防御 / 速度 / 元素",
+        u8"强化装备", u8"强化装备", u8"强化装备", u8"强化装备",
+        u8"强化装备",
+    }};
 
 constexpr std::array<platform::UiTextId, 43U> kPreTask4UiTextIds{{
     platform::UiTextId::pause_title,
@@ -114,6 +125,7 @@ void count_text(const char* text, void* context) noexcept {
 
 struct CatalogAudit final {
     std::array<bool, kApprovedInventoryProgressionSamples.size()> reached{};
+    std::array<std::size_t, 3U> material_description_counts{};
     std::size_t count{};
     bool valid_utf8{true};
 };
@@ -131,6 +143,12 @@ void audit_catalog_text(const char* text, void* context) noexcept {
         if (std::strcmp(text, kApprovedInventoryProgressionSamples[index]) == 0)
             audit.reached[index] = true;
     }
+    if (std::strcmp(text, u8"选择物品应用") == 0)
+        ++audit.material_description_counts[0];
+    if (std::strcmp(text, u8"选择伤害 / 防御 / 速度 / 元素") == 0)
+        ++audit.material_description_counts[1];
+    if (std::strcmp(text, u8"强化装备") == 0)
+        ++audit.material_description_counts[2];
 }
 
 std::size_t utf8_codepoint_count(const char* text) noexcept {
@@ -242,10 +260,20 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
         u8"剥离石", u8"神圣石", u8"重铸石", u8"定向核心", u8"强化石",
         u8"+6 强化券", u8"+9 强化券", u8"+12 强化券", u8"+15 强化券",
     }};
+    const platform::UiGlyphPlan glyph_plan = platform::ui_glyph_plan();
+    ARPG_REQUIRE(glyph_plan.codepoint_count == 639U);
+    ARPG_REQUIRE(!glyph_plan.capacity_exceeded);
     for (std::size_t index{}; index < kExpectedMaterialNames.size(); ++index) {
-        ARPG_REQUIRE(std::strcmp(platform::ui_material_name(
-            static_cast<arpg::items::MaterialId>(index)),
+        const auto id = static_cast<arpg::items::MaterialId>(index);
+        ARPG_REQUIRE(std::strcmp(platform::ui_material_name(id),
             kExpectedMaterialNames[index]) == 0);
+        const char* const description = platform::ui_material_description(id);
+        ARPG_REQUIRE(description != nullptr && description[0] != '\0');
+        ARPG_REQUIRE(std::strcmp(
+            description, kExpectedMaterialDescriptions[index]) == 0);
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(description));
+        ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+            glyph_plan, description));
     }
 
     ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
@@ -296,6 +324,9 @@ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(id), u8"未知") != 0);
     for (std::uint8_t raw = 0U; raw < 14U; ++raw)
         ARPG_REQUIRE(std::strcmp(platform::ui_material_name(
+            static_cast<arpg::items::MaterialId>(raw)), u8"未知") != 0);
+    for (std::uint8_t raw = 0U; raw < 14U; ++raw)
+        ARPG_REQUIRE(std::strcmp(platform::ui_material_description(
             static_cast<arpg::items::MaterialId>(raw)), u8"未知") != 0);
     for (std::uint8_t raw = 0U; raw < 6U; ++raw)
         ARPG_REQUIRE(std::strcmp(platform::ui_item_slot_name(
@@ -362,6 +393,8 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
     ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(255U), u8"未知") == 0);
     ARPG_REQUIRE(std::strcmp(platform::ui_material_name(
         static_cast<arpg::items::MaterialId>(255U)), u8"未知") == 0);
+    ARPG_REQUIRE(std::strcmp(platform::ui_material_description(
+        static_cast<arpg::items::MaterialId>(255U)), u8"未知") == 0);
     ARPG_REQUIRE(std::strcmp(platform::ui_item_slot_name(
         static_cast<arpg::items::ItemSlot>(255U)), u8"未知") == 0);
     ARPG_REQUIRE(std::strcmp(platform::ui_item_rarity_name(
@@ -389,7 +422,10 @@ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
         audit.valid_utf8 ? 1 : 0);
     ARPG_REQUIRE(audit.valid_utf8);
     for (const bool reached : audit.reached) ARPG_REQUIRE(reached);
-    ARPG_REQUIRE(audit.count == 329U);
+    ARPG_REQUIRE(audit.material_description_counts[0] == 8U);
+    ARPG_REQUIRE(audit.material_description_counts[1] == 1U);
+    ARPG_REQUIRE(audit.material_description_counts[2] == 5U);
+    ARPG_REQUIRE(audit.count == 343U);
     return {};
 }
 
@@ -400,7 +436,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 329U);
+        ARPG_REQUIRE(count == 343U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

@@ -61,6 +61,8 @@ enum class UiTextId : std::uint16_t {
 [[nodiscard]] const char* ui_text(UiTextId id) noexcept;
 [[nodiscard]] const char* ui_item_base_name(std::uint8_t base_id) noexcept;
 [[nodiscard]] const char* ui_material_name(items::MaterialId id) noexcept;
+[[nodiscard]] const char* ui_material_description(
+    items::MaterialId id) noexcept;
 [[nodiscard]] const char* ui_item_slot_name(items::ItemSlot id) noexcept;
 [[nodiscard]] const char* ui_item_rarity_name(items::ItemRarity id) noexcept;
 [[nodiscard]] const char* ui_item_affix_name(std::uint16_t affix_id) noexcept;

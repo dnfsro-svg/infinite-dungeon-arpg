@@ -48,6 +48,13 @@ namespace items = arpg::items;
 namespace persistence = arpg::persistence;
 namespace platform = arpg::platform;
 
+struct Resolution final {
+    int width{};
+    int height{};
+};
+
+constexpr Resolution kResolution{1280, 720};
+
 struct ScenarioResult final {
     bool ground_material_visible{};
     bool real_material_pickup{};
@@ -263,7 +270,7 @@ bool export_flushed_frame(const std::filesystem::path& path) noexcept {
 bool render_world_capture(const std::filesystem::path& run,
     platform::DungeonRuntime& runtime,
     const platform::SharedUiFont& shared_ui_font,
-    const char* name) noexcept {
+    Resolution resolution, const char* name) noexcept {
     const auto start = std::filesystem::file_time_type::clock::now()
         - std::chrono::seconds(1);
     const auto room = std::make_unique<platform::CombatRenderer>();
@@ -284,9 +291,12 @@ bool render_world_capture(const std::filesystem::path& run,
     if (world == nullptr || !current->combat.has_value()) return false;
     const platform::CombatCameraView camera =
         platform::make_combat_camera_view(
-            current->combat->player.position, 1280.0F, 720.0F);
+            current->combat->player.position,
+            static_cast<float>(resolution.width),
+            static_cast<float>(resolution.height));
     const dungeon::WorldViewQuery query = platform::make_world_view_query(
-        camera, 1280.0F, 720.0F, 1U);
+        camera, static_cast<float>(resolution.width),
+        static_cast<float>(resolution.height), 1U);
     if (!runtime.session()->write_render_snapshot(query, *world)) return false;
     const platform::CombatFeedback feedback{};
     platform::ControlHints hints{};
@@ -303,8 +313,10 @@ bool render_world_capture(const std::filesystem::path& run,
     EndDrawing();
     std::error_code error{};
     const Image decoded = LoadImage(image.string().c_str());
-    const bool valid = decoded.data != nullptr && decoded.width == 1280
-        && decoded.height == 720 && image_has_rendered_content(decoded);
+    const bool valid = decoded.data != nullptr
+        && decoded.width == resolution.width
+        && decoded.height == resolution.height
+        && image_has_rendered_content(decoded);
     if (decoded.data != nullptr) UnloadImage(decoded);
     const bool regular = std::filesystem::is_regular_file(image, error) && !error;
     error.clear();
@@ -317,7 +329,7 @@ bool render_world_capture(const std::filesystem::path& run,
 bool drive_real_material_pickup(const std::filesystem::path& run,
     platform::DungeonRuntime& runtime,
     const platform::SharedUiFont& shared_ui_font,
-    ScenarioResult& result) noexcept {
+    Resolution resolution, ScenarioResult& result) noexcept {
     std::int8_t retreat_direction{};
     int last_hp{-1};
     int last_max_hp{-1};
@@ -396,7 +408,7 @@ bool drive_real_material_pickup(const std::filesystem::path& run,
                 if (!result.ground_material_visible) {
                     result.ground_spawn_distance = std::sqrt(dx * dx + dy * dy);
                     result.ground_material_visible = render_world_capture(
-                        run, runtime, shared_ui_font,
+                        run, runtime, shared_ui_font, resolution,
                         "stage16-ground-material-1280x720.png");
                     if (!result.ground_material_visible) {
                         std::cerr << "stage16 failure=ground_material_capture tick="
@@ -549,37 +561,31 @@ Vector2 center(Rectangle rectangle) noexcept {
         rectangle.y + rectangle.height * 0.5F};
 }
 
-Vector2 first_inventory_cell() noexcept {
-    const platform::InventoryLayout layout = platform::inventory_layout(1280, 720);
-    return {layout.grid.x + 24.0F, layout.grid.y + 100.0F};
+Vector2 first_inventory_cell(Resolution resolution) noexcept {
+    const auto shell = platform::inventory_shell_layout(
+        resolution.width, resolution.height);
+    return center(platform::inventory_grid_item_rectangle(shell, 0U, 0.0F));
 }
 
-Vector2 inventory_cell(std::size_t filtered_position) noexcept {
-    const platform::InventoryLayout layout = platform::inventory_layout(1280, 720);
-    constexpr std::size_t columns = 2U;
-    const float cell_width = (layout.grid.width - 20.0F * layout.scale)
-        / static_cast<float>(columns);
-    return {
-        layout.grid.x + 24.0F * layout.scale
-            + static_cast<float>(filtered_position % columns) * cell_width,
-        layout.grid.y + (100.0F
-            + static_cast<float>(filtered_position / columns) * 58.0F)
-                * layout.scale,
-    };
+Vector2 inventory_cell(std::size_t filtered_position,
+    Resolution resolution) noexcept {
+    const auto shell = platform::inventory_shell_layout(
+        resolution.width, resolution.height);
+    return center(platform::inventory_grid_item_rectangle(
+        shell, filtered_position, 0.0F));
 }
 
-platform::HostFrameInput recipe_click(std::size_t filtered_position) noexcept {
-    auto input = click(inventory_cell(filtered_position));
+platform::HostFrameInput recipe_click(std::size_t filtered_position,
+    Resolution resolution) noexcept {
+    auto input = click(inventory_cell(filtered_position, resolution));
     input.control_down = true;
     return input;
 }
 
-Vector2 combine_button_center() noexcept {
-    const platform::InventoryLayout layout = platform::inventory_layout(1280, 720);
-    return {
-        layout.grid.x + layout.grid.width * 0.5F,
-        layout.grid.y + layout.grid.height - 27.0F * layout.scale,
-    };
+Vector2 combine_button_center(Resolution resolution) noexcept {
+    const auto shell = platform::inventory_shell_layout(
+        resolution.width, resolution.height);
+    return center(shell.action_bounds);
 }
 
 bool settle_pending_save(platform::DungeonRuntime& runtime) noexcept {
@@ -601,7 +607,7 @@ bool settle_pending_save(platform::DungeonRuntime& runtime) noexcept {
 
 bool inventory_close_clears_material_selection(
     platform::InventoryRenderer& inventory,
-    platform::DungeonRuntime& runtime) noexcept {
+    platform::DungeonRuntime& runtime, Resolution resolution) noexcept {
     const auto* const session = runtime.session();
     if (session == nullptr || !settle_pending_save(runtime)
             || runtime.item_state() == nullptr) {
@@ -612,13 +618,16 @@ bool inventory_close_clears_material_selection(
     const auto before = session->snapshot();
     const std::uint64_t material_before =
         runtime.item_state()->materials[material_index];
-    const auto bag = platform::material_bag_layout(1280, 720);
+    const auto shell = platform::inventory_shell_layout(
+        resolution.width, resolution.height);
+    const auto bag = platform::material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
     const bool selection_committed = inventory.process_input(runtime, before,
         click(center(bag.slots[material_index])));
     inventory.close();
     inventory.open(*session, session->snapshot());
     const bool item_click_committed = inventory.process_input(
-        runtime, session->snapshot(), click(first_inventory_cell()));
+        runtime, session->snapshot(), click(first_inventory_cell(resolution)));
     const auto after = session->snapshot();
     return !selection_committed && !item_click_committed
         && !after.pending_save_kind.has_value()
@@ -629,7 +638,7 @@ bool inventory_close_clears_material_selection(
 
 bool inventory_close_clears_recipe_selection(
     platform::InventoryRenderer& inventory,
-    platform::DungeonRuntime& runtime) noexcept {
+    platform::DungeonRuntime& runtime, Resolution resolution) noexcept {
     const auto* const session = runtime.session();
     if (session == nullptr || !settle_pending_save(runtime)
             || runtime.item_state() == nullptr) {
@@ -640,14 +649,14 @@ bool inventory_close_clears_recipe_selection(
     for (std::size_t filtered_position = 0U;
             filtered_position < 3U; ++filtered_position) {
         if (inventory.process_input(runtime, session->snapshot(),
-                recipe_click(filtered_position))) {
+                recipe_click(filtered_position, resolution))) {
             return false;
         }
     }
     inventory.close();
     inventory.open(*session, session->snapshot());
     const bool combine_committed = inventory.process_input(runtime,
-        session->snapshot(), click(combine_button_center()));
+        session->snapshot(), click(combine_button_center(resolution)));
     const auto after = session->snapshot();
     return !combine_committed && !after.pending_save_kind.has_value()
         && after.commit_generation == before.commit_generation
@@ -657,7 +666,8 @@ bool inventory_close_clears_recipe_selection(
 
 bool process_item_action(platform::InventoryRenderer& inventory,
     platform::DungeonRuntime& runtime, items::MaterialId material,
-    std::uint64_t expected_item, bool& action_result) noexcept {
+    std::uint64_t expected_item, Resolution resolution,
+    bool& action_result) noexcept {
     const auto* const session = runtime.session();
     if (session == nullptr || !settle_pending_save(runtime)) return false;
     const std::size_t index = items::material_index(material);
@@ -665,14 +675,17 @@ bool process_item_action(platform::InventoryRenderer& inventory,
             && index < items::kMaterialCount
         ? runtime.item_state()->materials[index] : 0U;
     auto snapshot = session->snapshot();
-    const auto bag = platform::material_bag_layout(1280, 720);
+    const auto shell = platform::inventory_shell_layout(
+        resolution.width, resolution.height);
+    const auto bag = platform::material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
     if (!inventory.process_input(runtime, snapshot,
             click(center(bag.slots[items::material_index(material)])))) {
         // Selecting a material is intentionally a UI-only click.
     }
     snapshot = runtime.session()->snapshot();
     const bool committed = inventory.process_input(runtime, snapshot,
-        click(first_inventory_cell()));
+        click(first_inventory_cell(resolution)));
     action_result = committed;
     if (committed && !settle_pending_save(runtime)) return false;
     if (runtime.item_state() == nullptr || !exists(*runtime.item_state(), expected_item)) {
@@ -721,7 +734,8 @@ bool process_item_action(platform::InventoryRenderer& inventory,
 
 bool render_inventory_capture(const std::filesystem::path& run,
     platform::DungeonRuntime& runtime, platform::InventoryRenderer& inventory,
-    const platform::SharedUiFont& shared_ui_font, const char* name) noexcept {
+    const platform::SharedUiFont& shared_ui_font, Resolution resolution,
+    const char* name) noexcept {
     const auto start = std::filesystem::file_time_type::clock::now()
         - std::chrono::seconds(1);
     const auto room = std::make_unique<platform::CombatRenderer>();
@@ -742,9 +756,12 @@ bool render_inventory_capture(const std::filesystem::path& run,
     if (world == nullptr || !current->combat.has_value()) return false;
     const platform::CombatCameraView camera =
         platform::make_combat_camera_view(
-            current->combat->player.position, 1280.0F, 720.0F);
+            current->combat->player.position,
+            static_cast<float>(resolution.width),
+            static_cast<float>(resolution.height));
     const dungeon::WorldViewQuery query = platform::make_world_view_query(
-        camera, 1280.0F, 720.0F, 2U);
+        camera, static_cast<float>(resolution.width),
+        static_cast<float>(resolution.height), 2U);
     if (!runtime.session()->write_render_snapshot(query, *world)) return false;
     const platform::CombatFeedback feedback{};
     platform::ControlHints hints{};
@@ -763,8 +780,10 @@ bool render_inventory_capture(const std::filesystem::path& run,
     EndDrawing();
     std::error_code error{};
     const Image decoded = LoadImage(image.string().c_str());
-    const bool valid = decoded.data != nullptr && decoded.width == 1280
-        && decoded.height == 720 && image_has_rendered_content(decoded);
+    const bool valid = decoded.data != nullptr
+        && decoded.width == resolution.width
+        && decoded.height == resolution.height
+        && image_has_rendered_content(decoded);
     if (decoded.data != nullptr) UnloadImage(decoded);
     const bool regular = std::filesystem::is_regular_file(image, error) && !error;
     error.clear();
@@ -776,7 +795,8 @@ bool render_inventory_capture(const std::filesystem::path& run,
 
 std::optional<ScenarioResult> run_production_scenario(
     const std::filesystem::path& run,
-    const platform::SharedUiFont& shared_ui_font) noexcept {
+    const platform::SharedUiFont& shared_ui_font,
+    Resolution resolution) noexcept {
     std::uint64_t target_id = 0x1601U;
     std::uint64_t root{};
     std::uint16_t first_drop_ordinal{};
@@ -820,7 +840,8 @@ std::optional<ScenarioResult> run_production_scenario(
     result.first_drop_ordinal = first_drop_ordinal;
     result.first_spawn_distance = first_spawn_distance;
     result.first_spawn_position = first_spawn_position;
-    if (!drive_real_material_pickup(run, *runtime, shared_ui_font, result)
+    if (!drive_real_material_pickup(
+            run, *runtime, shared_ui_font, resolution, result)
             || runtime->item_state() == nullptr
             || !settle_pending_save(*runtime)) {
         std::cerr << "stage16 failure=drive_real_material_pickup"
@@ -831,34 +852,40 @@ std::optional<ScenarioResult> run_production_scenario(
 
     const auto inventory = std::make_unique<platform::InventoryRenderer>();
     inventory->open(*runtime->session(), runtime->session()->snapshot());
-    if (!inventory_close_clears_material_selection(*inventory, *runtime)) {
+    if (!inventory_close_clears_material_selection(
+            *inventory, *runtime, resolution)) {
         std::cerr << "stage16 failure=inventory_close_material_selection\n";
         return std::nullopt;
     }
-    if (!inventory_close_clears_recipe_selection(*inventory, *runtime)) {
+    if (!inventory_close_clears_recipe_selection(
+            *inventory, *runtime, resolution)) {
         std::cerr << "stage16 failure=inventory_close_recipe_selection\n";
         return std::nullopt;
     }
     if (!process_item_action(*inventory, *runtime, items::MaterialId::chaos,
-            target_id, result.craft) || !result.craft) {
+            target_id, resolution, result.craft) || !result.craft) {
         std::cerr << "stage16 failure=chaos_craft\n";
         return std::nullopt;
     }
     if (!process_item_action(*inventory, *runtime, items::MaterialId::coupon_12,
-            target_id, result.coupon) || !result.coupon) {
+            target_id, resolution, result.coupon) || !result.coupon) {
         std::cerr << "stage16 failure=coupon_12\n";
         return std::nullopt;
     }
 
-    const auto bag = platform::material_bag_layout(1280, 720);
+    const auto shell = platform::inventory_shell_layout(
+        resolution.width, resolution.height);
+    const auto bag = platform::material_bag_layout(
+        shell.right_panel, shell.geometry_scale);
     static_cast<void>(inventory->process_input(*runtime, runtime->session()->snapshot(),
         click(center(bag.slots[items::material_index(
             items::MaterialId::reinforcement_stone)]))));
     static_cast<void>(inventory->process_input(*runtime, runtime->session()->snapshot(),
-        click(first_inventory_cell())));
-    const auto confirmation = platform::reinforcement_confirmation_layout(1280, 720);
+        click(first_inventory_cell(resolution))));
+    const auto confirmation = platform::reinforcement_confirmation_layout(
+        resolution.width, resolution.height);
     result.confirmation_visible = render_inventory_capture(
-        run, *runtime, *inventory, shared_ui_font,
+        run, *runtime, *inventory, shared_ui_font, resolution,
         "stage16-confirmation-1280x720.png");
     if (!result.confirmation_visible) {
         std::cerr << "stage16 failure=confirmation_capture\n";
@@ -876,7 +903,8 @@ std::optional<ScenarioResult> run_production_scenario(
                   << " destroyed=" << (result.destroyed ? 1 : 0) << '\n';
         return std::nullopt;
     }
-    if (!render_inventory_capture(run, *runtime, *inventory, shared_ui_font,
+    if (!render_inventory_capture(
+            run, *runtime, *inventory, shared_ui_font, resolution,
             "stage16-complete-1280x720.png")) {
         std::cerr << "stage16 failure=complete_capture\n";
         return std::nullopt;
@@ -908,6 +936,12 @@ std::optional<ScenarioResult> run_production_scenario(
         && consumables_spent && target_destroyed;
     result.bag_selection = result.craft && result.coupon;
     return result;
+}
+
+std::optional<ScenarioResult> run_production_scenario(
+    const std::filesystem::path& run,
+    const platform::SharedUiFont& shared_ui_font) noexcept {
+    return run_production_scenario(run, shared_ui_font, kResolution);
 }
 
 bool write_state(const std::filesystem::path& run,
@@ -947,7 +981,8 @@ int main(int argc, char** argv) {
     if (argc != 2 || argv[1] == nullptr) return 2;
     std::filesystem::path run{};
     if (!prepare_evidence(std::filesystem::absolute(argv[1]), run)) return 3;
-    InitWindow(1280, 720, "Stage 16 Production UI Validation");
+    InitWindow(kResolution.width, kResolution.height,
+        "Stage 16 Production UI Validation");
     if (!IsWindowReady()) return 4;
     if (!ChangeDirectory(GetApplicationDirectory())) {
         CloseWindow();
