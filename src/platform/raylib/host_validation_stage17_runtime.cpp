@@ -275,8 +275,9 @@ void observe_stage17_combat_event(
         || snapshot.focus_lost || state.suspend_injection) {
         return snapshot;
     }
-    const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
+    const InventoryShellLayout shell = inventory_shell_layout(
         config.window_width, config.window_height);
+    const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(shell);
     switch (state.step) {
     case Stage17ValidationStep::initial:
     case Stage17ValidationStep::draw_active:
@@ -320,7 +321,7 @@ void observe_stage17_combat_event(
             settings::SettingAction::inventory);
         break;
     case Stage17ValidationStep::open_skill_page:
-        stage17_click(snapshot, layout.skill_stones_page_button);
+        stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)]);
         state.step = Stage17ValidationStep::remove_slot_1;
         break;
     case Stage17ValidationStep::remove_slot_1:
@@ -341,7 +342,7 @@ void observe_stage17_combat_event(
             settings::SettingAction::inventory);
         break;
     case Stage17ValidationStep::restart_open_skill_page:
-        stage17_click(snapshot, layout.skill_stones_page_button);
+        stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)]);
         state.step = Stage17ValidationStep::restart_capture;
         state.capture_pending = Stage17Capture::restarted;
         break;

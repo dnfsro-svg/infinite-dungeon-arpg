@@ -396,96 +396,111 @@ std::array<char, 96> inventory_page_title(
 }
 
 ActiveSkillLoadoutLayout active_skill_loadout_layout(
-    int width, int height) noexcept {
-    if (width <= 0 || height <= 0) return {};
-    const float screen_width = static_cast<float>(width);
-    const float screen_height = static_cast<float>(height);
-    const float viewport_scale = ui_viewport_scale(width, height);
-    const float unscaled_main_width =
-        static_cast<float>(skills::kActiveSkillSlotCount) * kSkillMainWidth
-        + static_cast<float>(skills::kActiveSkillSlotCount - 1U)
-            * kSkillMainGap;
-    const float width_fit_scale = std::max(0.0F, screen_width - 40.0F)
-        / unscaled_main_width;
-    const float scale = std::min(viewport_scale, width_fit_scale);
+    InventoryShellLayout shell) noexcept {
+    if (!shell.valid) return {};
     ActiveSkillLoadoutLayout layout{};
-    layout.scale = scale;
-    layout.panel = {40.0F * scale, 70.0F * scale,
-        std::max(0.0F, screen_width - 80.0F * scale),
-        std::max(0.0F, screen_height - 100.0F * scale)};
-    layout.equipment_page_button = {
-        screen_width * 0.5F - (kPageButtonWidth + 6.0F) * scale,
-        18.0F * scale, kPageButtonWidth * scale, kPageButtonHeight * scale,
-    };
-    layout.skill_stones_page_button = {
-        screen_width * 0.5F + 6.0F * scale,
-        18.0F * scale, kPageButtonWidth * scale, kPageButtonHeight * scale,
-    };
+    layout.scale = shell.geometry_scale;
+    layout.panel = shell.content;
+    layout.equipment_page_button = shell.tabs[static_cast<std::size_t>(
+        InventoryPage::equipment)];
+    layout.skill_stones_page_button = shell.tabs[static_cast<std::size_t>(
+        InventoryPage::skill_stones)];
+    layout.remove_button = shell.action_bounds;
 
-    const float main_width = scale * unscaled_main_width;
-    const float main_x = (screen_width - main_width) * 0.5F;
-    const float main_y = layout.panel.y + 62.0F * scale;
+    const float padding = std::max(4.0F, 8.0F * layout.scale);
+    const float main_gap = std::max(4.0F, kSkillMainGap * layout.scale);
+    const float support_gap = std::max(3.0F, kSkillSupportGap * layout.scale);
+    const float skill_title_reserve = 36.0F * layout.scale;
+    const float support_label_reserve = 29.0F * layout.scale;
+    const float left_width = shell.left_panel.width - padding * 2.0F;
+    const float left_height = shell.left_panel.height - padding * 2.0F;
+    const float support_size = std::min(kSkillSupportSize * layout.scale,
+        (left_width - support_gap
+            * static_cast<float>(skills::kSupportSlotsPerActive - 1U))
+            / static_cast<float>(skills::kSupportSlotsPerActive));
+    const float main_height = (left_height - skill_title_reserve
+        - support_label_reserve - support_size
+        - main_gap * static_cast<float>(skills::kActiveSkillSlotCount - 1U))
+        / static_cast<float>(skills::kActiveSkillSlotCount);
+    const float main_width = std::min(std::max(180.0F,
+        kSkillMainWidth * layout.scale), left_width);
+    if (main_width <= 0.0F || support_size <= 0.0F || main_height <= 0.0F) {
+        return {};
+    }
     for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
         layout.main_slots[index] = {
-            main_x + static_cast<float>(index)
-                * (kSkillMainWidth + kSkillMainGap) * scale,
-            main_y, kSkillMainWidth * scale, kSkillMainHeight * scale,
+            shell.left_panel.x + (shell.left_panel.width - main_width) * 0.5F,
+            shell.left_panel.y + padding + skill_title_reserve
+                + static_cast<float>(index) * (main_height + main_gap),
+            main_width, main_height,
         };
     }
-
-    const float support_width = scale * (
-        static_cast<float>(skills::kSupportSlotsPerActive) * kSkillSupportSize
-        + static_cast<float>(skills::kSupportSlotsPerActive - 1U)
-            * kSkillSupportGap);
-    const float support_x = (screen_width - support_width) * 0.5F;
-    const float support_y = main_y + (kSkillMainHeight + 78.0F) * scale;
     for (std::size_t index = 0U; index < layout.support_slots.size(); ++index) {
         layout.support_slots[index] = {
-            support_x + static_cast<float>(index)
-                * (kSkillSupportSize + kSkillSupportGap) * scale,
-            support_y, kSkillSupportSize * scale, kSkillSupportSize * scale,
+            shell.left_panel.x + padding + static_cast<float>(index)
+                * (support_size + support_gap),
+            shell.left_panel.y + shell.left_panel.height - padding - support_size,
+            support_size, support_size,
         };
     }
 
     constexpr float kInventoryWidth = 180.0F;
     constexpr float kInventoryHeight = 62.0F;
-    constexpr float kInventoryGap = 18.0F;
-    const float inventory_total = scale * (
-        static_cast<float>(skills::kActiveSkillCount) * kInventoryWidth
-        + static_cast<float>(skills::kActiveSkillCount - 1U) * kInventoryGap);
-    const float inventory_x = (screen_width - inventory_total) * 0.5F;
-    const float inventory_y = support_y + (kSkillSupportSize + 82.0F) * scale;
+    const float inventory_gap = std::max(4.0F, kSkillMainGap * layout.scale);
+    const float inventory_width_target = std::max(144.0F,
+        kInventoryWidth * layout.scale);
+    const float inventory_height = kInventoryHeight * layout.scale;
+    const float right_width = shell.right_panel.width - padding * 2.0F;
+    const std::size_t inventory_columns = std::min(layout.inventory_slots.size(),
+        static_cast<std::size_t>(std::max(1.0F, std::floor((right_width
+            + inventory_gap) / (inventory_width_target + inventory_gap)))));
+    const float inventory_width = std::min(inventory_width_target,
+        (right_width - inventory_gap
+            * static_cast<float>(inventory_columns - 1U))
+            / static_cast<float>(inventory_columns));
+    if (right_width <= 0.0F || inventory_width <= 0.0F
+        || inventory_height <= 0.0F) {
+        return {};
+    }
     for (std::size_t index = 0U; index < layout.inventory_slots.size(); ++index) {
+        const std::size_t column = index % inventory_columns;
+        const std::size_t row = index / inventory_columns;
         layout.inventory_slots[index] = {
-            inventory_x + static_cast<float>(index)
-                * (kInventoryWidth + kInventoryGap) * scale,
-            inventory_y, kInventoryWidth * scale, kInventoryHeight * scale,
+            shell.right_panel.x + padding + static_cast<float>(column)
+                * (inventory_width + inventory_gap),
+            shell.right_panel.y + padding + skill_title_reserve
+                + static_cast<float>(row)
+                * (inventory_height + inventory_gap),
+            inventory_width, inventory_height,
         };
     }
-    layout.remove_button = {
-        (screen_width - 164.0F * scale) * 0.5F,
-        std::min(inventory_y + (kInventoryHeight + 42.0F) * scale,
-            screen_height - 62.0F * scale),
-        164.0F * scale, 38.0F * scale,
-    };
     return layout;
+}
+
+ActiveSkillLoadoutLayout active_skill_loadout_layout(
+    int width, int height) noexcept {
+    return active_skill_loadout_layout(inventory_shell_layout(width, height));
 }
 
 InventoryTextSafeLayout inventory_text_safe_layout(
     int width, int height) noexcept {
     if (width <= 0 || height <= 0) return {};
     const InventoryLayout panels = inventory_layout(width, height);
-    const ActiveSkillLoadoutLayout skill = active_skill_loadout_layout(
-        width, height);
-    const float scale = panels.scale;
+    const InventoryShellLayout shell = inventory_shell_layout(width, height);
+    const ActiveSkillLoadoutLayout skill = active_skill_loadout_layout(shell);
+    const float scale = shell.valid ? shell.geometry_scale : panels.scale;
     const auto panel_title = [scale](Rectangle panel) noexcept {
         return Rectangle{panel.x + 40.0F * scale, panel.y + 10.0F * scale,
             std::max(0.0F, panel.width - 56.0F * scale), 26.0F * scale};
     };
-    return {
-        {14.0F * scale, 24.0F * scale,
+    const Rectangle page_title = shell.valid
+        ? Rectangle{shell.content.x, shell.content.y, shell.content.width,
+            28.0F * scale}
+        : Rectangle{14.0F * scale, 24.0F * scale,
             std::max(0.0F, skill.equipment_page_button.x - 28.0F * scale),
-            34.0F * scale},
+            34.0F * scale};
+    return {
+        page_title,
         panel_title(panels.equipment),
         panel_title(panels.grid),
         panel_title(panels.detail),

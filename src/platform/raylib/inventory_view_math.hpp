@@ -486,6 +486,8 @@ inventory_control_text_style() noexcept;
 [[nodiscard]] std::array<char, 96> inventory_page_title(
     InventoryPage page, const char* inventory_binding_label) noexcept;
 [[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
+    InventoryShellLayout shell) noexcept;
+[[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
     int width, int height) noexcept;
 [[nodiscard]] InventoryTextSafeLayout inventory_text_safe_layout(
     int width, int height) noexcept;

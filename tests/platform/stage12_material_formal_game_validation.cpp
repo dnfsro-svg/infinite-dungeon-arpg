@@ -340,7 +340,8 @@ bool hud_text_layout_safe(int width, int height) noexcept {
 
 bool inventory_text_layout_safe(int width, int height) noexcept {
     const auto panels = platform::inventory_layout(width, height);
-    const auto skill = platform::active_skill_loadout_layout(width, height);
+    const auto shell = platform::inventory_shell_layout(width, height);
+    const auto skill = platform::active_skill_loadout_layout(shell);
     const auto text = platform::inventory_text_safe_layout(width, height);
     const Rectangle viewport{0.0F, 0.0F, static_cast<float>(width),
         static_cast<float>(height)};
@@ -355,7 +356,8 @@ bool inventory_text_layout_safe(int width, int height) noexcept {
 }
 
 bool skill_text_layout_safe(int width, int height) noexcept {
-    const auto skill = platform::active_skill_loadout_layout(width, height);
+    const auto shell = platform::inventory_shell_layout(width, height);
+    const auto skill = platform::active_skill_loadout_layout(shell);
     const auto text = platform::inventory_text_safe_layout(width, height);
     return rectangle_inside(text.skill_panel_title, skill.panel)
         && rectangles_separated(text.skill_panel_title, skill.main_slots[0])

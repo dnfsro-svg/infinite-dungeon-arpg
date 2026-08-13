@@ -153,13 +153,13 @@ function(stage17_injector_is_valid SANITIZED_SOURCE OUT_VALID)
     # can be left behind after an early return or inside a decoy lambda.
     string(SHA256 FUNCTION_SHA256 "${FUNCTION_NORMALIZED}")
     set(EXPECTED_FUNCTION_SHA256
-        "c9638dd62a65d332e6d179509b340845ab02b42cbf31110fd99bfb651aad9ddd")
+        "c431d441380744954a71781081c41a608da5611449680007ff49e6abfca8f66f")
     string(FIND "${FUNCTION_NORMALIZED}"
         "PhysicalKeySnapshot inject_stage17_physical_edges( PhysicalKeySnapshot snapshot, const RaylibHostConfig& config"
         SIGNATURE_BINDING)
     string(FIND "${FUNCTION_NORMALIZED}"
-        "active_skill_loadout_layout( config.window_width, config.window_height)"
-        LAYOUT_BINDING)
+        "const InventoryShellLayout shell = inventory_shell_layout( config.window_width, config.window_height); const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(shell)"
+        SHELL_LAYOUT_BINDING)
     string(FIND "${FUNCTION_NORMALIZED}"
         "stage17_prepare_isolated_storm( snapshot, input_settings, *current.combat, current.ecology == dungeon::checkpoint::DungeonElement::fire, state)"
         STORM_BINDING)
@@ -170,7 +170,39 @@ function(stage17_injector_is_valid SANITIZED_SOURCE OUT_VALID)
         "stage17_press_action(snapshot, input_settings,"
         ACTION_BINDING)
     string(FIND "${FUNCTION_NORMALIZED}"
-        "stage17_click(snapshot, layout." CLICK_BINDING)
+        "stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)])"
+        SKILL_STONES_TAB_CLICK_BINDING)
+    if(SKILL_STONES_TAB_CLICK_BINDING EQUAL -1)
+        set(SKILL_STONES_TAB_CLICK_COUNT 0)
+    else()
+        string(LENGTH
+            "stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)])"
+            SKILL_STONES_TAB_CLICK_LENGTH)
+        math(EXPR SKILL_STONES_TAB_CLICK_NEXT
+            "${SKILL_STONES_TAB_CLICK_BINDING} + ${SKILL_STONES_TAB_CLICK_LENGTH}")
+        string(SUBSTRING "${FUNCTION_NORMALIZED}"
+            ${SKILL_STONES_TAB_CLICK_NEXT} -1 SKILL_STONES_TAB_CLICK_TAIL)
+        string(FIND "${SKILL_STONES_TAB_CLICK_TAIL}"
+            "stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)])"
+            SKILL_STONES_TAB_CLICK_SECOND_BINDING)
+        if(SKILL_STONES_TAB_CLICK_SECOND_BINDING EQUAL -1)
+            set(SKILL_STONES_TAB_CLICK_COUNT 1)
+        else()
+            math(EXPR SKILL_STONES_TAB_CLICK_SECOND_NEXT
+                "${SKILL_STONES_TAB_CLICK_SECOND_BINDING} + ${SKILL_STONES_TAB_CLICK_LENGTH}")
+            string(SUBSTRING "${SKILL_STONES_TAB_CLICK_TAIL}"
+                ${SKILL_STONES_TAB_CLICK_SECOND_NEXT} -1
+                SKILL_STONES_TAB_CLICK_SECOND_TAIL)
+            string(FIND "${SKILL_STONES_TAB_CLICK_SECOND_TAIL}"
+                "stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)])"
+                SKILL_STONES_TAB_CLICK_THIRD_BINDING)
+            if(SKILL_STONES_TAB_CLICK_THIRD_BINDING EQUAL -1)
+                set(SKILL_STONES_TAB_CLICK_COUNT 2)
+            else()
+                set(SKILL_STONES_TAB_CLICK_COUNT 3)
+            endif()
+        endif()
+    endif()
     string(FIND "${FUNCTION_NORMALIZED}"
         "snapshot.focus_lost || state.suspend_injection) { return snapshot; }"
         EARLY_RETURN_BINDING)
@@ -179,11 +211,12 @@ function(stage17_injector_is_valid SANITIZED_SOURCE OUT_VALID)
         FINAL_RETURN_BINDING)
     if(SIGNATURE_BINDING EQUAL -1
             OR NOT FUNCTION_SHA256 STREQUAL EXPECTED_FUNCTION_SHA256
-            OR LAYOUT_BINDING EQUAL -1
+            OR SHELL_LAYOUT_BINDING EQUAL -1
             OR STORM_BINDING EQUAL -1
             OR MOVEMENT_BINDING EQUAL -1
             OR ACTION_BINDING EQUAL -1
-            OR CLICK_BINDING EQUAL -1
+            OR SKILL_STONES_TAB_CLICK_BINDING EQUAL -1
+            OR NOT SKILL_STONES_TAB_CLICK_COUNT EQUAL 2
             OR EARLY_RETURN_BINDING EQUAL -1
             OR FINAL_RETURN_BINDING EQUAL -1
             OR NOT CAPTURE_BY_REFERENCE_LAMBDA EQUAL -1
@@ -205,8 +238,8 @@ endif()
 
 set(STAGE17_INJECTOR_MUTATION_ACCEPTANCES)
 string(REPLACE
-    "const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout("
-    "[&] { }; const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout("
+    "const InventoryShellLayout shell = inventory_shell_layout("
+    "[&] { }; const InventoryShellLayout shell = inventory_shell_layout("
     STAGE17_UNCALLED_LAMBDA_MUTATION
     "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
 stage17_injector_is_valid("${STAGE17_UNCALLED_LAMBDA_MUTATION}"
@@ -232,7 +265,7 @@ if(STAGE17_SNAPSHOT_RETURN_VALID)
         "stage17_snapshot_return_bypass")
 endif()
 set(STAGE17_INJECTOR_ANCHOR
-    "const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(")
+    "const InventoryShellLayout shell = inventory_shell_layout(")
 string(REPLACE "${STAGE17_INJECTOR_ANCHOR}"
     "return snapshot; ${STAGE17_INJECTOR_ANCHOR}"
     STAGE17_EARLY_RETURN_MUTATION "${STAGE17_RUNTIME_SANITIZED_SOURCE}")

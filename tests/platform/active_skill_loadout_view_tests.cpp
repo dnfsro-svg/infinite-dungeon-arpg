@@ -68,11 +68,18 @@ arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions(
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto viewport : kViewports) {
+        const platform::InventoryShellLayout shell =
+            platform::inventory_shell_layout(viewport[0], viewport[1]);
         const platform::ActiveSkillLoadoutLayout layout =
-            platform::active_skill_loadout_layout(viewport[0], viewport[1]);
+            platform::active_skill_loadout_layout(shell);
         const Rectangle viewport_bounds{0.0F, 0.0F,
             static_cast<float>(viewport[0]), static_cast<float>(viewport[1])};
         ARPG_REQUIRE(inside(layout.panel, viewport_bounds));
+        ARPG_REQUIRE(layout.panel.x == shell.content.x);
+        ARPG_REQUIRE(layout.remove_button.x == shell.action_bounds.x);
+        ARPG_REQUIRE(layout.remove_button.y == shell.action_bounds.y);
+        ARPG_REQUIRE(layout.remove_button.width == shell.action_bounds.width);
+        ARPG_REQUIRE(layout.remove_button.height == shell.action_bounds.height);
         std::array<Rectangle, 13> hit_regions{};
         std::size_t count = 0U;
         for (const Rectangle rectangle : layout.main_slots) {
@@ -91,11 +98,14 @@ arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions(
             }
         }
         for (const Rectangle support : layout.support_slots) {
-            ARPG_REQUIRE(inside(support, viewport_bounds));
+            ARPG_REQUIRE(inside(support, shell.left_panel));
             for (std::size_t interactive = 0U;
                  interactive < count; ++interactive) {
                 ARPG_REQUIRE(!overlaps(support, hit_regions[interactive]));
             }
+        }
+        for (const Rectangle inventory : layout.inventory_slots) {
+            ARPG_REQUIRE(inside(inventory, shell.right_panel));
         }
     }
     return {};
@@ -105,7 +115,8 @@ arpg::test::Failure slot_clicks_emit_only_select_remove_and_swap_commands()
     noexcept {
     const skills::SkillLoadoutState state = skills::default_skill_loadout();
     const platform::ActiveSkillLoadoutLayout layout =
-        platform::active_skill_loadout_layout(1280, 720);
+        platform::active_skill_loadout_layout(
+            platform::inventory_shell_layout(1280, 720));
     platform::ActiveSkillLoadoutSelection selection{};
 
     auto command = platform::active_skill_loadout_command_after_click(
@@ -138,7 +149,8 @@ arpg::test::Failure occupied_slot_then_empty_slot_emits_swap_command()
     noexcept {
     const skills::SkillLoadoutState state = skills::default_skill_loadout();
     const platform::ActiveSkillLoadoutLayout layout =
-        platform::active_skill_loadout_layout(1280, 720);
+        platform::active_skill_loadout_layout(
+            platform::inventory_shell_layout(1280, 720));
     platform::ActiveSkillLoadoutSelection selection{};
 
     const auto select = platform::active_skill_loadout_command_after_click(
@@ -163,7 +175,8 @@ arpg::test::Failure inventory_selection_then_empty_slot_emits_equip_command()
     skills::SkillLoadoutState state = skills::default_skill_loadout();
     state.slots[0U].active = skills::ActiveSkillId::none;
     const platform::ActiveSkillLoadoutLayout layout =
-        platform::active_skill_loadout_layout(1280, 720);
+        platform::active_skill_loadout_layout(
+            platform::inventory_shell_layout(1280, 720));
     platform::ActiveSkillLoadoutSelection selection{};
 
     auto command = platform::active_skill_loadout_command_after_click(
@@ -208,7 +221,8 @@ arpg::test::Failure pending_save_and_support_slots_never_emit_edit_commands()
     noexcept {
     const skills::SkillLoadoutState state = skills::default_skill_loadout();
     const platform::ActiveSkillLoadoutLayout layout =
-        platform::active_skill_loadout_layout(1280, 720);
+        platform::active_skill_loadout_layout(
+            platform::inventory_shell_layout(1280, 720));
     platform::ActiveSkillLoadoutSelection selection{};
 
     const auto support = platform::active_skill_loadout_command_after_click(
