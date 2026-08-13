@@ -20,6 +20,45 @@ foreach(SOURCE_NAME IN ITEMS HOST_SOURCE COMBAT_RENDERER_SOURCE ROOM_RENDERER_SO
 endforeach()
 
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
+
+function(require_no_dead_branch BODY LABEL)
+    string(REGEX MATCH
+        "if([ ]+constexpr)?[ ]*\\([ ]*(false|0)[ ]*\\)"
+        DEAD_BRANCH "${BODY}")
+    if(NOT DEAD_BRANCH STREQUAL "")
+        message(FATAL_ERROR
+            "${LABEL} cannot hide renderer requirements in a dead branch")
+    endif()
+endfunction()
+
+function(require_no_uncalled_lambda BODY LABEL)
+    set(REMAINDER "${BODY}")
+    while(TRUE)
+        string(REGEX MATCH
+            "(const[ ]+)?auto([ ]*&&|[ ]*&)?[ ]+([A-Za-z_][A-Za-z0-9_]*)[ ]*=[ ]*\\["
+            LAMBDA_DECLARATION "${REMAINDER}")
+        if(LAMBDA_DECLARATION STREQUAL "")
+            break()
+        endif()
+        set(LAMBDA_NAME "${CMAKE_MATCH_3}")
+        string(LENGTH "${LAMBDA_DECLARATION}" DECLARATION_LENGTH)
+        string(FIND "${REMAINDER}" "${LAMBDA_DECLARATION}"
+            DECLARATION_INDEX)
+        math(EXPR AFTER_DECLARATION
+            "${DECLARATION_INDEX} + ${DECLARATION_LENGTH}")
+        string(SUBSTRING "${REMAINDER}" ${AFTER_DECLARATION} -1
+            AFTER_DECLARATION_TEXT)
+        string(REGEX MATCH
+            "(^|[^A-Za-z0-9_])(${LAMBDA_NAME}[ ]*\\(|std::invoke[ ]*\\([ ]*${LAMBDA_NAME}([^A-Za-z0-9_]|$))"
+            LAMBDA_INVOKED "${AFTER_DECLARATION_TEXT}")
+        if(LAMBDA_INVOKED STREQUAL "")
+            message(FATAL_ERROR
+                "${LABEL} cannot hide renderer requirements in an uncalled lambda")
+        endif()
+        set(REMAINDER "${AFTER_DECLARATION_TEXT}")
+    endwhile()
+endfunction()
+
 file(READ "${HOST_SOURCE}" HOST_TEXT)
 file(READ "${COMBAT_RENDERER_SOURCE}" COMBAT_TEXT)
 file(READ "${ROOM_RENDERER_SOURCE}" ROOM_TEXT)
@@ -65,9 +104,6 @@ if(BACKING_INDEX GREATER CJK_DRAW_INDEX)
 endif()
 if(NOT WORLD_PROMPT_CODE MATCHES "if[ ]*\\([ ]*!font_ready")
     message(FATAL_ERROR "world prompt must reject an unavailable shared font")
-endif()
-if(WORLD_PROMPT_CODE MATCHES "if[ ]*\\([ ]*(false|0)[ ]*\\)")
-    message(FATAL_ERROR "world prompt requirements cannot live in a dead branch")
 endif()
 foreach(FORBIDDEN_DRAW IN ITEMS
         "DrawText(" "DrawTextEx(" "MeasureText(" "GetFontDefault(")
@@ -236,16 +272,8 @@ foreach(CODE_NAME IN ITEMS WORLD_PROMPT_CODE DOOR_CODE DRAW_ROOM_CODE
         message(FATAL_ERROR
             "door-specific renderer paths must not use the default font")
     endif()
-    if("${${CODE_NAME}}" MATCHES
-            "if[ ]*constexpr[ ]*\\([ ]*(false|0)[ ]*\\)")
-        message(FATAL_ERROR
-            "door-specific renderer requirements cannot live in if constexpr(false)")
-    endif()
-    string(FIND "${${CODE_NAME}}" "auto&&" UNCALLED_LAMBDA_INDEX)
-    if(NOT UNCALLED_LAMBDA_INDEX EQUAL -1)
-        message(FATAL_ERROR
-            "door-specific renderer requirements cannot live in an uncalled auto&& lambda")
-    endif()
+    require_no_dead_branch("${${CODE_NAME}}" "${CODE_NAME}")
+    require_no_uncalled_lambda("${${CODE_NAME}}" "${CODE_NAME}")
 endforeach()
 
 set(HOST_DYNAMIC_KEY [=[feedback, audio_ready, stable_key_label(

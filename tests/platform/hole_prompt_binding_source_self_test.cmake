@@ -161,6 +161,21 @@ replace_required("${COMBAT_MUTATED}"
 run_guard(door_requirements_in_uncalled_lambda
     "${ROOM_MUTATED}" "${COMBAT_MUTATED}" FALSE)
 
+run_room_mutant(door_requirement_in_runtime_false_branch
+    "    draw_doors(current, camera, width, height, material_pack_,\n        world_ui_font_, world_ui_font_ready_, screen_offset);"
+    "    if (false) {\n        draw_doors(current, camera, width, height, material_pack_,\n            world_ui_font_, world_ui_font_ready_, screen_offset);\n    }\n    draw_doors(current, camera, width, height, material_pack_,\n        world_ui_font_, world_ui_font_ready_, {});")
+
+run_room_mutant(door_requirement_in_uncalled_auto_lambda
+    "    draw_doors(current, camera, width, height, material_pack_,\n        world_ui_font_, world_ui_font_ready_, screen_offset);"
+    "    auto hidden = [&]() noexcept {\n        draw_doors(current, camera, width, height, material_pack_,\n            world_ui_font_, world_ui_font_ready_, screen_offset);\n    };\n    static_cast<void>(hidden);\n    draw_doors(current, camera, width, height, material_pack_,\n        world_ui_font_, world_ui_font_ready_, {});")
+
+replace_required("${ROOM_ORIGINAL}"
+    "    draw_doors(current, camera, width, height, material_pack_,\n        world_ui_font_, world_ui_font_ready_, screen_offset);"
+    "    auto&& render_snapshot_reference = current;\n    static_cast<void>(render_snapshot_reference);\n    draw_doors(current, camera, width, height, material_pack_,\n        world_ui_font_, world_ui_font_ready_, screen_offset);"
+    ROOM_MUTATED unrelated_auto_reference_is_valid)
+run_guard(unrelated_auto_reference_is_valid
+    "${ROOM_MUTATED}" "${COMBAT_ORIGINAL}" TRUE)
+
 if(MISSED_MUTATIONS)
     list(JOIN MISSED_MUTATIONS ", " MISSED_LABELS)
     message(FATAL_ERROR "hole prompt guard missed mutations: ${MISSED_LABELS}")
