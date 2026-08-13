@@ -428,6 +428,94 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
     return {};
 }
 
+arpg::test::Failure stale_apply_reloads_external_settings() noexcept {
+    MemorySettingsFiles files{};
+    settings::SettingsData external = settings::default_settings();
+    external.revision = 1U;
+    external.master_sfx_percent = 40U;
+    external.window_mode = settings::WindowMode::fullscreen;
+    external.vsync_enabled = false;
+    put_memory_settings(files, external);
+    const settings::SettingsStore store = memory_store(files);
+
+    FakeBackend backend{};
+    platform::PauseMenuState menu{};
+    menu.screen = platform::PauseScreen::settings;
+    menu.committed = settings::default_settings();
+    menu.draft = changed_settings(menu.committed);
+    settings::SettingsData live = menu.committed;
+    settings::SettingsData input = menu.committed;
+    platform::HostSettingsRuntime runtime = make_runtime(
+        nullptr, menu, live, input, store, backend_for(backend));
+
+    ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+    ARPG_REQUIRE(files.replacements == 0U);
+    ARPG_REQUIRE(same_settings(menu.committed, external));
+    ARPG_REQUIRE(same_settings(menu.draft, external));
+    ARPG_REQUIRE(same_settings(live, external));
+    ARPG_REQUIRE(same_settings(input, external));
+    ARPG_REQUIRE(backend.volume == external.master_sfx_percent);
+    ARPG_REQUIRE(backend.mode == external.window_mode);
+    ARPG_REQUIRE(backend.vsync == external.vsync_enabled);
+    ARPG_REQUIRE(menu.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(menu.message,
+        "Settings changed in another game instance; reloaded") == 0);
+    return {};
+}
+
+arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
+    noexcept {
+    {
+        MemorySettingsFiles files{};
+        files.write_lock_held = true;
+        const settings::SettingsStore store = memory_store(files);
+        FakeBackend backend{};
+        platform::PauseMenuState menu{};
+        menu.committed = settings::default_settings();
+        menu.draft = changed_settings(menu.committed);
+        const settings::SettingsData edited = menu.draft;
+        settings::SettingsData live = menu.committed;
+        settings::SettingsData input = menu.committed;
+        platform::HostSettingsRuntime runtime = make_runtime(
+            nullptr, menu, live, input, store, backend_for(backend));
+
+        ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+        ARPG_REQUIRE(same_settings(menu.committed,
+            settings::default_settings()));
+        ARPG_REQUIRE(same_settings(live, menu.committed));
+        ARPG_REQUIRE(same_settings(input, menu.committed));
+        settings::SettingsData expected_draft = edited;
+        expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
+        ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+        ARPG_REQUIRE(menu.message != nullptr);
+        ARPG_REQUIRE(std::strcmp(menu.message,
+            "Settings save busy in another game instance; try again") == 0);
+    }
+    {
+        MemorySettingsFiles files{};
+        files.path = "memory-settings/settings-a.bin";
+        files.bytes = {0x01U};
+        const settings::SettingsStore store = memory_store(files);
+        FakeBackend backend{};
+        platform::PauseMenuState menu{};
+        menu.committed = settings::default_settings();
+        menu.draft = changed_settings(menu.committed);
+        settings::SettingsData live = menu.committed;
+        settings::SettingsData input = menu.committed;
+        platform::HostSettingsRuntime runtime = make_runtime(
+            nullptr, menu, live, input, store, backend_for(backend));
+
+        ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+        ARPG_REQUIRE(same_settings(menu.draft, menu.committed));
+        ARPG_REQUIRE(same_settings(live, menu.committed));
+        ARPG_REQUIRE(same_settings(input, menu.committed));
+        ARPG_REQUIRE(menu.message != nullptr);
+        ARPG_REQUIRE(std::strcmp(menu.message,
+            "Settings storage conflict; restart to recover") == 0);
+    }
+    return {};
+}
+
 arpg::test::Failure rollback_failure_preserves_live_and_reports_message()
     noexcept {
     MemorySettingsFiles files{};

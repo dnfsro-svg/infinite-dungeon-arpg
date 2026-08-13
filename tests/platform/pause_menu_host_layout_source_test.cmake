@@ -2,13 +2,17 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+
 file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" HOST_SOURCE)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/pause_menu_renderer.cpp"
     RENDERER_SOURCE)
+arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_CODE)
+arpg_sanitize_cpp_source("${RENDERER_SOURCE}" RENDERER_CODE)
 
-string(REGEX REPLACE "[ \t\r\n]+" "" HOST_COMPACT "${HOST_SOURCE}")
+string(REGEX REPLACE "[ \t\r\n]+" "" HOST_COMPACT "${HOST_CODE}")
 string(REGEX REPLACE "[ \t\r\n]+" "" RENDERER_COMPACT
-    "${RENDERER_SOURCE}")
+    "${RENDERER_CODE}")
 
 set(HOST_VIEW_SOURCE
     "constPauseMenuViewpause_view=make_pause_menu_view(pause_menu);")
@@ -32,6 +36,37 @@ string(FIND "${HOST_COMPACT}" "${HOST_HIT_TEST_SOURCE}" HOST_HIT_TEST_INDEX)
 if(HOST_HIT_TEST_INDEX EQUAL -1)
     message(FATAL_ERROR
         "pause host mouse hit testing must consume that shared layout")
+endif()
+
+set(HOST_HIT_TEST_CHAIN
+    "${HOST_VIEW_SOURCE}constPauseMenuLayoutlayout=${HOST_LAYOUT_SOURCE};constautoselected=${HOST_HIT_TEST_SOURCE};")
+string(FIND "${HOST_COMPACT}" "${HOST_HIT_TEST_CHAIN}"
+    HOST_HIT_TEST_CHAIN_INDEX)
+if(HOST_HIT_TEST_CHAIN_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host must build the current view, derive its visible-row layout, and hit-test that same layout in one chain")
+endif()
+
+string(LENGTH "${HOST_LAYOUT_SOURCE}" HOST_LAYOUT_SOURCE_LENGTH)
+math(EXPR HOST_LAYOUT_TAIL_BEGIN
+    "${HOST_LAYOUT_INDEX} + ${HOST_LAYOUT_SOURCE_LENGTH}")
+string(SUBSTRING "${HOST_COMPACT}" ${HOST_LAYOUT_TAIL_BEGIN} -1
+    HOST_LAYOUT_TAIL)
+string(FIND "${HOST_LAYOUT_TAIL}" "${HOST_LAYOUT_SOURCE}"
+    DUPLICATE_HOST_LAYOUT_INDEX)
+if(NOT DUPLICATE_HOST_LAYOUT_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host must have exactly one visible-row mouse hit-test layout")
+endif()
+
+string(REPLACE "${HOST_LAYOUT_SOURCE}"
+    "pause_menu_layout(GetScreenWidth(),GetScreenHeight())"
+    MUTATED_HOST_COMPACT "${HOST_COMPACT}")
+string(FIND "${MUTATED_HOST_COMPACT}" "${HOST_HIT_TEST_CHAIN}"
+    MUTATED_HOST_CHAIN_INDEX)
+if(NOT MUTATED_HOST_CHAIN_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host layout guard accepted a two-argument full-layout mutation")
 endif()
 
 set(RENDERER_VIEW_SOURCE

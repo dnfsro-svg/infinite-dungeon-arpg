@@ -1,7 +1,6 @@
 #include "loot_suction_animation.hpp"
 
 #include "dungeon/room_drop_state.hpp"
-
 #include <algorithm>
 #include <cmath>
 

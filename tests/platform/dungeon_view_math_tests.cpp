@@ -640,10 +640,16 @@ arpg::test::Failure hole_prompt_follows_current_interact_binding() noexcept {
     const auto longest_prompt =
         arpg::platform::hole_interaction_prompt(
             u8"右 Shift", HoleInteractionAction::next_floor);
+    const auto missing_prompt =
+        arpg::platform::hole_interaction_prompt(nullptr);
+    const auto empty_prompt =
+        arpg::platform::hole_interaction_prompt("");
     ARPG_REQUIRE(std::strcmp(descend.data(), u8"Q：下潜") == 0);
     ARPG_REQUIRE(std::strcmp(next_floor.data(), u8"Q：进入下一层") == 0);
     ARPG_REQUIRE(std::strcmp(longest_prompt.data(),
         u8"右 Shift：进入下一层") == 0);
+    ARPG_REQUIRE(missing_prompt[0] == '\0');
+    ARPG_REQUIRE(empty_prompt[0] == '\0');
     ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(descend.data()));
     ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(next_floor.data()));
     ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(longest_prompt.data()));
