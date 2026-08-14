@@ -654,9 +654,13 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     const auto materials_status =
         platform::inventory_status_presentation(materials_status_input);
     ARPG_REQUIRE(std::string_view{materials_status.status.data()} == u8"材料");
-    ARPG_REQUIRE(std::string_view{materials_status.hint.data()}
-        == u8"选择物品应用");
+    ARPG_REQUIRE(std::string_view{materials_status.hint.data()}.empty());
     ARPG_REQUIRE(!materials_status.action_visible);
+    materials_status_input.selected_material = items::MaterialId::chaos;
+    const auto selected_material_status =
+        platform::inventory_status_presentation(materials_status_input);
+    ARPG_REQUIRE(std::string_view{selected_material_status.hint.data()}
+        == platform::ui_material_description(items::MaterialId::chaos));
 
     platform::InventoryTransientStatusState transient{};
     platform::InventoryTransientStatusInput baseline_input{};

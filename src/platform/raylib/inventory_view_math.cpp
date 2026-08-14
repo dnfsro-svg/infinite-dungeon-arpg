@@ -969,8 +969,10 @@ InventoryStatusPresentation inventory_status_presentation(
     } else if (input.page == InventoryPage::materials) {
         static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
             ui_text(UiTextId::inventory_page_materials)));
-        static_cast<void>(ui_utf8_copy(output.hint.data(), output.hint.size(),
-            ui_material_description(items::MaterialId::transmute)));
+        if (input.selected_material.has_value()) {
+            static_cast<void>(ui_utf8_copy(output.hint.data(), output.hint.size(),
+                ui_material_description(*input.selected_material)));
+        }
     }
     if (input.save_state == InventorySavePresentationState::saving) {
         static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
