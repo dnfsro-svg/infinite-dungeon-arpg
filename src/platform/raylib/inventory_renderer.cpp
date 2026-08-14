@@ -105,7 +105,8 @@ void draw_centered_hud_font_text(Font font, bool ready, const char* text,
     Rectangle interaction_bounds, float size, float minimum_size, Color color,
     UiTextAuditPage audit_page = UiTextAuditPage::count,
     UiTextAuditRole audit_role = UiTextAuditRole::count,
-    Color opaque_backing = kInventoryTextBacking) noexcept {
+    Color opaque_backing = kInventoryTextBacking,
+    const Rectangle* audit_container = nullptr) noexcept {
     if (!ready || !IsFontValid(font)) return;
     if (text == nullptr || text[0] == '\0') return;
     if (opaque_backing.a != 255U) return;
@@ -123,9 +124,11 @@ void draw_centered_hud_font_text(Font font, bool ready, const char* text,
     }
     if (audit_page != UiTextAuditPage::count
             && audit_role != UiTextAuditRole::count) {
+        const Rectangle container = audit_container != nullptr
+            ? *audit_container : interaction_bounds;
         record_ui_text_bounds(audit_page, audit_role, font, layout.text,
             layout.position, layout.font_size, layout.spacing,
-            interaction_bounds, minimum_size * scale);
+            container, minimum_size * scale);
     }
     draw_crisp_ui_text(font, layout.text, layout.position, layout.font_size,
         layout.spacing, color);
@@ -136,13 +139,23 @@ void draw_centered_shell_text(Font font, bool ready, const char* text,
     float physical_minimum_size, Color color,
     UiTextAuditPage audit_page = UiTextAuditPage::count,
     UiTextAuditRole audit_role = UiTextAuditRole::count,
-    Color opaque_backing = kInventoryTextBacking) noexcept {
+    Color opaque_backing = kInventoryTextBacking,
+    const Rectangle* audit_container = nullptr) noexcept {
     const float viewport_scale = ui_viewport_scale(
         GetScreenWidth(), GetScreenHeight());
     draw_centered_hud_font_text(font, ready, text, interaction_bounds,
         physical_size / viewport_scale,
         physical_minimum_size / viewport_scale, color,
-        audit_page, audit_role, opaque_backing);
+        audit_page, audit_role, opaque_backing, audit_container);
+}
+
+Rectangle centered_text_shadow_fit_bounds(Rectangle outer) noexcept {
+    constexpr float kSnapMargin = 1.0F;
+    const float trailing_margin = kSnapMargin
+        + static_cast<float>(ui_text_contrast_style().shadow_pixels);
+    return {outer.x + kSnapMargin, outer.y + kSnapMargin,
+        std::max(0.0F, outer.width - kSnapMargin - trailing_margin),
+        std::max(0.0F, outer.height - kSnapMargin - trailing_margin)};
 }
 
 void draw_opaque_skill_text_backing(Rectangle bounds) noexcept {
@@ -472,13 +485,16 @@ void draw_equipment_overview(const items::ItemOwnershipState& state,
             font, font_ready);
         const items::ItemInstance* const item = find_item(state, item_id);
         const auto label = inventory_equipment_slot_label(slot, item);
-        const Rectangle label_bounds{bounds.x + 3.0F,
+        const Rectangle label_container{bounds.x,
             bounds.y + bounds.height * 0.66F,
-            bounds.width - 6.0F, bounds.height * 0.30F};
-        draw_centered_shell_text(font, font_ready, label.data(), label_bounds,
+            bounds.width, bounds.height * 0.34F};
+        const Rectangle label_fit = centered_text_shadow_fit_bounds(
+            label_container);
+        draw_centered_shell_text(font, font_ready, label.data(), label_fit,
             shell.body_font_size, 12.0F, ui_text_contrast_style().primary,
             UiTextAuditPage::inventory,
-            UiTextAuditRole::inventory_equipment_slot);
+            UiTextAuditRole::inventory_equipment_slot,
+            kInventoryTextBacking, &label_container);
     }
 }
 

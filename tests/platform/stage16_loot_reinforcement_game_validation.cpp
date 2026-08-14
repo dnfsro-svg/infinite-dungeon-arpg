@@ -1864,6 +1864,25 @@ bool run_poe2_inventory_scenarios(const std::filesystem::path& run,
                 != selected_a_cell.probe_digest) {
         return false;
     }
+    if (showcase_inventory.process_input(*showcase_runtime,
+            showcase_runtime->session()->snapshot(),
+            hover(center(shell.status_bounds)))
+            || showcase_inventory.process_input(*showcase_runtime,
+                showcase_runtime->session()->snapshot(),
+                click(center(comparison_a_tooltip.layout.backing)))) {
+        return false;
+    }
+    FrameObservation cleared_a_cell{};
+    if (!render_poe2_inventory_frame(run, *showcase_runtime->session(),
+            showcase_runtime->session()->snapshot(),
+            showcase_runtime->render_status(), showcase_inventory, assets,
+            resolution, nullptr, comparison_a_cell, {}, &cleared_a_cell)
+            || cleared_a_cell.probe_digest != unselected_a_cell.probe_digest
+            || showcase_inventory.process_input(*showcase_runtime,
+                showcase_runtime->session()->snapshot(),
+                hover(center(shell.status_bounds)))) {
+        return false;
+    }
     const Rectangle equipped_source_bounds = shell.equipment_slots[
         static_cast<std::size_t>(items::ItemSlot::weapon)];
     const ExpectedTooltip retained_tooltip = expected_tooltip(
