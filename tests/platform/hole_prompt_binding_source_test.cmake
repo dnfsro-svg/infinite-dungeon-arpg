@@ -165,6 +165,26 @@ extract_cpp_function_body("${ROOM_TEXT}" "Rectangle material_destination_bounds(
     MATERIAL_DESTINATION_BODY MATERIAL_DESTINATION_CODE)
 extract_cpp_function_body("${ROOM_TEXT}" "void draw_abyss("
     ABYSS_BODY ABYSS_CODE)
+string(FIND "${ROOM_CODE}" "void draw_abyss(" ABYSS_DECLARATION_START)
+if(ABYSS_DECLARATION_START EQUAL -1)
+    message(FATAL_ERROR "Unable to find abyss renderer declaration")
+endif()
+string(SUBSTRING "${ROOM_CODE}" ${ABYSS_DECLARATION_START} -1
+    ABYSS_DECLARATION_REMAINDER)
+string(FIND "${ABYSS_DECLARATION_REMAINDER}" "{"
+    ABYSS_DECLARATION_END)
+if(ABYSS_DECLARATION_END EQUAL -1)
+    message(FATAL_ERROR "Unable to find abyss renderer declaration body")
+endif()
+math(EXPR ABYSS_DECLARATION_LENGTH "${ABYSS_DECLARATION_END} + 1")
+string(SUBSTRING "${ABYSS_DECLARATION_REMAINDER}" 0
+    ${ABYSS_DECLARATION_LENGTH} ABYSS_DECLARATION)
+set(EXPECTED_ABYSS_DECLARATION
+    "void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {")
+if(NOT ABYSS_DECLARATION STREQUAL EXPECTED_ABYSS_DECLARATION)
+    message(FATAL_ERROR
+        "abyss renderer must not retain obsolete text/font parameters")
+endif()
 foreach(BODY_NAME IN ITEMS HOLE_CODE DOOR_CODE ABYSS_CODE)
     foreach(FORBIDDEN_DRAW IN ITEMS
             "DrawText(" "DrawTextEx(" "MeasureText(" "GetFontDefault(")
@@ -221,22 +241,36 @@ string(FIND "${DOOR_CODE}" "active_skill_layout.bounds" SLOT_ONLY_INDEX)
 if(NOT SLOT_ONLY_INDEX EQUAL -1)
     message(FATAL_ERROR "door renderer must use the complete active-skill visual bounds")
 endif()
-foreach(REQUIRED_TOKEN IN ITEMS "draw_world_prompt(label")
-    string(FIND "${ABYSS_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
+foreach(REQUIRED_TOKEN IN ITEMS
+        "abyss_pulse_alpha(elapsed_seconds)"
+        "DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight()"
+        "DrawRectangleLinesEx(")
+    string(FIND "${ABYSS_CODE}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
     if(TOKEN_INDEX EQUAL -1)
-        message(FATAL_ERROR "abyss renderer must use the shared world prompt path")
+        message(FATAL_ERROR
+            "abyss renderer must retain its tint and border: ${REQUIRED_TOKEN}")
     endif()
 endforeach()
+foreach(FORBIDDEN_TOKEN IN ITEMS
+        "draw_world_prompt(" "abyss_hud_values(" "ui_utf8_format(")
+    string(FIND "${ABYSS_CODE}" "${FORBIDDEN_TOKEN}" FORBIDDEN_INDEX)
+    if(NOT FORBIDDEN_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "abyss renderer must leave duplicated status text to the objective panel: ${FORBIDDEN_TOKEN}")
+    endif()
+endforeach()
+require_no_dead_branch("${ABYSS_CODE}" "abyss overlay")
+require_no_uncalled_lambda("${ABYSS_CODE}" "abyss overlay")
 
 extract_cpp_function_body("${ROOM_TEXT}"
     "void CombatRenderer::draw_abyss_overlay(" ABYSS_OVERLAY_BODY ABYSS_OVERLAY_CODE)
-set(ABYSS_SHARED_FONT_CALL
-    "draw_abyss(current, static_cast<float>(GetTime()), world_ui_font_, world_ui_font_ready_)")
-string(FIND "${ABYSS_OVERLAY_BODY}" "${ABYSS_SHARED_FONT_CALL}"
-    ABYSS_SHARED_FONT_INDEX)
-if(ABYSS_SHARED_FONT_INDEX EQUAL -1)
+set(ABYSS_OVERLAY_CALL
+    "draw_abyss(current, static_cast<float>(GetTime()))")
+string(FIND "${ABYSS_OVERLAY_BODY}" "${ABYSS_OVERLAY_CALL}"
+    ABYSS_OVERLAY_CALL_INDEX)
+if(ABYSS_OVERLAY_CALL_INDEX EQUAL -1)
     message(FATAL_ERROR
-        "CombatRenderer abyss overlay must pass its shared CJK font")
+        "CombatRenderer abyss overlay must draw the non-text visual exactly once")
 endif()
 string(REGEX MATCHALL "draw_abyss\\(" ABYSS_DRAW_CALLS
     "${ABYSS_OVERLAY_CODE}")
@@ -245,8 +279,8 @@ if(NOT ABYSS_DRAW_CALL_COUNT EQUAL 1)
     message(FATAL_ERROR
         "CombatRenderer abyss overlay must contain exactly one live draw call")
 endif()
-foreach(FORBIDDEN_TOKEN IN ITEMS "GetFontDefault(" "if(false)" "if (false)"
-        "if(0)" "if (0)")
+foreach(FORBIDDEN_TOKEN IN ITEMS "GetFontDefault(" "world_ui_font_"
+        "world_ui_font_ready_" "if(false)" "if (false)" "if(0)" "if (0)")
     string(FIND "${ABYSS_OVERLAY_CODE}" "${FORBIDDEN_TOKEN}"
         FORBIDDEN_INDEX)
     if(NOT FORBIDDEN_INDEX EQUAL -1)

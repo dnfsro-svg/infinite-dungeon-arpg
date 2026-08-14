@@ -525,7 +525,7 @@ void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
 }
 
 void draw_abyss(const dungeon::DungeonSnapshot& snapshot,
-    float elapsed_seconds, Font font, bool font_ready) noexcept {
+    float elapsed_seconds) noexcept {
     if (!snapshot.is_abyss) {
         return;
     }
@@ -535,17 +535,6 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot,
     DrawRectangleLinesEx({8.0F, 8.0F, static_cast<float>(GetScreenWidth() - 16),
         static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
         Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
-    const AbyssHudValues values = abyss_hud_values(snapshot);
-    if (values.visible) {
-        std::array<char, 96U> label{};
-        static_cast<void>(ui_utf8_format(label.data(), label.size(),
-            u8"%s｜%s", values.danger_label, values.rule_label));
-        const float screen_width = static_cast<float>(GetScreenWidth());
-        const float screen_height = static_cast<float>(GetScreenHeight());
-        draw_world_prompt(label.data(), {screen_width * 0.5F, 18.0F},
-            20.0F, raylib_color(world_prompt_style().primary),
-            font, font_ready, screen_width, screen_height);
-    }
 }
 
 HoleVisualMode render_hole_visual_mode(
@@ -680,8 +669,7 @@ MaterialResidencyRequest room_background_residency_request(
 
 void CombatRenderer::draw_abyss_overlay(
     const dungeon::DungeonSnapshot& current) const noexcept {
-    draw_abyss(current, static_cast<float>(GetTime()),
-        world_ui_font_, world_ui_font_ready_);
+    draw_abyss(current, static_cast<float>(GetTime()));
 }
 
 RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(

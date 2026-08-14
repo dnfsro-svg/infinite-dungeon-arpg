@@ -79,12 +79,27 @@ run_room_mutant(dead_cjk_decoy
     "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size * layout.text_scale,\n        1.0F * layout.text_scale, color);"
     "if (false) { draw_crisp_ui_text(font, text, layout.text_position, font_size * layout.text_scale, 1.0F * layout.text_scale, color); }")
 
-run_room_mutant(abyss_overlay_default_font
-    "draw_abyss(current, static_cast<float>(GetTime()),\n        world_ui_font_, world_ui_font_ready_);"
-    "draw_abyss(current, static_cast<float>(GetTime()),\n        GetFontDefault(), true);")
-run_room_mutant(abyss_overlay_dead_shared_font_decoy
-    "draw_abyss(current, static_cast<float>(GetTime()),\n        world_ui_font_, world_ui_font_ready_);"
-    "if (false) { draw_abyss(current, static_cast<float>(GetTime()), world_ui_font_, world_ui_font_ready_); }\n    draw_abyss(current, static_cast<float>(GetTime()), GetFontDefault(), true);")
+run_room_mutant(abyss_duplicate_world_prompt
+    "    const float pulse = abyss_pulse_alpha(elapsed_seconds);"
+    "    const float pulse = abyss_pulse_alpha(elapsed_seconds);\n    draw_world_prompt(u8\"深渊\", {20.0F, 20.0F}, 20.0F, WHITE, Font{}, false, 1280.0F, 720.0F);")
+run_room_mutant(abyss_duplicate_prompt_in_dead_branch
+    "    const float pulse = abyss_pulse_alpha(elapsed_seconds);"
+    "    const float pulse = abyss_pulse_alpha(elapsed_seconds);\n    if (false) { draw_world_prompt(u8\"深渊\", {20.0F, 20.0F}, 20.0F, WHITE, Font{}, false, 1280.0F, 720.0F); }")
+run_room_mutant(abyss_duplicate_prompt_in_uncalled_lambda
+    "    const float pulse = abyss_pulse_alpha(elapsed_seconds);"
+    "    const float pulse = abyss_pulse_alpha(elapsed_seconds);\n    auto hidden_abyss_prompt = [&]() noexcept { draw_world_prompt(u8\"深渊\", {20.0F, 20.0F}, 20.0F, WHITE, Font{}, false, 1280.0F, 720.0F); };\n    static_cast<void>(hidden_abyss_prompt);")
+run_room_mutant(abyss_visual_tint_removed
+    "    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),\n        Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));"
+    "    static_cast<void>(GetScreenWidth());")
+run_room_mutant(abyss_visual_border_removed
+    "    DrawRectangleLinesEx({8.0F, 8.0F, static_cast<float>(GetScreenWidth() - 16),\n        static_cast<float>(GetScreenHeight() - 16)}, 8.0F,\n        Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));"
+    "    static_cast<void>(GetScreenHeight());")
+run_room_mutant(abyss_visual_tint_string_decoy
+    "    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),\n        Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));"
+    "    static constexpr const char* hidden_abyss_tint = \"DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight()\";\n    static_cast<void>(hidden_abyss_tint);")
+run_room_mutant(abyss_obsolete_font_signature
+    "void draw_abyss(const dungeon::DungeonSnapshot& snapshot,\n    float elapsed_seconds) noexcept {"
+    "void draw_abyss(const dungeon::DungeonSnapshot& snapshot,\n    float elapsed_seconds, Font font = {}, bool font_ready = false) noexcept {")
 
 run_room_mutant(material_success_uses_fallback_frame
     "        ? material_destination : frame;"
