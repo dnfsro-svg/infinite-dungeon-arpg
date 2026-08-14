@@ -678,6 +678,14 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(std::string_view{selected_material_status.hint.data()}
         == platform::ui_material_description(items::MaterialId::chaos));
 
+    materials_status_input.selected_material = items::MaterialId::directed;
+    const auto directed_material_status =
+        platform::inventory_status_presentation(materials_status_input);
+    ARPG_REQUIRE(std::string_view{directed_material_status.status.data()}
+        == u8"已选择：定向核心 · 右键核心切换 · 右键装备取消");
+    ARPG_REQUIRE(std::string_view{directed_material_status.hint.data()}
+        == u8"右键切换");
+
     platform::InventoryStatusInput equipment_material_status_input{};
     equipment_material_status_input.page = platform::InventoryPage::equipment;
     equipment_material_status_input.selected_material = items::MaterialId::chaos;

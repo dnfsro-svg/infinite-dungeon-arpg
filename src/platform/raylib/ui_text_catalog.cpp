@@ -8,7 +8,7 @@ namespace {
 
 constexpr const char* kUnknown = u8"未知";
 
-constexpr std::array<const char*, 73U> kUiTexts{{
+constexpr std::array<const char*, 74U> kUiTexts{{
     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
@@ -38,6 +38,7 @@ constexpr std::array<const char*, 73U> kUiTexts{{
     u8"强化结果：失败 / 装备丢失 / +%u", u8"强化券结果：成功 / +%u → +%u",
     u8"应用失败 · 切换装备 · 右键取消",
     u8"已选择：%s · 可用装备已标出 · 右键取消",
+    u8"已选择：定向核心 · 右键核心切换 · 右键装备取消",
 }};
 
 constexpr std::array<const char*, 18U> kItemBaseNames{{
@@ -54,7 +55,7 @@ constexpr std::array<const char*, 14U> kMaterialNames{{
 constexpr std::array<const char*, 14U> kMaterialDescriptions{{
     u8"选择物品应用", u8"选择物品应用", u8"选择物品应用", u8"选择物品应用",
     u8"选择物品应用", u8"选择物品应用", u8"选择物品应用", u8"选择物品应用",
-    u8"选择伤害 / 防御 / 速度 / 元素",
+    u8"右键切换",
     u8"强化装备", u8"强化装备", u8"强化装备", u8"强化装备", u8"强化装备",
 }};
 
