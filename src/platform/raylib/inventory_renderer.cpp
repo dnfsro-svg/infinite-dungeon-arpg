@@ -953,6 +953,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     priority.material_target = left_pressed
         && page_ == InventoryPage::equipment
         && selected_material.has_value() && direct_hit.grid_item;
+    priority.material_selected = selected_material.has_value();
     priority.page_action = left_pressed
         && inventory_page_action_contains(frame_layout_.shell, page_, mouse);
     priority.filter = left_pressed && page_ == InventoryPage::equipment

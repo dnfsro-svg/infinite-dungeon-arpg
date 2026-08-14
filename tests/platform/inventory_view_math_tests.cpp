@@ -153,6 +153,9 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         disabled_action_click.background_clear = true;
         ARPG_REQUIRE(platform::inventory_pointer_layer(disabled_action_click)
             == platform::InventoryPointerLayer::page_action);
+        disabled_action_click.material_selected = true;
+        ARPG_REQUIRE(platform::inventory_pointer_layer(disabled_action_click)
+            == platform::InventoryPointerLayer::background_clear);
         if (shell.hint_visible) {
             ARPG_REQUIRE(inside(shell.hint_bounds, shell.status_bar));
             ARPG_REQUIRE(separated(shell.action_bounds, shell.hint_bounds));

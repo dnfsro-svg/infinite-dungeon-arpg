@@ -427,6 +427,7 @@ struct InventoryPointerPriorityInput final {
     bool material_cancel_requested{};
     bool material_select{};
     bool material_target{};
+    bool material_selected{};
     bool page_action{};
     bool filter{};
     bool skill_content{};

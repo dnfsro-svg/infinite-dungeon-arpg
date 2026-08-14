@@ -1575,7 +1575,8 @@ InventoryPointerLayer inventory_pointer_layer(
         return InventoryPointerLayer::material_cancel;
     if (input.material_select) return InventoryPointerLayer::material_select;
     if (input.material_target) return InventoryPointerLayer::material_target;
-    if (input.page_action) return InventoryPointerLayer::page_action;
+    if (input.page_action && !input.material_selected)
+        return InventoryPointerLayer::page_action;
     if (input.filter) return InventoryPointerLayer::filter;
     if (input.skill_content) return InventoryPointerLayer::skill_content;
     if (input.recipe) return InventoryPointerLayer::recipe;
