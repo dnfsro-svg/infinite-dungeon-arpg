@@ -222,6 +222,7 @@ struct ActiveSkillLoadoutLayout final {
     Rectangle empty_bounds{};
     Rectangle remove_button{};
     float scale{1.0F};
+    Rectangle support_label_bounds{};
 };
 
 enum class ActiveSkillLoadoutActionKind : std::uint8_t {

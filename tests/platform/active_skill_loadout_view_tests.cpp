@@ -89,6 +89,9 @@ arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions(
             + layout.empty_bounds.height * 0.5F
             - (shell.right_panel.y + shell.right_panel.height * 0.5F))
             < 0.001F);
+        ARPG_REQUIRE(layout.support_label_bounds.width > 0.0F
+            && layout.support_label_bounds.height > 0.0F);
+        ARPG_REQUIRE(inside(layout.support_label_bounds, shell.left_panel));
         std::array<Rectangle, 11> hit_regions{};
         std::size_t count = 0U;
         for (const Rectangle rectangle : layout.main_slots) {
@@ -106,10 +109,14 @@ arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions(
         }
         for (const Rectangle support : layout.support_slots) {
             ARPG_REQUIRE(inside(support, shell.left_panel));
+            ARPG_REQUIRE(!overlaps(layout.support_label_bounds, support));
             for (std::size_t interactive = 0U;
                  interactive < count; ++interactive) {
                 ARPG_REQUIRE(!overlaps(support, hit_regions[interactive]));
             }
+        }
+        for (const Rectangle main : layout.main_slots) {
+            ARPG_REQUIRE(!overlaps(layout.support_label_bounds, main));
         }
         for (const Rectangle inventory : layout.inventory_slots) {
             ARPG_REQUIRE(inside(inventory, shell.right_panel));

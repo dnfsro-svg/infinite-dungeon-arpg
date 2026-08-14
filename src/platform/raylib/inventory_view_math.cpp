@@ -519,6 +519,12 @@ ActiveSkillLoadoutLayout active_skill_loadout_layout(
             main_width, main_height,
         };
     }
+    layout.support_label_bounds = {
+        shell.left_panel.x + padding,
+        shell.left_panel.y + shell.left_panel.height - padding - support_size
+            - support_label_reserve,
+        left_width, support_label_reserve,
+    };
     for (std::size_t index = 0U; index < layout.support_slots.size(); ++index) {
         layout.support_slots[index] = {
             shell.left_panel.x + padding + static_cast<float>(index)

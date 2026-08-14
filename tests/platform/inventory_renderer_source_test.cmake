@@ -262,6 +262,9 @@ endforeach()
 require_token("${_skill_compact}"
     "std::max(12.0F, ui_typography().kSkillDescriptionFontSize * skill_text_scale), 12.0F,"
     "T4 skill name size must consume the local shell scale")
+require_token("${_skill_body}"
+    "draw_centered_hud_font_text(font, font_ready, u8\"辅助技能石（只读）\", layout.support_label_bounds,"
+    "T4 read-only support slots must expose their non-interactive contract")
 reject_dead_branch("${_skill_code}" "T2 active-skill loadout renderer")
 
 extract_cpp_function_body("${_inventory_source}"

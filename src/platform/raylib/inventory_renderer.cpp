@@ -305,6 +305,10 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             UiTextAuditPage::skill, UiTextAuditRole::skill_description);
     }
 
+    draw_centered_hud_font_text(font, font_ready, u8"辅助技能石（只读）",
+        layout.support_label_bounds, 19.0F, 18.0F,
+        ui_text_contrast_style().primary, UiTextAuditPage::skill,
+        UiTextAuditRole::skill_description);
     for (const Rectangle support : layout.support_slots) {
         if (!assets.draw_region_fit(ui_material_sprite(
                 UiMaterialElement::skill_slot_support),
