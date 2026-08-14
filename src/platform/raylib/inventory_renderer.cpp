@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <string_view>
 
 #include "direct_input_poison.hpp"
 
@@ -548,18 +549,25 @@ void draw_inventory_status(const InventoryShellLayout& shell,
     DrawRectangleRec(shell.status_bar, kInventoryTextBacking);
     DrawRectangleLinesEx(shell.status_bar, 1.0F, Color{72, 91, 120, 255});
     const Color color = status_tone_color(presentation.tone);
-    draw_centered_shell_text(font, font_ready, presentation.status.data(),
-        shell.status_bounds, shell.body_font_size, 12.0F, color,
-        UiTextAuditPage::inventory, UiTextAuditRole::inventory_status);
+    const bool duplicate_wide_hint = shell.hint_visible
+        && std::string_view{presentation.status.data()}
+            == std::string_view{presentation.hint.data()};
+    if (!duplicate_wide_hint) {
+        draw_centered_shell_text(font, font_ready, presentation.status.data(),
+            shell.status_bounds, shell.body_font_size, 12.0F, color,
+            UiTextAuditPage::inventory, UiTextAuditRole::inventory_status);
+    }
     if (presentation.action_visible) {
         draw_button(shell.action_bounds, presentation.action.data(),
             presentation.action_enabled, assets, font, font_ready,
             presentation.action_enabled);
     }
     if (shell.hint_visible) {
+        const Color hint_color = duplicate_wide_hint
+            ? color : ui_text_contrast_style().muted;
         draw_centered_shell_text(font, font_ready, presentation.hint.data(),
             shell.hint_bounds, shell.hint_font_size, 12.0F,
-            ui_text_contrast_style().muted, UiTextAuditPage::inventory,
+            hint_color, UiTextAuditPage::inventory,
             UiTextAuditRole::inventory_status);
     }
 }
