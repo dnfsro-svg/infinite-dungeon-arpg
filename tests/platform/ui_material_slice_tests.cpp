@@ -150,6 +150,15 @@ arpg::test::Failure death_overlay_uses_independent_material_fallbacks() noexcept
     ARPG_REQUIRE(combat_input.good() || combat_input.eof());
     ARPG_REQUIRE(combat.find(
         "death_overlay_.draw(current_hud, material_pack_, interact_binding_label)")
+        == std::string::npos);
+    ARPG_REQUIRE(combat.find(
+        "death_overlay_.draw(current_hud, material_pack_, "
+        "stable_key_label(settings::StableKey::e))") != std::string::npos);
+    const std::size_t draw_room = combat.find(
+        "draw_room(world, render_plan.ground_loot,");
+    ARPG_REQUIRE(draw_room != std::string::npos);
+    ARPG_REQUIRE(combat.find(
+        "render_plan.material_loot, camera, interact_binding_label", draw_room)
         != std::string::npos);
     return {};
 }

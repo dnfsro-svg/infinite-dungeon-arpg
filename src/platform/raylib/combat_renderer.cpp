@@ -3,6 +3,7 @@
 #include "combat_view_math.hpp"
 #include "debug_overlay_renderer.hpp"
 #include "dungeon_runtime.hpp"
+#include "stable_key_raylib.hpp"
 
 #include <raylib.h>
 
@@ -660,7 +661,7 @@ GroundLootView CombatRenderer::draw(
         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
             Fade(BLACK, overlay_alpha));
     }
-    death_overlay_.draw(current_hud, material_pack_, interact_binding_label);
+    death_overlay_.draw(current_hud, material_pack_, stable_key_label(settings::StableKey::e));
     return render_plan.ground_loot;
 }
 

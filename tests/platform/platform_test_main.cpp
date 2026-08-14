@@ -398,8 +398,9 @@ int main() {
     if (cplay032_death_retry_hint_only()) {
         const arpg::test::TestSuite cplay032_only[] = {
             death_overlay_view_suite(),
+            ui_material_slice_suite(),
         };
-        return arpg::test::run_suites(cplay032_only, 12,
+        return arpg::test::run_suites(cplay032_only, 16,
             "CPLAY-032 death retry key hint");
     }
     if (cplay030_hole_prompt_only()) {
