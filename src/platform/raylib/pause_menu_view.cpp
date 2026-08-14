@@ -222,7 +222,7 @@ PauseMenuLayout pause_menu_layout(
         (std::max)(0.0F, screen_height - 32.0F) / panel_base_height});
     const float panel_width = panel_base_width * scale;
     const float panel_height = panel_base_height * scale;
-    const float font_scale = compact ? scale : desired_scale;
+    const float font_scale = scale;
     PauseMenuLayout layout{};
     layout.visible_row_count = clamped_row_count;
     layout.title_font_size = (compact ? 32.0F : 26.0F) * font_scale;

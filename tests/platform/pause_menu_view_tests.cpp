@@ -426,6 +426,74 @@ test::Failure capture_text_fits_centered_with_real_font_measurement() noexcept {
     TestPauseFont font{};
     ARPG_REQUIRE(font.initialize());
     platform::PauseMenuState state = settings_state();
+
+    constexpr std::array<platform::PauseSettingsPage, 3U> kSettingsPages{{
+        platform::PauseSettingsPage::display,
+        platform::PauseSettingsPage::audio,
+        platform::PauseSettingsPage::bindings,
+    }};
+    constexpr std::array<std::size_t, 3U> kSettingsRowCounts{{4U, 6U, 11U}};
+    for (std::size_t page = 0U; page < kSettingsPages.size(); ++page) {
+        state.settings_page = kSettingsPages[page];
+        const platform::PauseMenuView settings_view =
+            platform::make_pause_menu_view(state);
+        const platform::PauseMenuLayout settings_layout =
+            platform::pause_menu_layout(800, 450, settings_view.row_count);
+        ARPG_REQUIRE(settings_view.row_count == kSettingsRowCounts[page]);
+        ARPG_REQUIRE(settings_layout.title_font_size
+            >= platform::kPauseMenuMinimumRowFontSize);
+        ARPG_REQUIRE(settings_layout.row_font_size
+            >= platform::kPauseMenuMinimumRowFontSize);
+        ARPG_REQUIRE(settings_layout.footer_font_size
+            >= platform::kPauseMenuMinimumRowFontSize);
+
+        Rectangle previous_text{};
+        for (std::size_t row = 0U; row < settings_view.row_count; ++row) {
+            std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
+            const auto centered = platform::fit_centered_pause_text_layout(
+                font.font(), settings_view.rows[row].primary.data(),
+                fitted.data(), fitted.size(), settings_layout.rows[row],
+                settings_layout.row_font_size, 0.5F,
+                platform::kPauseMenuMinimumRowFontSize, 12.0F);
+            const Vector2 measured = MeasureTextEx(font.font(), fitted.data(),
+                centered.font_size, centered.spacing);
+            ARPG_REQUIRE(centered.font_size
+                >= platform::kPauseMenuMinimumRowFontSize);
+            ARPG_REQUIRE(test::near(centered.text.height, measured.y, 0.01));
+            ARPG_REQUIRE(inside(centered.text, settings_layout.rows[row]));
+            if (row != 0U) {
+                ARPG_REQUIRE(separated(previous_text, centered.text));
+                ARPG_REQUIRE(previous_text.y + previous_text.height
+                    <= centered.text.y);
+            }
+            previous_text = centered.text;
+        }
+
+        const Vector2 title_size = MeasureTextEx(font.font(),
+            settings_view.title, settings_layout.title_font_size, 1.0F);
+        const Rectangle title_text{
+            settings_layout.title.x
+                + (settings_layout.title.width - title_size.x) * 0.5F,
+            settings_layout.title.y
+                + (settings_layout.title.height - title_size.y) * 0.5F,
+            title_size.x,
+            title_size.y,
+        };
+        ARPG_REQUIRE(inside(title_text, settings_layout.title));
+
+        const Vector2 message_size = MeasureTextEx(font.font(),
+            settings_view.message, settings_layout.footer_font_size, 1.0F);
+        const Rectangle message_text{
+            settings_layout.footer.x
+                + (settings_layout.footer.width - message_size.x) * 0.5F,
+            settings_layout.footer.y
+                + (settings_layout.footer.height - message_size.y) * 0.5F,
+            message_size.x,
+            message_size.y,
+        };
+        ARPG_REQUIRE(inside(message_text, settings_layout.footer));
+    }
+
     state.screen = platform::PauseScreen::capture_binding;
     state.capture_action = settings::SettingAction::light_attack;
     state.draft.bindings[static_cast<std::size_t>(
