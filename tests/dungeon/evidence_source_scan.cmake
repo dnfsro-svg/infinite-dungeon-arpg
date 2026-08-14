@@ -1146,6 +1146,13 @@ function(evidence_window_lifetime_boundary_is_valid
         host_direct owner_active owner_lexical output)
     string(REGEX REPLACE "[ \t\r\n]+" "" owner_lexical_compact
         "${owner_lexical}")
+    string(FIND "${owner_lexical}"
+        "__ARPG_PREPROCESSOR_BRANCH_BOUNDARY__;"
+        forged_branch_boundary_position)
+    if(NOT forged_branch_boundary_position EQUAL -1)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
     set(wrapper_seam
         "#include\"host_window_lifetime.hpp\"#include\"raylib_host.hpp\"#include\"window_settings.hpp\"#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindow#include<raylib.h>#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindow#ifdef_WIN32extern__declspec(dllimport)void*__stdcallImmAssociateContext(void*,void*);#endifnamespace{voidset_config_flags_noexcept(unsignedintflags)noexcept{SetConfigFlags(flags);}voidinit_window_noexcept(intwidth,intheight,constchar*title)noexcept{InitWindow(width,height,title);}boolis_window_ready_noexcept()noexcept{returnIsWindowReady();}void*detach_ime_context_noexcept()noexcept{#ifdef_WIN32void*constwindow=GetWindowHandle();returnwindow!=nullptr?ImmAssociateContext(window,nullptr):nullptr;#elsereturnnullptr;#endif}voidrestore_ime_context_noexcept(void*context)noexcept{#ifdef_WIN32void*constwindow=GetWindowHandle();if(window!=nullptr){static_cast<void>(ImmAssociateContext(window,context));}#elsestatic_cast<void>(context);#endif}voidclose_window_noexcept()noexcept{CloseWindow();}}")
     string(FIND "${owner_lexical_compact}" "${wrapper_seam}"
@@ -1301,6 +1308,8 @@ function(evidence_window_lifetime_boundary_is_valid
         math(EXPR wrapper_length "${wrapper_end} - ${wrapper_begin} + 1")
         string(SUBSTRING "${owner_token_surface}" ${wrapper_begin}
             ${wrapper_length} wrapper_function)
+        string(REPLACE "__ARPG_PREPROCESSOR_BRANCH_BOUNDARY__;" ""
+            wrapper_function "${wrapper_function}")
         string(REGEX REPLACE "[ \t\r\n]+" "" wrapper_compact
             "${wrapper_function}")
         if(NOT wrapper_compact STREQUAL "${${expected_variable}}")
