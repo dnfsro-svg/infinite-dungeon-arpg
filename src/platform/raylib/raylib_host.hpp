@@ -266,6 +266,9 @@ struct HostRoomResetGateInput final {
     bool paused,
     double frame_seconds) noexcept;
 
+[[nodiscard]] bool host_hud_notice_time_paused(
+    bool pause_blocks_gameplay, bool inventory_open) noexcept;
+
 [[nodiscard]] bool host_requests_room_reset(
     const HostRoomResetGateInput& input) noexcept;
 

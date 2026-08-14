@@ -217,12 +217,16 @@ arpg::test::Failure paused_frames_freeze_hud_notice_time() noexcept {
     platform::CombatRenderer renderer{};
 
     renderer.observe_hud(previous, current, saved_status(), committed_hints(4U),
-        3.0F, true);
+        3.0F, platform::host_hud_notice_time_paused(true, false));
     const float paused_seconds = renderer.hud_notice_view().primary.seconds_left;
     renderer.observe_hud(previous, current, saved_status(), committed_hints(4U),
-        1.25F, true);
+        1.25F, platform::host_hud_notice_time_paused(false, true));
     ARPG_REQUIRE(arpg::test::near(
         renderer.hud_notice_view().primary.seconds_left, paused_seconds));
+    renderer.observe_hud(previous, current, saved_status(), committed_hints(4U),
+        1.0F, platform::host_hud_notice_time_paused(false, false));
+    ARPG_REQUIRE(arpg::test::near(
+        renderer.hud_notice_view().primary.seconds_left, 2.0F));
     return {};
 }
 

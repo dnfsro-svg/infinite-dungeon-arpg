@@ -415,6 +415,11 @@ RecoveryScreenView make_recovery_screen_view(const DungeonRenderStatus& status,
     return make_recovery_screen_view_impl(status, width, height);
 }
 
+bool host_hud_notice_time_paused(
+    bool pause_blocks_gameplay, bool inventory_open) noexcept {
+    return pause_blocks_gameplay || inventory_open;
+}
+
 dungeon::AutoPickupPolicy loot_pickup_policy(
     settings::LootFilterMode mode) noexcept {
     switch (mode) {
@@ -1129,7 +1134,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer.observe_presented_hud_frame(hud_presented_frame,
                 presented_hud_previous, presented_hud_current,
                 runtime.render_status(), control_hints,
-                frame_seconds, pause_blocks_gameplay, render_world);
+                frame_seconds, host_hud_notice_time_paused(
+                    pause_blocks_gameplay, inventory.is_open()), render_world);
             validation_runtime->observe_hud(
                 current, renderer.hud_model(), renderer.hud_notice_view(),
                 draw_debug, GetScreenWidth(), GetScreenHeight());
