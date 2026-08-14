@@ -3,11 +3,14 @@
 #include "combat_view_math.hpp"
 #include "debug_overlay_renderer.hpp"
 #include "dungeon_runtime.hpp"
+#include "hud_layout.hpp"
 #include "stable_key_raylib.hpp"
 
 #include <raylib.h>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace arpg::platform {
 namespace {
@@ -69,6 +72,23 @@ LootLabelObstacleSet actor_label_obstacles(
             obstacles, position, camera, camera_offset, width, height);
     }
     return obstacles;
+}
+
+void append_player_hud_obstacle(LootLabelObstacleSet& obstacles,
+    float width, float height) noexcept {
+    const double maximum_dimension = static_cast<double>(
+        (std::numeric_limits<int>::max)());
+    if (!std::isfinite(width) || !std::isfinite(height)
+            || width <= 0.0F || height <= 0.0F
+            || static_cast<double>(width) > maximum_dimension
+            || static_cast<double>(height) > maximum_dimension) {
+        return;
+    }
+    const HudRect player_panel = make_hud_layout(
+        static_cast<int>(width), static_cast<int>(height), false).player_panel;
+    static_cast<void>(obstacles.append({
+        player_panel.x, player_panel.y,
+        player_panel.width, player_panel.height}));
 }
 
 LootLabelObstacleSet actor_label_obstacles(
@@ -263,6 +283,7 @@ CombatRenderPlan make_combat_render_plan(
     LootLabelObstacleSet obstacles = actor_label_obstacles(previous, current,
         interpolate_previous, interpolation_alpha, camera, camera_offset,
         width, height);
+    append_player_hud_obstacle(obstacles, width, height);
     plan.ground_loot = build_ground_loot_view(
         current, mode, camera, width, height, obstacles);
     plan.material_loot = build_material_loot_view(

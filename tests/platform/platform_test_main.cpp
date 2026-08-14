@@ -457,7 +457,7 @@ int main() {
             hud_host_integration_suite(),
             material_loot_view_suite(),
         };
-        return arpg::test::run_suites(cplay016_only, 31,
+        return arpg::test::run_suites(cplay016_only, 32,
             "CPLAY-016 compact ground potion labels");
     }
 

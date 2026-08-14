@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "allocation_probe.hpp"
+#include "combat/room_bounds.hpp"
 #include "combat_renderer.hpp"
 #include "combat_view_math.hpp"
 #include "control_hints.hpp"
@@ -8,6 +9,7 @@
 #include "dungeon_runtime.hpp"
 #include "ground_loot_view.hpp"
 #include "hud_font.hpp"
+#include "hud_layout.hpp"
 #include "pause_menu_state.hpp"
 #include "platform/settings/settings_types.hpp"
 #include "raylib_host.hpp"
@@ -436,7 +438,7 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
     return {};
 }
 
-arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
+arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_avoids_later_hud()
     noexcept {
     dungeon::DungeonSnapshot previous = snapshot();
     previous.combat.emplace();
@@ -504,6 +506,69 @@ arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
     ARPG_REQUIRE(plan.stages[2]
         == platform::CombatRenderStage::ground_loot_labels);
     ARPG_REQUIRE(plan.stages[3] == platform::CombatRenderStage::normal_hud);
+
+    struct HudCollisionCase final {
+        int width;
+        int height;
+    };
+    constexpr std::array<HudCollisionCase, 4U> kHudViewports{{
+        {800, 450}, {960, 540}, {1280, 720}, {1920, 1080},
+    }};
+    constexpr float kPlayerPanelItemX = -6.52173913F;
+    for (const HudCollisionCase viewport : kHudViewports) {
+        dungeon::DungeonSnapshot hud_previous = snapshot();
+        hud_previous.combat.emplace();
+        hud_previous.combat->player.position = {
+            0.0F, arpg::combat::room_bounds::max_y, 0.0F};
+
+        dungeon::DungeonRenderSnapshot hud_world{};
+        hud_world.has_active_room = true;
+        hud_world.has_combat = true;
+        hud_world.combat = *hud_previous.combat;
+        const arpg::combat::Vec3 covered_position{
+            kPlayerPanelItemX, arpg::combat::room_bounds::max_y, 0.0F};
+        const platform::CombatCameraView hud_camera =
+            platform::make_combat_camera_view(
+                hud_previous.combat->player.position,
+                static_cast<float>(viewport.width),
+                static_cast<float>(viewport.height));
+        const platform::HudLayout hud = platform::make_hud_layout(
+            viewport.width, viewport.height, false);
+        const platform::CameraOffset camera_shake = viewport.width == 1920
+            ? platform::CameraOffset{9.0F, -9.0F}
+            : platform::CameraOffset{};
+        const platform::LootLabelRect player_panel{
+            hud.player_panel.x, hud.player_panel.y,
+            hud.player_panel.width, hud.player_panel.height};
+
+        hud_world.equipment[0] = ground_item(50U, items::ItemRarity::rare);
+        hud_world.equipment[0].position = covered_position;
+        hud_world.equipment_count = 1U;
+        const platform::CombatRenderPlan equipment_plan =
+            platform::make_combat_render_plan(hud_previous, hud_world,
+                false, 0.0F, hud_camera, camera_shake,
+                settings::LootFilterMode::show_all,
+                static_cast<float>(viewport.width),
+                static_cast<float>(viewport.height));
+        ARPG_REQUIRE(equipment_plan.ground_loot.count == 1U);
+        ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+            equipment_plan.ground_loot.labels[0].rect, player_panel));
+
+        hud_world.equipment_count = 0U;
+        hud_world.materials[0] = {51U,
+            dungeon::GroundMaterialSource::monster_common,
+            covered_position, items::MaterialId::chaos};
+        hud_world.material_count = 1U;
+        const platform::CombatRenderPlan material_plan =
+            platform::make_combat_render_plan(hud_previous, hud_world,
+                false, 0.0F, hud_camera, camera_shake,
+                settings::LootFilterMode::show_all,
+                static_cast<float>(viewport.width),
+                static_cast<float>(viewport.height));
+        ARPG_REQUIRE(material_plan.material_loot.count == 1U);
+        ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+            material_plan.material_loot.labels[0].rect, player_panel));
+    }
     return {};
 }
 
@@ -647,8 +712,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"settings apply uses committed hints", &committed_settings_hints_and_revision_are_used_after_apply},
     {"observation publishes prebuilt hud model", &observation_publishes_the_prebuilt_hud_model},
     {"static HUD text cache invalidates by fragment", &static_text_cache_rebuilds_only_changed_fragments},
-    {"ground loot render plan reuses view and orders stages",
-        &ground_loot_render_plan_reuses_one_view_and_orders_stages},
+    {"ground loot render plan avoids later HUD",
+        &ground_loot_render_plan_reuses_one_view_and_avoids_later_hud},
     {"ground loot avoids highest monster resource bar",
         &ground_loot_labels_avoid_highest_monster_resource_bar},
     {"renderer draft is settings-only",
