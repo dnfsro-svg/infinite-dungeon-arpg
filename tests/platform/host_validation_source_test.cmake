@@ -2151,10 +2151,24 @@ HostFrameGateResult gate_host_frame(
     return {true, fixed_step.advance(frame_seconds)};
 }
 ]=])
+set(_host_room_reset_gate_contract [=[
+bool host_requests_room_reset(
+    const HostRoomResetGateInput& input) noexcept {
+    if (!input.reset_pressed || !input.gameplay_armed
+        || !input.death_allows_gameplay) {
+        return false;
+    }
+    if (input.pause_screen == PauseScreen::root) return true;
+    return input.pause_screen == PauseScreen::closed
+        && input.forward_actions && input.inventory_allows_room_reset;
+}
+]=])
 string(CONCAT _host_frame_gate_translation_unit_contract
     "#include \"raylib_host.hpp\"\n\n"
+    "#include \"pause_menu_state.hpp\"\n\n"
     "namespace arpg::platform {\n\n"
     "${_host_frame_gate_contract}\n"
+    "${_host_room_reset_gate_contract}\n"
     "}  // namespace arpg::platform\n")
 arpg_sanitize_cpp_source(
     "${_host_frame_gate_translation_unit_contract}"

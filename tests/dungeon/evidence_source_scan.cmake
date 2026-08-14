@@ -1192,6 +1192,19 @@ function(evidence_window_lifetime_boundary_is_valid
         "${initialize_function}" initialize_direct)
 
     evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(
+        "${owner_token_surface}" "void HostWindowLifetime::close("
+        "arpg::platform" close_begin close_open close_end close_valid)
+    if(NOT close_valid)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR close_length "${close_end} - ${close_begin} + 1")
+    string(SUBSTRING "${owner_token_surface}" ${close_begin} ${close_length}
+        close_function)
+    evidence_cpp_direct_execution_surface_in_sanitized(
+        "${close_function}" close_direct)
+
+    evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(
         "${owner_token_surface}" "HostWindowBackend raylib_host_window_backend("
         "arpg::platform"
         backend_begin backend_open backend_end backend_valid)
@@ -1208,6 +1221,8 @@ function(evidence_window_lifetime_boundary_is_valid
     string(REGEX REPLACE "[ \t\r\n]+" "" host_compact "${host_direct}")
     string(REGEX REPLACE "[ \t\r\n]+" "" initialize_compact
         "${initialize_direct}")
+    string(REGEX REPLACE "[ \t\r\n]+" "" close_compact
+        "${close_direct}")
     string(REGEX REPLACE "[ \t\r\n]+" "" backend_compact
         "${backend_direct}")
 
@@ -1238,9 +1253,12 @@ function(evidence_window_lifetime_boundary_is_valid
 
     set(expected_initialize
         "boolHostWindowLifetime::initialize(constRaylibHostConfig&config,constsettings::SettingsData&settings)noexcept{if(!backend_.set_config_flags||!backend_.init_window||!backend_.is_window_ready||!backend_.detach_ime_context||!backend_.restore_ime_context||!backend_.close_window){ready_=false;returnfalse;}backend_.set_config_flags(initial_window_flags(settings));backend_.init_window(config.window_width,config.window_height,config.window_title);ready_=backend_.is_window_ready();if(ready_){detached_ime_context_=backend_.detach_ime_context();ime_context_detached_=true;}returnready_;}")
+    set(expected_close
+        "voidHostWindowLifetime::close()noexcept{if(!ready_)return;ready_=false;if(ime_context_detached_){backend_.restore_ime_context(detached_ime_context_);detached_ime_context_=nullptr;ime_context_detached_=false;}if(backend_.close_window!=nullptr)backend_.close_window();}")
     set(expected_backend
         "HostWindowBackendraylib_host_window_backend()noexcept{return{&set_config_flags_noexcept,&init_window_noexcept,&is_window_ready_noexcept,&detach_ime_context_noexcept,&restore_ime_context_noexcept,&close_window_noexcept};}")
     if(NOT initialize_compact STREQUAL expected_initialize
+            OR NOT close_compact STREQUAL expected_close
             OR NOT backend_compact STREQUAL expected_backend)
         set(${output} FALSE PARENT_SCOPE)
         return()
