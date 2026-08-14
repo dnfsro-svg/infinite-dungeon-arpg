@@ -23,11 +23,11 @@ struct LootLabelRect final {
     float height{};
 };
 
-inline constexpr std::size_t kLootLabelObstacleCapacity = 2U
+inline constexpr std::size_t kLootLabelObstacleCapacity = 3U
     + combat::kMonsterCapacity + dungeon::kGroundDropCapacity
     + dungeon::kGroundMaterialCapacity
     + dungeon::kGroundHealthPotionCapacity;
-static_assert(kLootLabelObstacleCapacity == 914U);
+static_assert(kLootLabelObstacleCapacity == 915U);
 
 struct LootLabelObstacleSet final {
     std::array<LootLabelRect, kLootLabelObstacleCapacity> rects{};

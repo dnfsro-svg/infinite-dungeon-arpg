@@ -74,7 +74,7 @@ LootLabelObstacleSet actor_label_obstacles(
     return obstacles;
 }
 
-void append_player_hud_obstacle(LootLabelObstacleSet& obstacles,
+void append_bottom_hud_obstacles(LootLabelObstacleSet& obstacles,
     float width, float height) noexcept {
     const double maximum_dimension = static_cast<double>(
         (std::numeric_limits<int>::max)());
@@ -84,11 +84,18 @@ void append_player_hud_obstacle(LootLabelObstacleSet& obstacles,
             || static_cast<double>(height) > maximum_dimension) {
         return;
     }
-    const HudRect player_panel = make_hud_layout(
-        static_cast<int>(width), static_cast<int>(height), false).player_panel;
+    const CombatHudLayout hud = make_combat_hud_layout(
+        static_cast<int>(width), static_cast<int>(height), false);
+    const HudRect player_panel = hud.hud.player_panel;
     static_cast<void>(obstacles.append({
         player_panel.x, player_panel.y,
         player_panel.width, player_panel.height}));
+    if (hud.active_skill.valid) {
+        const Rectangle active_skill = hud.active_skill.visual_bounds;
+        static_cast<void>(obstacles.append({
+            active_skill.x, active_skill.y,
+            active_skill.width, active_skill.height}));
+    }
 }
 
 LootLabelObstacleSet actor_label_obstacles(
@@ -283,7 +290,7 @@ CombatRenderPlan make_combat_render_plan(
     LootLabelObstacleSet obstacles = actor_label_obstacles(previous, current,
         interpolate_previous, interpolation_alpha, camera, camera_offset,
         width, height);
-    append_player_hud_obstacle(obstacles, width, height);
+    append_bottom_hud_obstacles(obstacles, width, height);
     plan.ground_loot = build_ground_loot_view(
         current, mode, camera, width, height, obstacles);
     plan.material_loot = build_material_loot_view(

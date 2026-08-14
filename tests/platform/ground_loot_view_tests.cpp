@@ -288,7 +288,7 @@ arpg::test::Failure supported_resolutions_keep_all_rects_in_safety_area() noexce
 }
 
 arpg::test::Failure full_capacity_extreme_layout_is_bounded() noexcept {
-    static_assert(platform::kLootLabelObstacleCapacity == 914U);
+    static_assert(platform::kLootLabelObstacleCapacity == 915U);
     platform::LootLabelObstacleSet boundary{};
     for (std::size_t index = 0U;
          index < platform::kLootLabelObstacleCapacity; ++index) {

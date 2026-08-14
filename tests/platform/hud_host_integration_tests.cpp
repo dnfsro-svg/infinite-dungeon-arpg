@@ -569,6 +569,56 @@ arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_avoids_later_hud
         ARPG_REQUIRE(!platform::loot_label_rects_overlap(
             material_plan.material_loot.labels[0].rect, player_panel));
     }
+
+    dungeon::DungeonSnapshot skill_previous = snapshot();
+    skill_previous.combat.emplace();
+    skill_previous.combat->player.position = {
+        0.0F, arpg::combat::room_bounds::max_y, 0.0F};
+    dungeon::DungeonRenderSnapshot skill_world{};
+    skill_world.has_active_room = true;
+    skill_world.has_combat = true;
+    skill_world.combat = *skill_previous.combat;
+    constexpr float kSkillViewportWidth = 800.0F;
+    constexpr float kSkillViewportHeight = 450.0F;
+    const arpg::combat::Vec3 skill_covered_position{
+        7.0F, arpg::combat::room_bounds::max_y, 0.0F};
+    const platform::CombatCameraView skill_camera =
+        platform::make_combat_camera_view(
+            skill_previous.combat->player.position,
+            kSkillViewportWidth, kSkillViewportHeight);
+    const platform::CombatHudLayout skill_hud =
+        platform::make_combat_hud_layout(800, 450, false);
+    ARPG_REQUIRE(skill_hud.active_skill.valid);
+    const Rectangle skill_bounds = skill_hud.active_skill.visual_bounds;
+    const platform::LootLabelRect skill_blocker{
+        skill_bounds.x, skill_bounds.y,
+        skill_bounds.width, skill_bounds.height};
+
+    skill_world.equipment[0] = ground_item(60U, items::ItemRarity::rare);
+    skill_world.equipment[0].position = skill_covered_position;
+    skill_world.equipment_count = 1U;
+    const platform::CombatRenderPlan skill_equipment_plan =
+        platform::make_combat_render_plan(skill_previous, skill_world,
+            false, 0.0F, skill_camera, {},
+            settings::LootFilterMode::show_all,
+            kSkillViewportWidth, kSkillViewportHeight);
+    ARPG_REQUIRE(skill_equipment_plan.ground_loot.count == 1U);
+    ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+        skill_equipment_plan.ground_loot.labels[0].rect, skill_blocker));
+
+    skill_world.equipment_count = 0U;
+    skill_world.materials[0] = {61U,
+        dungeon::GroundMaterialSource::monster_common,
+        skill_covered_position, items::MaterialId::chaos};
+    skill_world.material_count = 1U;
+    const platform::CombatRenderPlan skill_material_plan =
+        platform::make_combat_render_plan(skill_previous, skill_world,
+            false, 0.0F, skill_camera, {},
+            settings::LootFilterMode::show_all,
+            kSkillViewportWidth, kSkillViewportHeight);
+    ARPG_REQUIRE(skill_material_plan.material_loot.count == 1U);
+    ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+        skill_material_plan.material_loot.labels[0].rect, skill_blocker));
     return {};
 }
 
