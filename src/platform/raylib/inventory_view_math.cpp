@@ -473,6 +473,16 @@ std::array<char, 64> inventory_equipment_slot_label(
     return label;
 }
 
+std::array<char, 64> inventory_grid_item_metadata(
+    const items::ItemInstance& item) noexcept {
+    std::array<char, 64> metadata{};
+    static_cast<void>(ui_utf8_format(metadata.data(), metadata.size(),
+        u8"%s · %u级 · +%u", ui_item_rarity_name(item.rarity),
+        static_cast<unsigned int>(item.item_level),
+        static_cast<unsigned int>(item.reinforcement)));
+    return metadata;
+}
+
 ActiveSkillLoadoutLayout active_skill_loadout_layout(
     InventoryShellLayout shell) noexcept {
     if (!shell.valid) return {};

@@ -465,6 +465,8 @@ inventory_control_text_style() noexcept;
     InventoryPage page, const char* inventory_binding_label) noexcept;
 [[nodiscard]] std::array<char, 64> inventory_equipment_slot_label(
     items::ItemSlot slot, const items::ItemInstance* item) noexcept;
+[[nodiscard]] std::array<char, 64> inventory_grid_item_metadata(
+    const items::ItemInstance& item) noexcept;
 [[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
     InventoryShellLayout shell) noexcept;
 [[nodiscard]] ActiveSkillLoadoutView make_active_skill_loadout_view(

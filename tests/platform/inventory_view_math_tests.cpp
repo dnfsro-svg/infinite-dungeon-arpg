@@ -355,6 +355,20 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     ARPG_REQUIRE(std::string_view{empty_slot_label.data()} == u8"武器");
     ARPG_REQUIRE(platform::ui_utf8_is_valid(reinforced_slot_label.data()));
 
+    const auto reinforced_grid_metadata =
+        platform::inventory_grid_item_metadata(reinforced);
+    ARPG_REQUIRE(std::string_view{reinforced_grid_metadata.data()}
+        == u8"稀有 · 1级 · +12");
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(
+        reinforced_grid_metadata.data()));
+    items::ItemInstance unreinforced = reinforced;
+    unreinforced.reinforcement = 0U;
+    const auto unreinforced_grid_metadata =
+        platform::inventory_grid_item_metadata(unreinforced);
+    ARPG_REQUIRE(std::string_view{unreinforced_grid_metadata.data()}
+        == u8"稀有 · 1级 · +0");
+    ARPG_REQUIRE(unreinforced_grid_metadata.back() == '\0');
+
     platform::RecipeSelection recipe{};
     recipe.ids = {{11U, 13U, 14U}};
     recipe.count = 3U;

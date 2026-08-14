@@ -1392,11 +1392,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
                 shell.body_font_size, 12.0F, rarity_color(item.rarity),
                 UiTextAuditPage::inventory,
                 UiTextAuditRole::inventory_grid_entry);
-            std::array<char, 64> item_meta{};
-            static_cast<void>(ui_utf8_format(item_meta.data(),
-                item_meta.size(), u8"%s · 物品等级 %u",
-                ui_item_rarity_name(item.rarity),
-                static_cast<unsigned>(item.item_level)));
+            const auto item_meta = inventory_grid_item_metadata(item);
             const Rectangle meta_bounds{name_bounds.x,
                 cell.y + cell.height * 0.50F, name_bounds.width,
                 cell.height * 0.44F};
