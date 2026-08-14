@@ -1433,7 +1433,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
 
         const InventoryEmptyPresentation empty =
             inventory_empty_presentation(state,
-                view_cache_.filtered_indices.size());
+                view_cache_.filtered_indices.size(), selected_material);
         if (empty.state != InventoryEmptyState::none) {
             const Rectangle title_bounds{shell.empty_state_bounds.x,
                 shell.empty_state_bounds.y
@@ -1452,7 +1452,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
                 UiTextAuditPage::inventory,
                 UiTextAuditRole::inventory_status);
             draw_centered_shell_text(hud_font, current_font_ready,
-                empty.hint, hint_bounds, shell.hint_font_size, 12.0F,
+                empty.hint.data(), hint_bounds, shell.hint_font_size, 12.0F,
                 ui_text_contrast_style().muted,
                 UiTextAuditPage::inventory,
                 UiTextAuditRole::inventory_status);

@@ -154,7 +154,7 @@ struct InventoryShellLayout final {
 struct InventoryEmptyPresentation final {
     InventoryEmptyState state{InventoryEmptyState::none};
     const char* title{};
-    const char* hint{};
+    std::array<char, 128> hint{};
 };
 
 struct InventoryStatusInput final {
@@ -525,7 +525,8 @@ void refresh_inventory_view_cache(InventoryViewCache& cache,
     std::uint64_t item_id, float scroll_rows) noexcept;
 [[nodiscard]] InventoryEmptyPresentation inventory_empty_presentation(
     const items::ItemOwnershipState& state,
-    std::size_t filtered_count) noexcept;
+    std::size_t filtered_count,
+    std::optional<items::MaterialId> selected_material = std::nullopt) noexcept;
 [[nodiscard]] InventoryStatusPresentation inventory_status_presentation(
     const InventoryStatusInput& input) noexcept;
 [[nodiscard]] InventoryTransientStatusFrameResult

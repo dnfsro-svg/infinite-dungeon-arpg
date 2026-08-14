@@ -916,11 +916,17 @@ InventoryVisibleItemSource inventory_visible_item_source(
 }
 
 InventoryEmptyPresentation inventory_empty_presentation(
-    const items::ItemOwnershipState& state, std::size_t filtered_count) noexcept {
-    if (filtered_count != 0U) return {};
-    if (state.items.empty()) return {InventoryEmptyState::inventory_empty,
-        ui_text(UiTextId::inventory_empty_title),
-        ui_text(UiTextId::inventory_empty_hint)};
+    const items::ItemOwnershipState& state, std::size_t filtered_count,
+    std::optional<items::MaterialId> selected_material) noexcept {
+    InventoryEmptyPresentation output{};
+    if (filtered_count != 0U) return output;
+    if (state.items.empty()) {
+        output.state = InventoryEmptyState::inventory_empty;
+        output.title = ui_text(UiTextId::inventory_empty_title);
+        static_cast<void>(ui_utf8_copy(output.hint.data(), output.hint.size(),
+            ui_text(UiTextId::inventory_empty_hint)));
+        return output;
+    }
     bool any_unequipped{};
     for (const items::ItemInstance& item : state.items) {
         if (!equipped(state.equipment, item.id)) {
@@ -928,12 +934,25 @@ InventoryEmptyPresentation inventory_empty_presentation(
             break;
         }
     }
-    if (!any_unequipped) return {InventoryEmptyState::all_equipped,
-        ui_text(UiTextId::inventory_all_equipped_title),
-        ui_text(UiTextId::inventory_all_equipped_hint)};
-    return {InventoryEmptyState::filter_empty,
-        ui_text(UiTextId::inventory_filter_empty_title),
-        ui_text(UiTextId::inventory_filter_empty_hint)};
+    if (!any_unequipped) {
+        output.state = InventoryEmptyState::all_equipped;
+        output.title = ui_text(UiTextId::inventory_all_equipped_title);
+        if (selected_material.has_value()) {
+            static_cast<void>(ui_utf8_format(output.hint.data(),
+                output.hint.size(),
+                ui_text(UiTextId::inventory_material_target_hint_format),
+                ui_material_name(*selected_material)));
+        } else {
+            static_cast<void>(ui_utf8_copy(output.hint.data(), output.hint.size(),
+                ui_text(UiTextId::inventory_all_equipped_hint)));
+        }
+        return output;
+    }
+    output.state = InventoryEmptyState::filter_empty;
+    output.title = ui_text(UiTextId::inventory_filter_empty_title);
+    static_cast<void>(ui_utf8_copy(output.hint.data(), output.hint.size(),
+        ui_text(UiTextId::inventory_filter_empty_hint)));
+    return output;
 }
 
 InventoryStatusPresentation inventory_status_presentation(

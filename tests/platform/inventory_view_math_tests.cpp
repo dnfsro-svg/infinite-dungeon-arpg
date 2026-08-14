@@ -255,6 +255,8 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
             shell.equipment_slots[0], false, view, &linear_measure, nullptr);
         const auto transition = platform::inventory_tooltip_transition({}, {});
         const auto empty = platform::inventory_empty_presentation(empty_state, 0U);
+        const auto material_empty = platform::inventory_empty_presentation(
+            ownership, 0U, items::MaterialId::chaos);
         const auto transient_frame = platform::inventory_transient_status_for_frame(
             transient, transient_input);
         transient = transient_frame.next;
@@ -271,6 +273,7 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         ARPG_REQUIRE(shell.valid && tip.valid && view.valid
             && transient_frame.next.initialized);
         ARPG_REQUIRE(!transition.state.visible && empty.title != nullptr
+            && material_empty.hint[0] != '\0'
             && status.status[0] != '\0'
             && visual.outline != platform::InventoryItemOutline::none
             && source.valid
@@ -333,7 +336,8 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     const auto empty_presentation = platform::inventory_empty_presentation(
         empty, 0U);
     ARPG_REQUIRE(std::string_view(empty_presentation.title) == u8"背包无装备");
-    ARPG_REQUIRE(std::string_view(empty_presentation.hint) == u8"击败怪物，拾取装备");
+    ARPG_REQUIRE(std::string_view(empty_presentation.hint.data())
+        == u8"击败怪物，拾取装备");
 
     items::ItemOwnershipState all_equipped{};
     all_equipped.items.push_back(make_item(80U, 1U, items::ItemRarity::normal));
@@ -341,12 +345,23 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     const auto equipped_presentation = platform::inventory_empty_presentation(
         all_equipped, 0U);
     ARPG_REQUIRE(std::string_view(equipped_presentation.title) == u8"无剩余装备");
-    ARPG_REQUIRE(std::string_view(equipped_presentation.hint) == u8"左击左方装备取出");
+    ARPG_REQUIRE(std::string_view(equipped_presentation.hint.data())
+        == u8"左击左方装备取出");
+
+    const auto material_equipped_presentation =
+        platform::inventory_empty_presentation(
+            all_equipped, 0U, items::MaterialId::chaos);
+    const std::string_view material_equipped_hint{
+        material_equipped_presentation.hint.data()};
+    ARPG_REQUIRE(material_equipped_hint.find(u8"取出") == std::string_view::npos);
+    ARPG_REQUIRE(material_equipped_hint
+        == u8"已选择：混沌石 · 可用装备已标出 · 右键取消");
 
     const auto filtered_presentation = platform::inventory_empty_presentation(
         state, 0U);
     ARPG_REQUIRE(std::string_view(filtered_presentation.title) == u8"当前过滤无结果");
-    ARPG_REQUIRE(std::string_view(filtered_presentation.hint) == u8"切换装备槽及稀有度");
+    ARPG_REQUIRE(std::string_view(filtered_presentation.hint.data())
+        == u8"切换装备槽及稀有度");
 
     items::ItemInstance reinforced = make_item(
         81U, 1U, items::ItemRarity::rare);

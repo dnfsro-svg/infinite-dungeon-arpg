@@ -503,6 +503,9 @@ foreach(_token IN ITEMS
     require_token("${_draw_body}" "${_token}"
         "T4 renderer must consume the live three-page shell path")
 endforeach()
+require_token("${_draw_compact}"
+    "inventory_empty_presentation(state, view_cache_.filtered_indices.size(), selected_material);"
+    "T4 inventory empty-state context must consume the live selected material")
 foreach(_token IN ITEMS
         "InventoryMaterialTargetContext material_target{};"
         "if (page_ == InventoryPage::equipment) { material_target.material = selected_material;"

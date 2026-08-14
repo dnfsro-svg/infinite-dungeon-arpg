@@ -392,6 +392,10 @@ expect_renderer_mutation_rejected(material_context_leaks_to_materials_page
     "        material_target.material = selected_material;"
     "    }\n    material_target.material = selected_material;\n    if (true) {")
 
+expect_renderer_mutation_rejected(empty_state_material_context_disconnected
+    "view_cache_.filtered_indices.size(), selected_material);"
+    "view_cache_.filtered_indices.size(), std::nullopt);")
+
 expect_renderer_mutation_rejected(skill_showcase_entry_auto_selects_slot_zero
     "void InventoryRenderer::show_skill_stones_page() noexcept {"
     "void InventoryRenderer::show_skill_stones_page() noexcept {\n    active_skill_selection_.selected_slot = 0U;")
