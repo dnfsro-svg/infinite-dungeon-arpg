@@ -226,10 +226,13 @@ CombatHudLayout make_combat_hud_layout(
         result.hud.player_panel.x, result.hud.player_panel.y,
         result.hud.player_panel.width, result.hud.player_panel.height,
     });
+    const Rectangle bottom_blocker = rectangle_union({
+        result.hud.player_panel.x, result.hud.player_panel.y,
+        result.hud.player_panel.width, result.hud.player_panel.height,
+    }, result.active_skill.visual_bounds);
     result.hud = hud_layout_avoiding_bottom_blocker(result.hud, {
-        result.active_skill.visual_bounds.x, result.active_skill.visual_bounds.y,
-        result.active_skill.visual_bounds.width,
-        result.active_skill.visual_bounds.height,
+        bottom_blocker.x, bottom_blocker.y,
+        bottom_blocker.width, bottom_blocker.height,
     });
     result.valid = result.active_skill.valid
         && hud_rect_inside(result.hud.primary_notice, result.hud.safe_area)

@@ -532,6 +532,16 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
             composition.hud.player_panel.height,
         };
         ARPG_REQUIRE(!overlaps(composition.active_skill.visual_bounds, player));
+        ARPG_REQUIRE(!overlaps(player,
+            Rectangle{composition.hud.primary_notice.x,
+                composition.hud.primary_notice.y,
+                composition.hud.primary_notice.width,
+                composition.hud.primary_notice.height}));
+        ARPG_REQUIRE(!overlaps(player,
+            Rectangle{composition.hud.secondary_notice.x,
+                composition.hud.secondary_notice.y,
+                composition.hud.secondary_notice.width,
+                composition.hud.secondary_notice.height}));
         ARPG_REQUIRE(composition.hud.primary_notice.y
                 + composition.hud.primary_notice.height
             <= composition.active_skill.visual_bounds.y
