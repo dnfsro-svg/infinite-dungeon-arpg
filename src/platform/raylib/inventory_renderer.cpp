@@ -442,6 +442,38 @@ void draw_inventory_item_overlay(Rectangle bounds,
     }
 }
 
+struct InventoryMaterialTargetContext final {
+    std::optional<items::MaterialId> material{};
+    std::optional<items::DirectedCategory> directed_category{};
+    std::uint64_t root_seed{};
+    std::uint64_t operation_nonce{};
+    std::uint64_t rejected_item_id{};
+    bool authority_enabled{};
+    bool rejection_active{};
+};
+
+InventoryItemVisualInput inventory_item_visual_input_with_material(
+    const items::ItemOwnershipState& state,
+    const items::ItemInstance* item, std::uint64_t item_id,
+    std::uint64_t hovered_item_id, std::uint64_t selected_item_id,
+    const RecipeSelection& recipe,
+    const InventoryMaterialTargetContext& material_target) noexcept {
+    InventoryItemVisualInput output{};
+    output.item_id = item_id;
+    output.hovered_item_id = hovered_item_id;
+    output.selected_item_id = selected_item_id;
+    output.recipe = recipe;
+    output.material_target_mode = material_target.material.has_value();
+    output.material_target_enabled = output.material_target_mode
+        && item != nullptr && inventory_material_target_enabled(state, *item,
+            *material_target.material, material_target.directed_category,
+            material_target.root_seed, material_target.operation_nonce,
+            material_target.authority_enabled);
+    output.material_target_rejected = material_target.rejection_active
+        && material_target.rejected_item_id == item_id;
+    return output;
+}
+
 void draw_character_silhouette(const InventoryShellLayout& shell) noexcept {
     const Rectangle body = shell.silhouette;
     const Color fill{21, 29, 41, 255};
@@ -471,14 +503,18 @@ void draw_character_silhouette(const InventoryShellLayout& shell) noexcept {
 void draw_equipment_overview(const items::ItemOwnershipState& state,
     const InventoryShellLayout& shell, const MaterialPack& assets,
     std::uint64_t hovered_item_id, std::uint64_t selected_item_id,
-    const RecipeSelection& recipe, Font font, bool font_ready) noexcept {
+    const RecipeSelection& recipe,
+    const InventoryMaterialTargetContext& material_target,
+    Font font, bool font_ready) noexcept {
     draw_character_silhouette(shell);
     for (std::size_t index{}; index < shell.equipment_slots.size(); ++index) {
         const auto slot = static_cast<items::ItemSlot>(index);
         const Rectangle bounds = shell.equipment_slots[index];
         const std::uint64_t item_id = state.equipment.equipped_ids[index];
-        const InventoryItemVisualState visual = inventory_item_visual_state({
-            item_id, hovered_item_id, selected_item_id, recipe, false, false});
+        const items::ItemInstance* const item = find_item(state, item_id);
+        const InventoryItemVisualState visual = inventory_item_visual_state(
+            inventory_item_visual_input_with_material(state, item, item_id,
+                hovered_item_id, selected_item_id, recipe, material_target));
         if (!assets.draw_horizontal_slice(ui_material_sprite(item_id != 0U
                 ? UiMaterialElement::inventory_slot_selected
                 : UiMaterialElement::inventory_slot_idle),
@@ -494,7 +530,6 @@ void draw_equipment_overview(const items::ItemOwnershipState& state,
             item_id == 0U ? Fade(WHITE, 0.30F) : WHITE));
         draw_inventory_item_overlay(bounds, visual, shell.geometry_scale,
             font, font_ready);
-        const items::ItemInstance* const item = find_item(state, item_id);
         const auto label = inventory_equipment_slot_label(slot, item);
         const Rectangle label_container{bounds.x,
             bounds.y + bounds.height * 0.66F,
@@ -953,7 +988,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         && material_card_contains(frame_layout_.materials, mouse);
     priority.material_target = left_pressed
         && page_ == InventoryPage::equipment
-        && selected_material.has_value() && direct_hit.grid_item;
+        && selected_material.has_value() && direct_hit.item != nullptr;
     priority.material_selected = selected_material.has_value();
     priority.page_action = left_pressed
         && inventory_page_action_contains(frame_layout_.shell, page_, mouse);
@@ -1232,6 +1267,18 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     const bool authority_enabled = !snapshot.pending_save_kind.has_value()
         && !status.recovery_required && !status.faulted;
+    InventoryMaterialTargetContext material_target{};
+    if (page_ == InventoryPage::equipment) {
+        material_target.material = selected_material;
+        if (selected_material == items::MaterialId::directed) {
+            material_target.directed_category = material_bag_.directed_category();
+        }
+    }
+    material_target.root_seed = snapshot.root_seed;
+    material_target.operation_nonce = snapshot.commit_generation;
+    material_target.authority_enabled = authority_enabled;
+    material_target.rejection_active = material_rejection_frames_ != 0U;
+    material_target.rejected_item_id = rejected_material_item_id_;
     const bool active_skill_removable =
         active_skill_selection_.selected_slot
             < snapshot.skill_loadout.slots.size()
@@ -1307,7 +1354,8 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     if (page_ == InventoryPage::equipment
             || page_ == InventoryPage::materials) {
         draw_equipment_overview(state, shell, material_pack, hovered_item_id,
-            selected_item_id_, recipe_, hud_font, current_font_ready);
+            selected_item_id_, recipe_, material_target, hud_font,
+            current_font_ready);
     }
 
     if (page_ == InventoryPage::equipment) {
@@ -1350,23 +1398,11 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
                 items::base_definition(item.base_id);
             const Rectangle cell = inventory_grid_item_rectangle(
                 shell, position, scroll_rows_);
-            const bool material_target_mode = selected_material.has_value();
-            const auto directed_category = material_target_mode
-                    && *selected_material == items::MaterialId::directed
-                ? std::optional<items::DirectedCategory>{
-                    material_bag_.directed_category()}
-                : std::nullopt;
-            const bool material_target_enabled = material_target_mode
-                && inventory_material_target_enabled(state, item,
-                    *selected_material, directed_category,
-                    snapshot.root_seed, snapshot.commit_generation,
-                    authority_enabled);
             const InventoryItemVisualState visual =
-                inventory_item_visual_state({item.id, hovered_item_id,
-                    selected_item_id_, recipe_, material_target_mode,
-                    material_target_enabled,
-                    material_rejection_frames_ != 0U
-                        && rejected_material_item_id_ == item.id});
+                inventory_item_visual_state(
+                    inventory_item_visual_input_with_material(state, &item,
+                        item.id, hovered_item_id, selected_item_id_, recipe_,
+                        material_target));
             if (!material_pack.draw_horizontal_slice(ui_material_sprite(
                     visual.outline == InventoryItemOutline::selected
                         ? UiMaterialElement::inventory_slot_selected

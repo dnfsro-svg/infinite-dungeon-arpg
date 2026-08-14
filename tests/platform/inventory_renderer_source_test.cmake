@@ -118,6 +118,13 @@ string(REGEX REPLACE "[ \t\r\n]+" "" _header_compact
 string(REGEX REPLACE "[ \t\r\n]+" "" _material_header_compact
     "${_material_header_normalized}")
 
+require_token("${_inventory_compact}"
+    "priority.material_target=left_pressed&&page_==InventoryPage::equipment&&selected_material.has_value()&&direct_hit.item!=nullptr;"
+    "T4 a selected material must target every directly hit item, including equipped slots")
+reject_token("${_inventory_compact}"
+    "priority.material_target=left_pressed&&page_==InventoryPage::equipment&&selected_material.has_value()&&direct_hit.grid_item;"
+    "T4 equipped material targets must not be restricted to inventory-grid items")
+
 foreach(_forbidden IN ITEMS
         "GetFontDefault(" "DrawText(" "DrawTextEx(" "LoadFontEx("
         "->display_name" ".display_name" "base->name" "definition->name")
@@ -428,6 +435,24 @@ require_token_order("${_input_body}"
 reject_dead_branch("${_input_code}" "T4 renderer input chain")
 
 extract_cpp_function_body("${_inventory_source}"
+    "InventoryItemVisualInput inventory_item_visual_input_with_material("
+    _material_visual_body _material_visual_code)
+string(REGEX REPLACE "[ \t\r\n]+" " " _material_visual_compact
+    "${_material_visual_code}")
+foreach(_token IN ITEMS
+        "output.material_target_mode = material_target.material.has_value();"
+        "output.material_target_enabled = output.material_target_mode && item != nullptr && inventory_material_target_enabled(state, *item, *material_target.material, material_target.directed_category, material_target.root_seed, material_target.operation_nonce, material_target.authority_enabled);"
+        "output.material_target_rejected = material_target.rejection_active && material_target.rejected_item_id == item_id;")
+    require_token("${_material_visual_compact}" "${_token}"
+        "T4 shared equipped/grid material target visuals are incomplete")
+endforeach()
+reject_dead_branch("${_material_visual_code}"
+    "T4 shared equipped/grid material target visuals")
+require_token("${_overview_body}"
+    "inventory_item_visual_input_with_material("
+    "T4 equipped slots must consume the shared material target visual path")
+
+extract_cpp_function_body("${_inventory_source}"
     "void InventoryRenderer::draw(" _draw_body _draw_code)
 reject_lambda("${_draw_code}" "T4 inventory live draw")
 string(REGEX REPLACE "[ \t\r\n]+" " " _draw_compact "${_draw_code}")
@@ -456,13 +481,26 @@ foreach(_token IN ITEMS
         "InventoryTransientStatusInput" "inventory_transient_status_for_frame("
         "transient_status_state_ = transient_result.next"
         "inventory_status_presentation("
-        "ui_item_rarity_name(item.rarity)"
+        "inventory_grid_item_metadata(item)"
         "ui_item_base_name(item.base_id)"
         "material_bag_.draw(state, material_pack, hud_font,"
         "draw_active_skill_loadout(" "draw_inventory_tooltip("
         "draw_inventory_status(")
     require_token("${_draw_body}" "${_token}"
         "T4 renderer must consume the live three-page shell path")
+endforeach()
+foreach(_token IN ITEMS
+        "InventoryMaterialTargetContext material_target{};"
+        "if (page_ == InventoryPage::equipment) { material_target.material = selected_material;"
+        "material_target.root_seed = snapshot.root_seed;"
+        "material_target.operation_nonce = snapshot.commit_generation;"
+        "material_target.authority_enabled = authority_enabled;"
+        "material_target.rejection_active = material_rejection_frames_ != 0U;"
+        "material_target.rejected_item_id = rejected_material_item_id_;"
+        "inventory_item_visual_input_with_material(state, &item, item.id,"
+        "draw_equipment_overview(state, shell, material_pack, hovered_item_id, selected_item_id_, recipe_, material_target,")
+    require_token("${_draw_compact}" "${_token}"
+        "T4 live draw must share the real material target context with equipped and grid items")
 endforeach()
 foreach(_builder IN ITEMS "inventory_shell_layout("
         "active_skill_loadout_layout(" "material_bag_layout(")

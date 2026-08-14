@@ -243,9 +243,9 @@ expect_renderer_mutation_accepted_without_dead_check(
     "draw_inventory_page_button(shell.tabs[index], tab_labels[index],"
     "${_dead_comparison_decoy}")
 
-expect_renderer_mutation_rejected(default_core_rarity_name
-    "ui_item_rarity_name(item.rarity)"
-    "rarity_name(item.rarity)")
+expect_renderer_mutation_rejected(grid_metadata_disconnected
+    "inventory_grid_item_metadata(item)"
+    "std::array<char, 64>{}")
 
 expect_renderer_mutation_rejected(text_width_button_backing
     "DrawRectangleRec(rectangle, fill);"
@@ -371,6 +371,26 @@ expect_renderer_mutation_rejected(corridor_steals_source_card_input
 expect_renderer_mutation_rejected(corridor_widens_pointer_inside_backing
     "const bool pointer_inside_retained_tooltip = retained_frame.valid\n        && contains(retained_frame.layout.backing, mouse);"
     "const bool pointer_inside_retained_tooltip = retained_frame.valid\n        && (contains(retained_frame.layout.backing, mouse)\n            || contains(retained_frame.layout.retention_corridor, mouse));")
+
+expect_renderer_mutation_rejected(equipped_material_target_grid_only
+    "&& selected_material.has_value() && direct_hit.item != nullptr;"
+    "&& selected_material.has_value() && direct_hit.grid_item;")
+
+expect_renderer_mutation_rejected(equipped_material_visual_disabled
+    "output.material_target_mode = material_target.material.has_value();"
+    "output.material_target_mode = false;")
+
+expect_renderer_mutation_rejected(equipped_material_rejection_ignored
+    "output.material_target_rejected = material_target.rejection_active\n        && material_target.rejected_item_id == item_id;"
+    "output.material_target_rejected = false;")
+
+expect_renderer_mutation_rejected(equipped_material_context_disconnected
+    "selected_item_id_, recipe_, material_target, hud_font,"
+    "selected_item_id_, recipe_, InventoryMaterialTargetContext{}, hud_font,")
+
+expect_renderer_mutation_rejected(material_context_leaks_to_materials_page
+    "        material_target.material = selected_material;"
+    "    }\n    material_target.material = selected_material;\n    if (true) {")
 
 expect_renderer_mutation_rejected(non_centered_remove_button
     "draw_button(shell.action_bounds, presentation.action.data(),"
