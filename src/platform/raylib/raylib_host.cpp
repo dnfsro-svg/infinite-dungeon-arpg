@@ -845,6 +845,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const PauseScreen pause_screen_before = pause_menu.screen;
             const bool pause_was_open =
                 pause_screen_before != PauseScreen::closed;
+            bool pause_pointer_row_hit = false;
             if (pause_was_open
                     && !physical_keys.focus_lost
                     && physical_keys.mouse_left) {
@@ -855,6 +856,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     pause_view.row_count);
                 const auto selected = hit_test_pause_row(
                     layout, physical_keys.mouse_position);
+                pause_pointer_row_hit = selected.has_value();
                 if (selected.has_value()) pause_menu.selected_row = *selected;
             }
             const PauseContext pause_context{
@@ -868,6 +870,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             PauseInput pause_input = pause_input_from_snapshot(
                 physical_keys, escape_consumed,
                 pause_menu.screen == PauseScreen::capture_binding);
+            pause_input.activate = pause_input.activate
+                && pause_pointer_row_hit;
             const PauseCommand pause_command = update_pause_menu(
                 pause_menu, pause_context, pause_input);
             UiAudioCueMask ui_audio_cues = pause_audio_cues(

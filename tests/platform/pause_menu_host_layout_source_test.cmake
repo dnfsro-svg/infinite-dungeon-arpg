@@ -47,6 +47,45 @@ if(HOST_HIT_TEST_CHAIN_INDEX EQUAL -1)
         "pause host must build the current view, derive its visible-row layout, and hit-test that same layout in one chain")
 endif()
 
+set(HOST_POINTER_HIT_DEFAULT_SOURCE
+    "boolpause_pointer_row_hit=false;")
+string(FIND "${HOST_COMPACT}" "${HOST_POINTER_HIT_DEFAULT_SOURCE}"
+    HOST_POINTER_HIT_DEFAULT_INDEX)
+if(HOST_POINTER_HIT_DEFAULT_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host must default blank-area clicks to no visible-row hit")
+endif()
+
+set(HOST_POINTER_HIT_SOURCE
+    "pause_pointer_row_hit=selected.has_value();")
+string(FIND "${HOST_COMPACT}" "${HOST_POINTER_HIT_SOURCE}"
+    HOST_POINTER_HIT_INDEX)
+if(HOST_POINTER_HIT_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host must preserve whether the pointer hit a visible row")
+endif()
+
+set(HOST_ACTIVATE_GATE_SOURCE
+    "pause_input.activate=pause_input.activate&&pause_pointer_row_hit;")
+string(FIND "${HOST_COMPACT}" "${HOST_ACTIVATE_GATE_SOURCE}"
+    HOST_ACTIVATE_GATE_INDEX)
+if(HOST_ACTIVATE_GATE_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host must not activate the selected command from a blank-area click")
+endif()
+
+set(HOST_UPDATE_SOURCE
+    "constPauseCommandpause_command=update_pause_menu(pause_menu,pause_context,pause_input);")
+string(FIND "${HOST_COMPACT}" "${HOST_UPDATE_SOURCE}" HOST_UPDATE_INDEX)
+if(HOST_UPDATE_INDEX EQUAL -1
+        OR NOT HOST_POINTER_HIT_DEFAULT_INDEX LESS HOST_HIT_TEST_INDEX
+        OR NOT HOST_HIT_TEST_INDEX LESS HOST_POINTER_HIT_INDEX
+        OR NOT HOST_POINTER_HIT_INDEX LESS HOST_ACTIVATE_GATE_INDEX
+        OR NOT HOST_ACTIVATE_GATE_INDEX LESS HOST_UPDATE_INDEX)
+    message(FATAL_ERROR
+        "pause row hit must gate mouse activation before the pause state update")
+endif()
+
 string(LENGTH "${HOST_LAYOUT_SOURCE}" HOST_LAYOUT_SOURCE_LENGTH)
 math(EXPR HOST_LAYOUT_TAIL_BEGIN
     "${HOST_LAYOUT_INDEX} + ${HOST_LAYOUT_SOURCE_LENGTH}")
