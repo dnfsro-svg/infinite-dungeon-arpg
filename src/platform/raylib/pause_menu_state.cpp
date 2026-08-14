@@ -222,6 +222,7 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
                 return PauseCommand::none;
             }
             if (state.selected_row <= kSettingsHomeBindingsRow) {
+                state.message = nullptr;
                 state.settings_page = static_cast<PauseSettingsPage>(
                     state.selected_row + 1U);
                 state.selected_row = 0U;

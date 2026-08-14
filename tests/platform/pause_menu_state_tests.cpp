@@ -206,6 +206,7 @@ test::Failure settings_navigation_wraps_each_page_row_count() noexcept {
 }
 
 test::Failure settings_home_enters_pages_and_escape_preserves_draft() noexcept {
+    constexpr char kStaleMessage[] = "stale status";
     constexpr platform::PauseSettingsPage expected_pages[] = {
         platform::PauseSettingsPage::audio,
         platform::PauseSettingsPage::display,
@@ -216,10 +217,12 @@ test::Failure settings_home_enters_pages_and_escape_preserves_draft() noexcept {
         state.screen = platform::PauseScreen::settings;
         state.settings_page = platform::PauseSettingsPage::home;
         state.selected_row = row;
+        state.message = kStaleMessage;
         ARPG_REQUIRE(update(state, input_for(InputKind::enter)) ==
             platform::PauseCommand::none);
         ARPG_REQUIRE(state.settings_page == expected_pages[row]);
         ARPG_REQUIRE(state.selected_row == 0U);
+        ARPG_REQUIRE(state.message == nullptr);
 
         state.draft.master_sfx_percent = 80U;
         ARPG_REQUIRE(update(state, input_for(InputKind::escape)) ==
