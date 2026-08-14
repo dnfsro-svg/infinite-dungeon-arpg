@@ -46,6 +46,14 @@ constexpr float kBottomMargin = 20.0F;
     return {left, top, right - left, bottom - top};
 }
 
+[[nodiscard]] bool rectangles_overlap(
+    Rectangle first, Rectangle second) noexcept {
+    return first.x < second.x + second.width
+        && second.x < first.x + first.width
+        && first.y < second.y + second.height
+        && second.y < first.y + first.height;
+}
+
 [[nodiscard]] ActiveSkillTextPlatePlan make_text_plate_plan(
     const char* source, Rectangle backing, float scale, UiTextAuditRole role,
     UiTextMeasureFn measure, void* measure_context) noexcept {
@@ -72,6 +80,76 @@ constexpr float kBottomMargin = 20.0F;
     const skills::ActiveSkillDefinition& definition) noexcept {
     if (id == skills::ActiveSkillId::storm_swords) return u8"暴风式";
     return definition.display_name;
+}
+
+[[nodiscard]] ActiveSkillHudLayout make_active_skill_hud_layout(
+    int width, int height, Rectangle player_blocker) noexcept {
+    if (width <= 0 || height <= 0) return {};
+    const float scale = ui_viewport_scale(width, height);
+    if (!finite(scale) || scale <= 0.0F) return {};
+    const float total_width = scale * (
+        static_cast<float>(skills::kActiveSkillSlotCount) * kSlotSize
+        + static_cast<float>(skills::kActiveSkillSlotCount - 1U) * kSlotGap);
+    float x = (static_cast<float>(width) - total_width) * 0.5F;
+    const float y = static_cast<float>(height)
+        - (kSlotSize + kBottomMargin) * scale;
+    const Rectangle viewport{0.0F, 0.0F, static_cast<float>(width),
+        static_cast<float>(height)};
+    Rectangle visual_candidate{x, y - 20.0F * scale, total_width,
+        115.0F * scale};
+    if (!valid_rectangle(viewport) || !valid_rectangle(visual_candidate)) {
+        return {};
+    }
+    if (valid_rectangle(player_blocker)
+            && rectangles_overlap(visual_candidate, player_blocker)) {
+        x = player_blocker.x + player_blocker.width + 12.0F * scale;
+        visual_candidate.x = x;
+    }
+    if (!ui_text_bounds_inside(visual_candidate, viewport)) return {};
+
+    ActiveSkillHudLayout result{};
+    result.bounds = {x, y, total_width, kSlotSize * scale};
+    result.scale = scale;
+    if (!valid_rectangle(result.bounds)) return {};
+    for (std::size_t index = 0U; index < result.slots.size(); ++index) {
+        result.slots[index] = {
+            x + static_cast<float>(index) * (kSlotSize + kSlotGap) * scale,
+            y, kSlotSize * scale, kSlotSize * scale,
+        };
+        ActiveSkillHudTextRegions& regions = result.text_regions[index];
+        const Rectangle& slot = result.slots[index];
+        regions.key = {slot.x + 4.0F * scale, slot.y - 20.0F * scale,
+            slot.width - 8.0F * scale, 18.0F * scale};
+        regions.cooldown = {slot.x + 16.0F * scale,
+            slot.y + 28.0F * scale, slot.width - 32.0F * scale,
+            20.0F * scale};
+        regions.name = {slot.x + 7.0F * scale, slot.y + 77.0F * scale,
+            slot.width - 14.0F * scale, 18.0F * scale};
+        regions.visual_bounds = rectangle_union(slot, regions.key);
+        regions.visual_bounds = rectangle_union(
+            regions.visual_bounds, regions.cooldown);
+        regions.visual_bounds = rectangle_union(
+            regions.visual_bounds, regions.name);
+        if (!valid_rectangle(slot) || !valid_rectangle(regions.key)
+                || !valid_rectangle(regions.cooldown)
+                || !valid_rectangle(regions.name)
+                || !valid_rectangle(regions.visual_bounds)
+                || !ui_text_bounds_inside(regions.visual_bounds, viewport)) {
+            return {};
+        }
+        if (index == 0U) {
+            result.visual_bounds = regions.visual_bounds;
+        } else {
+            result.visual_bounds = rectangle_union(
+                result.visual_bounds, regions.visual_bounds);
+        }
+    }
+    if (!valid_rectangle(result.visual_bounds)
+            || !ui_text_bounds_inside(result.visual_bounds, viewport)) {
+        return {};
+    }
+    result.valid = true;
+    return result;
 }
 
 }  // namespace
@@ -133,61 +211,29 @@ ActiveSkillHudModel make_active_skill_hud_model(
 
 ActiveSkillHudLayout active_skill_hud_layout(
     int width, int height) noexcept {
-    if (width <= 0 || height <= 0) return {};
-    const float scale = ui_viewport_scale(width, height);
-    if (!finite(scale) || scale <= 0.0F) return {};
-    const float total_width = scale * (
-        static_cast<float>(skills::kActiveSkillSlotCount) * kSlotSize
-        + static_cast<float>(skills::kActiveSkillSlotCount - 1U) * kSlotGap);
-    const float x = (static_cast<float>(width) - total_width) * 0.5F;
-    const float y = static_cast<float>(height)
-        - (kSlotSize + kBottomMargin) * scale;
-    const Rectangle viewport{0.0F, 0.0F, static_cast<float>(width),
-        static_cast<float>(height)};
-    ActiveSkillHudLayout result{};
-    result.bounds = {x, y, total_width, kSlotSize * scale};
-    result.scale = scale;
-    if (!valid_rectangle(viewport) || !valid_rectangle(result.bounds)) {
-        return {};
-    }
-    for (std::size_t index = 0U; index < result.slots.size(); ++index) {
-        result.slots[index] = {
-            x + static_cast<float>(index) * (kSlotSize + kSlotGap) * scale,
-            y, kSlotSize * scale, kSlotSize * scale,
-        };
-        ActiveSkillHudTextRegions& regions = result.text_regions[index];
-        const Rectangle& slot = result.slots[index];
-        regions.key = {slot.x + 4.0F * scale, slot.y - 20.0F * scale,
-            slot.width - 8.0F * scale, 18.0F * scale};
-        regions.cooldown = {slot.x + 16.0F * scale,
-            slot.y + 28.0F * scale, slot.width - 32.0F * scale,
-            20.0F * scale};
-        regions.name = {slot.x + 7.0F * scale, slot.y + 77.0F * scale,
-            slot.width - 14.0F * scale, 18.0F * scale};
-        regions.visual_bounds = rectangle_union(slot, regions.key);
-        regions.visual_bounds = rectangle_union(
-            regions.visual_bounds, regions.cooldown);
-        regions.visual_bounds = rectangle_union(
-            regions.visual_bounds, regions.name);
-        if (!valid_rectangle(slot) || !valid_rectangle(regions.key)
-                || !valid_rectangle(regions.cooldown)
-                || !valid_rectangle(regions.name)
-                || !valid_rectangle(regions.visual_bounds)
-                || !ui_text_bounds_inside(regions.visual_bounds, viewport)) {
-            return {};
-        }
-        if (index == 0U) {
-            result.visual_bounds = regions.visual_bounds;
-        } else {
-            result.visual_bounds = rectangle_union(
-                result.visual_bounds, regions.visual_bounds);
-        }
-    }
-    if (!valid_rectangle(result.visual_bounds)
-            || !ui_text_bounds_inside(result.visual_bounds, viewport)) {
-        return {};
-    }
-    result.valid = true;
+    const HudLayout hud = make_hud_layout(width, height, false);
+    return make_active_skill_hud_layout(width, height, {
+        hud.player_panel.x, hud.player_panel.y,
+        hud.player_panel.width, hud.player_panel.height,
+    });
+}
+
+CombatHudLayout make_combat_hud_layout(
+    int width, int height, bool debug_visible) noexcept {
+    CombatHudLayout result{};
+    result.hud = make_hud_layout(width, height, debug_visible);
+    result.active_skill = make_active_skill_hud_layout(width, height, {
+        result.hud.player_panel.x, result.hud.player_panel.y,
+        result.hud.player_panel.width, result.hud.player_panel.height,
+    });
+    result.hud = hud_layout_avoiding_bottom_blocker(result.hud, {
+        result.active_skill.visual_bounds.x, result.active_skill.visual_bounds.y,
+        result.active_skill.visual_bounds.width,
+        result.active_skill.visual_bounds.height,
+    });
+    result.valid = result.active_skill.valid
+        && hud_rect_inside(result.hud.primary_notice, result.hud.safe_area)
+        && hud_rect_inside(result.hud.secondary_notice, result.hud.safe_area);
     return result;
 }
 

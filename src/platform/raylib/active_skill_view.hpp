@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hud_layout.hpp"
 #include "material_asset_types.hpp"
 #include "skills/active_skill_types.hpp"
 #include "ui_text_bounds_audit.hpp"
@@ -68,6 +69,12 @@ struct ActiveSkillHudLayout final {
         skills::kActiveSkillSlotCount> text_regions{};
 };
 
+struct CombatHudLayout final {
+    HudLayout hud{};
+    ActiveSkillHudLayout active_skill{};
+    bool valid{};
+};
+
 [[nodiscard]] constexpr Color active_skill_text_plate_backing() noexcept {
     return {5, 9, 16, 255};
 }
@@ -79,6 +86,8 @@ struct ActiveSkillHudLayout final {
 
 [[nodiscard]] ActiveSkillHudLayout active_skill_hud_layout(
     int width, int height) noexcept;
+[[nodiscard]] CombatHudLayout make_combat_hud_layout(
+    int width, int height, bool debug_visible) noexcept;
 
 [[nodiscard]] ActiveSkillHudTextPlan make_active_skill_hud_text_plan(
     const ActiveSkillHudSlot& slot,

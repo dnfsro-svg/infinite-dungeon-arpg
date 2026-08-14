@@ -239,6 +239,7 @@ private:
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     ActiveSkillHudModel active_skill_hud_model_{};
+    ActiveSkillHudLayout active_skill_hud_layout_{};
     HudLayout hud_layout_{};
     std::uint64_t hud_binding_revision_{};
     std::uint64_t hud_observation_count_{};

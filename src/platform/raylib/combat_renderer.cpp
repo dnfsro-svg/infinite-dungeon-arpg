@@ -473,9 +473,15 @@ void CombatRenderer::observe_hud(
         : std::array<std::uint16_t, skills::kActiveSkillCount>{};
     active_skill_hud_model_ = make_active_skill_hud_model(
         current.skill_loadout, cooldowns);
-    hud_layout_ = IsWindowReady()
-        ? make_hud_layout(GetScreenWidth(), GetScreenHeight(), false)
-        : HudLayout{};
+    if (IsWindowReady()) {
+        const CombatHudLayout composition = make_combat_hud_layout(
+            GetScreenWidth(), GetScreenHeight(), false);
+        hud_layout_ = composition.hud;
+        active_skill_hud_layout_ = composition.active_skill;
+    } else {
+        hud_layout_ = {};
+        active_skill_hud_layout_ = {};
+    }
     hud_binding_revision_ = control_hints.revision;
     ++hud_observation_count_;
 }
@@ -631,7 +637,7 @@ GroundLootView CombatRenderer::draw(
         case CombatRenderStage::normal_hud:
             draw_hud();
             active_skill_renderer_.draw_hud(active_skill_hud_model_,
-                active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
+                active_skill_hud_layout_,
                 hud_renderer_.hud_font(), hud_renderer_.font_ready(),
                 material_pack_);
             break;

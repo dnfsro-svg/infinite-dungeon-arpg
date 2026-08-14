@@ -4,6 +4,7 @@
 #include "active_skill_renderer.hpp"
 #include "active_skill_view.hpp"
 #include "combat/active_skill_runtime.hpp"
+#include "hud_layout.hpp"
 #include "skills/active_skill_catalog.hpp"
 #include "skills/skill_loadout.hpp"
 #include "ui_text_bounds_audit.hpp"
@@ -502,22 +503,63 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
 
 arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
     noexcept {
-    constexpr std::array<std::array<int, 2>, 3> kViewports{{
-        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+    struct CollisionCase final {
+        int width;
+        int height;
+        float expected_scale;
+        float expected_x;
+    };
+    constexpr std::array<CollisionCase, 4U> kViewports{{
+        {800, 450, 1.0F, 284.5F},
+        {960, 540, 1.0F, 339.0F},
+        {1280, 720, 1.0F, 448.0F},
+        {1920, 1080, 1.5F, 672.0F},
     }};
-    for (const auto viewport : kViewports) {
-        const float scale = viewport[0] == 1920 ? 1.5F : 1.0F;
+    for (const CollisionCase values : kViewports) {
+        const float scale = values.expected_scale;
         const float expected_width = (5.0F * 76.0F + 4.0F * 8.0F) * scale;
         const platform::ActiveSkillHudLayout layout =
-            platform::active_skill_hud_layout(viewport[0], viewport[1]);
+            platform::active_skill_hud_layout(values.width, values.height);
+        const platform::CombatHudLayout composition =
+            platform::make_combat_hud_layout(values.width, values.height, false);
+        ARPG_REQUIRE(composition.valid);
+        ARPG_REQUIRE(arpg::test::near(
+            composition.active_skill.bounds.x, values.expected_x));
+        const Rectangle player{
+            composition.hud.player_panel.x,
+            composition.hud.player_panel.y,
+            composition.hud.player_panel.width,
+            composition.hud.player_panel.height,
+        };
+        ARPG_REQUIRE(!overlaps(composition.active_skill.visual_bounds, player));
+        ARPG_REQUIRE(composition.hud.primary_notice.y
+                + composition.hud.primary_notice.height
+            <= composition.active_skill.visual_bounds.y
+                - 12.0F * composition.hud.scale);
+        ARPG_REQUIRE(!overlaps(composition.active_skill.visual_bounds,
+            Rectangle{composition.hud.primary_notice.x,
+                composition.hud.primary_notice.y,
+                composition.hud.primary_notice.width,
+                composition.hud.primary_notice.height}));
+        ARPG_REQUIRE(!overlaps(composition.active_skill.visual_bounds,
+            Rectangle{composition.hud.secondary_notice.x,
+                composition.hud.secondary_notice.y,
+                composition.hud.secondary_notice.width,
+                composition.hud.secondary_notice.height}));
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            composition.hud.primary_notice, composition.hud.safe_area));
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            composition.hud.secondary_notice, composition.hud.safe_area));
         ARPG_REQUIRE(layout.valid);
+        ARPG_REQUIRE(same_rectangle(layout.bounds,
+            composition.active_skill.bounds));
+        ARPG_REQUIRE(same_rectangle(layout.visual_bounds,
+            composition.active_skill.visual_bounds));
         ARPG_REQUIRE(arpg::test::near(layout.scale, scale));
         ARPG_REQUIRE(arpg::test::near(layout.bounds.width, expected_width));
-        ARPG_REQUIRE(arpg::test::near(layout.bounds.x
-            + layout.bounds.width * 0.5F,
-            static_cast<float>(viewport[0]) * 0.5F));
+        ARPG_REQUIRE(arpg::test::near(layout.bounds.x, values.expected_x));
         ARPG_REQUIRE(layout.bounds.y + layout.bounds.height
-            <= static_cast<float>(viewport[1]));
+            <= static_cast<float>(values.height));
         for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
             ARPG_REQUIRE(arpg::test::near(
                 layout.slots[index].width, 76.0F * scale));
@@ -548,8 +590,8 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
                 layout.slots[index].width - 14.0F * scale));
             ARPG_REQUIRE(arpg::test::near(regions.name.height, 18.0F * scale));
             ARPG_REQUIRE(platform::ui_text_bounds_inside(regions.visual_bounds,
-                {0.0F, 0.0F, static_cast<float>(viewport[0]),
-                    static_cast<float>(viewport[1])}));
+                {0.0F, 0.0F, static_cast<float>(values.width),
+                    static_cast<float>(values.height)}));
             ARPG_REQUIRE(platform::ui_text_bounds_separated(
                 regions.key, regions.cooldown));
             ARPG_REQUIRE(platform::ui_text_bounds_separated(
@@ -575,11 +617,10 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
         ARPG_REQUIRE(layout.visual_bounds.x >= 0.0F);
         ARPG_REQUIRE(layout.visual_bounds.y >= 0.0F);
         ARPG_REQUIRE(layout.visual_bounds.x + layout.visual_bounds.width
-            <= static_cast<float>(viewport[0]));
+            <= static_cast<float>(values.width));
         ARPG_REQUIRE(layout.visual_bounds.y + layout.visual_bounds.height
-            <= static_cast<float>(viewport[1]));
-        if (viewport[0] == 800) {
-            ARPG_REQUIRE(arpg::test::near(layout.bounds.x, 194.0F));
+            <= static_cast<float>(values.height));
+        if (values.width == 800) {
             ARPG_REQUIRE(arpg::test::near(layout.bounds.y, 354.0F));
             ARPG_REQUIRE(arpg::test::near(layout.bounds.width, 412.0F));
             ARPG_REQUIRE(arpg::test::near(layout.bounds.height, 76.0F));

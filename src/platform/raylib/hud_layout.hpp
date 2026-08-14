@@ -37,6 +37,8 @@ struct HudTextSafeLayout final {
 
 [[nodiscard]] HudLayout make_hud_layout(
     int screen_width, int screen_height, bool debug_visible) noexcept;
+[[nodiscard]] HudLayout hud_layout_avoiding_bottom_blocker(
+    HudLayout layout, HudRect blocker) noexcept;
 [[nodiscard]] HudTextSafeLayout make_hud_text_safe_layout(
     const HudLayout& layout) noexcept;
 [[nodiscard]] bool hud_rects_overlap(HudRect lhs, HudRect rhs) noexcept;

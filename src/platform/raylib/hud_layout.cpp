@@ -1,6 +1,7 @@
 #include "hud_layout.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace arpg::platform {
 namespace {
@@ -40,6 +41,13 @@ constexpr float kDebugHeight = 228.0F;
 
 [[nodiscard]] bool has_area(HudRect rect) noexcept {
     return rect.width > 0.0F && rect.height > 0.0F;
+}
+
+[[nodiscard]] bool valid_rect(HudRect rect) noexcept {
+    return std::isfinite(rect.x) && std::isfinite(rect.y)
+        && std::isfinite(rect.width) && std::isfinite(rect.height)
+        && has_area(rect) && std::isfinite(rect.x + rect.width)
+        && std::isfinite(rect.y + rect.height);
 }
 
 }  // namespace
@@ -96,6 +104,28 @@ HudLayout make_hud_layout(
         layout.debug_panel = scaled_rect(safe_area.x,
             canvas_y + (kDebugY * scale), kDebugWidth, kDebugHeight, scale);
     }
+    return layout;
+}
+
+HudLayout hud_layout_avoiding_bottom_blocker(
+    HudLayout layout, HudRect blocker) noexcept {
+    if (!std::isfinite(layout.scale) || layout.scale <= 0.0F
+            || !valid_rect(blocker) || !valid_rect(layout.safe_area)
+            || !valid_rect(layout.primary_notice)
+            || !valid_rect(layout.secondary_notice)) {
+        return layout;
+    }
+    const float blocker_gap = 12.0F * layout.scale;
+    const float notice_gap = 6.0F * layout.scale;
+    const float desired_primary_y = blocker.y - blocker_gap
+        - layout.primary_notice.height;
+    const float minimum_primary_y = layout.safe_area.y
+        + layout.secondary_notice.height + notice_gap;
+    const float target_primary_y = std::max(minimum_primary_y,
+        std::min(layout.primary_notice.y, desired_primary_y));
+    const float delta_y = target_primary_y - layout.primary_notice.y;
+    layout.primary_notice.y += delta_y;
+    layout.secondary_notice.y += delta_y;
     return layout;
 }
 
