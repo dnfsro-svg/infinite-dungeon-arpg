@@ -39,6 +39,7 @@ private:
     std::uint32_t dropped_count_{};
     std::uint64_t last_commit_generation_{};
     std::uint64_t last_room_index_{};
+    std::uint64_t last_control_hints_revision_{};
     std::uint64_t last_room_experience_{};
     std::uint8_t last_level_{};
     std::uint8_t last_unspent_passive_points_{};

@@ -306,6 +306,11 @@ arpg::test::Failure rebound_action_notices_are_structured_and_chinese()
     noexcept {
     const dungeon::DungeonSnapshot previous = baseline_snapshot();
     const platform::ControlHints hints = rebound_hints();
+    const settings::SettingsData default_values = settings::default_settings();
+    platform::ControlHints default_hints{};
+    platform::refresh_control_hints(default_hints, default_values);
+    ARPG_REQUIRE(default_hints.revision == 0U);
+    ARPG_REQUIRE(hints.revision == 17U);
 
     dungeon::DungeonSnapshot hole = previous;
     hole.phase = dungeon::RoomPhase::awaiting_exit;
@@ -335,11 +340,31 @@ arpg::test::Failure rebound_action_notices_are_structured_and_chinese()
     passive.phase = dungeon::RoomPhase::awaiting_exit;
     passive.progression.unspent_passive_points = 1U;
     platform::HudNoticeState passive_state{};
-    passive_state.observe(previous, passive, saved_status(), hints, false);
-    ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(), "T")
-        != nullptr);
-    ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(),
-        u8"被动树") != nullptr);
+    passive_state.observe(previous, passive, saved_status(), default_hints,
+        false);
+    ARPG_REQUIRE(std::strcmp(
+        passive_state.view().secondary.text.bytes.data(),
+        u8"P 打开被动树") == 0);
+    passive_state.update(kTransientSeconds, true);
+    ARPG_REQUIRE(arpg::test::near(
+        passive_state.view().secondary.seconds_left, kTransientSeconds));
+
+    passive_state.observe(passive, passive, saved_status(), hints, false);
+    ARPG_REQUIRE(std::strcmp(
+        passive_state.view().secondary.text.bytes.data(),
+        u8"T 打开被动树") == 0);
+    passive_state.update(1.0F, false);
+    ARPG_REQUIRE(arpg::test::near(
+        passive_state.view().secondary.seconds_left, 2.0F));
+    passive_state.observe(passive, passive, saved_status(), hints, false);
+    ARPG_REQUIRE(arpg::test::near(
+        passive_state.view().secondary.seconds_left, 2.0F));
+
+    passive_state.clear_room_context();
+    passive_state.observe(passive, passive, saved_status(), hints, false);
+    ARPG_REQUIRE(std::strcmp(
+        passive_state.view().secondary.text.bytes.data(),
+        u8"T 打开被动树") == 0);
     ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(),
         "Passive Tree") == nullptr);
     ARPG_REQUIRE(hole_state.view().primary.text.bytes.back() == '\0');

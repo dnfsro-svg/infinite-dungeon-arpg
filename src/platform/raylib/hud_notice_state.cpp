@@ -180,8 +180,10 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     const bool new_commit = current.commit_generation != last_commit_generation_;
     const bool new_room = has_observation_
         && current.room_index != last_room_index_;
+    const bool control_hints_changed = has_observation_
+        && hints.revision != last_control_hints_revision_;
     const bool context_changed = !has_observation_ || new_commit
-        || last_room_index_ != current.room_index;
+        || last_room_index_ != current.room_index || control_hints_changed;
     if (new_room) {
         clear_room_context();
     }
@@ -271,6 +273,7 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
 
     last_commit_generation_ = current.commit_generation;
     last_room_index_ = current.room_index;
+    last_control_hints_revision_ = hints.revision;
     last_room_experience_ = current.last_room_experience;
     last_level_ = current.progression.level;
     last_unspent_passive_points_ =
