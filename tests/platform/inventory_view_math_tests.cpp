@@ -376,6 +376,9 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
         recipe, true, false}).outline
         == platform::InventoryItemOutline::disabled_target);
+    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
+        recipe, true, false, true}).outline
+        == platform::InventoryItemOutline::rejected_target);
 
     state.materials[items::material_index(items::MaterialId::transmute)] = 1U;
     const items::ItemInstance& normal_target = state.items[0U];

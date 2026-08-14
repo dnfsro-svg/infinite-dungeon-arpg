@@ -65,6 +65,8 @@ private:
         Rectangle source, bool source_is_in_right_panel,
         Font measure_font, bool measure_font_ready);
     [[nodiscard]] bool recipe_ready() const noexcept;
+    void clear_material_rejection() noexcept;
+    void show_material_rejection(std::uint64_t item_id) noexcept;
 
     bool open_{};
     InventoryPage page_{InventoryPage::equipment};
@@ -79,6 +81,8 @@ private:
     InventoryFrameLayout frame_layout_{};
     InventoryTooltipInteractionState tooltip_state_{};
     InventoryTransientStatusState transient_status_state_{};
+    std::uint64_t rejected_material_item_id_{};
+    std::uint16_t material_rejection_frames_{};
     Font tooltip_measure_font_{};
     bool tooltip_measure_font_ready_{};
     std::uint64_t comparison_generation_{~std::uint64_t{0U}};

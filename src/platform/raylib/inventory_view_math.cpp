@@ -1092,6 +1092,10 @@ InventoryItemVisualState inventory_item_visual_state(
     output.selected_indicator = input.item_id != 0U
         && input.item_id == input.selected_item_id;
     if (input.item_id == 0U) return output;
+    if (input.material_target_mode && input.material_target_rejected) {
+        output.outline = InventoryItemOutline::rejected_target;
+        return output;
+    }
     if (input.material_target_mode) {
         output.outline = input.material_target_enabled
             ? InventoryItemOutline::material_target

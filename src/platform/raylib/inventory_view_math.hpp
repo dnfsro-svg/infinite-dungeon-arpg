@@ -269,6 +269,7 @@ enum class InventoryItemOutline : std::uint8_t {
     recipe,
     material_target,
     disabled_target,
+    rejected_target,
 };
 
 struct InventoryItemVisualInput final {
@@ -278,6 +279,7 @@ struct InventoryItemVisualInput final {
     RecipeSelection recipe{};
     bool material_target_mode{};
     bool material_target_enabled{};
+    bool material_target_rejected{};
 };
 
 struct InventoryItemVisualState final {

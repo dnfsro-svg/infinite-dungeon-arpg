@@ -136,6 +136,7 @@ struct FrameObservation final {
     std::uint64_t probe_digest{};
     bool gold_outline{};
     bool cyan_outline{};
+    bool negative_outline{};
     bool hover_outline{};
     bool valid{};
 };
@@ -682,6 +683,9 @@ bool render_poe2_inventory_frame(const std::filesystem::path& run,
         observation->cyan_outline = finite_positive_rectangle(semantic_probe)
             && image_region_border_has_color(observed, semantic_probe,
                 Color{87, 220, 244, 255});
+        observation->negative_outline = finite_positive_rectangle(semantic_probe)
+            && image_region_border_has_color(observed, semantic_probe,
+                Color{255, 145, 118, 255});
         observation->hover_outline = finite_positive_rectangle(semantic_probe)
             && image_region_has_color(observed, semantic_probe,
                 Color{144, 170, 190, 255});
@@ -2071,7 +2075,8 @@ bool run_poe2_inventory_scenarios(const std::filesystem::path& run,
             &material_unselected_target)
             || material_unselected_target.probe_digest == 0U
             || material_unselected_target.gold_outline
-            || material_unselected_target.cyan_outline) {
+            || material_unselected_target.cyan_outline
+            || material_unselected_target.negative_outline) {
         return false;
     }
     FrameObservation material_unselected_tab{};
@@ -2128,7 +2133,8 @@ bool run_poe2_inventory_scenarios(const std::filesystem::path& run,
             &rejected_target_before)
             || rejected_target_before.probe_digest == 0U
             || rejected_target_before.gold_outline
-            || rejected_target_before.cyan_outline) {
+            || rejected_target_before.cyan_outline
+            || rejected_target_before.negative_outline) {
         return false;
     }
     const auto rejected_before = material_runtime->session()->snapshot();
@@ -2155,9 +2161,10 @@ bool run_poe2_inventory_scenarios(const std::filesystem::path& run,
     const FrameObservation& rejected_target_after = result.captures[
         poe2_scenario_index(Poe2Scenario::material_rejected)].frame;
     if (rejected_target_after.probe_digest
-                != rejected_target_before.probe_digest
+                == rejected_target_before.probe_digest
             || rejected_target_after.gold_outline
-            || rejected_target_after.cyan_outline) {
+            || rejected_target_after.cyan_outline
+            || !rejected_target_after.negative_outline) {
         return false;
     }
     FrameObservation rejected_tab_after{};
@@ -2182,7 +2189,8 @@ bool run_poe2_inventory_scenarios(const std::filesystem::path& run,
             || rejected_unselected_target.probe_digest
                 != material_unselected_target.probe_digest
             || rejected_unselected_target.gold_outline
-            || rejected_unselected_target.cyan_outline) {
+            || rejected_unselected_target.cyan_outline
+            || rejected_unselected_target.negative_outline) {
         return false;
     }
     FrameObservation rejected_unselected_tab{};

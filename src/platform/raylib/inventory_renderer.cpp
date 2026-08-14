@@ -33,6 +33,7 @@ namespace arpg::platform {
 namespace {
 
 constexpr Color kInventoryTextBacking{5, 9, 16, 255};
+constexpr std::uint16_t kMaterialRejectionFrameCount{45U};
 
 Color rarity_color(items::ItemRarity rarity) noexcept {
     switch (rarity) {
@@ -397,6 +398,7 @@ Color outline_color(InventoryItemOutline outline) noexcept {
     case InventoryItemOutline::recipe: return Color{237, 118, 212, 255};
     case InventoryItemOutline::material_target: return Color{218, 172, 72, 255};
     case InventoryItemOutline::disabled_target: return Color{105, 91, 67, 255};
+    case InventoryItemOutline::rejected_target: return Color{255, 145, 118, 255};
     case InventoryItemOutline::none: break;
     }
     return BLANK;
@@ -409,6 +411,7 @@ float outline_thickness(InventoryItemOutline outline) noexcept {
     case InventoryItemOutline::recipe: return 3.0F;
     case InventoryItemOutline::material_target:
     case InventoryItemOutline::disabled_target: return 2.0F;
+    case InventoryItemOutline::rejected_target: return 3.0F;
     case InventoryItemOutline::none: return 0.0F;
     }
     return 0.0F;
@@ -660,6 +663,7 @@ void InventoryRenderer::open(const dungeon::DungeonSession& session,
     frame_layout_ = {};
     tooltip_state_ = {};
     transient_status_state_ = {};
+    clear_material_rejection();
     tooltip_measure_font_ = {};
     tooltip_measure_font_ready_ = false;
     comparison_generation_ = ~std::uint64_t{0U};
@@ -682,6 +686,7 @@ void InventoryRenderer::close() noexcept {
     frame_layout_ = {};
     tooltip_state_ = {};
     transient_status_state_ = {};
+    clear_material_rejection();
     tooltip_measure_font_ = {};
     tooltip_measure_font_ready_ = false;
     comparison_generation_ = ~std::uint64_t{0U};
@@ -697,6 +702,7 @@ void InventoryRenderer::show_skill_stones_page() noexcept {
     if (!open_) return;
     page_ = InventoryPage::skill_stones;
     tooltip_state_ = {};
+    clear_material_rejection();
     if (active_skill_selection_.selected_slot
             == kNoActiveSkillLoadoutSelection) {
         active_skill_selection_.selected_slot = 0U;
@@ -704,6 +710,17 @@ void InventoryRenderer::show_skill_stones_page() noexcept {
 }
 
 bool InventoryRenderer::is_open() const noexcept { return open_; }
+
+void InventoryRenderer::clear_material_rejection() noexcept {
+    rejected_material_item_id_ = 0U;
+    material_rejection_frames_ = 0U;
+}
+
+void InventoryRenderer::show_material_rejection(
+    std::uint64_t item_id) noexcept {
+    rejected_material_item_id_ = item_id;
+    material_rejection_frames_ = kMaterialRejectionFrameCount;
+}
 
 void InventoryRenderer::refresh_frame_layout() noexcept {
     const int width = GetScreenWidth();
@@ -903,6 +920,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         confirmation_open || retained_backing_blocks,
         input.mouse_wheel, view_cache_.filtered_indices.size(), scroll_rows_);
     if (!left_pressed && !right_pressed) return false;
+    clear_material_rejection();
 
     std::size_t tab_index = kInventoryPageCount;
     if (left_pressed) {
@@ -1021,6 +1039,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         if (!inventory_material_target_enabled(state, item,
                 *selected_material, category, snapshot.root_seed,
                 snapshot.commit_generation, requests_enabled)) {
+            show_material_rejection(item.id);
             return false;
         }
         dungeon::RequestResult request = dungeon::RequestResult::rejected;
@@ -1043,6 +1062,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
             runtime.service_pending_save();
             return true;
         }
+        show_material_rejection(item.id);
         return false;
     }
     case InventoryPointerLayer::page_action:
@@ -1339,7 +1359,9 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             const InventoryItemVisualState visual =
                 inventory_item_visual_state({item.id, hovered_item_id,
                     selected_item_id_, recipe_, material_target_mode,
-                    material_target_enabled});
+                    material_target_enabled,
+                    material_rejection_frames_ != 0U
+                        && rejected_material_item_id_ == item.id});
             if (!material_pack.draw_horizontal_slice(ui_material_sprite(
                     visual.outline == InventoryItemOutline::selected
                         ? UiMaterialElement::inventory_slot_selected
@@ -1453,6 +1475,12 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     material_bag_.draw_reinforcement_confirmation(material_pack,
         hud_font, current_font_ready, frame_layout_.width,
         frame_layout_.height);
+    if (material_rejection_frames_ != 0U) {
+        --material_rejection_frames_;
+        if (material_rejection_frames_ == 0U) {
+            rejected_material_item_id_ = 0U;
+        }
+    }
 }
 
 }  // namespace arpg::platform
