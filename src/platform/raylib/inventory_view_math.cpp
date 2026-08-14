@@ -1028,7 +1028,9 @@ InventoryStatusPresentation inventory_status_presentation(
     }
     if (input.selected_material.has_value()) {
         static_cast<void>(ui_utf8_format(output.status.data(), output.status.size(),
-            ui_text(UiTextId::inventory_material_selected_format),
+            ui_text(input.page == InventoryPage::equipment
+                    ? UiTextId::inventory_material_target_hint_format
+                    : UiTextId::inventory_material_selected_format),
             ui_material_name(*input.selected_material)));
         output.tone = InventoryStatusTone::warning;
         return output;

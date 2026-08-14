@@ -161,7 +161,7 @@ std::size_t utf8_codepoint_count(const char* text) noexcept {
 }
 
 arpg::test::Failure fixed_messages_are_chinese() noexcept {
-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 72U>
+    constexpr std::array<std::pair<platform::UiTextId, const char*>, 73U>
         kExpectedTexts{{
             {platform::UiTextId::pause_title, u8"暂停"},
             {platform::UiTextId::pause_continue, u8"继续游戏"},
@@ -228,6 +228,8 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
             {platform::UiTextId::inventory_material_selected_format, u8"已选择：%s · 切换至装备 · 右键取消"},
             {platform::UiTextId::inventory_material_rejected,
                 u8"应用失败 · 切换装备 · 右键取消"},
+            {platform::UiTextId::inventory_material_target_hint_format,
+                u8"已选择：%s · 可用装备已标出 · 右键取消"},
             {platform::UiTextId::inventory_recipe_action_format, u8"三合一（%u/3）"},
             {platform::UiTextId::inventory_recipe_danger, u8"危险：三合一取消强化"},
             {platform::UiTextId::inventory_slot_filter_format, u8"装备槽：%s"},
@@ -428,7 +430,7 @@ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
     ARPG_REQUIRE(audit.material_description_counts[0] == 8U);
     ARPG_REQUIRE(audit.material_description_counts[1] == 1U);
     ARPG_REQUIRE(audit.material_description_counts[2] == 5U);
-    ARPG_REQUIRE(audit.count == 344U);
+    ARPG_REQUIRE(audit.count == 345U);
     return {};
 }
 
@@ -439,7 +441,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 344U);
+        ARPG_REQUIRE(count == 345U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

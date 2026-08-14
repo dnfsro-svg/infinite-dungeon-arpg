@@ -86,6 +86,7 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
         platform::UiTextId::inventory_no_change,
         platform::UiTextId::inventory_material_selected_format,
         platform::UiTextId::inventory_material_rejected,
+        platform::UiTextId::inventory_material_target_hint_format,
         platform::UiTextId::inventory_recipe_action_format,
         platform::UiTextId::inventory_recipe_danger,
         platform::UiTextId::inventory_slot_filter_format,

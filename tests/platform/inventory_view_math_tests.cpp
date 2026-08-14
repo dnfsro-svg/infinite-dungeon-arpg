@@ -659,8 +659,19 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     materials_status_input.selected_material = items::MaterialId::chaos;
     const auto selected_material_status =
         platform::inventory_status_presentation(materials_status_input);
+    ARPG_REQUIRE(std::string_view{selected_material_status.status.data()}
+        == u8"已选择：混沌石 · 切换至装备 · 右键取消");
     ARPG_REQUIRE(std::string_view{selected_material_status.hint.data()}
         == platform::ui_material_description(items::MaterialId::chaos));
+
+    platform::InventoryStatusInput equipment_material_status_input{};
+    equipment_material_status_input.page = platform::InventoryPage::equipment;
+    equipment_material_status_input.selected_material = items::MaterialId::chaos;
+    const auto equipment_material_status =
+        platform::inventory_status_presentation(
+            equipment_material_status_input);
+    ARPG_REQUIRE(std::string_view{equipment_material_status.status.data()}
+        == u8"已选择：混沌石 · 可用装备已标出 · 右键取消");
 
     platform::InventoryStatusInput rejected_material_status_input{};
     rejected_material_status_input.page = platform::InventoryPage::equipment;
