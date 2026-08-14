@@ -184,13 +184,13 @@ ReinforcementConfirmationLayout reinforcement_confirmation_layout(
     const float modal_gap = 8.0F * scale;
     const float button_width = (panel.width - modal_inset * 2.0F
         - modal_gap) * 0.5F;
+    const float button_height = (std::max)(32.0F, 24.0F * scale);
+    const float button_y = panel.y + panel.height - modal_inset - button_height;
     return {panel,
         {panel.x + modal_inset,
-            panel.y + panel.height - 38.0F * scale,
-            button_width, 24.0F * scale},
+            button_y, button_width, button_height},
         {panel.x + modal_inset + button_width + modal_gap,
-            panel.y + panel.height - 38.0F * scale,
-            button_width, 24.0F * scale}};
+            button_y, button_width, button_height}};
 }
 
 bool MaterialBagRenderer::select_slot(std::size_t slot,

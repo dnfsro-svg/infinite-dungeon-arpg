@@ -131,12 +131,14 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
         }
         const auto confirmation = platform::reinforcement_confirmation_layout(
             resolution[0], resolution[1]);
-        ARPG_REQUIRE(confirmation.confirm.x >= confirmation.panel.x);
-        ARPG_REQUIRE(confirmation.cancel.x >= confirmation.panel.x);
+        ARPG_REQUIRE(inside(confirmation.confirm, confirmation.panel));
+        ARPG_REQUIRE(inside(confirmation.cancel, confirmation.panel));
+        ARPG_REQUIRE(confirmation.confirm.width >= 40.0F
+            && confirmation.confirm.height >= 32.0F);
+        ARPG_REQUIRE(confirmation.cancel.width >= 40.0F
+            && confirmation.cancel.height >= 32.0F);
         ARPG_REQUIRE(confirmation.confirm.x + confirmation.confirm.width
-            <= confirmation.panel.x + confirmation.panel.width);
-        ARPG_REQUIRE(confirmation.cancel.x + confirmation.cancel.width
-            <= confirmation.panel.x + confirmation.panel.width);
+            <= confirmation.cancel.x);
 
         const Rectangle danger_bounds{
             confirmation.panel.x + 14.0F * scale,
