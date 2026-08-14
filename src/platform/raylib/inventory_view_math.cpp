@@ -1038,7 +1038,8 @@ InventoryStatusPresentation inventory_status_presentation(
         output.tone = InventoryStatusTone::positive;
         return output;
     }
-    if (input.selected_material.has_value()) {
+    if (input.selected_material.has_value()
+            && input.page != InventoryPage::skill_stones) {
         if (input.page == InventoryPage::materials
                 && *input.selected_material == items::MaterialId::directed) {
             static_cast<void>(ui_utf8_copy(output.status.data(),
@@ -1575,7 +1576,8 @@ InventoryPointerLayer inventory_pointer_layer(
         return InventoryPointerLayer::material_cancel;
     if (input.material_select) return InventoryPointerLayer::material_select;
     if (input.material_target) return InventoryPointerLayer::material_target;
-    if (input.page_action && !input.material_selected)
+    if (input.page_action && (input.page != InventoryPage::equipment
+            || !input.material_selected))
         return InventoryPointerLayer::page_action;
     if (input.filter) return InventoryPointerLayer::filter;
     if (input.skill_content) return InventoryPointerLayer::skill_content;

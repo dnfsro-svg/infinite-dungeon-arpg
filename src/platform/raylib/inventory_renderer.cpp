@@ -941,6 +941,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         && directed_index < frame_layout_.materials.slots.size()
         && contains(frame_layout_.materials.slots[directed_index], mouse);
     InventoryPointerPriorityInput priority{};
+    priority.page = page_;
     priority.confirmation = confirmation_open;
     priority.tab = tab_index < kInventoryPageCount;
     priority.tooltip = retained_backing_blocks;

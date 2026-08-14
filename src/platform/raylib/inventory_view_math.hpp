@@ -434,6 +434,7 @@ struct InventoryPointerPriorityInput final {
     bool recipe{};
     bool equipment{};
     bool background_clear{};
+    InventoryPage page{InventoryPage::equipment};
 };
 
 struct ItemAttributeLabel final {

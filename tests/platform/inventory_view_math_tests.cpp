@@ -156,6 +156,9 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         disabled_action_click.material_selected = true;
         ARPG_REQUIRE(platform::inventory_pointer_layer(disabled_action_click)
             == platform::InventoryPointerLayer::background_clear);
+        disabled_action_click.page = platform::InventoryPage::skill_stones;
+        ARPG_REQUIRE(platform::inventory_pointer_layer(disabled_action_click)
+            == platform::InventoryPointerLayer::page_action);
         if (shell.hint_visible) {
             ARPG_REQUIRE(inside(shell.hint_bounds, shell.status_bar));
             ARPG_REQUIRE(separated(shell.action_bounds, shell.hint_bounds));
@@ -1045,6 +1048,7 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(skill_equip_status.action_visible
         && !skill_equip_status.action_enabled);
     skill_status_input.active_skill_removable = true;
+    skill_status_input.selected_material = items::MaterialId::chaos;
     const auto skill_selected_status =
         platform::inventory_status_presentation(skill_status_input);
     ARPG_REQUIRE(std::string_view(skill_selected_status.status.data())
