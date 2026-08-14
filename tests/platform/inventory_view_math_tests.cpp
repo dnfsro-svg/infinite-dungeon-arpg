@@ -1301,6 +1301,20 @@ test::Failure tooltip_content_stays_inside_all_required_viewports() noexcept {
         ARPG_REQUIRE(left_layout.placement_count == expected_placements);
     }
 
+    auto compact_item = item;
+    compact_item.affix_count = 0U;
+    const auto compact_view = platform::inventory_tooltip_view(
+        compact_item, std::nullopt);
+    const auto compact_shell = platform::inventory_shell_layout(800, 450);
+    const Rectangle compact_source = compact_shell.equipment_slots[
+        static_cast<std::size_t>(items::ItemSlot::weapon)];
+    const auto compact_layout = platform::inventory_tooltip_layout(
+        compact_shell, compact_source, false, compact_view,
+        &mixed_width_measure, nullptr);
+    ARPG_REQUIRE(compact_layout.valid);
+    ARPG_REQUIRE(inside(compact_layout.backing,
+        compact_shell.grid_viewport));
+
     auto fallback_shell = platform::inventory_shell_layout(1280, 720);
     const Rectangle fallback_right_source =
         platform::inventory_grid_item_rectangle(fallback_shell, 0U, 0.0F);

@@ -1303,16 +1303,23 @@ InventoryTooltipLayout inventory_tooltip_layout(InventoryShellLayout shell,
     const float source_gap = 8.0F * shell.geometry_scale;
     const float content_right = shell.content.x + shell.content.width;
     const float source_right = source.x + source.width;
-    const Rectangle preferred = source_is_in_right_panel
+    const Rectangle full_preferred = source_is_in_right_panel
         ? shell.left_panel : shell.right_panel;
+    const Rectangle preferred = source_is_in_right_panel
+        ? full_preferred : shell.grid_viewport;
+    const float opposite_y = source_is_in_right_panel
+        ? shell.content.y : shell.grid_viewport.y;
+    const float opposite_height = source_is_in_right_panel
+        ? shell.content.height : shell.grid_viewport.height;
     const Rectangle opposite_side = source_is_in_right_panel
-        ? Rectangle{shell.content.x, shell.content.y,
+        ? Rectangle{shell.content.x, opposite_y,
             std::max(0.0F, source.x - source_gap - shell.content.x),
-            shell.content.height}
-        : Rectangle{source_right + source_gap, shell.content.y,
+            opposite_height}
+        : Rectangle{source_right + source_gap, opposite_y,
             std::max(0.0F, content_right - source_right - source_gap),
-            shell.content.height};
-    const std::array<Rectangle, 2U> candidates{{preferred, opposite_side}};
+            opposite_height};
+    const std::array<Rectangle, 3U> candidates{{
+        preferred, full_preferred, opposite_side}};
 
     for (const Rectangle target_panel : candidates) {
         InventoryTooltipLayout output{};
