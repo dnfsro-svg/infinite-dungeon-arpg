@@ -200,7 +200,14 @@ void draw_button(Rectangle rectangle, const char* label,
         DrawRectangleRoundedLinesEx(rectangle, 0.12F, 4, 1.0F,
             enabled ? Color{90, 151, 190, 255} : Color{65, 68, 75, 255});
     }
-    static_cast<void>(opaque_label_plate);
+    if (opaque_label_plate) {
+        const float scale = ui_viewport_scale(
+            GetScreenWidth(), GetScreenHeight());
+        draw_opaque_skill_text_backing({rectangle.x + 4.0F * scale,
+            rectangle.y + 3.0F * scale,
+            rectangle.width - 8.0F * scale,
+            rectangle.height - 6.0F * scale});
+    }
     draw_centered_hud_font_text(font, font_ready, label, rectangle,
         ui_typography().kInventoryBodyFontSize,
         ui_typography().kInventoryBodyFontSize, text,
@@ -560,7 +567,7 @@ void draw_inventory_status(const InventoryShellLayout& shell,
     if (presentation.action_visible) {
         draw_button(shell.action_bounds, presentation.action.data(),
             presentation.action_enabled, assets, font, font_ready,
-            presentation.action_enabled);
+            presentation.action_enabled, true);
     }
     if (shell.hint_visible) {
         const Color hint_color = duplicate_wide_hint
