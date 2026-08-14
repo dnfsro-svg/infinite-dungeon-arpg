@@ -950,8 +950,12 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
         == platform::InventoryStatusTone::warning);
     tone_input.save_state = platform::InventorySavePresentationState::error;
-    ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
+    const auto save_error_status =
+        platform::inventory_status_presentation(tone_input);
+    ARPG_REQUIRE(save_error_status.tone
         == platform::InventoryStatusTone::negative);
+    ARPG_REQUIRE(std::string_view(save_error_status.status.data())
+        == u8"保存失败，当前进度未保存，请重试");
     tone_input = {};
     tone_input.selected_material = items::MaterialId::transmute;
     ARPG_REQUIRE(platform::inventory_status_presentation(tone_input).tone
