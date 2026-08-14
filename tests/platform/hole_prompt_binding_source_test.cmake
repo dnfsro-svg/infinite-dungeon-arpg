@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
 
+if(NOT DEFINED RAYLIB_SOURCE_DIR AND DEFINED SOURCE_ROOT)
+    set(RAYLIB_SOURCE_DIR "${SOURCE_ROOT}/src/platform/raylib")
+endif()
 if(NOT DEFINED RAYLIB_SOURCE_DIR)
-    message(FATAL_ERROR "RAYLIB_SOURCE_DIR is required")
+    message(FATAL_ERROR "RAYLIB_SOURCE_DIR or SOURCE_ROOT is required")
 endif()
 
 foreach(SOURCE_NAME IN ITEMS HOST_SOURCE COMBAT_RENDERER_SOURCE ROOM_RENDERER_SOURCE)
@@ -118,15 +121,43 @@ extract_cpp_function_body("${ROOM_TEXT}" "void draw_hole("
     HOLE_BODY HOLE_CODE)
 foreach(REQUIRED_TOKEN IN ITEMS
         "hole_visual_label(hole)"
+        "active_skill_hud_layout( static_cast<int>(screen_width), static_cast<int>(screen_height))"
+        "active_skill_layout.valid ? active_skill_layout.visual_bounds : Rectangle{}"
+        "const Rectangle hole_bounds{geometry.center.x - geometry.radius_x, geometry.center.y - geometry.radius_y, geometry.radius_x * 2.0F, geometry.radius_y * 2.0F}"
+        "interact_binding_label != nullptr && interact_binding_label[0] != '\\0'"
         "hole_interaction_prompt( interact_binding_label, HoleInteractionAction::descend)"
-        "draw_world_prompt(label, {geometry.center.x, geometry.center.y - 12.0F}, 20.0F, label_color, font, font_ready, screen_width, screen_height)"
-        "draw_world_prompt(prompt.data(), {geometry.center.x, geometry.center.y + 36.0F}, 26.0F, raylib_color(world_prompt_style().primary), font, font_ready, screen_width, screen_height)")
+        "draw_world_prompt(label, {geometry.center.x, geometry.center.y - 12.0F}, 20.0F, label_color, font, font_ready, screen_width, screen_height, &hole_bounds, hud_blocker, screen_offset)"
+        "draw_world_prompt(prompt.data(), {geometry.center.x, geometry.center.y + 36.0F}, 26.0F, raylib_color(world_prompt_style().primary), font, font_ready, screen_width, screen_height, &hole_bounds, hud_blocker, screen_offset)")
     string(FIND "${HOLE_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
     if(TOKEN_INDEX EQUAL -1)
         message(FATAL_ERROR
-            "hole renderer must consume labels, dynamic key, and shared font: ${REQUIRED_TOKEN}")
+            "hole renderer must use its live bounds, HUD blocker, offset, dynamic key, and shared font: ${REQUIRED_TOKEN}")
     endif()
 endforeach()
+string(REGEX MATCHALL "active_skill_hud_layout\\(" HOLE_ACTIVE_SKILL_LAYOUT_CALLS
+    "${HOLE_CODE}")
+list(LENGTH HOLE_ACTIVE_SKILL_LAYOUT_CALLS HOLE_ACTIVE_SKILL_LAYOUT_CALL_COUNT)
+if(NOT HOLE_ACTIVE_SKILL_LAYOUT_CALL_COUNT EQUAL 1)
+    message(FATAL_ERROR
+        "hole renderer must compute the active-skill layout exactly once per draw")
+endif()
+string(FIND "${HOLE_CODE}" "active_skill_layout.bounds" HOLE_SLOT_ONLY_INDEX)
+if(NOT HOLE_SLOT_ONLY_INDEX EQUAL -1)
+    message(FATAL_ERROR "hole renderer must use the complete active-skill visual bounds")
+endif()
+string(FIND "${HOLE_BODY}" "} else { draw_world_prompt(label"
+    HOLE_SINGLE_PROMPT_BRANCH_INDEX)
+if(HOLE_SINGLE_PROMPT_BRANCH_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "hole renderer must draw either the dynamic interaction prompt or the static label")
+endif()
+string(REGEX MATCHALL "draw_world_prompt\\(" HOLE_WORLD_PROMPT_CALLS
+    "${HOLE_CODE}")
+list(LENGTH HOLE_WORLD_PROMPT_CALLS HOLE_WORLD_PROMPT_CALL_COUNT)
+if(NOT HOLE_WORLD_PROMPT_CALL_COUNT EQUAL 2)
+    message(FATAL_ERROR
+        "hole renderer must contain exactly one dynamic and one static prompt call")
+endif()
 
 extract_cpp_function_body("${ROOM_TEXT}" "void draw_doors("
     DOOR_BODY DOOR_CODE)
@@ -228,7 +259,7 @@ extract_cpp_function_body("${ROOM_TEXT}" "void CombatRenderer::draw_room("
     DRAW_ROOM_BODY DRAW_ROOM_CODE)
 foreach(REQUIRED_TOKEN IN ITEMS
         "draw_doors(current, camera, width, height, material_pack_, world_ui_font_, world_ui_font_ready_, screen_offset)"
-        "draw_hole(current, material_pack_, camera, interact_binding_label, world_ui_font_, world_ui_font_ready_)")
+        "draw_hole(current, material_pack_, camera, interact_binding_label, world_ui_font_, world_ui_font_ready_, screen_offset)")
     string(FIND "${DRAW_ROOM_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
     if(TOKEN_INDEX EQUAL -1)
         message(FATAL_ERROR "CombatRenderer room path must pass its shared CJK font")
@@ -265,7 +296,7 @@ if(COMBAT_DYNAMIC_KEY_INDEX EQUAL -1)
         "CombatRenderer must forward the same interact key and live camera offset")
 endif()
 
-foreach(CODE_NAME IN ITEMS WORLD_PROMPT_CODE DOOR_CODE DRAW_ROOM_CODE
+foreach(CODE_NAME IN ITEMS WORLD_PROMPT_CODE HOLE_CODE DOOR_CODE DRAW_ROOM_CODE
         COMBAT_DRAW_BODY MATERIAL_DESTINATION_CODE)
     string(FIND "${${CODE_NAME}}" "GetFontDefault(" DEFAULT_FONT_INDEX)
     if(NOT DEFAULT_FONT_INDEX EQUAL -1)
@@ -286,4 +317,4 @@ if(HOST_DYNAMIC_KEY_INDEX EQUAL -1)
 endif()
 
 message(STATUS
-    "[CPLAY-030] door prompts use live bounds/offset/HUD blocker; hole and abyss stay generic")
+    "[CPLAY-030] door and hole prompts use live bounds/offset/HUD blocker; abyss stays generic")

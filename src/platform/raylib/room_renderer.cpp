@@ -575,7 +575,7 @@ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
     const MaterialPack& material_pack,
     const CombatCameraView& camera,
     const char* interact_binding_label,
-    Font font, bool font_ready) noexcept {
+    Font font, bool font_ready, Vector2 screen_offset) noexcept {
     const HoleVisualMode hole = render_hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
@@ -586,6 +586,13 @@ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
         static_cast<float>(GetScreenHeight()));
     const float screen_width = static_cast<float>(GetScreenWidth());
     const float screen_height = static_cast<float>(GetScreenHeight());
+    const ActiveSkillHudLayout active_skill_layout = active_skill_hud_layout(
+        static_cast<int>(screen_width), static_cast<int>(screen_height));
+    const Rectangle hud_blocker = active_skill_layout.valid
+        ? active_skill_layout.visual_bounds : Rectangle{};
+    const Rectangle hole_bounds{geometry.center.x - geometry.radius_x,
+        geometry.center.y - geometry.radius_y,
+        geometry.radius_x * 2.0F, geometry.radius_y * 2.0F};
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
@@ -608,19 +615,24 @@ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
             : hole == HoleVisualMode::ready
                 ? raylib_color(prompt_style.primary)
                 : raylib_color(prompt_style.secondary);
-    draw_world_prompt(label,
-        {geometry.center.x, geometry.center.y - 12.0F},
-        20.0F, label_color, font, font_ready,
-        screen_width, screen_height);
     if (snapshot.has_combat && hole == HoleVisualMode::ready
         && player_in_hole_range(snapshot.combat.player.position,
-            snapshot.hole.position, kHoleInteractionRadius)) {
+            snapshot.hole.position, kHoleInteractionRadius)
+        && interact_binding_label != nullptr
+        && interact_binding_label[0] != '\0') {
         const auto prompt = hole_interaction_prompt(
             interact_binding_label, HoleInteractionAction::descend);
         draw_world_prompt(prompt.data(),
             {geometry.center.x, geometry.center.y + 36.0F},
             26.0F, raylib_color(world_prompt_style().primary),
-            font, font_ready, screen_width, screen_height);
+            font, font_ready, screen_width, screen_height,
+            &hole_bounds, hud_blocker, screen_offset);
+    } else {
+        draw_world_prompt(label,
+            {geometry.center.x, geometry.center.y - 12.0F},
+            20.0F, label_color, font, font_ready,
+            screen_width, screen_height,
+            &hole_bounds, hud_blocker, screen_offset);
     }
 }
 
@@ -736,7 +748,7 @@ void CombatRenderer::draw_room(
     draw_doors(current, camera, width, height, material_pack_,
         world_ui_font_, world_ui_font_ready_, screen_offset);
     draw_hole(current, material_pack_, camera, interact_binding_label,
-        world_ui_font_, world_ui_font_ready_);
+        world_ui_font_, world_ui_font_ready_, screen_offset);
     draw_ground_materials(
         current, material_pack_, camera, width, height);
     draw_ground_items(ground_item_range(current), loot_filter_mode_, material_pack_,

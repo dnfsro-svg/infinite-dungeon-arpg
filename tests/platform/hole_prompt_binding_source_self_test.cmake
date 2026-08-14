@@ -93,6 +93,26 @@ run_room_mutant(slot_only_blocker
     "active_skill_layout.visual_bounds"
     "active_skill_layout.bounds")
 
+run_room_mutant(hole_blocker_bypassed
+    "&hole_bounds, hud_blocker, screen_offset"
+    "&hole_bounds, {}, screen_offset")
+
+run_room_mutant(hole_screen_offset_dropped
+    "draw_hole(current, material_pack_, camera, interact_binding_label,\n        world_ui_font_, world_ui_font_ready_, screen_offset);"
+    "draw_hole(current, material_pack_, camera, interact_binding_label,\n        world_ui_font_, world_ui_font_ready_, {});")
+
+run_room_mutant(hole_requirements_in_dead_branch
+    "draw_world_prompt(prompt.data(),\n            {geometry.center.x, geometry.center.y + 36.0F},\n            26.0F, raylib_color(world_prompt_style().primary),\n            font, font_ready, screen_width, screen_height,\n            &hole_bounds, hud_blocker, screen_offset);"
+    "if (false) {\n            draw_world_prompt(prompt.data(),\n                {geometry.center.x, geometry.center.y + 36.0F},\n                26.0F, raylib_color(world_prompt_style().primary),\n                font, font_ready, screen_width, screen_height,\n                &hole_bounds, hud_blocker, screen_offset);\n        }")
+
+run_room_mutant(hole_requirements_in_uncalled_lambda
+    "draw_world_prompt(prompt.data(),\n            {geometry.center.x, geometry.center.y + 36.0F},\n            26.0F, raylib_color(world_prompt_style().primary),\n            font, font_ready, screen_width, screen_height,\n            &hole_bounds, hud_blocker, screen_offset);"
+    "auto hidden_hole_prompt = [&]() noexcept {\n            draw_world_prompt(prompt.data(),\n                {geometry.center.x, geometry.center.y + 36.0F},\n                26.0F, raylib_color(world_prompt_style().primary),\n                font, font_ready, screen_width, screen_height,\n                &hole_bounds, hud_blocker, screen_offset);\n        };\n        static_cast<void>(hidden_hole_prompt);")
+
+run_room_mutant(hole_duplicate_static_prompt
+    "draw_world_prompt(label,\n            {geometry.center.x, geometry.center.y - 12.0F},\n            20.0F, label_color, font, font_ready,\n            screen_width, screen_height,\n            &hole_bounds, hud_blocker, screen_offset);"
+    "draw_world_prompt(label,\n            {geometry.center.x, geometry.center.y - 12.0F},\n            20.0F, label_color, font, font_ready,\n            screen_width, screen_height,\n            &hole_bounds, hud_blocker, screen_offset);\n        draw_world_prompt(label,\n            {geometry.center.x, geometry.center.y - 12.0F},\n            20.0F, label_color, font, font_ready,\n            screen_width, screen_height,\n            &hole_bounds, hud_blocker, screen_offset);")
+
 replace_required("${COMBAT_ORIGINAL}"
     "            draw_room(world, render_plan.ground_loot,\n                render_plan.material_loot, camera, interact_binding_label,\n                {camera_offset.x, camera_offset.y});"
     "            draw_room(world, render_plan.ground_loot,\n                render_plan.material_loot, camera, interact_binding_label,\n                {});"
