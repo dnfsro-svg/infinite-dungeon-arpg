@@ -1151,7 +1151,7 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     return {};
 }
 
-test::Failure recipe_cache_rejects_same_slot_different_bases() noexcept {
+test::Failure recipe_cache_rejects_incompatible_or_filtered_items() noexcept {
     items::ItemOwnershipState state{};
     state.items = {
         make_item(701U, 1U, items::ItemRarity::normal),
@@ -1163,6 +1163,21 @@ test::Failure recipe_cache_rejects_same_slot_different_bases() noexcept {
     recipe.count = 3U;
     platform::InventoryViewCache cache{};
     platform::refresh_inventory_view_cache(cache, state, 91U, {}, 0U, recipe);
+    ARPG_REQUIRE(!platform::cached_recipe_ready(cache));
+
+    state.items = {
+        make_item(701U, 1U, items::ItemRarity::normal),
+        make_item(702U, 1U, items::ItemRarity::normal),
+        make_item(703U, 1U, items::ItemRarity::normal),
+    };
+    platform::refresh_inventory_view_cache(cache, state, 92U, {}, 0U, recipe);
+    ARPG_REQUIRE(platform::cached_recipe_ready(cache));
+    platform::InventoryFilter hidden_recipe_filter{};
+    hidden_recipe_filter.rarity = items::ItemRarity::magic;
+    platform::refresh_inventory_view_cache(cache, state, 92U,
+        hidden_recipe_filter, 0U, recipe);
+    ARPG_REQUIRE(cache.filtered_indices.empty());
+    ARPG_REQUIRE(cache.resolved_recipe.count == 0U);
     ARPG_REQUIRE(!platform::cached_recipe_ready(cache));
     return {};
 }
@@ -1589,8 +1604,8 @@ constexpr test::TestCase kCases[] = {
     {"inventory equipment hit", &equipped_slot_hit_requires_an_occupied_slot},
     {"inventory overlay gates", &inventory_and_passive_overlays_are_mutually_exclusive},
     {"inventory build comparison", &comparison_uses_full_build_fields},
-    {"inventory recipe base contract",
-        &recipe_cache_rejects_same_slot_different_bases},
+    {"inventory recipe visibility contract",
+        &recipe_cache_rejects_incompatible_or_filtered_items},
     {"inventory maximum cache complexity",
         &view_cache_never_rescans_stable_maximum_inventory},
     {"inventory readable attribute labels",

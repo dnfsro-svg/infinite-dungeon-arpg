@@ -837,12 +837,14 @@ void refresh_inventory_view_cache(InventoryViewCache& cache,
         const items::ItemInstance& item = state.items[index];
         const bool is_equipped = equipped(state.equipment, item.id);
         if (item.id == selected_item_id) cache.selected_index = index;
-        for (std::size_t selected = 0U; selected < recipe.count; ++selected) {
-            if (!is_equipped && item.id == recipe.ids[selected]) {
-                cache.recipe_indices[selected] = index;
+        const bool matches_filter =
+            matches_inventory_filter(item, is_equipped, filter);
+        if (matches_filter) {
+            for (std::size_t selected = 0U; selected < recipe.count; ++selected) {
+                if (item.id == recipe.ids[selected]) {
+                    cache.recipe_indices[selected] = index;
+                }
             }
-        }
-        if (matches_inventory_filter(item, is_equipped, filter)) {
             cache.filtered_indices.push_back(index);
         }
     }
