@@ -392,6 +392,14 @@ expect_renderer_mutation_rejected(material_context_leaks_to_materials_page
     "        material_target.material = selected_material;"
     "    }\n    material_target.material = selected_material;\n    if (true) {")
 
+expect_renderer_mutation_rejected(skill_showcase_entry_auto_selects_slot_zero
+    "void InventoryRenderer::show_skill_stones_page() noexcept {"
+    "void InventoryRenderer::show_skill_stones_page() noexcept {\n    active_skill_selection_.selected_slot = 0U;")
+
+expect_renderer_mutation_rejected(skill_tab_entry_auto_selects_slot_zero
+    "case InventoryPointerLayer::tab:"
+    "case InventoryPointerLayer::tab:\n        active_skill_selection_.selected_slot = 0U;")
+
 expect_renderer_mutation_rejected(non_centered_remove_button
     "draw_button(shell.action_bounds, presentation.action.data(),"
     "draw_button(Rectangle{}, presentation.action.data(),")

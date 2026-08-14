@@ -127,28 +127,29 @@ arpg::test::Failure slot_clicks_emit_only_select_remove_and_swap_commands()
     platform::ActiveSkillLoadoutSelection selection{};
 
     auto command = platform::active_skill_loadout_command_after_click(
-        state, layout, center(layout.main_slots[0U]), selection, false);
+        state, layout, center(layout.main_slots[1U]), selection, false);
     ARPG_REQUIRE(command.has_value());
     ARPG_REQUIRE(command->kind
         == platform::ActiveSkillLoadoutActionKind::select);
-    ARPG_REQUIRE(selection.selected_slot == 0U);
+    ARPG_REQUIRE(command->slot == 1U);
+    ARPG_REQUIRE(selection.selected_slot == 1U);
+
+    command = platform::active_skill_loadout_command_after_click(
+        state, layout, center(layout.main_slots[0U]), selection, false);
+    ARPG_REQUIRE(command.has_value());
+    ARPG_REQUIRE(command->kind
+        == platform::ActiveSkillLoadoutActionKind::swap);
+    ARPG_REQUIRE(command->slot == 1U);
+    ARPG_REQUIRE(command->other_slot == 0U);
+    ARPG_REQUIRE(selection.selected_slot == 1U);
 
     command = platform::active_skill_loadout_command_after_click(
         state, layout, center(layout.remove_button), selection, false);
     ARPG_REQUIRE(command.has_value());
     ARPG_REQUIRE(command->kind
         == platform::ActiveSkillLoadoutActionKind::remove);
-    ARPG_REQUIRE(command->slot == 0U);
-    ARPG_REQUIRE(selection.selected_slot == 0U);
-
-    command = platform::active_skill_loadout_command_after_click(
-        state, layout, center(layout.main_slots[1U]), selection, false);
-    ARPG_REQUIRE(command.has_value());
-    ARPG_REQUIRE(command->kind
-        == platform::ActiveSkillLoadoutActionKind::swap);
-    ARPG_REQUIRE(command->slot == 0U);
-    ARPG_REQUIRE(command->other_slot == 1U);
-    ARPG_REQUIRE(selection.selected_slot == 0U);
+    ARPG_REQUIRE(command->slot == 1U);
+    ARPG_REQUIRE(selection.selected_slot == 1U);
     return {};
 }
 

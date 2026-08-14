@@ -373,8 +373,22 @@ foreach(_lifecycle_signature IN ITEMS
 endforeach()
 
 extract_cpp_function_body("${_inventory_source}"
+    "void InventoryRenderer::show_skill_stones_page("
+    _show_skill_page_body _show_skill_page_code)
+string(REGEX REPLACE "[ \t\r\n]+" "" _show_skill_page_compact
+    "${_show_skill_page_code}")
+reject_token("${_show_skill_page_compact}"
+    "active_skill_selection_.selected_slot=0U;"
+    "T4 opening the skill page must not arm slot zero before player input")
+reject_dead_branch("${_show_skill_page_code}" "T4 skill-page showcase entry")
+
+extract_cpp_function_body("${_inventory_source}"
     "bool InventoryRenderer::process_input(" _input_body _input_code)
 string(REGEX REPLACE "[ \t\r\n]+" " " _input_compact "${_input_code}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _input_tight "${_input_code}")
+reject_token("${_input_tight}"
+    "active_skill_selection_.selected_slot=0U;"
+    "T4 switching to the skill tab must not arm slot zero before player input")
 foreach(_resolver IN ITEMS
         "const InventoryVisibleItemSource frozen_source = inventory_visible_item_source(frame_layout_.shell, page_, state, view_cache_, tooltip_state_.frozen_item_id, scroll_rows_);"
         "const InventoryVisibleItemSource selected_source = inventory_visible_item_source(frame_layout_.shell, page_, state, view_cache_, selected_item_id_, scroll_rows_);")

@@ -738,10 +738,6 @@ void InventoryRenderer::show_skill_stones_page() noexcept {
     page_ = InventoryPage::skill_stones;
     tooltip_state_ = {};
     clear_material_rejection();
-    if (active_skill_selection_.selected_slot
-            == kNoActiveSkillLoadoutSelection) {
-        active_skill_selection_.selected_slot = 0U;
-    }
 }
 
 bool InventoryRenderer::is_open() const noexcept { return open_; }
@@ -1031,13 +1027,6 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     case InventoryPointerLayer::tab:
         page_ = static_cast<InventoryPage>(tab_index);
         tooltip_state_ = {};
-        if (page_ == InventoryPage::skill_stones
-                && active_skill_selection_.selected_slot
-                    == kNoActiveSkillLoadoutSelection
-                && active_skill_selection_.selected_inventory
-                    == skills::ActiveSkillId::none) {
-            active_skill_selection_.selected_slot = 0U;
-        }
         return false;
     case InventoryPointerLayer::tooltip:
         if (right_pressed && selected_material.has_value()) {
