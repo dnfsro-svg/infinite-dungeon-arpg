@@ -426,6 +426,270 @@ arpg_expect_stage11c_sequence_rejection(stage_source_spliced_crlf_comment_decoy
     "${_stage11c_spliced_crlf_decoy}"
     "Evidence validation function is missing: std::uint64_t")
 
+function(arpg_expect_stage17_poe2_rejection
+        NAME TARGET SEARCH REPLACEMENT EXPECTED_REASON)
+    if("${TARGET}" STREQUAL "header")
+        set(_source
+            "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17.hpp")
+        set(_override STAGE17_HEADER_OVERRIDE)
+        set(_suffix hpp)
+    elseif("${TARGET}" STREQUAL "runtime")
+        set(_source
+            "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17_runtime.cpp")
+        set(_override STAGE17_RUNTIME_OVERRIDE)
+        set(_suffix cpp)
+    elseif("${TARGET}" STREQUAL "report")
+        set(_source
+            "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17_report.cpp")
+        set(_override STAGE17_REPORT_OVERRIDE)
+        set(_suffix cpp)
+    elseif("${TARGET}" STREQUAL "host")
+        set(_source
+            "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+        set(_override HOST_OVERRIDE)
+        set(_suffix cpp)
+    else()
+        message(FATAL_ERROR "Unknown Stage17 POE2 mutation target: ${TARGET}")
+    endif()
+
+    file(READ "${_source}" _mutated)
+    set(_original "${_mutated}")
+    string(REPLACE "${SEARCH}" "${REPLACEMENT}" _mutated "${_mutated}")
+    if(_mutated STREQUAL _original)
+        message(FATAL_ERROR
+            "Stage17 POE2 mutation ${NAME} anchor is missing")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/stage17-poe2-${NAME}.${_suffix}")
+    file(WRITE "${_mutation}" "${_mutated}")
+    set(_contract_only_arg)
+    if(NOT "${TARGET}" STREQUAL "host")
+        set(_contract_only_arg "-DSTAGE17_POE2_CONTRACT_ONLY=ON")
+    endif()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            ${_contract_only_arg} "-D${_override}=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted Stage17 POE2 mutation: ${NAME}")
+    endif()
+    set(_combined "${_stdout}\n${_stderr}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _combined_normalized
+        "${_combined}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _expected_normalized
+        "${EXPECTED_REASON}")
+    string(FIND "${_combined_normalized}" "${_expected_normalized}"
+        _reason_position)
+    if(_reason_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage17 POE2 mutation ${NAME} failed for wrong reason; "
+            "expected '${EXPECTED_REASON}', got: ${_combined}")
+    endif()
+endfunction()
+
+arpg_expect_stage17_poe2_rejection(enum_capture_order header
+    [=[    skill_removed,
+    skill_selected,]=]
+    [=[    skill_selected,
+    skill_removed,]=]
+    "Stage17 POE2 capture contract is invalid: capture enum order")
+arpg_expect_stage17_poe2_rejection(pending_pause_removed runtime
+    "    if (state.capture_pending != Stage17Capture::none) return snapshot;"
+    "    if (state.capture_pending == Stage17Capture::none) return snapshot;"
+    "Stage17 POE2 capture contract is invalid: capture pending pauses injection")
+arpg_expect_stage17_poe2_rejection(empty_capture_wrong_owner runtime
+    [=[    case Stage17ValidationStep::open_skill_page:
+        stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)]);
+        state.capture_pending = Stage17Capture::skill_empty;]=]
+    [=[    case Stage17ValidationStep::open_skill_page:
+        stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)]);
+        state.capture_pending = Stage17Capture::skill_selected;]=]
+    "Stage17 POE2 capture contract is invalid: empty panel capture interlock")
+arpg_expect_stage17_poe2_rejection(removed_capture_wrong_owner runtime
+    [=[    } else if (state.step == Stage17ValidationStep::remove_slot_1
+            && current.skill_loadout.slots[0].active
+                == skills::ActiveSkillId::none) {
+        state.capture_pending = Stage17Capture::skill_removed;]=]
+    [=[    } else if (state.step == Stage17ValidationStep::remove_slot_1
+            && current.skill_loadout.slots[0].active
+                == skills::ActiveSkillId::none) {
+        state.capture_pending = Stage17Capture::skill_selected;]=]
+    "Stage17 POE2 capture contract is invalid: removed stone authority interlock")
+arpg_expect_stage17_poe2_rejection(swapped_capture_without_transaction_interlock
+    runtime
+    [=[        if (state.production_transactions) {
+            state.capture_pending = Stage17Capture::skill_swapped;
+        }]=]
+    [=[        if (!state.production_transactions) {
+            state.capture_pending = Stage17Capture::skill_swapped;
+        }]=]
+    "Stage17 POE2 capture contract is invalid: swapped loadout authority interlock")
+arpg_expect_stage17_poe2_rejection(capture_complete_wrong_step report
+    [=[    case Stage17Capture::skill_removed:
+        if (!skipped) state.skill_removed_captured = true;
+        state.step = Stage17ValidationStep::select_draw_inventory;]=]
+    [=[    case Stage17Capture::skill_removed:
+        if (!skipped) state.skill_removed_captured = true;
+        state.step = Stage17ValidationStep::equip_slot_5;]=]
+    "Stage17 POE2 capture contract is invalid: four capture completion transitions")
+arpg_expect_stage17_poe2_rejection(mark_completion_removed report
+    "    complete_stage17_capture(state, false);"
+    "    static_cast<void>(state);"
+    "Stage17 POE2 capture contract is invalid: public mark delegates completion once")
+arpg_expect_stage17_poe2_rejection(mark_completion_duplicated report
+    "    complete_stage17_capture(state, false);"
+    [=[    complete_stage17_capture(state, false);
+    complete_stage17_capture(state, false);]=]
+    "Stage17 POE2 capture contract is invalid: public mark delegates completion once")
+arpg_expect_stage17_poe2_rejection(completion_pending_not_cleared report
+    [=[    }
+    state.capture_pending = Stage17Capture::none;
+}]=]
+    [=[    }
+    static_cast<void>(state.capture_pending);
+}]=]
+    "Stage17 POE2 capture contract is invalid: completion clears pending last")
+arpg_expect_stage17_poe2_rejection(legacy_resolution_wrong report
+    "    return config.window_width == 1280 && config.window_height == 720;"
+    "    return config.window_width == 800 && config.window_height == 450;"
+    "Stage17 POE2 capture contract is invalid: legacy resolution predicate")
+arpg_expect_stage17_poe2_rejection(resolution_name_constant report
+    [=[    return std::to_string(config.window_width) + 'x'
+        + std::to_string(config.window_height);]=]
+    [=[    return std::string{"1280x720"};]=]
+    "Stage17 POE2 capture contract is invalid: resolution name maps width x height")
+arpg_expect_stage17_poe2_rejection(resolution_name_swapped report
+    [=[    return std::to_string(config.window_width) + 'x'
+        + std::to_string(config.window_height);]=]
+    [=[    return std::to_string(config.window_height) + 'x'
+        + std::to_string(config.window_width);]=]
+    "Stage17 POE2 capture contract is invalid: resolution name maps width x height")
+arpg_expect_stage17_poe2_rejection(capture_name_hidden_in_uncalled_lambda report
+    [=[[[nodiscard]] std::string stage17_capture_name(
+    const RaylibHostConfig& config, const Stage17Capture capture) {
+    const char* const stem = stage17_capture_stem(capture);
+    if (stem == nullptr) return {};
+    return std::string{stem} + stage17_resolution_name(config) + ".png";
+}]=]
+    [=[[[nodiscard]] std::string stage17_capture_name(
+    const RaylibHostConfig& config, const Stage17Capture capture) {
+    const char* const stem = stage17_capture_stem(capture);
+    if (stem == nullptr) return {};
+    const auto correct_name_decoy = [&]() {
+        return std::string{stem} + stage17_resolution_name(config) + ".png";
+    };
+    static_cast<void>(correct_name_decoy);
+    return std::string{stem};
+}]=]
+    "Stage17 POE2 capture contract is invalid: resolution-qualified capture name")
+arpg_expect_stage17_poe2_rejection(capture_field_flags_swapped report
+    [=[    stream << prefix << "_captured=" << (captured ? 1 : 0) << '\n'
+           << prefix << "_skipped=" << (skipped ? 1 : 0) << '\n']=]
+    [=[    stream << prefix << "_captured=" << (skipped ? 1 : 0) << '\n'
+           << prefix << "_skipped=" << (captured ? 1 : 0) << '\n']=]
+    "Stage17 POE2 capture contract is invalid: capture field helper body")
+arpg_expect_stage17_poe2_rejection(capture_field_wrong_name_argument report
+    "(captured ? stage17_capture_name(config, capture) : \"N/A\")"
+    "(captured ? stage17_capture_name(config, Stage17Capture::none) : \"N/A\")"
+    "Stage17 POE2 capture contract is invalid: capture field helper body")
+arpg_expect_stage17_poe2_rejection(legacy_capture_missing_draw_hit report
+    [=[    return capture == Stage17Capture::initial
+        || capture == Stage17Capture::draw_windup
+        || capture == Stage17Capture::draw_hit;]=]
+    [=[    return capture == Stage17Capture::initial
+        || capture == Stage17Capture::draw_windup;]=]
+    "Stage17 POE2 capture contract is invalid: legacy capture predicate")
+arpg_expect_stage17_poe2_rejection(legacy_skip_noop report
+    "        complete_stage17_capture(state, true);"
+    "        static_cast<void>(state);"
+    "Stage17 POE2 capture contract is invalid: legacy skip delegates completion")
+arpg_expect_stage17_poe2_rejection(initial_repeat_guard_removed report
+    "            && !state.initial_captured && !state.initial_skipped"
+    "            && !state.initial_captured"
+    "Stage17 POE2 capture contract is invalid: initial capture repeat guard")
+arpg_expect_stage17_poe2_rejection(windup_repeat_guard_removed runtime
+    [=[                && !state.draw_windup_captured
+                && !state.draw_windup_skipped]=]
+    "                && !state.draw_windup_captured"
+    "Stage17 POE2 capture contract is invalid: draw-windup capture repeat guard")
+arpg_expect_stage17_poe2_rejection(hit_repeat_guard_removed runtime
+    [=[        if (!state->suppress_draw_captures && !state->draw_captured
+                && !state->draw_hit_skipped) {]=]
+    "        if (!state->suppress_draw_captures && !state->draw_captured) {"
+    "Stage17 POE2 capture contract is invalid: draw-hit capture repeat guard")
+arpg_expect_stage17_poe2_rejection(skill_empty_stem_wrong_owner report
+    [=[    case Stage17Capture::skill_empty:
+        return "poe2-inventory-skill-empty-";]=]
+    [=[    case static_cast<Stage17Capture>(250U):
+        return "poe2-inventory-skill-empty-";]=]
+    "Stage17 POE2 capture contract is invalid: skill_empty capture stem owner")
+arpg_expect_stage17_poe2_rejection(skill_removed_stem_wrong_owner report
+    [=[    case Stage17Capture::skill_removed:
+        return "poe2-inventory-skill-removed-";]=]
+    [=[    case static_cast<Stage17Capture>(251U):
+        return "poe2-inventory-skill-removed-";]=]
+    "Stage17 POE2 capture contract is invalid: skill_removed capture stem owner")
+arpg_expect_stage17_poe2_rejection(skill_selected_stem_wrong_owner report
+    [=[    case Stage17Capture::skill_selected:
+        return "poe2-inventory-skill-selected-";]=]
+    [=[    case static_cast<Stage17Capture>(252U):
+        return "poe2-inventory-skill-selected-";]=]
+    "Stage17 POE2 capture contract is invalid: skill_selected capture stem owner")
+arpg_expect_stage17_poe2_rejection(skill_swapped_stem_wrong_owner report
+    [=[    case Stage17Capture::skill_swapped:
+        return "poe2-inventory-skill-swapped-";]=]
+    [=[    case static_cast<Stage17Capture>(253U):
+        return "poe2-inventory-skill-swapped-";]=]
+    "Stage17 POE2 capture contract is invalid: skill_swapped capture stem owner")
+arpg_expect_stage17_poe2_rejection(skip_after_pending_pause report
+    [=[    if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::production_sequence
+            && !stage17_legacy_resolution(config)
+            && stage17_legacy_capture(state.capture_pending)) {
+        skip_stage17_capture_without_file(state);
+        return std::nullopt;
+    }
+    if (state.capture_pending == Stage17Capture::none]=]
+    [=[    if (state.capture_pending == Stage17Capture::none]=]
+    "Stage17 POE2 capture contract is invalid: non-1280 legacy skip precedes pause")
+arpg_expect_stage17_poe2_rejection(scaled_resolution_predicate report
+    "                && !state.initial_captured && state.initial_skipped"
+    "                && state.initial_captured && state.initial_skipped"
+    "Stage17 POE2 capture contract is invalid: legacy capture pass schema")
+arpg_expect_stage17_poe2_rejection(scaled_resolution_set report
+    [=[        const bool scaled_production_resolution =
+            (config.window_width == 800 && config.window_height == 450)
+            || (config.window_width == 1920 && config.window_height == 1080);]=]
+    [=[        const bool scaled_production_resolution =
+            (config.window_width == 1280 && config.window_height == 720)
+            || (config.window_width == 1920 && config.window_height == 1080);]=]
+    "Stage17 POE2 capture contract is invalid: scaled production resolution set")
+arpg_expect_stage17_poe2_rejection(skill_capture_name report
+    "        return \"poe2-inventory-skill-empty-\";"
+    "        return \"poe2-inventory-skill-empty-mutated-\";"
+    "Stage17 literal is missing from stage17_capture_stem: stage17_literal_skill_empty")
+arpg_expect_stage17_poe2_rejection(summary_capture_order report
+    [=[        write_stage17_capture_field(stream, "skill_removed", config,
+            Stage17Capture::skill_removed, state.skill_removed_captured, false);
+        write_stage17_capture_field(stream, "skill_selected", config,
+            Stage17Capture::skill_selected, state.skill_selected_captured, false);]=]
+    [=[        write_stage17_capture_field(stream, "skill_selected", config,
+            Stage17Capture::skill_selected, state.skill_selected_captured, false);
+        write_stage17_capture_field(stream, "skill_removed", config,
+            Stage17Capture::skill_removed, state.skill_removed_captured, false);]=]
+    "Stage17 POE2 capture contract is invalid: capture summary schema")
+arpg_expect_stage17_poe2_rejection(renderer_draw_wrong_interact_action host
+    "settings::SettingAction::interact"
+    "settings::SettingAction::inventory"
+    "rejected real renderer draw return statement")
+arpg_expect_stage17_poe2_rejection(renderer_draw_hardcoded_interact_label host
+    [=[stable_key_label(
+                        settings::binding_for(input_settings,
+                            settings::SettingAction::interact))]=]
+    [=["E"]=]
+    "rejected real renderer draw return statement")
+
 set(_split_fixed_step "${GUARD_TEST_ROOT}/split-fixed-step-conditions.cpp")
 file(WRITE "${_split_fixed_step}" [=[
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
@@ -795,26 +1059,42 @@ function(arpg_expect_task9_host_cleanup_rejection NAME MUTATION)
     set(_original "${_mutated}")
     if(MUTATION STREQUAL missing_standard_cleanup)
         set(_anchor [=[        TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+        if (pause_menu_renderer_storage != nullptr) {
+            pause_menu_renderer_storage->shutdown();
+        }
         if (renderer_storage != nullptr) {
             renderer_storage->shutdown_resources();
         }
 ]=])
         set(_replacement [=[        TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+        if (pause_menu_renderer_storage != nullptr) {
+            pause_menu_renderer_storage->shutdown();
+        }
 ]=])
     elseif(MUTATION STREQUAL missing_unknown_cleanup)
         set(_anchor [=[        TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
+        if (pause_menu_renderer_storage != nullptr) {
+            pause_menu_renderer_storage->shutdown();
+        }
         if (renderer_storage != nullptr) {
             renderer_storage->shutdown_resources();
         }
 ]=])
         set(_replacement [=[        TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
+        if (pause_menu_renderer_storage != nullptr) {
+            pause_menu_renderer_storage->shutdown();
+        }
 ]=])
     elseif(MUTATION STREQUAL owner_inside_try)
         set(_anchor [=[    HostWindowLifetime window{raylib_host_window_backend()};
+    SharedUiFont shared_ui_font{};
     std::unique_ptr<CombatRenderer> renderer_storage;
+    std::unique_ptr<PauseMenuRenderer> pause_menu_renderer_storage;
     try {
 ]=])
         set(_replacement [=[    HostWindowLifetime window{raylib_host_window_backend()};
+    SharedUiFont shared_ui_font{};
+    std::unique_ptr<PauseMenuRenderer> pause_menu_renderer_storage;
     try {
         std::unique_ptr<CombatRenderer> renderer_storage;
 ]=])

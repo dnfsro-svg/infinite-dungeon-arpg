@@ -98,6 +98,7 @@ constexpr std::array<std::uint16_t, 8> kStormCaptureTicks{{
 constexpr std::size_t kExpectedFullPackBytes = 329'430'304U;
 constexpr std::size_t kExpectedResidentPeakBytes = 226'800'928U;
 constexpr std::size_t kExpectedTransitionPeakBytes = 261'010'720U;
+constexpr std::size_t kPoe2EmptyInventoryTextCount = 17U;
 struct NativeBackgroundSpec final {
     const char* name{};
     arpg::dungeon::DungeonElement ecology{};
@@ -339,32 +340,39 @@ bool hud_text_layout_safe(int width, int height) noexcept {
 }
 
 bool inventory_text_layout_safe(int width, int height) noexcept {
-    const auto panels = platform::inventory_layout(width, height);
     const auto shell = platform::inventory_shell_layout(width, height);
-    const auto skill = platform::active_skill_loadout_layout(shell);
-    const auto text = platform::inventory_text_safe_layout(width, height);
-    const Rectangle viewport{0.0F, 0.0F, static_cast<float>(width),
-        static_cast<float>(height)};
-    return rectangle_inside(text.page_title, viewport)
-        && rectangles_separated(text.page_title,
-            skill.equipment_page_button)
-        && rectangles_separated(text.page_title,
-            skill.skill_stones_page_button)
-        && rectangle_inside(text.equipment_panel_title, panels.equipment)
-        && rectangle_inside(text.grid_panel_title, panels.grid)
-        && rectangle_inside(text.detail_panel_title, panels.detail);
+    if (!shell.valid) return false;
+    for (const Rectangle tab : shell.tabs) {
+        if (!rectangle_inside(tab, shell.header)) return false;
+    }
+    return rectangle_inside(shell.left_panel, shell.content)
+        && rectangle_inside(shell.right_panel, shell.content)
+        && rectangle_inside(shell.slot_filter_bounds, shell.right_panel)
+        && rectangle_inside(shell.rarity_filter_bounds, shell.right_panel)
+        && rectangle_inside(shell.grid_viewport, shell.right_panel)
+        && rectangle_inside(shell.status_bounds, shell.status_bar)
+        && rectangle_inside(shell.action_bounds, shell.status_bar)
+        && rectangle_inside(shell.hint_bounds, shell.status_bar)
+        && rectangles_separated(shell.left_panel, shell.right_panel)
+        && rectangles_separated(shell.status_bounds, shell.action_bounds)
+        && rectangles_separated(shell.action_bounds, shell.hint_bounds);
 }
 
 bool skill_text_layout_safe(int width, int height) noexcept {
     const auto shell = platform::inventory_shell_layout(width, height);
     const auto skill = platform::active_skill_loadout_layout(shell);
-    const auto text = platform::inventory_text_safe_layout(width, height);
-    return rectangle_inside(text.skill_panel_title, skill.panel)
-        && rectangles_separated(text.skill_panel_title, skill.main_slots[0])
-        && rectangles_separated(text.support_section_title,
-            skill.support_slots[0])
-        && rectangles_separated(text.inventory_section_title,
-            skill.inventory_slots[0]);
+    if (!shell.valid || skill.panel.width <= 0.0F
+            || skill.panel.height <= 0.0F) return false;
+    for (const Rectangle slot : skill.main_slots) {
+        if (!rectangle_inside(slot, shell.left_panel)) return false;
+    }
+    for (const Rectangle slot : skill.support_slots) {
+        if (!rectangle_inside(slot, shell.left_panel)) return false;
+    }
+    for (const Rectangle slot : skill.inventory_slots) {
+        if (!rectangle_inside(slot, shell.right_panel)) return false;
+    }
+    return rectangle_inside(skill.remove_button, shell.status_bar);
 }
 
 bool pause_text_layout_safe(int width, int height) noexcept {
@@ -2160,10 +2168,12 @@ int main(int argc, char** argv) {
             Ui::hud_skill_empty, Ui::hud_skill_ready, Ui::label_plate});
     const bool inventory_ui_runtime_ok = inventory_ui_ok && ui_resources_drawn(
         inventory_ui_runtime, std::array{Ui::inventory_panel_equipment,
-            Ui::inventory_panel_grid, Ui::inventory_panel_detail,
+            Ui::inventory_panel_grid,
             Ui::inventory_tab_idle, Ui::inventory_tab_active,
             Ui::inventory_slot_idle, Ui::inventory_button_idle,
-            Ui::inventory_button_disabled, Ui::label_plate});
+            Ui::inventory_button_disabled, Ui::label_plate})
+        && inventory_ui_runtime.ui_material_draws[
+            static_cast<std::size_t>(Ui::inventory_panel_detail)] == 0U;
     const bool skill_ui_runtime_ok = skill_ui_ok && ui_resources_drawn(
         skill_ui_runtime, std::array{Ui::skill_panel, Ui::skill_slot_empty,
             Ui::skill_slot_support, Ui::inventory_tab_idle,
@@ -2178,10 +2188,12 @@ int main(int argc, char** argv) {
     const bool inventory_ui_1920_runtime_ok = inventory_ui_1920_ok
         && ui_resources_drawn(inventory_ui_1920_runtime,
             std::array{Ui::inventory_panel_equipment,
-                Ui::inventory_panel_grid, Ui::inventory_panel_detail,
+                Ui::inventory_panel_grid,
                 Ui::inventory_tab_idle, Ui::inventory_tab_active,
                 Ui::inventory_slot_idle, Ui::inventory_button_idle,
-                Ui::inventory_button_disabled, Ui::label_plate});
+                Ui::inventory_button_disabled, Ui::label_plate})
+        && inventory_ui_1920_runtime.ui_material_draws[
+            static_cast<std::size_t>(Ui::inventory_panel_detail)] == 0U;
     const bool skill_ui_1920_runtime_ok = skill_ui_1920_ok
         && ui_resources_drawn(skill_ui_1920_runtime,
             std::array{Ui::skill_panel, Ui::skill_slot_empty,
@@ -2275,10 +2287,6 @@ int main(int argc, char** argv) {
     const std::uint64_t inventory_required_roles = ui_text_role_mask({
         platform::UiTextAuditRole::inventory_page_title,
         platform::UiTextAuditRole::inventory_equipment_slot,
-        platform::UiTextAuditRole::inventory_statistics,
-        platform::UiTextAuditRole::inventory_grid_entry,
-        platform::UiTextAuditRole::inventory_material_entry,
-        platform::UiTextAuditRole::inventory_detail,
         platform::UiTextAuditRole::inventory_status,
     });
     const std::uint64_t skill_required_roles = ui_text_role_mask({
@@ -2300,10 +2308,22 @@ int main(int argc, char** argv) {
         hud_required_roles, 12U);
     const bool inventory_real_text_1280_ok = real_font_text_bounds_safe(
         inventory_ui_runtime, platform::UiTextAuditPage::inventory,
-        inventory_required_roles, 20U);
+        inventory_required_roles, kPoe2EmptyInventoryTextCount)
+        && inventory_ui_runtime.ui_text_measured_counts[
+            static_cast<std::size_t>(platform::UiTextAuditPage::inventory)]
+            == kPoe2EmptyInventoryTextCount
+        && inventory_ui_runtime.ui_text_observed_roles[
+            static_cast<std::size_t>(platform::UiTextAuditPage::inventory)]
+            == inventory_required_roles;
     const bool inventory_real_text_1920_ok = real_font_text_bounds_safe(
         inventory_ui_1920_runtime, platform::UiTextAuditPage::inventory,
-        inventory_required_roles, 20U);
+        inventory_required_roles, kPoe2EmptyInventoryTextCount)
+        && inventory_ui_1920_runtime.ui_text_measured_counts[
+            static_cast<std::size_t>(platform::UiTextAuditPage::inventory)]
+            == kPoe2EmptyInventoryTextCount
+        && inventory_ui_1920_runtime.ui_text_observed_roles[
+            static_cast<std::size_t>(platform::UiTextAuditPage::inventory)]
+            == inventory_required_roles;
     const bool skill_real_text_1280_ok = real_font_text_bounds_safe(
         skill_ui_runtime, platform::UiTextAuditPage::skill,
         skill_required_roles, 10U);
@@ -2693,6 +2713,16 @@ int main(int argc, char** argv) {
            << hud_ui_1920_runtime.ui_text_observed_roles[0] << '\n'
            << "hud_real_font_measurements=" << hud_ui_runtime.ui_text_measured_counts[0] << '\n'
            << "inventory_real_font_measurements=" << inventory_ui_runtime.ui_text_measured_counts[1] << '\n'
+           << "inventory_real_font_measurements_1920="
+           << inventory_ui_1920_runtime.ui_text_measured_counts[1] << '\n'
+           << "inventory_observed_text_roles="
+           << inventory_ui_runtime.ui_text_observed_roles[1] << '\n'
+           << "inventory_required_text_roles=" << inventory_required_roles
+           << '\n'
+           << "inventory_observed_text_roles_1920="
+           << inventory_ui_1920_runtime.ui_text_observed_roles[1] << '\n'
+           << "inventory_required_text_roles_1920="
+           << inventory_required_roles << '\n'
            << "skill_real_font_measurements=" << skill_ui_runtime.ui_text_measured_counts[2] << '\n'
            << "pause_real_font_measurements=" << pause_ui_runtime.ui_text_measured_counts[3] << '\n'
            << "hud_failed_bounds_roles=" << hud_ui_runtime.ui_text_failed_bounds_roles[0] << '\n'

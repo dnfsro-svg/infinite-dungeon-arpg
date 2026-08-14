@@ -245,7 +245,8 @@ void observe_stage17_combat_event(
     if (state == nullptr || event.kind != combat::CombatEventKind::hit) return;
     if (event.skill == skills::ActiveSkillId::draw_slash) {
         ++state->draw_hit_count;
-        if (!state->suppress_draw_captures && !state->draw_captured) {
+        if (!state->suppress_draw_captures && !state->draw_captured
+                && !state->draw_hit_skipped) {
             state->capture_pending = Stage17Capture::draw_hit;
         }
     } else if (event.skill == skills::ActiveSkillId::storm_swords) {
@@ -275,6 +276,7 @@ void observe_stage17_combat_event(
         || snapshot.focus_lost || state.suspend_injection) {
         return snapshot;
     }
+    if (state.capture_pending != Stage17Capture::none) return snapshot;
     const InventoryShellLayout shell = inventory_shell_layout(
         config.window_width, config.window_height);
     const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(shell);
@@ -322,14 +324,14 @@ void observe_stage17_combat_event(
         break;
     case Stage17ValidationStep::open_skill_page:
         stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)]);
-        state.step = Stage17ValidationStep::remove_slot_1;
+        state.capture_pending = Stage17Capture::skill_empty;
         break;
     case Stage17ValidationStep::remove_slot_1:
         stage17_click(snapshot, layout.remove_button);
         break;
     case Stage17ValidationStep::select_draw_inventory:
         stage17_click(snapshot, layout.inventory_slots[0]);
-        state.step = Stage17ValidationStep::equip_slot_5;
+        state.capture_pending = Stage17Capture::skill_selected;
         break;
     case Stage17ValidationStep::equip_slot_5:
         stage17_click(snapshot, layout.main_slots[4]);
@@ -427,6 +429,7 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
         if (config.stage17_skill_stones_validation
                 != Stage17SkillStonesValidationScenario::storm_sequence
                 && !state.draw_windup_captured
+                && !state.draw_windup_skipped
                 && combat_state.active_skill.frame_index >= 6U
                 && combat_state.active_skill.frame_index < 18U) {
             state.capture_pending = Stage17Capture::draw_windup;
@@ -438,7 +441,8 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
             if (state.draw_accepted && state.draw_hit_count == 2U) {
                 state.step = Stage17ValidationStep::approach_storm;
             }
-        } else if (state.draw_windup_captured && state.draw_captured) {
+        } else if ((state.draw_windup_captured || state.draw_windup_skipped)
+                && (state.draw_captured || state.draw_hit_skipped)) {
             state.step = Stage17ValidationStep::open_inventory;
         }
     }
@@ -556,7 +560,7 @@ void observe_stage17_inventory(const RaylibHostConfig& config,
     } else if (state.step == Stage17ValidationStep::remove_slot_1
             && current.skill_loadout.slots[0].active
                 == skills::ActiveSkillId::none) {
-        state.step = Stage17ValidationStep::select_draw_inventory;
+        state.capture_pending = Stage17Capture::skill_removed;
     } else if (state.step == Stage17ValidationStep::equip_slot_5
             && current.skill_loadout.slots[4].active
                 == skills::ActiveSkillId::draw_slash) {
@@ -567,7 +571,7 @@ void observe_stage17_inventory(const RaylibHostConfig& config,
         state.production_transactions =
             !current.pending_save_kind.has_value();
         if (state.production_transactions) {
-            state.step = Stage17ValidationStep::close_inventory;
+            state.capture_pending = Stage17Capture::skill_swapped;
         }
     } else if (state.step == Stage17ValidationStep::close_inventory
             && !inventory.is_open() && current.combat.has_value()) {

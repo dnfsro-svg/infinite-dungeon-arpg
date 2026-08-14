@@ -65,7 +65,35 @@ mutate_and_expect_accept(attribute_control "passive_tree_view_math.cpp"
 mutate_and_expect_accept(spaced_array_control "passive_tree_view_math.cpp"
     "PassiveNodeTextView view{};"
     "PassiveNodeTextView view{};\n    if (view.name [0] == '\\0') { static_cast<void>(view.name [0]); }")
-mutate_and_expect(active_english "inventory_renderer.cpp" "ui_item_base_name(item.base_id)" "\"EQUIPMENT INVENTORY\"")
+mutate_and_expect(active_english "inventory_renderer.cpp"
+    "ui_text(UiTextId::equipment_title)" "\"EQUIPMENT INVENTORY\"")
+mutate_and_expect(hardcoded_inventory_binding_plain "inventory_renderer.cpp"
+    "inventory_page_title(page_,\n        inventory_binding_label)"
+    "inventory_page_title(page_, \"I\")")
+mutate_and_expect(hardcoded_inventory_binding_u8 "inventory_renderer.cpp"
+    "inventory_page_title(page_,\n        inventory_binding_label)"
+    "inventory_page_title(page_, u8\"I\")")
+mutate_and_expect(wrong_inventory_binding_argument "inventory_renderer.cpp"
+    "inventory_page_title(page_,\n        inventory_binding_label)"
+    "inventory_page_title(page_, ui_text(UiTextId::inventory_title))")
+mutate_and_expect(resize_touches_transient_status "inventory_renderer.cpp"
+    "tooltip_state_ = {};\n    tooltip_measure_font_ = {};"
+    "tooltip_state_ = {};\n    transient_status_state_ = InventoryTransientStatusState{};\n    tooltip_measure_font_ = {};")
+mutate_and_expect(input_frozen_resolver_uses_selected "inventory_renderer.cpp"
+    "const InventoryVisibleItemSource frozen_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, tooltip_state_.frozen_item_id, scroll_rows_);"
+    "const InventoryVisibleItemSource frozen_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, selected_item_id_, scroll_rows_);")
+mutate_and_expect(input_selected_resolver_uses_frozen "inventory_renderer.cpp"
+    "const InventoryVisibleItemSource selected_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, selected_item_id_, scroll_rows_);"
+    "const InventoryVisibleItemSource selected_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, tooltip_state_.frozen_item_id, scroll_rows_);")
+mutate_and_expect(draw_frozen_resolver_uses_selected "inventory_renderer.cpp"
+    "const InventoryVisibleItemSource frozen_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                tooltip_state_.frozen_item_id, scroll_rows_);"
+    "const InventoryVisibleItemSource frozen_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                selected_item_id_, scroll_rows_);")
+mutate_and_expect(draw_selected_resolver_uses_frozen "inventory_renderer.cpp"
+    "const InventoryVisibleItemSource selected_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                selected_item_id_, scroll_rows_);"
+    "const InventoryVisibleItemSource selected_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                tooltip_state_.frozen_item_id, scroll_rows_);")
+mutate_and_expect(corridor_widens_pointer_inside_backing "inventory_renderer.cpp"
+    "const bool pointer_inside_retained_tooltip = retained_frame.valid\n        && contains(retained_frame.layout.backing, mouse);"
+    "const bool pointer_inside_retained_tooltip = retained_frame.valid\n        && (contains(retained_frame.layout.backing, mouse)\n            || contains(retained_frame.layout.retention_corridor, mouse));")
 mutate_and_expect(ground_comment_decoy "ground_loot_view.cpp" "ui_item_base_name(item.base_id)" "/* ui_item_base_name(item.base_id) */ base->name.data()")
 mutate_and_expect(ground_preprocessor_decoy "ground_loot_view.cpp" "ui_item_base_name(item.base_id)" "#if 0\nui_item_base_name(item.base_id)\n#endif\nbase->name.data()")
 mutate_and_expect(ground_lambda_decoy "ground_loot_view.cpp" "ui_item_base_name(item.base_id)" "([&]() { static_cast<void>(ui_item_base_name(item.base_id)); }, u8\"未知\")")

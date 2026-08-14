@@ -110,10 +110,14 @@ arpg_sanitize_cpp_source("${HOST_VALIDATION_RUNTIME_SOURCE}"
     HOST_VALIDATION_RUNTIME_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
     STAGE17_RUNTIME_SANITIZED_SOURCE)
+arpg_sanitize_cpp_source("${STAGE17_REPORT_SOURCE_TEXT}"
+    STAGE17_REPORT_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${STAGE11B_RUNTIME_SOURCE}"
     STAGE11B_RUNTIME_SANITIZED_SOURCE)
 stage17_unconditional_cpp_surface("${STAGE17_RUNTIME_SOURCE}"
     STAGE17_RUNTIME_ACTIVE_SOURCE)
+stage17_unconditional_cpp_surface("${STAGE17_REPORT_SOURCE_TEXT}"
+    STAGE17_REPORT_ACTIVE_SOURCE)
 stage17_unconditional_cpp_surface("${HOST_SETTINGS_RUNTIME_SOURCE}"
     HOST_SETTINGS_RUNTIME_ACTIVE_SOURCE)
 stage17_unconditional_cpp_surface("${HOST_SOURCE}" HOST_ACTIVE_SOURCE)
@@ -152,8 +156,9 @@ function(stage17_injector_is_valid SANITIZED_SOURCE OUT_VALID)
     # injector (comments and whitespace excluded), not a subset of tokens that
     # can be left behind after an early return or inside a decoy lambda.
     string(SHA256 FUNCTION_SHA256 "${FUNCTION_NORMALIZED}")
+    set(STAGE17_LAST_FUNCTION_SHA256 "${FUNCTION_SHA256}" PARENT_SCOPE)
     set(EXPECTED_FUNCTION_SHA256
-        "c431d441380744954a71781081c41a608da5611449680007ff49e6abfca8f66f")
+        "a66d91f6a5b27f76a4a4f8ced13b041099a3fa0d34f9d596fc1a2718d6fef6d5")
     string(FIND "${FUNCTION_NORMALIZED}"
         "PhysicalKeySnapshot inject_stage17_physical_edges( PhysicalKeySnapshot snapshot, const RaylibHostConfig& config"
         SIGNATURE_BINDING)
@@ -207,6 +212,9 @@ function(stage17_injector_is_valid SANITIZED_SOURCE OUT_VALID)
         "snapshot.focus_lost || state.suspend_injection) { return snapshot; }"
         EARLY_RETURN_BINDING)
     string(FIND "${FUNCTION_NORMALIZED}"
+        "if (state.capture_pending != Stage17Capture::none) return snapshot; const InventoryShellLayout shell = inventory_shell_layout("
+        CAPTURE_PENDING_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
         "state.capture_pending = Stage17Capture::restarted; break; } return snapshot; }"
         FINAL_RETURN_BINDING)
     if(SIGNATURE_BINDING EQUAL -1
@@ -218,6 +226,7 @@ function(stage17_injector_is_valid SANITIZED_SOURCE OUT_VALID)
             OR SKILL_STONES_TAB_CLICK_BINDING EQUAL -1
             OR NOT SKILL_STONES_TAB_CLICK_COUNT EQUAL 2
             OR EARLY_RETURN_BINDING EQUAL -1
+            OR CAPTURE_PENDING_BINDING EQUAL -1
             OR FINAL_RETURN_BINDING EQUAL -1
             OR NOT CAPTURE_BY_REFERENCE_LAMBDA EQUAL -1
             OR NOT CAPTURE_BY_VALUE_LAMBDA EQUAL -1
@@ -233,7 +242,7 @@ stage17_injector_is_valid("${STAGE17_RUNTIME_SANITIZED_SOURCE}"
     STAGE17_INJECTOR_VALID)
 if(NOT STAGE17_INJECTOR_VALID)
     message(FATAL_ERROR
-        "Stage17 runtime must augment the shared stable input snapshot")
+        "Stage17 runtime must augment the shared stable input snapshot; normalized_sha256=${STAGE17_LAST_FUNCTION_SHA256}")
 endif()
 
 set(STAGE17_INJECTOR_MUTATION_ACCEPTANCES)
@@ -292,6 +301,39 @@ if(STAGE17_SLOT_REMOVAL_VALID)
     list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
         "stage17_inject_slot_removal")
 endif()
+string(REPLACE
+    "if (state.capture_pending != Stage17Capture::none) return snapshot;"
+    ""
+    STAGE17_PENDING_PAUSE_REMOVAL_MUTATION
+    "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_PENDING_PAUSE_REMOVAL_MUTATION}"
+    STAGE17_PENDING_PAUSE_REMOVAL_VALID)
+if(STAGE17_PENDING_PAUSE_REMOVAL_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_pending_pause_removal")
+endif()
+string(REPLACE
+    "if (state.capture_pending != Stage17Capture::none) return snapshot;"
+    "if (state.capture_pending == Stage17Capture::skill_empty) return snapshot;"
+    STAGE17_PARTIAL_PENDING_PAUSE_MUTATION
+    "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_PARTIAL_PENDING_PAUSE_MUTATION}"
+    STAGE17_PARTIAL_PENDING_PAUSE_VALID)
+if(STAGE17_PARTIAL_PENDING_PAUSE_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_partial_pending_pause")
+endif()
+string(REPLACE
+    "state.capture_pending = Stage17Capture::skill_selected;"
+    "state.step = Stage17ValidationStep::equip_slot_5;"
+    STAGE17_SELECTED_INTERLOCK_REMOVAL_MUTATION
+    "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_SELECTED_INTERLOCK_REMOVAL_MUTATION}"
+    STAGE17_SELECTED_INTERLOCK_REMOVAL_VALID)
+if(STAGE17_SELECTED_INTERLOCK_REMOVAL_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_selected_interlock_removal")
+endif()
 string(REPLACE "${STAGE17_INJECTOR_ANCHOR}"
     "return snapshot; ${STAGE17_INJECTOR_ANCHOR}"
     STAGE17_WEAK_ACTIVE_SOURCE "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
@@ -308,6 +350,73 @@ if(STAGE17_INJECTOR_MUTATION_ACCEPTANCES)
         STAGE17_INJECTOR_MUTATION_NAMES)
     message(FATAL_ERROR
         "Stage17 input guard accepted mutations: ${STAGE17_INJECTOR_MUTATION_NAMES}")
+endif()
+
+function(stage17_skip_before_pause_is_valid SANITIZED_SOURCE OUT_VALID)
+    evidence_find_cpp_function_bounds_in_sanitized("${SANITIZED_SOURCE}"
+        "std::optional<std::string> stage17_capture_path("
+        FUNCTION_BEGIN FUNCTION_OPEN FUNCTION_END)
+    math(EXPR FUNCTION_LENGTH "${FUNCTION_END} - ${FUNCTION_BEGIN} + 1")
+    string(SUBSTRING "${SANITIZED_SOURCE}" ${FUNCTION_BEGIN}
+        ${FUNCTION_LENGTH} FUNCTION_SOURCE)
+    string(REGEX REPLACE "[ \t\r\n]+" " " FUNCTION_NORMALIZED
+        "${FUNCTION_SOURCE}")
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "if (config.stage17_skill_stones_validation == Stage17SkillStonesValidationScenario::production_sequence && !stage17_legacy_resolution(config) && stage17_legacy_capture(state.capture_pending)) { skip_stage17_capture_without_file(state); return std::nullopt; } if (state.capture_pending == Stage17Capture::none || GetScreenWidth() != config.window_width || GetScreenHeight() != config.window_height) { return std::nullopt; }"
+        SKIP_BEFORE_PATH)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "&& !state.initial_captured && !state.initial_skipped && state.presented_frames >= 2U)"
+        INITIAL_REPEAT_GUARD)
+    if(SKIP_BEFORE_PATH EQUAL -1 OR INITIAL_REPEAT_GUARD EQUAL -1)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+    else()
+        set("${OUT_VALID}" TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+stage17_skip_before_pause_is_valid("${STAGE17_REPORT_ACTIVE_SOURCE}"
+    STAGE17_SKIP_BEFORE_PAUSE_VALID)
+if(NOT STAGE17_SKIP_BEFORE_PAUSE_VALID)
+    message(FATAL_ERROR
+        "Stage17 non-1280 legacy skip must complete before pending pause")
+endif()
+string(REPLACE
+    "skip_stage17_capture_without_file(state);\n        return std::nullopt;"
+    "return std::nullopt;\n        skip_stage17_capture_without_file(state);"
+    STAGE17_SKIP_REORDER_MUTATION "${STAGE17_REPORT_ACTIVE_SOURCE}")
+stage17_skip_before_pause_is_valid("${STAGE17_SKIP_REORDER_MUTATION}"
+    STAGE17_SKIP_REORDER_VALID)
+string(REPLACE
+    "&& !state.initial_captured && !state.initial_skipped"
+    "&& !state.initial_captured"
+    STAGE17_SKIP_REPEAT_MUTATION "${STAGE17_REPORT_ACTIVE_SOURCE}")
+stage17_skip_before_pause_is_valid("${STAGE17_SKIP_REPEAT_MUTATION}"
+    STAGE17_SKIP_REPEAT_VALID)
+if(STAGE17_SKIP_REORDER_MUTATION STREQUAL STAGE17_REPORT_ACTIVE_SOURCE
+        OR STAGE17_SKIP_REPEAT_MUTATION STREQUAL
+            STAGE17_REPORT_ACTIVE_SOURCE
+        OR STAGE17_SKIP_REORDER_VALID OR STAGE17_SKIP_REPEAT_VALID)
+    message(FATAL_ERROR
+        "Stage17 skip-before-pause guard accepted a reorder/repeat mutation")
+endif()
+
+string(REPLACE
+    "skip_stage17_capture_without_file(state);\n        return std::nullopt;"
+    "return std::nullopt;\n        skip_stage17_capture_without_file(state);"
+    STAGE17_WEAK_ACTIVE_REPORT "${STAGE17_REPORT_SOURCE_TEXT}")
+if(STAGE17_WEAK_ACTIVE_REPORT STREQUAL STAGE17_REPORT_SOURCE_TEXT)
+    message(FATAL_ERROR
+        "Stage17 inactive-copy mutation anchor is missing")
+endif()
+set(STAGE17_INACTIVE_EXACT_REPORT_MUTATION
+    "#if 0\n${STAGE17_REPORT_SOURCE_TEXT}\n#endif\n${STAGE17_WEAK_ACTIVE_REPORT}")
+stage17_unconditional_cpp_surface("${STAGE17_INACTIVE_EXACT_REPORT_MUTATION}"
+    STAGE17_INACTIVE_EXACT_REPORT_ACTIVE_SOURCE)
+stage17_skip_before_pause_is_valid(
+    "${STAGE17_INACTIVE_EXACT_REPORT_ACTIVE_SOURCE}"
+    STAGE17_INACTIVE_EXACT_REPORT_VALID)
+if(STAGE17_INACTIVE_EXACT_REPORT_VALID)
+    message(FATAL_ERROR
+        "Stage17 skip-before-pause guard borrowed an inactive exact copy")
 endif()
 
 if(HOST_SOURCE MATCHES "SetTargetFPS[ \t\r\n]*\\(")

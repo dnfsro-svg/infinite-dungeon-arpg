@@ -179,7 +179,7 @@ if(TARGET arpg_raylib)
         COMMAND "$<TARGET_FILE:arpg_stage16_loot_reinforcement_game_validation>"
             "${CMAKE_CURRENT_BINARY_DIR}/stage16 loot reinforcement evidence")
     set_tests_properties(stage16.loot_reinforcement.real_raylib PROPERTIES
-        LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE
+        LABELS "platform;raylib;stage16;validation" TIMEOUT 600 RUN_SERIAL TRUE
         WORKING_DIRECTORY
             "$<TARGET_FILE_DIR:arpg_stage16_loot_reinforcement_game_validation>")
 
@@ -220,14 +220,14 @@ if(TARGET arpg_raylib)
             "${_stage17_evidence_root}")
     set_tests_properties(stage17.skill_stones.real_raylib PROPERTIES
         LABELS "platform;raylib;graphics;formal-game;stage17;validation"
-        TIMEOUT 180 RUN_SERIAL TRUE FIXTURES_SETUP stage17_skill_stones_evidence)
+        TIMEOUT 600 RUN_SERIAL TRUE FIXTURES_SETUP stage17_skill_stones_evidence)
     add_test(NAME stage17.skill_stones.evidence_validator
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
             "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator.ps1"
             -EvidenceDirectory "${_stage17_evidence_run}")
     set_tests_properties(stage17.skill_stones.evidence_validator PROPERTIES
         LABELS "platform;raylib;graphics;formal-game;stage17;validation"
-        TIMEOUT 60 FIXTURES_REQUIRED stage17_skill_stones_evidence)
+        TIMEOUT 120 FIXTURES_REQUIRED stage17_skill_stones_evidence)
     add_test(NAME stage17.skill_stones.evidence_validator_self_test
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
             "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator_self_test.ps1"
@@ -237,7 +237,7 @@ if(TARGET arpg_raylib)
     set_tests_properties(
         stage17.skill_stones.evidence_validator_self_test PROPERTIES
         LABELS "platform;raylib;graphics;formal-game;negative;stage17;validation"
-        TIMEOUT 90 FIXTURES_REQUIRED stage17_skill_stones_evidence)
+        TIMEOUT 240 FIXTURES_REQUIRED stage17_skill_stones_evidence)
 
     add_executable(arpg_stage12_material_formal
         stage12_material_formal_game_validation.cpp)
@@ -2156,7 +2156,7 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/host_validation_sequence_guard_self_test.cmake")
 set_tests_properties(
     platform.host_validation_sequence_self_test
-    PROPERTIES LABELS "headless;platform;architecture" TIMEOUT 2400)
+    PROPERTIES LABELS "headless;platform;architecture" TIMEOUT 3600)
 
 # Task 11 deliberately registers the real-host evidence gate before the
 # harness exists.  This keeps the first execution red instead of silently

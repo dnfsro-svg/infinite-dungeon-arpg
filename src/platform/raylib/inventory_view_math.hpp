@@ -2,6 +2,7 @@
 
 #include "combat/combat_types.hpp"
 #include "items/item_catalog.hpp"
+#include "items/item_crafting.hpp"
 #include "skills/active_skill_types.hpp"
 #include "ui_text_layout.hpp"
 
@@ -11,21 +12,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string_view>
 #include <vector>
 
 namespace arpg::platform {
 
-struct InventoryLayout final {
-    Rectangle equipment{};
-    Rectangle grid{};
-    Rectangle detail{};
-    float scale{1.0F};
-};
-
 enum class InventoryPage : std::uint8_t {
     equipment,
-    equipment_materials = equipment,
     skill_stones,
     materials,
     count,
@@ -226,20 +218,9 @@ struct ActiveSkillLoadoutLayout final {
     std::array<Rectangle, skills::kActiveSkillSlotCount> main_slots{};
     std::array<Rectangle, skills::kSupportSlotsPerActive> support_slots{};
     std::array<Rectangle, skills::kActiveSkillCount> inventory_slots{};
+    Rectangle empty_bounds{};
     Rectangle remove_button{};
-    Rectangle equipment_page_button{};
-    Rectangle skill_stones_page_button{};
     float scale{1.0F};
-};
-
-struct InventoryTextSafeLayout final {
-    Rectangle page_title{};
-    Rectangle equipment_panel_title{};
-    Rectangle grid_panel_title{};
-    Rectangle detail_panel_title{};
-    Rectangle skill_panel_title{};
-    Rectangle support_section_title{};
-    Rectangle inventory_section_title{};
 };
 
 enum class ActiveSkillLoadoutActionKind : std::uint8_t {
@@ -459,13 +440,6 @@ struct ItemAttributeLabel final {
     bool multiplier{};
 };
 
-struct InventoryDetailRowLayout final {
-    Rectangle label_bounds{};
-    Rectangle value_bounds{};
-    float gap{};
-    bool valid{};
-};
-
 struct InventoryControlTextStyle final {
     Color content_backing{};
     Color idle_backing{};
@@ -474,23 +448,22 @@ struct InventoryControlTextStyle final {
     Color remove_backing{};
 };
 
-[[nodiscard]] InventoryLayout inventory_layout(int width, int height) noexcept;
 [[nodiscard]] InventoryShellLayout inventory_shell_layout(
     int width, int height) noexcept;
 [[nodiscard]] int inventory_grid_columns(InventoryShellLayout layout) noexcept;
 [[nodiscard]] Rectangle inventory_grid_item_rectangle(
     InventoryShellLayout layout, std::size_t filtered_position,
     float scroll_rows) noexcept;
+[[nodiscard]] bool inventory_page_action_contains(
+    InventoryShellLayout shell, InventoryPage page, Vector2 point) noexcept;
 [[nodiscard]] InventoryControlTextStyle
 inventory_control_text_style() noexcept;
 [[nodiscard]] std::array<char, 96> inventory_page_title(
     InventoryPage page, const char* inventory_binding_label) noexcept;
+[[nodiscard]] std::array<char, 64> inventory_equipment_slot_label(
+    items::ItemSlot slot, const items::ItemInstance* item) noexcept;
 [[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
     InventoryShellLayout shell) noexcept;
-[[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
-    int width, int height) noexcept;
-[[nodiscard]] InventoryTextSafeLayout inventory_text_safe_layout(
-    int width, int height) noexcept;
 [[nodiscard]] ActiveSkillLoadoutView make_active_skill_loadout_view(
     const skills::SkillLoadoutState& state,
     const ActiveSkillLoadoutSelection& selection,
@@ -518,11 +491,6 @@ void advance_active_skill_loadout_selection(
     double now_seconds) noexcept;
 [[nodiscard]] bool toggle_recipe_selection(
     RecipeSelection& selection, std::uint64_t item_id) noexcept;
-[[nodiscard]] Rectangle equipment_slot_rectangle(
-    InventoryLayout layout, items::ItemSlot slot) noexcept;
-[[nodiscard]] std::optional<items::ItemSlot> hit_test_equipped_slot(
-    Vector2 point, InventoryLayout layout,
-    const items::EquipmentState& equipment) noexcept;
 [[nodiscard]] std::optional<items::ItemSlot> hit_test_equipped_slot(
     Vector2 point, InventoryShellLayout layout,
     const items::EquipmentState& equipment) noexcept;
@@ -559,6 +527,12 @@ inventory_transient_status_for_frame(
     const InventoryTransientStatusInput& input) noexcept;
 [[nodiscard]] InventoryItemVisualState inventory_item_visual_state(
     const InventoryItemVisualInput& input) noexcept;
+[[nodiscard]] bool inventory_material_target_enabled(
+    const items::ItemOwnershipState& state,
+    const items::ItemInstance& item, items::MaterialId material,
+    std::optional<items::DirectedCategory> directed_category,
+    std::uint64_t root_seed, std::uint64_t operation_nonce,
+    bool authority_enabled) noexcept;
 [[nodiscard]] InventoryTooltipView inventory_tooltip_view(
     const items::ItemInstance& item,
     const std::optional<BuildDifference>& difference) noexcept;
@@ -566,6 +540,11 @@ inventory_transient_status_for_frame(
     InventoryShellLayout shell, Rectangle source,
     bool source_is_in_right_panel, const InventoryTooltipView& view,
     UiTextMeasureFn measure, void* measure_context) noexcept;
+[[nodiscard]] InventoryTooltipInteractionState
+inventory_tooltip_state_with_retained_source(
+    InventoryTooltipInteractionState state,
+    InventoryVisibleItemSource source,
+    Rectangle retention_corridor) noexcept;
 [[nodiscard]] InventoryTooltipInteractionResult inventory_tooltip_transition(
     InventoryTooltipInteractionState state,
     const InventoryTooltipInteractionInput& input) noexcept;
@@ -581,15 +560,4 @@ inventory_transient_status_for_frame(
     std::uint8_t variant) noexcept;
 [[nodiscard]] double item_attribute_display_value(
     std::int32_t raw_value, ItemAttributeLabel label) noexcept;
-[[nodiscard]] Rectangle detail_line_rectangle(
-    InventoryLayout layout, std::size_t line) noexcept;
-[[nodiscard]] InventoryDetailRowLayout inventory_detail_row_layout(
-    InventoryLayout layout, std::size_t line) noexcept;
-[[nodiscard]] bool detail_content_fits(
-    InventoryLayout layout, std::size_t line_count) noexcept;
-[[nodiscard]] std::size_t detail_line_character_capacity(
-    InventoryLayout layout) noexcept;
-[[nodiscard]] bool detail_text_fits(InventoryLayout layout,
-    std::string_view text) noexcept;
-
 }  // namespace arpg::platform

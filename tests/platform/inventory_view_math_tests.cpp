@@ -84,26 +84,32 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto& size : kSizes) {
-        const Rectangle viewport{0.0F, 0.0F,
-            static_cast<float>(size[0]), static_cast<float>(size[1])};
-        const platform::InventoryLayout layout =
-            platform::inventory_layout(size[0], size[1]);
-        ARPG_REQUIRE(inside(layout.equipment, viewport));
-        ARPG_REQUIRE(inside(layout.grid, viewport));
-        ARPG_REQUIRE(inside(layout.detail, viewport));
-        ARPG_REQUIRE(separated(layout.equipment, layout.grid));
-        ARPG_REQUIRE(separated(layout.grid, layout.detail));
-        ARPG_REQUIRE(layout.equipment.width > 0.0F);
-        ARPG_REQUIRE(layout.grid.width > 0.0F);
-        ARPG_REQUIRE(layout.detail.width > 0.0F);
-
         // This catches regressions where the shared POE2 shell falls back to
         // the legacy three-panel layout or lets compact controls overlap.
         const auto shell = platform::inventory_shell_layout(size[0], size[1]);
         ARPG_REQUIRE(shell.valid);
+        const float scale = shell.geometry_scale;
+        const float expected_header_height = std::max(32.0F, 44.0F * scale);
+        const float expected_status_height = std::max(32.0F, 52.0F * scale);
+        ARPG_REQUIRE(test::near(shell.header.x, 16.0F * scale));
+        ARPG_REQUIRE(test::near(shell.header.y, 16.0F * scale));
+        ARPG_REQUIRE(test::near(shell.header.height, expected_header_height));
+        ARPG_REQUIRE(test::near(shell.status_bar.height,
+            expected_status_height));
+        ARPG_REQUIRE(test::near(shell.content.y
+            - (shell.header.y + shell.header.height), 16.0F * scale));
+        ARPG_REQUIRE(test::near(shell.status_bar.y
+            - (shell.content.y + shell.content.height), 16.0F * scale));
+        ARPG_REQUIRE(test::near(shell.viewport.y + shell.viewport.height
+            - (shell.status_bar.y + shell.status_bar.height), 16.0F * scale));
+        ARPG_REQUIRE(test::near(shell.right_panel.x
+            - (shell.left_panel.x + shell.left_panel.width), 16.0F * scale));
+        ARPG_REQUIRE(test::near(shell.left_panel.width, 440.0F * scale));
         ARPG_REQUIRE(inside(shell.header, shell.viewport));
         ARPG_REQUIRE(inside(shell.left_panel, shell.viewport));
         ARPG_REQUIRE(inside(shell.right_panel, shell.viewport));
+        ARPG_REQUIRE(inside(shell.left_panel, shell.content));
+        ARPG_REQUIRE(inside(shell.right_panel, shell.content));
         ARPG_REQUIRE(inside(shell.status_bar, shell.viewport));
         ARPG_REQUIRE(separated(shell.left_panel, shell.right_panel));
         ARPG_REQUIRE(shell.right_panel.width > shell.left_panel.width);
@@ -112,12 +118,41 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         ARPG_REQUIRE(shell.hint_font_size >= 12.0F);
         ARPG_REQUIRE(inside(shell.slot_filter_bounds, shell.filter_bar));
         ARPG_REQUIRE(inside(shell.rarity_filter_bounds, shell.filter_bar));
+        ARPG_REQUIRE(shell.slot_filter_bounds.width >= 40.0F
+            && shell.slot_filter_bounds.height >= 32.0F);
+        ARPG_REQUIRE(shell.rarity_filter_bounds.width >= 40.0F
+            && shell.rarity_filter_bounds.height >= 32.0F);
         ARPG_REQUIRE(separated(shell.slot_filter_bounds,
             shell.rarity_filter_bounds));
         ARPG_REQUIRE(inside(shell.empty_state_bounds, shell.right_panel));
         ARPG_REQUIRE(inside(shell.status_bounds, shell.status_bar));
         ARPG_REQUIRE(inside(shell.action_bounds, shell.status_bar));
+        ARPG_REQUIRE(shell.action_bounds.width >= 40.0F
+            && shell.action_bounds.height >= 32.0F);
         ARPG_REQUIRE(separated(shell.status_bounds, shell.action_bounds));
+        const Vector2 action_center{
+            shell.action_bounds.x + shell.action_bounds.width * 0.5F,
+            shell.action_bounds.y + shell.action_bounds.height * 0.5F};
+        platform::InventoryStatusInput disabled_action_status_input{};
+        disabled_action_status_input.page = platform::InventoryPage::equipment;
+        const auto disabled_action_status =
+            platform::inventory_status_presentation(
+                disabled_action_status_input);
+        ARPG_REQUIRE(disabled_action_status.action_visible
+            && !disabled_action_status.action_enabled);
+        ARPG_REQUIRE(platform::inventory_page_action_contains(shell,
+            platform::InventoryPage::equipment, action_center));
+        ARPG_REQUIRE(platform::inventory_page_action_contains(shell,
+            platform::InventoryPage::skill_stones, action_center));
+        ARPG_REQUIRE(!platform::inventory_page_action_contains(shell,
+            platform::InventoryPage::materials, action_center));
+        platform::InventoryPointerPriorityInput disabled_action_click{};
+        disabled_action_click.page_action =
+            platform::inventory_page_action_contains(shell,
+                platform::InventoryPage::equipment, action_center);
+        disabled_action_click.background_clear = true;
+        ARPG_REQUIRE(platform::inventory_pointer_layer(disabled_action_click)
+            == platform::InventoryPointerLayer::page_action);
         if (shell.hint_visible) {
             ARPG_REQUIRE(inside(shell.hint_bounds, shell.status_bar));
             ARPG_REQUIRE(separated(shell.action_bounds, shell.hint_bounds));
@@ -127,6 +162,7 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         for (const Rectangle tab : shell.tabs) {
             ARPG_REQUIRE(tab.width >= 40.0F);
             ARPG_REQUIRE(tab.height >= 32.0F);
+            ARPG_REQUIRE(test::near(tab.height, expected_header_height));
             ARPG_REQUIRE(inside(tab, shell.viewport));
         }
         for (std::size_t left{}; left < shell.tabs.size(); ++left) {
@@ -137,9 +173,24 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         }
         for (const Rectangle slot : shell.equipment_slots) {
             ARPG_REQUIRE(inside(slot, shell.left_panel));
-            ARPG_REQUIRE(slot.width >= 40.0F);
-            ARPG_REQUIRE(slot.height >= 32.0F);
+            ARPG_REQUIRE(test::near(slot.width, 78.0F * scale));
+            ARPG_REQUIRE(test::near(slot.height, 78.0F * scale));
         }
+        for (std::size_t left{}; left < shell.equipment_slots.size(); ++left) {
+            for (std::size_t right = left + 1U;
+                 right < shell.equipment_slots.size(); ++right) {
+                ARPG_REQUIRE(separated(shell.equipment_slots[left],
+                    shell.equipment_slots[right]));
+            }
+        }
+        const Rectangle helmet = shell.equipment_slots[
+            static_cast<std::size_t>(items::ItemSlot::helmet)];
+        const Rectangle chest = shell.equipment_slots[
+            static_cast<std::size_t>(items::ItemSlot::chest)];
+        const Rectangle boots = shell.equipment_slots[
+            static_cast<std::size_t>(items::ItemSlot::boots)];
+        ARPG_REQUIRE(helmet.y < chest.y && chest.y < boots.y);
+        ARPG_REQUIRE(inside(shell.silhouette, shell.left_panel));
     }
     platform::InventoryPointerPriorityInput layered{};
     layered.tooltip = true;
@@ -291,6 +342,19 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     ARPG_REQUIRE(std::string_view(filtered_presentation.title) == u8"当前过滤无结果");
     ARPG_REQUIRE(std::string_view(filtered_presentation.hint) == u8"切换装备槽及稀有度");
 
+    items::ItemInstance reinforced = make_item(
+        81U, 1U, items::ItemRarity::rare);
+    reinforced.reinforcement = 12U;
+    const auto reinforced_slot_label =
+        platform::inventory_equipment_slot_label(
+            items::ItemSlot::weapon, &reinforced);
+    ARPG_REQUIRE(std::string_view{reinforced_slot_label.data()}
+        == u8"+12 · 精炼之刃");
+    const auto empty_slot_label = platform::inventory_equipment_slot_label(
+        items::ItemSlot::weapon, nullptr);
+    ARPG_REQUIRE(std::string_view{empty_slot_label.data()} == u8"武器");
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(reinforced_slot_label.data()));
+
     platform::RecipeSelection recipe{};
     recipe.ids = {{11U, 13U, 14U}};
     recipe.count = 3U;
@@ -312,6 +376,23 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
     ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
         recipe, true, false}).outline
         == platform::InventoryItemOutline::disabled_target);
+
+    state.materials[items::material_index(items::MaterialId::transmute)] = 1U;
+    const items::ItemInstance& normal_target = state.items[0U];
+    ARPG_REQUIRE(platform::inventory_material_target_enabled(state,
+        normal_target, items::MaterialId::transmute, std::nullopt,
+        0xA11CEU, 12U, true));
+    ARPG_REQUIRE(!platform::inventory_material_target_enabled(state,
+        normal_target, items::MaterialId::transmute, std::nullopt,
+        0xA11CEU, 12U, false));
+    state.materials[items::material_index(items::MaterialId::transmute)] = 0U;
+    ARPG_REQUIRE(!platform::inventory_material_target_enabled(state,
+        normal_target, items::MaterialId::transmute, std::nullopt,
+        0xA11CEU, 12U, true));
+    state.materials[items::material_index(items::MaterialId::transmute)] = 1U;
+    ARPG_REQUIRE(!platform::inventory_material_target_enabled(state,
+        state.items[2U], items::MaterialId::transmute, std::nullopt,
+        0xA11CEU, 12U, true));
 
     const auto shell_1280 = platform::inventory_shell_layout(1280, 720);
     platform::InventoryViewCache source_cache{};
@@ -449,19 +530,20 @@ test::Failure ctrl_selection_toggles_and_never_exceeds_three() noexcept {
 }
 
 test::Failure equipped_slot_hit_requires_an_occupied_slot() noexcept {
-    const platform::InventoryLayout layout = platform::inventory_layout(1280, 720);
+    const platform::InventoryShellLayout layout =
+        platform::inventory_shell_layout(1280, 720);
     items::EquipmentState equipment{};
     equipment.equipped_ids[2] = 42U;
-    const Rectangle occupied = platform::equipment_slot_rectangle(
-        layout, items::ItemSlot::chest);
+    const Rectangle occupied = layout.equipment_slots[
+        static_cast<std::size_t>(items::ItemSlot::chest)];
     const Vector2 center{occupied.x + occupied.width * 0.5F,
         occupied.y + occupied.height * 0.5F};
     const auto hit = platform::hit_test_equipped_slot(center, layout, equipment);
     ARPG_REQUIRE(hit.has_value());
     ARPG_REQUIRE(*hit == items::ItemSlot::chest);
 
-    const Rectangle empty = platform::equipment_slot_rectangle(
-        layout, items::ItemSlot::weapon);
+    const Rectangle empty = layout.equipment_slots[
+        static_cast<std::size_t>(items::ItemSlot::weapon)];
     ARPG_REQUIRE(!platform::hit_test_equipped_slot(
         {empty.x + 2.0F, empty.y + 2.0F}, layout, equipment).has_value());
     return {};
@@ -491,6 +573,8 @@ test::Failure inventory_and_passive_overlays_are_mutually_exclusive() noexcept {
 test::Failure comparison_uses_full_build_fields() noexcept {
     combat::PlayerCombatBuild current{};
     current.values.max_health = 100;
+    current.values.max_barrier = 200;
+    current.values.movement_speed = 10000;
     current.values.armor = 1000;
     current.values.evasion = 250;
     current.values.damage_reduction[0] = 1200;
@@ -506,6 +590,8 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     current.local_attack_speed_bp = 500;
     combat::PlayerCombatBuild candidate = current;
     candidate.values.max_health = 114;
+    candidate.values.max_barrier = 225;
+    candidate.values.movement_speed = 10750;
     candidate.values.armor = 4000;
     candidate.values.evasion = 200;
     candidate.values.damage_reduction[0] = 1500;
@@ -523,6 +609,8 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     const platform::BuildDifference difference =
         platform::compare_player_builds(current, candidate);
     ARPG_REQUIRE(difference.max_health == 14);
+    ARPG_REQUIRE(difference.max_barrier == 25);
+    ARPG_REQUIRE(difference.move_speed == 750);
     ARPG_REQUIRE(difference.armor == 3000);
     ARPG_REQUIRE(difference.evasion == -50);
     ARPG_REQUIRE(difference.damage_reduction[0] == 300);
@@ -556,6 +644,17 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(status.tone == platform::InventoryStatusTone::positive);
     ARPG_REQUIRE(std::string_view{status.action.data()} == u8"三合一（3/3）");
 
+    // The materials page must not inherit the equipment double-click/recipe
+    // instruction when no material is selected.
+    platform::InventoryStatusInput materials_status_input{};
+    materials_status_input.page = platform::InventoryPage::materials;
+    const auto materials_status =
+        platform::inventory_status_presentation(materials_status_input);
+    ARPG_REQUIRE(std::string_view{materials_status.status.data()} == u8"材料");
+    ARPG_REQUIRE(std::string_view{materials_status.hint.data()}
+        == u8"选择物品应用");
+    ARPG_REQUIRE(!materials_status.action_visible);
+
     platform::InventoryTransientStatusState transient{};
     platform::InventoryTransientStatusInput baseline_input{};
     baseline_input.commit_generation = 10U;
@@ -579,13 +678,85 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(new_receipt.presentation.kind
         == platform::InventoryTransientStatusKind::reinforcement_receipt);
 
-    const items::ItemInstance tooltip_item = make_item(
+    items::ItemInstance tooltip_item = make_item(
         9001U, 1U, items::ItemRarity::rare);
+    tooltip_item.affixes[0] = {2U, 1U, 0xFFU,
+        items::kAffixValueRollCanonicalBp};
+    tooltip_item.affixes[1] = {1U, 1U, 0xFFU,
+        items::kAffixValueRollCanonicalBp};
+    tooltip_item.affixes[2] = {101U, 1U, 0xFFU,
+        items::kAffixValueRollCanonicalBp};
+    tooltip_item.affix_count = 3U;
+    platform::BuildDifference display_difference{};
+    display_difference.max_health = 14 * modifiers::kFixedOne;
+    display_difference.max_barrier = 25 * modifiers::kFixedOne;
+    display_difference.flat_damage[0] = 25000;
+    display_difference.damage_increased[0] = 4200;
+    display_difference.move_speed = -1250;
+    display_difference.attack_speed = 1200;
+    display_difference.melee_damage = 800;
+    display_difference.impulse_scale = 700;
+    display_difference.weapon_physical = 3;
+    display_difference.local_attack_speed_bp = 250;
+    display_difference.armor = 7;
+    display_difference.evasion = -5;
+    display_difference.armor_reduction_bp = 125;
+    display_difference.evasion_rate_bp = -250;
+    display_difference.damage_reduction[0] = 300;
+    display_difference.damage_reduction_cap_bonus[0] = 200;
     const auto tooltip = platform::inventory_tooltip_view(tooltip_item,
-        difference);
+        display_difference);
     ARPG_REQUIRE(tooltip.valid);
     ARPG_REQUIRE(tooltip.line_count <= tooltip.lines.size());
     ARPG_REQUIRE(tooltip.line_count > 0U);
+    const auto has_segment = [&tooltip](std::string_view expected) noexcept {
+        for (std::size_t line{}; line < tooltip.line_count; ++line) {
+            for (std::size_t segment{};
+                 segment < tooltip.lines[line].segment_count; ++segment) {
+                if (std::string_view{
+                        tooltip.lines[line].segments[segment].text.data()}
+                        == expected) return true;
+            }
+        }
+        return false;
+    };
+    const auto group_has_segment = [&tooltip](std::string_view heading,
+        std::string_view expected) noexcept {
+        for (std::size_t line{}; line < tooltip.line_count; ++line) {
+            const auto& candidate = tooltip.lines[line];
+            if (candidate.segment_count < 2U
+                || std::string_view{candidate.segments[0].text.data()}
+                    != heading) continue;
+            for (std::size_t segment = 1U;
+                 segment < candidate.segment_count; ++segment) {
+                if (std::string_view{candidate.segments[segment].text.data()}
+                    == expected) return true;
+            }
+        }
+        return false;
+    };
+    // These literals protect the player-facing unit contract. Affix rolls use
+    // their semantic display unit, while comparison fields mix fixed scalars,
+    // integer ratings and basis-point percentages.
+    ARPG_REQUIRE(has_segment(u8"1级 前缀 凶猛 +42%"));
+    ARPG_REQUIRE(has_segment(u8"1级 前缀 锋利 +12"));
+    ARPG_REQUIRE(has_segment(u8"1级 后缀 火焰 +12%"));
+    ARPG_REQUIRE(group_has_segment(u8"生存", u8"生命 +14"));
+    ARPG_REQUIRE(group_has_segment(u8"生存", u8"护盾 +25"));
+    ARPG_REQUIRE(group_has_segment(u8"基础伤害", u8"物理 +2.5"));
+    ARPG_REQUIRE(group_has_segment(u8"伤害提高", u8"物理 +42%"));
+    ARPG_REQUIRE(group_has_segment(u8"速度", u8"移动 -12.5%"));
+    ARPG_REQUIRE(group_has_segment(u8"速度", u8"攻击 +12%"));
+    ARPG_REQUIRE(group_has_segment(u8"近战", u8"伤害 +8%"));
+    ARPG_REQUIRE(group_has_segment(u8"近战", u8"击退 +7%"));
+    ARPG_REQUIRE(group_has_segment(u8"武器", u8"物理 +3"));
+    ARPG_REQUIRE(group_has_segment(u8"武器", u8"局部攻速 +2.5%"));
+    ARPG_REQUIRE(group_has_segment(u8"防御", u8"护甲 +7"));
+    ARPG_REQUIRE(group_has_segment(u8"防御", u8"闪避 -5"));
+    ARPG_REQUIRE(group_has_segment(u8"防御", u8"减伤 +1.25%"));
+    ARPG_REQUIRE(group_has_segment(u8"防御", u8"闪避率 -2.5%"));
+    ARPG_REQUIRE(group_has_segment(u8"元素减伤", u8"火 +3%"));
+    ARPG_REQUIRE(group_has_segment(u8"减伤上限", u8"火 +2%"));
 
     // A narrow 224px content region must reserve visual lines before placing
     // wrapped segments. The old implementation reserved only logical lines.
@@ -603,7 +774,7 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     }
     wrapped.line_count = 6U;
     wrapped.valid = true;
-    const auto shell = platform::inventory_shell_layout(1280, 720);
+    const auto shell = platform::inventory_shell_layout(800, 450);
     const auto wrapped_layout = platform::inventory_tooltip_layout(shell,
         shell.equipment_slots[0], false, wrapped, &linear_measure, nullptr);
     ARPG_REQUIRE(wrapped_layout.valid);
@@ -788,6 +959,31 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(platform::inventory_status_presentation({}).tone
         == platform::InventoryStatusTone::muted);
 
+    platform::InventoryStatusInput skill_status_input{};
+    skill_status_input.page = platform::InventoryPage::skill_stones;
+    skill_status_input.authority_enabled = true;
+    const auto skill_equip_status =
+        platform::inventory_status_presentation(skill_status_input);
+    ARPG_REQUIRE(std::string_view(skill_equip_status.status.data())
+        == platform::ui_text(platform::UiTextId::inventory_skill_equip_hint));
+    ARPG_REQUIRE(skill_equip_status.action_visible
+        && !skill_equip_status.action_enabled);
+    skill_status_input.active_skill_removable = true;
+    const auto skill_selected_status =
+        platform::inventory_status_presentation(skill_status_input);
+    ARPG_REQUIRE(std::string_view(skill_selected_status.status.data())
+        == platform::ui_text(platform::UiTextId::inventory_skill_swap_hint));
+    ARPG_REQUIRE(std::string_view(skill_selected_status.hint.data())
+        == platform::ui_text(platform::UiTextId::inventory_skill_remove_hint));
+    ARPG_REQUIRE(skill_selected_status.action_visible
+        && skill_selected_status.action_enabled);
+    skill_status_input.save_state =
+        platform::InventorySavePresentationState::saving;
+    const auto skill_saving_status =
+        platform::inventory_status_presentation(skill_status_input);
+    ARPG_REQUIRE(skill_saving_status.action_visible
+        && !skill_saving_status.action_enabled);
+
     platform::InventoryTooltipInteractionState interaction{};
     const Rectangle corridor{10.0F, 10.0F, 80.0F, 40.0F};
     auto hover = platform::inventory_tooltip_transition(interaction,
@@ -796,30 +992,62 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     interaction = hover.state;
     const auto frozen = platform::inventory_tooltip_transition(interaction,
         {{}, {}, {}, false, {20.0F, 20.0F}, false, false, false, false});
-    ARPG_REQUIRE(frozen.state.frozen_item_id == 55U);
+    ARPG_REQUIRE(frozen.state.frozen_item_id == 55U
+        && !frozen.blocks_pointer);
+    const platform::InventoryVisibleItemSource rebuilt_source{
+        55U, {140.0F, 120.0F, 60.0F, 60.0F}, true, true};
+    const Rectangle rebuilt_corridor{120.0F, 100.0F, 220.0F, 180.0F};
+    const auto rebuilt_state = platform::inventory_tooltip_state_with_retained_source(
+        frozen.state, rebuilt_source, rebuilt_corridor);
+    ARPG_REQUIRE(rebuilt_state.source.x == rebuilt_source.bounds.x
+        && rebuilt_state.source.y == rebuilt_source.bounds.y
+        && rebuilt_state.source.width == rebuilt_source.bounds.width
+        && rebuilt_state.source.height == rebuilt_source.bounds.height
+        && rebuilt_state.retention_corridor.x == rebuilt_corridor.x
+        && rebuilt_state.retention_corridor.y == rebuilt_corridor.y
+        && rebuilt_state.retention_corridor.width == rebuilt_corridor.width
+        && rebuilt_state.retention_corridor.height == rebuilt_corridor.height
+        && rebuilt_state.source_is_in_right_panel);
+    const auto retained_after_rebuild = platform::inventory_tooltip_transition(
+        rebuilt_state,
+        {{}, {}, {}, false, {300.0F, 250.0F}, false, false, false, false});
+    ARPG_REQUIRE(retained_after_rebuild.state.visible
+        && retained_after_rebuild.state.frozen_item_id == 55U);
     auto invalidated_input = platform::InventoryTooltipInteractionInput{};
     invalidated_input.pointer = {20.0F, 20.0F};
     invalidated_input.source_invalidated = true;
     const auto invalidated = platform::inventory_tooltip_transition(frozen.state,
         invalidated_input);
     ARPG_REQUIRE(!invalidated.state.visible && invalidated.state.hovered_item_id == 0U
-        && invalidated.state.frozen_item_id == 0U);
+        && invalidated.state.frozen_item_id == 0U
+        && invalidated.state.suppressed_item_id == 0U
+        && invalidated.state.source.width == 0.0F
+        && invalidated.state.retention_corridor.width == 0.0F
+        && !invalidated.state.source_is_in_right_panel
+        && !invalidated.blocks_pointer);
     const auto closed = platform::inventory_tooltip_transition(frozen.state,
-        {{}, {}, {}, false, {20.0F, 20.0F}, false, true, true, false});
+        {{}, {}, {}, false, {20.0F, 20.0F}, true, true, true, false});
     ARPG_REQUIRE(!closed.state.visible && closed.state.suppressed_item_id == 55U
         && closed.clear_persistent_selection && closed.blocks_pointer);
     const auto suppressed = platform::inventory_tooltip_transition(closed.state,
         {55U, corridor, corridor, false, {20.0F, 20.0F}, false, false, false, false});
     ARPG_REQUIRE(!suppressed.state.visible);
+    const auto alternate_suppressed = platform::inventory_tooltip_transition(
+        suppressed.state,
+        {77U, corridor, corridor, false, {20.0F, 20.0F}, false, false, false,
+            false});
+    ARPG_REQUIRE(!alternate_suppressed.state.visible
+        && alternate_suppressed.state.suppressed_item_id == 55U);
     const auto restored = platform::inventory_tooltip_transition(suppressed.state,
         {55U, corridor, corridor, true, {200.0F, 200.0F}, false, false, false, false});
     ARPG_REQUIRE(restored.state.visible && restored.state.source_is_in_right_panel);
     const auto right_click = platform::inventory_tooltip_transition(restored.state,
-        {{}, {}, {}, false, {20.0F, 20.0F}, false, true, false, false});
+        {{}, {}, {}, false, {20.0F, 20.0F}, true, true, false, false});
     ARPG_REQUIRE(!right_click.clear_persistent_selection && right_click.blocks_pointer);
     const auto background = platform::inventory_tooltip_transition(restored.state,
         {{}, {}, {}, false, {20.0F, 20.0F}, false, false, false, true});
-    ARPG_REQUIRE(background.clear_persistent_selection && background.blocks_pointer);
+    ARPG_REQUIRE(background.clear_persistent_selection
+        && !background.blocks_pointer);
     const Vector2 grid_pointer{shell.grid_viewport.x + 1.0F,
         shell.grid_viewport.y + 1.0F};
     const float scrolled = platform::inventory_grid_scroll_after_wheel(
@@ -1013,89 +1241,113 @@ test::Failure all_catalog_affixes_use_semantic_value_units() noexcept {
     return {};
 }
 
-test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
+test::Failure tooltip_content_stays_inside_all_required_viewports() noexcept {
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
+    items::ItemInstance item = make_item(9100U, 1U, items::ItemRarity::rare);
+    item.item_level = 72U;
+    item.required_level = 64U;
+    item.reinforcement = 12U;
+    item.affix_count = 6U;
+    for (std::size_t index{}; index < item.affix_count; ++index) {
+        item.affixes[index].affix_id = static_cast<std::uint16_t>(index + 1U);
+        item.affixes[index].tier = 1U;
+    }
+    platform::BuildDifference difference{};
+    difference.max_health = 100;
+    difference.max_barrier = -50;
+    difference.melee_damage = 200;
+    difference.impulse_scale = -100;
+    difference.move_speed = 300;
+    difference.attack_speed = -200;
+    difference.armor = 400;
+    difference.evasion = -300;
+    difference.weapon_physical = 500;
+    difference.local_attack_speed_bp = -100;
+    difference.flat_damage = {{1, -2, 3, -4, 5}};
+    difference.damage_increased = {{10, -20, 30, -40, 50}};
+    difference.damage_reduction = {{100, -200, 300, -400}};
+    difference.damage_reduction_cap_bonus = {{100, -100, 200, -200}};
+    const auto view = platform::inventory_tooltip_view(item, difference);
+    ARPG_REQUIRE(view.valid);
+    ARPG_REQUIRE(view.line_count >= 12U);
+    std::size_t expected_placements{};
+    for (std::size_t line{}; line < view.line_count; ++line)
+        expected_placements += view.lines[line].segment_count;
     for (const auto& size : kSizes) {
-        const platform::InventoryLayout layout =
-            platform::inventory_layout(size[0], size[1]);
-        ARPG_REQUIRE(platform::detail_content_fits(layout, 21U));
-        for (std::size_t line = 0U; line < 21U; ++line) {
-            const Rectangle rectangle =
-                platform::detail_line_rectangle(layout, line);
-            ARPG_REQUIRE(inside(rectangle, layout.detail));
-            ARPG_REQUIRE(rectangle.width >= 211.0F);
-        }
-        ARPG_REQUIRE(platform::detail_line_character_capacity(layout) >= 26U);
-        constexpr std::array<std::string_view, 5> kLongestLines{{
-            u8"1级 后缀 猎杀 [全局] 闪电减伤上限",
-            u8"1级 前缀 锋利 [全局] 火焰伤害",
-            u8"基础 [全局] 全元素减伤",
-            u8"局部攻击速度",
-            u8"闪避率",
-        }};
-        for (const std::string_view line : kLongestLines) {
-            ARPG_REQUIRE(platform::detail_text_fits(layout, line));
-        }
-        for (std::size_t line = 0U; line < 21U; ++line) {
-            const platform::InventoryDetailRowLayout row =
-                platform::inventory_detail_row_layout(layout, line);
-            ARPG_REQUIRE(row.valid);
-            const Rectangle line_bounds =
-                platform::detail_line_rectangle(layout, line);
-            ARPG_REQUIRE(inside(row.label_bounds, line_bounds));
-            ARPG_REQUIRE(inside(row.value_bounds, line_bounds));
-            ARPG_REQUIRE(row.label_bounds.x + row.label_bounds.width
-                <= row.value_bounds.x);
-            ARPG_REQUIRE(row.gap > 0.0F);
-        }
-
-        struct ApprovedDetailRow final {
-            const char* label;
-            const char* value;
-        };
-        constexpr std::array<ApprovedDetailRow, 4> kApprovedRows{{
-            {u8"基础 [全局]", u8"全元素减伤 +12%"},
-            {u8"1级 后缀 猎杀 [全局]", u8"闪电减伤上限 +12%"},
-            {u8"1级 前缀 锋利 [全局]", u8"最终火焰伤害 ×1.12"},
-            {u8"护甲/减伤/闪避/闪避率", u8"+999/+99%/+999/+99%"},
-        }};
-        const platform::InventoryDetailRowLayout approved_row =
-            platform::inventory_detail_row_layout(layout, 0U);
-        for (const ApprovedDetailRow& text : kApprovedRows) {
-            std::array<char, 128> fitted_label{};
-            std::array<char, 128> fitted_value{};
-            const float preferred = 16.0F * layout.scale;
-            const float minimum = 9.0F * layout.scale;
-            const float spacing = 0.5F * layout.scale;
-            const auto label_fit = platform::fit_centered_ui_text(
-                fitted_label.data(), fitted_label.size(), text.label,
-                approved_row.label_bounds, preferred, minimum, spacing,
-                &mixed_width_measure, nullptr);
-            const auto value_fit = platform::fit_centered_ui_text(
-                fitted_value.data(), fitted_value.size(), text.value,
-                approved_row.value_bounds, preferred, minimum, spacing,
-                &mixed_width_measure, nullptr);
-            ARPG_REQUIRE(label_fit.drawable);
-            ARPG_REQUIRE(value_fit.drawable);
-            ARPG_REQUIRE(!label_fit.truncated);
-            ARPG_REQUIRE(!value_fit.truncated);
-        }
+        const auto shell = platform::inventory_shell_layout(size[0], size[1]);
+        const Rectangle right_source = platform::inventory_grid_item_rectangle(
+            shell, 0U, 0.0F);
+        const auto right_layout = platform::inventory_tooltip_layout(shell,
+            right_source, true, view, &mixed_width_measure, nullptr);
+        ARPG_REQUIRE(right_layout.valid);
+        ARPG_REQUIRE(inside(right_layout.backing, shell.left_panel));
+        ARPG_REQUIRE(inside(right_layout.backing, shell.content));
+        ARPG_REQUIRE(right_layout.backing.x + right_layout.backing.width
+            + 8.0F * shell.geometry_scale <= right_source.x);
+        ARPG_REQUIRE(right_layout.backing.width >= 224.0F);
+        ARPG_REQUIRE(right_layout.backing.width <= 630.0F);
+        const Rectangle left_source = shell.equipment_slots[
+            static_cast<std::size_t>(items::ItemSlot::weapon)];
+        const auto left_layout = platform::inventory_tooltip_layout(shell,
+            left_source, false, view, &mixed_width_measure, nullptr);
+        ARPG_REQUIRE(left_layout.valid);
+        ARPG_REQUIRE(inside(left_layout.backing, shell.right_panel));
+        ARPG_REQUIRE(inside(left_layout.backing, shell.content));
+        ARPG_REQUIRE(left_layout.backing.x >= left_source.x
+            + left_source.width + 8.0F * shell.geometry_scale);
+        ARPG_REQUIRE(left_layout.placement_count == right_layout.placement_count);
+        ARPG_REQUIRE(left_layout.placement_count == expected_placements);
     }
 
-    const platform::InventoryLayout layout =
-        platform::inventory_layout(1280, 720);
+    auto fallback_shell = platform::inventory_shell_layout(1280, 720);
+    const Rectangle fallback_right_source =
+        platform::inventory_grid_item_rectangle(fallback_shell, 0U, 0.0F);
+    fallback_shell.left_panel.width = 200.0F;
+    const auto fallback_left = platform::inventory_tooltip_layout(
+        fallback_shell, fallback_right_source, true, view,
+        &mixed_width_measure, nullptr);
+    ARPG_REQUIRE(fallback_left.valid);
+    ARPG_REQUIRE(inside(fallback_left.backing, fallback_shell.content));
+    ARPG_REQUIRE(!inside(fallback_left.backing, fallback_shell.left_panel));
+    ARPG_REQUIRE(fallback_left.backing.x + fallback_left.backing.width
+        + 8.0F * fallback_shell.geometry_scale <= fallback_right_source.x);
+
+    fallback_shell = platform::inventory_shell_layout(1280, 720);
+    const Rectangle fallback_left_source = fallback_shell.equipment_slots[
+        static_cast<std::size_t>(items::ItemSlot::weapon)];
+    fallback_shell.right_panel.width = 200.0F;
+    const auto fallback_right = platform::inventory_tooltip_layout(
+        fallback_shell, fallback_left_source, false, view,
+        &mixed_width_measure, nullptr);
+    ARPG_REQUIRE(fallback_right.valid);
+    ARPG_REQUIRE(inside(fallback_right.backing, fallback_shell.content));
+    ARPG_REQUIRE(!inside(fallback_right.backing, fallback_shell.right_panel));
+    ARPG_REQUIRE(fallback_right.backing.x >= fallback_left_source.x
+        + fallback_left_source.width
+        + 8.0F * fallback_shell.geometry_scale);
+
+    auto blocked_shell = platform::inventory_shell_layout(800, 450);
+    blocked_shell.left_panel.width = 200.0F;
+    const Rectangle blocked_source{blocked_shell.content.x + 220.0F,
+        blocked_shell.content.y + 40.0F, 340.0F, 60.0F};
+    ARPG_REQUIRE(!platform::inventory_tooltip_layout(blocked_shell,
+        blocked_source, true, view, &mixed_width_measure, nullptr).valid);
+
+    const auto shell = platform::inventory_shell_layout(1280, 720);
+    const Rectangle source = platform::inventory_grid_item_rectangle(
+        shell, 0U, 0.0F);
     std::size_t valid_count{};
     const std::uint64_t before = test::allocation_count();
-    for (std::size_t iteration = 0U; iteration < 100000U; ++iteration) {
-        valid_count += platform::inventory_detail_row_layout(
-            layout, iteration % 21U).valid ? 1U : 0U;
+    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+        valid_count += platform::inventory_tooltip_layout(shell, source, true,
+            view, &mixed_width_measure, nullptr).valid ? 1U : 0U;
     }
     const std::uint64_t after = test::allocation_count();
-    std::printf("[inventory-detail-layout] iterations=100000 allocations=%llu\n",
+    std::printf("[inventory-tooltip-layout] iterations=10000 allocations=%llu\n",
         static_cast<unsigned long long>(after - before));
-    ARPG_REQUIRE(valid_count == 100000U);
+    ARPG_REQUIRE(valid_count == 10000U);
     ARPG_REQUIRE(after == before);
     return {};
 }
@@ -1105,38 +1357,32 @@ test::Failure inventory_and_skill_text_boxes_use_disjoint_safe_areas() noexcept 
         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto size : kSizes) {
-        const Rectangle viewport{0.0F, 0.0F,
-            static_cast<float>(size[0]), static_cast<float>(size[1])};
-        const platform::InventoryLayout panels =
-            platform::inventory_layout(size[0], size[1]);
+        const auto shell = platform::inventory_shell_layout(size[0], size[1]);
         const platform::ActiveSkillLoadoutLayout skill =
-            platform::active_skill_loadout_layout(size[0], size[1]);
-        const platform::InventoryTextSafeLayout text =
-            platform::inventory_text_safe_layout(size[0], size[1]);
-        ARPG_REQUIRE(inside(text.page_title, viewport));
-        ARPG_REQUIRE(separated(text.page_title,
-            skill.equipment_page_button));
-        ARPG_REQUIRE(separated(text.page_title,
-            skill.skill_stones_page_button));
-        ARPG_REQUIRE(inside(text.equipment_panel_title, panels.equipment));
-        ARPG_REQUIRE(inside(text.grid_panel_title, panels.grid));
-        ARPG_REQUIRE(inside(text.detail_panel_title, panels.detail));
-        ARPG_REQUIRE(inside(text.skill_panel_title, skill.panel));
-        ARPG_REQUIRE(separated(text.skill_panel_title, skill.main_slots[0]));
-        ARPG_REQUIRE(separated(text.support_section_title,
-            skill.support_slots[0]));
-        ARPG_REQUIRE(separated(text.inventory_section_title,
-            skill.inventory_slots[0]));
+            platform::active_skill_loadout_layout(shell);
+        ARPG_REQUIRE(inside(skill.panel, shell.content));
+        for (const Rectangle main : skill.main_slots)
+            ARPG_REQUIRE(inside(main, shell.left_panel));
+        for (const Rectangle support : skill.support_slots)
+            ARPG_REQUIRE(inside(support, shell.left_panel));
+        for (const Rectangle inventory : skill.inventory_slots)
+            ARPG_REQUIRE(inside(inventory, shell.right_panel));
+        ARPG_REQUIRE(inside(skill.empty_bounds, shell.right_panel));
+        ARPG_REQUIRE(test::near(skill.empty_bounds.x
+            + skill.empty_bounds.width * 0.5F,
+            shell.right_panel.x + shell.right_panel.width * 0.5F));
+        ARPG_REQUIRE(test::near(skill.empty_bounds.y
+            + skill.empty_bounds.height * 0.5F,
+            shell.right_panel.y + shell.right_panel.height * 0.5F));
 
         constexpr const char* kLabels[] = {
-            u8"装备 / 材料", u8"技能石", u8"取出",
+            u8"装备", u8"技能石", u8"材料", u8"取出",
         };
         const Rectangle controls[] = {
-            skill.equipment_page_button,
-            skill.skill_stones_page_button,
+            shell.tabs[0U], shell.tabs[1U], shell.tabs[2U],
             skill.remove_button,
         };
-        for (std::size_t index = 0U; index < 3U; ++index) {
+        for (std::size_t index = 0U; index < 4U; ++index) {
             std::array<char, 64U> fitted{};
             const float preferred = 18.0F * skill.scale;
             const auto centered = platform::fit_centered_ui_text(
@@ -1168,8 +1414,8 @@ test::Failure inventory_and_skill_text_boxes_use_disjoint_safe_areas() noexcept 
             std::array<char, 64U> fitted{};
             const auto name_fit = platform::fit_centered_ui_text(
                 fitted.data(), fitted.size(), u8"极·鬼剑术（暴风式）",
-                bounds, 18.0F * skill.scale, 9.0F * panels.scale,
-                0.5F * panels.scale, &mixed_width_measure, nullptr);
+                bounds, std::max(12.0F, 18.0F * skill.scale), 12.0F,
+                0.5F * skill.scale, &mixed_width_measure, nullptr);
             ARPG_REQUIRE(name_fit.drawable);
             ARPG_REQUIRE(!name_fit.truncated);
             ARPG_REQUIRE(std::strcmp(
@@ -1181,16 +1427,16 @@ test::Failure inventory_and_skill_text_boxes_use_disjoint_safe_areas() noexcept 
 
 test::Failure full_hd_inventory_and_skill_geometry_scales_by_one_and_a_half()
     noexcept {
-    const platform::InventoryLayout inventory_720 =
-        platform::inventory_layout(1280, 720);
-    const platform::InventoryLayout inventory_1080 =
-        platform::inventory_layout(1920, 1080);
+    const platform::InventoryShellLayout inventory_720 =
+        platform::inventory_shell_layout(1280, 720);
+    const platform::InventoryShellLayout inventory_1080 =
+        platform::inventory_shell_layout(1920, 1080);
     const platform::ActiveSkillLoadoutLayout skill_720 =
-        platform::active_skill_loadout_layout(1280, 720);
+        platform::active_skill_loadout_layout(inventory_720);
     const platform::ActiveSkillLoadoutLayout skill_1080 =
-        platform::active_skill_loadout_layout(1920, 1080);
-    ARPG_REQUIRE(test::near(inventory_720.scale, 1.0F));
-    ARPG_REQUIRE(test::near(inventory_1080.scale, 1.5F));
+        platform::active_skill_loadout_layout(inventory_1080);
+    ARPG_REQUIRE(test::near(inventory_720.geometry_scale, 1.0F));
+    ARPG_REQUIRE(test::near(inventory_1080.geometry_scale, 1.5F));
     ARPG_REQUIRE(test::near(skill_720.scale, 1.0F));
     ARPG_REQUIRE(test::near(skill_1080.scale, 1.5F));
     ARPG_REQUIRE(skill_720.main_slots[0].width >= 200.0F);
@@ -1203,7 +1449,7 @@ test::Failure full_hd_inventory_and_skill_geometry_scales_by_one_and_a_half()
 
 test::Failure inventory_page_titles_follow_the_current_binding() noexcept {
     const auto equipment = platform::inventory_page_title(
-        platform::InventoryPage::equipment_materials, u8"右 Shift");
+        platform::InventoryPage::equipment, u8"右 Shift");
     const auto skills = platform::inventory_page_title(
         platform::InventoryPage::skill_stones, u8"右 Shift");
     const auto materials = platform::inventory_page_title(
@@ -1215,11 +1461,11 @@ test::Failure inventory_page_titles_follow_the_current_binding() noexcept {
     ARPG_REQUIRE(std::string_view(materials.data())
         == u8"按键提示：右 Shift / ESC  ·  材料背包");
     const auto unknown = platform::inventory_page_title(
-        platform::InventoryPage::equipment_materials, nullptr);
+        platform::InventoryPage::equipment, nullptr);
     ARPG_REQUIRE(std::string_view(unknown.data())
         == u8"按键提示：未知 / ESC  ·  装备背包");
     const auto longest = platform::inventory_page_title(
-        platform::InventoryPage::equipment_materials, u8"右 Shift");
+        platform::InventoryPage::equipment, u8"右 Shift");
     ARPG_REQUIRE(std::string_view(longest.data()).rfind(
         u8"按键提示：右 Shift / ESC", 0U) == 0U);
     ARPG_REQUIRE(platform::ui_utf8_is_valid(equipment.data()));
@@ -1228,7 +1474,7 @@ test::Failure inventory_page_titles_follow_the_current_binding() noexcept {
     ARPG_REQUIRE(platform::ui_utf8_is_valid(unknown.data()));
 
     const auto extreme = platform::inventory_page_title(
-        platform::InventoryPage::equipment_materials,
+        platform::InventoryPage::equipment,
         u8"超长中文绑定名称超长中文绑定名称超长中文绑定名称超长中文绑定名称");
     const std::string_view extreme_text{extreme.data()};
     constexpr std::string_view kEquipmentSuffix = u8" / ESC  ·  装备背包";
@@ -1257,8 +1503,8 @@ constexpr test::TestCase kCases[] = {
         &attribute_labels_are_human_readable_and_scoped},
     {"inventory catalog attribute units",
         &all_catalog_affixes_use_semantic_value_units},
-    {"inventory detail content boundaries",
-        &detail_content_stays_inside_all_required_viewports},
+    {"inventory tooltip content boundaries",
+        &tooltip_content_stays_inside_all_required_viewports},
     {"inventory and skill text safe areas",
         &inventory_and_skill_text_boxes_use_disjoint_safe_areas},
     {"full-HD inventory and skill scaling",

@@ -320,6 +320,71 @@ foreach ($page in @('hud','inventory','skill','pause')) {
         Name="missing-$page-ui-runtime-draw-1920"; Path=$missingPageRuntime }
 }
 
+$legacyInventoryDetail = New-Mutation 'legacy-inventory-detail-draw'
+$reportPath = Join-Path $legacyInventoryDetail 'stage12-material-evidence.txt'
+$legacyDetailReport = Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8
+$legacyDetailMatch = [regex]::Match($legacyDetailReport,
+    '(?m)^inventory_ui_draw_mask=(\d+)\r?$')
+if (-not $legacyDetailMatch.Success) {
+    throw 'mutation source text missing: legacy-inventory-detail-draw'
+}
+$legacyDetailMask = [uint64]$legacyDetailMatch.Groups[1].Value -bor
+    ([uint64]1 -shl 19)
+$legacyDetailReport = Replace-RegexRequired $legacyDetailReport `
+    '(?m)^inventory_ui_draw_mask=\d+\r?$' `
+    "inventory_ui_draw_mask=$legacyDetailMask" `
+    'legacy-inventory-detail-draw'
+$legacyDetailReport | Set-Content -LiteralPath $reportPath `
+    -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='legacy-inventory-detail-draw'; Path=$legacyInventoryDetail }
+
+$legacyInventoryRoles = New-Mutation 'legacy-inventory-text-roles'
+$reportPath = Join-Path $legacyInventoryRoles 'stage12-material-evidence.txt'
+$legacyRoleReport = Replace-RegexRequired `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    '(?m)^inventory_observed_text_roles=\d+\r?$' `
+    'inventory_observed_text_roles=15744' 'legacy-inventory-text-roles'
+$legacyRoleReport | Set-Content -LiteralPath $reportPath `
+    -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='legacy-inventory-text-roles'; Path=$legacyInventoryRoles }
+
+$legacyInventoryCount = New-Mutation 'legacy-inventory-text-count-20'
+$reportPath = Join-Path $legacyInventoryCount 'stage12-material-evidence.txt'
+$legacyCountReport = Replace-RegexRequired `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    '(?m)^inventory_real_font_measurements=\d+\r?$' `
+    'inventory_real_font_measurements=20' 'legacy-inventory-text-count-20'
+$legacyCountReport | Set-Content -LiteralPath $reportPath `
+    -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='legacy-inventory-text-count-20'; Path=$legacyInventoryCount }
+
+$missingInventoryRole = New-Mutation 'missing-inventory-equipment-role'
+$reportPath = Join-Path $missingInventoryRole 'stage12-material-evidence.txt'
+$missingRoleReport = Replace-RegexRequired `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    '(?m)^inventory_observed_text_roles_1920=\d+\r?$' `
+    'inventory_observed_text_roles_1920=8320' `
+    'missing-inventory-equipment-role'
+$missingRoleReport | Set-Content -LiteralPath $reportPath `
+    -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='missing-inventory-equipment-role'; Path=$missingInventoryRole }
+
+$wrongInventoryCount = New-Mutation 'wrong-inventory-text-count-nonzero'
+$reportPath = Join-Path $wrongInventoryCount 'stage12-material-evidence.txt'
+$wrongCountReport = Replace-RegexRequired `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    '(?m)^inventory_real_font_measurements_1920=\d+\r?$' `
+    'inventory_real_font_measurements_1920=18' `
+    'wrong-inventory-text-count-nonzero'
+$wrongCountReport | Set-Content -LiteralPath $reportPath `
+    -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='wrong-inventory-text-count-nonzero'; Path=$wrongInventoryCount }
+
 $missingBundledFont = New-Mutation 'missing-bundled-font-runtime'
 $reportPath = Join-Path $missingBundledFont 'stage12-material-evidence.txt'
 (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
@@ -715,8 +780,8 @@ $reportPath = Join-Path $wrongHudEcology 'stage12-material-evidence.txt'
 $mutations += @{
     Name='wrong-native-gameplay-hud-ecology'; Path=$wrongHudEcology }
 
-if ($mutations.Count -ne 80) {
-    throw "stage12 validator mutation inventory changed: expected=80 actual=$($mutations.Count)"
+if ($mutations.Count -ne 85) {
+    throw "stage12 validator mutation inventory changed: expected=85 actual=$($mutations.Count)"
 }
 $failures = @()
 foreach ($mutation in $mutations) {

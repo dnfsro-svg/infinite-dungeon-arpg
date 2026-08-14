@@ -55,6 +55,10 @@ enum class Stage17Capture : std::uint8_t {
     initial,
     draw_windup,
     draw_hit,
+    skill_empty,
+    skill_removed,
+    skill_selected,
+    skill_swapped,
     storm_array,
     storm_aerial,
     storm_finisher,
@@ -90,9 +94,16 @@ struct Stage17SkillStonesValidationState final {
         (std::numeric_limits<std::uint16_t>::max)()};
     bool initial_recorded{};
     bool initial_captured{};
+    bool initial_skipped{};
     bool draw_accepted{};
     bool draw_windup_captured{};
+    bool draw_windup_skipped{};
     bool draw_captured{};
+    bool draw_hit_skipped{};
+    bool skill_empty_captured{};
+    bool skill_removed_captured{};
+    bool skill_selected_captured{};
+    bool skill_swapped_captured{};
     bool storm_accepted{};
     bool storm_approach_locked{};
     bool storm_isolation_invalidated{};

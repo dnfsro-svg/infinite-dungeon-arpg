@@ -115,7 +115,7 @@ Assert-ValidatorRejects 'forged-state' {
 }
 Assert-ValidatorRejects 'forged-storm-summary' {
     param($caseRun)
-    $path = Join-Path $caseRun 'storm-summary.txt'
+    $path = Join-Path (Join-Path $caseRun '1280x720') 'storm-summary.txt'
     $text = [System.IO.File]::ReadAllText($path).Replace(
         'storm_strike_hit_count=3', 'storm_strike_hit_count=2')
     [System.IO.File]::WriteAllText(
@@ -123,7 +123,8 @@ Assert-ValidatorRejects 'forged-storm-summary' {
 }
 Assert-ValidatorRejects 'forged-cooldown-drain-summary' {
     param($caseRun)
-    $path = Join-Path $caseRun 'production-summary.txt'
+    $path = Join-Path (Join-Path $caseRun '1280x720') `
+        'production-summary-1280x720.txt'
     $text = [System.IO.File]::ReadAllText($path).Replace(
         'production_cooldowns_zero_before_shutdown=1',
         'production_cooldowns_zero_before_shutdown=0')
@@ -135,6 +136,56 @@ Assert-ValidatorRejects 'stale-png' {
     $marker = Get-Item -LiteralPath (Join-Path $caseRun 'run.marker')
     (Get-Item -LiteralPath (Join-Path $caseRun '04-storm-ground-array-1280x720.png')).LastWriteTimeUtc =
         $marker.LastWriteTimeUtc.AddSeconds(-1)
+}
+Assert-ValidatorRejects 'missing-scaled-skill-png' {
+    param($caseRun)
+    Remove-Item -LiteralPath `
+        (Join-Path $caseRun 'poe2-inventory-skill-selected-800x450.png')
+}
+Assert-ValidatorRejects 'wrong-scaled-skill-dimensions' {
+    param($caseRun)
+    Copy-Item -LiteralPath `
+        (Join-Path $caseRun 'poe2-inventory-skill-empty-800x450.png') `
+        -Destination `
+        (Join-Path $caseRun 'poe2-inventory-skill-empty-1920x1080.png') `
+        -Force
+}
+Assert-ValidatorRejects 'duplicate-skill-pixels' {
+    param($caseRun)
+    Copy-Item -LiteralPath `
+        (Join-Path $caseRun 'poe2-inventory-skill-empty-1280x720.png') `
+        -Destination `
+        (Join-Path $caseRun 'poe2-inventory-skill-selected-1280x720.png') `
+        -Force
+}
+Assert-ValidatorRejects 'captured-and-skipped' {
+    param($caseRun)
+    $path = Join-Path (Join-Path $caseRun '800x450') `
+        'production-summary-800x450.txt'
+    $text = [System.IO.File]::ReadAllText($path).Replace(
+        'initial_captured=0', 'initial_captured=1')
+    [System.IO.File]::WriteAllText(
+        $path, $text, [System.Text.UTF8Encoding]::new($false))
+}
+Assert-ValidatorRejects 'neither-captured-nor-skipped' {
+    param($caseRun)
+    $path = Join-Path (Join-Path $caseRun '800x450') `
+        'production-summary-800x450.txt'
+    $text = [System.IO.File]::ReadAllText($path).Replace(
+        'initial_skipped=1', 'initial_skipped=0')
+    [System.IO.File]::WriteAllText(
+        $path, $text, [System.Text.UTF8Encoding]::new($false))
+}
+Assert-ValidatorRejects 'forged-non1280-legacy-file' {
+    param($caseRun)
+    Copy-Item -LiteralPath (Join-Path $caseRun '01-new-default-1280x720.png') `
+        -Destination (Join-Path $caseRun '01-new-default-800x450.png')
+}
+Assert-ValidatorRejects 'missing-production-summary' {
+    param($caseRun)
+    Remove-Item -LiteralPath `
+        (Join-Path (Join-Path $caseRun '1920x1080') `
+            'production-summary-1920x1080.txt')
 }
 
 $junctionTarget = Join-Path $evidence 'validator-self-test-junction-target'

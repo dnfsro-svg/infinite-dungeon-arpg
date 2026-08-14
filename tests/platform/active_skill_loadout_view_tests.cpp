@@ -80,7 +80,16 @@ arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions(
         ARPG_REQUIRE(layout.remove_button.y == shell.action_bounds.y);
         ARPG_REQUIRE(layout.remove_button.width == shell.action_bounds.width);
         ARPG_REQUIRE(layout.remove_button.height == shell.action_bounds.height);
-        std::array<Rectangle, 13> hit_regions{};
+        ARPG_REQUIRE(inside(layout.empty_bounds, shell.right_panel));
+        ARPG_REQUIRE(std::fabs(layout.empty_bounds.x
+            + layout.empty_bounds.width * 0.5F
+            - (shell.right_panel.x + shell.right_panel.width * 0.5F))
+            < 0.001F);
+        ARPG_REQUIRE(std::fabs(layout.empty_bounds.y
+            + layout.empty_bounds.height * 0.5F
+            - (shell.right_panel.y + shell.right_panel.height * 0.5F))
+            < 0.001F);
+        std::array<Rectangle, 11> hit_regions{};
         std::size_t count = 0U;
         for (const Rectangle rectangle : layout.main_slots) {
             hit_regions[count++] = rectangle;
@@ -89,8 +98,6 @@ arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions(
             hit_regions[count++] = rectangle;
         }
         hit_regions[count++] = layout.remove_button;
-        hit_regions[count++] = layout.equipment_page_button;
-        hit_regions[count++] = layout.skill_stones_page_button;
         for (std::size_t left = 0U; left < count; ++left) {
             ARPG_REQUIRE(inside(hit_regions[left], viewport_bounds));
             for (std::size_t right = left + 1U; right < count; ++right) {

@@ -200,16 +200,13 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
     return {};
 }
 
-arpg::test::Failure minimum_layout_keeps_legacy_detail_and_shell_bag_valid() noexcept {
-    const auto legacy = platform::inventory_layout(800, 450);
+arpg::test::Failure minimum_layout_keeps_shell_bag_valid() noexcept {
     const auto shell = platform::inventory_shell_layout(800, 450);
     const platform::MaterialBagLayout bag =
         platform::material_bag_layout(
             shell.right_panel, shell.geometry_scale);
-    const Rectangle detail = platform::material_bag_detail_bounds(800, 450);
     ARPG_REQUIRE(bag.contains_all_slots());
-    ARPG_REQUIRE(detail.height > 0.0F);
-    ARPG_REQUIRE(inside(detail, legacy.detail));
+    ARPG_REQUIRE(inside(bag.panel, shell.right_panel));
     for (const Rectangle slot : bag.slots)
         ARPG_REQUIRE(inside(slot, shell.right_panel));
     return {};
@@ -240,6 +237,12 @@ arpg::test::Failure selected_material_requires_an_owned_material_slot() noexcept
         state, layout));
     ARPG_REQUIRE(renderer.selected_material() == items::MaterialId::directed);
     ARPG_REQUIRE(renderer.directed_category() == items::DirectedCategory::damage);
+    ARPG_REQUIRE(platform::material_bag_slot_visual_state(0U, true)
+        == platform::MaterialBagSlotVisualState::disabled);
+    ARPG_REQUIRE(platform::material_bag_slot_visual_state(1U, false)
+        == platform::MaterialBagSlotVisualState::idle);
+    ARPG_REQUIRE(platform::material_bag_slot_visual_state(1U, true)
+        == platform::MaterialBagSlotVisualState::selected);
     ARPG_REQUIRE(renderer.cycle_directed_category(
         center(layout.slots[directed]), layout));
     ARPG_REQUIRE(renderer.directed_category() == items::DirectedCategory::defense);
@@ -303,7 +306,7 @@ arpg::test::Failure material_bag_and_skill_stones_use_authored_icon_resources() 
 
 constexpr arpg::test::TestCase kCases[] = {
     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
-    {"minimum layout keeps legacy detail and shell bag valid", &minimum_layout_keeps_legacy_detail_and_shell_bag_valid},
+    {"minimum layout keeps shell bag valid", &minimum_layout_keeps_shell_bag_valid},
     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
     {"material bag selection cancels", &selected_material_can_be_cancelled_without_changing_counts},
     {"reinforcement requires destroy confirmation", &reinforcement_stone_requires_explicit_destroy_confirmation},

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <string>
 
 namespace arpg::platform::host_validation {
 namespace {
@@ -19,19 +20,120 @@ namespace {
 }
 
 
-[[nodiscard]] const char* stage17_capture_name(
+[[nodiscard]] const char* stage17_capture_stem(
     const Stage17Capture capture) noexcept {
     switch (capture) {
-    case Stage17Capture::initial: return "01-new-default-1280x720.png";
-    case Stage17Capture::draw_windup: return "02-draw-slash-windup-1280x720.png";
-    case Stage17Capture::draw_hit: return "03-draw-slash-hit-1280x720.png";
-    case Stage17Capture::storm_array: return "04-storm-ground-array-1280x720.png";
-    case Stage17Capture::storm_aerial: return "05-storm-aerial-array-1280x720.png";
-    case Stage17Capture::storm_finisher: return "06-storm-finisher-1280x720.png";
-    case Stage17Capture::restarted: return "07-restarted-loadout-1280x720.png";
+    case Stage17Capture::initial: return "01-new-default-";
+    case Stage17Capture::draw_windup: return "02-draw-slash-windup-";
+    case Stage17Capture::draw_hit: return "03-draw-slash-hit-";
+    case Stage17Capture::skill_empty:
+        return "poe2-inventory-skill-empty-";
+    case Stage17Capture::skill_removed:
+        return "poe2-inventory-skill-removed-";
+    case Stage17Capture::skill_selected:
+        return "poe2-inventory-skill-selected-";
+    case Stage17Capture::skill_swapped:
+        return "poe2-inventory-skill-swapped-";
+    case Stage17Capture::storm_array: return "04-storm-ground-array-";
+    case Stage17Capture::storm_aerial: return "05-storm-aerial-array-";
+    case Stage17Capture::storm_finisher: return "06-storm-finisher-";
+    case Stage17Capture::restarted: return "07-restarted-loadout-";
     case Stage17Capture::none: break;
     }
     return nullptr;
+}
+
+[[nodiscard]] std::string stage17_resolution_name(
+    const RaylibHostConfig& config) {
+    return std::to_string(config.window_width) + 'x'
+        + std::to_string(config.window_height);
+}
+
+[[nodiscard]] std::string stage17_capture_name(
+    const RaylibHostConfig& config, const Stage17Capture capture) {
+    const char* const stem = stage17_capture_stem(capture);
+    if (stem == nullptr) return {};
+    return std::string{stem} + stage17_resolution_name(config) + ".png";
+}
+
+[[nodiscard]] bool stage17_legacy_capture(
+    const Stage17Capture capture) noexcept {
+    return capture == Stage17Capture::initial
+        || capture == Stage17Capture::draw_windup
+        || capture == Stage17Capture::draw_hit;
+}
+
+[[nodiscard]] bool stage17_legacy_resolution(
+    const RaylibHostConfig& config) noexcept {
+    return config.window_width == 1280 && config.window_height == 720;
+}
+
+void complete_stage17_capture(Stage17SkillStonesValidationState& state,
+    const bool skipped) noexcept {
+    switch (state.capture_pending) {
+    case Stage17Capture::initial:
+        state.initial_captured = !skipped;
+        state.initial_skipped = skipped;
+        state.step = Stage17ValidationStep::empty_slot_3;
+        break;
+    case Stage17Capture::draw_windup:
+        state.draw_windup_captured = !skipped;
+        state.draw_windup_skipped = skipped;
+        break;
+    case Stage17Capture::draw_hit:
+        state.draw_captured = !skipped;
+        state.draw_hit_skipped = skipped;
+        break;
+    case Stage17Capture::skill_empty:
+        if (!skipped) state.skill_empty_captured = true;
+        state.step = Stage17ValidationStep::remove_slot_1;
+        break;
+    case Stage17Capture::skill_removed:
+        if (!skipped) state.skill_removed_captured = true;
+        state.step = Stage17ValidationStep::select_draw_inventory;
+        break;
+    case Stage17Capture::skill_selected:
+        if (!skipped) state.skill_selected_captured = true;
+        state.step = Stage17ValidationStep::equip_slot_5;
+        break;
+    case Stage17Capture::skill_swapped:
+        if (!skipped) state.skill_swapped_captured = true;
+        state.step = Stage17ValidationStep::close_inventory;
+        break;
+    case Stage17Capture::storm_array:
+        if (!skipped) state.storm_array_captured = true;
+        break;
+    case Stage17Capture::storm_aerial:
+        if (!skipped) state.storm_aerial_captured = true;
+        break;
+    case Stage17Capture::storm_finisher:
+        if (!skipped) state.storm_finisher_captured = true;
+        break;
+    case Stage17Capture::restarted:
+        if (!skipped) state.restart_captured = true;
+        state.step = Stage17ValidationStep::complete;
+        break;
+    case Stage17Capture::none:
+        break;
+    }
+    state.capture_pending = Stage17Capture::none;
+}
+
+void skip_stage17_capture_without_file(
+    Stage17SkillStonesValidationState& state) noexcept {
+    if (stage17_legacy_capture(state.capture_pending)) {
+        complete_stage17_capture(state, true);
+    }
+}
+
+void write_stage17_capture_field(std::ostream& stream, const char* prefix,
+    const RaylibHostConfig& config, const Stage17Capture capture,
+    const bool captured, const bool skipped) {
+    stream << prefix << "_captured=" << (captured ? 1 : 0) << '\n'
+           << prefix << "_skipped=" << (skipped ? 1 : 0) << '\n'
+           << prefix << "_capture_file="
+           << (captured ? stage17_capture_name(config, capture) : "N/A")
+           << '\n';
 }
 
 }  // namespace
@@ -46,44 +148,31 @@ namespace {
     }
     ++state.presented_frames;
     if (state.step == Stage17ValidationStep::initial
-            && !state.initial_captured && state.presented_frames >= 2U) {
+            && !state.initial_captured && !state.initial_skipped
+            && state.presented_frames >= 2U) {
         state.capture_pending = Stage17Capture::initial;
     }
-    const char* const name = stage17_capture_name(state.capture_pending);
-    if (name == nullptr) return std::nullopt;
+    if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::production_sequence
+            && !stage17_legacy_resolution(config)
+            && stage17_legacy_capture(state.capture_pending)) {
+        skip_stage17_capture_without_file(state);
+        return std::nullopt;
+    }
+    if (state.capture_pending == Stage17Capture::none
+            || GetScreenWidth() != config.window_width
+            || GetScreenHeight() != config.window_height) {
+        return std::nullopt;
+    }
+    const std::string name = stage17_capture_name(config,
+        state.capture_pending);
+    if (name.empty()) return std::nullopt;
     return (*config.screenshot_directory / name).string();
 }
 
 void mark_stage17_capture_complete(
     Stage17SkillStonesValidationState& state) noexcept {
-    switch (state.capture_pending) {
-    case Stage17Capture::initial:
-        state.initial_captured = true;
-        state.step = Stage17ValidationStep::empty_slot_3;
-        break;
-    case Stage17Capture::draw_windup:
-        state.draw_windup_captured = true;
-        break;
-    case Stage17Capture::draw_hit:
-        state.draw_captured = true;
-        break;
-    case Stage17Capture::storm_array:
-        state.storm_array_captured = true;
-        break;
-    case Stage17Capture::storm_aerial:
-        state.storm_aerial_captured = true;
-        break;
-    case Stage17Capture::storm_finisher:
-        state.storm_finisher_captured = true;
-        break;
-    case Stage17Capture::restarted:
-        state.restart_captured = true;
-        state.step = Stage17ValidationStep::complete;
-        break;
-    case Stage17Capture::none:
-        break;
-    }
-    state.capture_pending = Stage17Capture::none;
+    complete_stage17_capture(state, false);
 }
 
 namespace {
@@ -143,6 +232,21 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
             == Stage17SkillStonesValidationScenario::production_sequence;
         const bool storm = config.stage17_skill_stones_validation
             == Stage17SkillStonesValidationScenario::storm_sequence;
+        const bool legacy_resolution = stage17_legacy_resolution(config);
+        const bool scaled_production_resolution =
+            (config.window_width == 800 && config.window_height == 450)
+            || (config.window_width == 1920 && config.window_height == 1080);
+        const bool legacy_captures_valid = legacy_resolution
+            ? state.initial_captured && !state.initial_skipped
+                && state.draw_windup_captured && !state.draw_windup_skipped
+                && state.draw_captured && !state.draw_hit_skipped
+            : scaled_production_resolution
+                && !state.initial_captured && state.initial_skipped
+                && !state.draw_windup_captured && state.draw_windup_skipped
+                && !state.draw_captured && state.draw_hit_skipped;
+        const bool skill_captures_valid = state.skill_empty_captured
+            && state.skill_removed_captured && state.skill_selected_captured
+            && state.skill_swapped_captured;
         const bool empty_slots = std::all_of(state.empty_slots_none.begin(),
             state.empty_slots_none.end(), [](const bool value) noexcept {
                 return value;
@@ -161,8 +265,8 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
             storm_player_x * storm_player_x + storm_player_y * storm_player_y);
         const bool passed = production
             ? state.step == Stage17ValidationStep::complete
-                && state.initial_captured && state.draw_accepted
-                && state.draw_windup_captured && state.draw_captured
+                && legacy_captures_valid && skill_captures_valid
+                && state.draw_accepted
                 && stage17_draw_runtime_valid(state.draw_runtime)
                 && !state.renderer_status_failure_latched
                 && state.public_input_path
@@ -194,6 +298,7 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
         stream << "scenario=" << (production ? "production_sequence"
                 : storm ? "storm_sequence" : "restarted_loadout") << '\n'
                << "result=" << (passed ? "pass" : "fail") << '\n'
+               << "window=" << stage17_resolution_name(config) << '\n'
                << "final_step=" << static_cast<unsigned>(state.step) << '\n'
                << "aborted_by_death=" << (state.aborted_by_death ? 1 : 0) << '\n'
                << "initial_slots=";
@@ -206,8 +311,6 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                << stage17_support_none_count(state.initial_loadout) << '\n'
                << "empty_slots_none=" << (empty_slots ? 1 : 0) << '\n'
                << "draw_accepted=" << (state.draw_accepted ? 1 : 0) << '\n'
-               << "draw_windup_captured="
-               << (state.draw_windup_captured ? 1 : 0) << '\n'
                << "draw_frame_peak=" << state.draw_frame_peak << '\n'
                << "draw_hit_count=" << state.draw_hit_count << '\n'
                << "storm_prelude_draw_hit_count="
@@ -303,6 +406,23 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                << "restart_persisted=" << (state.restart_persisted ? 1 : 0) << '\n'
                << "restart_cooldowns_zero="
                << (state.restart_cooldowns_zero ? 1 : 0) << '\n';
+        write_stage17_capture_field(stream, "initial", config,
+            Stage17Capture::initial, state.initial_captured,
+            state.initial_skipped);
+        write_stage17_capture_field(stream, "draw_windup", config,
+            Stage17Capture::draw_windup, state.draw_windup_captured,
+            state.draw_windup_skipped);
+        write_stage17_capture_field(stream, "draw_hit", config,
+            Stage17Capture::draw_hit, state.draw_captured,
+            state.draw_hit_skipped);
+        write_stage17_capture_field(stream, "skill_empty", config,
+            Stage17Capture::skill_empty, state.skill_empty_captured, false);
+        write_stage17_capture_field(stream, "skill_removed", config,
+            Stage17Capture::skill_removed, state.skill_removed_captured, false);
+        write_stage17_capture_field(stream, "skill_selected", config,
+            Stage17Capture::skill_selected, state.skill_selected_captured, false);
+        write_stage17_capture_field(stream, "skill_swapped", config,
+            Stage17Capture::skill_swapped, state.skill_swapped_captured, false);
         for (std::size_t index = 0U;
                 index < state.storm_approach_samples.size(); ++index) {
             stream << "storm_approach_sample_" << (index + 1U) * 300U << '=';

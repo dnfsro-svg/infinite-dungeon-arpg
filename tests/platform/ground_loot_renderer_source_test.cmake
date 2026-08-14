@@ -5,7 +5,7 @@ if(NOT DEFINED SOURCE_ROOT)
 endif()
 
 foreach(_name IN ITEMS GROUND_SOURCE PICKUP_SOURCE MATERIAL_SOURCE BAG_SOURCE
-        INVENTORY_SOURCE HUD_SOURCE CATALOG_SOURCE)
+        INVENTORY_SOURCE VIEW_HEADER VIEW_SOURCE HUD_SOURCE CATALOG_SOURCE)
     if(NOT DEFINED ${_name})
         if(_name STREQUAL "GROUND_SOURCE")
             set(${_name} "${SOURCE_ROOT}/src/platform/raylib/ground_loot_view.cpp")
@@ -17,6 +17,10 @@ foreach(_name IN ITEMS GROUND_SOURCE PICKUP_SOURCE MATERIAL_SOURCE BAG_SOURCE
             set(${_name} "${SOURCE_ROOT}/src/platform/raylib/material_bag_renderer.cpp")
         elseif(_name STREQUAL "INVENTORY_SOURCE")
             set(${_name} "${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp")
+        elseif(_name STREQUAL "VIEW_HEADER")
+            set(${_name} "${SOURCE_ROOT}/src/platform/raylib/inventory_view_math.hpp")
+        elseif(_name STREQUAL "VIEW_SOURCE")
+            set(${_name} "${SOURCE_ROOT}/src/platform/raylib/inventory_view_math.cpp")
         elseif(_name STREQUAL "HUD_SOURCE")
             set(${_name} "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp")
         else()
@@ -44,6 +48,20 @@ function(reject_token TEXT TOKEN MESSAGE_TEXT)
     endif()
 endfunction()
 
+function(require_unique_token TEXT TOKEN MESSAGE_TEXT)
+    string(FIND "${TEXT}" "${TOKEN}" _first)
+    if(_first EQUAL -1)
+        message(FATAL_ERROR "${MESSAGE_TEXT}: missing ${TOKEN}")
+    endif()
+    string(LENGTH "${TOKEN}" _token_length)
+    math(EXPR _tail_start "${_first} + ${_token_length}")
+    string(SUBSTRING "${TEXT}" ${_tail_start} -1 _tail)
+    string(FIND "${_tail}" "${TOKEN}" _second)
+    if(NOT _second EQUAL -1)
+        message(FATAL_ERROR "${MESSAGE_TEXT}: duplicate ${TOKEN}")
+    endif()
+endfunction()
+
 function(reject_dead_branch CODE MESSAGE_TEXT)
     if("${CODE}" MATCHES
             "if[ ]*(constexpr[ ]*)?\\([ ]*(false|0|0[ ]*==[ ]*1|1[ ]*==[ ]*0)[ ]*\\)"
@@ -59,6 +77,8 @@ file(READ "${PICKUP_SOURCE}" _pickup_source)
 file(READ "${MATERIAL_SOURCE}" _material_source)
 file(READ "${BAG_SOURCE}" _bag_source)
 file(READ "${INVENTORY_SOURCE}" _inventory_source)
+file(READ "${VIEW_HEADER}" _view_header)
+file(READ "${VIEW_SOURCE}" _view_source)
 file(READ "${HUD_SOURCE}" _hud_source)
 file(READ "${CATALOG_SOURCE}" _catalog_source)
 
@@ -171,12 +191,100 @@ foreach(_token IN ITEMS
         "T3 reinforcement confirmation text must stay centered in its own rectangle")
 endforeach()
 
-foreach(_token IN ITEMS "u8\"成功\"" "u8\"失败\""
-        "u8\"装备丢失\"" "result_bounds"
-        "DrawRectangleRec(result_bounds" "DrawRectangleRoundedLinesEx(result_bounds"
-        "draw_centered_hud_font_text(")
-    require_token("${_inventory_source}" "${_token}"
-        "T3 reinforcement result must combine Chinese text with a state border")
+extract_cpp_function_body("${_inventory_source}"
+    "void InventoryRenderer::draw(" _inventory_draw_body _inventory_draw_code)
+string(REGEX REPLACE "[ \t\r\n]+" " " _inventory_draw_compact
+    "${_inventory_draw_code}")
+require_token("${_inventory_draw_compact}"
+    "transient_input.receipt_commit_generation = snapshot.reinforcement_receipt.commit_generation;"
+    "T4 receipt generation must bind to the authoritative receipt generation")
+require_token("${_inventory_draw_code}"
+    "transient_input.receipt_destroyed = snapshot.reinforcement_receipt.destroyed;"
+    "T4 receipt destroyed presentation must bind to the authoritative receipt field")
+foreach(_token IN ITEMS
+        "InventoryTransientStatusInput transient_input{}"
+        "transient_input.commit_generation = snapshot.commit_generation"
+        "transient_input.receipt_valid = snapshot.reinforcement_receipt.valid"
+        "transient_input.receipt_success = snapshot.reinforcement_receipt.success"
+        "transient_input.receipt_coupon = snapshot.reinforcement_receipt.coupon"
+        "snapshot.reinforcement_receipt.commit_generation"
+        "transient_input.receipt_before = snapshot.reinforcement_receipt.before"
+        "transient_input.receipt_after = snapshot.reinforcement_receipt.after"
+        "inventory_transient_status_for_frame(transient_status_state_,"
+        "transient_status_state_ = transient_result.next"
+        "status_input.transient = transient_result.presentation"
+        "inventory_status_presentation(status_input)"
+        "draw_inventory_status(shell, status_presentation")
+    require_token("${_inventory_draw_body}" "${_token}"
+        "T4 reinforcement receipt must feed the single transient status path")
+endforeach()
+require_unique_token("${_inventory_draw_body}"
+    "inventory_transient_status_for_frame("
+    "T4 transient reinforcement status must advance once per draw frame")
+require_unique_token("${_inventory_draw_body}" "draw_inventory_status("
+    "T4 reinforcement status must not create a second result strip")
+foreach(_legacy IN ITEMS "result_bounds" "u8\"成功\"" "u8\"失败\""
+        "u8\"装备丢失\"")
+    reject_token("${_inventory_draw_body}" "${_legacy}"
+        "T4 renderer must not reconstruct reinforcement receipt UI")
+endforeach()
+reject_dead_branch("${_inventory_draw_code}" "T4 inventory transient status")
+
+extract_cpp_function_body("${_inventory_source}"
+    "void draw_inventory_status(" _inventory_status_body _inventory_status_code)
+require_token("${_inventory_source}"
+    "constexpr Color kInventoryTextBacking{5, 9, 16, 255};"
+    "T4 inventory status backing must remain fully opaque")
+foreach(_token IN ITEMS
+        "DrawRectangleRec(shell.status_bar, kInventoryTextBacking)"
+        "status_tone_color(presentation.tone)"
+        "presentation.status.data()")
+    require_token("${_inventory_status_body}" "${_token}"
+        "T4 receipt status must use one opaque tone-driven status bar")
+endforeach()
+reject_dead_branch("${_inventory_status_code}" "T4 inventory status bar")
+
+require_token("${_view_header}"
+    "kInventoryTransientStatusFrameCount = 180U"
+    "T4 receipt transient lifetime must remain exactly 180 draw frames")
+extract_cpp_function_body("${_view_source}"
+    "InventoryTransientStatusFrameResult inventory_transient_status_for_frame("
+    _transient_frame_body _transient_frame_code)
+foreach(_token IN ITEMS
+        "input.receipt_commit_generation > state.last_receipt_generation"
+        "state.last_receipt_generation = std::max("
+        "--state.remaining_frames")
+    require_token("${_transient_frame_body}" "${_token}"
+        "T4 receipt generation deduplication and context recovery are incomplete")
+endforeach()
+set(_lifetime_assignment
+    "state.remaining_frames = kInventoryTransientStatusFrameCount;")
+set(_lifetime_scan "${_transient_frame_code}")
+set(_lifetime_assignment_count 0)
+string(LENGTH "${_lifetime_assignment}" _lifetime_assignment_length)
+while(TRUE)
+    string(FIND "${_lifetime_scan}" "${_lifetime_assignment}" _lifetime_pos)
+    if(_lifetime_pos EQUAL -1)
+        break()
+    endif()
+    math(EXPR _lifetime_assignment_count "${_lifetime_assignment_count} + 1")
+    math(EXPR _lifetime_tail_start
+        "${_lifetime_pos} + ${_lifetime_assignment_length}")
+    string(SUBSTRING "${_lifetime_scan}" ${_lifetime_tail_start} -1
+        _lifetime_scan)
+endwhile()
+if(NOT _lifetime_assignment_count EQUAL 3)
+    message(FATAL_ERROR
+        "T4 receipt/saved/recovered lifetime assignments must be exactly 180 draw frames: ${_lifetime_assignment_count}")
+endif()
+reject_dead_branch("${_transient_frame_code}" "T4 receipt transient lifetime")
+foreach(_token IN ITEMS
+        "强化结果：成功 / +%u → +%u"
+        "强化结果：失败 / +%u → +%u"
+        "强化结果：失败 / 装备丢失 / +%u"
+        "强化券结果：成功 / +%u → +%u")
+    require_token("${_catalog_source}" "${_token}"
+        "T4 receipt text must come from the catalog formats")
 endforeach()
 
 extract_cpp_function_body("${_hud_source}"

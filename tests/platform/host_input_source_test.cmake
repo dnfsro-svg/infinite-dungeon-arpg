@@ -62,10 +62,10 @@ if(NOT LEGACY_INVENTORY_BINDING_TITLE EQUAL -1
         "inventory page titles must not hard-code the default I binding")
 endif()
 require_match_count("${INVENTORY_SOURCE}"
-    "page_title\\.data\\(\\)" 2
+    "page_title\\.data\\(\\)" 1
     "inventory renderer dynamic page-title consumers")
-set(DYNAMIC_INVENTORY_TITLE [=[const auto page_title = inventory_page_title(
-        page_, inventory_binding_label);]=])
+set(DYNAMIC_INVENTORY_TITLE [=[const auto page_title = inventory_page_title(page_,
+        inventory_binding_label);]=])
 string(FIND "${INVENTORY_SOURCE}" "${DYNAMIC_INVENTORY_TITLE}"
     DYNAMIC_INVENTORY_TITLE_INDEX)
 if(DYNAMIC_INVENTORY_TITLE_INDEX EQUAL -1)
@@ -343,6 +343,8 @@ arpg_sanitize_cpp_source("${HOST_VALIDATION_RUNTIME_SOURCE}"
     SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE)
 arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
     SANITIZED_STAGE17_RUNTIME_SOURCE)
+arpg_sanitize_cpp_source("${STAGE17_REPORT_SOURCE_TEXT}"
+    SANITIZED_STAGE17_REPORT_SOURCE)
 arpg_sanitize_cpp_source(
     "${DUNGEON_SESSION_SOURCE}" SANITIZED_DUNGEON_SESSION_SOURCE)
 mask_cpp_inactive_preprocessor_regions(
@@ -356,6 +358,9 @@ mask_cpp_inactive_preprocessor_regions(
 mask_cpp_inactive_preprocessor_regions(
     "${SANITIZED_STAGE17_RUNTIME_SOURCE}"
     ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE)
+mask_cpp_inactive_preprocessor_regions(
+    "${SANITIZED_STAGE17_REPORT_SOURCE}"
+    ACTIVE_SANITIZED_STAGE17_REPORT_SOURCE)
 mask_cpp_inactive_preprocessor_regions(
     "${SANITIZED_DUNGEON_SESSION_SOURCE}"
     ACTIVE_SANITIZED_DUNGEON_SESSION_SOURCE)
@@ -602,6 +607,14 @@ require_cpp_function_definition_from_sanitized(
     "void observe_stage17_inventory("
     "Stage17 inventory observer" STAGE17_INVENTORY_SOURCE)
 require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_STAGE17_REPORT_SOURCE}"
+    "std::optional<std::string> stage17_capture_path("
+    "Stage17 capture path" STAGE17_CAPTURE_PATH_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_STAGE17_REPORT_SOURCE}"
+    "void complete_stage17_capture("
+    "Stage17 capture completion" STAGE17_CAPTURE_COMPLETE_SOURCE)
+require_cpp_function_definition_from_sanitized(
     "${ACTIVE_SANITIZED_DUNGEON_SESSION_SOURCE}"
     "void DungeonSession::tick("
     "DungeonSession::tick" DUNGEON_TICK_SOURCE)
@@ -612,7 +625,8 @@ require_cpp_function_definition_from_sanitized(
 foreach(FUNCTION_SOURCE_NAME IN ITEMS
         STAGE17_DRAW_RUNTIME_SOURCE STAGE17_PREPARE_STORM_SOURCE
         STAGE17_INJECT_SOURCE STAGE17_SNAPSHOT_SOURCE
-        STAGE17_INVENTORY_SOURCE DUNGEON_TICK_SOURCE
+        STAGE17_INVENTORY_SOURCE STAGE17_CAPTURE_PATH_SOURCE
+        STAGE17_CAPTURE_COMPLETE_SOURCE DUNGEON_TICK_SOURCE
         PREPARE_ROOM_CLEAR_SOURCE)
     mask_cpp_non_direct_executable_scopes(
         "${${FUNCTION_SOURCE_NAME}}" DIRECT_${FUNCTION_SOURCE_NAME})
@@ -830,7 +844,7 @@ if (state.step == Stage17ValidationStep::open_inventory
     } else if (state.step == Stage17ValidationStep::remove_slot_1
             && current.skill_loadout.slots[0].active
                 == skills::ActiveSkillId::none) {
-        state.step = Stage17ValidationStep::select_draw_inventory;
+        state.capture_pending = Stage17Capture::skill_removed;
     } else if (state.step == Stage17ValidationStep::equip_slot_5
             && current.skill_loadout.slots[4].active
                 == skills::ActiveSkillId::draw_slash) {
@@ -841,7 +855,7 @@ if (state.step == Stage17ValidationStep::open_inventory
         state.production_transactions =
             !current.pending_save_kind.has_value();
         if (state.production_transactions) {
-            state.step = Stage17ValidationStep::close_inventory;
+            state.capture_pending = Stage17Capture::skill_swapped;
         }
     } else if (state.step == Stage17ValidationStep::close_inventory
             && !inventory.is_open() && current.combat.has_value()) {
@@ -954,7 +968,8 @@ if(STAGE17_STORM_PRELUDE_GUARD_INDEX EQUAL -1)
         "Stage17 storm scenario must use an explicit draw prelude")
 endif()
 set(STAGE17_DRAW_TO_TRANSACTIONS_GUARD [=[
-} else if (state.draw_windup_captured && state.draw_captured) {
+} else if ((state.draw_windup_captured || state.draw_windup_skipped)
+                && (state.draw_captured || state.draw_hit_skipped)) {
             state.step = Stage17ValidationStep::open_inventory;
 ]=])
 string(FIND "${DIRECT_STAGE17_SNAPSHOT_SOURCE}" "${STAGE17_DRAW_TO_TRANSACTIONS_GUARD}"
@@ -1648,7 +1663,8 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     list(LENGTH REQUEST_DESCENT_CALLS REQUEST_DESCENT_CALL_COUNT)
     string(REGEX MATCHALL "forward_descent${WS}=" FORWARD_DESCENT_ASSIGNMENTS "${HOST_CHAIN_SOURCE}")
     list(LENGTH FORWARD_DESCENT_ASSIGNMENTS FORWARD_DESCENT_ASSIGNMENT_COUNT)
-    string(REGEX MATCHALL "gameplay_armed${WS}=" GAMEPLAY_ARMED_ASSIGNMENTS
+    string(REGEX MATCHALL "(^|[^A-Za-z0-9_.])gameplay_armed${WS}="
+        GAMEPLAY_ARMED_ASSIGNMENTS
         "${HOST_CHAIN_SOURCE}")
     list(LENGTH GAMEPLAY_ARMED_ASSIGNMENTS GAMEPLAY_ARMED_ASSIGNMENT_COUNT)
     string(REGEX MATCHALL "forward_movement${WS}=" FORWARD_MOVEMENT_ASSIGNMENTS
@@ -2090,6 +2106,124 @@ hud_present_structure_valid("${RECOVERY_PRESENT_BEFORE_DRAW_SOURCE}"
     RECOVERY_PRESENT_BEFORE_DRAW_VALID)
 if(RECOVERY_PRESENT_BEFORE_DRAW_VALID)
     message(FATAL_ERROR "recovery present before draw must not validate")
+endif()
+
+set(STAGE17_CAPTURE_INTERLOCK_GUARD [=[
+if (state.capture_pending != Stage17Capture::none) return snapshot;
+]=])
+string(FIND "${DIRECT_STAGE17_INJECT_SOURCE}"
+    "${STAGE17_CAPTURE_INTERLOCK_GUARD}"
+    STAGE17_CAPTURE_INTERLOCK_GUARD_INDEX)
+set(STAGE17_SKILL_PRESENTATION_GUARD [=[
+case Stage17ValidationStep::open_skill_page:
+        stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)]);
+        state.capture_pending = Stage17Capture::skill_empty;
+        break;
+]=])
+string(FIND "${DIRECT_STAGE17_INJECT_SOURCE}"
+    "${STAGE17_SKILL_PRESENTATION_GUARD}"
+    STAGE17_SKILL_PRESENTATION_GUARD_INDEX)
+set(STAGE17_SELECTED_PRESENTATION_GUARD [=[
+case Stage17ValidationStep::select_draw_inventory:
+        stage17_click(snapshot, layout.inventory_slots[0]);
+        state.capture_pending = Stage17Capture::skill_selected;
+        break;
+]=])
+string(FIND "${DIRECT_STAGE17_INJECT_SOURCE}"
+    "${STAGE17_SELECTED_PRESENTATION_GUARD}"
+    STAGE17_SELECTED_PRESENTATION_GUARD_INDEX)
+set(STAGE17_SKIP_BEFORE_PATH_GUARD [=[
+if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::production_sequence
+            && !stage17_legacy_resolution(config)
+            && stage17_legacy_capture(state.capture_pending)) {
+        skip_stage17_capture_without_file(state);
+        return std::nullopt;
+    }
+    if (state.capture_pending == Stage17Capture::none
+]=])
+string(FIND "${DIRECT_STAGE17_CAPTURE_PATH_SOURCE}"
+    "${STAGE17_SKIP_BEFORE_PATH_GUARD}"
+    STAGE17_SKIP_BEFORE_PATH_GUARD_INDEX)
+set(STAGE17_CAPTURE_COMPLETE_ORDER_GUARD [=[
+case Stage17Capture::skill_empty:
+        if (!skipped) state.skill_empty_captured = true;
+        state.step = Stage17ValidationStep::remove_slot_1;
+        break;
+    case Stage17Capture::skill_removed:
+        if (!skipped) state.skill_removed_captured = true;
+        state.step = Stage17ValidationStep::select_draw_inventory;
+        break;
+    case Stage17Capture::skill_selected:
+        if (!skipped) state.skill_selected_captured = true;
+        state.step = Stage17ValidationStep::equip_slot_5;
+        break;
+    case Stage17Capture::skill_swapped:
+        if (!skipped) state.skill_swapped_captured = true;
+        state.step = Stage17ValidationStep::close_inventory;
+]=])
+function(stage17_capture_contract_valid
+        INJECT_SOURCE PATH_SOURCE COMPLETE_SOURCE OUT_VALID)
+    string(FIND "${INJECT_SOURCE}" "${STAGE17_CAPTURE_INTERLOCK_GUARD}"
+        _pending)
+    string(FIND "${INJECT_SOURCE}" "${STAGE17_SKILL_PRESENTATION_GUARD}"
+        _empty)
+    string(FIND "${INJECT_SOURCE}" "${STAGE17_SELECTED_PRESENTATION_GUARD}"
+        _selected)
+    string(FIND "${PATH_SOURCE}" "${STAGE17_SKIP_BEFORE_PATH_GUARD}"
+        _skip)
+    string(FIND "${COMPLETE_SOURCE}"
+        "${STAGE17_CAPTURE_COMPLETE_ORDER_GUARD}" _complete)
+    if(NOT _pending EQUAL -1 AND NOT _empty EQUAL -1
+            AND NOT _selected EQUAL -1 AND NOT _skip EQUAL -1
+            AND NOT _complete EQUAL -1)
+        set("${OUT_VALID}" TRUE PARENT_SCOPE)
+    else()
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+stage17_capture_contract_valid("${DIRECT_STAGE17_INJECT_SOURCE}"
+    "${DIRECT_STAGE17_CAPTURE_PATH_SOURCE}"
+    "${DIRECT_STAGE17_CAPTURE_COMPLETE_SOURCE}"
+    STAGE17_CAPTURE_CONTRACT_VALID)
+if(NOT STAGE17_CAPTURE_CONTRACT_VALID)
+    message(FATAL_ERROR
+        "Stage17 capture pending/skip/complete interlock is invalid")
+endif()
+
+string(REPLACE "${STAGE17_CAPTURE_INTERLOCK_GUARD}" ""
+    STAGE17_PENDING_REMOVAL_MUTATION "${DIRECT_STAGE17_INJECT_SOURCE}")
+stage17_capture_contract_valid("${STAGE17_PENDING_REMOVAL_MUTATION}"
+    "${DIRECT_STAGE17_CAPTURE_PATH_SOURCE}"
+    "${DIRECT_STAGE17_CAPTURE_COMPLETE_SOURCE}"
+    STAGE17_PENDING_REMOVAL_VALID)
+string(REPLACE
+    "skip_stage17_capture_without_file(state);\n        return std::nullopt;"
+    "return std::nullopt;\n        skip_stage17_capture_without_file(state);"
+    STAGE17_SKIP_AFTER_PAUSE_MUTATION
+    "${DIRECT_STAGE17_CAPTURE_PATH_SOURCE}")
+stage17_capture_contract_valid("${DIRECT_STAGE17_INJECT_SOURCE}"
+    "${STAGE17_SKIP_AFTER_PAUSE_MUTATION}"
+    "${DIRECT_STAGE17_CAPTURE_COMPLETE_SOURCE}"
+    STAGE17_SKIP_AFTER_PAUSE_VALID)
+string(REPLACE
+    "state.step = Stage17ValidationStep::select_draw_inventory;"
+    "state.step = Stage17ValidationStep::equip_slot_5;"
+    STAGE17_CAPTURE_REORDER_MUTATION
+    "${DIRECT_STAGE17_CAPTURE_COMPLETE_SOURCE}")
+stage17_capture_contract_valid("${DIRECT_STAGE17_INJECT_SOURCE}"
+    "${DIRECT_STAGE17_CAPTURE_PATH_SOURCE}"
+    "${STAGE17_CAPTURE_REORDER_MUTATION}"
+    STAGE17_CAPTURE_REORDER_VALID)
+if(STAGE17_PENDING_REMOVAL_MUTATION STREQUAL DIRECT_STAGE17_INJECT_SOURCE
+        OR STAGE17_SKIP_AFTER_PAUSE_MUTATION STREQUAL
+            DIRECT_STAGE17_CAPTURE_PATH_SOURCE
+        OR STAGE17_CAPTURE_REORDER_MUTATION STREQUAL
+            DIRECT_STAGE17_CAPTURE_COMPLETE_SOURCE
+        OR STAGE17_PENDING_REMOVAL_VALID OR STAGE17_SKIP_AFTER_PAUSE_VALID
+        OR STAGE17_CAPTURE_REORDER_VALID)
+    message(FATAL_ERROR
+        "Stage17 capture interlock guard accepted a named mutation")
 endif()
 string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
     "draw_recovery_screen(Font{}, runtime.render_status());"

@@ -1660,6 +1660,11 @@ foreach ($key in @('manifest','atlas_bytes','full_pack_bytes',
         'ui_text_secondary_contrast','ui_text_muted_contrast',
         'ui_text_outline_pixels','ui_text_shadow_pixels',
         'ui_text_backing_alpha','ui_text_physical_scale',
+        'inventory_real_font_measurements',
+        'inventory_real_font_measurements_1920',
+        'inventory_observed_text_roles','inventory_required_text_roles',
+        'inventory_observed_text_roles_1920',
+        'inventory_required_text_roles_1920',
         'inventory_min_font_1280','inventory_min_font_1920',
         'skill_min_font_1280','skill_min_font_1920',
         'pause_min_font_1280','pause_min_font_1920',
@@ -1787,13 +1792,34 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
     throw 'formal material report rejected'
 }
 Assert-UiDrawMask ([uint64]$report.hud_ui_draw_mask) @(0,1,2,5,14,15,37) 'hud'
-Assert-UiDrawMask ([uint64]$report.inventory_ui_draw_mask) @(17,18,19,20,21,22,24,26,37) 'inventory'
+Assert-UiDrawMask ([uint64]$report.inventory_ui_draw_mask) @(17,18,20,21,22,24,26,37) 'inventory'
 Assert-UiDrawMask ([uint64]$report.skill_ui_draw_mask) @(20,21,25,27,28,31) 'skill-stones'
 Assert-UiDrawMask ([uint64]$report.pause_ui_draw_mask) @(32,33,34,35) 'pause'
 Assert-UiDrawMask ([uint64]$report.hud_ui_draw_mask_1920) @(0,1,2,5,14,15,37) 'hud-1920'
-Assert-UiDrawMask ([uint64]$report.inventory_ui_draw_mask_1920) @(17,18,19,20,21,22,24,26,37) 'inventory-1920'
+Assert-UiDrawMask ([uint64]$report.inventory_ui_draw_mask_1920) @(17,18,20,21,22,24,26,37) 'inventory-1920'
 Assert-UiDrawMask ([uint64]$report.skill_ui_draw_mask_1920) @(20,21,25,27,28,31) 'skill-stones-1920'
 Assert-UiDrawMask ([uint64]$report.pause_ui_draw_mask_1920) @(32,33,34,35) 'pause-1920'
+$legacyInventoryDetailBit = [uint64]1 -shl 19
+if (([uint64]$report.inventory_ui_draw_mask -band
+        $legacyInventoryDetailBit) -ne 0 -or
+        ([uint64]$report.inventory_ui_draw_mask_1920 -band
+        $legacyInventoryDetailBit) -ne 0) {
+    throw 'legacy inventory detail panel was drawn'
+}
+$inventoryRequiredTextRoles = ([uint64]1 -shl 7) -bor
+    ([uint64]1 -shl 8) -bor ([uint64]1 -shl 13)
+if ([uint64]$report.inventory_required_text_roles -ne
+        $inventoryRequiredTextRoles -or
+        [uint64]$report.inventory_required_text_roles_1920 -ne
+        $inventoryRequiredTextRoles -or
+        [uint64]$report.inventory_observed_text_roles -ne
+        $inventoryRequiredTextRoles -or
+        [uint64]$report.inventory_observed_text_roles_1920 -ne
+        $inventoryRequiredTextRoles -or
+        [uint32]$report.inventory_real_font_measurements -ne 17 -or
+        [uint32]$report.inventory_real_font_measurements_1920 -ne 17) {
+    throw 'POE2 empty inventory text role/count contract failed'
+}
 $shooterFrame = [uint16]$report.lightning_shooter_frame
 $dasherFrame = [uint16]$report.lightning_dasher_frame
 if ($shooterFrame -ge 12 -or $dasherFrame -ge 12) {

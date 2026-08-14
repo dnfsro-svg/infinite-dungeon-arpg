@@ -78,19 +78,49 @@ endif()
 # text that can be borrowed from a comment or #if 0 branch.
 function(stage17_active_report_literal_surface SOURCE OUT_SURFACE)
     set(_prepared "${SOURCE}")
-    string(REPLACE "\"01-new-default-1280x720.png\"" "stage17_literal_01"
+    string(REPLACE "'x'" "stage17_literal_resolution_separator"
         _prepared "${_prepared}")
-    string(REPLACE "\"02-draw-slash-windup-1280x720.png\"" "stage17_literal_02"
+    string(REPLACE "\"01-new-default-\"" "stage17_literal_01"
         _prepared "${_prepared}")
-    string(REPLACE "\"03-draw-slash-hit-1280x720.png\"" "stage17_literal_03"
+    string(REPLACE "\"02-draw-slash-windup-\"" "stage17_literal_02"
         _prepared "${_prepared}")
-    string(REPLACE "\"04-storm-ground-array-1280x720.png\"" "stage17_literal_04"
+    string(REPLACE "\"03-draw-slash-hit-\"" "stage17_literal_03"
         _prepared "${_prepared}")
-    string(REPLACE "\"05-storm-aerial-array-1280x720.png\"" "stage17_literal_05"
+    string(REPLACE "\"04-storm-ground-array-\"" "stage17_literal_04"
         _prepared "${_prepared}")
-    string(REPLACE "\"06-storm-finisher-1280x720.png\"" "stage17_literal_06"
+    string(REPLACE "\"05-storm-aerial-array-\"" "stage17_literal_05"
         _prepared "${_prepared}")
-    string(REPLACE "\"07-restarted-loadout-1280x720.png\"" "stage17_literal_07"
+    string(REPLACE "\"06-storm-finisher-\"" "stage17_literal_06"
+        _prepared "${_prepared}")
+    string(REPLACE "\"07-restarted-loadout-\"" "stage17_literal_07"
+        _prepared "${_prepared}")
+    string(REPLACE "\"poe2-inventory-skill-empty-\""
+        "stage17_literal_skill_empty" _prepared "${_prepared}")
+    string(REPLACE "\"poe2-inventory-skill-removed-\""
+        "stage17_literal_skill_removed" _prepared "${_prepared}")
+    string(REPLACE "\"poe2-inventory-skill-selected-\""
+        "stage17_literal_skill_selected" _prepared "${_prepared}")
+    string(REPLACE "\"poe2-inventory-skill-swapped-\""
+        "stage17_literal_skill_swapped" _prepared "${_prepared}")
+    string(REPLACE "\".png\"" "stage17_literal_png_suffix"
+        _prepared "${_prepared}")
+    string(REPLACE "\"_captured=\"" "stage17_literal_capture_captured"
+        _prepared "${_prepared}")
+    string(REPLACE "\"_skipped=\"" "stage17_literal_capture_skipped"
+        _prepared "${_prepared}")
+    string(REPLACE "\"_capture_file=\"" "stage17_literal_capture_file"
+        _prepared "${_prepared}")
+    string(REPLACE "\"N/A\"" "stage17_literal_capture_na"
+        _prepared "${_prepared}")
+    string(REPLACE "'\\n'" "stage17_literal_newline"
+        _prepared "${_prepared}")
+    string(REPLACE "\"skill_empty\"" "stage17_literal_field_skill_empty"
+        _prepared "${_prepared}")
+    string(REPLACE "\"skill_removed\"" "stage17_literal_field_skill_removed"
+        _prepared "${_prepared}")
+    string(REPLACE "\"skill_selected\"" "stage17_literal_field_skill_selected"
+        _prepared "${_prepared}")
+    string(REPLACE "\"skill_swapped\"" "stage17_literal_field_skill_swapped"
         _prepared "${_prepared}")
     string(REPLACE "\"clean_shutdown_exact_ready=\""
         "stage17_literal_clean_shutdown" _prepared "${_prepared}")
@@ -120,6 +150,17 @@ function(stage17_assert_literal_absent LABEL SURFACE SENTINEL)
     endif()
 endfunction()
 
+function(stage17_extract_cpp_function_block_from_sanitized
+        SOURCE SIGNATURE OUTPUT)
+    evidence_find_cpp_function_bounds_in_sanitized("${SOURCE}" "${SIGNATURE}"
+        _function_begin _function_open _function_end)
+    math(EXPR _function_length
+        "${_function_end} - ${_function_begin} + 1")
+    string(SUBSTRING "${SOURCE}" ${_function_begin} ${_function_length}
+        _function_block)
+    set(${OUTPUT} "${_function_block}" PARENT_SCOPE)
+endfunction()
+
 function(stage17_assert_spliced_conditional LABEL EOL)
     string(ASCII 92 _backslash)
     set(_fixture
@@ -141,6 +182,22 @@ stage17_assert_spliced_conditional(stage17_spliced_crlf
 
 set(_stage17_named_mutation_consumed FALSE)
 
+set(_stage17_poe2_contract_only FALSE)
+if(DEFINED STAGE17_POE2_CONTRACT_ONLY AND STAGE17_POE2_CONTRACT_ONLY)
+    set(_stage17_override_count 0)
+    foreach(_stage17_override IN ITEMS STAGE17_HEADER_OVERRIDE
+            STAGE17_RUNTIME_OVERRIDE STAGE17_REPORT_OVERRIDE)
+        if(DEFINED ${_stage17_override})
+            math(EXPR _stage17_override_count "${_stage17_override_count} + 1")
+        endif()
+    endforeach()
+    if(NOT _stage17_override_count EQUAL 1 OR DEFINED HOST_OVERRIDE)
+        message(FATAL_ERROR
+            "Stage17 POE2 contract-only mode requires exactly one Stage17 source override")
+    endif()
+    set(_stage17_poe2_contract_only TRUE)
+endif()
+
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
@@ -150,6 +207,12 @@ if(NOT EXISTS "${_host}")
 endif()
 
 file(READ "${_host}" _host_text)
+if(_stage17_poe2_contract_only)
+    set(_host_text [=[HostExitCode run_raylib_host(
+        const RaylibHostConfig&) noexcept {
+    return HostExitCode::success;
+}]=])
+endif()
 if(DEFINED TASK9_RAYLIB_CODELIKE_OVERRIDE)
     if(NOT EXISTS "${TASK9_RAYLIB_CODELIKE_OVERRIDE}"
             OR NOT TASK9_RAYLIB_CODELIKE_OVERRIDE MATCHES
@@ -234,7 +297,7 @@ if(_runtime_candidate EQUAL -1)
 endif()
 string(SUBSTRING "${_host_active_text}" ${_runtime_candidate} -1
     _host_runtime_candidate)
-evidence_extract_cpp_function_block("${_host_runtime_candidate}"
+stage17_extract_cpp_function_block_from_sanitized("${_host_runtime_candidate}"
     "HostExitCode run_raylib_host(" _host_runtime)
 evidence_cpp_direct_execution_surface_in_sanitized(
     "${_host_runtime}" _host_runtime_direct)
@@ -303,6 +366,9 @@ if(DEFINED STAGE17_RUNTIME_OVERRIDE)
 endif()
 set(_stage17_report
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17_report.cpp")
+if(DEFINED STAGE17_REPORT_OVERRIDE)
+    set(_stage17_report "${STAGE17_REPORT_OVERRIDE}")
+endif()
 if(NOT EXISTS "${_stage17_report}")
     message(FATAL_ERROR
         "Stage17 report source is required: ${_stage17_report}")
@@ -1002,7 +1068,14 @@ endforeach()
 
 foreach(_stage17_report_private_definition IN ITEMS
         "bool stage17_draw_runtime_valid("
-        "const char* stage17_capture_name("
+        "const char* stage17_capture_stem("
+        "std::string stage17_resolution_name("
+        "std::string stage17_capture_name("
+        "bool stage17_legacy_capture("
+        "bool stage17_legacy_resolution("
+        "void complete_stage17_capture("
+        "void skip_stage17_capture_without_file("
+        "void write_stage17_capture_field("
         "const char* stage17_skill_name("
         "void write_stage17_loadout("
         "std::size_t stage17_support_none_count(")
@@ -1012,8 +1085,8 @@ foreach(_stage17_report_private_definition IN ITEMS
         "${_stage17_report_private_definition}" _stage17_report_private_position)
     cpp_token_brace_depth("${_stage17_report_code}"
         ${_stage17_report_private_position} _stage17_report_private_depth)
-    if(_stage17_report_private_definition MATCHES
-            "stage17_draw_runtime_valid|stage17_capture_name")
+    if(_stage17_report_private_position LESS
+            _stage17_report_second_private_begin)
         set(_private_open ${_stage17_report_private_open})
         set(_private_end ${_stage17_report_private_end})
     else()
@@ -1033,18 +1106,32 @@ foreach(_stage17_report_private_definition IN ITEMS
     endforeach()
 endforeach()
 
-evidence_extract_cpp_function_block("${_stage17_report_literal_surface}"
-    "const char* stage17_capture_name(" _stage17_capture_name_literal_block)
-evidence_extract_cpp_function_block("${_stage17_report_literal_surface}"
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_literal_surface}"
+    "const char* stage17_capture_stem(" _stage17_capture_stem_literal_block)
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_literal_surface}"
+    "std::string stage17_resolution_name("
+    _stage17_resolution_name_literal_block)
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_literal_surface}"
+    "std::string stage17_capture_name(" _stage17_capture_name_literal_block)
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_literal_surface}"
+    "void write_stage17_capture_field("
+    _stage17_capture_field_literal_block)
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_literal_surface}"
     "void write_stage17_validation_summary(" _stage17_summary_literal_block)
 foreach(_capture_literal IN ITEMS stage17_literal_01 stage17_literal_02
         stage17_literal_03 stage17_literal_04 stage17_literal_05
-        stage17_literal_06 stage17_literal_07)
-    stage17_assert_literal_once("stage17_capture_name"
-        "${_stage17_capture_name_literal_block}" "${_capture_literal}")
+        stage17_literal_06 stage17_literal_07
+        stage17_literal_skill_empty stage17_literal_skill_removed
+        stage17_literal_skill_selected stage17_literal_skill_swapped)
+    stage17_assert_literal_once("stage17_capture_stem"
+        "${_stage17_capture_stem_literal_block}" "${_capture_literal}")
 endforeach()
+stage17_assert_literal_once("stage17_capture_name"
+    "${_stage17_capture_name_literal_block}" stage17_literal_png_suffix)
 foreach(_summary_literal IN ITEMS stage17_literal_result
-        stage17_literal_clean_shutdown)
+        stage17_literal_clean_shutdown stage17_literal_field_skill_empty
+        stage17_literal_field_skill_removed stage17_literal_field_skill_selected
+        stage17_literal_field_skill_swapped)
     stage17_assert_literal_once("write_stage17_validation_summary"
         "${_stage17_summary_literal_block}" "${_summary_literal}")
 endforeach()
@@ -1055,13 +1142,235 @@ if(NOT DEFINED HOST_OVERRIDE)
             "${_stage17_header_literal_surface}")
         foreach(_forbidden_literal IN ITEMS stage17_literal_01 stage17_literal_02
                 stage17_literal_03 stage17_literal_04 stage17_literal_05
-                stage17_literal_06 stage17_literal_07 stage17_literal_result
+                stage17_literal_06 stage17_literal_07
+                stage17_literal_skill_empty stage17_literal_skill_removed
+                stage17_literal_skill_selected stage17_literal_skill_swapped
+                stage17_literal_png_suffix stage17_literal_field_skill_empty
+                stage17_literal_field_skill_removed
+                stage17_literal_field_skill_selected
+                stage17_literal_field_skill_swapped stage17_literal_result
                 stage17_literal_clean_shutdown)
             stage17_assert_literal_absent("non-report source"
                 "${_literal_owner_surface}" "${_forbidden_literal}")
         endforeach()
     endforeach()
 endif()
+
+function(stage17_assert_poe2_contract_contains LABEL SURFACE TOKEN)
+    string(FIND "${SURFACE}" "${TOKEN}" _position)
+    if(_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage17 POE2 capture contract is invalid: ${LABEL}")
+    endif()
+endfunction()
+
+function(stage17_assert_poe2_contract_equal LABEL ACTUAL EXPECTED)
+    if(NOT "${ACTUAL}" STREQUAL "${EXPECTED}")
+        message(FATAL_ERROR
+            "Stage17 POE2 capture contract is invalid: ${LABEL}")
+    endif()
+endfunction()
+
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_header_normalized
+    "${_stage17_header_code}")
+string(STRIP "${_stage17_header_normalized}" _stage17_header_normalized)
+stage17_assert_poe2_contract_contains("capture enum order"
+    "${_stage17_header_normalized}"
+    [=[enum class Stage17Capture : std::uint8_t { none, initial, draw_windup, draw_hit, skill_empty, skill_removed, skill_selected, skill_swapped, storm_array, storm_aerial, storm_finisher, restarted, };]=])
+
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_capture_stem_normalized
+    "${_stage17_capture_stem_literal_block}")
+string(STRIP "${_stage17_capture_stem_normalized}"
+    _stage17_capture_stem_normalized)
+foreach(_skill_capture_mapping IN ITEMS
+        "skill_empty|stage17_literal_skill_empty"
+        "skill_removed|stage17_literal_skill_removed"
+        "skill_selected|stage17_literal_skill_selected"
+        "skill_swapped|stage17_literal_skill_swapped")
+    string(REPLACE "|" ";" _skill_capture_mapping_fields
+        "${_skill_capture_mapping}")
+    list(GET _skill_capture_mapping_fields 0 _skill_capture_enum)
+    list(GET _skill_capture_mapping_fields 1 _skill_capture_literal)
+    stage17_assert_poe2_contract_contains(
+        "${_skill_capture_enum} capture stem owner"
+        "${_stage17_capture_stem_normalized}"
+        "case Stage17Capture::${_skill_capture_enum}: return ${_skill_capture_literal};")
+endforeach()
+
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_resolution_name_normalized
+    "${_stage17_resolution_name_literal_block}")
+string(STRIP "${_stage17_resolution_name_normalized}"
+    _stage17_resolution_name_normalized)
+stage17_assert_poe2_contract_equal("resolution name maps width x height"
+    "${_stage17_resolution_name_normalized}"
+    [=[std::string stage17_resolution_name( const RaylibHostConfig& config) { return std::to_string(config.window_width) + stage17_literal_resolution_separator + std::to_string(config.window_height); }]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_code}"
+    "bool stage17_legacy_capture(" _stage17_legacy_capture_block)
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_legacy_capture_normalized
+    "${_stage17_legacy_capture_block}")
+string(STRIP "${_stage17_legacy_capture_normalized}"
+    _stage17_legacy_capture_normalized)
+stage17_assert_poe2_contract_equal("legacy capture predicate"
+    "${_stage17_legacy_capture_normalized}"
+    [=[bool stage17_legacy_capture( const Stage17Capture capture) noexcept { return capture == Stage17Capture::initial || capture == Stage17Capture::draw_windup || capture == Stage17Capture::draw_hit; }]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_code}"
+    "bool stage17_legacy_resolution(" _stage17_legacy_resolution_block)
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_legacy_resolution_normalized
+    "${_stage17_legacy_resolution_block}")
+string(STRIP "${_stage17_legacy_resolution_normalized}"
+    _stage17_legacy_resolution_normalized)
+stage17_assert_poe2_contract_equal("legacy resolution predicate"
+    "${_stage17_legacy_resolution_normalized}"
+    [=[bool stage17_legacy_resolution( const RaylibHostConfig& config) noexcept { return config.window_width == 1280 && config.window_height == 720; }]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_code}"
+    "void skip_stage17_capture_without_file("
+    _stage17_skip_capture_block)
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_skip_capture_normalized "${_stage17_skip_capture_block}")
+string(STRIP "${_stage17_skip_capture_normalized}"
+    _stage17_skip_capture_normalized)
+stage17_assert_poe2_contract_equal("legacy skip delegates completion"
+    "${_stage17_skip_capture_normalized}"
+    [=[void skip_stage17_capture_without_file( Stage17SkillStonesValidationState& state) noexcept { if (stage17_legacy_capture(state.capture_pending)) { complete_stage17_capture(state, true); } }]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_code}"
+    "void mark_stage17_capture_complete("
+    _stage17_mark_capture_block)
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_mark_capture_normalized "${_stage17_mark_capture_block}")
+string(STRIP "${_stage17_mark_capture_normalized}"
+    _stage17_mark_capture_normalized)
+stage17_assert_poe2_contract_equal("public mark delegates completion once"
+    "${_stage17_mark_capture_normalized}"
+    [=[void mark_stage17_capture_complete( Stage17SkillStonesValidationState& state) noexcept { complete_stage17_capture(state, false); }]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_runtime_code}"
+    "PhysicalKeySnapshot inject_stage17_physical_edges("
+    _stage17_injector_block)
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_injector_normalized
+    "${_stage17_injector_block}")
+string(STRIP "${_stage17_injector_normalized}"
+    _stage17_injector_normalized)
+stage17_assert_poe2_contract_contains("capture pending pauses injection"
+    "${_stage17_injector_normalized}"
+    [=[if (state.capture_pending != Stage17Capture::none) return snapshot; const InventoryShellLayout shell]=])
+stage17_assert_poe2_contract_contains("empty panel capture interlock"
+    "${_stage17_injector_normalized}"
+    [=[case Stage17ValidationStep::open_skill_page: stage17_click(snapshot, shell.tabs[static_cast<std::size_t>(InventoryPage::skill_stones)]); state.capture_pending = Stage17Capture::skill_empty; break; case Stage17ValidationStep::remove_slot_1:]=])
+stage17_assert_poe2_contract_contains("selected stone capture interlock"
+    "${_stage17_injector_normalized}"
+    [=[case Stage17ValidationStep::select_draw_inventory: stage17_click(snapshot, layout.inventory_slots[0]); state.capture_pending = Stage17Capture::skill_selected; break; case Stage17ValidationStep::equip_slot_5:]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_runtime_code}"
+    "void observe_stage17_inventory(" _stage17_inventory_block)
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_inventory_normalized
+    "${_stage17_inventory_block}")
+string(STRIP "${_stage17_inventory_normalized}"
+    _stage17_inventory_normalized)
+stage17_assert_poe2_contract_contains("removed stone authority interlock"
+    "${_stage17_inventory_normalized}"
+    [=[else if (state.step == Stage17ValidationStep::remove_slot_1 && current.skill_loadout.slots[0].active == skills::ActiveSkillId::none) { state.capture_pending = Stage17Capture::skill_removed; } else if (state.step == Stage17ValidationStep::equip_slot_5]=])
+stage17_assert_poe2_contract_contains("swapped loadout authority interlock"
+    "${_stage17_inventory_normalized}"
+    [=[if (state.production_transactions) { state.capture_pending = Stage17Capture::skill_swapped; } } else if (state.step == Stage17ValidationStep::close_inventory]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_runtime_code}"
+    "void observe_stage17_snapshot(" _stage17_snapshot_block)
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_snapshot_normalized
+    "${_stage17_snapshot_block}")
+string(STRIP "${_stage17_snapshot_normalized}"
+    _stage17_snapshot_normalized)
+stage17_assert_poe2_contract_contains("draw-windup capture repeat guard"
+    "${_stage17_snapshot_normalized}"
+    [=[&& !state.draw_windup_captured && !state.draw_windup_skipped && combat_state.active_skill.frame_index >= 6U]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_runtime_code}"
+    "void observe_stage17_combat_event(" _stage17_combat_event_block)
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_combat_event_normalized "${_stage17_combat_event_block}")
+string(STRIP "${_stage17_combat_event_normalized}"
+    _stage17_combat_event_normalized)
+stage17_assert_poe2_contract_contains("draw-hit capture repeat guard"
+    "${_stage17_combat_event_normalized}"
+    [=[if (!state->suppress_draw_captures && !state->draw_captured && !state->draw_hit_skipped) { state->capture_pending = Stage17Capture::draw_hit; }]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_code}"
+    "void complete_stage17_capture(" _stage17_complete_capture_block)
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_complete_capture_normalized
+    "${_stage17_complete_capture_block}")
+string(STRIP "${_stage17_complete_capture_normalized}"
+    _stage17_complete_capture_normalized)
+stage17_assert_poe2_contract_contains("four capture completion transitions"
+    "${_stage17_complete_capture_normalized}"
+    [=[case Stage17Capture::skill_empty: if (!skipped) state.skill_empty_captured = true; state.step = Stage17ValidationStep::remove_slot_1; break; case Stage17Capture::skill_removed: if (!skipped) state.skill_removed_captured = true; state.step = Stage17ValidationStep::select_draw_inventory; break; case Stage17Capture::skill_selected: if (!skipped) state.skill_selected_captured = true; state.step = Stage17ValidationStep::equip_slot_5; break; case Stage17Capture::skill_swapped: if (!skipped) state.skill_swapped_captured = true; state.step = Stage17ValidationStep::close_inventory; break;]=])
+stage17_assert_poe2_contract_contains("completion clears pending last"
+    "${_stage17_complete_capture_normalized}"
+    [=[case Stage17Capture::none: break; } state.capture_pending = Stage17Capture::none; }]=])
+
+stage17_extract_cpp_function_block_from_sanitized("${_stage17_report_code}"
+    "std::optional<std::string> stage17_capture_path("
+    _stage17_capture_path_block)
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_capture_path_normalized
+    "${_stage17_capture_path_block}")
+string(STRIP "${_stage17_capture_path_normalized}"
+    _stage17_capture_path_normalized)
+stage17_assert_poe2_contract_contains("initial capture repeat guard"
+    "${_stage17_capture_path_normalized}"
+    [=[&& !state.initial_captured && !state.initial_skipped && state.presented_frames >= 2U)]=])
+stage17_assert_poe2_contract_contains("non-1280 legacy skip precedes pause"
+    "${_stage17_capture_path_normalized}"
+    [=[&& !stage17_legacy_resolution(config) && stage17_legacy_capture(state.capture_pending)) { skip_stage17_capture_without_file(state); return std::nullopt; } if (state.capture_pending == Stage17Capture::none || GetScreenWidth() != config.window_width || GetScreenHeight() != config.window_height)]=])
+
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_report_normalized
+    "${_stage17_report_code}")
+string(STRIP "${_stage17_report_normalized}" _stage17_report_normalized)
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_capture_name_literal_normalized
+    "${_stage17_capture_name_literal_block}")
+string(STRIP "${_stage17_capture_name_literal_normalized}"
+    _stage17_capture_name_literal_normalized)
+stage17_assert_poe2_contract_equal("resolution-qualified capture name"
+    "${_stage17_capture_name_literal_normalized}"
+    [=[std::string stage17_capture_name( const RaylibHostConfig& config, const Stage17Capture capture) { const char* const stem = stage17_capture_stem(capture); if (stem == nullptr) return {}; return std::string{stem} + stage17_resolution_name(config) + stage17_literal_png_suffix; }]=])
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _stage17_capture_field_literal_normalized
+    "${_stage17_capture_field_literal_block}")
+string(STRIP "${_stage17_capture_field_literal_normalized}"
+    _stage17_capture_field_literal_normalized)
+stage17_assert_poe2_contract_equal("capture field helper body"
+    "${_stage17_capture_field_literal_normalized}"
+    [=[void write_stage17_capture_field(std::ostream& stream, const char* prefix, const RaylibHostConfig& config, const Stage17Capture capture, const bool captured, const bool skipped) { stream << prefix << stage17_literal_capture_captured << (captured ? 1 : 0) << stage17_literal_newline << prefix << stage17_literal_capture_skipped << (skipped ? 1 : 0) << stage17_literal_newline << prefix << stage17_literal_capture_file << (captured ? stage17_capture_name(config, capture) : stage17_literal_capture_na) << stage17_literal_newline; }]=])
+stage17_assert_poe2_contract_contains("legacy capture pass schema"
+    "${_stage17_report_normalized}"
+    [=[const bool legacy_captures_valid = legacy_resolution ? state.initial_captured && !state.initial_skipped && state.draw_windup_captured && !state.draw_windup_skipped && state.draw_captured && !state.draw_hit_skipped : scaled_production_resolution && !state.initial_captured && state.initial_skipped && !state.draw_windup_captured && state.draw_windup_skipped && !state.draw_captured && state.draw_hit_skipped;]=])
+stage17_assert_poe2_contract_contains("four skill capture pass schema"
+    "${_stage17_report_normalized}"
+    [=[const bool skill_captures_valid = state.skill_empty_captured && state.skill_removed_captured && state.skill_selected_captured && state.skill_swapped_captured;]=])
+string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_summary_literal_normalized
+    "${_stage17_summary_literal_block}")
+string(STRIP "${_stage17_summary_literal_normalized}"
+    _stage17_summary_literal_normalized)
+stage17_assert_poe2_contract_contains("scaled production resolution set"
+    "${_stage17_summary_literal_normalized}"
+    [=[const bool scaled_production_resolution = (config.window_width == 800 && config.window_height == 450) || (config.window_width == 1920 && config.window_height == 1080);]=])
+stage17_assert_poe2_contract_contains("capture summary schema"
+    "${_stage17_summary_literal_normalized}"
+    [=[write_stage17_capture_field(stream, stage17_literal_field_skill_empty, config, Stage17Capture::skill_empty, state.skill_empty_captured, false); write_stage17_capture_field(stream, stage17_literal_field_skill_removed, config, Stage17Capture::skill_removed, state.skill_removed_captured, false); write_stage17_capture_field(stream, stage17_literal_field_skill_selected, config, Stage17Capture::skill_selected, state.skill_selected_captured, false); write_stage17_capture_field(stream, stage17_literal_field_skill_swapped, config, Stage17Capture::skill_swapped, state.skill_swapped_captured, false);]=])
+
+# Stage17 mutation self-tests exercise the exact contract above repeatedly.
+# Stop here only for that explicit, single-source override mode; the registered
+# direct guard continues through every legacy host/renderer contract below.
+if(_stage17_poe2_contract_only)
+    return()
+endif()
+
 foreach(_stage10_11_definition_token IN ITEMS
         "combat::MovementInput stage10_validation_input("
         "combat::MovementInput stage11_validation_input("
@@ -2112,7 +2421,8 @@ function(extract_unique_direct_cpp_block LABEL SURFACE SIGNATURE EXPECTED_DEPTH
         message(FATAL_ERROR
             "Host validation sequence guard rejected ${LABEL} outside direct scope")
     endif()
-    evidence_extract_cpp_function_block("${SURFACE}" "${SIGNATURE}" _block)
+    stage17_extract_cpp_function_block_from_sanitized(
+        "${SURFACE}" "${SIGNATURE}" _block)
     set(${OUT_BLOCK} "${_block}" PARENT_SCOPE)
     set(${OUT_BEGIN} ${_position} PARENT_SCOPE)
 endfunction()
@@ -2134,7 +2444,8 @@ evidence_sanitize_cpp_for_scan("${_drain_events_slice}"
     _drain_events_code)
 assert_unique_cpp_definition("drain_events" "${_drain_events_code}"
     "void drain_events(")
-evidence_extract_cpp_function_block("${_drain_events_code}" "void drain_events("
+stage17_extract_cpp_function_block_from_sanitized(
+    "${_drain_events_code}" "void drain_events("
     _drain_events_block)
 string(REGEX REPLACE "[ \t\r\n]+" " " _drain_events_normalized
     "${_drain_events_block}")
@@ -2611,7 +2922,7 @@ assert_one_normalized_match("fixed-step snapshot producer-to-observer binding"
 assert_direct_exact_call_count("real renderer draw return statement"
     "${_ground_loot_draw_normalized}"
     "renderer[.]draw\\("
-    "([;{}])[ ]*return[ ]+renderer[.]draw\\([ ]*previous,[ ]*presented_snapshot,[ ]*[*]render_world,[ ]*frame_camera,[ ]*runtime[.]render_status\\([ ]*\\),[ ]*static_cast<float>\\([ ]*frame[.]interpolation_alpha[ ]*\\),[ ]*draw_debug,[ ]*feedback,[ ]*audio_ready[ ]*\\)[ ]*;"
+    "([;{}])[ ]*return[ ]+renderer[.]draw\\([ ]*previous,[ ]*presented_snapshot,[ ]*[*]render_world,[ ]*frame_camera,[ ]*runtime[.]render_status\\([ ]*\\),[ ]*static_cast<float>\\([ ]*frame[.]interpolation_alpha[ ]*\\),[ ]*draw_debug,[ ]*feedback,[ ]*audio_ready,[ ]*stable_key_label\\([ ]*settings::binding_for\\([ ]*input_settings,[ ]*settings::SettingAction::interact[ ]*\\)[ ]*\\)[ ]*\\)[ ]*;"
     1)
 
 string(FIND "${_host_loop}" "validation_runtime->observe_inventory("

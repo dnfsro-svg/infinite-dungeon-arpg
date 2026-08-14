@@ -183,6 +183,15 @@ endforeach()
 extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_view_math.cpp"
     "void copy_skill_name(" _skill "inventory catalog skill consumer")
 require_token("${_skill}" "ui_skill_name(id)" "inventory catalog skill consumer")
+extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_view_math.cpp"
+    "InventoryTooltipView inventory_tooltip_view("
+    _tooltip_view "inventory tooltip catalog consumer")
+foreach(_token IN ITEMS "ui_item_base_name(item.base_id)"
+        "ui_item_rarity_name(item.rarity)"
+        "ui_item_affix_name(roll.affix_id)")
+    require_token("${_tooltip_view}" "${_token}"
+        "inventory tooltip catalog consumer")
+endforeach()
 extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp"
     "void draw_button(" _button "inventory button")
 reject_lambda("${_button}" "inventory button")
@@ -191,14 +200,118 @@ foreach(_token IN ITEMS "DrawRectangleRec(rectangle, fill)" "draw_centered_hud_f
 endforeach()
 reject_token("${_button}" "MeasureTextEx(" "inventory button backing")
 extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp"
+    "void InventoryRenderer::refresh_frame_layout("
+    _frame_layout_refresh "inventory frame-layout refresh")
+reject_token("${_frame_layout_refresh}" "transient_status_state_"
+    "inventory resize must not restart transient status")
+extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp"
+    "bool InventoryRenderer::process_input(" _inventory_input "inventory live input")
+string(REGEX REPLACE "[ \t\r\n]+" " " _inventory_input_compact
+    "${_inventory_input}")
+foreach(_resolver IN ITEMS
+        "const InventoryVisibleItemSource frozen_source = inventory_visible_item_source(frame_layout_.shell, page_, state, view_cache_, tooltip_state_.frozen_item_id, scroll_rows_);"
+        "const InventoryVisibleItemSource selected_source = inventory_visible_item_source(frame_layout_.shell, page_, state, view_cache_, selected_item_id_, scroll_rows_);")
+    require_token("${_inventory_input_compact}" "${_resolver}"
+        "inventory input current-frame tooltip resolver")
+endforeach()
+require_token("${_inventory_input_compact}"
+    "const bool pointer_inside_retained_tooltip = retained_frame.valid && contains(retained_frame.layout.backing, mouse);"
+    "inventory input backing-only tooltip hit")
+foreach(_token IN ITEMS "refresh_frame_layout()" "frame_layout_.shell"
+        "frame_layout_.skills" "frame_layout_.materials"
+        "inventory_visible_item_source(" "build_tooltip_frame("
+        "inventory_tooltip_transition(" "inventory_pointer_layer("
+        "InventoryPointerLayer::confirmation" "InventoryPointerLayer::tab"
+        "InventoryPointerLayer::tooltip" "InventoryPointerLayer::directed_material"
+        "InventoryPointerLayer::material_cancel" "InventoryPointerLayer::material_select"
+        "InventoryPointerLayer::material_target" "InventoryPointerLayer::page_action"
+        "InventoryPointerLayer::filter" "InventoryPointerLayer::skill_content"
+        "InventoryPointerLayer::recipe" "InventoryPointerLayer::equipment"
+        "InventoryPointerLayer::background_clear"
+        "material_bag_.process_click(mouse, state,"
+        "active_skill_loadout_command_after_click("
+        "advance_active_skill_loadout_selection(")
+    require_token("${_inventory_input}" "${_token}" "inventory live input")
+endforeach()
+foreach(_builder IN ITEMS "inventory_shell_layout("
+        "active_skill_loadout_layout(" "material_bag_layout(")
+    reject_token("${_inventory_input}" "${_builder}"
+        "inventory input must consume one cached frame layout")
+endforeach()
+reject_lambda("${_inventory_input}" "inventory live input")
+extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp"
     "void InventoryRenderer::draw(" _inventory_draw "inventory live renderer")
-foreach(_token IN ITEMS "ui_item_slot_name(slot)" "ui_item_rarity_name(item.rarity)"
-        "ui_item_base_name(item.base_id)" "ui_item_affix_name(roll.affix_id)"
-        "ui_material_name(*selected_material)" "draw_detail_row(")
+string(REGEX REPLACE "[ \t\r\n]+" " " _inventory_draw_compact
+    "${_inventory_draw}")
+foreach(_resolver IN ITEMS
+        "const InventoryVisibleItemSource frozen_source = inventory_visible_item_source(shell, page_, state, view_cache_, tooltip_state_.frozen_item_id, scroll_rows_);"
+        "const InventoryVisibleItemSource selected_source = inventory_visible_item_source(shell, page_, state, view_cache_, selected_item_id_, scroll_rows_);")
+    require_token("${_inventory_draw_compact}" "${_resolver}"
+        "inventory draw current-frame tooltip resolver")
+endforeach()
+require_token("${_inventory_draw_compact}"
+    "inventory_page_title(page_, inventory_binding_label)"
+    "inventory title live binding argument")
+reject_token("${_inventory_draw}" "\"I\""
+    "inventory title hard-coded default binding")
+foreach(_token IN ITEMS "refresh_frame_layout()" "frame_layout_.shell"
+        "InventoryPage::equipment" "InventoryPage::skill_stones"
+        "InventoryPage::materials" "inventory_page_title("
+        "inventory_empty_presentation(" "inventory_item_visual_state("
+        "build_tooltip_frame(" "inventory_transient_status_for_frame("
+        "inventory_status_presentation("
+        "ui_item_rarity_name(item.rarity)"
+        "ui_item_base_name(item.base_id)"
+        "material_bag_.draw(" "draw_active_skill_loadout("
+        "draw_inventory_tooltip(" "draw_inventory_status(")
     require_token("${_inventory_draw}" "${_token}" "inventory live renderer")
 endforeach()
-foreach(_bad IN ITEMS "->display_name" ".display_name" "base->name" "definition->name")
+foreach(_builder IN ITEMS "inventory_shell_layout("
+        "active_skill_loadout_layout(" "material_bag_layout(")
+    reject_token("${_inventory_draw}" "${_builder}"
+        "inventory draw must consume one cached frame layout")
+endforeach()
+foreach(_bad IN ITEMS "->display_name" ".display_name" "base->name" "definition->name"
+        "InventoryLayout" "InventoryTextSafeLayout"
+        "InventoryDetailRowLayout" "draw_detail_row(" "inventory_layout("
+        "inventory_text_safe_layout("
+        "material_bag_detail_bounds(" "GetFontDefault(")
     reject_token("${_inventory_draw}" "${_bad}" "inventory live renderer")
+endforeach()
+
+extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp"
+    "void draw_equipment_overview(" _equipment_overview
+    "inventory equipment overview")
+foreach(_token IN ITEMS "draw_character_silhouette(shell)"
+        "shell.equipment_slots" "inventory_item_visual_state("
+        "draw_inventory_item_overlay("
+        "inventory_equipment_slot_label(slot, item)")
+    require_token("${_equipment_overview}" "${_token}"
+        "inventory equipment overview")
+endforeach()
+extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp"
+    "void draw_inventory_tooltip(" _tooltip_draw "inventory tooltip draw")
+foreach(_token IN ITEMS "DrawRectangleRec(frame.layout.backing"
+        "frame.layout.placements" "draw_crisp_ui_text(")
+    require_token("${_tooltip_draw}" "${_token}" "inventory tooltip draw")
+endforeach()
+extract_live("${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp"
+    "void draw_inventory_status(" _status_draw "inventory bottom status")
+foreach(_token IN ITEMS "DrawRectangleRec(shell.status_bar, kInventoryTextBacking)"
+        "status_tone_color(presentation.tone)" "shell.status_bounds"
+        "shell.action_bounds" "shell.hint_bounds")
+    require_token("${_status_draw}" "${_token}" "inventory bottom status")
+endforeach()
+
+extract_live("${SOURCE_ROOT}/src/platform/raylib/material_bag_renderer.cpp"
+    "bool MaterialBagRenderer::process_click(" _material_click "material shared-layout click")
+require_token("${_material_click}" "layout.slots"
+    "material shared-layout click")
+extract_live("${SOURCE_ROOT}/src/platform/raylib/material_bag_renderer.cpp"
+    "void MaterialBagRenderer::draw(" _material_draw "material shared-layout draw")
+foreach(_token IN ITEMS "layout.contains_all_slots()"
+        "ui_material_description(id)" "state.materials[index]")
+    require_token("${_material_draw}" "${_token}" "material shared-layout draw")
 endforeach()
 
 # T3 loot, materials and only the two authorized HUD methods.

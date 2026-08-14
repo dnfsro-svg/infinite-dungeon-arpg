@@ -55,35 +55,86 @@ function Assert-EvidenceFields([hashtable]$Fields, $Expected) {
     }
 }
 
-$productionFields = Read-EvidenceFields (Join-Path $run 'production-summary.txt')
-Assert-EvidenceFields $productionFields ([ordered]@{
-    scenario = 'production_sequence'
-    result = 'pass'
-    draw_accepted = '1'
-    draw_windup_captured = '1'
-    draw_frame_peak = '35'
-    draw_hit_count = '2'
-    storm_accepted = '0'
-    storm_strike_hit_count = '0'
-    storm_finisher_hit_count = '0'
-    draw_renderer_samples = '<positive>'
-    draw_material_frame_drawn = '1'
-    draw_base_player_drawn = '0'
-    draw_procedural_main_visual_peak = '0'
-    draw_renderer_status_valid = '1'
-    public_input_path = '1'
-    production_transactions = '1'
-    production_inventory_closed = '1'
-    production_cooldown_wait_started = '1'
-    production_cooldown_start_ticks = '<positive>'
-    production_cooldown_wait_ticks = '<positive>'
-    production_cooldowns_zero_before_shutdown = '1'
-    clean_shutdown_exact_ready = '1'
-})
-$stormFields = Read-EvidenceFields (Join-Path $run 'storm-summary.txt')
+function Assert-CaptureFields(
+    [hashtable]$Fields,
+    [string]$Prefix,
+    [bool]$Captured,
+    [bool]$Skipped,
+    [string]$File) {
+    Assert-EvidenceFields $Fields ([ordered]@{
+        ($Prefix + '_captured') = $(if ($Captured) { '1' } else { '0' })
+        ($Prefix + '_skipped') = $(if ($Skipped) { '1' } else { '0' })
+        ($Prefix + '_capture_file') = $File
+    })
+}
+
+function Get-CaptureName([string]$Stem, [string]$Resolution) {
+    return $Stem + $Resolution + '.png'
+}
+
+$resolutions = @('800x450', '1280x720', '1920x1080')
+$legacyStems = @(
+    '01-new-default-',
+    '02-draw-slash-windup-',
+    '03-draw-slash-hit-'
+)
+$legacyPrefixes = @('initial', 'draw_windup', 'draw_hit')
+$skillStems = [ordered]@{
+    skill_empty = 'poe2-inventory-skill-empty-'
+    skill_removed = 'poe2-inventory-skill-removed-'
+    skill_selected = 'poe2-inventory-skill-selected-'
+    skill_swapped = 'poe2-inventory-skill-swapped-'
+}
+$productionByResolution = @{}
+foreach ($resolution in $resolutions) {
+    $summary = Join-Path (Join-Path $run $resolution) `
+        ('production-summary-' + $resolution + '.txt')
+    $productionFields = Read-EvidenceFields $summary
+    $productionByResolution[$resolution] = $productionFields
+    Assert-EvidenceFields $productionFields ([ordered]@{
+        scenario = 'production_sequence'
+        result = 'pass'
+        window = $resolution
+        draw_accepted = '1'
+        draw_frame_peak = '35'
+        draw_hit_count = '2'
+        storm_accepted = '0'
+        storm_strike_hit_count = '0'
+        storm_finisher_hit_count = '0'
+        draw_renderer_samples = '<positive>'
+        draw_material_frame_drawn = '1'
+        draw_base_player_drawn = '0'
+        draw_procedural_main_visual_peak = '0'
+        draw_renderer_status_valid = '1'
+        public_input_path = '1'
+        production_transactions = '1'
+        production_inventory_closed = '1'
+        production_cooldown_wait_started = '1'
+        production_cooldown_start_ticks = '<positive>'
+        production_cooldown_wait_ticks = '<positive>'
+        production_cooldowns_zero_before_shutdown = '1'
+        clean_shutdown_exact_ready = '1'
+    })
+    $legacyCaptured = $resolution -ceq '1280x720'
+    for ($index = 0; $index -lt $legacyPrefixes.Count; ++$index) {
+        Assert-CaptureFields $productionFields $legacyPrefixes[$index] `
+            $legacyCaptured (-not $legacyCaptured) `
+            $(if ($legacyCaptured) {
+                Get-CaptureName $legacyStems[$index] $resolution
+            } else { 'N/A' })
+    }
+    foreach ($entry in $skillStems.GetEnumerator()) {
+        Assert-CaptureFields $productionFields $entry.Key $true $false `
+            (Get-CaptureName $entry.Value $resolution)
+    }
+}
+
+$stormFields = Read-EvidenceFields `
+    (Join-Path (Join-Path $run '1280x720') 'storm-summary.txt')
 Assert-EvidenceFields $stormFields ([ordered]@{
     scenario = 'storm_sequence'
     result = 'pass'
+    window = '1280x720'
     draw_accepted = '1'
     draw_hit_count = '2'
     storm_prelude_draw_hit_count = '2'
@@ -109,17 +160,19 @@ Assert-EvidenceFields $stormFields ([ordered]@{
     production_transactions = '0'
     clean_shutdown_exact_ready = '1'
 })
-$restartFields = Read-EvidenceFields (Join-Path $run 'restart-summary.txt')
+$restartFields = Read-EvidenceFields `
+    (Join-Path (Join-Path $run '1280x720') 'restart-summary.txt')
 Assert-EvidenceFields $restartFields ([ordered]@{
     scenario = 'restarted_loadout'
     result = 'pass'
+    window = '1280x720'
     initial_slots = 'none,draw_slash,none,none,storm_swords'
     restart_persisted = '1'
     restart_cooldowns_zero = '1'
     clean_shutdown_exact_ready = '1'
 })
 
-$images = @(
+$legacyImages = @(
     '01-new-default-1280x720.png',
     '02-draw-slash-windup-1280x720.png',
     '03-draw-slash-hit-1280x720.png',
@@ -128,6 +181,33 @@ $images = @(
     '06-storm-finisher-1280x720.png',
     '07-restarted-loadout-1280x720.png'
 )
+$skillImages = @()
+foreach ($resolution in $resolutions) {
+    foreach ($stem in $skillStems.Values) {
+        $skillImages += Get-CaptureName $stem $resolution
+    }
+}
+$images = @($legacyImages) + @($skillImages)
+$forbiddenLegacyImages = @()
+foreach ($resolution in @('800x450', '1920x1080')) {
+    foreach ($stem in $legacyStems) {
+        $forbiddenLegacyImages += Get-CaptureName $stem $resolution
+    }
+}
+foreach ($name in $forbiddenLegacyImages) {
+    if (Test-Path -LiteralPath (Join-Path $run $name)) {
+        throw "non-1280 legacy PNG must not exist: $name"
+    }
+}
+$actualPngNames = @(Get-ChildItem -LiteralPath $run -File -Filter '*.png' |
+    ForEach-Object { $_.Name })
+if ($actualPngNames.Count -ne $images.Count) {
+    throw "PNG evidence count rejected: expected $($images.Count), got $($actualPngNames.Count)"
+}
+$unexpectedPngNames = @($actualPngNames | Where-Object { $_ -cnotin $images })
+if ($unexpectedPngNames.Count -ne 0) {
+    throw "unexpected PNG evidence: $($unexpectedPngNames -join ', ')"
+}
 $pixelHashes = [System.Collections.Generic.HashSet[string]]::new()
 $pixelHashesByImage = [ordered]@{}
 foreach ($name in $images) {
@@ -143,7 +223,13 @@ foreach ($name in $images) {
 
     $bitmap = [System.Drawing.Bitmap]::new($path)
     try {
-        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720) {
+        if ($name -notmatch '-(?<width>[0-9]+)x(?<height>[0-9]+)\.png$') {
+            throw "PNG filename has no dimensions: $name"
+        }
+        $expectedWidth = [int]$Matches.width
+        $expectedHeight = [int]$Matches.height
+        if ($bitmap.Width -ne $expectedWidth -or
+                $bitmap.Height -ne $expectedHeight) {
             throw "PNG dimensions rejected for $name`: $($bitmap.Width)x$($bitmap.Height)"
         }
         $rect = [System.Drawing.Rectangle]::new(0, 0, $bitmap.Width, $bitmap.Height)
@@ -187,8 +273,10 @@ $expected = [ordered]@{
     result = 'PASS'
     renderer = 'raylib-6.0-opengl'
     window = '1280x720'
+    poe2_resolutions = '800x450,1280x720,1920x1080'
     fixture_path = 'production-raylib-host'
-    showcase_capture_count = '0'
+    showcase_capture_count = '12'
+    legacy_capture_count = '7'
     save_version = '10'
     initial_slots = 'draw_slash,storm_swords,none,none,none'
     final_slots = 'none,draw_slash,none,none,storm_swords'
@@ -215,7 +303,7 @@ $expected = [ordered]@{
     storm_finisher_phase_seen = 'true'
     storm_aerial_captured = 'true'
     active_skill_atlases_ready = 'true'
-    renderer_status_source = 'production-summary.txt,storm-summary.txt'
+    renderer_status_source = '800x450/production-summary-800x450.txt,1280x720/production-summary-1280x720.txt,1920x1080/production-summary-1920x1080.txt,1280x720/storm-summary.txt'
     draw_renderer_samples = '<positive>'
     draw_material_frame_drawn = '1'
     draw_base_player_drawn = '0'

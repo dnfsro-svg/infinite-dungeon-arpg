@@ -18,6 +18,22 @@ class DungeonRuntime;
 struct DungeonRenderStatus;
 struct HostFrameInput;
 
+struct InventoryFrameLayout final {
+    int width{};
+    int height{};
+    InventoryShellLayout shell{};
+    ActiveSkillLoadoutLayout skills{};
+    MaterialBagLayout materials{};
+    bool valid{};
+};
+
+struct InventoryTooltipFrame final {
+    std::uint64_t item_id{};
+    InventoryTooltipView view{};
+    InventoryTooltipLayout layout{};
+    bool valid{};
+};
+
 class InventoryRenderer final {
 public:
     void open(const dungeon::DungeonSession& session,
@@ -36,16 +52,22 @@ public:
         Font hud_font, bool hud_font_ready);
 
 private:
+    void refresh_frame_layout() noexcept;
     void sync(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot);
     void refresh_comparison(const dungeon::DungeonSession& session,
-        const dungeon::DungeonSnapshot& snapshot);
-    [[nodiscard]] const items::ItemInstance* selected_item(
-        const items::ItemOwnershipState& state) const noexcept;
+        const dungeon::DungeonSnapshot& snapshot,
+        std::uint64_t presentation_item_id);
+    [[nodiscard]] InventoryTooltipFrame build_tooltip_frame(
+        const dungeon::DungeonSession& session,
+        const dungeon::DungeonSnapshot& snapshot,
+        std::uint64_t presentation_item_id,
+        Rectangle source, bool source_is_in_right_panel,
+        Font measure_font, bool measure_font_ready);
     [[nodiscard]] bool recipe_ready() const noexcept;
 
     bool open_{};
-    InventoryPage page_{InventoryPage::equipment_materials};
+    InventoryPage page_{InventoryPage::equipment};
     ActiveSkillLoadoutSelection active_skill_selection_{};
     InventoryFilter filter_{};
     float scroll_rows_{};
@@ -54,6 +76,11 @@ private:
     InventoryClickTracker click_tracker_{};
     InventoryViewCache view_cache_{};
     MaterialBagRenderer material_bag_{};
+    InventoryFrameLayout frame_layout_{};
+    InventoryTooltipInteractionState tooltip_state_{};
+    InventoryTransientStatusState transient_status_state_{};
+    Font tooltip_measure_font_{};
+    bool tooltip_measure_font_ready_{};
     std::uint64_t comparison_generation_{~std::uint64_t{0U}};
     std::uint64_t comparison_item_id_{};
     items::EquipmentState comparison_equipment_{};

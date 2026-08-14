@@ -6,21 +6,31 @@ endif()
 
 set(_guard
     "${SOURCE_ROOT}/tests/platform/inventory_renderer_source_test.cmake")
+set(_renderer_header
+    "${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.hpp")
 set(_renderer
     "${SOURCE_ROOT}/src/platform/raylib/inventory_renderer.cpp")
 set(_view_header
     "${SOURCE_ROOT}/src/platform/raylib/inventory_view_math.hpp")
 set(_view_source
     "${SOURCE_ROOT}/src/platform/raylib/inventory_view_math.cpp")
-foreach(_path IN ITEMS _guard _renderer _view_header _view_source)
+set(_material_header
+    "${SOURCE_ROOT}/src/platform/raylib/material_bag_renderer.hpp")
+set(_material_source
+    "${SOURCE_ROOT}/src/platform/raylib/material_bag_renderer.cpp")
+foreach(_path IN ITEMS _guard _renderer_header _renderer _view_header
+        _view_source _material_header _material_source)
     if(NOT EXISTS "${${_path}}")
         message(FATAL_ERROR "T2 self-test input is missing: ${${_path}}")
     endif()
 endforeach()
 
+file(READ "${_renderer_header}" _renderer_header_original)
 file(READ "${_renderer}" _renderer_original)
 file(READ "${_view_header}" _header_original)
 file(READ "${_view_source}" _view_original)
+file(READ "${_material_header}" _material_header_original)
+file(READ "${_material_source}" _material_source_original)
 file(READ "${_guard}" _guard_original)
 string(REPLACE "\r\n" "\n" _guard_original "${_guard_original}")
 file(REMOVE_RECURSE "${MUTATION_ROOT}")
@@ -46,24 +56,45 @@ endif()
 set(_guard_without_dead_check
     "${MUTATION_ROOT}/inventory_renderer_source_test_without_dead_check.cmake")
 file(WRITE "${_guard_without_dead_check}" "${_guard_without_dead_check_text}")
+set(_draw_lambda_guard_call
+    [=[reject_lambda("${_draw_code}" "T4 inventory live draw")]=])
+string(REPLACE "${_draw_lambda_guard_call}" ""
+    _guard_without_draw_lambda_check_text "${_guard_original}")
+if(_guard_without_draw_lambda_check_text STREQUAL _guard_original)
+    message(FATAL_ERROR "T2 draw-lambda guard probe anchor is missing")
+endif()
+set(_guard_without_draw_lambda_check
+    "${MUTATION_ROOT}/inventory_renderer_source_test_without_draw_lambda_check.cmake")
+file(WRITE "${_guard_without_draw_lambda_check}"
+    "${_guard_without_draw_lambda_check_text}")
 file(COPY "${SOURCE_ROOT}/tests/platform/cpp_source_function_body.cmake"
     DESTINATION "${MUTATION_ROOT}")
 
-function(run_guard_with_script LABEL RENDERER_TEXT HEADER_TEXT VIEW_TEXT
+function(run_guard_with_all_inputs LABEL RENDERER_HEADER_TEXT RENDERER_TEXT
+        HEADER_TEXT VIEW_TEXT MATERIAL_HEADER_TEXT MATERIAL_TEXT
         EXPECT_SUCCESS GUARD_SCRIPT)
     set(_root "${MUTATION_ROOT}/${LABEL}")
     file(MAKE_DIRECTORY "${_root}")
+    set(_renderer_header_mutant "${_root}/inventory_renderer.hpp")
     set(_renderer_mutant "${_root}/inventory_renderer.cpp")
     set(_header_mutant "${_root}/inventory_view_math.hpp")
     set(_view_mutant "${_root}/inventory_view_math.cpp")
+    set(_material_header_mutant "${_root}/material_bag_renderer.hpp")
+    set(_material_mutant "${_root}/material_bag_renderer.cpp")
+    file(WRITE "${_renderer_header_mutant}" "${RENDERER_HEADER_TEXT}")
     file(WRITE "${_renderer_mutant}" "${RENDERER_TEXT}")
     file(WRITE "${_header_mutant}" "${HEADER_TEXT}")
     file(WRITE "${_view_mutant}" "${VIEW_TEXT}")
+    file(WRITE "${_material_header_mutant}" "${MATERIAL_HEADER_TEXT}")
+    file(WRITE "${_material_mutant}" "${MATERIAL_TEXT}")
     execute_process(COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DINVENTORY_HEADER=${_renderer_header_mutant}"
         "-DINVENTORY_SOURCE=${_renderer_mutant}"
         "-DVIEW_HEADER=${_header_mutant}"
         "-DVIEW_SOURCE=${_view_mutant}"
+        "-DMATERIAL_HEADER=${_material_header_mutant}"
+        "-DMATERIAL_SOURCE=${_material_mutant}"
         -P "${GUARD_SCRIPT}"
         RESULT_VARIABLE _result OUTPUT_QUIET ERROR_QUIET)
     if(EXPECT_SUCCESS AND NOT _result EQUAL 0)
@@ -73,6 +104,14 @@ function(run_guard_with_script LABEL RENDERER_TEXT HEADER_TEXT VIEW_TEXT
         set_property(GLOBAL APPEND PROPERTY
             T2_INVENTORY_RENDERER_MISSED_MUTATIONS "${LABEL}")
     endif()
+endfunction()
+
+function(run_guard_with_script LABEL RENDERER_TEXT HEADER_TEXT VIEW_TEXT
+        EXPECT_SUCCESS GUARD_SCRIPT)
+    run_guard_with_all_inputs("${LABEL}" "${_renderer_header_original}"
+        "${RENDERER_TEXT}" "${HEADER_TEXT}" "${VIEW_TEXT}"
+        "${_material_header_original}" "${_material_source_original}"
+        "${EXPECT_SUCCESS}" "${GUARD_SCRIPT}")
 endfunction()
 
 function(run_guard LABEL RENDERER_TEXT HEADER_TEXT VIEW_TEXT EXPECT_SUCCESS)
@@ -112,6 +151,43 @@ function(expect_view_mutation_rejected LABEL NEEDLE REPLACEMENT)
         "${_mutated}" FALSE)
 endfunction()
 
+function(expect_renderer_header_mutation_rejected LABEL NEEDLE REPLACEMENT)
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}"
+        _mutated "${_renderer_header_original}")
+    if(_mutated STREQUAL _renderer_header_original)
+        message(FATAL_ERROR
+            "T2 renderer-header mutation anchor is missing: ${LABEL}")
+    endif()
+    run_guard_with_all_inputs("${LABEL}" "${_mutated}"
+        "${_renderer_original}" "${_header_original}" "${_view_original}"
+        "${_material_header_original}" "${_material_source_original}"
+        FALSE "${_guard}")
+endfunction()
+
+function(expect_material_header_mutation_rejected LABEL NEEDLE REPLACEMENT)
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}"
+        _mutated "${_material_header_original}")
+    if(_mutated STREQUAL _material_header_original)
+        message(FATAL_ERROR
+            "T2 material-header mutation anchor is missing: ${LABEL}")
+    endif()
+    run_guard_with_all_inputs("${LABEL}" "${_renderer_header_original}"
+        "${_renderer_original}" "${_header_original}" "${_view_original}"
+        "${_mutated}" "${_material_source_original}" FALSE "${_guard}")
+endfunction()
+
+function(expect_material_source_mutation_rejected LABEL NEEDLE REPLACEMENT)
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}"
+        _mutated "${_material_source_original}")
+    if(_mutated STREQUAL _material_source_original)
+        message(FATAL_ERROR
+            "T2 material-source mutation anchor is missing: ${LABEL}")
+    endif()
+    run_guard_with_all_inputs("${LABEL}" "${_renderer_header_original}"
+        "${_renderer_original}" "${_header_original}" "${_view_original}"
+        "${_material_header_original}" "${_mutated}" FALSE "${_guard}")
+endfunction()
+
 run_guard(pristine "${_renderer_original}" "${_header_original}"
     "${_view_original}" TRUE)
 
@@ -132,45 +208,39 @@ expect_renderer_mutation_rejected(active_english_panel_title
     "\"EQUIPMENT\"")
 
 set(_dead_constexpr_decoy [=[if constexpr (false) {
-        draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),
-            material_pack, UiMaterialElement::inventory_panel_equipment,
-            hud_font, hud_font_ready, text_layout.equipment_panel_title);
-    }
-    draw_panel(layout.equipment, u8"装备",]=])
+            static_cast<void>(tab_labels[index]);
+        }
+        draw_inventory_page_button(shell.tabs[index], u8"装备",]=])
 expect_renderer_mutation_rejected(dead_constexpr_chinese_decoy
-    "draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),"
+    "draw_inventory_page_button(shell.tabs[index], tab_labels[index],"
     "${_dead_constexpr_decoy}")
 expect_renderer_mutation_accepted_without_dead_check(
     dead_constexpr_chinese_decoy
-    "draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),"
+    "draw_inventory_page_button(shell.tabs[index], tab_labels[index],"
     "${_dead_constexpr_decoy}")
 
 set(_dead_preprocessor_decoy [=[#if 0
-        draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),
-            material_pack, UiMaterialElement::inventory_panel_equipment,
-            hud_font, hud_font_ready, text_layout.equipment_panel_title);
+        static_cast<void>(tab_labels[index]);
 #endif
-    draw_panel(layout.equipment, u8"装备",]=])
+        draw_inventory_page_button(shell.tabs[index], u8"装备",]=])
 expect_renderer_mutation_rejected(dead_preprocessor_chinese_decoy
-    "draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),"
+    "draw_inventory_page_button(shell.tabs[index], tab_labels[index],"
     "${_dead_preprocessor_decoy}")
 expect_renderer_mutation_accepted_without_dead_check(
     dead_preprocessor_decoy
-    "draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),"
+    "draw_inventory_page_button(shell.tabs[index], tab_labels[index],"
     "${_dead_preprocessor_decoy}")
 
 set(_dead_comparison_decoy [=[if (0 == 1) {
-        draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),
-            material_pack, UiMaterialElement::inventory_panel_equipment,
-            hud_font, hud_font_ready, text_layout.equipment_panel_title);
-    }
-    draw_panel(layout.equipment, u8"装备",]=])
+            static_cast<void>(tab_labels[index]);
+        }
+        draw_inventory_page_button(shell.tabs[index], u8"装备",]=])
 expect_renderer_mutation_rejected(dead_comparison_chinese_decoy
-    "draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),"
+    "draw_inventory_page_button(shell.tabs[index], tab_labels[index],"
     "${_dead_comparison_decoy}")
 expect_renderer_mutation_accepted_without_dead_check(
     dead_comparison_decoy
-    "draw_panel(layout.equipment, ui_text(UiTextId::equipment_title),"
+    "draw_inventory_page_button(shell.tabs[index], tab_labels[index],"
     "${_dead_comparison_decoy}")
 
 expect_renderer_mutation_rejected(default_core_rarity_name
@@ -194,16 +264,133 @@ expect_view_mutation_rejected(unsupported_runtime_glyph
     "u8\"空中控制\"")
 
 expect_renderer_mutation_rejected(skill_name_ignores_local_scale
-    "ui_typography().kSkillDescriptionFontSize * skill_text_scale,\n            9.0F,"
-    "ui_typography().kSkillDescriptionFontSize,\n            9.0F,")
+    "std::max(12.0F, ui_typography().kSkillDescriptionFontSize\n                * skill_text_scale), 12.0F,"
+    "std::max(12.0F, ui_typography().kSkillDescriptionFontSize), 12.0F,")
+
+expect_renderer_mutation_rejected(hard_coded_inventory_binding_u8
+    "inventory_page_title(page_,\n        inventory_binding_label)"
+    "inventory_page_title(page_, u8\"I\")")
+
+expect_renderer_mutation_rejected(hard_coded_inventory_binding_plain
+    "inventory_page_title(page_,\n        inventory_binding_label)"
+    "inventory_page_title(page_, \"I\")")
+
+expect_renderer_mutation_rejected(wrong_inventory_binding_argument
+    "inventory_page_title(page_,\n        inventory_binding_label)"
+    "inventory_page_title(page_, ui_text(UiTextId::inventory_title))")
+
+expect_renderer_mutation_rejected(resize_restarts_transient_status
+    "tooltip_state_ = {};\n    tooltip_measure_font_ = {};"
+    "tooltip_state_ = {};\n    transient_status_state_ = {};\n    tooltip_measure_font_ = {};")
+
+expect_renderer_mutation_rejected(resize_restarts_typed_transient_status
+    "tooltip_state_ = {};\n    tooltip_measure_font_ = {};"
+    "tooltip_state_ = {};\n    transient_status_state_ = InventoryTransientStatusState{};\n    tooltip_measure_font_ = {};")
+
+expect_renderer_mutation_rejected(input_frozen_resolver_uses_selected
+    "const InventoryVisibleItemSource frozen_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, tooltip_state_.frozen_item_id, scroll_rows_);"
+    "const InventoryVisibleItemSource frozen_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, selected_item_id_, scroll_rows_);")
+
+expect_renderer_mutation_rejected(input_selected_resolver_uses_frozen
+    "const InventoryVisibleItemSource selected_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, selected_item_id_, scroll_rows_);"
+    "const InventoryVisibleItemSource selected_source =\n        inventory_visible_item_source(frame_layout_.shell, page_, state,\n            view_cache_, tooltip_state_.frozen_item_id, scroll_rows_);")
+
+expect_renderer_mutation_rejected(draw_frozen_resolver_uses_selected
+    "const InventoryVisibleItemSource frozen_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                tooltip_state_.frozen_item_id, scroll_rows_);"
+    "const InventoryVisibleItemSource frozen_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                selected_item_id_, scroll_rows_);")
+
+expect_renderer_mutation_rejected(draw_selected_resolver_uses_frozen
+    "const InventoryVisibleItemSource selected_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                selected_item_id_, scroll_rows_);"
+    "const InventoryVisibleItemSource selected_source =\n            inventory_visible_item_source(shell, page_, state, view_cache_,\n                tooltip_state_.frozen_item_id, scroll_rows_);")
+
+set(_draw_contract_lambda_anchor [=[    const auto page_title = inventory_page_title(page_,
+        inventory_binding_label);]=])
+set(_draw_contract_lambda_replacement [=[    const auto draw_contract_decoy = [&]() {
+        const auto page_title = inventory_page_title(page_,
+            inventory_binding_label);
+        const InventoryVisibleItemSource frozen_source =
+            inventory_visible_item_source(shell, page_, state, view_cache_,
+                tooltip_state_.frozen_item_id, scroll_rows_);
+        const InventoryVisibleItemSource selected_source =
+            inventory_visible_item_source(shell, page_, state, view_cache_,
+                selected_item_id_, scroll_rows_);
+        static_cast<void>(page_title);
+        static_cast<void>(frozen_source);
+        static_cast<void>(selected_source);
+    };
+    static_cast<void>(draw_contract_decoy);
+    const auto page_title = inventory_page_title(page_,
+        ui_text(UiTextId::inventory_title));]=])
+set(_draw_contract_lambda_mutant "${_renderer_original}")
+set(_draw_contract_before_frozen "${_draw_contract_lambda_mutant}")
+string(REPLACE
+    [=[const InventoryVisibleItemSource frozen_source =
+            inventory_visible_item_source(shell, page_, state, view_cache_,
+                tooltip_state_.frozen_item_id, scroll_rows_);]=]
+    [=[const InventoryVisibleItemSource frozen_source =
+            inventory_visible_item_source(shell, page_, state, view_cache_,
+                selected_item_id_, scroll_rows_);]=]
+    _draw_contract_lambda_mutant "${_draw_contract_lambda_mutant}")
+if(_draw_contract_lambda_mutant STREQUAL _draw_contract_before_frozen)
+    message(FATAL_ERROR "T2 draw-contract frozen resolver anchor is missing")
+endif()
+set(_draw_contract_before_selected "${_draw_contract_lambda_mutant}")
+string(REPLACE
+    [=[const InventoryVisibleItemSource selected_source =
+            inventory_visible_item_source(shell, page_, state, view_cache_,
+                selected_item_id_, scroll_rows_);]=]
+    [=[const InventoryVisibleItemSource selected_source =
+            inventory_visible_item_source(shell, page_, state, view_cache_,
+                tooltip_state_.frozen_item_id, scroll_rows_);]=]
+    _draw_contract_lambda_mutant "${_draw_contract_lambda_mutant}")
+if(_draw_contract_lambda_mutant STREQUAL _draw_contract_before_selected)
+    message(FATAL_ERROR "T2 draw-contract selected resolver anchor is missing")
+endif()
+set(_draw_contract_before_decoy "${_draw_contract_lambda_mutant}")
+string(REPLACE "${_draw_contract_lambda_anchor}"
+    "${_draw_contract_lambda_replacement}" _draw_contract_lambda_mutant
+    "${_draw_contract_lambda_mutant}")
+if(_draw_contract_lambda_mutant STREQUAL _draw_contract_before_decoy)
+    message(FATAL_ERROR "T2 draw-contract lambda mutation anchor is missing")
+endif()
+run_guard_with_script(draw_contract_hidden_in_uncalled_lambda
+    "${_draw_contract_lambda_mutant}" "${_header_original}"
+    "${_view_original}" FALSE "${_guard}")
+run_guard_with_script(draw_contract_without_lambda_check
+    "${_draw_contract_lambda_mutant}" "${_header_original}"
+    "${_view_original}" TRUE "${_guard_without_draw_lambda_check}")
+
+expect_renderer_mutation_rejected(selected_tooltip_flickers_after_restore
+    "|| tooltip_state_.frozen_item_id == selected_source.item_id))"
+    "|| false))")
+
+expect_renderer_mutation_rejected(corridor_steals_source_card_input
+    "const bool retained_backing_blocks = tooltip_state_.visible\n        && pointer_inside_retained_tooltip;"
+    "const bool retained_backing_blocks = tooltip_state_.visible\n        && (pointer_inside_retained_tooltip\n            || contains(retained_frame.layout.retention_corridor, mouse));")
+
+expect_renderer_mutation_rejected(corridor_widens_pointer_inside_backing
+    "const bool pointer_inside_retained_tooltip = retained_frame.valid\n        && contains(retained_frame.layout.backing, mouse);"
+    "const bool pointer_inside_retained_tooltip = retained_frame.valid\n        && (contains(retained_frame.layout.backing, mouse)\n            || contains(retained_frame.layout.retention_corridor, mouse));")
 
 expect_renderer_mutation_rejected(non_centered_remove_button
-    "draw_centered_hud_font_text(font, font_ready, u8\"取出\",\n        layout.remove_button,"
-    "draw_hud_font_text(font, font_ready, u8\"取出\",\n        layout.remove_button.x, layout.remove_button.y,")
+    "draw_button(shell.action_bounds, presentation.action.data(),"
+    "draw_button(Rectangle{}, presentation.action.data(),")
 
 expect_renderer_mutation_rejected(single_column_detail_rows
-    "const InventoryDetailRowLayout row = inventory_detail_row_layout("
-    "const InventoryDetailRowLayout row{}; static_cast<void>(detail_line_rectangle(")
+    "DrawRectangleRec(shell.grid_viewport, Color{11, 16, 25, 255});"
+    "InventoryDetailRowLayout legacy_detail{};\n        DrawRectangleRec(shell.grid_viewport, Color{11, 16, 25, 255});")
+
+expect_renderer_header_mutation_rejected(renderer_header_state_disconnected
+    "InventoryTransientStatusState transient_status_state_{};"
+    "InventoryTransientStatusState transient_status_state_removed_{};")
+
+expect_material_header_mutation_rejected(material_header_legacy_draw_api
+    "class MaterialBagRenderer final {"
+    "class MaterialBagRenderer final {\n    void draw(const items::ItemOwnershipState&, const MaterialPack&, Font font, bool font_ready, int width, int height);")
+
+expect_material_source_mutation_rejected(material_source_layout_disconnected
+    "if (!layout.contains_all_slots()) return;"
+    "if (layout.slots.empty()) return;")
 
 get_property(_missed_mutations GLOBAL PROPERTY
     T2_INVENTORY_RENDERER_MISSED_MUTATIONS)
