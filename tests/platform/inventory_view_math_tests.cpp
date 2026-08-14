@@ -660,6 +660,11 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(status.action_enabled);
     ARPG_REQUIRE(status.tone == platform::InventoryStatusTone::positive);
     ARPG_REQUIRE(std::string_view{status.action.data()} == u8"三合一（3/3）");
+    status_input.selected_material = items::MaterialId::chaos;
+    const auto material_target_status =
+        platform::inventory_status_presentation(status_input);
+    ARPG_REQUIRE(!material_target_status.action_visible);
+    ARPG_REQUIRE(!material_target_status.action_enabled);
 
     // The materials page must not inherit the equipment double-click/recipe
     // instruction when no material is selected.

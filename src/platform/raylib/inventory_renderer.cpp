@@ -1067,7 +1067,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     }
     case InventoryPointerLayer::page_action:
         if (page_ == InventoryPage::equipment) {
-            if (requests_enabled && recipe_ready()
+            if (requests_enabled && !selected_material.has_value() && recipe_ready()
                     && runtime.request_recipe(recipe_.ids)
                         == dungeon::RequestResult::accepted) {
                 runtime.service_pending_save();

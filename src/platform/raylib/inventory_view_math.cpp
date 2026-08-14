@@ -943,12 +943,14 @@ InventoryStatusPresentation inventory_status_presentation(
             ui_text(UiTextId::inventory_context_hint)));
         static_cast<void>(ui_utf8_copy(output.hint.data(), output.hint.size(),
             ui_text(UiTextId::inventory_context_hint)));
-        static_cast<void>(ui_utf8_format(output.action.data(), output.action.size(),
-            ui_text(UiTextId::inventory_recipe_action_format),
-            static_cast<unsigned int>(input.recipe_count)));
-        output.action_kind = InventoryActionKind::combine;
-        output.action_visible = true;
-        output.action_enabled = input.recipe_ready && input.authority_enabled;
+        if (!input.selected_material.has_value()) {
+            static_cast<void>(ui_utf8_format(output.action.data(), output.action.size(),
+                ui_text(UiTextId::inventory_recipe_action_format),
+                static_cast<unsigned int>(input.recipe_count)));
+            output.action_kind = InventoryActionKind::combine;
+            output.action_visible = true;
+            output.action_enabled = input.recipe_ready && input.authority_enabled;
+        }
         if (input.reinforced_recipe_input) {
             static_cast<void>(ui_utf8_copy(output.status.data(),
                 output.status.size(), ui_text(UiTextId::inventory_recipe_danger)));
