@@ -164,6 +164,7 @@ struct InventoryStatusInput final {
     bool recovery_required{};
     InventoryTransientStatusPresentation transient{};
     std::optional<items::MaterialId> selected_material{};
+    bool material_target_rejected{};
     std::size_t recipe_count{};
     bool recipe_ready{};
     bool reinforced_recipe_input{};

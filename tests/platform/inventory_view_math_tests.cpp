@@ -662,6 +662,30 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(std::string_view{selected_material_status.hint.data()}
         == platform::ui_material_description(items::MaterialId::chaos));
 
+    platform::InventoryStatusInput rejected_material_status_input{};
+    rejected_material_status_input.page = platform::InventoryPage::equipment;
+    rejected_material_status_input.material_target_rejected = true;
+    const auto rejected_material_status =
+        platform::inventory_status_presentation(
+            rejected_material_status_input);
+    ARPG_REQUIRE(std::string_view{rejected_material_status.status.data()}
+        == u8"应用失败 · 切换装备 · 右键取消");
+    ARPG_REQUIRE(rejected_material_status.tone
+        == platform::InventoryStatusTone::negative);
+    rejected_material_status_input.transient.kind =
+        platform::InventoryTransientStatusKind::reinforcement_receipt;
+    rejected_material_status_input.transient.receipt_success = true;
+    rejected_material_status_input.transient.receipt_before = 1U;
+    rejected_material_status_input.transient.receipt_after = 2U;
+    ARPG_REQUIRE(std::string_view{platform::inventory_status_presentation(
+        rejected_material_status_input).status.data()}
+        == u8"应用失败 · 切换装备 · 右键取消");
+    rejected_material_status_input.save_state =
+        platform::InventorySavePresentationState::error;
+    ARPG_REQUIRE(std::string_view{platform::inventory_status_presentation(
+        rejected_material_status_input).status.data()}
+        == u8"保存失败，当前进度未保存，请重试");
+
     platform::InventoryTransientStatusState transient{};
     platform::InventoryTransientStatusInput baseline_input{};
     baseline_input.commit_generation = 10U;

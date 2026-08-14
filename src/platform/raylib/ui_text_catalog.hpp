@@ -55,6 +55,7 @@ enum class UiTextId : std::uint16_t {
     inventory_reinforcement_failure_format,
     inventory_reinforcement_destroyed_format,
     inventory_coupon_success_format,
+    inventory_material_rejected,
     count,
 };
 

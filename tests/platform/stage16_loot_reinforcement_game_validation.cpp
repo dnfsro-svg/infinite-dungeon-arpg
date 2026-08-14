@@ -2162,6 +2162,9 @@ bool run_poe2_inventory_scenarios(const std::filesystem::path& run,
         poe2_scenario_index(Poe2Scenario::material_rejected)].frame;
     if (rejected_target_after.probe_digest
                 == rejected_target_before.probe_digest
+            || rejected_target_after.status_digest == 0U
+            || rejected_target_after.status_digest
+                == rejected_target_before.status_digest
             || rejected_target_after.gold_outline
             || rejected_target_after.cyan_outline
             || !rejected_target_after.negative_outline) {
@@ -2188,6 +2191,8 @@ bool run_poe2_inventory_scenarios(const std::filesystem::path& run,
             target_cell, target_cell, &rejected_unselected_target)
             || rejected_unselected_target.probe_digest
                 != material_unselected_target.probe_digest
+            || rejected_unselected_target.status_digest
+                != material_unselected_target.status_digest
             || rejected_unselected_target.gold_outline
             || rejected_unselected_target.cyan_outline
             || rejected_unselected_target.negative_outline) {

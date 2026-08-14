@@ -1242,6 +1242,9 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     status_input.recovery_required = status.recovery_required;
     status_input.transient = transient_result.presentation;
     status_input.selected_material = selected_material;
+    status_input.material_target_rejected =
+        material_rejection_frames_ != 0U
+        && rejected_material_item_id_ != 0U;
     status_input.recipe_count = recipe_.count;
     status_input.recipe_ready = recipe_ready();
     status_input.reinforced_recipe_input = reinforced_recipe_input;

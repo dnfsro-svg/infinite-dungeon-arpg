@@ -989,6 +989,12 @@ InventoryStatusPresentation inventory_status_presentation(
         output.action_enabled = false;
         return output;
     }
+    if (input.material_target_rejected) {
+        static_cast<void>(ui_utf8_copy(output.status.data(), output.status.size(),
+            ui_text(UiTextId::inventory_material_rejected)));
+        output.tone = InventoryStatusTone::negative;
+        return output;
+    }
     if (input.transient.kind == InventoryTransientStatusKind::reinforcement_receipt) {
         UiTextId format = UiTextId::inventory_reinforcement_success_format;
         output.tone = InventoryStatusTone::positive;
