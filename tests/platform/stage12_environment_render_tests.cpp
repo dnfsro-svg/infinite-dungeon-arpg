@@ -1225,7 +1225,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         "apply_stage12_material_showcase_world(", normal_hud_observe);
     const std::size_t same_world_argument = host.find(
         "frame_seconds, host_hud_notice_time_paused(\n"
-        "                    pause_blocks_gameplay, inventory.is_open()), render_world);",
+        "                    pause_blocks_gameplay, inventory.is_open(),\n"
+        "                    passive_overlay_open), render_world);",
         normal_hud_observe);
     const std::size_t begin_drawing = host.find(
         "BeginDrawing();", normal_hud_observe);
