@@ -371,7 +371,7 @@ int main() {
         const arpg::test::TestSuite cplay038_only[] = {
             dungeon_runtime_save_directory_lease_suite(),
         };
-        return arpg::test::run_suites(cplay038_only, 8,
+        return arpg::test::run_suites(cplay038_only, 9,
             "CPLAY-038 runtime save directory lease");
     }
     if (cplay035_settings_conflict_only()) {

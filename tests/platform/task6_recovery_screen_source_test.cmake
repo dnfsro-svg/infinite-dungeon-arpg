@@ -39,6 +39,18 @@ if(initialization_start EQUAL -1
         "Task 6 initialization fault presentation must call the live presentable helper before window initialization")
 endif()
 
+extract_cpp_function_body("${host_text}"
+    "bool host_directory_busy_retry_requested("
+    directory_busy_gate_body directory_busy_gate_code)
+set(required_directory_busy_gate
+    "return state == DungeonRuntimeState::faulted && error == persistence::SaveError::directory_busy && n_pressed;")
+string(FIND "${directory_busy_gate_code}" "${required_directory_busy_gate}"
+    directory_busy_gate_index)
+if(NOT directory_busy_gate_index EQUAL 0)
+    message(FATAL_ERROR
+        "Task 6 directory-busy retry gate must require exactly faulted, directory_busy, and the N edge")
+endif()
+
 foreach(required IN ITEMS
         "const RecoveryScreenView view = ::arpg::platform::make_recovery_screen_view(status,"
         "DrawRectangleRounded(view.panel"
@@ -57,6 +69,8 @@ endforeach()
 
 set(recovery_request_marker
     "recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,")
+set(directory_busy_retry_marker
+    "if (host_directory_busy_retry_requested(\n                    runtime.state(), runtime.render_status().error,\n                    frame_input.keys.recovery))")
 set(recovery_branch_marker
     "if (runtime.state() == DungeonRuntimeState::recovery_required\n                    || runtime.state() == DungeonRuntimeState::faulted)")
 set(recovery_observe_marker
@@ -70,6 +84,16 @@ set(gameplay_branch_marker
 string(FIND "${host_text}" "${recovery_branch_marker}" recovery_branch_start)
 if(recovery_branch_start EQUAL -1)
     message(FATAL_ERROR "Task 6 recovery/faulted blocking branch is missing")
+endif()
+string(FIND "${host_text}" "dungeon::DungeonRenderSnapshot* render_world ="
+    mutable_render_world_start)
+string(FIND "${host_text}"
+    "dungeon::DungeonRenderSnapshot* const render_world ="
+    stale_const_render_world_start)
+if(mutable_render_world_start EQUAL -1
+        OR NOT stale_const_render_world_start EQUAL -1)
+    message(FATAL_ERROR
+        "Task 6 directory-busy retry must keep the render snapshot pointer rebindable")
 endif()
 set(host_loop_marker "while (!exit_requested) {")
 string(FIND "${host_text}" "${host_loop_marker}" host_loop_start)
@@ -91,11 +115,71 @@ if(ready_auto_exit_start EQUAL -1 OR NOT faulted_auto_exit_start EQUAL -1)
         "Task 6 Host may auto-exit only after a ready clean shutdown")
 endif()
 string(FIND "${host_text}" "${recovery_request_marker}" recovery_request_start)
-if(recovery_request_start EQUAL -1
+string(FIND "${host_text}" "${directory_busy_retry_marker}"
+    directory_busy_retry_start)
+if(directory_busy_retry_start EQUAL -1
+        OR recovery_request_start EQUAL -1
+        OR NOT host_loop_start LESS directory_busy_retry_start
+        OR NOT directory_busy_retry_start LESS recovery_request_start
         OR NOT recovery_request_start LESS recovery_branch_start)
     message(FATAL_ERROR
-        "Task 6 N recovery must stay exclusive to recovery_required")
+        "Task 6 must consume directory-busy retry before recovery_required handling and blocking presentation")
 endif()
+string(REGEX MATCHALL "runtime\\.initialize\\(\\)"
+    runtime_initialize_calls "${host_text}")
+list(LENGTH runtime_initialize_calls runtime_initialize_call_count)
+if(NOT runtime_initialize_call_count EQUAL 2)
+    message(FATAL_ERROR
+        "Task 6 Host must initialize only at startup and on the explicit directory-busy N edge")
+endif()
+extract_cpp_function_body("${host_text}" "${directory_busy_retry_marker}"
+    directory_busy_retry_body directory_busy_retry_code)
+set(required_retry_rebind_sequence
+    "const bool retry_initialized = runtime.initialize(); render_world = runtime.render_snapshot_storage();")
+string(FIND "${directory_busy_retry_body}" "${required_retry_rebind_sequence}"
+    retry_rebind_sequence_index)
+if(retry_rebind_sequence_index EQUAL -1)
+    message(FATAL_ERROR
+        "Task 6 directory-busy retry must rebind render_world immediately after initialize")
+endif()
+set(directory_busy_retry_last_index -1)
+foreach(required IN ITEMS
+        "const bool retry_initialized = runtime.initialize();"
+        "render_world = runtime.render_snapshot_storage();"
+        "if (retry_initialized && runtime.session() != nullptr && render_world != nullptr)"
+        "runtime.session()->snapshot(current);"
+        "previous = current;"
+        "validation_runtime->observe_snapshot(current);"
+        "drain_events(*runtime.session(), renderer, feedback, audio, validation_runtime.get());"
+        "fixed_step.clear_accumulator();"
+        "continue;")
+    string(FIND "${directory_busy_retry_body}" "${required}"
+        directory_busy_retry_required_index)
+    if(directory_busy_retry_required_index EQUAL -1
+            OR NOT directory_busy_retry_last_index LESS
+                directory_busy_retry_required_index)
+        message(FATAL_ERROR
+            "Task 6 directory-busy retry is missing or misorders: ${required}")
+    endif()
+    set(directory_busy_retry_last_index
+        ${directory_busy_retry_required_index})
+endforeach()
+set(required_consumed_retry
+    "fixed_step.clear_accumulator(); } continue;")
+string(FIND "${directory_busy_retry_body}" "${required_consumed_retry}"
+    consumed_retry_index)
+if(consumed_retry_index EQUAL -1)
+    message(FATAL_ERROR
+        "Task 6 directory-busy retry must consume the N edge on both success and failure")
+endif()
+foreach(forbidden IN ITEMS "recover_with_new_run(" "while (" "for (")
+    string(FIND "${directory_busy_retry_code}" "${forbidden}"
+        directory_busy_retry_forbidden_index)
+    if(NOT directory_busy_retry_forbidden_index EQUAL -1)
+        message(FATAL_ERROR
+            "Task 6 directory-busy retry contains forbidden action: ${forbidden}")
+    endif()
+endforeach()
 string(FIND "${host_text}" "${gameplay_branch_marker}" gameplay_branch_start)
 if(gameplay_branch_start EQUAL -1
         OR NOT recovery_branch_start LESS gameplay_branch_start)

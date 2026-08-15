@@ -54,6 +54,11 @@ struct RecoveryScreenView final {
     bool render_snapshot_available,
     persistence::SaveError error) noexcept;
 
+[[nodiscard]] bool host_directory_busy_retry_requested(
+    DungeonRuntimeState state,
+    persistence::SaveError error,
+    bool n_pressed) noexcept;
+
 inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumns{{
     -4.0F, -1.3F, 1.3F, 4.0F,
 }};

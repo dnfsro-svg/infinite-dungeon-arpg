@@ -526,7 +526,7 @@ arpg::test::Failure font_plan_covers_all_overlay_text_and_ascii() noexcept {
                 plan, view.lines[index].text.data()));
         }
     }
-    ARPG_REQUIRE(plan.codepoint_count == 647U);
+    ARPG_REQUIRE(plan.codepoint_count == 646U);
     ARPG_REQUIRE(plan.codepoint_count < platform::kUiGlyphCapacity);
     return {};
 }

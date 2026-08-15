@@ -221,7 +221,7 @@ arpg::test::Failure passive_tree_chinese_text_is_covered_by_shared_font_plan()
                 plan.shared, value));
         }
     }
-    ARPG_REQUIRE(plan.shared.codepoint_count == 647U);
+    ARPG_REQUIRE(plan.shared.codepoint_count == 646U);
     ARPG_REQUIRE(plan.shared.codepoint_count < platform::kUiGlyphCapacity);
     return {};
 }

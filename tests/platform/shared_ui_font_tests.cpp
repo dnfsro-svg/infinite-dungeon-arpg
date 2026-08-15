@@ -104,7 +104,7 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
     for (const platform::UiTextId id : kInventoryShellIds)
         ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
             platform::ui_text(id)));
-    ARPG_REQUIRE(plan.codepoint_count == 647U);
+    ARPG_REQUIRE(plan.codepoint_count == 646U);
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
         platform::death_overlay_font_plan(), u8"混沌之眼"));
     ARPG_REQUIRE(platform::hud_font_plan().covers_required_text);

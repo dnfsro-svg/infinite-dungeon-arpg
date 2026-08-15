@@ -443,6 +443,14 @@ bool host_runtime_initialization_is_presentable(
             && error != persistence::SaveError::none);
 }
 
+bool host_directory_busy_retry_requested(
+    DungeonRuntimeState state,
+    persistence::SaveError error,
+    bool n_pressed) noexcept {
+    return state == DungeonRuntimeState::faulted
+        && error == persistence::SaveError::directory_busy && n_pressed;
+}
+
 bool host_hud_notice_time_paused(
     bool pause_blocks_gameplay, bool inventory_open,
     bool passive_overlay_open) noexcept {
@@ -551,7 +559,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 "Stage 12 background-only capture refused a recovery save");
             return HostExitCode::save_initialization_failed;
         }
-        dungeon::DungeonRenderSnapshot* const render_world =
+        dungeon::DungeonRenderSnapshot* render_world =
             runtime.render_snapshot_storage();
         if (render_world == nullptr) {
             return HostExitCode::save_initialization_failed;
@@ -732,6 +740,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             HostFrameInput frame_input = map_host_frame_input(
                 input_settings, stage17_physical_keys);
+            if (host_directory_busy_retry_requested(
+                    runtime.state(), runtime.render_status().error,
+                    frame_input.keys.recovery)) {
+                const bool retry_initialized = runtime.initialize();
+                render_world = runtime.render_snapshot_storage();
+                if (retry_initialized && runtime.session() != nullptr
+                        && render_world != nullptr) {
+                    runtime.session()->snapshot(current);
+                    previous = current;
+                    validation_runtime->observe_snapshot(current);
+                    drain_events(*runtime.session(), renderer, feedback, audio,
+                        validation_runtime.get());
+                    fixed_step.clear_accumulator();
+                }
+                continue;
+            }
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
                     frame_input.keys.recovery)) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {

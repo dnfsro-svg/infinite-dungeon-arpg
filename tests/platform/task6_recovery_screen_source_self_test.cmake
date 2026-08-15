@@ -16,7 +16,14 @@ if(NOT pristine_result EQUAL 0)
 endif()
 
 file(READ "${host}" source)
+set(executed_mutant_count 0)
 function(expect_rejected label mutated)
+    if(DEFINED TASK6_MUTANT_FILTER
+            AND NOT "${label}" MATCHES "${TASK6_MUTANT_FILTER}")
+        return()
+    endif()
+    math(EXPR next_executed_mutant_count "${executed_mutant_count} + 1")
+    set(executed_mutant_count ${next_executed_mutant_count} PARENT_SCOPE)
     set(path "${MUTATION_ROOT}/${label}.cpp")
     file(WRITE "${path}" "${mutated}")
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
@@ -25,6 +32,27 @@ function(expect_rejected label mutated)
     if(result EQUAL 0)
         message(FATAL_ERROR "Task 6 recovery source guard accepted mutation: ${label}")
     endif()
+endfunction()
+
+function(replace_unique input match replacement output label)
+    set(remainder "${input}")
+    set(match_count 0)
+    string(LENGTH "${match}" match_length)
+    while(TRUE)
+        string(FIND "${remainder}" "${match}" match_index)
+        if(match_index EQUAL -1)
+            break()
+        endif()
+        math(EXPR match_count "${match_count} + 1")
+        math(EXPR after_match "${match_index} + ${match_length}")
+        string(SUBSTRING "${remainder}" ${after_match} -1 remainder)
+    endwhile()
+    if(NOT match_count EQUAL 1)
+        message(FATAL_ERROR
+            "Task 6 ${label} mutation requires one anchor, found ${match_count}")
+    endif()
+    string(REPLACE "${match}" "${replacement}" mutated "${input}")
+    set(${output} "${mutated}" PARENT_SCOPE)
 endfunction()
 
 string(REPLACE
@@ -70,6 +98,73 @@ if(faulted_not_blocked STREQUAL source)
 endif()
 expect_rejected("faulted-not-blocked" "${faulted_not_blocked}")
 
+set(directory_busy_gate_predicate
+    "    return state == DungeonRuntimeState::faulted\n        && error == persistence::SaveError::directory_busy && n_pressed;")
+replace_unique("${source}" "${directory_busy_gate_predicate}"
+    "    return error == persistence::SaveError::directory_busy && n_pressed;"
+    directory_busy_broad_predicate "directory-busy-broad-predicate")
+expect_rejected("directory-busy-broad-predicate"
+    "${directory_busy_broad_predicate}")
+
+replace_unique("${source}" "${directory_busy_gate_predicate}"
+    "    return state == DungeonRuntimeState::faulted\n        && error == persistence::SaveError::directory_busy;"
+    directory_busy_without_n "directory-busy-without-n")
+expect_rejected("directory-busy-without-n" "${directory_busy_without_n}")
+
+set(directory_busy_branch_anchor
+    "            if (host_directory_busy_retry_requested(\n                    runtime.state(), runtime.render_status().error,\n                    frame_input.keys.recovery)) {")
+replace_unique("${source}" "${directory_busy_branch_anchor}"
+    "            static_cast<void>(runtime.initialize());\n${directory_busy_branch_anchor}"
+    directory_busy_automatic_poll "directory-busy-automatic-poll")
+expect_rejected("directory-busy-automatic-poll"
+    "${directory_busy_automatic_poll}")
+
+replace_unique("${source}"
+    "                render_world = runtime.render_snapshot_storage();\n"
+    "" directory_busy_without_rebind "directory-busy-without-rebind")
+expect_rejected("directory-busy-without-rebind"
+    "${directory_busy_without_rebind}")
+
+set(directory_busy_snapshot_anchor
+    "                if (retry_initialized && runtime.session() != nullptr\n                        && render_world != nullptr) {\n                    runtime.session()->snapshot(current);\n                    previous = current;")
+replace_unique("${source}" "${directory_busy_snapshot_anchor}"
+    "                if (retry_initialized && runtime.session() != nullptr\n                        && render_world != nullptr) {\n                    previous = current;"
+    directory_busy_without_snapshot "directory-busy-without-snapshot")
+expect_rejected("directory-busy-without-snapshot"
+    "${directory_busy_without_snapshot}")
+
+set(directory_busy_drain_anchor
+    "                    validation_runtime->observe_snapshot(current);\n                    drain_events(*runtime.session(), renderer, feedback, audio,\n                        validation_runtime.get());\n                    fixed_step.clear_accumulator();")
+replace_unique("${source}" "${directory_busy_drain_anchor}"
+    "                    validation_runtime->observe_snapshot(current);\n                    fixed_step.clear_accumulator();"
+    directory_busy_without_events "directory-busy-without-events")
+expect_rejected("directory-busy-without-events"
+    "${directory_busy_without_events}")
+
+set(directory_busy_accumulator_anchor
+    "                    drain_events(*runtime.session(), renderer, feedback, audio,\n                        validation_runtime.get());\n                    fixed_step.clear_accumulator();\n                }\n                continue;")
+replace_unique("${source}" "${directory_busy_accumulator_anchor}"
+    "                    drain_events(*runtime.session(), renderer, feedback, audio,\n                        validation_runtime.get());\n                }\n                continue;"
+    directory_busy_without_accumulator
+    "directory-busy-without-accumulator")
+expect_rejected("directory-busy-without-accumulator"
+    "${directory_busy_without_accumulator}")
+
+set(directory_busy_continue_anchor
+    "                }\n                continue;\n            }\n            if (recovery_requested(")
+replace_unique("${source}" "${directory_busy_continue_anchor}"
+    "                }\n            }\n            if (recovery_requested("
+    directory_busy_without_continue "directory-busy-without-continue")
+expect_rejected("directory-busy-without-continue"
+    "${directory_busy_without_continue}")
+
+replace_unique("${source}"
+    "                const bool retry_initialized = runtime.initialize();"
+    "                static_cast<void>(runtime.recover_with_new_run());\n                const bool retry_initialized = runtime.initialize();"
+    directory_busy_reuses_recovery "directory-busy-reuses-recovery")
+expect_rejected("directory-busy-reuses-recovery"
+    "${directory_busy_reuses_recovery}")
+
 string(REPLACE
     "if (recovery_blocked\n                        && (config.stage12_material_background_only\n                            || config.stage12_material_icons_only))"
     "if (config.stage12_material_background_only\n                        || config.stage12_material_icons_only)"
@@ -110,4 +205,9 @@ if(unavailable_snapshot STREQUAL source)
 endif()
 expect_rejected("unavailable-snapshot" "${unavailable_snapshot}")
 
-message(STATUS "Task 6 recovery source guard self-test rejected all mutations")
+if(DEFINED TASK6_MUTANT_FILTER AND executed_mutant_count EQUAL 0)
+    message(FATAL_ERROR
+        "Task 6 mutant filter executed no mutations: ${TASK6_MUTANT_FILTER}")
+endif()
+message(STATUS
+    "Task 6 recovery source guard self-test rejected ${executed_mutant_count} mutations")

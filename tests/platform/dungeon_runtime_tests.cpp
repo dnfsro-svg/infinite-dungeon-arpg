@@ -91,6 +91,20 @@ constexpr std::uint64_t kRuntimeVectorProxyAllocations = 1U;
 constexpr std::uint64_t kRuntimeVectorProxyAllocations = 0U;
 #endif
 
+template <typename RuntimeState>
+auto call_directory_busy_retry_gate(RuntimeState state,
+    persistence::SaveError error, bool n_pressed, int) noexcept
+    -> decltype(host_directory_busy_retry_requested(
+        state, error, n_pressed)) {
+    return host_directory_busy_retry_requested(state, error, n_pressed);
+}
+
+template <typename RuntimeState>
+bool call_directory_busy_retry_gate(RuntimeState,
+    persistence::SaveError, bool, long) noexcept {
+    return false;
+}
+
 items::ItemInstance normal_item(std::uint64_t id,
     std::uint8_t base_id = 1U) noexcept {
     items::ItemInstance item{};
@@ -706,6 +720,47 @@ arpg::test::Failure valid_save_ignores_new_run_seed_override() noexcept {
     return {};
 }
 
+arpg::test::Failure directory_busy_retry_gate_requires_exact_fault_error_and_n_edge()
+    noexcept {
+    struct GateCase final {
+        platform::DungeonRuntimeState state{};
+        persistence::SaveError error{};
+        bool n_pressed{};
+        bool expected{};
+    };
+    constexpr std::array<GateCase, 8U> kCases{{
+        {platform::DungeonRuntimeState::faulted,
+            persistence::SaveError::directory_busy, true, true},
+        {platform::DungeonRuntimeState::faulted,
+            persistence::SaveError::directory_busy, false, false},
+        {platform::DungeonRuntimeState::faulted,
+            persistence::SaveError::none, true, false},
+        {platform::DungeonRuntimeState::faulted,
+            persistence::SaveError::write_failed, true, false},
+        {platform::DungeonRuntimeState::recovery_required,
+            persistence::SaveError::conflicting_slots, true, false},
+        {platform::DungeonRuntimeState::recovery_required,
+            persistence::SaveError::directory_busy, true, false},
+        {platform::DungeonRuntimeState::running,
+            persistence::SaveError::directory_busy, true, false},
+        {platform::DungeonRuntimeState::uninitialized,
+            persistence::SaveError::directory_busy, true, false},
+    }};
+
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    std::size_t accepted_count{};
+    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+        const GateCase& test_case = kCases[iteration % kCases.size()];
+        const bool accepted = call_directory_busy_retry_gate(test_case.state,
+            test_case.error, test_case.n_pressed, 0);
+        ARPG_REQUIRE(accepted == test_case.expected);
+        accepted_count += accepted ? 1U : 0U;
+    }
+    ARPG_REQUIRE(accepted_count == 1250U);
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    return {};
+}
+
 arpg::test::Failure runtime_directory_lease_rejects_concurrent_owner_and_retries()
     noexcept {
     TempDirectory directory;
@@ -736,12 +791,22 @@ arpg::test::Failure runtime_directory_lease_rejects_concurrent_owner_and_retries
             contender.render_status(), 1280, 720);
     ARPG_REQUIRE(std::strcmp(view.title, u8"存档正在使用") == 0);
     ARPG_REQUIRE(std::strcmp(view.message,
-        u8"另一游戏实例正在使用此存档。请关闭其他实例后重试。") == 0);
+        u8"关闭其他实例后按 N 重试") == 0);
     static_assert(sizeof(u8"故障码 255｜ESC：退出游戏")
         <= platform::kRecoveryScreenErrorTextCapacity);
     ARPG_REQUIRE(std::strcmp(
         view.error_text.data(), u8"故障码 13｜ESC：退出游戏") == 0);
     ARPG_REQUIRE(view.error_text.back() == '\0');
+
+    for (std::size_t retry = 0U; retry < 3U; ++retry) {
+        ARPG_REQUIRE(!contender.initialize());
+        ARPG_REQUIRE(contender.state()
+            == platform::DungeonRuntimeState::faulted);
+        ARPG_REQUIRE(contender.render_status().error
+            == persistence::SaveError::directory_busy);
+        ARPG_REQUIRE(contender.session() == nullptr);
+        ARPG_REQUIRE(contender.render_snapshot_storage() != nullptr);
+    }
 
     owner.reset();
     ARPG_REQUIRE(contender.initialize());
@@ -2882,6 +2947,8 @@ constexpr arpg::test::TestCase kV10MigrationCases[] = {
 };
 
 constexpr arpg::test::TestCase kSaveDirectoryLeaseCases[] = {
+    {"directory busy retry gate requires exact fault error and N edge",
+        &directory_busy_retry_gate_requires_exact_fault_error_and_n_edge},
     {"runtime directory lease rejects concurrent owner and retries",
         &runtime_directory_lease_rejects_concurrent_owner_and_retries},
     {"valid save ignores new run seed override",

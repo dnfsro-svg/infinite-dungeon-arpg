@@ -254,7 +254,7 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
             {platform::UiTextId::save_directory_busy_title,
                 u8"存档正在使用"},
             {platform::UiTextId::save_directory_busy_instruction,
-                u8"另一游戏实例正在使用此存档。请关闭其他实例后重试。"},
+                u8"关闭其他实例后按 N 重试"},
             {platform::UiTextId::inventory_level_locked_format,
                 u8"需要等级 %u（当前 %u）· 无法装备"},
         }};
@@ -282,7 +282,7 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
         u8"+6 强化券", u8"+9 强化券", u8"+12 强化券", u8"+15 强化券",
     }};
     const platform::UiGlyphPlan glyph_plan = platform::ui_glyph_plan();
-    ARPG_REQUIRE(glyph_plan.codepoint_count == 647U);
+    ARPG_REQUIRE(glyph_plan.codepoint_count == 646U);
     ARPG_REQUIRE(!glyph_plan.capacity_exceeded);
     for (std::size_t index{}; index < kExpectedMaterialNames.size(); ++index) {
         const auto id = static_cast<arpg::items::MaterialId>(index);
