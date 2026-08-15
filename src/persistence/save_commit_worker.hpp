@@ -121,6 +121,7 @@ public:
     [[nodiscard]] const std::filesystem::path* temp_path(
         std::size_t index) const noexcept;
     [[nodiscard]] SaveLoadState load_state() const noexcept;
+    [[nodiscard]] SaveError load_error() const noexcept;
     [[nodiscard]] SaveSlot loaded_slot() const noexcept;
     [[nodiscard]] const checkpoint::SaveCheckpointSlot*
     loaded_checkpoint() const noexcept;

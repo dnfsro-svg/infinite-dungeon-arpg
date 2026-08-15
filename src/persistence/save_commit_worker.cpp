@@ -502,6 +502,14 @@ SaveLoadState SaveCommitStorage::load_state() const noexcept {
     return load_state_;
 }
 
+SaveError SaveCommitStorage::load_error() const noexcept {
+    if (load_state_ != SaveLoadState::recovery_required) {
+        return SaveError::none;
+    }
+    return equal_revision_conflict_
+        ? SaveError::conflicting_slots : SaveError::read_failed;
+}
+
 SaveSlot SaveCommitStorage::loaded_slot() const noexcept {
     return loaded_index_ == 0U ? SaveSlot::a
         : loaded_index_ == 1U ? SaveSlot::b : SaveSlot::none;

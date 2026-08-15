@@ -926,6 +926,53 @@ arpg::test::Failure indeterminate_maps_to_faulted_runtime_and_blocks_selection()
 }
 
 arpg::test::Failure dual_slot_corruption_requires_recovery_then_archives_new_run() noexcept {
+    {
+        TempDirectory conflict_directory;
+        dungeon::DungeonRules rules{};
+        const auto first_initial = dungeon::make_initial_run_state(8U, rules);
+        const auto second_initial = dungeon::make_initial_run_state(9U, rules);
+        ARPG_REQUIRE(first_initial.fault == dungeon::DungeonFault::none);
+        ARPG_REQUIRE(second_initial.fault == dungeon::DungeonFault::none);
+        dungeon::DungeonSession first_source{rules, first_initial.state};
+        dungeon::DungeonSession second_source{rules, second_initial.state};
+        auto first = std::make_unique<checkpoint::SaveCheckpointSlot>();
+        auto second = std::make_unique<checkpoint::SaveCheckpointSlot>();
+        ARPG_REQUIRE(first != nullptr && second != nullptr);
+        constexpr std::uint64_t kConflictingRevision = 41U;
+        ARPG_REQUIRE(first_source.capture_save_checkpoint(
+            *first, kConflictingRevision));
+        ARPG_REQUIRE(second_source.capture_save_checkpoint(
+            *second, kConflictingRevision));
+        ARPG_REQUIRE(first->persistence_revision
+            == second->persistence_revision);
+        ARPG_REQUIRE(first->state.root_seed != second->state.root_seed);
+
+        const auto write_checkpoint = [](const std::filesystem::path& path,
+                                          const checkpoint::SaveCheckpointSlot& slot) {
+            std::vector<std::uint8_t> bytes(
+                persistence::kMaximumEncodedCheckpointBytes);
+            std::size_t written{};
+            if (persistence::encode_checkpoint_v10_into(slot, bytes.data(),
+                    bytes.size(), written) != persistence::CodecError::none) {
+                return false;
+            }
+            bytes.resize(written);
+            return write_save(path, bytes);
+        };
+        ARPG_REQUIRE(write_checkpoint(
+            conflict_directory.path / "run_a.sav", *first));
+        ARPG_REQUIRE(write_checkpoint(
+            conflict_directory.path / "run_b.sav", *second));
+
+        platform::DungeonRuntime conflict_runtime(
+            config_for(conflict_directory));
+        ARPG_REQUIRE(!conflict_runtime.initialize());
+        ARPG_REQUIRE(conflict_runtime.state()
+            == platform::DungeonRuntimeState::recovery_required);
+        ARPG_REQUIRE(conflict_runtime.render_status().error
+            == persistence::SaveError::conflicting_slots);
+    }
+
     TempDirectory directory;
     const char invalid[] = "bad";
     std::ofstream(directory.path / "run_a.sav", std::ios::binary).write(invalid, 3);
@@ -934,6 +981,8 @@ arpg::test::Failure dual_slot_corruption_requires_recovery_then_archives_new_run
     ARPG_REQUIRE(!runtime.initialize());
     ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::recovery_required);
     ARPG_REQUIRE(runtime.render_status().recovery_required);
+    ARPG_REQUIRE(runtime.render_status().error
+        == persistence::SaveError::read_failed);
     ARPG_REQUIRE(!runtime.render_status().faulted);
     ARPG_REQUIRE(runtime.session() == nullptr);
     ARPG_REQUIRE(runtime.item_state() == nullptr);

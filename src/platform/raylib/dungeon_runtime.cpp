@@ -330,7 +330,7 @@ bool DungeonRuntime::initialize() noexcept {
     if (load_state == persistence::SaveLoadState::recovery_required) {
         state_ = DungeonRuntimeState::recovery_required;
         status_.indicator = SaveIndicator::error;
-        status_.error = persistence::SaveError::read_failed;
+        status_.error = save_storage_->load_error();
         return false;
     }
     if (load_state != persistence::SaveLoadState::empty) {

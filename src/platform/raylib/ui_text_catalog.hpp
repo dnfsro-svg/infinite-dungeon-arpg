@@ -58,6 +58,7 @@ enum class UiTextId : std::uint16_t {
     inventory_material_rejected,
     inventory_material_target_hint_format,
     inventory_directed_material_hint,
+    recovery_conflicting_slots_instruction,
     count,
 };
 

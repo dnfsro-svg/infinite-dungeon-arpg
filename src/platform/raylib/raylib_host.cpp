@@ -189,7 +189,9 @@ RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& sta
         view.panel.y + 186.0F * scale, view.panel.width - 80.0F * scale,
         34.0F * scale};
     view.title = ui_text(UiTextId::recovery_title);
-    view.message = ui_text(UiTextId::recovery_dual_slot_instruction);
+    view.message = status.error == persistence::SaveError::conflicting_slots
+        ? ui_text(UiTextId::recovery_conflicting_slots_instruction)
+        : ui_text(UiTextId::recovery_dual_slot_instruction);
     static_cast<void>(ui_utf8_format(view.error_text.data(),
         view.error_text.size(), "%s %u", save_indicator_label(
             SaveIndicator::error),
