@@ -273,6 +273,11 @@ struct HostRoomResetGateInput final {
 [[nodiscard]] bool host_requests_room_reset(
     const HostRoomResetGateInput& input) noexcept;
 
+void host_sync_pause_quit_saving(
+    PauseMenuState& pause_menu,
+    CleanShutdownState clean_shutdown_state,
+    PauseCommand command) noexcept;
+
 [[nodiscard]] dungeon::AutoPickupPolicy loot_pickup_policy(
     settings::LootFilterMode mode) noexcept;
 

@@ -698,6 +698,7 @@ arpg::test::Failure renderer_uses_draft_only_on_the_settings_screen() noexcept {
         platform::PauseScreen::root,
         platform::PauseScreen::capture_binding,
         platform::PauseScreen::quit_confirm,
+        platform::PauseScreen::quit_saving,
     };
     for (const platform::PauseScreen screen : kCommittedScreens) {
         ARPG_REQUIRE(platform::renderer_loot_filter_mode(screen, live, draft)

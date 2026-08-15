@@ -601,6 +601,34 @@ test::Failure quit_confirm_only_row_zero_quits() noexcept {
     state.selected_row = 0U;
     ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::quit);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
+
+    platform::begin_pause_quit_saving(state);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_saving);
+    ARPG_REQUIRE(state.selected_row == 0U);
+    ARPG_REQUIRE(state.message == nullptr);
+
+    for (const InputKind input : {
+             InputKind::escape,
+             InputKind::enter,
+             InputKind::up,
+             InputKind::down,
+             InputKind::activate,
+         }) {
+        ARPG_REQUIRE(update(state, input_for(input)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_saving);
+        ARPG_REQUIRE(state.selected_row == 0U);
+    }
+
+    platform::cancel_pause_quit_saving(state);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
+    ARPG_REQUIRE(state.selected_row == 1U);
+    ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(state.message,
+        u8"保存失败，当前进度未保存，请重试") == 0);
+
+    platform::cancel_pause_quit_saving(state);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
+    ARPG_REQUIRE(state.selected_row == 1U);
     return {};
 }
 
@@ -801,6 +829,9 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
         state.screen = platform::PauseScreen::quit_confirm;
         state.selected_row = 0U;
         ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::quit);
+        platform::begin_pause_quit_saving(state);
+        platform::cancel_pause_quit_saving(state);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
 
         state = make_state();
         state.screen = platform::PauseScreen::quit_confirm;

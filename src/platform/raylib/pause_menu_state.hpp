@@ -13,7 +13,8 @@ enum class PauseScreen : std::uint8_t {
     root,
     settings,
     capture_binding,
-    quit_confirm
+    quit_confirm,
+    quit_saving,
 };
 
 enum class PauseSettingsPage : std::uint8_t {
@@ -67,5 +68,8 @@ struct PauseMenuState final {
     PauseMenuState& state,
     const PauseContext& context,
     const PauseInput& input) noexcept;
+
+void begin_pause_quit_saving(PauseMenuState& state) noexcept;
+void cancel_pause_quit_saving(PauseMenuState& state) noexcept;
 
 }  // namespace arpg::platform

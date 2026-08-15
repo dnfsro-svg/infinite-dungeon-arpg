@@ -377,12 +377,29 @@ PauseCommand update_pause_menu(
             return update_capture(state, context, input);
         case PauseScreen::quit_confirm:
             return update_quit_confirm(state, input);
+        case PauseScreen::quit_saving:
+            return PauseCommand::none;
     }
     state.screen = PauseScreen::closed;
     state.settings_page = PauseSettingsPage::home;
     state.selected_row = 0U;
     state.capture_action.reset();
     return PauseCommand::none;
+}
+
+void begin_pause_quit_saving(PauseMenuState& state) noexcept {
+    state.screen = PauseScreen::quit_saving;
+    state.selected_row = 0U;
+    state.capture_action.reset();
+    state.message = nullptr;
+}
+
+void cancel_pause_quit_saving(PauseMenuState& state) noexcept {
+    if (state.screen != PauseScreen::quit_saving) return;
+    state.screen = PauseScreen::quit_confirm;
+    state.selected_row = 1U;
+    state.capture_action.reset();
+    state.message = ui_text(UiTextId::save_error);
 }
 
 }  // namespace arpg::platform

@@ -422,6 +422,12 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
             write_primary(view, 0U, "%s", ui_text(UiTextId::pause_quit));
             write_primary(view, 1U, "%s", u8"返回");
             return view;
+        case PauseScreen::quit_saving:
+            view.title = ui_text(UiTextId::pause_quit);
+            view.row_count = 1U;
+            view.selected_row = view.row_count;
+            write_primary(view, 0U, "%s", ui_text(UiTextId::save_saving));
+            return view;
     }
     return view;
 }

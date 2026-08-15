@@ -466,6 +466,7 @@ arpg::test::Failure renderer_filter_uses_draft_only_on_settings_screen()
         platform::PauseScreen::root,
         platform::PauseScreen::capture_binding,
         platform::PauseScreen::quit_confirm,
+        platform::PauseScreen::quit_saving,
     };
     ARPG_REQUIRE(platform::renderer_loot_filter_mode(
         platform::PauseScreen::settings, live, draft)

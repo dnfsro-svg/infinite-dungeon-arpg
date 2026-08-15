@@ -318,6 +318,17 @@ test::Failure root_and_quit_views_have_complete_content() noexcept {
     ARPG_REQUIRE(quit.footer != nullptr);
     ARPG_REQUIRE(std::strcmp(quit.footer,
         u8"方向键导航｜Enter 选择｜Esc 返回") == 0);
+
+    state.screen = platform::PauseScreen::quit_saving;
+    state.selected_row = (std::numeric_limits<std::size_t>::max)();
+    state.message = nullptr;
+    const auto saving = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(saving.title, u8"退出游戏") == 0);
+    ARPG_REQUIRE(saving.row_count == 1U);
+    ARPG_REQUIRE(saving.selected_row == saving.row_count);
+    ARPG_REQUIRE(row_equals(saving.rows[0], u8"正在保存"));
+    ARPG_REQUIRE(saving.message == nullptr);
+    ARPG_REQUIRE(saving.footer == nullptr);
     return {};
 }
 
@@ -656,6 +667,7 @@ test::Failure render_plans_have_exact_screen_orders() noexcept {
         platform::PauseScreen::settings,
         platform::PauseScreen::capture_binding,
         platform::PauseScreen::quit_confirm,
+        platform::PauseScreen::quit_saving,
     };
     for (const platform::PauseScreen screen : kScreens) {
         state.screen = screen;
@@ -680,7 +692,8 @@ test::Failure render_plans_have_exact_screen_orders() noexcept {
             ARPG_REQUIRE(op.selected == (row == view.selected_row));
             if (op.selected) ++selected_count;
         }
-        ARPG_REQUIRE(selected_count == 1U);
+        ARPG_REQUIRE(selected_count
+            == (screen == platform::PauseScreen::quit_saving ? 0U : 1U));
         ARPG_REQUIRE(plan.ops[plan.op_count - 1U].kind
             == platform::PauseMenuRenderOpKind::footer);
         ARPG_REQUIRE(!plan.has_message);
@@ -747,6 +760,7 @@ test::Failure every_static_pause_view_text_has_shared_font_coverage() noexcept {
         platform::PauseScreen::settings,
         platform::PauseScreen::capture_binding,
         platform::PauseScreen::quit_confirm,
+        platform::PauseScreen::quit_saving,
     };
     constexpr platform::PauseSettingsPage kPages[] = {
         platform::PauseSettingsPage::home,
@@ -766,8 +780,12 @@ test::Failure every_static_pause_view_text_has_shared_font_coverage() noexcept {
                 platform::make_pause_menu_view(state);
             ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
                 glyphs, view.title));
-            ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
-                glyphs, view.footer));
+            if (screen == platform::PauseScreen::quit_saving) {
+                ARPG_REQUIRE(view.footer == nullptr);
+            } else {
+                ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+                    glyphs, view.footer));
+            }
             for (std::size_t row = 0U; row < view.row_count; ++row) {
                 ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
                     glyphs, view.rows[row].primary.data()));
@@ -780,7 +798,7 @@ test::Failure every_static_pause_view_text_has_shared_font_coverage() noexcept {
 }
 
 test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
-    std::array<platform::PauseMenuState, 5U> states{};
+    std::array<platform::PauseMenuState, 6U> states{};
     states[0] = settings_state();
     states[0].screen = platform::PauseScreen::closed;
     states[1] = settings_state();
@@ -793,6 +811,9 @@ test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
     states[3].message = "";
     states[4] = settings_state();
     states[4].screen = platform::PauseScreen::quit_confirm;
+    states[5] = settings_state();
+    states[5].screen = platform::PauseScreen::quit_saving;
+    states[5].message = nullptr;
 
     const std::uint64_t before = test::allocation_count();
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {

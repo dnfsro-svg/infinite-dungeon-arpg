@@ -423,6 +423,24 @@ bool host_hud_notice_time_paused(
     return pause_blocks_gameplay || inventory_open || passive_overlay_open;
 }
 
+void host_sync_pause_quit_saving(
+    PauseMenuState& pause_menu,
+    CleanShutdownState clean_shutdown_state,
+    PauseCommand command) noexcept {
+    if (command == PauseCommand::quit) {
+        if (clean_shutdown_state == CleanShutdownState::closing) {
+            begin_pause_quit_saving(pause_menu);
+            return;
+        }
+        if (clean_shutdown_state == CleanShutdownState::canceled) {
+            begin_pause_quit_saving(pause_menu);
+        }
+    }
+    if (clean_shutdown_state == CleanShutdownState::canceled) {
+        cancel_pause_quit_saving(pause_menu);
+    }
+}
+
 dungeon::AutoPickupPolicy loot_pickup_policy(
     settings::LootFilterMode mode) noexcept {
     switch (mode) {
@@ -655,6 +673,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 // genuine close request can start a new exact-save attempt.
                 window_close_latched = false;
             }
+            host_sync_pause_quit_saving(pause_menu,
+                runtime.clean_shutdown_state(), PauseCommand::none);
             if (runtime.clean_shutdown_state() == CleanShutdownState::ready
                     || runtime.clean_shutdown_state()
                         == CleanShutdownState::faulted) {
@@ -895,6 +915,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 if (!window_close_requested || !window_close_latched) {
                     if (window_close_requested) window_close_latched = true;
                     begin_clean_exit();
+                    host_sync_pause_quit_saving(pause_menu,
+                        runtime.clean_shutdown_state(), pause_command);
                 }
             }
             if (input_settings.revision != input_revision_before) {

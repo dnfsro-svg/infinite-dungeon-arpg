@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -21,6 +23,40 @@ namespace core = arpg::core;
 namespace dungeon = arpg::dungeon;
 namespace platform = arpg::platform;
 namespace settings = arpg::settings;
+
+[[nodiscard]] std::string compact_project_source(
+    const char* relative_path) {
+    const std::filesystem::path path =
+        std::filesystem::path{ARPG_PROJECT_SOURCE_DIR} / relative_path;
+    std::ifstream input{path, std::ios::binary};
+    if (!input) return {};
+    const std::string source{
+        std::istreambuf_iterator<char>{input},
+        std::istreambuf_iterator<char>{}};
+    std::string compact{};
+    compact.reserve(source.size());
+    for (const char value : source) {
+        if (value != ' ' && value != '\t'
+                && value != '\r' && value != '\n') {
+            compact.push_back(value);
+        }
+    }
+    return compact;
+}
+
+[[nodiscard]] std::size_t token_count(
+    const std::string& source,
+    const char* token) noexcept {
+    const std::size_t token_size = std::strlen(token);
+    if (token_size == 0U) return 0U;
+    std::size_t count = 0U;
+    std::size_t cursor = 0U;
+    while ((cursor = source.find(token, cursor)) != std::string::npos) {
+        ++count;
+        cursor += token_size;
+    }
+    return count;
+}
 
 struct MemorySettingsFiles final {
     std::filesystem::path path{};
@@ -208,6 +244,7 @@ arpg::test::Failure room_reset_gate_keeps_pause_gameplay_frozen() noexcept {
              platform::PauseScreen::settings,
              platform::PauseScreen::capture_binding,
              platform::PauseScreen::quit_confirm,
+             platform::PauseScreen::quit_saving,
          }) {
         input.pause_screen = screen;
         ARPG_REQUIRE(!platform::host_requests_room_reset(input));
@@ -227,6 +264,71 @@ arpg::test::Failure room_reset_gate_keeps_pause_gameplay_frozen() noexcept {
     input.death_allows_gameplay = true;
     input.reset_pressed = false;
     ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+
+    platform::PauseMenuState quit_menu{};
+    quit_menu.screen = platform::PauseScreen::quit_confirm;
+    platform::host_sync_pause_quit_saving(quit_menu,
+        platform::CleanShutdownState::idle, platform::PauseCommand::quit);
+    ARPG_REQUIRE(quit_menu.screen == platform::PauseScreen::quit_confirm);
+
+    platform::host_sync_pause_quit_saving(quit_menu,
+        platform::CleanShutdownState::closing, platform::PauseCommand::quit);
+    ARPG_REQUIRE(quit_menu.screen == platform::PauseScreen::quit_saving);
+    ARPG_REQUIRE(quit_menu.selected_row == 0U);
+    ARPG_REQUIRE(quit_menu.message == nullptr);
+
+    platform::host_sync_pause_quit_saving(quit_menu,
+        platform::CleanShutdownState::canceled, platform::PauseCommand::none);
+    ARPG_REQUIRE(quit_menu.screen == platform::PauseScreen::quit_confirm);
+    ARPG_REQUIRE(quit_menu.selected_row == 1U);
+    ARPG_REQUIRE(quit_menu.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(quit_menu.message,
+        u8"保存失败，当前进度未保存，请重试") == 0);
+
+    quit_menu.selected_row = 0U;
+    platform::host_sync_pause_quit_saving(quit_menu,
+        platform::CleanShutdownState::canceled, platform::PauseCommand::none);
+    ARPG_REQUIRE(quit_menu.selected_row == 0U);
+
+    quit_menu.screen = platform::PauseScreen::settings;
+    platform::host_sync_pause_quit_saving(quit_menu,
+        platform::CleanShutdownState::closing, platform::PauseCommand::none);
+    ARPG_REQUIRE(quit_menu.screen == platform::PauseScreen::settings);
+
+    quit_menu.screen = platform::PauseScreen::root;
+    platform::host_sync_pause_quit_saving(quit_menu,
+        platform::CleanShutdownState::canceled, platform::PauseCommand::quit);
+    ARPG_REQUIRE(quit_menu.screen == platform::PauseScreen::quit_confirm);
+    ARPG_REQUIRE(quit_menu.selected_row == 1U);
+
+    const std::string host_source = compact_project_source(
+        "src/platform/raylib/raylib_host.cpp");
+    ARPG_REQUIRE(!host_source.empty());
+    ARPG_REQUIRE(token_count(host_source,
+        "host_sync_pause_quit_saving(") == 3U);
+    const std::size_t loop = host_source.find(
+        "while(!exit_requested){runtime.pump_persistence_frame();");
+    const std::size_t canceled_sync = host_source.find(
+        "host_sync_pause_quit_saving(pause_menu,"
+        "runtime.clean_shutdown_state(),PauseCommand::none);", loop);
+    const std::size_t ready_gate = host_source.find(
+        "if(runtime.clean_shutdown_state()==CleanShutdownState::ready", loop);
+    ARPG_REQUIRE(loop != std::string::npos);
+    ARPG_REQUIRE(canceled_sync != std::string::npos);
+    ARPG_REQUIRE(ready_gate != std::string::npos);
+    ARPG_REQUIRE(loop < canceled_sync && canceled_sync < ready_gate);
+
+    const std::size_t settle = host_source.find(
+        "if(settings_runtime.settle(");
+    const std::size_t begin = host_source.find(
+        "begin_clean_exit();", settle);
+    const std::size_t accepted_sync = host_source.find(
+        "host_sync_pause_quit_saving(pause_menu,"
+        "runtime.clean_shutdown_state(),pause_command);", begin);
+    ARPG_REQUIRE(settle != std::string::npos);
+    ARPG_REQUIRE(begin != std::string::npos);
+    ARPG_REQUIRE(accepted_sync != std::string::npos);
+    ARPG_REQUIRE(settle < begin && begin < accepted_sync);
     return {};
 }
 
