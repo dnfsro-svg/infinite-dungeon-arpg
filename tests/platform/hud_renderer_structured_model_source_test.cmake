@@ -91,6 +91,24 @@ if(NOT BAR_LABEL_USE_COUNT EQUAL 2)
         "HudRenderer::draw must contain exactly the audit and draw label uses")
 endif()
 
+set(REQUIRED_EXIT_WARNING_COLOR
+    "view.room.exit_warning ? ui_text_contrast_style().warning : ui_text_contrast_style().primary")
+count_substring("${HUD_DRAW_BODY}" "${REQUIRED_EXIT_WARNING_COLOR}"
+    EXIT_WARNING_COLOR_COUNT)
+if(NOT EXIT_WARNING_COLOR_COUNT EQUAL 1)
+    message(FATAL_ERROR
+        "HudRenderer::draw must derive exit color exactly once from RoomHudModel::exit_warning")
+endif()
+foreach(FORBIDDEN_EXIT_RECOMPUTE IN ITEMS
+        "view.room.exits_unlocked" "view.room.remaining_targets")
+    string(FIND "${HUD_DRAW_CODE}" "${FORBIDDEN_EXIT_RECOMPUTE}"
+        FORBIDDEN_EXIT_RECOMPUTE_INDEX)
+    if(NOT FORBIDDEN_EXIT_RECOMPUTE_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "HudRenderer::draw must not recompute exit warning from ${FORBIDDEN_EXIT_RECOMPUTE}")
+    endif()
+endforeach()
+
 file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_SOURCE)
 extract_cpp_function_body("${ACTIVE_SOURCE}"
     "void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,"

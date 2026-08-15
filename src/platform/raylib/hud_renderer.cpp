@@ -681,10 +681,9 @@ void HudRenderer::draw(const HudViewModel& view,
                 UiTextAuditRole::hud_objective, layout.scale);
             draw_panel_text(draw_font, exit_bounds, view.room.exit_text,
                 style.objective_secondary_font_size * layout.scale,
-                objective.abyss && view.room.exits_unlocked
-                    && view.room.remaining_targets != 0U
-                        ? ui_text_contrast_style().warning
-                        : ui_text_contrast_style().primary,
+                view.room.exit_warning
+                    ? ui_text_contrast_style().warning
+                    : ui_text_contrast_style().primary,
                 UiTextAuditRole::hud_objective, layout.scale);
             draw_panel_text(draw_font, progress_bounds,
                 view.room.progress_text,

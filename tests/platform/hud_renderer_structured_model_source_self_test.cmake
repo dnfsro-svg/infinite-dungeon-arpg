@@ -123,6 +123,12 @@ replace_required("${HUD_MUTATED}"
 run_guard(hud_complete_dead_calls_with_live_legacy_path
     "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
 
+replace_required("${HUD_ORIGINAL}" "view.room.exit_warning"
+    "objective.abyss && view.room.exits_unlocked && view.room.remaining_targets != 0U"
+    HUD_MUTATED "recompute exit warning color in renderer")
+run_guard(exit_warning_color_recomputed_in_renderer
+    "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
+
 
 macro(run_fixture_reset_mutant LABEL RESET_HINTS RESET_CONTROL_HINTS)
     set(DUNGEON_FIXTURE_OVERRIDE

@@ -264,18 +264,60 @@ arpg::test::Failure exit_copy_distinguishes_threshold_full_clear_and_abyss_warni
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
     ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
         u8"出口已开放，战斗仍可继续") == 0);
+    ARPG_REQUIRE(!output.room.exit_warning);
 
     snapshot.is_abyss = true;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
     ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
         u8"出口已开放，离开将放弃剩余奖励") == 0);
+    ARPG_REQUIRE(output.room.exit_warning);
 
     snapshot.phase = dungeon::RoomPhase::awaiting_exit;
     snapshot.defeated_monster_count = 1125U;
     snapshot.remaining_targets = 0U;
+    snapshot.abyss_pending_rewards = 1U;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+        u8"出口已开放，离开将放弃剩余奖励") == 0);
+    ARPG_REQUIRE(output.room.exit_warning);
+
+    snapshot.abyss_pending_rewards = 0U;
+    snapshot.abyss_unpicked_rewards = 1U;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+        u8"出口已开放，离开将放弃剩余奖励") == 0);
+    ARPG_REQUIRE(output.room.exit_warning);
+
+    snapshot.abyss_unpicked_rewards = 0U;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
     ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
         u8"出口已开放") == 0);
+    ARPG_REQUIRE(!output.room.exit_warning);
+
+    snapshot.is_abyss = false;
+    snapshot.abyss_unpicked_rewards = 1U;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+        u8"出口已开放") == 0);
+    ARPG_REQUIRE(!output.room.exit_warning);
+
+    snapshot.is_abyss = true;
+    platform::HudViewModelProjector projector{};
+    projector.build(output, snapshot, {}, default_hints());
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+        const std::size_t state = iteration % 3U;
+        snapshot.abyss_pending_rewards = state == 0U ? 1U : 0U;
+        snapshot.abyss_unpicked_rewards = state == 1U ? 1U : 0U;
+        projector.build(output, snapshot, {}, default_hints());
+        const char* const expected = state == 2U
+            ? u8"出口已开放"
+            : u8"出口已开放，离开将放弃剩余奖励";
+        ARPG_REQUIRE(std::strcmp(
+            output.room.exit_text.bytes.data(), expected) == 0);
+        ARPG_REQUIRE(output.room.exit_warning == (state != 2U));
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
     return {};
 }
 

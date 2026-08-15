@@ -119,13 +119,20 @@ void build_large_room_status(RoomHudModel& room,
     format_text(room.remaining_text, diagnostics, u8"剩余 %u",
         static_cast<unsigned>(room.remaining_targets));
 
-    if (room_is_fully_cleared(snapshot)) {
+    const bool fully_cleared = room_is_fully_cleared(snapshot);
+    const bool has_unclaimed_abyss_rewards = snapshot.is_abyss
+        && (snapshot.abyss_pending_rewards != 0U
+            || snapshot.abyss_unpicked_rewards != 0U);
+    room.exit_warning = snapshot.exits_unlocked && snapshot.is_abyss
+        && (!fully_cleared || has_unclaimed_abyss_rewards);
+
+    if (room.exit_warning) {
+        format_text(room.exit_text, diagnostics,
+            u8"出口已开放，离开将放弃剩余奖励");
+    } else if (fully_cleared) {
         format_text(room.exit_text, diagnostics, u8"出口已开放");
     } else if (!snapshot.exits_unlocked) {
         format_text(room.exit_text, diagnostics, u8"出口尚未开放");
-    } else if (snapshot.is_abyss) {
-        format_text(room.exit_text, diagnostics,
-            u8"出口已开放，离开将放弃剩余奖励");
     } else {
         format_text(room.exit_text, diagnostics,
             u8"出口已开放，战斗仍可继续");

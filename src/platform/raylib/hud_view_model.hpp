@@ -80,6 +80,7 @@ struct RoomHudModel final {
     std::uint32_t required_kills{};
     std::uint32_t remaining_targets{};
     bool exits_unlocked{};
+    bool exit_warning{};
 };
 
 struct NavigationHudModel final {
