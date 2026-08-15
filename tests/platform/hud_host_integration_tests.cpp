@@ -315,6 +315,18 @@ arpg::test::Failure recovery_screen_view_distinguishes_conflicting_valid_slots()
             const platform::RecoveryScreenView view =
                 platform::make_recovery_screen_view(status,
                     static_cast<int>(screen.x), static_cast<int>(screen.y));
+            const platform::RecoveryScreenView armed_view =
+                platform::make_recovery_screen_view(status,
+                    static_cast<int>(screen.x), static_cast<int>(screen.y),
+                    platform::RecoveryNewRunConfirmationPhase::armed);
+            const platform::RecoveryScreenView submitted_view =
+                platform::make_recovery_screen_view(status,
+                    static_cast<int>(screen.x), static_cast<int>(screen.y),
+                    platform::RecoveryNewRunConfirmationPhase::submitted);
+            const platform::RecoveryScreenView invalid_view =
+                platform::make_recovery_screen_view(status,
+                    static_cast<int>(screen.x), static_cast<int>(screen.y),
+                    static_cast<platform::RecoveryNewRunConfirmationPhase>(255U));
             ARPG_REQUIRE(view.panel.x >= 0.0F);
             ARPG_REQUIRE(view.panel.y >= 0.0F);
             ARPG_REQUIRE(view.panel.x + view.panel.width <= screen.x);
@@ -339,8 +351,20 @@ arpg::test::Failure recovery_screen_view_distinguishes_conflicting_valid_slots()
                 <= view.panel.y + view.panel.height);
             ARPG_REQUIRE(std::strcmp(view.title, u8"需要恢复存档") == 0);
             ARPG_REQUIRE(std::strcmp(view.message, copy.message) == 0);
+            ARPG_REQUIRE(std::strcmp(armed_view.message,
+                u8"再次按 N 确认归档并创建新游戏") == 0);
+            ARPG_REQUIRE(std::strcmp(submitted_view.message,
+                u8"正在创建并保存新游戏，请稍候") == 0);
+            ARPG_REQUIRE(std::strcmp(submitted_view.error_text.data(),
+                u8"保存中｜ESC：退出游戏") == 0);
+            ARPG_REQUIRE(invalid_view.message != nullptr);
+            ARPG_REQUIRE(std::strcmp(invalid_view.message, view.message) == 0);
             ARPG_REQUIRE(platform::death_overlay_font_covers_text(
                 font.shared, view.message));
+            ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+                font.shared, armed_view.message));
+            ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+                font.shared, submitted_view.message));
             ARPG_REQUIRE(std::strcmp(
                 view.error_text.data(), copy.error_text) == 0);
             ARPG_REQUIRE(platform::death_overlay_font_covers_text(
@@ -366,6 +390,10 @@ arpg::test::Failure recovery_screen_view_distinguishes_conflicting_valid_slots()
         faulted.title, u8"存档提交状态不确定") == 0);
     ARPG_REQUIRE(std::strcmp(faulted.message,
         u8"请退出并重启；启动时会重新校验双槽存档。") == 0);
+    const platform::RecoveryScreenView faulted_submitted =
+        platform::make_recovery_screen_view(status, 1280, 720,
+            platform::RecoveryNewRunConfirmationPhase::submitted);
+    ARPG_REQUIRE(std::strcmp(faulted_submitted.message, faulted.message) == 0);
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
         font.shared, faulted.title));
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
@@ -373,12 +401,17 @@ arpg::test::Failure recovery_screen_view_distinguishes_conflicting_valid_slots()
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
         font.shared, faulted.error_text.data()));
 
+    status.faulted = false;
+    status.recovery_required = true;
+    status.error = arpg::persistence::SaveError::conflicting_slots;
     const std::uint64_t allocation_count_before =
         arpg::test::allocation_count();
     for (std::size_t iteration{}; iteration < 10000U; ++iteration) {
         static_cast<void>(platform::make_recovery_screen_view(status,
             static_cast<int>(kScreens[iteration % kScreens.size()].x),
-            static_cast<int>(kScreens[iteration % kScreens.size()].y)));
+            static_cast<int>(kScreens[iteration % kScreens.size()].y),
+            static_cast<platform::RecoveryNewRunConfirmationPhase>(
+                iteration % 3U)));
     }
     ARPG_REQUIRE(arpg::test::allocation_count() == allocation_count_before);
     return {};
@@ -834,4 +867,13 @@ constexpr arpg::test::TestCase kCases[] = {
 
 arpg::test::TestSuite hud_host_integration_suite() noexcept {
     return arpg::test::make_suite("hud_host_integration", kCases);
+}
+
+arpg::test::TestSuite recovery_screen_view_suite() noexcept {
+    static constexpr arpg::test::TestCase kRecoveryScreenViewCases[] = {
+        {"recovery screen distinguishes conflicting valid slots",
+            &recovery_screen_view_distinguishes_conflicting_valid_slots},
+    };
+    return arpg::test::make_suite(
+        "recovery_screen_view", kRecoveryScreenViewCases);
 }

@@ -56,8 +56,8 @@ function(replace_unique input match replacement output label)
 endfunction()
 
 string(REPLACE
-    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
-    "draw_recovery_screen(Font{}, runtime.render_status());"
+    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);"
+    "draw_recovery_screen(Font{}, runtime.render_status(),\n                    recovery_new_run_confirmation);"
     unshared_font "${source}")
 if(unshared_font STREQUAL source)
     message(FATAL_ERROR "Task 6 shared-font mutation anchor is missing")
@@ -65,8 +65,8 @@ endif()
 expect_rejected("unshared-font" "${unshared_font}")
 
 string(REPLACE
-    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
-    "static_cast<void>(present_frame_and_maybe_capture(nullptr));\n                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
+    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);"
+    "static_cast<void>(present_frame_and_maybe_capture(nullptr));\n                draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);"
     present_before_draw "${source}")
 if(present_before_draw STREQUAL source)
     message(FATAL_ERROR "Task 6 present-order mutation anchor is missing")
@@ -99,20 +99,27 @@ endif()
 expect_rejected("faulted-not-blocked" "${faulted_not_blocked}")
 
 set(directory_busy_gate_predicate
-    "    return state == DungeonRuntimeState::faulted\n        && error == persistence::SaveError::directory_busy && n_pressed;")
+    "    return state == DungeonRuntimeState::faulted\n        && error == persistence::SaveError::directory_busy && n_pressed\n        && !focus_lost && !escape_pressed && !window_close_requested;")
 replace_unique("${source}" "${directory_busy_gate_predicate}"
-    "    return error == persistence::SaveError::directory_busy && n_pressed;"
+    "    return error == persistence::SaveError::directory_busy && n_pressed\n        && !focus_lost && !escape_pressed && !window_close_requested;"
     directory_busy_broad_predicate "directory-busy-broad-predicate")
 expect_rejected("directory-busy-broad-predicate"
     "${directory_busy_broad_predicate}")
 
 replace_unique("${source}" "${directory_busy_gate_predicate}"
-    "    return state == DungeonRuntimeState::faulted\n        && error == persistence::SaveError::directory_busy;"
+    "    return state == DungeonRuntimeState::faulted\n        && error == persistence::SaveError::directory_busy\n        && !focus_lost && !escape_pressed && !window_close_requested;"
     directory_busy_without_n "directory-busy-without-n")
 expect_rejected("directory-busy-without-n" "${directory_busy_without_n}")
 
+replace_unique("${source}" "${directory_busy_gate_predicate}"
+    "    return state == DungeonRuntimeState::faulted\n        && error == persistence::SaveError::directory_busy && n_pressed;"
+    directory_busy_without_exit_priority
+    "directory-busy-without-exit-priority")
+expect_rejected("directory-busy-without-exit-priority"
+    "${directory_busy_without_exit_priority}")
+
 set(directory_busy_branch_anchor
-    "            if (host_directory_busy_retry_requested(\n                    runtime.state(), runtime.render_status().error,\n                    frame_input.keys.recovery)) {")
+    "            if (host_directory_busy_retry_requested(\n                    runtime.state(), runtime.render_status().error,\n                    frame_input.keys.recovery, frame_input.keys.focus_lost,\n                    frame_input.keys.escape, window_close_requested)) {")
 replace_unique("${source}" "${directory_busy_branch_anchor}"
     "            static_cast<void>(runtime.initialize());\n${directory_busy_branch_anchor}"
     directory_busy_automatic_poll "directory-busy-automatic-poll")
@@ -151,9 +158,9 @@ expect_rejected("directory-busy-without-accumulator"
     "${directory_busy_without_accumulator}")
 
 set(directory_busy_continue_anchor
-    "                }\n                continue;\n            }\n            if (recovery_requested(")
+    "                }\n                continue;\n            }\n            if (recovery_confirmation.recover_with_new_run)")
 replace_unique("${source}" "${directory_busy_continue_anchor}"
-    "                }\n            }\n            if (recovery_requested("
+    "                }\n            }\n            if (recovery_confirmation.recover_with_new_run)"
     directory_busy_without_continue "directory-busy-without-continue")
 expect_rejected("directory-busy-without-continue"
     "${directory_busy_without_continue}")
@@ -164,6 +171,65 @@ replace_unique("${source}"
     directory_busy_reuses_recovery "directory-busy-reuses-recovery")
 expect_rejected("directory-busy-reuses-recovery"
     "${directory_busy_reuses_recovery}")
+
+set(recovery_confirmation_cancel_anchor
+    "    if (focus_lost || escape_pressed || window_close_requested\n            || runtime_state != DungeonRuntimeState::recovery_required) {")
+replace_unique("${source}" "${recovery_confirmation_cancel_anchor}"
+    "    if (escape_pressed || window_close_requested\n            || runtime_state != DungeonRuntimeState::recovery_required) {"
+    recovery_confirmation_without_focus_cancel
+    "recovery-confirmation-without-focus-cancel")
+expect_rejected("recovery-confirmation-without-focus-cancel"
+    "${recovery_confirmation_without_focus_cancel}")
+
+set(recovery_confirmation_idle_anchor
+    "    case RecoveryNewRunConfirmationPhase::idle:\n        return n_pressed\n            ? RecoveryNewRunConfirmationDecision{\n                RecoveryNewRunConfirmationPhase::armed, false}\n            : RecoveryNewRunConfirmationDecision{\n                RecoveryNewRunConfirmationPhase::idle, false};")
+replace_unique("${source}" "${recovery_confirmation_idle_anchor}"
+    "    case RecoveryNewRunConfirmationPhase::idle:\n        return n_pressed\n            ? RecoveryNewRunConfirmationDecision{\n                RecoveryNewRunConfirmationPhase::submitted, true}\n            : RecoveryNewRunConfirmationDecision{\n                RecoveryNewRunConfirmationPhase::idle, false};"
+    recovery_confirmation_single_press
+    "recovery-confirmation-single-press")
+expect_rejected("recovery-confirmation-single-press"
+    "${recovery_confirmation_single_press}")
+
+replace_unique("${source}"
+    "        return {RecoveryNewRunConfirmationPhase::submitted, false};"
+    "        return {RecoveryNewRunConfirmationPhase::submitted, true};"
+    recovery_confirmation_submitted_reentry
+    "recovery-confirmation-submitted-reentry")
+expect_rejected("recovery-confirmation-submitted-reentry"
+    "${recovery_confirmation_submitted_reentry}")
+
+replace_unique("${source}"
+    "            if (recovery_confirmation.recover_with_new_run) {"
+    "            if (frame_input.keys.recovery) {"
+    recovery_confirmation_bypassed_action
+    "recovery-confirmation-bypassed-action")
+expect_rejected("recovery-confirmation-bypassed-action"
+    "${recovery_confirmation_bypassed_action}")
+
+set(recovery_confirmation_update_anchor
+    "            const RecoveryNewRunConfirmationDecision recovery_confirmation =\n                update_recovery_new_run_confirmation(")
+replace_unique("${source}" "${recovery_confirmation_update_anchor}"
+    "            static_cast<void>(update_recovery_new_run_confirmation(\n                recovery_new_run_confirmation, runtime.state(),\n                frame_input.keys.recovery, frame_input.keys.focus_lost,\n                frame_input.keys.escape, window_close_requested));\n${recovery_confirmation_update_anchor}"
+    recovery_confirmation_double_update
+    "recovery-confirmation-double-update")
+expect_rejected("recovery-confirmation-double-update"
+    "${recovery_confirmation_double_update}")
+
+replace_unique("${source}"
+    "            recovery_new_run_confirmation = recovery_confirmation.phase;\n"
+    ""
+    recovery_confirmation_not_cleared_before_busy
+    "recovery-confirmation-not-cleared-before-busy")
+expect_rejected("recovery-confirmation-not-cleared-before-busy"
+    "${recovery_confirmation_not_cleared_before_busy}")
+
+replace_unique("${source}"
+    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);"
+    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
+    recovery_confirmation_view_drops_phase
+    "recovery-confirmation-view-drops-phase")
+expect_rejected("recovery-confirmation-view-drops-phase"
+    "${recovery_confirmation_view_drops_phase}")
 
 string(REPLACE
     "if (recovery_blocked\n                        && (config.stage12_material_background_only\n                            || config.stage12_material_icons_only))"

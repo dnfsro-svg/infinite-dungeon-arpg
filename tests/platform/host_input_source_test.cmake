@@ -665,7 +665,7 @@ endforeach()
 require_match_count(
     "${SANITIZED_HOST_SOURCE}"
     "(runtime\\.session\\(\\)|session)->snapshot[ \t\r\n]*\\([ \t\r\n]*current[ \t\r\n]*\\)"
-    9
+    10
     "raylib host preallocated snapshot captures")
 require_match_count(
     "${SANITIZED_HOST_SOURCE}"
@@ -1970,9 +1970,9 @@ function(hud_present_structure_valid SOURCE OUT_VARIABLE)
         "capture_path[.]has_value\\([ \t\r\n]*\\)[ \t\r\n]*\\?[ \t\r\n]*capture_path->c_str\\([ \t\r\n]*\\)[ \t\r\n]*:[ \t\r\n]*nullptr")
     set(RECOVERY_PRESENT_PATTERN
         "static_cast[ \t\r\n]*<[ \t\r\n]*void[ \t\r\n]*>[ \t\r\n]*\\([ \t\r\n]*present_frame_and_maybe_capture[ \t\r\n]*\\([ \t\r\n]*${CAPTURE_PATH_ARGUMENT_PATTERN}[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*;")
-    string(FIND "${CODE}" "if (runtime.state() == DungeonRuntimeState::recovery_required)" RECOVERY_START)
+    string(FIND "${CODE}" "if (runtime.state() == DungeonRuntimeState::recovery_required\n                    || runtime.state() == DungeonRuntimeState::faulted)" RECOVERY_START)
     set(RECOVERY_SHARED_FONT_DRAW
-        "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
+        "draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);")
     string(FIND "${CODE}" "${RECOVERY_SHARED_FONT_DRAW}" RECOVERY_DRAW)
     string(REGEX MATCH "${RECOVERY_PRESENT_PATTERN}"
         RECOVERY_PRESENT_CALL_MATCH "${CODE}")
@@ -2091,10 +2091,10 @@ hud_present_structure_valid("${NORMAL_NULL_ARGUMENT_SOURCE}"
 if(NORMAL_NULL_ARGUMENT_VALID)
     message(FATAL_ERROR "normal present must retain the capture-path argument")
 endif()
-string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());" ""
+string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);" ""
     RECOVERY_PRESENT_BEFORE_DRAW_SOURCE "${HOST_SOURCE}")
 set(RECOVERY_PRESENT_WITH_LATE_DRAW
-    "${RECOVERY_PRESENT_MULTILINE}\n                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
+    "${RECOVERY_PRESENT_MULTILINE}\n                draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);")
 string(REPLACE "${RECOVERY_PRESENT_MULTILINE}"
     "${RECOVERY_PRESENT_WITH_LATE_DRAW}"
     RECOVERY_PRESENT_BEFORE_DRAW_SOURCE
@@ -2225,8 +2225,8 @@ if(STAGE17_PENDING_REMOVAL_MUTATION STREQUAL DIRECT_STAGE17_INJECT_SOURCE
     message(FATAL_ERROR
         "Stage17 capture interlock guard accepted a named mutation")
 endif()
-string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
-    "draw_recovery_screen(Font{}, runtime.render_status());"
+string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);"
+    "draw_recovery_screen(Font{}, runtime.render_status(),\n                    recovery_new_run_confirmation);"
     RECOVERY_UNSHARED_FONT_SOURCE "${HOST_SOURCE}")
 if(RECOVERY_UNSHARED_FONT_SOURCE STREQUAL HOST_SOURCE)
     message(FATAL_ERROR "recovery shared-font fixture did not mutate")

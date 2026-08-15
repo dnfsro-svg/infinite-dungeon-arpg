@@ -93,15 +93,18 @@ constexpr std::uint64_t kRuntimeVectorProxyAllocations = 0U;
 
 template <typename RuntimeState>
 auto call_directory_busy_retry_gate(RuntimeState state,
-    persistence::SaveError error, bool n_pressed, int) noexcept
+    persistence::SaveError error, bool n_pressed, bool focus_lost,
+    bool escape_pressed, bool window_close_requested, int) noexcept
     -> decltype(host_directory_busy_retry_requested(
-        state, error, n_pressed)) {
-    return host_directory_busy_retry_requested(state, error, n_pressed);
+        state, error, n_pressed, focus_lost, escape_pressed,
+        window_close_requested)) {
+    return host_directory_busy_retry_requested(state, error, n_pressed,
+        focus_lost, escape_pressed, window_close_requested);
 }
 
 template <typename RuntimeState>
 bool call_directory_busy_retry_gate(RuntimeState,
-    persistence::SaveError, bool, long) noexcept {
+    persistence::SaveError, bool, bool, bool, bool, long) noexcept {
     return false;
 }
 
@@ -726,25 +729,45 @@ arpg::test::Failure directory_busy_retry_gate_requires_exact_fault_error_and_n_e
         platform::DungeonRuntimeState state{};
         persistence::SaveError error{};
         bool n_pressed{};
+        bool focus_lost{};
+        bool escape_pressed{};
+        bool window_close_requested{};
         bool expected{};
     };
-    constexpr std::array<GateCase, 8U> kCases{{
+    constexpr std::array<GateCase, 11U> kCases{{
         {platform::DungeonRuntimeState::faulted,
-            persistence::SaveError::directory_busy, true, true},
+            persistence::SaveError::directory_busy,
+            true, false, false, false, true},
         {platform::DungeonRuntimeState::faulted,
-            persistence::SaveError::directory_busy, false, false},
+            persistence::SaveError::directory_busy,
+            true, true, false, false, false},
         {platform::DungeonRuntimeState::faulted,
-            persistence::SaveError::none, true, false},
+            persistence::SaveError::directory_busy,
+            true, false, true, false, false},
         {platform::DungeonRuntimeState::faulted,
-            persistence::SaveError::write_failed, true, false},
+            persistence::SaveError::directory_busy,
+            true, false, false, true, false},
+        {platform::DungeonRuntimeState::faulted,
+            persistence::SaveError::directory_busy,
+            false, false, false, false, false},
+        {platform::DungeonRuntimeState::faulted,
+            persistence::SaveError::none,
+            true, false, false, false, false},
+        {platform::DungeonRuntimeState::faulted,
+            persistence::SaveError::write_failed,
+            true, false, false, false, false},
         {platform::DungeonRuntimeState::recovery_required,
-            persistence::SaveError::conflicting_slots, true, false},
+            persistence::SaveError::conflicting_slots,
+            true, false, false, false, false},
         {platform::DungeonRuntimeState::recovery_required,
-            persistence::SaveError::directory_busy, true, false},
+            persistence::SaveError::directory_busy,
+            true, false, false, false, false},
         {platform::DungeonRuntimeState::running,
-            persistence::SaveError::directory_busy, true, false},
+            persistence::SaveError::directory_busy,
+            true, false, false, false, false},
         {platform::DungeonRuntimeState::uninitialized,
-            persistence::SaveError::directory_busy, true, false},
+            persistence::SaveError::directory_busy,
+            true, false, false, false, false},
     }};
 
     const std::uint64_t allocations_before = arpg::test::allocation_count();
@@ -752,11 +775,71 @@ arpg::test::Failure directory_busy_retry_gate_requires_exact_fault_error_and_n_e
     for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
         const GateCase& test_case = kCases[iteration % kCases.size()];
         const bool accepted = call_directory_busy_retry_gate(test_case.state,
-            test_case.error, test_case.n_pressed, 0);
+            test_case.error, test_case.n_pressed, test_case.focus_lost,
+            test_case.escape_pressed, test_case.window_close_requested, 0);
         ARPG_REQUIRE(accepted == test_case.expected);
         accepted_count += accepted ? 1U : 0U;
     }
-    ARPG_REQUIRE(accepted_count == 1250U);
+    ARPG_REQUIRE(accepted_count == 910U);
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    return {};
+}
+
+arpg::test::Failure recovery_new_run_requires_two_n_edges_and_resets_safely()
+    noexcept {
+    using Phase = platform::RecoveryNewRunConfirmationPhase;
+    struct GateCase final {
+        Phase phase{};
+        platform::DungeonRuntimeState runtime_state{};
+        bool n_pressed{};
+        bool focus_lost{};
+        bool escape_pressed{};
+        bool window_close_requested{};
+        Phase expected_phase{};
+        bool expected_recovery{};
+    };
+    constexpr std::array<GateCase, 12U> kCases{{
+        {Phase::idle, platform::DungeonRuntimeState::running,
+            true, false, false, false, Phase::idle, false},
+        {Phase::idle, platform::DungeonRuntimeState::recovery_required,
+            false, false, false, false, Phase::idle, false},
+        {Phase::idle, platform::DungeonRuntimeState::recovery_required,
+            true, false, false, false, Phase::armed, false},
+        {Phase::armed, platform::DungeonRuntimeState::recovery_required,
+            false, false, false, false, Phase::armed, false},
+        {Phase::armed, platform::DungeonRuntimeState::recovery_required,
+            true, false, false, false, Phase::submitted, true},
+        {Phase::submitted, platform::DungeonRuntimeState::recovery_required,
+            false, false, false, false, Phase::submitted, false},
+        {Phase::submitted, platform::DungeonRuntimeState::recovery_required,
+            true, false, false, false, Phase::submitted, false},
+        {Phase::armed, platform::DungeonRuntimeState::faulted,
+            true, false, false, false, Phase::idle, false},
+        {Phase::armed, platform::DungeonRuntimeState::recovery_required,
+            true, true, false, false, Phase::idle, false},
+        {Phase::armed, platform::DungeonRuntimeState::recovery_required,
+            true, false, true, false, Phase::idle, false},
+        {Phase::armed, platform::DungeonRuntimeState::recovery_required,
+            true, false, false, true, Phase::idle, false},
+        {Phase::submitted, platform::DungeonRuntimeState::running,
+            true, false, false, false, Phase::idle, false},
+    }};
+
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    std::size_t confirmed_count{};
+    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+        const GateCase& test_case = kCases[iteration % kCases.size()];
+        const platform::RecoveryNewRunConfirmationDecision decision =
+            platform::update_recovery_new_run_confirmation(
+                test_case.phase, test_case.runtime_state,
+                test_case.n_pressed, test_case.focus_lost,
+                test_case.escape_pressed, test_case.window_close_requested);
+        ARPG_REQUIRE(decision.phase == test_case.expected_phase);
+        ARPG_REQUIRE(decision.recover_with_new_run
+            == test_case.expected_recovery);
+        confirmed_count += decision.recover_with_new_run ? 1U : 0U;
+    }
+    ARPG_REQUIRE(confirmed_count == 833U);
     ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
     return {};
 }
@@ -789,9 +872,14 @@ arpg::test::Failure runtime_directory_lease_rejects_concurrent_owner_and_retries
     const platform::RecoveryScreenView view =
         platform::make_recovery_screen_view(
             contender.render_status(), 1280, 720);
+    const platform::RecoveryScreenView submitted_view =
+        platform::make_recovery_screen_view(contender.render_status(),
+            1280, 720,
+            platform::RecoveryNewRunConfirmationPhase::submitted);
     ARPG_REQUIRE(std::strcmp(view.title, u8"存档正在使用") == 0);
     ARPG_REQUIRE(std::strcmp(view.message,
         u8"关闭其他实例后按 N 重试") == 0);
+    ARPG_REQUIRE(std::strcmp(submitted_view.message, view.message) == 0);
     static_assert(sizeof(u8"故障码 255｜ESC：退出游戏")
         <= platform::kRecoveryScreenErrorTextCapacity);
     ARPG_REQUIRE(std::strcmp(
@@ -2949,6 +3037,8 @@ constexpr arpg::test::TestCase kV10MigrationCases[] = {
 constexpr arpg::test::TestCase kSaveDirectoryLeaseCases[] = {
     {"directory busy retry gate requires exact fault error and N edge",
         &directory_busy_retry_gate_requires_exact_fault_error_and_n_edge},
+    {"recovery new run requires two N edges and resets safely",
+        &recovery_new_run_requires_two_n_edges_and_resets_safely},
     {"runtime directory lease rejects concurrent owner and retries",
         &runtime_directory_lease_rejects_concurrent_owner_and_retries},
     {"valid save ignores new run seed override",

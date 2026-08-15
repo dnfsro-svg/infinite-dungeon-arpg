@@ -48,6 +48,7 @@ arpg::test::TestSuite debug_overlay_renderer_suite() noexcept;
 arpg::test::TestSuite hud_font_suite() noexcept;
 arpg::test::TestSuite hud_render_plan_suite() noexcept;
 arpg::test::TestSuite hud_host_integration_suite() noexcept;
+arpg::test::TestSuite recovery_screen_view_suite() noexcept;
 arpg::test::TestSuite ground_loot_view_suite() noexcept;
 arpg::test::TestSuite material_loot_view_suite() noexcept;
 arpg::test::TestSuite material_bag_renderer_suite() noexcept;
@@ -370,9 +371,10 @@ int main() {
     if (cplay038_save_directory_only()) {
         const arpg::test::TestSuite cplay038_only[] = {
             dungeon_runtime_save_directory_lease_suite(),
+            recovery_screen_view_suite(),
         };
-        return arpg::test::run_suites(cplay038_only, 9,
-            "CPLAY-038 runtime save directory lease");
+        return arpg::test::run_suites(cplay038_only, 11,
+            "CPLAY-038 save directory and recovery confirmation");
     }
     if (cplay035_settings_conflict_only()) {
         const arpg::test::TestSuite cplay035_only[] = {

@@ -538,7 +538,7 @@ arpg::test::Failure pause_reset_requires_explicit_contextual_confirmation()
 
     const platform::UiGlyphPlan glyph_plan = platform::ui_glyph_plan();
     ARPG_REQUIRE(!glyph_plan.capacity_exceeded);
-    ARPG_REQUIRE(glyph_plan.codepoint_count == 646U);
+    ARPG_REQUIRE(glyph_plan.codepoint_count == 647U);
     constexpr const char* kResetTexts[] = {
         u8"确认重置房间？",
         u8"本房间的未保存经验和地面掉落将丢失",
