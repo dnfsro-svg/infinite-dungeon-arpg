@@ -104,6 +104,28 @@ foreach(_token IN ITEMS
         "T4 fixed text/layout API is missing")
 endforeach()
 
+require_token("${_header_compact}"
+    "inlineconstexprfloatkPassiveNodeVisibleRingExtension=3.0F;"
+    "T4 visible-ring extension must remain a shared fixed constant")
+
+extract_cpp_function_body("${_renderer_source}"
+    "void draw_node_state_mark("
+    _state_mark_body _state_mark_code)
+require_token("${_state_mark_body}"
+    "radius + kPassiveNodeVisibleRingExtension"
+    "T4 visible ring must consume the shared extension")
+reject_dead_branch("${_state_mark_code}" "T4 passive state mark")
+
+extract_cpp_function_body("${_view_source}"
+    "std::optional<passives::PassiveNodeId> hit_test_passive_node("
+    _hit_test_body _hit_test_code)
+foreach(_token IN ITEMS "std::max(12.0F,"
+        "projection.radius + kPassiveNodeVisibleRingExtension")
+    require_token("${_hit_test_body}" "${_token}"
+        "T4 passive hit target must include the shared visible ring")
+endforeach()
+reject_dead_branch("${_hit_test_code}" "T4 passive hit target")
+
 extract_cpp_function_body("${_view_source}"
     "PassiveNodeTextView passive_node_text_view("
     _text_view_body _text_view_code)

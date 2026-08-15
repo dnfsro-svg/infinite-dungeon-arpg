@@ -117,6 +117,10 @@ expect_renderer_mutation_rejected(missing_state_shape
     "draw_node_state_mark(cue.mark, projection, color);"
     "static_cast<void>(cue.mark);")
 
+expect_renderer_mutation_rejected(disconnected_visible_ring_extension
+    "radius + kPassiveNodeVisibleRingExtension"
+    "radius + 3.0F")
+
 expect_renderer_mutation_rejected(hardcoded_close_binding
     "snapshot.progression.unspent_passive_points,\n        passive_tree_binding_label);"
     "snapshot.progression.unspent_passive_points, \"P\");")

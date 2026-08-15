@@ -23,6 +23,8 @@ struct PassiveNodeProjection final {
     bool visible{};
 };
 
+inline constexpr float kPassiveNodeVisibleRingExtension = 3.0F;
+
 enum class PassiveNodeVisualState : std::uint8_t {
     locked,
     available,

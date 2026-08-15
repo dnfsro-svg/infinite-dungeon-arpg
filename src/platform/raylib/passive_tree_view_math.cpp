@@ -213,15 +213,25 @@ PassiveNodeProjection project_passive_node(passives::PassiveNodeId node,
 
 std::optional<passives::PassiveNodeId> hit_test_passive_node(
     PassiveScreenPoint screen, float width, float height) noexcept {
+    std::optional<passives::PassiveNodeId> closest{};
+    float closest_distance_squared{};
     for (std::size_t index = 0U; index < passives::kPassiveNodeCount; ++index) {
         const auto node = static_cast<passives::PassiveNodeId>(index);
         const PassiveNodeProjection projection = project_passive_node(node, width, height);
-        if (!projection.visible) return std::nullopt;
+        if (!projection.visible) continue;
         const float dx = screen.x - projection.center.x;
         const float dy = screen.y - projection.center.y;
-        if (dx * dx + dy * dy <= projection.radius * projection.radius) return node;
+        const float distance_squared = dx * dx + dy * dy;
+        const float hit_radius = std::max(12.0F,
+            projection.radius + kPassiveNodeVisibleRingExtension);
+        if (!(distance_squared <= hit_radius * hit_radius)) continue;
+        if (!closest.has_value()
+            || distance_squared < closest_distance_squared) {
+            closest = node;
+            closest_distance_squared = distance_squared;
+        }
     }
-    return std::nullopt;
+    return closest;
 }
 
 PassiveNodeVisualState passive_node_visual_state(

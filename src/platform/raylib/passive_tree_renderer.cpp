@@ -94,7 +94,7 @@ void draw_node_state_mark(PassiveNodeStateMark mark,
     }
     case PassiveNodeStateMark::available_ring:
         DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
-            radius + 3.0F, color);
+            radius + kPassiveNodeVisibleRingExtension, color);
         break;
     case PassiveNodeStateMark::allocated_dot:
         DrawCircle(static_cast<int>(badge.x), static_cast<int>(badge.y),

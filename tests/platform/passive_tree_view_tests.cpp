@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 
 namespace {
@@ -111,6 +112,87 @@ arpg::test::Failure node_projection_and_hit_test_are_stable() noexcept {
         == std::optional<PassiveNodeId>{static_cast<PassiveNodeId>(8U)});
     ARPG_REQUIRE(!arpg::platform::hit_test_passive_node(
         {-1.0F, -1.0F}, 1280.0F, 720.0F));
+    ARPG_REQUIRE(!arpg::platform::hit_test_passive_node(
+        {std::numeric_limits<float>::quiet_NaN(), projected.center.y},
+        1280.0F, 720.0F));
+    ARPG_REQUIRE(!arpg::platform::hit_test_passive_node(
+        projected.center, std::numeric_limits<float>::infinity(), 720.0F));
+
+    struct HitViewport final {
+        float width{};
+        float height{};
+    };
+    constexpr HitViewport kHitViewports[] = {
+        {800.0F, 450.0F},
+        {1280.0F, 720.0F},
+        {1920.0F, 1080.0F},
+    };
+    for (const HitViewport viewport : kHitViewports) {
+        const auto outer_node = arpg::platform::project_passive_node(
+            static_cast<PassiveNodeId>(8U), viewport.width, viewport.height);
+        ARPG_REQUIRE(outer_node.visible);
+        ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
+            {outer_node.center.x + outer_node.radius + 2.75F,
+                outer_node.center.y},
+            viewport.width, viewport.height)
+            == std::optional<PassiveNodeId>{static_cast<PassiveNodeId>(8U)});
+
+        const float hit_radius = outer_node.radius + 3.0F > 12.0F
+            ? outer_node.radius + 3.0F : 12.0F;
+        ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
+            {outer_node.center.x + hit_radius, outer_node.center.y},
+            viewport.width, viewport.height)
+            == std::optional<PassiveNodeId>{static_cast<PassiveNodeId>(8U)});
+        ARPG_REQUIRE(!arpg::platform::hit_test_passive_node(
+            {outer_node.center.x + hit_radius + 0.25F,
+                outer_node.center.y},
+            viewport.width, viewport.height));
+    }
+
+    const auto compact_node = arpg::platform::project_passive_node(
+        static_cast<PassiveNodeId>(8U), 800.0F, 450.0F);
+    ARPG_REQUIRE(compact_node.radius + 3.0F < 12.0F);
+    ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
+        {compact_node.center.x + 11.75F, compact_node.center.y},
+        800.0F, 450.0F)
+        == std::optional<PassiveNodeId>{static_cast<PassiveNodeId>(8U)});
+
+    constexpr float kOverlapWidth = 24.0F;
+    constexpr float kOverlapHeight = 760.0F;
+    const auto overlap_target = arpg::platform::project_passive_node(
+        static_cast<PassiveNodeId>(63U), kOverlapWidth, kOverlapHeight);
+    ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
+        overlap_target.center, kOverlapWidth, kOverlapHeight)
+        == std::optional<PassiveNodeId>{static_cast<PassiveNodeId>(63U)});
+
+    const auto tie_low = arpg::platform::project_passive_node(
+        static_cast<PassiveNodeId>(8U), kOverlapWidth, kOverlapHeight);
+    const auto tie_high = arpg::platform::project_passive_node(
+        static_cast<PassiveNodeId>(11U), kOverlapWidth, kOverlapHeight);
+    ARPG_REQUIRE(tie_low.center.y == tie_high.center.y);
+    ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
+        {(tie_low.center.x + tie_high.center.x) * 0.5F,
+            tie_low.center.y},
+        kOverlapWidth, kOverlapHeight)
+        == std::optional<PassiveNodeId>{static_cast<PassiveNodeId>(8U)});
+
+    std::uint64_t hit_checksum{};
+    const std::uint64_t hit_allocations_before =
+        arpg::test::allocation_count();
+    for (std::size_t iteration{}; iteration < 10'000U; ++iteration) {
+        const HitViewport viewport = kHitViewports[
+            iteration % std::size(kHitViewports)];
+        const auto node = static_cast<PassiveNodeId>(
+            iteration % arpg::passives::kPassiveNodeCount);
+        const auto projection = arpg::platform::project_passive_node(
+            node, viewport.width, viewport.height);
+        const auto selected = arpg::platform::hit_test_passive_node(
+            projection.center, viewport.width, viewport.height);
+        ARPG_REQUIRE(selected == std::optional<PassiveNodeId>{node});
+        hit_checksum += static_cast<std::uint64_t>(*selected) + 1U;
+    }
+    ARPG_REQUIRE(hit_checksum != 0U);
+    ARPG_REQUIRE(arpg::test::allocation_count() == hit_allocations_before);
 
     struct Viewport final {
         int width{};
