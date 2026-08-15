@@ -193,7 +193,7 @@ RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& sta
         ? ui_text(UiTextId::recovery_conflicting_slots_instruction)
         : ui_text(UiTextId::recovery_dual_slot_instruction);
     static_cast<void>(ui_utf8_format(view.error_text.data(),
-        view.error_text.size(), "%s %u", save_indicator_label(
+        view.error_text.size(), u8"%s %u｜ESC：退出游戏", save_indicator_label(
             SaveIndicator::error),
         static_cast<unsigned>(status.error)));
     view.panel_color = style.backing;
