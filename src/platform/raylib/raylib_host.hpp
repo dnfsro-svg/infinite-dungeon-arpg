@@ -28,6 +28,27 @@ namespace arpg::platform {
 
 inline constexpr std::size_t kRecoveryScreenErrorTextCapacity = 48U;
 
+enum class RecoveryNewRunConfirmationPhase : std::uint8_t {
+    idle,
+    armed,
+    submitted,
+};
+
+struct RecoveryNewRunConfirmationDecision final {
+    RecoveryNewRunConfirmationPhase phase{
+        RecoveryNewRunConfirmationPhase::idle};
+    bool recover_with_new_run{};
+};
+
+[[nodiscard]] RecoveryNewRunConfirmationDecision
+update_recovery_new_run_confirmation(
+    RecoveryNewRunConfirmationPhase phase,
+    DungeonRuntimeState runtime_state,
+    bool n_pressed,
+    bool focus_lost,
+    bool escape_pressed,
+    bool window_close_requested) noexcept;
+
 struct RecoveryScreenView final {
     Rectangle panel{};
     Rectangle title_bounds{};
@@ -46,7 +67,9 @@ struct RecoveryScreenView final {
 };
 
 [[nodiscard]] RecoveryScreenView make_recovery_screen_view(
-    const DungeonRenderStatus& status, int width, int height) noexcept;
+    const DungeonRenderStatus& status, int width, int height,
+    RecoveryNewRunConfirmationPhase confirmation =
+        RecoveryNewRunConfirmationPhase::idle) noexcept;
 
 [[nodiscard]] bool host_runtime_initialization_is_presentable(
     bool initialized,
@@ -57,7 +80,10 @@ struct RecoveryScreenView final {
 [[nodiscard]] bool host_directory_busy_retry_requested(
     DungeonRuntimeState state,
     persistence::SaveError error,
-    bool n_pressed) noexcept;
+    bool n_pressed,
+    bool focus_lost,
+    bool escape_pressed,
+    bool window_close_requested) noexcept;
 
 inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumns{{
     -4.0F, -1.3F, 1.3F, 4.0F,

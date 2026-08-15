@@ -166,7 +166,8 @@ void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
 }
 
 RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& status,
-    int width, int height) noexcept {
+    int width, int height,
+    RecoveryNewRunConfirmationPhase confirmation) noexcept {
     constexpr float kBasePanelWidth = 640.0F;
     constexpr float kBasePanelHeight = 260.0F;
     constexpr float kMargin = 32.0F;
@@ -203,13 +204,33 @@ RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& sta
             static_cast<unsigned>(status.error)));
     } else {
         view.title = ui_text(UiTextId::recovery_title);
-        view.message = status.error == persistence::SaveError::conflicting_slots
-            ? ui_text(UiTextId::recovery_conflicting_slots_instruction)
-            : ui_text(UiTextId::recovery_dual_slot_instruction);
-        static_cast<void>(ui_utf8_format(view.error_text.data(),
-            view.error_text.size(), u8"%s %u｜ESC：退出游戏",
-            save_indicator_label(SaveIndicator::error),
-            static_cast<unsigned>(status.error)));
+        switch (confirmation) {
+        case RecoveryNewRunConfirmationPhase::armed:
+            view.message = ui_text(
+                UiTextId::recovery_confirm_new_run_instruction);
+            break;
+        case RecoveryNewRunConfirmationPhase::submitted:
+            view.message = ui_text(
+                UiTextId::recovery_new_run_submitted_instruction);
+            break;
+        case RecoveryNewRunConfirmationPhase::idle:
+        default:
+            view.message = status.error
+                    == persistence::SaveError::conflicting_slots
+                ? ui_text(UiTextId::recovery_conflicting_slots_instruction)
+                : ui_text(UiTextId::recovery_dual_slot_instruction);
+            break;
+        }
+        if (confirmation == RecoveryNewRunConfirmationPhase::submitted) {
+            static_cast<void>(ui_utf8_format(view.error_text.data(),
+                view.error_text.size(), u8"%s｜ESC：退出游戏",
+                save_indicator_label(SaveIndicator::saving)));
+        } else {
+            static_cast<void>(ui_utf8_format(view.error_text.data(),
+                view.error_text.size(), u8"%s %u｜ESC：退出游戏",
+                save_indicator_label(SaveIndicator::error),
+                static_cast<unsigned>(status.error)));
+        }
     }
     view.panel_color = style.backing;
     view.title_color = style.danger;
@@ -221,12 +242,13 @@ RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& sta
     return view;
 }
 
-void draw_recovery_screen(Font font, const DungeonRenderStatus& status) noexcept {
+void draw_recovery_screen(Font font, const DungeonRenderStatus& status,
+    RecoveryNewRunConfirmationPhase confirmation) noexcept {
     BeginDrawing();
     ClearBackground(Color{12, 8, 18, 255});
     if (!IsFontValid(font)) return;
     const RecoveryScreenView view = ::arpg::platform::make_recovery_screen_view(status,
-        GetScreenWidth(), GetScreenHeight());
+        GetScreenWidth(), GetScreenHeight(), confirmation);
     DrawRectangleRounded(view.panel, 0.04F, 8, view.panel_color);
     DrawRectangleRoundedLinesEx(view.panel, 0.04F, 8, 2.0F,
         Color{129, 75, 94, 255});
@@ -428,8 +450,10 @@ void apply_stage12_material_showcase_world(
 }  // namespace
 
 RecoveryScreenView make_recovery_screen_view(const DungeonRenderStatus& status,
-    int width, int height) noexcept {
-    return make_recovery_screen_view_impl(status, width, height);
+    int width, int height,
+    RecoveryNewRunConfirmationPhase confirmation) noexcept {
+    return make_recovery_screen_view_impl(
+        status, width, height, confirmation);
 }
 
 bool host_runtime_initialization_is_presentable(
@@ -446,9 +470,43 @@ bool host_runtime_initialization_is_presentable(
 bool host_directory_busy_retry_requested(
     DungeonRuntimeState state,
     persistence::SaveError error,
-    bool n_pressed) noexcept {
+    bool n_pressed,
+    bool focus_lost,
+    bool escape_pressed,
+    bool window_close_requested) noexcept {
     return state == DungeonRuntimeState::faulted
-        && error == persistence::SaveError::directory_busy && n_pressed;
+        && error == persistence::SaveError::directory_busy && n_pressed
+        && !focus_lost && !escape_pressed && !window_close_requested;
+}
+
+RecoveryNewRunConfirmationDecision update_recovery_new_run_confirmation(
+    RecoveryNewRunConfirmationPhase phase,
+    DungeonRuntimeState runtime_state,
+    bool n_pressed,
+    bool focus_lost,
+    bool escape_pressed,
+    bool window_close_requested) noexcept {
+    if (focus_lost || escape_pressed || window_close_requested
+            || runtime_state != DungeonRuntimeState::recovery_required) {
+        return {};
+    }
+    switch (phase) {
+    case RecoveryNewRunConfirmationPhase::idle:
+        return n_pressed
+            ? RecoveryNewRunConfirmationDecision{
+                RecoveryNewRunConfirmationPhase::armed, false}
+            : RecoveryNewRunConfirmationDecision{
+                RecoveryNewRunConfirmationPhase::idle, false};
+    case RecoveryNewRunConfirmationPhase::armed:
+        return n_pressed
+            ? RecoveryNewRunConfirmationDecision{
+                RecoveryNewRunConfirmationPhase::submitted, true}
+            : RecoveryNewRunConfirmationDecision{
+                RecoveryNewRunConfirmationPhase::armed, false};
+    case RecoveryNewRunConfirmationPhase::submitted:
+        return {RecoveryNewRunConfirmationPhase::submitted, false};
+    }
+    return {};
 }
 
 bool host_hud_notice_time_paused(
@@ -700,6 +758,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
         }
 
+        RecoveryNewRunConfirmationPhase recovery_new_run_confirmation{};
         while (!exit_requested) {
             runtime.pump_persistence_frame();
             if (runtime.clean_shutdown_state()
@@ -740,9 +799,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             HostFrameInput frame_input = map_host_frame_input(
                 input_settings, stage17_physical_keys);
+            const RecoveryNewRunConfirmationDecision recovery_confirmation =
+                update_recovery_new_run_confirmation(
+                    recovery_new_run_confirmation, runtime.state(),
+                    frame_input.keys.recovery, frame_input.keys.focus_lost,
+                    frame_input.keys.escape, window_close_requested);
+            recovery_new_run_confirmation = recovery_confirmation.phase;
             if (host_directory_busy_retry_requested(
                     runtime.state(), runtime.render_status().error,
-                    frame_input.keys.recovery)) {
+                    frame_input.keys.recovery, frame_input.keys.focus_lost,
+                    frame_input.keys.escape, window_close_requested)) {
                 const bool retry_initialized = runtime.initialize();
                 render_world = runtime.render_snapshot_storage();
                 if (retry_initialized && runtime.session() != nullptr
@@ -756,8 +822,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
                 continue;
             }
-            if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
-                    frame_input.keys.recovery)) {
+            if (recovery_confirmation.recover_with_new_run) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
                     runtime.session()->snapshot(current);
                     previous = current;
@@ -798,7 +863,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,
                     previous, current, runtime.render_status(), control_hints,
                     GetFrameTime(), true);
-                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());
+                draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),
+                    recovery_new_run_confirmation);
                 std::optional<std::string> capture_path = recovery_blocked
                     ? validation_capture_path() : std::nullopt;
                 if (frame_input.keys.f12 || frame_input.keys.v) {

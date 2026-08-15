@@ -43,16 +43,49 @@ extract_cpp_function_body("${host_text}"
     "bool host_directory_busy_retry_requested("
     directory_busy_gate_body directory_busy_gate_code)
 set(required_directory_busy_gate
-    "return state == DungeonRuntimeState::faulted && error == persistence::SaveError::directory_busy && n_pressed;")
+    "return state == DungeonRuntimeState::faulted && error == persistence::SaveError::directory_busy && n_pressed && !focus_lost && !escape_pressed && !window_close_requested;")
 string(FIND "${directory_busy_gate_code}" "${required_directory_busy_gate}"
     directory_busy_gate_index)
 if(NOT directory_busy_gate_index EQUAL 0)
     message(FATAL_ERROR
-        "Task 6 directory-busy retry gate must require exactly faulted, directory_busy, and the N edge")
+        "Task 6 directory-busy retry gate must require faulted, directory_busy, the N edge, and no same-frame exit request")
 endif()
+
+extract_cpp_function_body("${host_text}"
+    "RecoveryNewRunConfirmationDecision update_recovery_new_run_confirmation("
+    recovery_confirmation_gate_body recovery_confirmation_gate_code)
+set(required_recovery_confirmation_cancel
+    "if (focus_lost || escape_pressed || window_close_requested || runtime_state != DungeonRuntimeState::recovery_required) { return {}; }")
+string(FIND "${recovery_confirmation_gate_code}"
+    "${required_recovery_confirmation_cancel}"
+    recovery_confirmation_cancel_index)
+if(NOT recovery_confirmation_cancel_index EQUAL 0)
+    message(FATAL_ERROR
+        "Task 6 recovery confirmation must cancel first on focus loss, Escape, window close, or a non-recovery state")
+endif()
+foreach(required IN ITEMS
+        "case RecoveryNewRunConfirmationPhase::idle: return n_pressed ? RecoveryNewRunConfirmationDecision{ RecoveryNewRunConfirmationPhase::armed, false} : RecoveryNewRunConfirmationDecision{ RecoveryNewRunConfirmationPhase::idle, false};"
+        "case RecoveryNewRunConfirmationPhase::armed: return n_pressed ? RecoveryNewRunConfirmationDecision{ RecoveryNewRunConfirmationPhase::submitted, true} : RecoveryNewRunConfirmationDecision{ RecoveryNewRunConfirmationPhase::armed, false};"
+        "case RecoveryNewRunConfirmationPhase::submitted: return {RecoveryNewRunConfirmationPhase::submitted, false};")
+    string(FIND "${recovery_confirmation_gate_code}" "${required}"
+        recovery_confirmation_gate_required_index)
+    if(recovery_confirmation_gate_required_index EQUAL -1)
+        message(FATAL_ERROR
+            "Task 6 recovery confirmation phase contract is missing: ${required}")
+    endif()
+endforeach()
+foreach(forbidden IN ITEMS "recover_with_new_run(" "while (" "for (")
+    string(FIND "${recovery_confirmation_gate_code}" "${forbidden}"
+        recovery_confirmation_gate_forbidden_index)
+    if(NOT recovery_confirmation_gate_forbidden_index EQUAL -1)
+        message(FATAL_ERROR
+            "Task 6 pure recovery confirmation gate contains forbidden action: ${forbidden}")
+    endif()
+endforeach()
 
 foreach(required IN ITEMS
         "const RecoveryScreenView view = ::arpg::platform::make_recovery_screen_view(status,"
+        "GetScreenWidth(), GetScreenHeight(), confirmation);"
         "DrawRectangleRounded(view.panel"
         "draw_crisp_ui_text(font, text")
     string(FIND "${recovery_draw_body}" "${required}" found)
@@ -68,15 +101,21 @@ foreach(forbidden IN ITEMS "DrawText" "TextFormat" "GetFontDefault" "LoadFont")
 endforeach()
 
 set(recovery_request_marker
-    "recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,")
+    "if (recovery_confirmation.recover_with_new_run)")
+set(recovery_confirmation_local_marker
+    "RecoveryNewRunConfirmationPhase recovery_new_run_confirmation{};")
+set(recovery_confirmation_update_marker
+    "const RecoveryNewRunConfirmationDecision recovery_confirmation =\n                update_recovery_new_run_confirmation(")
+set(recovery_confirmation_assign_marker
+    "recovery_new_run_confirmation = recovery_confirmation.phase;")
 set(directory_busy_retry_marker
-    "if (host_directory_busy_retry_requested(\n                    runtime.state(), runtime.render_status().error,\n                    frame_input.keys.recovery))")
+    "if (host_directory_busy_retry_requested(\n                    runtime.state(), runtime.render_status().error,\n                    frame_input.keys.recovery, frame_input.keys.focus_lost,\n                    frame_input.keys.escape, window_close_requested))")
 set(recovery_branch_marker
     "if (runtime.state() == DungeonRuntimeState::recovery_required\n                    || runtime.state() == DungeonRuntimeState::faulted)")
 set(recovery_observe_marker
     "renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,")
 set(recovery_draw_marker
-    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
+    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status(),\n                    recovery_new_run_confirmation);")
 set(recovery_present_marker
     "static_cast<void>(present_frame_and_maybe_capture(")
 set(gameplay_branch_marker
@@ -100,6 +139,13 @@ string(FIND "${host_text}" "${host_loop_marker}" host_loop_start)
 if(host_loop_start EQUAL -1 OR NOT host_loop_start LESS recovery_branch_start)
     message(FATAL_ERROR "Task 6 Host exit loop is missing")
 endif()
+string(FIND "${host_text}" "${recovery_confirmation_local_marker}"
+    recovery_confirmation_local_start)
+if(recovery_confirmation_local_start EQUAL -1
+        OR NOT recovery_confirmation_local_start LESS host_loop_start)
+    message(FATAL_ERROR
+        "Task 6 recovery new-run confirmation must use one fixed local state before the Host loop")
+endif()
 math(EXPR pre_blocking_length
     "${recovery_branch_start} - ${host_loop_start}")
 string(SUBSTRING "${host_text}" ${host_loop_start}
@@ -115,15 +161,71 @@ if(ready_auto_exit_start EQUAL -1 OR NOT faulted_auto_exit_start EQUAL -1)
         "Task 6 Host may auto-exit only after a ready clean shutdown")
 endif()
 string(FIND "${host_text}" "${recovery_request_marker}" recovery_request_start)
+string(FIND "${host_text}" "${recovery_confirmation_update_marker}"
+    recovery_confirmation_update_start)
+string(FIND "${host_text}" "${recovery_confirmation_assign_marker}"
+    recovery_confirmation_assign_start)
 string(FIND "${host_text}" "${directory_busy_retry_marker}"
     directory_busy_retry_start)
-if(directory_busy_retry_start EQUAL -1
+if(recovery_confirmation_update_start EQUAL -1
+        OR recovery_confirmation_assign_start EQUAL -1
+        OR directory_busy_retry_start EQUAL -1
         OR recovery_request_start EQUAL -1
-        OR NOT host_loop_start LESS directory_busy_retry_start
+        OR NOT host_loop_start LESS recovery_confirmation_update_start
+        OR NOT recovery_confirmation_update_start LESS
+            recovery_confirmation_assign_start
+        OR NOT recovery_confirmation_assign_start LESS
+            directory_busy_retry_start
         OR NOT directory_busy_retry_start LESS recovery_request_start
         OR NOT recovery_request_start LESS recovery_branch_start)
     message(FATAL_ERROR
-        "Task 6 must consume directory-busy retry before recovery_required handling and blocking presentation")
+        "Task 6 must update/reset confirmation once, keep directory-busy retry independent, then handle confirmed recovery")
+endif()
+math(EXPR host_loop_body_length "${recovery_branch_start} - ${host_loop_start}")
+string(SUBSTRING "${host_text}" ${host_loop_start}
+    ${host_loop_body_length} host_loop_before_blocking)
+string(REGEX MATCHALL "update_recovery_new_run_confirmation\\("
+    recovery_confirmation_updates "${host_loop_before_blocking}")
+list(LENGTH recovery_confirmation_updates recovery_confirmation_update_count)
+if(NOT recovery_confirmation_update_count EQUAL 1)
+    message(FATAL_ERROR
+        "Task 6 Host must update recovery confirmation exactly once per frame")
+endif()
+set(recovery_confirmation_cancel_arguments
+    "frame_input.keys.recovery, frame_input.keys.focus_lost,\n                    frame_input.keys.escape, window_close_requested)")
+string(FIND "${host_loop_before_blocking}"
+    "${recovery_confirmation_cancel_arguments}"
+    recovery_confirmation_cancel_arguments_start)
+if(recovery_confirmation_cancel_arguments_start EQUAL -1)
+    message(FATAL_ERROR
+        "Task 6 recovery confirmation must give focus loss, Escape, and window close priority over N")
+endif()
+extract_cpp_function_body("${host_text}" "${recovery_request_marker}"
+    recovery_confirmation_body recovery_confirmation_code)
+foreach(required IN ITEMS
+        "runtime.recover_with_new_run()"
+        "runtime.session()->snapshot(current);"
+        "previous = current;"
+        "drain_events(*runtime.session(), renderer, feedback, audio, validation_runtime.get());")
+    string(FIND "${recovery_confirmation_body}" "${required}"
+        recovery_confirmation_required_index)
+    if(recovery_confirmation_required_index EQUAL -1)
+        message(FATAL_ERROR
+            "Task 6 confirmed recovery is missing: ${required}")
+    endif()
+endforeach()
+string(REGEX MATCHALL "runtime\\.recover_with_new_run\\(\\)"
+    recover_with_new_run_calls "${host_text}")
+list(LENGTH recover_with_new_run_calls recover_with_new_run_call_count)
+if(NOT recover_with_new_run_call_count EQUAL 1)
+    message(FATAL_ERROR
+        "Task 6 Host must call recover_with_new_run exactly once and only from the confirmed branch")
+endif()
+string(FIND "${host_loop_before_blocking}" "recovery_requested("
+    legacy_recovery_request_start)
+if(NOT legacy_recovery_request_start EQUAL -1)
+    message(FATAL_ERROR
+        "Task 6 Host must not bypass the two-edge confirmation with the legacy recovery gate")
 endif()
 string(REGEX MATCHALL "runtime\\.initialize\\(\\)"
     runtime_initialize_calls "${host_text}")
