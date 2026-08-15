@@ -148,21 +148,26 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
             confirmation.panel.x + 14.0F * scale,
             confirmation.panel.y + 38.0F * scale,
             confirmation.panel.width - 28.0F * scale, 22.0F * scale};
-        const std::array<const char*, 4> popup_texts{{
+        const std::array<const char*, 6> popup_texts{{
             u8"危险：强化失败，装备丢失", u8"确认强化石？",
             u8"确认", u8"取消",
+            platform::ui_text(platform::UiTextId::inventory_recipe_danger),
+            u8"确认三合一？",
         }};
-        const std::array<Rectangle, 4> popup_bounds{{
+        const std::array<Rectangle, 6> popup_bounds{{
             danger_bounds, question_bounds,
             confirmation.confirm, confirmation.cancel,
+            danger_bounds, question_bounds,
         }};
-        const std::array<float, 4> popup_sizes{{
+        const std::array<float, 6> popup_sizes{{
             16.0F, platform::ui_typography().kInventoryBodyFontSize,
             platform::ui_typography().kInventoryBodyFontSize,
             platform::ui_typography().kInventoryBodyFontSize,
+            16.0F, platform::ui_typography().kInventoryBodyFontSize,
         }};
-        const std::array<float, 4> popup_minimum_sizes{{
+        const std::array<float, 6> popup_minimum_sizes{{
             10.0F, 9.0F, 9.0F, 9.0F,
+            10.0F, 9.0F,
         }};
         for (std::size_t index{}; index < popup_texts.size(); ++index) {
             char popup_fitted[96]{};
@@ -268,14 +273,38 @@ arpg::test::Failure selected_material_can_be_cancelled_without_changing_counts()
 
 arpg::test::Failure reinforcement_stone_requires_explicit_destroy_confirmation() noexcept {
     platform::MaterialBagRenderer renderer{};
+    ARPG_REQUIRE(renderer.confirmation_kind()
+        == platform::InventoryConfirmationKind::none);
+    ARPG_REQUIRE(renderer.begin_recipe_confirmation());
+    ARPG_REQUIRE(renderer.confirmation_kind()
+        == platform::InventoryConfirmationKind::recipe);
+    ARPG_REQUIRE(!renderer.reinforcement_confirmation_item().has_value());
+    ARPG_REQUIRE(!renderer.begin_reinforcement_confirmation(77U, 12U));
+    ARPG_REQUIRE(!renderer.resolve_reinforcement_confirmation(true).has_value());
+    ARPG_REQUIRE(renderer.confirmation_kind()
+        == platform::InventoryConfirmationKind::recipe);
+    ARPG_REQUIRE(!renderer.resolve_recipe_confirmation(false));
+    ARPG_REQUIRE(renderer.confirmation_kind()
+        == platform::InventoryConfirmationKind::none);
     ARPG_REQUIRE(!renderer.begin_reinforcement_confirmation(77U, 11U));
     ARPG_REQUIRE(renderer.begin_reinforcement_confirmation(77U, 12U));
+    ARPG_REQUIRE(renderer.confirmation_kind()
+        == platform::InventoryConfirmationKind::reinforcement);
+    ARPG_REQUIRE(!renderer.begin_recipe_confirmation());
+    ARPG_REQUIRE(renderer.reinforcement_confirmation_item() == 77U);
+    ARPG_REQUIRE(!renderer.resolve_recipe_confirmation(true));
+    ARPG_REQUIRE(renderer.confirmation_kind()
+        == platform::InventoryConfirmationKind::reinforcement);
     ARPG_REQUIRE(renderer.reinforcement_confirmation_item() == 77U);
     ARPG_REQUIRE(!renderer.resolve_reinforcement_confirmation(false).has_value());
     ARPG_REQUIRE(!renderer.reinforcement_confirmation_item().has_value());
     ARPG_REQUIRE(renderer.begin_reinforcement_confirmation(77U, 13U));
     ARPG_REQUIRE(renderer.resolve_reinforcement_confirmation(true) == 77U);
     ARPG_REQUIRE(!renderer.reinforcement_confirmation_item().has_value());
+    ARPG_REQUIRE(renderer.begin_recipe_confirmation());
+    ARPG_REQUIRE(renderer.resolve_recipe_confirmation(true));
+    ARPG_REQUIRE(renderer.confirmation_kind()
+        == platform::InventoryConfirmationKind::none);
     return {};
 }
 

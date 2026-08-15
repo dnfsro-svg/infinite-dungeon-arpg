@@ -463,6 +463,26 @@ expect_renderer_mutation_rejected(non_centered_remove_button
     "draw_button(shell.action_bounds, presentation.action.data(),"
     "draw_button(Rectangle{}, presentation.action.data(),")
 
+expect_renderer_mutation_rejected(recipe_confirmation_skips_live_revalidation
+    "confirmation_kind, InventoryRecipeConfirmationIntent::confirm,\n                requests_enabled, recipe_context_valid, recipe_ready(),\n                reinforced_recipe_input)"
+    "confirmation_kind, InventoryRecipeConfirmationIntent::confirm,\n                true, true, true, true)")
+
+expect_renderer_mutation_rejected(recipe_confirmation_stops_blocking_wheel
+    "confirmation_open || retained_backing_blocks,"
+    "retained_backing_blocks,")
+
+expect_renderer_mutation_rejected(invalidated_recipe_confirmation_clicks_through
+    "static_cast<void>(material_bag_.resolve_recipe_confirmation(false));\n            return false;"
+    "static_cast<void>(material_bag_.resolve_recipe_confirmation(false));")
+
+expect_renderer_mutation_rejected(recipe_confirmation_result_ignored
+    "if (request_confirmed_recipe\n                        && runtime.request_recipe(recipe_.ids)"
+    "if (true\n                        && runtime.request_recipe(recipe_.ids)")
+
+expect_renderer_mutation_rejected(ordinary_recipe_decision_ignored
+    "if (recipe_action.request_recipe\n                    && runtime.request_recipe(recipe_.ids)"
+    "if (true\n                    && runtime.request_recipe(recipe_.ids)")
+
 expect_renderer_mutation_rejected(single_column_detail_rows
     "DrawRectangleRec(shell.grid_viewport, Color{11, 16, 25, 255});"
     "InventoryDetailRowLayout legacy_detail{};\n        DrawRectangleRec(shell.grid_viewport, Color{11, 16, 25, 255});")

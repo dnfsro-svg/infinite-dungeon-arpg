@@ -691,6 +691,7 @@ InventorySavePresentationState inventory_save_state(
 
 void InventoryRenderer::open(const dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot) {
+    material_bag_.dismiss_confirmation();
     open_ = true;
     page_ = InventoryPage::equipment;
     active_skill_selection_ = {};
@@ -734,11 +735,12 @@ void InventoryRenderer::close() noexcept {
     current_build_.reset();
     difference_.reset();
     static_cast<void>(material_bag_.clear_selection());
-    static_cast<void>(material_bag_.resolve_reinforcement_confirmation(false));
+    material_bag_.dismiss_confirmation();
 }
 
 void InventoryRenderer::show_skill_stones_page() noexcept {
     if (!open_) return;
+    material_bag_.dismiss_confirmation();
     page_ = InventoryPage::skill_stones;
     tooltip_state_ = {};
     clear_material_rejection();
@@ -865,11 +867,30 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     dungeon::DungeonSession& session = *runtime.session();
     sync(session, snapshot);
     const items::ItemOwnershipState& state = session.item_state();
+    const auto selected_material = material_bag_.selected_material();
     const bool left_pressed = input.mouse_left_pressed;
     const bool right_pressed = input.mouse_right_pressed;
     const Vector2 mouse = input.mouse_position;
     const bool requests_enabled = !snapshot.pending_save_kind.has_value()
         && runtime.authority_requests_enabled();
+    const bool recipe_context_valid = page_ == InventoryPage::equipment
+        && !selected_material.has_value();
+    const bool reinforced_recipe_input =
+        inventory_recipe_has_reinforced_input(state, recipe_);
+    if (material_bag_.confirmation_kind()
+            == InventoryConfirmationKind::recipe) {
+        const InventoryRecipeConfirmationResult live_recipe_confirmation =
+            inventory_recipe_confirmation_transition(InventoryConfirmationKind::recipe,
+                InventoryRecipeConfirmationIntent::none,
+                requests_enabled, recipe_context_valid, recipe_ready(),
+                reinforced_recipe_input);
+        if (live_recipe_confirmation.kind == InventoryConfirmationKind::none) {
+            static_cast<void>(material_bag_.resolve_recipe_confirmation(false));
+            return false;
+        }
+    }
+    const InventoryConfirmationKind confirmation_kind =
+        material_bag_.confirmation_kind();
 
     const InventoryVisibleItemSource frozen_source =
         inventory_visible_item_source(frame_layout_.shell, page_, state,
@@ -948,8 +969,8 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
             tooltip_state_, transition).state;
     }
 
-    const bool confirmation_open = material_bag_
-        .reinforcement_confirmation_item().has_value();
+    const bool confirmation_open =
+        confirmation_kind != InventoryConfirmationKind::none;
     scroll_rows_ = inventory_grid_scroll_after_wheel(page_,
         frame_layout_.shell, mouse,
         confirmation_open || retained_backing_blocks,
@@ -967,7 +988,6 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
             }
         }
     }
-    const auto selected_material = material_bag_.selected_material();
     const std::size_t directed_index = items::material_index(
         items::MaterialId::directed);
     const bool directed_material = right_pressed
@@ -1010,6 +1030,36 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         const ReinforcementConfirmationLayout confirmation =
             reinforcement_confirmation_layout(frame_layout_.width,
                 frame_layout_.height);
+        if (confirmation_kind == InventoryConfirmationKind::recipe) {
+            if (right_pressed || (left_pressed
+                    && contains(confirmation.cancel, mouse))) {
+                const InventoryRecipeConfirmationResult cancelled_recipe =
+                    inventory_recipe_confirmation_transition(confirmation_kind,
+                        InventoryRecipeConfirmationIntent::cancel,
+                        requests_enabled, recipe_context_valid, recipe_ready(),
+                        reinforced_recipe_input);
+                if (cancelled_recipe.kind == InventoryConfirmationKind::none)
+                    static_cast<void>(material_bag_
+                        .resolve_recipe_confirmation(false));
+                return false;
+            }
+            if (left_pressed && contains(confirmation.confirm, mouse)) {
+                const InventoryRecipeConfirmationResult confirmed_recipe =
+                    inventory_recipe_confirmation_transition(confirmation_kind,
+                        InventoryRecipeConfirmationIntent::confirm,
+                        requests_enabled, recipe_context_valid, recipe_ready(),
+                        reinforced_recipe_input);
+                const bool request_confirmed_recipe =
+                    material_bag_.resolve_recipe_confirmation(confirmed_recipe.request_recipe);
+                if (request_confirmed_recipe
+                        && runtime.request_recipe(recipe_.ids)
+                            == dungeon::RequestResult::accepted) {
+                    runtime.service_pending_save();
+                    return true;
+                }
+            }
+            return false;
+        }
         if (right_pressed || (left_pressed
                 && contains(confirmation.cancel, mouse))) {
             static_cast<void>(material_bag_
@@ -1097,7 +1147,16 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     }
     case InventoryPointerLayer::page_action:
         if (page_ == InventoryPage::equipment) {
-            if (requests_enabled && !selected_material.has_value() && recipe_ready()
+            const InventoryRecipeConfirmationResult recipe_action =
+                inventory_recipe_confirmation_transition(confirmation_kind,
+                    InventoryRecipeConfirmationIntent::page_action,
+                    requests_enabled, recipe_context_valid, recipe_ready(),
+                    reinforced_recipe_input);
+            if (recipe_action.kind == InventoryConfirmationKind::recipe) {
+                static_cast<void>(material_bag_.begin_recipe_confirmation());
+                return false;
+            }
+            if (recipe_action.request_recipe
                     && runtime.request_recipe(recipe_.ids)
                         == dungeon::RequestResult::accepted) {
                 runtime.service_pending_save();
@@ -1258,16 +1317,8 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             transient_input);
     transient_status_state_ = transient_result.next;
 
-    bool reinforced_recipe_input{};
-    for (std::size_t recipe_index{}; recipe_index < recipe_.count;
-         ++recipe_index) {
-        const items::ItemInstance* const recipe_item =
-            find_item(state, recipe_.ids[recipe_index]);
-        if (recipe_item != nullptr && recipe_item->reinforcement != 0U) {
-            reinforced_recipe_input = true;
-            break;
-        }
-    }
+    const bool reinforced_recipe_input =
+        inventory_recipe_has_reinforced_input(state, recipe_);
     const bool authority_enabled = !snapshot.pending_save_kind.has_value()
         && !status.recovery_required && !status.faulted;
     InventoryMaterialTargetContext material_target{};
@@ -1516,7 +1567,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
 
     draw_inventory_status(shell, status_presentation, material_pack,
         hud_font, current_font_ready);
-    material_bag_.draw_reinforcement_confirmation(material_pack,
+    material_bag_.draw_confirmation(material_pack,
         hud_font, current_font_ready, frame_layout_.width,
         frame_layout_.height);
     if (material_rejection_frames_ != 0U) {

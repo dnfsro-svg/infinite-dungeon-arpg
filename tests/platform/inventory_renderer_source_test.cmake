@@ -167,6 +167,34 @@ foreach(_token IN ITEMS
         "T4 renderer frame/tooltip state contract is missing")
 endforeach()
 
+foreach(_token IN ITEMS
+        "enumclassInventoryConfirmationKind:std::uint8_t{none,reinforcement,recipe,};"
+        "enumclassInventoryRecipeConfirmationIntent:std::uint8_t{none,page_action,confirm,cancel,};"
+        "structInventoryRecipeConfirmationResultfinal{"
+        "InventoryConfirmationKindkind{InventoryConfirmationKind::none};"
+        "boolrequest_recipe{};"
+        "boolinventory_recipe_has_reinforced_input("
+        "InventoryRecipeConfirmationResultinventory_recipe_confirmation_transition(")
+    require_token("${_header_compact}" "${_token}"
+        "T4 fixed-capacity recipe confirmation contract is missing")
+endforeach()
+foreach(_token IN ITEMS
+        "boolbegin_recipe_confirmation()noexcept;"
+        "boolresolve_recipe_confirmation(boolconfirmed)noexcept;"
+        "InventoryConfirmationKindconfirmation_kind()constnoexcept;"
+        "voiddismiss_confirmation()noexcept;"
+        "std::uint64_treinforcement_confirmation_item_{};"
+        "InventoryConfirmationKindconfirmation_kind_{InventoryConfirmationKind::none};")
+    require_token("${_material_header_compact}" "${_token}"
+        "T4 the two destructive actions must share one fixed confirmation kind")
+endforeach()
+reject_token("${_material_header_compact}"
+    "std::optional<std::uint64_t>reinforcement_confirmation_item_{};"
+    "T4 confirmation kind must be mutually exclusive, not parallel optional state")
+reject_token("${_inventory_header_compact}${_material_header_compact}"
+    "RecipeSelectionrecipe_confirmation_"
+    "T4 recipe confirmation must not duplicate the three selected ids")
+
 foreach(_legacy IN ITEMS
         "structInventoryLayoutfinal{" "equipment_materials=equipment"
         "structInventoryTextSafeLayoutfinal{"
@@ -368,7 +396,8 @@ foreach(_lifecycle_signature IN ITEMS
         "${_lifecycle_signature}" _lifecycle_body _lifecycle_code)
     foreach(_token IN ITEMS "frame_layout_ = {}" "tooltip_state_ = {}"
             "transient_status_state_ = {}" "tooltip_measure_font_ = {}"
-            "tooltip_measure_font_ready_ = false")
+            "tooltip_measure_font_ready_ = false"
+            "material_bag_.dismiss_confirmation()")
         require_token("${_lifecycle_body}" "${_token}"
             "T4 inventory lifecycle must clear all volatile layout/status/font state")
     endforeach()
@@ -383,6 +412,9 @@ string(REGEX REPLACE "[ \t\r\n]+" "" _show_skill_page_compact
 reject_token("${_show_skill_page_compact}"
     "active_skill_selection_.selected_slot=0U;"
     "T4 opening the skill page must not arm slot zero before player input")
+require_token("${_show_skill_page_compact}"
+    "material_bag_.dismiss_confirmation();"
+    "T4 non-pointer skill-page entry must cancel a destructive confirmation")
 reject_dead_branch("${_show_skill_page_code}" "T4 skill-page showcase entry")
 
 extract_cpp_function_body("${_inventory_source}"
@@ -426,6 +458,38 @@ foreach(_token IN ITEMS
     require_token("${_input_body}" "${_token}"
         "T4 renderer input chain is not fully wired")
 endforeach()
+foreach(_token IN ITEMS
+        "const auto selected_material = material_bag_.selected_material();"
+        "const bool reinforced_recipe_input = inventory_recipe_has_reinforced_input(state, recipe_);"
+        "const bool recipe_context_valid = page_ == InventoryPage::equipment && !selected_material.has_value();"
+        "const InventoryConfirmationKind confirmation_kind = material_bag_.confirmation_kind();"
+        "const bool confirmation_open = confirmation_kind != InventoryConfirmationKind::none;"
+        "confirmation_open || retained_backing_blocks"
+        "priority.confirmation = confirmation_open;"
+        "inventory_recipe_confirmation_transition(InventoryConfirmationKind::recipe, InventoryRecipeConfirmationIntent::none, requests_enabled, recipe_context_valid, recipe_ready(), reinforced_recipe_input)"
+        "material_bag_.resolve_recipe_confirmation(false)"
+        "if (live_recipe_confirmation.kind == InventoryConfirmationKind::none) { static_cast<void>(material_bag_.resolve_recipe_confirmation(false)); return false; }"
+        "inventory_recipe_confirmation_transition(confirmation_kind, InventoryRecipeConfirmationIntent::confirm, requests_enabled, recipe_context_valid, recipe_ready(), reinforced_recipe_input)"
+        "material_bag_.resolve_recipe_confirmation(confirmed_recipe.request_recipe)"
+        "if (request_confirmed_recipe && runtime.request_recipe(recipe_.ids) == dungeon::RequestResult::accepted)"
+        "inventory_recipe_confirmation_transition(confirmation_kind, InventoryRecipeConfirmationIntent::page_action, requests_enabled, recipe_context_valid, recipe_ready(), reinforced_recipe_input)"
+        "material_bag_.begin_recipe_confirmation()"
+        "if (recipe_action.request_recipe && runtime.request_recipe(recipe_.ids) == dungeon::RequestResult::accepted)"
+        "runtime.request_recipe(recipe_.ids)")
+    require_token("${_input_compact}" "${_token}"
+        "T4 reinforced recipe confirmation is not wired to the live gated recipe")
+endforeach()
+require_token_order("${_input_compact}"
+    "inventory_recipe_confirmation_transition(confirmation_kind, InventoryRecipeConfirmationIntent::confirm, requests_enabled, recipe_context_valid, recipe_ready(), reinforced_recipe_input)"
+    "runtime.request_recipe(recipe_.ids)"
+    "T4 recipe confirmation must revalidate before requesting authority")
+require_token_order("${_input_compact}"
+    "const bool confirmation_open = confirmation_kind != InventoryConfirmationKind::none;"
+    "priority.confirmation = confirmation_open;"
+    "T4 one shared confirmation-open value must feed highest pointer priority")
+reject_token("${_input_compact}"
+    "RecipeSelection recipe_confirmation"
+    "T4 confirmation must consume the current fixed recipe without copying ids")
 foreach(_builder IN ITEMS "inventory_shell_layout("
         "active_skill_loadout_layout(" "material_bag_layout(")
     reject_token("${_input_body}" "${_builder}"
@@ -523,6 +587,9 @@ foreach(_token IN ITEMS
         "T4 renderer must consume the live three-page shell path")
 endforeach()
 require_token("${_draw_compact}"
+    "material_bag_.draw_confirmation(material_pack, hud_font, current_font_ready, frame_layout_.width, frame_layout_.height);"
+    "T4 live inventory must draw the shared destructive confirmation")
+require_token("${_draw_compact}"
     "inventory_empty_presentation(state, view_cache_.filtered_indices.size(), selected_material);"
     "T4 inventory empty-state context must consume the live selected material")
 foreach(_token IN ITEMS
@@ -570,6 +637,14 @@ require_token_order("${_draw_body}"
     "material_pack.draw_horizontal_slice" "draw_inventory_item_overlay("
     "T4 item semantics must be drawn after the grid card asset/fallback")
 reject_dead_branch("${_draw_code}" "T2 inventory renderer")
+
+foreach(_token IN ITEMS
+        "confirmation_kind_ == InventoryConfirmationKind::recipe"
+        "ui_text(UiTextId::inventory_recipe_danger)"
+        "u8\"确认三合一？\"")
+    require_token("${_material_normalized}" "${_token}"
+        "T4 shared confirmation must render the reinforced-recipe warning and question")
+endforeach()
 
 foreach(_legacy IN ITEMS "InventoryLayout" "InventoryTextSafeLayout"
         "InventoryDetailRowLayout" "inventory_layout("

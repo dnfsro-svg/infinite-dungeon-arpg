@@ -274,6 +274,24 @@ struct RecipeSelection final {
     std::size_t count{};
 };
 
+enum class InventoryConfirmationKind : std::uint8_t {
+    none,
+    reinforcement,
+    recipe,
+};
+
+enum class InventoryRecipeConfirmationIntent : std::uint8_t {
+    none,
+    page_action,
+    confirm,
+    cancel,
+};
+
+struct InventoryRecipeConfirmationResult final {
+    InventoryConfirmationKind kind{InventoryConfirmationKind::none};
+    bool request_recipe{};
+};
+
 enum class InventoryItemOutline : std::uint8_t {
     none,
     hover,
@@ -512,6 +530,15 @@ void advance_active_skill_loadout_selection(
     const items::ItemInstance* item, std::uint8_t current_level) noexcept;
 [[nodiscard]] bool toggle_recipe_selection(
     RecipeSelection& selection, std::uint64_t item_id) noexcept;
+[[nodiscard]] bool inventory_recipe_has_reinforced_input(
+    const items::ItemOwnershipState& state,
+    const RecipeSelection& recipe) noexcept;
+[[nodiscard]] InventoryRecipeConfirmationResult
+inventory_recipe_confirmation_transition(
+    InventoryConfirmationKind kind,
+    InventoryRecipeConfirmationIntent intent,
+    bool requests_enabled, bool recipe_context_valid,
+    bool recipe_ready, bool reinforced_recipe_input) noexcept;
 [[nodiscard]] std::optional<items::ItemSlot> hit_test_equipped_slot(
     Vector2 point, InventoryShellLayout layout,
     const items::EquipmentState& equipment) noexcept;

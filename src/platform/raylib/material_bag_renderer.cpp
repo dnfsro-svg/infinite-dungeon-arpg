@@ -209,24 +209,55 @@ bool MaterialBagRenderer::clear_selection() noexcept {
 bool MaterialBagRenderer::begin_reinforcement_confirmation(
     std::uint64_t item_id, std::uint32_t current) noexcept {
     if (item_id == 0U || current < 12U
-            || reinforcement_confirmation_item_.has_value()) {
+            || confirmation_kind_ != InventoryConfirmationKind::none) {
         return false;
     }
     reinforcement_confirmation_item_ = item_id;
+    confirmation_kind_ = InventoryConfirmationKind::reinforcement;
+    return true;
+}
+
+bool MaterialBagRenderer::begin_recipe_confirmation() noexcept {
+    if (confirmation_kind_ != InventoryConfirmationKind::none) return false;
+    reinforcement_confirmation_item_ = 0U;
+    confirmation_kind_ = InventoryConfirmationKind::recipe;
     return true;
 }
 
 std::optional<std::uint64_t>
 MaterialBagRenderer::resolve_reinforcement_confirmation(
     bool confirmed) noexcept {
-    const auto item = reinforcement_confirmation_item_;
-    reinforcement_confirmation_item_.reset();
-    return confirmed ? item : std::nullopt;
+    if (confirmation_kind_ != InventoryConfirmationKind::reinforcement)
+        return std::nullopt;
+    const std::uint64_t item = reinforcement_confirmation_item_;
+    dismiss_confirmation();
+    return confirmed ? std::optional<std::uint64_t>{item} : std::nullopt;
+}
+
+bool MaterialBagRenderer::resolve_recipe_confirmation(
+    bool confirmed) noexcept {
+    if (confirmation_kind_ != InventoryConfirmationKind::recipe) return false;
+    dismiss_confirmation();
+    return confirmed;
 }
 
 std::optional<std::uint64_t>
 MaterialBagRenderer::reinforcement_confirmation_item() const noexcept {
+    if (confirmation_kind_ != InventoryConfirmationKind::reinforcement
+            || reinforcement_confirmation_item_ == 0U) {
+        return std::nullopt;
+    }
     return reinforcement_confirmation_item_;
+}
+
+InventoryConfirmationKind
+MaterialBagRenderer::confirmation_kind() const noexcept {
+    return confirmation_kind_;
+}
+
+void MaterialBagRenderer::dismiss_confirmation() noexcept {
+    reinforcement_confirmation_item_ = 0U;
+    confirmation_kind_ = InventoryConfirmationKind::none;
 }
 
 void MaterialBagRenderer::sync_selection(
@@ -363,10 +394,12 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
     }
 }
 
-void MaterialBagRenderer::draw_reinforcement_confirmation(
+void MaterialBagRenderer::draw_confirmation(
     const MaterialPack& assets, Font font, bool font_ready,
     int width, int height) const noexcept {
-    if (!reinforcement_confirmation_item_.has_value()) return;
+    if (confirmation_kind_ == InventoryConfirmationKind::none) return;
+    const bool recipe_confirmation =
+        confirmation_kind_ == InventoryConfirmationKind::recipe;
     const ReinforcementConfirmationLayout layout =
         reinforcement_confirmation_layout(width, height);
     const float scale = ui_viewport_scale(width, height);
@@ -381,12 +414,16 @@ void MaterialBagRenderer::draw_reinforcement_confirmation(
         layout.panel.y + 10.0F * scale,
         layout.panel.width - 28.0F * scale, 25.0F * scale};
     draw_material_text(font, font_ready,
-        u8"危险：强化失败，装备丢失", danger_bounds, 16.0F, 10.0F,
+        recipe_confirmation ? ui_text(UiTextId::inventory_recipe_danger)
+                            : u8"危险：强化失败，装备丢失",
+        danger_bounds, 16.0F, 10.0F,
         ui_text_contrast_style().danger, kDangerBacking);
     const Rectangle question_bounds{layout.panel.x + 14.0F * scale,
         layout.panel.y + 38.0F * scale,
         layout.panel.width - 28.0F * scale, 22.0F * scale};
-    draw_material_text(font, font_ready, u8"确认强化石？", question_bounds,
+    draw_material_text(font, font_ready,
+        recipe_confirmation ? u8"确认三合一？" : u8"确认强化石？",
+        question_bounds,
         ui_typography().kInventoryBodyFontSize, 9.0F,
         ui_text_contrast_style().primary, kDangerBacking);
     DrawRectangleRec(layout.confirm, kConfirmBacking);

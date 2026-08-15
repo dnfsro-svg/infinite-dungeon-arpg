@@ -221,6 +221,7 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
     item.rarity = items::ItemRarity::rare;
     item.item_level = 1U;
     item.required_level = 1U;
+    item.reinforcement = 1U;
     items::ItemOwnershipState ownership{};
     ownership.items.push_back(item);
     ownership.equipment.equipped_ids[0] = item.id;
@@ -244,6 +245,9 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
     platform::InventoryTransientStatusInput transient_input{};
     transient_input.commit_generation = 1U;
     transient_input.save_state = platform::InventorySavePresentationState::saved;
+    platform::RecipeSelection reinforced_recipe{};
+    reinforced_recipe.ids[0] = item.id;
+    reinforced_recipe.count = 1U;
     const auto warm_shell = platform::inventory_shell_layout(800, 450);
     const auto warm_view = platform::inventory_tooltip_view(item,
         platform::BuildDifference{});
@@ -276,6 +280,14 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
             platform::InventoryPage::equipment, ownership, view_cache, item.id,
             0.0F);
         const auto pointer_layer = platform::inventory_pointer_layer(layered);
+        const bool reinforced_input =
+            platform::inventory_recipe_has_reinforced_input(
+                ownership, reinforced_recipe);
+        const auto recipe_confirmation =
+            platform::inventory_recipe_confirmation_transition(
+                platform::InventoryConfirmationKind::none,
+                platform::InventoryRecipeConfirmationIntent::page_action,
+                true, true, true, reinforced_input);
         const float scroll = platform::inventory_grid_scroll_after_wheel(
             platform::InventoryPage::equipment, shell,
             {shell.grid_viewport.x + 1.0F, shell.grid_viewport.y + 1.0F},
@@ -289,6 +301,9 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
             && visual.outline != platform::InventoryItemOutline::none
             && source.valid
             && pointer_layer != platform::InventoryPointerLayer::none
+            && recipe_confirmation.kind
+                == platform::InventoryConfirmationKind::recipe
+            && !recipe_confirmation.request_recipe
             && scroll >= 0.0F);
     }
     ARPG_REQUIRE(test::allocation_count() == before);
@@ -597,6 +612,99 @@ test::Failure ctrl_selection_toggles_and_never_exceeds_three() noexcept {
     ARPG_REQUIRE(selection.ids[0] == 1U);
     ARPG_REQUIRE(selection.ids[1] == 3U);
     ARPG_REQUIRE(selection.ids[2] == 4U);
+
+    items::ItemOwnershipState state{};
+    for (std::uint64_t id = 1U; id <= 4U; ++id) {
+        items::ItemInstance item{};
+        item.id = id;
+        item.base_id = 1U;
+        item.reinforcement = id == 3U ? 7U : 0U;
+        state.items.push_back(item);
+    }
+    ARPG_REQUIRE(platform::inventory_recipe_has_reinforced_input(
+        state, selection));
+    selection.ids[1] = 2U;
+    ARPG_REQUIRE(!platform::inventory_recipe_has_reinforced_input(
+        state, selection));
+    selection.ids[1] = 3U;
+    platform::RecipeSelection malformed_selection = selection;
+    malformed_selection.count = malformed_selection.ids.size() + 1U;
+    ARPG_REQUIRE(!platform::inventory_recipe_has_reinforced_input(
+        state, malformed_selection));
+
+    using ConfirmationKind = platform::InventoryConfirmationKind;
+    using ConfirmationIntent = platform::InventoryRecipeConfirmationIntent;
+    const auto armed = platform::inventory_recipe_confirmation_transition(
+        ConfirmationKind::none, ConfirmationIntent::page_action,
+        true, true, true, true);
+    ARPG_REQUIRE(armed.kind == ConfirmationKind::recipe);
+    ARPG_REQUIRE(!armed.request_recipe);
+    const auto waiting = platform::inventory_recipe_confirmation_transition(
+        armed.kind, ConfirmationIntent::none, true, true, true, true);
+    ARPG_REQUIRE(waiting.kind == ConfirmationKind::recipe);
+    ARPG_REQUIRE(!waiting.request_recipe);
+    const auto cancelled = platform::inventory_recipe_confirmation_transition(
+        waiting.kind, ConfirmationIntent::cancel, true, true, true, true);
+    ARPG_REQUIRE(cancelled.kind == ConfirmationKind::none);
+    ARPG_REQUIRE(!cancelled.request_recipe);
+    const auto confirmed = platform::inventory_recipe_confirmation_transition(
+        ConfirmationKind::recipe, ConfirmationIntent::confirm,
+        true, true, true, true);
+    ARPG_REQUIRE(confirmed.kind == ConfirmationKind::none);
+    ARPG_REQUIRE(confirmed.request_recipe);
+
+    for (const std::array<bool, 4> gates : {
+            std::array<bool, 4>{{false, true, true, true}},
+            std::array<bool, 4>{{true, false, true, true}},
+            std::array<bool, 4>{{true, true, false, true}},
+            std::array<bool, 4>{{true, true, true, false}}}) {
+        const auto failed_closed =
+            platform::inventory_recipe_confirmation_transition(
+                ConfirmationKind::recipe, ConfirmationIntent::confirm,
+                gates[0], gates[1], gates[2], gates[3]);
+        ARPG_REQUIRE(failed_closed.kind == ConfirmationKind::none);
+        ARPG_REQUIRE(!failed_closed.request_recipe);
+        const auto invalidated_without_click =
+            platform::inventory_recipe_confirmation_transition(
+                ConfirmationKind::recipe, ConfirmationIntent::none,
+                gates[0], gates[1], gates[2], gates[3]);
+        ARPG_REQUIRE(invalidated_without_click.kind
+            == ConfirmationKind::none);
+        ARPG_REQUIRE(!invalidated_without_click.request_recipe);
+    }
+
+    const auto ordinary_recipe =
+        platform::inventory_recipe_confirmation_transition(
+            ConfirmationKind::none, ConfirmationIntent::page_action,
+            true, true, true, false);
+    ARPG_REQUIRE(ordinary_recipe.kind == ConfirmationKind::none);
+    ARPG_REQUIRE(ordinary_recipe.request_recipe);
+    const auto disabled_recipe =
+        platform::inventory_recipe_confirmation_transition(
+            ConfirmationKind::none, ConfirmationIntent::page_action,
+            false, true, true, true);
+    ARPG_REQUIRE(disabled_recipe.kind == ConfirmationKind::none);
+    ARPG_REQUIRE(!disabled_recipe.request_recipe);
+    const auto reinforcement_modal =
+        platform::inventory_recipe_confirmation_transition(
+            ConfirmationKind::reinforcement, ConfirmationIntent::confirm,
+            true, true, true, true);
+    ARPG_REQUIRE(reinforcement_modal.kind
+        == ConfirmationKind::reinforcement);
+    ARPG_REQUIRE(!reinforcement_modal.request_recipe);
+    const auto invalid_kind =
+        platform::inventory_recipe_confirmation_transition(
+            static_cast<ConfirmationKind>(0xFFU), ConfirmationIntent::confirm,
+            true, true, true, true);
+    ARPG_REQUIRE(invalid_kind.kind == ConfirmationKind::none);
+    ARPG_REQUIRE(!invalid_kind.request_recipe);
+    const auto invalid_intent =
+        platform::inventory_recipe_confirmation_transition(
+            ConfirmationKind::recipe,
+            static_cast<ConfirmationIntent>(0xFFU),
+            true, true, true, true);
+    ARPG_REQUIRE(invalid_intent.kind == ConfirmationKind::none);
+    ARPG_REQUIRE(!invalid_intent.request_recipe);
     return {};
 }
 

@@ -761,6 +761,61 @@ bool toggle_recipe_selection(RecipeSelection& selection,
     return true;
 }
 
+bool inventory_recipe_has_reinforced_input(
+    const items::ItemOwnershipState& state,
+    const RecipeSelection& recipe) noexcept {
+    if (recipe.count > recipe.ids.size()) return false;
+    for (std::size_t selected{}; selected < recipe.count; ++selected) {
+        const std::uint64_t item_id = recipe.ids[selected];
+        if (item_id == 0U) continue;
+        const auto item = std::find_if(state.items.begin(), state.items.end(),
+            [item_id](const items::ItemInstance& candidate) noexcept {
+                return candidate.id == item_id;
+            });
+        if (item != state.items.end() && item->reinforcement != 0U) return true;
+    }
+    return false;
+}
+
+InventoryRecipeConfirmationResult inventory_recipe_confirmation_transition(
+    InventoryConfirmationKind kind,
+    InventoryRecipeConfirmationIntent intent,
+    bool requests_enabled, bool recipe_context_valid,
+    bool recipe_ready, bool reinforced_recipe_input) noexcept {
+    switch (intent) {
+    case InventoryRecipeConfirmationIntent::none:
+    case InventoryRecipeConfirmationIntent::page_action:
+    case InventoryRecipeConfirmationIntent::confirm:
+    case InventoryRecipeConfirmationIntent::cancel: break;
+    default: return {};
+    }
+    switch (kind) {
+    case InventoryConfirmationKind::reinforcement:
+        return {InventoryConfirmationKind::reinforcement, false};
+    case InventoryConfirmationKind::recipe:
+        if (intent == InventoryRecipeConfirmationIntent::cancel) return {};
+        if (!requests_enabled || !recipe_context_valid || !recipe_ready
+                || !reinforced_recipe_input) {
+            return {};
+        }
+        if (intent == InventoryRecipeConfirmationIntent::confirm)
+            return {InventoryConfirmationKind::none, true};
+        return {InventoryConfirmationKind::recipe, false};
+    case InventoryConfirmationKind::none:
+        if (intent != InventoryRecipeConfirmationIntent::page_action
+                || !requests_enabled || !recipe_context_valid
+                || !recipe_ready) {
+            return {};
+        }
+        return reinforced_recipe_input
+            ? InventoryRecipeConfirmationResult{
+                InventoryConfirmationKind::recipe, false}
+            : InventoryRecipeConfirmationResult{
+                InventoryConfirmationKind::none, true};
+    }
+    return {};
+}
+
 std::optional<items::ItemSlot> hit_test_equipped_slot(Vector2 point,
     InventoryShellLayout layout,
     const items::EquipmentState& equipment) noexcept {
