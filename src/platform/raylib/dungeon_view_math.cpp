@@ -250,7 +250,7 @@ AbyssHudValues abyss_hud_values(
         values.confirmation_label = u8"再次交互，放弃剩余奖励并下潜";
     } else {
         values.confirmation_label =
-            u8"离开后再次触碰同一出口以放弃全部剩余奖励";
+            u8"放开移动键，再次向同一出口移动以放弃全部剩余奖励";
     }
     return values;
 }

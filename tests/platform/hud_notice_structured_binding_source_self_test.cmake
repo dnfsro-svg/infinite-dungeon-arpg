@@ -32,6 +32,12 @@ endfunction()
 
 run_guard(clean "${ORIGINAL}" TRUE)
 
+set(OBSERVE_DIRECT_HINTS_MEMBER
+    "static_cast<void>(hints.bindings);\n    const bool new_commit =")
+string(REPLACE "const bool new_commit ="
+    "${OBSERVE_DIRECT_HINTS_MEMBER}" MUTATED "${ORIGINAL}")
+run_guard(observe_live_direct_hints_member "${MUTATED}" FALSE)
+
 set(OBSERVE_LOOP_LOOKUP
     "const char* parsed_key = u8\"未知\";\n    for (const char* cursor = notices_[0].text.bytes.data(); *cursor != '\\0'; ++cursor) {\n        if (*cursor == ':') parsed_key = cursor + 1;\n    }\n    static_cast<void>(parsed_key);\n    if (context_changed && exits_unlocked && current.has_hole) {")
 string(REPLACE

@@ -162,12 +162,11 @@ void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
     if (values.confirmation_transition == dungeon::TransitionKind::descent) {
         add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon,
             kAbyssPriority, hints, settings::SettingAction::interact,
-            u8"再次交互，放弃剩余奖励并下降");
+            values.confirmation_label);
         return;
     }
     add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon,
-        kAbyssPriority,
-        u8"离开后再次触碰同一出口以放弃全部剩余奖励");
+        kAbyssPriority, values.confirmation_label);
 }
 
 }  // namespace

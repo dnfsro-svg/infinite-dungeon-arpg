@@ -404,6 +404,10 @@ arpg::test::Failure longest_key_notice_is_utf8_safe_and_allocation_free()
 }
 
 arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covered() noexcept {
+    constexpr char kDoorConfirmation[] =
+        u8"放开移动键，再次向同一出口移动以放弃全部剩余奖励";
+    static_assert(sizeof(kDoorConfirmation) < 96U);
+
     const dungeon::DungeonSnapshot previous = baseline_snapshot();
     const platform::ControlHints hints = rebound_hints();
     const platform::HudFontPlan font = platform::hud_font_plan();
@@ -414,6 +418,7 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
         platform::HudNoticeState state{};
         state.observe(previous, current, status, hints, recovery);
         return std::strcmp(state.view().primary.text.bytes.data(), expected) == 0
+            && !state.view().primary.text.truncated
             && platform::death_overlay_font_covers_text(font.shared, expected);
     };
 
@@ -426,7 +431,11 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
     current.abyss_exit_confirmation_armed = true;
     current.abyss_exit_confirmation_transition = dungeon::TransitionKind::door;
     ARPG_REQUIRE(require_primary(current, saved_status(), false,
-        u8"离开后再次触碰同一出口以放弃全部剩余奖励"));
+        kDoorConfirmation));
+
+    current.abyss_exit_confirmation_transition = dungeon::TransitionKind::descent;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false,
+        u8"Q 再次交互，放弃剩余奖励并下潜"));
 
     current = previous;
     current.phase = dungeon::RoomPhase::awaiting_exit;

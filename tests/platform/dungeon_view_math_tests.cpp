@@ -337,7 +337,7 @@ arpg::test::Failure abyss_confirmation_prompt_preserves_transition_and_direction
         == arpg::dungeon::TransitionKind::door);
     ARPG_REQUIRE(values.confirmation_direction == ExitDirection::left);
     ARPG_REQUIRE(std::strcmp(values.confirmation_label,
-        u8"离开后再次触碰同一出口以放弃全部剩余奖励") == 0);
+        u8"放开移动键，再次向同一出口移动以放弃全部剩余奖励") == 0);
 
     snapshot.abyss_exit_confirmation_transition =
         arpg::dungeon::TransitionKind::descent;

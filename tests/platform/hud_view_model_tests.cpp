@@ -537,7 +537,7 @@ arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meanin
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "F") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(),
         u8"放弃剩余奖励") != nullptr);
-    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"下降") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"下潜") != nullptr);
 
     dungeon::DungeonSnapshot door = previous;
     door.abyss_exit_confirmation_armed = true;
@@ -549,7 +549,7 @@ arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meanin
     platform::attach_notice_view(output, door_notices.view());
     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "F") == nullptr);
-    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"离开后") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"放开移动键") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"同一出口") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"全部剩余奖励") != nullptr);
     return {};

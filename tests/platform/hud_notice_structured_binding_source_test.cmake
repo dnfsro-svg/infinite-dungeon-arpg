@@ -34,7 +34,7 @@ endif()
 extract_cpp_function_body("${SOURCE}"
     "void add_abyss_confirmation_notice(" ABYSS_BODY)
 set(EXPECTED_ABYSS_BODY
-    "const AbyssHudValues values = abyss_hud_values(current); if (values.confirmation_transition == dungeon::TransitionKind::descent) { add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, hints, settings::SettingAction::interact, u8\"再次交互，放弃剩余奖励并下降\"); return; } add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, u8\"离开后再次触碰同一出口以放弃全部剩余奖励\");")
+    "const AbyssHudValues values = abyss_hud_values(current); if (values.confirmation_transition == dungeon::TransitionKind::descent) { add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, hints, settings::SettingAction::interact, values.confirmation_label); return; } add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, values.confirmation_label);")
 if(NOT ABYSS_BODY STREQUAL EXPECTED_ABYSS_BODY)
     message(FATAL_ERROR
         "Abyss action notice must use the exact structured interact call")
@@ -62,11 +62,26 @@ endif()
 
 foreach(FORBIDDEN_OBSERVE_REGEX IN ITEMS
         "for[ ]*\\("
-        "while[ ]*\\("
-        "hints[ ]*\\.")
+        "while[ ]*\\(")
     string(REGEX MATCH "${FORBIDDEN_OBSERVE_REGEX}" FOUND "${OBSERVE_CODE}")
     if(FOUND)
         message(FATAL_ERROR
             "HudNoticeState::observe must not scan display text: ${FORBIDDEN_OBSERVE_REGEX}")
     endif()
 endforeach()
+
+string(REGEX MATCHALL "hints[ ]*\\.[ ]*revision" HINTS_REVISION_READS
+    "${OBSERVE_CODE}")
+list(LENGTH HINTS_REVISION_READS HINTS_REVISION_READ_COUNT)
+if(NOT HINTS_REVISION_READ_COUNT EQUAL 2)
+    message(FATAL_ERROR
+        "HudNoticeState::observe must contain exactly two control-hint revision reads")
+endif()
+string(REGEX REPLACE "hints[ ]*\\.[ ]*revision" ""
+    OBSERVE_WITHOUT_REVISION_READS "${OBSERVE_CODE}")
+string(REGEX MATCH "hints[ ]*\\." FOUND_DIRECT_HINTS_MEMBER
+    "${OBSERVE_WITHOUT_REVISION_READS}")
+if(FOUND_DIRECT_HINTS_MEMBER)
+    message(FATAL_ERROR
+        "HudNoticeState::observe must not directly read control-hint display members")
+endif()
