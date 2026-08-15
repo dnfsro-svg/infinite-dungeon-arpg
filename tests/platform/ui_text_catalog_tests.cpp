@@ -161,7 +161,7 @@ std::size_t utf8_codepoint_count(const char* text) noexcept {
 }
 
 arpg::test::Failure fixed_messages_are_chinese() noexcept {
-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 78U>
+    constexpr std::array<std::pair<platform::UiTextId, const char*>, 80U>
         kExpectedTexts{{
             {platform::UiTextId::pause_title, u8"暂停"},
             {platform::UiTextId::pause_continue, u8"继续游戏"},
@@ -251,6 +251,10 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
                 u8"请退出并重启；启动时会重新校验双槽存档。"},
             {platform::UiTextId::save_faulted_error_format,
                 u8"故障码 %u｜ESC：退出游戏"},
+            {platform::UiTextId::save_directory_busy_title,
+                u8"存档正在使用"},
+            {platform::UiTextId::save_directory_busy_instruction,
+                u8"另一游戏实例正在使用此存档。请关闭其他实例后重试。"},
         }};
     for (const auto& expected : kExpectedTexts) {
         ARPG_REQUIRE(std::strcmp(
@@ -276,7 +280,7 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
         u8"+6 强化券", u8"+9 强化券", u8"+12 强化券", u8"+15 强化券",
     }};
     const platform::UiGlyphPlan glyph_plan = platform::ui_glyph_plan();
-    ARPG_REQUIRE(glyph_plan.codepoint_count == 644U);
+    ARPG_REQUIRE(glyph_plan.codepoint_count == 647U);
     ARPG_REQUIRE(!glyph_plan.capacity_exceeded);
     for (std::size_t index{}; index < kExpectedMaterialNames.size(); ++index) {
         const auto id = static_cast<arpg::items::MaterialId>(index);
@@ -300,7 +304,7 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
 }
 
 arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
-    constexpr std::array<platform::UiTextId, 49U> texts{{
+    constexpr std::array<platform::UiTextId, 51U> texts{{
         platform::UiTextId::pause_title, platform::UiTextId::pause_continue,
         platform::UiTextId::pause_settings, platform::UiTextId::pause_quit,
         platform::UiTextId::settings_title, platform::UiTextId::settings_audio,
@@ -335,6 +339,8 @@ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
         platform::UiTextId::save_faulted_title,
         platform::UiTextId::save_faulted_instruction,
         platform::UiTextId::save_faulted_error_format,
+        platform::UiTextId::save_directory_busy_title,
+        platform::UiTextId::save_directory_busy_instruction,
     }};
     for (const platform::UiTextId id : texts)
         ARPG_REQUIRE(platform::ui_text(id)[0] != '\0');
@@ -444,7 +450,7 @@ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
     ARPG_REQUIRE(audit.material_description_counts[0] == 8U);
     ARPG_REQUIRE(audit.material_description_counts[1] == 1U);
     ARPG_REQUIRE(audit.material_description_counts[2] == 5U);
-    ARPG_REQUIRE(audit.count == 350U);
+    ARPG_REQUIRE(audit.count == 352U);
     return {};
 }
 
@@ -455,7 +461,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 350U);
+        ARPG_REQUIRE(count == 352U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

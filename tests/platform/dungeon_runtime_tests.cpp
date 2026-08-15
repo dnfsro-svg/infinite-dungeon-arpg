@@ -714,10 +714,34 @@ arpg::test::Failure runtime_directory_lease_rejects_concurrent_owner_and_retries
     ARPG_REQUIRE(owner->initialize());
 
     platform::DungeonRuntime contender(config);
-    ARPG_REQUIRE(!contender.initialize());
+    const bool contender_initialized = contender.initialize();
+    ARPG_REQUIRE(!contender_initialized);
     ARPG_REQUIRE(contender.state() == platform::DungeonRuntimeState::faulted);
     ARPG_REQUIRE(contender.render_status().error
         == persistence::SaveError::directory_busy);
+    ARPG_REQUIRE(contender.render_snapshot_storage() != nullptr);
+    ARPG_REQUIRE(platform::host_runtime_initialization_is_presentable(
+        contender_initialized, contender.state(),
+        contender.render_snapshot_storage() != nullptr,
+        contender.render_status().error));
+    ARPG_REQUIRE(!platform::host_runtime_initialization_is_presentable(
+        false, platform::DungeonRuntimeState::faulted, false,
+        persistence::SaveError::directory_busy));
+    ARPG_REQUIRE(!platform::host_runtime_initialization_is_presentable(
+        false, platform::DungeonRuntimeState::faulted, true,
+        persistence::SaveError::none));
+
+    const platform::RecoveryScreenView view =
+        platform::make_recovery_screen_view(
+            contender.render_status(), 1280, 720);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"存档正在使用") == 0);
+    ARPG_REQUIRE(std::strcmp(view.message,
+        u8"另一游戏实例正在使用此存档。请关闭其他实例后重试。") == 0);
+    static_assert(sizeof(u8"故障码 255｜ESC：退出游戏")
+        <= platform::kRecoveryScreenErrorTextCapacity);
+    ARPG_REQUIRE(std::strcmp(
+        view.error_text.data(), u8"故障码 13｜ESC：退出游戏") == 0);
+    ARPG_REQUIRE(view.error_text.back() == '\0');
 
     owner.reset();
     ARPG_REQUIRE(contender.initialize());

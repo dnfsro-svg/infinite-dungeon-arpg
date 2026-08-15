@@ -189,8 +189,14 @@ RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& sta
         view.panel.y + 186.0F * scale, view.panel.width - 80.0F * scale,
         34.0F * scale};
     if (status.faulted) {
-        view.title = ui_text(UiTextId::save_faulted_title);
-        view.message = ui_text(UiTextId::save_faulted_instruction);
+        const bool directory_busy =
+            status.error == persistence::SaveError::directory_busy;
+        view.title = ui_text(directory_busy
+            ? UiTextId::save_directory_busy_title
+            : UiTextId::save_faulted_title);
+        view.message = ui_text(directory_busy
+            ? UiTextId::save_directory_busy_instruction
+            : UiTextId::save_faulted_instruction);
         static_cast<void>(ui_utf8_format(view.error_text.data(),
             view.error_text.size(), ui_text(UiTextId::save_faulted_error_format),
             static_cast<unsigned>(status.error)));
@@ -425,6 +431,17 @@ RecoveryScreenView make_recovery_screen_view(const DungeonRenderStatus& status,
     return make_recovery_screen_view_impl(status, width, height);
 }
 
+bool host_runtime_initialization_is_presentable(
+    bool initialized,
+    DungeonRuntimeState state,
+    bool render_snapshot_available,
+    persistence::SaveError error) noexcept {
+    return initialized || state == DungeonRuntimeState::recovery_required
+        || (state == DungeonRuntimeState::faulted
+            && render_snapshot_available
+            && error != persistence::SaveError::none);
+}
+
 bool host_hud_notice_time_paused(
     bool pause_blocks_gameplay, bool inventory_open,
     bool passive_overlay_open) noexcept {
@@ -516,7 +533,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             std::make_unique<DungeonRuntime>(runtime_config);
         DungeonRuntime& runtime = *runtime_storage;
         const bool initialized = runtime.initialize();
-        if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
+        if (!host_runtime_initialization_is_presentable(initialized,
+                runtime.state(), runtime.render_snapshot_storage() != nullptr,
+                runtime.render_status().error)) {
             if (runtime.render_status().error
                     == persistence::SaveError::directory_busy) {
                 TraceLog(LOG_ERROR,

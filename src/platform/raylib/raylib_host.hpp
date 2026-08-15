@@ -48,6 +48,12 @@ struct RecoveryScreenView final {
 [[nodiscard]] RecoveryScreenView make_recovery_screen_view(
     const DungeonRenderStatus& status, int width, int height) noexcept;
 
+[[nodiscard]] bool host_runtime_initialization_is_presentable(
+    bool initialized,
+    DungeonRuntimeState state,
+    bool render_snapshot_available,
+    persistence::SaveError error) noexcept;
+
 inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumns{{
     -4.0F, -1.3F, 1.3F, 4.0F,
 }};

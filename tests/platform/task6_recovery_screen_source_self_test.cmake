@@ -88,4 +88,26 @@ if(faulted_periodic_capture STREQUAL source)
 endif()
 expect_rejected("faulted-periodic-capture" "${faulted_periodic_capture}")
 
+set(presentable_gate
+    "if (!host_runtime_initialization_is_presentable(initialized,\n                runtime.state(), runtime.render_snapshot_storage() != nullptr,\n                runtime.render_status().error))")
+set(legacy_gate
+    "if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required)")
+string(REPLACE "${presentable_gate}" "${legacy_gate}"
+    legacy_initialization_gate "${source}")
+if(legacy_initialization_gate STREQUAL source)
+    message(FATAL_ERROR
+        "Task 6 legacy initialization-gate mutation anchor is missing")
+endif()
+expect_rejected("legacy-initialization-gate" "${legacy_initialization_gate}")
+
+string(REPLACE
+    "runtime.state(), runtime.render_snapshot_storage() != nullptr,"
+    "runtime.state(), false,"
+    unavailable_snapshot "${source}")
+if(unavailable_snapshot STREQUAL source)
+    message(FATAL_ERROR
+        "Task 6 unavailable-snapshot mutation anchor is missing")
+endif()
+expect_rejected("unavailable-snapshot" "${unavailable_snapshot}")
+
 message(STATUS "Task 6 recovery source guard self-test rejected all mutations")

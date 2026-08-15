@@ -17,6 +17,28 @@ file(READ "${host_source}" host_text)
 extract_cpp_function_body("${host_text}" "void draw_recovery_screen("
     recovery_draw_body recovery_draw_code)
 
+set(initialization_presentable_marker
+    "if (!host_runtime_initialization_is_presentable(initialized,\n                runtime.state(), runtime.render_snapshot_storage() != nullptr,\n                runtime.render_status().error))")
+set(legacy_initialization_gate
+    "if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required)")
+string(FIND "${host_text}" "const bool initialized = runtime.initialize();"
+    initialization_start)
+string(FIND "${host_text}" "${initialization_presentable_marker}"
+    initialization_presentable_start)
+string(FIND "${host_text}" "${legacy_initialization_gate}"
+    legacy_initialization_gate_start)
+string(FIND "${host_text}" "if (!window.initialize(config, committed_settings))"
+    window_initialization_start)
+if(initialization_start EQUAL -1
+        OR initialization_presentable_start EQUAL -1
+        OR NOT legacy_initialization_gate_start EQUAL -1
+        OR window_initialization_start EQUAL -1
+        OR NOT initialization_start LESS initialization_presentable_start
+        OR NOT initialization_presentable_start LESS window_initialization_start)
+    message(FATAL_ERROR
+        "Task 6 initialization fault presentation must call the live presentable helper before window initialization")
+endif()
+
 foreach(required IN ITEMS
         "const RecoveryScreenView view = ::arpg::platform::make_recovery_screen_view(status,"
         "DrawRectangleRounded(view.panel"
