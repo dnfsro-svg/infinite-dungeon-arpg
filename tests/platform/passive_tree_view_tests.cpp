@@ -56,11 +56,16 @@ arpg::test::Failure overlay_only_opens_for_clean_awaiting_exit() noexcept {
     DungeonSnapshot snapshot{};
     snapshot.phase = RoomPhase::awaiting_exit;
     ARPG_REQUIRE(arpg::platform::passive_tree_can_open(snapshot));
+    ARPG_REQUIRE(arpg::platform::passive_tree_can_stay_open(snapshot));
     snapshot.passive_save_pending = true;
     ARPG_REQUIRE(!arpg::platform::passive_tree_can_open(snapshot));
+    snapshot.phase = RoomPhase::committing;
+    ARPG_REQUIRE(arpg::platform::passive_tree_can_stay_open(snapshot));
     snapshot.passive_save_pending = false;
+    ARPG_REQUIRE(!arpg::platform::passive_tree_can_stay_open(snapshot));
     snapshot.phase = RoomPhase::combat;
     ARPG_REQUIRE(!arpg::platform::passive_tree_can_open(snapshot));
+    ARPG_REQUIRE(!arpg::platform::passive_tree_can_stay_open(snapshot));
     return {};
 }
 
@@ -72,17 +77,28 @@ arpg::test::Failure combat_toggle_reports_full_clear_gate_only_for_live_input()
     combat.remaining_targets = 7U;
 
     ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
-        combat, true, true)
+        combat, true, true, false)
         == PassiveTreeToggleAction::show_full_clear_requirement);
     ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
-        combat, false, true) == PassiveTreeToggleAction::none);
+        combat, false, true, false) == PassiveTreeToggleAction::none);
     ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
-        combat, true, false) == PassiveTreeToggleAction::none);
+        combat, true, false, false) == PassiveTreeToggleAction::none);
 
     combat.phase = RoomPhase::awaiting_exit;
     combat.remaining_targets = 0U;
     ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
-        combat, true, true) == PassiveTreeToggleAction::toggle);
+        combat, true, true, false) == PassiveTreeToggleAction::toggle);
+
+    combat.phase = RoomPhase::committing;
+    combat.passive_save_pending = true;
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, true, true, true) == PassiveTreeToggleAction::toggle);
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, true, true, false) == PassiveTreeToggleAction::none);
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, true, false, true) == PassiveTreeToggleAction::toggle);
+    ARPG_REQUIRE(arpg::platform::passive_tree_toggle_action(
+        combat, false, false, true) == PassiveTreeToggleAction::none);
     return {};
 }
 

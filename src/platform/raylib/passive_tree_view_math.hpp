@@ -117,10 +117,13 @@ struct PassiveOverlayInputGate final {
 
 [[nodiscard]] bool passive_tree_can_open(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
+[[nodiscard]] bool passive_tree_can_stay_open(
+    const dungeon::DungeonSnapshot& snapshot) noexcept;
 [[nodiscard]] PassiveTreeToggleAction passive_tree_toggle_action(
     const dungeon::DungeonSnapshot& snapshot,
     bool pressed,
-    bool gameplay_input_available) noexcept;
+    bool open_input_available,
+    bool overlay_open) noexcept;
 [[nodiscard]] PassiveNodeProjection project_passive_node(
     passives::PassiveNodeId node, float width, float height) noexcept;
 [[nodiscard]] std::optional<passives::PassiveNodeId> hit_test_passive_node(

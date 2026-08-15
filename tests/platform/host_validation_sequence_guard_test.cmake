@@ -692,7 +692,8 @@ for (std::uint32_t step = 0; step < frame.steps; ++step) {
         if (inventory.is_open()) inventory.close();
         passive_overlay_open = false;
     }
-    if (!passive_tree_can_open(current)) {
+    if (runtime.state() != DungeonRuntimeState::running
+        || !passive_tree_can_stay_open(current)) {
         passive_overlay_open = false;
     }
     if (runtime.state() != DungeonRuntimeState::running
@@ -2301,6 +2302,171 @@ string(REGEX REPLACE "[ \t\r\n]+" " " _host_loop_normalized
     "${_host_loop}")
 string(REGEX REPLACE "[ \t\r\n]+" " " _host_runtime_normalized
     "${_host_runtime}")
+evidence_cpp_direct_execution_surface_in_sanitized(
+    "${_host_loop}" _passive_host_loop_direct)
+string(REGEX REPLACE "[ \t\r\n]+" " "
+    _passive_host_loop_direct_normalized "${_passive_host_loop_direct}")
+
+function(passive_overlay_host_contract_valid NORMALIZED OUT_VALID OUT_REASON)
+    set(_force_close [=[if (runtime.state() != DungeonRuntimeState::running || !passive_tree_can_stay_open(current)) { passive_overlay_open = false; }]=])
+    task7b_count_token("${NORMALIZED}" "${_force_close}"
+        _force_close_count)
+    task7b_count_token("${NORMALIZED}"
+        "passive_tree_can_stay_open(current)" _stay_open_count)
+    if(NOT _force_close_count EQUAL 2 OR NOT _stay_open_count EQUAL 2)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_REASON} "force_close_contract" PARENT_SCOPE)
+        return()
+    endif()
+
+    set(_local_toggle_gate [=[const bool passive_toggle_input_available = death_gate.forward_gameplay && pause_menu.screen == PauseScreen::closed && !inventory.is_open() && !inventory_toggled_this_frame && passive_overlay_can_toggle(inventory.is_open());]=])
+    set(_open_gate [=[const bool passive_open_input_available = runtime.authority_requests_enabled() && !gameplay_rearm_was_required;]=])
+    task7b_count_token("${NORMALIZED}" "${_local_toggle_gate}"
+        _local_toggle_gate_count)
+    task7b_count_token("${NORMALIZED}"
+        "const bool passive_toggle_input_available ="
+        _local_toggle_declaration_count)
+    task7b_count_token("${NORMALIZED}" "${_open_gate}"
+        _open_gate_count)
+    task7b_count_token("${NORMALIZED}"
+        "const bool passive_open_input_available ="
+        _open_gate_declaration_count)
+    if(NOT _local_toggle_gate_count EQUAL 1
+            OR NOT _local_toggle_declaration_count EQUAL 1
+            OR NOT _open_gate_count EQUAL 1
+            OR NOT _open_gate_declaration_count EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_REASON} "split_toggle_gate_contract" PARENT_SCOPE)
+        return()
+    endif()
+
+    set(_toggle_call [=[const PassiveTreeToggleAction passive_toggle_action = passive_tree_toggle_action(current, frame_input.keys.passives && passive_toggle_input_available, passive_open_input_available, passive_overlay_open);]=])
+    task7b_count_token("${NORMALIZED}" "${_toggle_call}"
+        _toggle_call_count)
+    task7b_count_token("${NORMALIZED}"
+        "passive_tree_toggle_action(current," _all_toggle_call_count)
+    if(NOT _toggle_call_count EQUAL 1 OR NOT _all_toggle_call_count EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_REASON} "four_argument_toggle_binding" PARENT_SCOPE)
+        return()
+    endif()
+
+    set(_node_click_gate [=[if (gameplay_armed && !pause_blocks_gameplay && death_gate.forward_gameplay && passive_overlay_open && passive_tree_can_open(current) && frame_input.keys.mouse_gameplay) {]=])
+    task7b_count_token("${NORMALIZED}" "${_node_click_gate}"
+        _node_click_gate_count)
+    task7b_count_token("${NORMALIZED}" "passive_tree_can_open(current)"
+        _all_node_open_gate_count)
+    if(NOT _node_click_gate_count EQUAL 1
+            OR NOT _all_node_open_gate_count EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_REASON} "node_click_open_gate" PARENT_SCOPE)
+        return()
+    endif()
+
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+    set(${OUT_REASON} "" PARENT_SCOPE)
+endfunction()
+
+if(NOT DEFINED HOST_OVERRIDE AND NOT _stage17_poe2_contract_only)
+    passive_overlay_host_contract_valid("${_passive_host_loop_direct_normalized}"
+        _passive_overlay_contract_valid _passive_overlay_contract_reason)
+    if(NOT _passive_overlay_contract_valid)
+        message(FATAL_ERROR
+            "Host validation sequence guard rejected passive-overlay persistence wiring: ${_passive_overlay_contract_reason}")
+    endif()
+
+    set(_passive_overlay_missing_runtime_gate
+        "${_passive_host_loop_direct_normalized}")
+    string(REPLACE
+        "runtime.state() != DungeonRuntimeState::running || !passive_tree_can_stay_open(current)"
+        "!passive_tree_can_stay_open(current)"
+        _passive_overlay_missing_runtime_gate
+        "${_passive_overlay_missing_runtime_gate}")
+    if(_passive_overlay_missing_runtime_gate STREQUAL
+            _passive_host_loop_direct_normalized)
+        message(FATAL_ERROR
+            "Passive-overlay runtime-gate mutation anchor is missing")
+    endif()
+    passive_overlay_host_contract_valid("${_passive_overlay_missing_runtime_gate}"
+        _passive_overlay_mutation_valid _passive_overlay_mutation_reason)
+    if(_passive_overlay_mutation_valid)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted passive-overlay runtime-gate mutation")
+    endif()
+
+    set(_passive_overlay_missing_toggle_binding
+        "${_passive_host_loop_direct_normalized}")
+    string(REPLACE
+        "passive_open_input_available, passive_overlay_open);"
+        "passive_open_input_available);"
+        _passive_overlay_missing_toggle_binding
+        "${_passive_overlay_missing_toggle_binding}")
+    if(_passive_overlay_missing_toggle_binding STREQUAL
+            _passive_host_loop_direct_normalized)
+        message(FATAL_ERROR
+            "Passive-overlay four-argument mutation anchor is missing")
+    endif()
+    passive_overlay_host_contract_valid("${_passive_overlay_missing_toggle_binding}"
+        _passive_overlay_mutation_valid _passive_overlay_mutation_reason)
+    if(_passive_overlay_mutation_valid)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted passive-overlay four-argument mutation")
+    endif()
+
+    set(_passive_overlay_toggle_segment [=[            const bool passive_toggle_input_available =
+                death_gate.forward_gameplay
+                && pause_menu.screen == PauseScreen::closed
+                && !inventory.is_open()
+                && !inventory_toggled_this_frame
+                && passive_overlay_can_toggle(inventory.is_open());
+            const bool passive_open_input_available =
+                runtime.authority_requests_enabled()
+                && !gameplay_rearm_was_required;
+            const PassiveTreeToggleAction passive_toggle_action =
+                passive_tree_toggle_action(current,
+                    frame_input.keys.passives
+                        && passive_toggle_input_available,
+                    passive_open_input_available,
+                    passive_overlay_open);]=])
+    set(_passive_overlay_dead_toggle_segment [=[            if (false) {
+                const bool passive_toggle_input_available =
+                    death_gate.forward_gameplay
+                    && pause_menu.screen == PauseScreen::closed
+                    && !inventory.is_open()
+                    && !inventory_toggled_this_frame
+                    && passive_overlay_can_toggle(inventory.is_open());
+                const bool passive_open_input_available =
+                    runtime.authority_requests_enabled()
+                    && !gameplay_rearm_was_required;
+                const PassiveTreeToggleAction passive_toggle_action =
+                    passive_tree_toggle_action(current,
+                        frame_input.keys.passives
+                            && passive_toggle_input_available,
+                        passive_open_input_available,
+                        passive_overlay_open);
+            }]=])
+    string(REPLACE "${_passive_overlay_toggle_segment}"
+        "${_passive_overlay_dead_toggle_segment}"
+        _passive_overlay_dead_toggle_loop "${_host_loop}")
+    if(_passive_overlay_dead_toggle_loop STREQUAL _host_loop)
+        message(FATAL_ERROR
+            "Passive-overlay dead-control mutation anchor is missing")
+    endif()
+    evidence_cpp_direct_execution_surface_in_sanitized(
+        "${_passive_overlay_dead_toggle_loop}"
+        _passive_overlay_dead_toggle_direct)
+    string(REGEX REPLACE "[ \t\r\n]+" " "
+        _passive_overlay_dead_toggle_normalized
+        "${_passive_overlay_dead_toggle_direct}")
+    passive_overlay_host_contract_valid(
+        "${_passive_overlay_dead_toggle_normalized}"
+        _passive_overlay_mutation_valid _passive_overlay_mutation_reason)
+    if(_passive_overlay_mutation_valid)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted passive-overlay dead-control mutation")
+    endif()
+endif()
+
 set(_task9_renderer_owner
     "std::unique_ptr<CombatRenderer> renderer_storage;")
 set(_task9_renderer_allocation
@@ -2702,7 +2868,8 @@ for (std::uint32_t step = 0; step < frame.steps; ++step) {
         if (inventory.is_open()) inventory.close();
         passive_overlay_open = false;
     }
-    if (!passive_tree_can_open(current)) {
+    if (runtime.state() != DungeonRuntimeState::running
+        || !passive_tree_can_stay_open(current)) {
         passive_overlay_open = false;
     }
     if (runtime.state() != DungeonRuntimeState::running
@@ -2865,7 +3032,8 @@ for (std::uint32_t step = 0; step < frame.steps; ++step) {
         if (inventory.is_open()) inventory.close();
         passive_overlay_open = false;
     }
-    if (!passive_tree_can_open(current)) {
+    if (runtime.state() != DungeonRuntimeState::running
+        || !passive_tree_can_stay_open(current)) {
         passive_overlay_open = false;
     }
     if (runtime.state() != DungeonRuntimeState::running
@@ -2879,7 +3047,8 @@ for (std::uint32_t step = 0; step < frame.steps; ++step) {
         if (inventory.is_open()) inventory.close();
         passive_overlay_open = false;
     }
-    if (!passive_tree_can_open(current)) {
+    if (runtime.state() != DungeonRuntimeState::running
+        || !passive_tree_can_stay_open(current)) {
         passive_overlay_open = false;
     }
     if (runtime.state() != DungeonRuntimeState::running

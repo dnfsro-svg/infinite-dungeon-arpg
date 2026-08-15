@@ -171,13 +171,21 @@ bool passive_tree_can_open(const dungeon::DungeonSnapshot& snapshot) noexcept {
         && !snapshot.passive_save_pending;
 }
 
+bool passive_tree_can_stay_open(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    return snapshot.phase == dungeon::RoomPhase::awaiting_exit
+        || (snapshot.phase == dungeon::RoomPhase::committing
+            && snapshot.passive_save_pending);
+}
+
 PassiveTreeToggleAction passive_tree_toggle_action(
     const dungeon::DungeonSnapshot& snapshot,
     bool pressed,
-    bool gameplay_input_available) noexcept {
-    if (!pressed || !gameplay_input_available) {
-        return PassiveTreeToggleAction::none;
-    }
+    bool open_input_available,
+    bool overlay_open) noexcept {
+    if (!pressed) return PassiveTreeToggleAction::none;
+    if (overlay_open) return PassiveTreeToggleAction::toggle;
+    if (!open_input_available) return PassiveTreeToggleAction::none;
     if (passive_tree_can_open(snapshot)) {
         return PassiveTreeToggleAction::toggle;
     }

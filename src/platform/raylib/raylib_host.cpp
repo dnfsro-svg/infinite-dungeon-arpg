@@ -763,7 +763,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 passive_overlay_open = false;
                 inventory_toggled_this_frame = false;
             }
-            if (!passive_tree_can_open(current)) {
+            if (runtime.state() != DungeonRuntimeState::running
+                    || !passive_tree_can_stay_open(current)) {
                 passive_overlay_open = false;
             }
             if (death_gate.exit && !death_gate.forward_gameplay) {
@@ -814,17 +815,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             const bool passive_toggle_input_available =
-                runtime.authority_requests_enabled()
-                && !gameplay_rearm_was_required
-                && death_gate.forward_gameplay
+                death_gate.forward_gameplay
                 && pause_menu.screen == PauseScreen::closed
                 && !inventory.is_open()
                 && !inventory_toggled_this_frame
                 && passive_overlay_can_toggle(inventory.is_open());
+            const bool passive_open_input_available =
+                runtime.authority_requests_enabled()
+                && !gameplay_rearm_was_required;
             const PassiveTreeToggleAction passive_toggle_action =
                 passive_tree_toggle_action(current,
-                    frame_input.keys.passives,
-                    passive_toggle_input_available);
+                    frame_input.keys.passives
+                        && passive_toggle_input_available,
+                    passive_open_input_available,
+                    passive_overlay_open);
             if (passive_toggle_action == PassiveTreeToggleAction::toggle) {
                 passive_overlay_open = !passive_overlay_open;
             } else if (passive_toggle_action
@@ -955,6 +959,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (gameplay_armed && !pause_blocks_gameplay
                     && death_gate.forward_gameplay
                     && passive_overlay_open
+                    && passive_tree_can_open(current)
                     && frame_input.keys.mouse_gameplay) {
                 const auto selected = hit_test_passive_node(
                     {frame_input.mouse_position.x, frame_input.mouse_position.y},
@@ -1031,7 +1036,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     if (inventory.is_open()) inventory.close();
                     passive_overlay_open = false;
                 }
-                if (!passive_tree_can_open(current)) {
+                if (runtime.state() != DungeonRuntimeState::running
+                        || !passive_tree_can_stay_open(current)) {
                     passive_overlay_open = false;
                 }
                 if (runtime.state() != DungeonRuntimeState::running
