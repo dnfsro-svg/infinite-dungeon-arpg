@@ -157,6 +157,12 @@ struct InventoryEmptyPresentation final {
     std::array<char, 128> hint{};
 };
 
+enum class InventoryEquipAvailability : std::uint8_t {
+    not_applicable,
+    available,
+    level_locked,
+};
+
 struct InventoryStatusInput final {
     InventoryPage page{InventoryPage::equipment};
     InventorySavePresentationState save_state{
@@ -170,6 +176,10 @@ struct InventoryStatusInput final {
     bool reinforced_recipe_input{};
     bool active_skill_removable{};
     bool authority_enabled{};
+    InventoryEquipAvailability equip_availability{
+        InventoryEquipAvailability::not_applicable};
+    std::uint8_t required_level{};
+    std::uint8_t current_level{};
 };
 
 struct InventoryStatusPresentation final {
@@ -497,6 +507,9 @@ void advance_active_skill_loadout_selection(
 [[nodiscard]] InventoryClickKind register_inventory_click(
     InventoryClickTracker& tracker, std::uint64_t item_id,
     double now_seconds) noexcept;
+[[nodiscard]] InventoryEquipAvailability inventory_equip_availability(
+    const items::ItemOwnershipState& state,
+    const items::ItemInstance* item, std::uint8_t current_level) noexcept;
 [[nodiscard]] bool toggle_recipe_selection(
     RecipeSelection& selection, std::uint64_t item_id) noexcept;
 [[nodiscard]] std::optional<items::ItemSlot> hit_test_equipped_slot(

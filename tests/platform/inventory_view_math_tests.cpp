@@ -232,6 +232,11 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
     status_input.recipe_count = 3U;
     status_input.recipe_ready = true;
     status_input.authority_enabled = true;
+    platform::InventoryStatusInput level_locked_allocation_input{};
+    level_locked_allocation_input.equip_availability =
+        platform::InventoryEquipAvailability::level_locked;
+    level_locked_allocation_input.required_level = 255U;
+    level_locked_allocation_input.current_level = 255U;
     platform::InventoryItemVisualInput visual_input{};
     visual_input.item_id = item.id;
     visual_input.selected_item_id = item.id;
@@ -246,6 +251,8 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         warm_shell.equipment_slots[0], false, warm_view, &linear_measure,
         nullptr));
     static_cast<void>(platform::inventory_status_presentation(status_input));
+    static_cast<void>(platform::inventory_status_presentation(
+        level_locked_allocation_input));
     const std::uint64_t before = test::allocation_count();
     for (std::size_t iteration{}; iteration < 10000U; ++iteration) {
         const auto shell = platform::inventory_shell_layout(800, 450);
@@ -261,6 +268,9 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
             transient, transient_input);
         transient = transient_frame.next;
         const auto status = platform::inventory_status_presentation(status_input);
+        const auto level_locked_status =
+            platform::inventory_status_presentation(
+                level_locked_allocation_input);
         const auto visual = platform::inventory_item_visual_state(visual_input);
         const auto source = platform::inventory_visible_item_source(shell,
             platform::InventoryPage::equipment, ownership, view_cache, item.id,
@@ -275,6 +285,7 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
         ARPG_REQUIRE(!transition.state.visible && empty.title != nullptr
             && material_empty.hint[0] != '\0'
             && status.status[0] != '\0'
+            && level_locked_status.status[0] != '\0'
             && visual.outline != platform::InventoryItemOutline::none
             && source.valid
             && pointer_layer != platform::InventoryPointerLayer::none
@@ -547,6 +558,28 @@ test::Failure click_tracker_distinguishes_single_and_double_click() noexcept {
         == platform::InventoryClickKind::single);
     ARPG_REQUIRE(platform::register_inventory_click(tracker, 8U, 10.70)
         == platform::InventoryClickKind::single);
+
+    // This catches a renderer regression that forwards a level-locked grid
+    // double click to authority and then fails without player-facing feedback.
+    items::ItemInstance item{};
+    item.id = 7U;
+    item.base_id = 1U;
+    item.required_level = 5U;
+    items::ItemOwnershipState ownership{};
+    ownership.items.push_back(item);
+    ARPG_REQUIRE(platform::inventory_equip_availability(
+        ownership, nullptr, 4U)
+        == platform::InventoryEquipAvailability::not_applicable);
+    ARPG_REQUIRE(platform::inventory_equip_availability(
+        ownership, &ownership.items[0], 4U)
+        == platform::InventoryEquipAvailability::level_locked);
+    ARPG_REQUIRE(platform::inventory_equip_availability(
+        ownership, &ownership.items[0], 5U)
+        == platform::InventoryEquipAvailability::available);
+    ownership.equipment.equipped_ids[0] = item.id;
+    ARPG_REQUIRE(platform::inventory_equip_availability(
+        ownership, &ownership.items[0], 4U)
+        == platform::InventoryEquipAvailability::not_applicable);
     return {};
 }
 
@@ -681,6 +714,71 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(status.action_enabled);
     ARPG_REQUIRE(status.tone == platform::InventoryStatusTone::positive);
     ARPG_REQUIRE(std::string_view{status.action.data()} == u8"三合一（3/3）");
+
+    platform::InventoryStatusInput level_locked_status_input{};
+    level_locked_status_input.page = platform::InventoryPage::equipment;
+    level_locked_status_input.equip_availability =
+        platform::InventoryEquipAvailability::level_locked;
+    level_locked_status_input.required_level = 12U;
+    level_locked_status_input.current_level = 4U;
+    const auto level_locked_status =
+        platform::inventory_status_presentation(level_locked_status_input);
+    ARPG_REQUIRE(std::string_view{level_locked_status.status.data()}
+        == u8"需要等级 12（当前 4）· 无法装备");
+    ARPG_REQUIRE(std::string_view{level_locked_status.hint.data()}
+        == u8"需要等级 12（当前 4）· 无法装备");
+    ARPG_REQUIRE(level_locked_status.tone
+        == platform::InventoryStatusTone::warning);
+
+    level_locked_status_input.required_level = 255U;
+    level_locked_status_input.current_level = 255U;
+    const auto maximum_level_locked_status =
+        platform::inventory_status_presentation(level_locked_status_input);
+    ARPG_REQUIRE(std::string_view{maximum_level_locked_status.status.data()}
+        == u8"需要等级 255（当前 255）· 无法装备");
+    ARPG_REQUIRE(std::strlen(maximum_level_locked_status.status.data()) == 47U);
+    ARPG_REQUIRE(maximum_level_locked_status.status[47U] == '\0');
+    ARPG_REQUIRE(std::strlen(maximum_level_locked_status.hint.data()) == 47U);
+    ARPG_REQUIRE(maximum_level_locked_status.hint[47U] == '\0');
+
+    level_locked_status_input.reinforced_recipe_input = true;
+    const auto reinforced_level_locked_status =
+        platform::inventory_status_presentation(level_locked_status_input);
+    ARPG_REQUIRE(std::string_view{reinforced_level_locked_status.status.data()}
+        == u8"危险：三合一取消强化");
+    ARPG_REQUIRE(reinforced_level_locked_status.tone
+        == platform::InventoryStatusTone::negative);
+    level_locked_status_input.reinforced_recipe_input = false;
+    level_locked_status_input.recipe_count = 1U;
+    ARPG_REQUIRE(std::string_view{platform::inventory_status_presentation(
+        level_locked_status_input).status.data()}
+        == platform::ui_text(platform::UiTextId::inventory_context_hint));
+    level_locked_status_input.recipe_count = 0U;
+    level_locked_status_input.selected_material = items::MaterialId::chaos;
+    ARPG_REQUIRE(std::string_view{platform::inventory_status_presentation(
+        level_locked_status_input).status.data()}
+        == u8"已选择：混沌石 · 可用装备已标出 · 右键取消");
+    level_locked_status_input.selected_material.reset();
+    level_locked_status_input.transient.kind =
+        platform::InventoryTransientStatusKind::reinforcement_receipt;
+    level_locked_status_input.transient.receipt_success = true;
+    level_locked_status_input.transient.receipt_before = 1U;
+    level_locked_status_input.transient.receipt_after = 2U;
+    ARPG_REQUIRE(std::string_view{platform::inventory_status_presentation(
+        level_locked_status_input).status.data()}
+        == u8"强化结果：成功 / +1 → +2");
+    level_locked_status_input.transient = {};
+    level_locked_status_input.material_target_rejected = true;
+    ARPG_REQUIRE(std::string_view{platform::inventory_status_presentation(
+        level_locked_status_input).status.data()}
+        == u8"应用失败 · 切换装备 · 右键取消");
+    level_locked_status_input.material_target_rejected = false;
+    level_locked_status_input.save_state =
+        platform::InventorySavePresentationState::error;
+    ARPG_REQUIRE(std::string_view{platform::inventory_status_presentation(
+        level_locked_status_input).status.data()}
+        == u8"保存失败，当前进度未保存，请重试");
+
     status_input.selected_material = items::MaterialId::chaos;
     const auto material_target_status =
         platform::inventory_status_presentation(status_input);

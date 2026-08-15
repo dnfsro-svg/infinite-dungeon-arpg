@@ -64,6 +64,7 @@ enum class UiTextId : std::uint16_t {
     save_faulted_error_format,
     save_directory_busy_title,
     save_directory_busy_instruction,
+    inventory_level_locked_format,
     count,
 };
 

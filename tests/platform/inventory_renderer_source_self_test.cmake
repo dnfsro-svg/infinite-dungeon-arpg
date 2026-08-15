@@ -388,6 +388,57 @@ expect_renderer_mutation_rejected(equipped_material_context_disconnected
     "selected_item_id_, recipe_, material_target, hud_font,"
     "selected_item_id_, recipe_, InventoryMaterialTargetContext{}, hud_font,")
 
+expect_renderer_mutation_rejected(level_locked_grid_request_bypasses_gate
+    "equip_availability == InventoryEquipAvailability::available"
+    "true")
+
+expect_renderer_mutation_rejected(level_locked_single_click_requests_equip
+    "InventoryClickKind::double_click"
+    "InventoryClickKind::single")
+
+set(_level_gate_after_unequip [=[        if (direct_hit.equipped_slot.has_value()) {
+            if (requests_enabled
+                    && runtime.request_unequip(*direct_hit.equipped_slot)
+                        == dungeon::RequestResult::accepted) {
+                runtime.service_pending_save();
+                return true;
+            }
+            return false;
+        }
+        const InventoryEquipAvailability equip_availability =
+            inventory_equip_availability(state, direct_hit.item,
+                snapshot.progression.level);]=])
+set(_level_gate_before_unequip [=[        const InventoryEquipAvailability equip_availability =
+            inventory_equip_availability(state, direct_hit.item,
+                snapshot.progression.level);
+        if (equip_availability != InventoryEquipAvailability::available)
+            return false;
+        if (direct_hit.equipped_slot.has_value()) {
+            if (requests_enabled
+                    && runtime.request_unequip(*direct_hit.equipped_slot)
+                        == dungeon::RequestResult::accepted) {
+                runtime.service_pending_save();
+                return true;
+            }
+            return false;
+        }]=])
+expect_renderer_mutation_rejected(level_locked_gate_wraps_unequip
+    "${_level_gate_after_unequip}"
+    "${_level_gate_before_unequip}")
+
+expect_renderer_mutation_rejected(level_locked_draw_rescans_item_vector
+    "cached_selected_item(view_cache_, state)"
+    "find_item(state, selected_item_id_)")
+
+expect_renderer_mutation_rejected(level_locked_draw_uses_required_as_current
+    "status_input.current_level = snapshot.progression.level;"
+    "status_input.current_level = selected_item == nullptr ? 0U : selected_item->required_level;")
+
+expect_renderer_mutation_rejected(level_locked_draw_helper_uses_zero_level
+    "inventory_equip_availability(state, selected_item,
+            snapshot.progression.level);"
+    "inventory_equip_availability(state, selected_item, 0U);")
+
 expect_renderer_mutation_rejected(material_context_leaks_to_materials_page
     "        material_target.material = selected_material;"
     "    }\n    material_target.material = selected_material;\n    if (true) {")

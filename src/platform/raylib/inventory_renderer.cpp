@@ -1161,7 +1161,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         sync(session, snapshot);
         click_tracker_ = {};
         return false;
-    case InventoryPointerLayer::equipment:
+    case InventoryPointerLayer::equipment: {
         if (direct_hit.equipped_slot.has_value()) {
             if (requests_enabled
                     && runtime.request_unequip(*direct_hit.equipped_slot)
@@ -1171,10 +1171,14 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
             }
             return false;
         }
+        const InventoryEquipAvailability equip_availability =
+            inventory_equip_availability(state, direct_hit.item,
+                snapshot.progression.level);
         selected_item_id_ = direct_hit.item->id;
         sync(session, snapshot);
         if (register_inventory_click(click_tracker_, direct_hit.item->id,
                 GetTime()) == InventoryClickKind::double_click
+                && equip_availability == InventoryEquipAvailability::available
                 && requests_enabled
                 && runtime.request_equip(direct_hit.item->id)
                     == dungeon::RequestResult::accepted) {
@@ -1182,6 +1186,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
             return true;
         }
         return false;
+    }
     case InventoryPointerLayer::background_clear: {
         InventoryTooltipInteractionInput clear{};
         clear.pointer = mouse;
@@ -1228,6 +1233,11 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const items::ItemOwnershipState& state = session.item_state();
     const InventoryShellLayout& shell = frame_layout_.shell;
     const auto selected_material = material_bag_.selected_material();
+    const items::ItemInstance* const selected_item =
+        cached_selected_item(view_cache_, state);
+    const InventoryEquipAvailability selected_equip_availability =
+        inventory_equip_availability(state, selected_item,
+            snapshot.progression.level);
     DrawRectangle(0, 0, frame_layout_.width, frame_layout_.height,
         Color{3, 5, 9, 255});
 
@@ -1284,6 +1294,10 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     status_input.recovery_required = status.recovery_required;
     status_input.transient = transient_result.presentation;
     status_input.selected_material = selected_material;
+    status_input.equip_availability = selected_equip_availability;
+    status_input.required_level = selected_item == nullptr
+        ? 0U : selected_item->required_level;
+    status_input.current_level = snapshot.progression.level;
     status_input.material_target_rejected =
         material_rejection_frames_ != 0U
         && rejected_material_item_id_ != 0U;

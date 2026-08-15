@@ -161,7 +161,7 @@ std::size_t utf8_codepoint_count(const char* text) noexcept {
 }
 
 arpg::test::Failure fixed_messages_are_chinese() noexcept {
-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 80U>
+    constexpr std::array<std::pair<platform::UiTextId, const char*>, 81U>
         kExpectedTexts{{
             {platform::UiTextId::pause_title, u8"暂停"},
             {platform::UiTextId::pause_continue, u8"继续游戏"},
@@ -255,6 +255,8 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
                 u8"存档正在使用"},
             {platform::UiTextId::save_directory_busy_instruction,
                 u8"另一游戏实例正在使用此存档。请关闭其他实例后重试。"},
+            {platform::UiTextId::inventory_level_locked_format,
+                u8"需要等级 %u（当前 %u）· 无法装备"},
         }};
     for (const auto& expected : kExpectedTexts) {
         ARPG_REQUIRE(std::strcmp(
@@ -450,7 +452,7 @@ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
     ARPG_REQUIRE(audit.material_description_counts[0] == 8U);
     ARPG_REQUIRE(audit.material_description_counts[1] == 1U);
     ARPG_REQUIRE(audit.material_description_counts[2] == 5U);
-    ARPG_REQUIRE(audit.count == 352U);
+    ARPG_REQUIRE(audit.count == 353U);
     return {};
 }
 
@@ -461,7 +463,7 @@ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         std::size_t count{};
         platform::visit_ui_text_catalog(&count_text, &count);
-        ARPG_REQUIRE(count == 352U);
+        ARPG_REQUIRE(count == 353U);
         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(

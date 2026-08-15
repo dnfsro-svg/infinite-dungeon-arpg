@@ -449,6 +449,22 @@ require_token_order("${_input_body}"
     "if (!retained_backing_blocks && page_ == InventoryPage::equipment)"
     "inventory_direct_item_hit(frame_layout_.shell"
     "T4 retained tooltip blocker must gate lower item hit-testing")
+foreach(_token IN ITEMS
+        "const InventoryEquipAvailability equip_availability = inventory_equip_availability(state, direct_hit.item, snapshot.progression.level);"
+        "if (register_inventory_click(click_tracker_, direct_hit.item->id, GetTime()) == InventoryClickKind::double_click && equip_availability == InventoryEquipAvailability::available && requests_enabled && runtime.request_equip(direct_hit.item->id)")
+    require_token("${_input_compact}" "${_token}"
+        "T4 grid double click must fail closed before authority when item level is locked")
+endforeach()
+require_token_order("${_input_compact}"
+    "if (direct_hit.equipped_slot.has_value())"
+    "const InventoryEquipAvailability equip_availability = inventory_equip_availability(state, direct_hit.item, snapshot.progression.level);"
+    "T4 equipped-slot removal must stay outside the grid level gate")
+require_token_order("${_input_compact}"
+    "const InventoryEquipAvailability equip_availability = inventory_equip_availability(state, direct_hit.item, snapshot.progression.level);"
+    "runtime.request_equip(direct_hit.item->id)"
+    "T4 grid level gate must run before the equip authority request")
+reject_lambda("${_input_code}"
+    "T4 renderer input level gate")
 reject_dead_branch("${_input_code}" "T4 renderer input chain")
 
 extract_cpp_function_body("${_inventory_source}"
@@ -522,6 +538,18 @@ foreach(_token IN ITEMS
     require_token("${_draw_compact}" "${_token}"
         "T4 live draw must share the real material target context with equipped and grid items")
 endforeach()
+foreach(_token IN ITEMS
+        "const items::ItemInstance* const selected_item = cached_selected_item(view_cache_, state);"
+        "const InventoryEquipAvailability selected_equip_availability = inventory_equip_availability(state, selected_item, snapshot.progression.level);"
+        "status_input.equip_availability = selected_equip_availability;"
+        "status_input.required_level = selected_item == nullptr ? 0U : selected_item->required_level;"
+        "status_input.current_level = snapshot.progression.level;")
+    require_token("${_draw_compact}" "${_token}"
+        "T4 inventory status must consume the selected grid item's live level gate")
+endforeach()
+reject_token("${_draw_compact}"
+    "const items::ItemInstance* const selected_item = find_item(state, selected_item_id_);"
+    "T4 inventory level status must not rescan the maximum-size item vector every frame")
 foreach(_builder IN ITEMS "inventory_shell_layout("
         "active_skill_loadout_layout(" "material_bag_layout(")
     reject_token("${_draw_body}" "${_builder}"

@@ -733,6 +733,18 @@ InventoryClickKind register_inventory_click(InventoryClickTracker& tracker,
                     : InventoryClickKind::single;
 }
 
+InventoryEquipAvailability inventory_equip_availability(
+    const items::ItemOwnershipState& state,
+    const items::ItemInstance* item, std::uint8_t current_level) noexcept {
+    if (item == nullptr || item->id == 0U
+            || equipped(state.equipment, item->id)) {
+        return InventoryEquipAvailability::not_applicable;
+    }
+    return item->required_level > current_level
+        ? InventoryEquipAvailability::level_locked
+        : InventoryEquipAvailability::available;
+}
+
 bool toggle_recipe_selection(RecipeSelection& selection,
     std::uint64_t item_id) noexcept {
     if (item_id == 0U) return false;
@@ -1082,6 +1094,23 @@ InventoryStatusPresentation inventory_status_presentation(
                         : UiTextId::inventory_material_selected_format),
                 ui_material_name(*input.selected_material)));
         }
+        output.tone = InventoryStatusTone::warning;
+        return output;
+    }
+    if (input.page == InventoryPage::equipment
+            && input.recipe_count == 0U
+            && !input.reinforced_recipe_input
+            && input.equip_availability
+                == InventoryEquipAvailability::level_locked) {
+        static_cast<void>(ui_utf8_format(output.status.data(),
+            output.status.size(),
+            ui_text(UiTextId::inventory_level_locked_format),
+            static_cast<unsigned int>(input.required_level),
+            static_cast<unsigned int>(input.current_level)));
+        static_cast<void>(ui_utf8_format(output.hint.data(), output.hint.size(),
+            ui_text(UiTextId::inventory_level_locked_format),
+            static_cast<unsigned int>(input.required_level),
+            static_cast<unsigned int>(input.current_level)));
         output.tone = InventoryStatusTone::warning;
         return output;
     }
