@@ -26,6 +26,10 @@ InstallationStatus make_status(
 
 }  // namespace
 
+LauncherButton default_launcher_button(const bool installation_ready) noexcept {
+    return installation_ready ? LauncherButton::start : LauncherButton::verify;
+}
+
 bool InstallationStatus::ready() const noexcept {
     return state == InstallationState::ready;
 }

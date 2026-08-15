@@ -9,6 +9,7 @@ namespace {
 
 using arpg::launcher::InstallationState;
 using arpg::launcher::InstallationStatus;
+using arpg::launcher::LauncherButton;
 
 constexpr std::wstring_view kRequiredAssetDirectories[] = {
     L"assets/fonts",
@@ -59,6 +60,14 @@ public:
 private:
     std::filesystem::path root_;
 };
+
+arpg::test::Failure default_button_follows_installation_readiness() noexcept {
+    ARPG_REQUIRE(arpg::launcher::default_launcher_button(true)
+        == LauncherButton::start);
+    ARPG_REQUIRE(arpg::launcher::default_launcher_button(false)
+        == LauncherButton::verify);
+    return {};
+}
 
 arpg::test::Failure ready_installation_is_accepted() noexcept {
     TemporaryInstallation installation{L"ready installation"};
@@ -162,6 +171,8 @@ arpg::test::Failure empty_local_app_data_is_rejected() noexcept {
 
 arpg::test::TestSuite launcher_core_suite() noexcept {
     static const arpg::test::TestCase cases[] = {
+        {"default button follows installation readiness",
+            default_button_follows_installation_readiness},
         {"ready installation is accepted", ready_installation_is_accepted},
         {"invalid launcher and missing game are reported",
             invalid_launcher_and_missing_game_are_reported},

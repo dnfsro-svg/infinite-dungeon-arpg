@@ -325,9 +325,7 @@ public:
             return 0;
         case WM_KEYDOWN:
             if (w_param == VK_RETURN) {
-                if (status_.ready()) {
-                    start_game();
-                }
+                invoke(default_launcher_button(status_.ready()));
                 return 0;
             }
             if (w_param == VK_ESCAPE) {
@@ -570,7 +568,7 @@ private:
         BeginPaint(window_, &paint_structure);
         const LauncherLayout current_layout = layout();
         const LauncherButton focused_button = window_focused_
-            ? (status_.ready() ? LauncherButton::start : LauncherButton::verify)
+            ? default_launcher_button(status_.ready())
             : LauncherButton::none;
         const LauncherView view{
             current_layout,

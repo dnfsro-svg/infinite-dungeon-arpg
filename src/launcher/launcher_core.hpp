@@ -8,6 +8,17 @@
 
 namespace arpg::launcher {
 
+enum class LauncherButton : std::uint8_t {
+    none,
+    start,
+    verify,
+    save,
+    exit,
+};
+
+[[nodiscard]] LauncherButton default_launcher_button(
+    bool installation_ready) noexcept;
+
 enum class InstallationState : std::uint8_t {
     ready,
     invalid_launcher_path,

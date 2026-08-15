@@ -1,7 +1,8 @@
 param(
     [string] $Launcher,
     [switch] $SelfTestStaleCleanup,
-    [switch] $SelfTestChineseCopyGuard
+    [switch] $SelfTestChineseCopyGuard,
+    [switch] $DirectSourceGuard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -340,6 +341,38 @@ function Get-Task8ChineseCopySources {
         Platform = [System.IO.File]::ReadAllText(
             (Join-Path $sourceRoot 'src\launcher\launcher_platform_win32.cpp'),
             [System.Text.Encoding]::UTF8)
+    }
+}
+
+function Assert-LauncherDefaultButtonSourceGuard {
+    param([Parameter(Mandatory = $true)][string] $MainSource)
+
+    $activeMain = Get-Task8CppStructuralSource $MainSource
+    $handleMessageBody = Get-Task8CppFunctionBody `
+        $activeMain `
+        'LRESULT\s+handle_message\s*\(\s*const\s+UINT\s+message\s*,\s*const\s+WPARAM\s+w_param\s*,\s*const\s+LPARAM\s+l_param\s*\)' `
+        'WindowController::handle_message'
+    Assert-Task8SourcePattern $handleMessageBody `
+        'if\s*\(\s*w_param\s*==\s*VK_RETURN\s*\)\s*\{\s*invoke\(\s*default_launcher_button\(\s*status_\.ready\(\)\s*\)\s*\);\s*return\s+0\s*;\s*\}' `
+        'Enter must invoke the same default launcher button selected from installation readiness'
+
+    $paintBody = Get-Task8CppFunctionBody `
+        $activeMain `
+        'void\s+paint\s*\(\s*\)\s*noexcept' `
+        'WindowController::paint'
+    Assert-Task8SourcePattern $paintBody `
+        'const\s+LauncherButton\s+focused_button\s*=\s*window_focused_\s*\?\s*default_launcher_button\(\s*status_\.ready\(\)\s*\)\s*:\s*LauncherButton::none\s*;' `
+        'paint must focus the same default launcher button selected from installation readiness'
+
+    if ([regex]::Matches(
+            $activeMain,
+            '\bdefault_launcher_button\s*\(').Count -ne 2) {
+        throw 'Launcher default-button guard requires exactly the Enter and paint consumers'
+    }
+    if ([regex]::IsMatch(
+            $activeMain,
+            'default_launcher_button\s*\(\s*status_ready_')) {
+        throw 'Launcher default-button guard rejects transient status readiness'
     }
 }
 
@@ -1475,6 +1508,11 @@ function Assert-RenderedClientPixels {
 }
 
 $task8Sources = Get-Task8ChineseCopySources
+Assert-LauncherDefaultButtonSourceGuard $task8Sources.Main
+if ($DirectSourceGuard) {
+    Write-Host 'Launcher default-button source guard passed'
+    exit 0
+}
 $task8SelfTestResult = Invoke-Task8ChineseCopyGuardSelfTest $task8Sources
 if ($SelfTestChineseCopyGuard) {
     Write-Host "Task 8 Chinese-copy guard accepted pristine sources and $($task8SelfTestResult.ValidVariantCount) lexical variants, and rejected $($task8SelfTestResult.MutationCount) mutations"

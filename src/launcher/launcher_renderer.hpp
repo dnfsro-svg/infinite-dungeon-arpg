@@ -1,5 +1,6 @@
 #pragma once
 
+#include "launcher_core.hpp"
 #include "launcher_layout.hpp"
 
 #include <Windows.h>
@@ -10,14 +11,6 @@
 #include <string_view>
 
 namespace arpg::launcher {
-
-enum class LauncherButton {
-    none,
-    start,
-    verify,
-    save,
-    exit,
-};
 
 enum class RendererStage {
     none,
