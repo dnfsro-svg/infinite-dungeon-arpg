@@ -88,8 +88,6 @@ bool HostSettingsRuntime::settle(
                 *live, pause_menu->committed, backend);
             this->live->loot_filter_mode =
                 this->pause_menu->committed.loot_filter_mode;
-            pause_menu->draft.loot_filter_mode =
-                pause_menu->committed.loot_filter_mode;
             if (rollback == LiveSettingsResult::applied) {
                 *live = pause_menu->committed;
                 pause_menu->message = kSettingsPreviewFailed;
@@ -117,8 +115,6 @@ bool HostSettingsRuntime::settle(
                 previewed, pause_menu->committed, backend);
             this->live->loot_filter_mode =
                 this->pause_menu->committed.loot_filter_mode;
-            pause_menu->draft.loot_filter_mode =
-                pause_menu->committed.loot_filter_mode;
             if (rollback == LiveSettingsResult::applied) {
                 *live = pause_menu->committed;
                 pause_menu->message = kSettingsSaveBusy;
@@ -175,8 +171,6 @@ bool HostSettingsRuntime::settle(
             previewed, pause_menu->committed, backend);
         this->live->loot_filter_mode =
             this->pause_menu->committed.loot_filter_mode;
-        pause_menu->draft.loot_filter_mode =
-            pause_menu->committed.loot_filter_mode;
         if (rollback == LiveSettingsResult::applied) {
             *live = pause_menu->committed;
             pause_menu->message = kSettingsSaveFailed;

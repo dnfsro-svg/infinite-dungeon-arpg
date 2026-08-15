@@ -331,9 +331,7 @@ arpg::test::Failure save_failure_rolls_back_live_and_reports_retry()
     ARPG_REQUIRE(same_settings(live, committed));
     ARPG_REQUIRE(same_settings(input, committed));
     ARPG_REQUIRE(same_settings(menu.committed, committed));
-    settings::SettingsData expected_draft = edited;
-    expected_draft.loot_filter_mode = committed.loot_filter_mode;
-    ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+    ARPG_REQUIRE(same_settings(menu.draft, edited));
     ARPG_REQUIRE(menu.message != nullptr);
     ARPG_REQUIRE(std::strcmp(menu.message,
         u8"设置保存失败，请重试") == 0);
@@ -396,9 +394,7 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
             settings::default_settings()));
         ARPG_REQUIRE(same_settings(live, menu.committed));
         ARPG_REQUIRE(same_settings(input, menu.committed));
-        settings::SettingsData expected_draft = edited;
-        expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
-        ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+        ARPG_REQUIRE(same_settings(menu.draft, edited));
         ARPG_REQUIRE(menu.message != nullptr);
         ARPG_REQUIRE(std::strcmp(menu.message,
             u8"另一游戏实例正在保存，请稍后重试") == 0);
@@ -503,9 +499,7 @@ arpg::test::Failure apply_preview_failure_rolls_back_and_reports_preview()
     ARPG_REQUIRE(same_settings(live, menu.committed));
     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
     ARPG_REQUIRE(same_settings(input, input_before));
-    settings::SettingsData expected_draft = edited;
-    expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
-    ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+    ARPG_REQUIRE(same_settings(menu.draft, edited));
     ARPG_REQUIRE(std::strcmp(menu.message, u8"实时预览失败") == 0);
     return {};
 }
@@ -528,8 +522,7 @@ arpg::test::Failure apply_preview_and_rollback_failure_reports_rollback()
     settings::SettingsData input = menu.committed;
     const settings::SettingsData committed_before = menu.committed;
     const settings::SettingsData input_before = input;
-    settings::SettingsData expected_draft = menu.draft;
-    expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
+    const settings::SettingsData draft_before = menu.draft;
     settings::SettingsData expected_live = live;
     expected_live.loot_filter_mode = menu.committed.loot_filter_mode;
     platform::HostSettingsRuntime runtime = make_runtime(
@@ -538,7 +531,7 @@ arpg::test::Failure apply_preview_and_rollback_failure_reports_rollback()
     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
     ARPG_REQUIRE(same_settings(live, expected_live));
     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
-    ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+    ARPG_REQUIRE(same_settings(menu.draft, draft_before));
     ARPG_REQUIRE(same_settings(input, input_before));
     ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
     return {};
@@ -558,8 +551,7 @@ arpg::test::Failure apply_save_and_rollback_failure_keeps_previewed_live()
     settings::SettingsData input = menu.committed;
     const settings::SettingsData committed_before = menu.committed;
     const settings::SettingsData input_before = input;
-    settings::SettingsData expected_draft = menu.draft;
-    expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
+    const settings::SettingsData draft_before = menu.draft;
     settings::SettingsData expected_live = menu.draft;
     expected_live.loot_filter_mode = menu.committed.loot_filter_mode;
     platform::HostSettingsRuntime runtime = make_runtime(
@@ -568,7 +560,7 @@ arpg::test::Failure apply_save_and_rollback_failure_keeps_previewed_live()
     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
     ARPG_REQUIRE(same_settings(live, expected_live));
     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
-    ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+    ARPG_REQUIRE(same_settings(menu.draft, draft_before));
     ARPG_REQUIRE(same_settings(input, input_before));
     ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
     return {};
