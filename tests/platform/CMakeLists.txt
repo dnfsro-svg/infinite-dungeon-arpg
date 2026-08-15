@@ -2140,6 +2140,15 @@ set_tests_properties(
     PROPERTIES LABELS "headless;platform;architecture")
 
 add_test(
+    NAME platform.pause_reset_confirmation_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/pause_reset_confirmation_source_test.cmake")
+set_tests_properties(
+    platform.pause_reset_confirmation_source
+    PROPERTIES LABELS "headless;platform;ui;architecture")
+
+add_test(
     NAME platform.host_validation_sequence
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"

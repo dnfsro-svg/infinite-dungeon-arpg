@@ -149,6 +149,7 @@ void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
             cues | ui_audio_cue_mask(UiAudioCue::navigate));
         break;
     case PauseCommand::apply:
+    case PauseCommand::reset_room:
     case PauseCommand::quit:
         cues = static_cast<UiAudioCueMask>(
             cues | ui_audio_cue_mask(UiAudioCue::confirm));
@@ -933,9 +934,24 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 current.pending_save_kind.has_value(),
                 !physical_keys.focus_lost,
             };
+            PauseContext contextual_pause = pause_context;
+            if (current.is_abyss) {
+                if (current.phase == dungeon::RoomPhase::locked
+                        || current.phase == dungeon::RoomPhase::combat
+                        || current.phase == dungeon::RoomPhase::wave_delay) {
+                    contextual_pause.reset_room_context =
+                        PauseRoomResetContext::active_abyss;
+                } else if (current.phase == dungeon::RoomPhase::cleared
+                        || current.phase
+                            == dungeon::RoomPhase::awaiting_exit) {
+                    contextual_pause.reset_room_context =
+                        PauseRoomResetContext::cleared_abyss;
+                }
+            }
             PauseInput pause_input = pause_input_from_snapshot(
                 physical_keys, escape_consumed,
                 pause_menu.screen == PauseScreen::capture_binding);
+            pause_input.reset = frame_input.keys.reset;
             pause_input.activate = pause_input.activate
                 && pause_pointer_row_hit;
             if (pause_input.activate) {
@@ -943,6 +959,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 pause_input.down = false;
                 pause_input.left = false;
                 pause_input.right = false;
+                pause_input.reset = false;
                 pause_input.activate = false;
                 switch (pause_pointer_hit.intent) {
                     case PausePointerIntent::activate:
@@ -959,7 +976,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             const PauseCommand pause_command = update_pause_menu(
-                pause_menu, pause_context, pause_input);
+                pause_menu, contextual_pause, pause_input);
             UiAudioCueMask ui_audio_cues = pause_audio_cues(
                 pause_screen_before, pause_menu.screen, pause_command);
             settings_runtime.consume_notice(pause_screen_before);
@@ -1016,15 +1033,24 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && gameplay_armed;
             HostRoomResetGateInput room_reset_gate{};
             room_reset_gate.pause_screen = pause_screen_before;
-            room_reset_gate.reset_pressed = frame_input.keys.reset;
-            room_reset_gate.gameplay_armed = gameplay_armed;
+            room_reset_gate.gameplay_armed = gameplay_armed
+                && !window_close_requested;
             room_reset_gate.death_allows_gameplay = death_gate.forward_gameplay;
-            room_reset_gate.forward_actions = forward_actions;
-            room_reset_gate.inventory_allows_room_reset =
-                inventory_gate.forward_room_reset;
-            if (host_requests_room_reset(room_reset_gate)) {
+            room_reset_gate.pause_reset_confirmed =
+                pause_command == PauseCommand::reset_room;
+            const bool room_reset_requested =
+                host_requests_room_reset(room_reset_gate);
+            if (pause_command == PauseCommand::reset_room
+                    && !room_reset_requested) {
+                resolve_pause_room_reset(pause_menu, false);
+            }
+            if (room_reset_requested) {
                 const dungeon::RequestResult reset =
                     session->reset_current_room();
+                if (pause_command == PauseCommand::reset_room) {
+                    resolve_pause_room_reset(pause_menu,
+                        reset != dungeon::RequestResult::rejected);
+                }
                 if (reset != dungeon::RequestResult::rejected) {
                     session->snapshot(current);
                     previous = current;

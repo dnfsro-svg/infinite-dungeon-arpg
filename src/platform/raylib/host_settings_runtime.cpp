@@ -190,6 +190,7 @@ bool HostSettingsRuntime::settle(
         break;
     }
     case PauseCommand::resume:
+    case PauseCommand::reset_room:
         break;
     case PauseCommand::quit:
         return true;

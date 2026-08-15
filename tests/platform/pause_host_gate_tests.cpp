@@ -1,11 +1,14 @@
+#include "allocation_probe.hpp"
 #include "test_framework.hpp"
 
 #include "core/fixed_step.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "host_input.hpp"
 #include "pause_menu_state.hpp"
+#include "pause_menu_view.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "raylib_host.hpp"
+#include "shared_ui_font.hpp"
 #include "window_settings.hpp"
 
 #include <cstdint>
@@ -232,28 +235,10 @@ arpg::test::Failure room_reset_gate_keeps_pause_gameplay_frozen() noexcept {
     ARPG_REQUIRE(!paused.forward_gameplay);
 
     platform::HostRoomResetGateInput input{};
-    input.pause_screen = platform::PauseScreen::root;
-    input.reset_pressed = true;
+    input.pause_screen = platform::PauseScreen::reset_confirm;
     input.gameplay_armed = true;
     input.death_allows_gameplay = true;
-    input.forward_actions = paused.forward_gameplay;
-    input.inventory_allows_room_reset = false;
-    ARPG_REQUIRE(platform::host_requests_room_reset(input));
-
-    for (const platform::PauseScreen screen : {
-             platform::PauseScreen::settings,
-             platform::PauseScreen::capture_binding,
-             platform::PauseScreen::quit_confirm,
-             platform::PauseScreen::quit_saving,
-         }) {
-        input.pause_screen = screen;
-        ARPG_REQUIRE(!platform::host_requests_room_reset(input));
-    }
-
-    input.pause_screen = platform::PauseScreen::closed;
-    ARPG_REQUIRE(!platform::host_requests_room_reset(input));
-    input.forward_actions = true;
-    input.inventory_allows_room_reset = true;
+    input.pause_reset_confirmed = true;
     ARPG_REQUIRE(platform::host_requests_room_reset(input));
 
     input.gameplay_armed = false;
@@ -262,8 +247,21 @@ arpg::test::Failure room_reset_gate_keeps_pause_gameplay_frozen() noexcept {
     input.death_allows_gameplay = false;
     ARPG_REQUIRE(!platform::host_requests_room_reset(input));
     input.death_allows_gameplay = true;
-    input.reset_pressed = false;
+    input.pause_reset_confirmed = false;
     ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+
+    for (const platform::PauseScreen screen : {
+             platform::PauseScreen::closed,
+             platform::PauseScreen::root,
+             platform::PauseScreen::settings,
+             platform::PauseScreen::capture_binding,
+             platform::PauseScreen::quit_confirm,
+             platform::PauseScreen::quit_saving,
+         }) {
+        input.pause_screen = screen;
+        input.pause_reset_confirmed = true;
+        ARPG_REQUIRE(!platform::host_requests_room_reset(input));
+    }
 
     platform::PauseMenuState quit_menu{};
     quit_menu.screen = platform::PauseScreen::quit_confirm;
@@ -329,6 +327,250 @@ arpg::test::Failure room_reset_gate_keeps_pause_gameplay_frozen() noexcept {
     ARPG_REQUIRE(begin != std::string::npos);
     ARPG_REQUIRE(accepted_sync != std::string::npos);
     ARPG_REQUIRE(settle < begin && begin < accepted_sync);
+    return {};
+}
+
+arpg::test::Failure pause_reset_requires_explicit_contextual_confirmation()
+    noexcept {
+    platform::PauseMenuState state{};
+
+    platform::PauseInput reset{};
+    reset.reset = true;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::reset_confirm);
+    ARPG_REQUIRE(state.selected_row == 1U);
+    ARPG_REQUIRE(state.reset_room_origin
+        == platform::PauseRoomResetOrigin::closed);
+    platform::PauseInput enter{};
+    enter.enter = true;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, enter)
+        == platform::PauseCommand::resume);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::closed);
+
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    platform::PauseInput up{};
+    up.up = true;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, up)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, enter)
+        == platform::PauseCommand::reset_room);
+    platform::resolve_pause_room_reset(state, true);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::closed);
+    ARPG_REQUIRE(state.message == nullptr);
+
+    const platform::PauseContext blocked_contexts[] = {
+        {true, false, false, false, false, true},
+        {false, true, false, false, false, true},
+        {false, false, true, false, false, true},
+        {false, false, false, true, false, true},
+        {false, false, false, false, true, true},
+        {false, false, false, false, false, false},
+    };
+    for (const platform::PauseContext& blocked : blocked_contexts) {
+        state.screen = platform::PauseScreen::closed;
+        state.message = nullptr;
+        ARPG_REQUIRE(platform::update_pause_menu(state, blocked, reset)
+            == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::closed);
+        ARPG_REQUIRE(state.message == nullptr);
+    }
+    state.screen = platform::PauseScreen::root;
+
+    platform::PauseContext pending{};
+    pending.pending_save = true;
+    ARPG_REQUIRE(platform::update_pause_menu(state, pending, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+    ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(
+        state.message, u8"当前状态无法重置") == 0);
+
+    state.selected_row = 2U;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, enter)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
+    ARPG_REQUIRE(state.message == nullptr);
+    platform::PauseInput escape{};
+    escape.escape = true;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, escape)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+
+    ARPG_REQUIRE(platform::update_pause_menu(state, pending, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, escape)
+        == platform::PauseCommand::resume);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::closed);
+    ARPG_REQUIRE(state.message == nullptr);
+    state.screen = platform::PauseScreen::root;
+    ARPG_REQUIRE(platform::update_pause_menu(state, pending, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.message != nullptr);
+    state.selected_row = 0U;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, enter)
+        == platform::PauseCommand::resume);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::closed);
+    ARPG_REQUIRE(state.message == nullptr);
+    state.screen = platform::PauseScreen::root;
+
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::reset_confirm);
+    ARPG_REQUIRE(state.selected_row == 1U);
+    ARPG_REQUIRE(state.reset_room_origin
+        == platform::PauseRoomResetOrigin::root);
+    ARPG_REQUIRE(state.reset_room_context
+        == platform::PauseRoomResetContext::normal);
+
+    platform::PauseMenuView view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"确认重置房间？") == 0);
+    ARPG_REQUIRE(std::strcmp(view.footer,
+        u8"本房间的未保存经验和地面掉落将丢失") == 0);
+    ARPG_REQUIRE(view.row_count == 2U);
+    ARPG_REQUIRE(view.selected_row == 1U);
+    ARPG_REQUIRE(std::strcmp(
+        view.rows[0].primary.data(), u8"确认重置房间") == 0);
+    ARPG_REQUIRE(std::strcmp(view.rows[1].primary.data(), u8"返回") == 0);
+
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, enter)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, up)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.selected_row == 0U);
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, enter)
+        == platform::PauseCommand::reset_room);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::reset_confirm);
+
+    platform::resolve_pause_room_reset(state, false);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::reset_confirm);
+    ARPG_REQUIRE(state.selected_row == 1U);
+    ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(
+        state.message, u8"当前状态无法重置") == 0);
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, escape)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+    ARPG_REQUIRE(state.message == nullptr);
+
+    platform::PauseContext abyss{};
+    abyss.reset_room_context = platform::PauseRoomResetContext::active_abyss;
+    ARPG_REQUIRE(platform::update_pause_menu(state, abyss, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::reset_confirm);
+    ARPG_REQUIRE(state.selected_row == 1U);
+    ARPG_REQUIRE(state.reset_room_context
+        == platform::PauseRoomResetContext::active_abyss);
+    view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"确认放弃深渊？") == 0);
+    ARPG_REQUIRE(std::strcmp(view.footer,
+        u8"本次深渊将失败，并放弃全部剩余奖励") == 0);
+    ARPG_REQUIRE(std::strcmp(
+        view.rows[0].primary.data(), u8"确认放弃深渊") == 0);
+
+    ARPG_REQUIRE(platform::update_pause_menu(state, abyss, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::reset_confirm);
+    ARPG_REQUIRE(state.selected_row == 1U);
+
+    const platform::PauseMenuLayout layout = platform::pause_menu_layout(
+        1280, 720, view.row_count);
+    const Rectangle confirm_bounds = layout.rows[0];
+    const platform::PausePointerHit hit = platform::hit_test_pause_pointer(
+        state, view, layout,
+        {confirm_bounds.x + confirm_bounds.width * 0.5F,
+         confirm_bounds.y + confirm_bounds.height * 0.5F});
+    ARPG_REQUIRE(hit.row == 0U);
+    ARPG_REQUIRE(hit.intent == platform::PausePointerIntent::activate);
+    state.selected_row = hit.row;
+    platform::PauseInput click{};
+    click.activate = hit.intent == platform::PausePointerIntent::activate;
+    ARPG_REQUIRE(platform::update_pause_menu(state, abyss, click)
+        == platform::PauseCommand::reset_room);
+    platform::resolve_pause_room_reset(state, true);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+    ARPG_REQUIRE(state.selected_row == 0U);
+    ARPG_REQUIRE(state.message == nullptr);
+    ARPG_REQUIRE(state.reset_room_context
+        == platform::PauseRoomResetContext::normal);
+
+    platform::PauseContext cleared_abyss{};
+    cleared_abyss.reset_room_context =
+        platform::PauseRoomResetContext::cleared_abyss;
+    ARPG_REQUIRE(platform::update_pause_menu(state, cleared_abyss, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::reset_confirm);
+    ARPG_REQUIRE(state.selected_row == 0U);
+    view = platform::make_pause_menu_view(state);
+    ARPG_REQUIRE(std::strcmp(view.title, u8"深渊已清理") == 0);
+    ARPG_REQUIRE(std::strcmp(view.footer, u8"当前状态无法重置") == 0);
+    ARPG_REQUIRE(view.row_count == 1U);
+    ARPG_REQUIRE(std::strcmp(
+        view.rows[0].primary.data(), u8"返回") == 0);
+    ARPG_REQUIRE(platform::update_pause_menu(state, cleared_abyss, enter)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+
+    state.screen = platform::PauseScreen::settings;
+    state.settings_page = platform::PauseSettingsPage::home;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+    state.screen = platform::PauseScreen::quit_confirm;
+    state.selected_row = 1U;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
+    state.screen = platform::PauseScreen::capture_binding;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::capture_binding);
+    state.screen = platform::PauseScreen::quit_saving;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, reset)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_saving);
+
+    const platform::UiGlyphPlan glyph_plan = platform::ui_glyph_plan();
+    ARPG_REQUIRE(!glyph_plan.capacity_exceeded);
+    ARPG_REQUIRE(glyph_plan.codepoint_count == 647U);
+    constexpr const char* kResetTexts[] = {
+        u8"确认重置房间？",
+        u8"本房间的未保存经验和地面掉落将丢失",
+        u8"确认重置房间",
+        u8"确认放弃深渊？",
+        u8"本次深渊将失败，并放弃全部剩余奖励",
+        u8"确认放弃深渊",
+        u8"深渊已清理",
+        u8"当前状态无法重置",
+    };
+    for (const char* text : kResetTexts) {
+        ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(glyph_plan, text));
+    }
+
+    platform::PauseMenuState bounded{};
+    bounded.screen = platform::PauseScreen::root;
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
+        platform::PauseContext context{};
+        context.reset_room_context = iteration % 2U == 0U
+            ? platform::PauseRoomResetContext::normal
+            : platform::PauseRoomResetContext::active_abyss;
+        bounded.screen = platform::PauseScreen::root;
+        ARPG_REQUIRE(platform::update_pause_menu(bounded, context, reset)
+            == platform::PauseCommand::none);
+        const platform::PauseMenuView bounded_view =
+            platform::make_pause_menu_view(bounded);
+        ARPG_REQUIRE(bounded_view.row_count == 2U);
+        ARPG_REQUIRE(platform::update_pause_menu(bounded, context, escape)
+            == platform::PauseCommand::none);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
     return {};
 }
 
@@ -483,7 +725,8 @@ arpg::test::Failure close_same_frame_waits_for_rejected_apply() noexcept {
     ARPG_REQUIRE(input.bindings == original.bindings);
     ARPG_REQUIRE(state.draft.bindings != original.bindings);
     ARPG_REQUIRE(live.loot_filter_mode == original.loot_filter_mode);
-    ARPG_REQUIRE(state.draft.loot_filter_mode == original.loot_filter_mode);
+    ARPG_REQUIRE(state.draft.loot_filter_mode
+        == settings::LootFilterMode::rare_only);
     ARPG_REQUIRE(platform::renderer_loot_filter_mode(
         state.screen, live, state.draft) == original.loot_filter_mode);
     ARPG_REQUIRE(state.message != nullptr);
@@ -551,11 +794,13 @@ arpg::test::Failure apply_rollback_failure_still_restores_committed_loot_policy(
     ARPG_REQUIRE(state.message != nullptr);
     ARPG_REQUIRE(state.committed.loot_filter_mode == original.loot_filter_mode);
     ARPG_REQUIRE(live.loot_filter_mode == original.loot_filter_mode);
-    ARPG_REQUIRE(state.draft.loot_filter_mode == original.loot_filter_mode);
+    ARPG_REQUIRE(state.draft.loot_filter_mode
+        == settings::LootFilterMode::rare_only);
     ARPG_REQUIRE(platform::loot_pickup_policy(live.loot_filter_mode).minimum_rarity
         == platform::loot_pickup_policy(original.loot_filter_mode).minimum_rarity);
     ARPG_REQUIRE(platform::renderer_loot_filter_mode(
-        state.screen, live, state.draft) == original.loot_filter_mode);
+        state.screen, live, state.draft)
+        == settings::LootFilterMode::rare_only);
     return {};
 }
 
@@ -566,6 +811,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &pause_entry_discards_same_frame_action_and_accumulator},
     {"room reset gate keeps pause gameplay frozen",
         &room_reset_gate_keeps_pause_gameplay_frozen},
+    {"pause reset requires explicit contextual confirmation",
+        &pause_reset_requires_explicit_contextual_confirmation},
     {"death continue uses fixed E snapshot",
         &death_continue_uses_fixed_e_from_authoritative_snapshot},
     {"death continue rejects fixed E while focus lost",

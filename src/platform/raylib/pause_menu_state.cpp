@@ -15,6 +15,8 @@ constexpr std::size_t kSettingsAudioRowCount = 6U;
 constexpr std::size_t kSettingsDisplayRowCount = 4U;
 constexpr std::size_t kSettingsBindingsRowCount = 11U;
 constexpr std::size_t kQuitRowCount = 2U;
+constexpr std::size_t kResetRowCount = 2U;
+constexpr const char* kResetRejected = u8"当前状态无法重置";
 constexpr std::size_t kSettingsHomeAudioRow = 0U;
 constexpr std::size_t kSettingsHomeDisplayRow = 1U;
 constexpr std::size_t kSettingsHomeBindingsRow = 2U;
@@ -51,6 +53,39 @@ void return_to_root(PauseMenuState& state) noexcept {
     state.settings_page = PauseSettingsPage::home;
     state.selected_row = 0U;
     state.capture_action.reset();
+    state.reset_room_context = PauseRoomResetContext::normal;
+    state.reset_room_origin = PauseRoomResetOrigin::root;
+}
+
+void open_reset_confirm(
+    PauseMenuState& state,
+    const PauseContext& context,
+    PauseRoomResetOrigin origin) noexcept {
+    state.screen = PauseScreen::reset_confirm;
+    state.reset_room_context = context.reset_room_context;
+    state.reset_room_origin = origin;
+    state.selected_row = context.reset_room_context
+            == PauseRoomResetContext::cleared_abyss
+        ? 0U : 1U;
+    state.capture_action.reset();
+    state.message = nullptr;
+}
+
+[[nodiscard]] PauseCommand return_from_reset_confirm(
+    PauseMenuState& state) noexcept {
+    const PauseRoomResetOrigin origin = state.reset_room_origin;
+    state.message = nullptr;
+    if (origin == PauseRoomResetOrigin::closed) {
+        state.screen = PauseScreen::closed;
+        state.settings_page = PauseSettingsPage::home;
+        state.selected_row = 0U;
+        state.capture_action.reset();
+        state.reset_room_context = PauseRoomResetContext::normal;
+        state.reset_room_origin = PauseRoomResetOrigin::root;
+        return PauseCommand::resume;
+    }
+    return_to_root(state);
+    return PauseCommand::none;
 }
 
 [[nodiscard]] constexpr std::size_t home_row_for(
@@ -100,27 +135,42 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
     PauseMenuState& state,
     const PauseContext& context,
     const PauseInput& input) noexcept {
-    if (!input.escape) {
+    if (!input.escape && !input.reset) {
         return PauseCommand::none;
     }
     if (context.recovery_active || context.death_active || context.inventory_open ||
         context.passive_open || context.pending_save) {
         return PauseCommand::none;
     }
-    state.screen = PauseScreen::root;
-    state.selected_row = 0U;
-    state.capture_action.reset();
+    if (input.escape) {
+        state.screen = PauseScreen::root;
+        state.selected_row = 0U;
+        state.capture_action.reset();
+        state.message = nullptr;
+        return PauseCommand::none;
+    }
+    open_reset_confirm(state, context, PauseRoomResetOrigin::closed);
     return PauseCommand::none;
 }
 
 [[nodiscard]] PauseCommand update_root(
     PauseMenuState& state,
+    const PauseContext& context,
     const PauseInput& input) noexcept {
     if (input.escape) {
         state.screen = PauseScreen::closed;
         state.selected_row = 0U;
         state.capture_action.reset();
+        state.message = nullptr;
         return PauseCommand::resume;
+    }
+    if (input.reset) {
+        if (context.pending_save) {
+            state.message = kResetRejected;
+            return PauseCommand::none;
+        }
+        open_reset_confirm(state, context, PauseRoomResetOrigin::root);
+        return PauseCommand::none;
     }
     if (navigate(state.selected_row, kRootRowCount, input)) {
         return PauseCommand::none;
@@ -132,6 +182,7 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
         state.screen = PauseScreen::closed;
         state.selected_row = 0U;
         state.capture_action.reset();
+        state.message = nullptr;
         return PauseCommand::resume;
     }
     if (state.selected_row == 1U) {
@@ -146,6 +197,7 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
     state.screen = PauseScreen::quit_confirm;
     state.selected_row = 1U;
     state.capture_action.reset();
+    state.message = nullptr;
     return PauseCommand::none;
 }
 
@@ -309,6 +361,28 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
     return PauseCommand::none;
 }
 
+[[nodiscard]] PauseCommand update_reset_confirm(
+    PauseMenuState& state,
+    const PauseInput& input) noexcept {
+    if (input.escape) {
+        return return_from_reset_confirm(state);
+    }
+    const bool cleared_abyss = state.reset_room_context
+        == PauseRoomResetContext::cleared_abyss;
+    const std::size_t row_count = cleared_abyss ? 1U : kResetRowCount;
+    if (navigate(state.selected_row, row_count, input)) {
+        return PauseCommand::none;
+    }
+    if (!confirmed(input)) {
+        return PauseCommand::none;
+    }
+    if (!cleared_abyss && state.selected_row == 0U) {
+        state.message = nullptr;
+        return PauseCommand::reset_room;
+    }
+    return return_from_reset_confirm(state);
+}
+
 [[nodiscard]] PauseCommand update_capture(
     PauseMenuState& state,
     const PauseContext& context,
@@ -370,11 +444,13 @@ PauseCommand update_pause_menu(
         case PauseScreen::closed:
             return update_closed(state, context, input);
         case PauseScreen::root:
-            return update_root(state, input);
+            return update_root(state, context, input);
         case PauseScreen::settings:
             return update_settings(state, input);
         case PauseScreen::capture_binding:
             return update_capture(state, context, input);
+        case PauseScreen::reset_confirm:
+            return update_reset_confirm(state, input);
         case PauseScreen::quit_confirm:
             return update_quit_confirm(state, input);
         case PauseScreen::quit_saving:
@@ -384,6 +460,8 @@ PauseCommand update_pause_menu(
     state.settings_page = PauseSettingsPage::home;
     state.selected_row = 0U;
     state.capture_action.reset();
+    state.reset_room_context = PauseRoomResetContext::normal;
+    state.reset_room_origin = PauseRoomResetOrigin::root;
     return PauseCommand::none;
 }
 
@@ -400,6 +478,18 @@ void cancel_pause_quit_saving(PauseMenuState& state) noexcept {
     state.selected_row = 1U;
     state.capture_action.reset();
     state.message = ui_text(UiTextId::save_error);
+}
+
+void resolve_pause_room_reset(PauseMenuState& state, bool accepted) noexcept {
+    if (state.screen != PauseScreen::reset_confirm) return;
+    if (accepted) {
+        static_cast<void>(return_from_reset_confirm(state));
+        return;
+    }
+    state.selected_row = state.reset_room_context
+            == PauseRoomResetContext::cleared_abyss
+        ? 0U : 1U;
+    state.message = kResetRejected;
 }
 
 }  // namespace arpg::platform

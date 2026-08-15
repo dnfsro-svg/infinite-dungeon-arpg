@@ -13,6 +13,7 @@ enum class PauseScreen : std::uint8_t {
     root,
     settings,
     capture_binding,
+    reset_confirm,
     quit_confirm,
     quit_saving,
 };
@@ -30,7 +31,19 @@ enum class PauseCommand : std::uint8_t {
     apply,
     rollback,
     resume,
+    reset_room,
     quit
+};
+
+enum class PauseRoomResetContext : std::uint8_t {
+    normal,
+    active_abyss,
+    cleared_abyss,
+};
+
+enum class PauseRoomResetOrigin : std::uint8_t {
+    root,
+    closed,
 };
 
 struct PauseContext final {
@@ -40,6 +53,7 @@ struct PauseContext final {
     bool passive_open{};
     bool pending_save{};
     bool window_focused{true};
+    PauseRoomResetContext reset_room_context{PauseRoomResetContext::normal};
 };
 
 struct PauseInput final {
@@ -52,6 +66,7 @@ struct PauseInput final {
     bool activate{};
     bool focus_lost{};
     std::optional<settings::StableKey> captured_key{};
+    bool reset{};
 };
 
 struct PauseMenuState final {
@@ -62,6 +77,8 @@ struct PauseMenuState final {
     settings::SettingsData committed{};
     settings::SettingsData draft{};
     const char* message{};
+    PauseRoomResetContext reset_room_context{PauseRoomResetContext::normal};
+    PauseRoomResetOrigin reset_room_origin{PauseRoomResetOrigin::root};
 };
 
 [[nodiscard]] PauseCommand update_pause_menu(
@@ -71,5 +88,6 @@ struct PauseMenuState final {
 
 void begin_pause_quit_saving(PauseMenuState& state) noexcept;
 void cancel_pause_quit_saving(PauseMenuState& state) noexcept;
+void resolve_pause_room_reset(PauseMenuState& state, bool accepted) noexcept;
 
 }  // namespace arpg::platform

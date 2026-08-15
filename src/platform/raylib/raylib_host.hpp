@@ -259,11 +259,9 @@ struct HostFrameGateResult final {
 
 struct HostRoomResetGateInput final {
     PauseScreen pause_screen{};
-    bool reset_pressed{};
     bool gameplay_armed{};
     bool death_allows_gameplay{};
-    bool forward_actions{};
-    bool inventory_allows_room_reset{};
+    bool pause_reset_confirmed{};
 };
 
 [[nodiscard]] HostFrameGateResult gate_host_frame(

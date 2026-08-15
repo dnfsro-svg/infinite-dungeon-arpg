@@ -2154,13 +2154,11 @@ HostFrameGateResult gate_host_frame(
 set(_host_room_reset_gate_contract [=[
 bool host_requests_room_reset(
     const HostRoomResetGateInput& input) noexcept {
-    if (!input.reset_pressed || !input.gameplay_armed
-        || !input.death_allows_gameplay) {
+    if (!input.gameplay_armed || !input.death_allows_gameplay) {
         return false;
     }
-    if (input.pause_screen == PauseScreen::root) return true;
-    return input.pause_screen == PauseScreen::closed
-        && input.forward_actions && input.inventory_allows_room_reset;
+    return input.pause_screen == PauseScreen::reset_confirm
+        && input.pause_reset_confirmed;
 }
 ]=])
 string(CONCAT _host_frame_gate_translation_unit_contract

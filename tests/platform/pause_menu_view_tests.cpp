@@ -723,6 +723,12 @@ test::Failure selected_rows_clamp_to_each_visible_view() noexcept {
     state.screen = platform::PauseScreen::capture_binding;
     ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 0U);
 
+    state.screen = platform::PauseScreen::reset_confirm;
+    state.reset_room_context = platform::PauseRoomResetContext::normal;
+    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 1U);
+    state.reset_room_context = platform::PauseRoomResetContext::cleared_abyss;
+    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 0U);
+
     state.screen = platform::PauseScreen::closed;
     ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 0U);
     return {};
@@ -735,6 +741,7 @@ test::Failure render_plans_have_exact_screen_orders() noexcept {
         platform::PauseScreen::root,
         platform::PauseScreen::settings,
         platform::PauseScreen::capture_binding,
+        platform::PauseScreen::reset_confirm,
         platform::PauseScreen::quit_confirm,
         platform::PauseScreen::quit_saving,
     };
@@ -828,6 +835,7 @@ test::Failure every_static_pause_view_text_has_shared_font_coverage() noexcept {
         platform::PauseScreen::root,
         platform::PauseScreen::settings,
         platform::PauseScreen::capture_binding,
+        platform::PauseScreen::reset_confirm,
         platform::PauseScreen::quit_confirm,
         platform::PauseScreen::quit_saving,
     };
@@ -867,7 +875,7 @@ test::Failure every_static_pause_view_text_has_shared_font_coverage() noexcept {
 }
 
 test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
-    std::array<platform::PauseMenuState, 6U> states{};
+    std::array<platform::PauseMenuState, 9U> states{};
     states[0] = settings_state();
     states[0].screen = platform::PauseScreen::closed;
     states[1] = settings_state();
@@ -879,10 +887,21 @@ test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
     states[3].capture_action = settings::SettingAction::passive_tree;
     states[3].message = "";
     states[4] = settings_state();
-    states[4].screen = platform::PauseScreen::quit_confirm;
+    states[4].screen = platform::PauseScreen::reset_confirm;
+    states[4].reset_room_context = platform::PauseRoomResetContext::normal;
     states[5] = settings_state();
-    states[5].screen = platform::PauseScreen::quit_saving;
-    states[5].message = nullptr;
+    states[5].screen = platform::PauseScreen::reset_confirm;
+    states[5].reset_room_context =
+        platform::PauseRoomResetContext::active_abyss;
+    states[6] = settings_state();
+    states[6].screen = platform::PauseScreen::reset_confirm;
+    states[6].reset_room_context =
+        platform::PauseRoomResetContext::cleared_abyss;
+    states[7] = settings_state();
+    states[7].screen = platform::PauseScreen::quit_confirm;
+    states[8] = settings_state();
+    states[8].screen = platform::PauseScreen::quit_saving;
+    states[8].message = nullptr;
 
     const std::uint64_t before = test::allocation_count();
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {

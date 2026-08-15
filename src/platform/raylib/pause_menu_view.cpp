@@ -420,6 +420,31 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
                 key_label(settings::binding_for(state.draft, action)));
             return view;
         }
+        case PauseScreen::reset_confirm:
+            if (state.reset_room_context
+                    == PauseRoomResetContext::cleared_abyss) {
+                view.title = u8"深渊已清理";
+                view.footer = u8"当前状态无法重置";
+                view.row_count = 1U;
+                view.selected_row = 0U;
+                write_primary(view, 0U, "%s", u8"返回");
+                return view;
+            }
+            view.title = state.reset_room_context
+                    == PauseRoomResetContext::active_abyss
+                ? u8"确认放弃深渊？" : u8"确认重置房间？";
+            view.footer = state.reset_room_context
+                    == PauseRoomResetContext::active_abyss
+                ? u8"本次深渊将失败，并放弃全部剩余奖励"
+                : u8"本房间的未保存经验和地面掉落将丢失";
+            view.row_count = 2U;
+            view.selected_row = clamp_selected_row(
+                state.selected_row, view.row_count);
+            write_primary(view, 0U, "%s",
+                state.reset_room_context == PauseRoomResetContext::active_abyss
+                    ? u8"确认放弃深渊" : u8"确认重置房间");
+            write_primary(view, 1U, "%s", u8"返回");
+            return view;
         case PauseScreen::quit_confirm:
             view.title = u8"确认退出？";
             view.footer = kPauseFooter;
