@@ -276,6 +276,8 @@ test::Failure volume_preview_clamps_and_noop_returns_none() noexcept {
     ARPG_REQUIRE(state.draft.master_sfx_percent == 100U);
     ARPG_REQUIRE(update(state, input_for(InputKind::right)) == platform::PauseCommand::none);
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+    ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.draft.master_sfx_percent == 100U);
     std::uint8_t settings::SettingsData::* buses[] = {
         &settings::SettingsData::sfx_percent,
         &settings::SettingsData::music_percent,

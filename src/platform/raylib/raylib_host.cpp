@@ -888,6 +888,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const bool pause_was_open =
                 pause_screen_before != PauseScreen::closed;
             bool pause_pointer_row_hit = false;
+            PausePointerHit pause_pointer_hit{};
             if (pause_was_open
                     && !physical_keys.focus_lost
                     && physical_keys.mouse_left) {
@@ -896,10 +897,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 const PauseMenuLayout layout = pause_menu_layout(
                     GetScreenWidth(), GetScreenHeight(),
                     pause_view.row_count);
-                const auto selected = hit_test_pause_row(
-                    layout, physical_keys.mouse_position);
-                pause_pointer_row_hit = selected.has_value();
-                if (selected.has_value()) pause_menu.selected_row = *selected;
+                pause_pointer_hit = hit_test_pause_pointer(
+                    pause_menu, pause_view, layout,
+                    physical_keys.mouse_position);
+                pause_pointer_row_hit = pause_pointer_hit.intent
+                    != PausePointerIntent::none;
+                if (pause_pointer_row_hit) {
+                    pause_menu.selected_row = pause_pointer_hit.row;
+                }
             }
             const PauseContext pause_context{
                 death_saving || death_pending,
@@ -914,6 +919,26 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 pause_menu.screen == PauseScreen::capture_binding);
             pause_input.activate = pause_input.activate
                 && pause_pointer_row_hit;
+            if (pause_input.activate) {
+                pause_input.up = false;
+                pause_input.down = false;
+                pause_input.left = false;
+                pause_input.right = false;
+                pause_input.activate = false;
+                switch (pause_pointer_hit.intent) {
+                    case PausePointerIntent::activate:
+                        pause_input.activate = true;
+                        break;
+                    case PausePointerIntent::decrement:
+                        pause_input.left = true;
+                        break;
+                    case PausePointerIntent::increment:
+                        pause_input.right = true;
+                        break;
+                    case PausePointerIntent::none:
+                        break;
+                }
+            }
             const PauseCommand pause_command = update_pause_menu(
                 pause_menu, pause_context, pause_input);
             UiAudioCueMask ui_audio_cues = pause_audio_cues(

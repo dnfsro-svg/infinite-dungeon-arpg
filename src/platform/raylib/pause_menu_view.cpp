@@ -36,6 +36,8 @@ constexpr const char* kPauseRootResetFooter =
     u8"方向键导航｜Enter 选择｜Esc 返回｜R 重置房间";
 constexpr const char* kSettingsFooter =
     u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回";
+constexpr const char* kSettingsAudioFooter =
+    u8"上下导航｜左右键调整｜点击左减右增｜返回行 Enter｜Esc 返回";
 constexpr const char* kCaptureFooter =
     u8"请按下可绑定按键｜Esc 取消";
 
@@ -383,6 +385,7 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
                     break;
                 case PauseSettingsPage::audio:
                     view.title = ui_text(UiTextId::settings_audio);
+                    view.footer = kSettingsAudioFooter;
                     view.row_count = 6U;
                     build_settings_audio_rows(view, state);
                     break;
@@ -435,7 +438,9 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
 std::optional<std::size_t> hit_test_pause_row(
     const PauseMenuLayout& layout,
     Vector2 point) noexcept {
-    for (std::size_t row = 0U; row < layout.visible_row_count; ++row) {
+    const std::size_t row_count = (std::min)(
+        layout.visible_row_count, kPauseMenuRowCapacity);
+    for (std::size_t row = 0U; row < row_count; ++row) {
         const Rectangle bounds = layout.rows[row];
         if (point.x >= bounds.x && point.x < bounds.x + bounds.width
                 && point.y >= bounds.y
@@ -444,6 +449,34 @@ std::optional<std::size_t> hit_test_pause_row(
         }
     }
     return std::nullopt;
+}
+
+PausePointerHit hit_test_pause_pointer(
+    const PauseMenuState& state,
+    const PauseMenuView& view,
+    const PauseMenuLayout& layout,
+    Vector2 point) noexcept {
+    const std::optional<std::size_t> row = hit_test_pause_row(layout, point);
+    if (!row.has_value() || *row >= view.row_count
+            || *row >= kPauseMenuRowCapacity) {
+        return {};
+    }
+
+    if (state.screen == PauseScreen::settings
+            && state.settings_page == PauseSettingsPage::audio) {
+        constexpr std::size_t kVolumeRowCount = 5U;
+        constexpr std::size_t kBackRow = 5U;
+        if (*row < kVolumeRowCount) {
+            const Rectangle bounds = layout.rows[*row];
+            const float midpoint = bounds.x + bounds.width * 0.5F;
+            return {*row, point.x < midpoint
+                ? PausePointerIntent::decrement
+                : PausePointerIntent::increment};
+        }
+        if (*row != kBackRow) return {};
+    }
+
+    return {*row, PausePointerIntent::activate};
 }
 
 }  // namespace arpg::platform

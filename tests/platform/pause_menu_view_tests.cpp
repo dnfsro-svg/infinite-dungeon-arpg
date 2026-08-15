@@ -268,6 +268,69 @@ test::Failure hit_test_uses_half_open_rows_only() noexcept {
     ARPG_REQUIRE(!platform::hit_test_pause_row(layout,
         {layout.panel.x + layout.panel.width,
          layout.panel.y + layout.panel.height}).has_value());
+
+    platform::PauseMenuState audio_state = settings_state();
+    audio_state.settings_page = platform::PauseSettingsPage::audio;
+    const platform::PauseMenuView audio_view =
+        platform::make_pause_menu_view(audio_state);
+    const platform::PauseMenuLayout audio_layout =
+        platform::pause_menu_layout(1280, 720, audio_view.row_count);
+    for (std::size_t row = 0U; row < 5U; ++row) {
+        const Rectangle bounds = audio_layout.rows[row];
+        const auto decrement = platform::hit_test_pause_pointer(
+            audio_state, audio_view, audio_layout,
+            {bounds.x + bounds.width * 0.25F,
+             bounds.y + bounds.height * 0.5F});
+        ARPG_REQUIRE(decrement.row == row);
+        ARPG_REQUIRE(decrement.intent
+            == platform::PausePointerIntent::decrement);
+
+        const auto increment_from_center = platform::hit_test_pause_pointer(
+            audio_state, audio_view, audio_layout,
+            {bounds.x + bounds.width * 0.5F,
+             bounds.y + bounds.height * 0.5F});
+        ARPG_REQUIRE(increment_from_center.row == row);
+        ARPG_REQUIRE(increment_from_center.intent
+            == platform::PausePointerIntent::increment);
+    }
+
+    const Rectangle back = audio_layout.rows[5U];
+    const auto activate_back = platform::hit_test_pause_pointer(
+        audio_state, audio_view, audio_layout,
+        {back.x + back.width * 0.5F, back.y + back.height * 0.5F});
+    ARPG_REQUIRE(activate_back.row == 5U);
+    ARPG_REQUIRE(activate_back.intent
+        == platform::PausePointerIntent::activate);
+
+    platform::PauseMenuView shortened_audio_view = audio_view;
+    shortened_audio_view.row_count = 5U;
+    const auto hidden_back = platform::hit_test_pause_pointer(
+        audio_state, shortened_audio_view, audio_layout,
+        {back.x + back.width * 0.5F, back.y + back.height * 0.5F});
+    ARPG_REQUIRE(hidden_back.row == platform::kPauseMenuRowCapacity);
+    ARPG_REQUIRE(hidden_back.intent == platform::PausePointerIntent::none);
+
+    platform::PauseMenuState display_state = audio_state;
+    display_state.settings_page = platform::PauseSettingsPage::display;
+    const platform::PauseMenuView display_view =
+        platform::make_pause_menu_view(display_state);
+    const platform::PauseMenuLayout display_layout =
+        platform::pause_menu_layout(1280, 720, display_view.row_count);
+    const Rectangle display_row = display_layout.rows[0U];
+    const auto activate_display = platform::hit_test_pause_pointer(
+        display_state, display_view, display_layout,
+        {display_row.x + display_row.width * 0.25F,
+         display_row.y + display_row.height * 0.5F});
+    ARPG_REQUIRE(activate_display.row == 0U);
+    ARPG_REQUIRE(activate_display.intent
+        == platform::PausePointerIntent::activate);
+
+    auto overreported_layout = audio_layout;
+    overreported_layout.visible_row_count =
+        (std::numeric_limits<std::size_t>::max)();
+    ARPG_REQUIRE(!platform::hit_test_pause_row(overreported_layout,
+        {overreported_layout.footer.x,
+         overreported_layout.footer.y}).has_value());
     return {};
 }
 
@@ -382,6 +445,8 @@ test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcep
     view = platform::make_pause_menu_view(state);
     ARPG_REQUIRE(std::strcmp(view.title, u8"音频设置") == 0);
     ARPG_REQUIRE(view.row_count == 6U);
+    ARPG_REQUIRE(std::strcmp(view.footer,
+        u8"上下导航｜左右键调整｜点击左减右增｜返回行 Enter｜Esc 返回") == 0);
     constexpr const char* kAudioPrimary[] = {
         u8"总音量：55%", u8"音效：60%", u8"音乐：35%",
         u8"环境音：25%", u8"界面音：70%", u8"返回",
@@ -400,6 +465,8 @@ test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcep
     view = platform::make_pause_menu_view(state);
     ARPG_REQUIRE(std::strcmp(view.title, u8"显示设置") == 0);
     ARPG_REQUIRE(view.row_count == 4U);
+    ARPG_REQUIRE(std::strcmp(view.footer,
+        u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回") == 0);
     ARPG_REQUIRE(row_equals(view.rows[0], u8"窗口模式：全屏",
         u8"已保存：窗口化"));
     ARPG_REQUIRE(row_equals(view.rows[1], u8"垂直同步：关",
@@ -412,6 +479,8 @@ test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcep
     view = platform::make_pause_menu_view(state);
     ARPG_REQUIRE(std::strcmp(view.title, u8"按键设置") == 0);
     ARPG_REQUIRE(view.row_count == 11U);
+    ARPG_REQUIRE(std::strcmp(view.footer,
+        u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回") == 0);
     constexpr const char* kBindingPrimary[] = {
         u8"上移：0", u8"下移：1", u8"左移：2", u8"右移：3",
         u8"轻攻击：4", u8"跳跃：5", u8"挑飞：6", u8"交互：7",
@@ -822,6 +891,13 @@ test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
             ARPG_REQUIRE(view.row_count <= 21U);
             const auto plan = platform::make_pause_menu_render_plan(view);
             ARPG_REQUIRE(plan.op_count <= platform::kPauseMenuRenderOpCapacity);
+            const auto layout = platform::pause_menu_layout(
+                1280, 720, view.row_count);
+            const auto pointer = platform::hit_test_pause_pointer(
+                state, view, layout,
+                {layout.rows[0].x + layout.rows[0].width * 0.5F,
+                 layout.rows[0].y + layout.rows[0].height * 0.5F});
+            ARPG_REQUIRE(pointer.row <= platform::kPauseMenuRowCapacity);
         }
         constexpr std::array<std::array<int, 2>, 3> kSizes{{
             {{1024, 576}}, {{1280, 720}}, {{1920, 1080}},

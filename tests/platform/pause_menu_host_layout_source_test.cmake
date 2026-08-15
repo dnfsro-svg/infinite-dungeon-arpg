@@ -30,21 +30,22 @@ if(HOST_LAYOUT_INDEX EQUAL -1)
         "pause host mouse hit testing must use the three-argument row-count layout")
 endif()
 
-set(HOST_HIT_TEST_SOURCE
-    "hit_test_pause_row(layout,physical_keys.mouse_position)")
-string(FIND "${HOST_COMPACT}" "${HOST_HIT_TEST_SOURCE}" HOST_HIT_TEST_INDEX)
-if(HOST_HIT_TEST_INDEX EQUAL -1)
+set(HOST_POINTER_MAP_SOURCE
+    "pause_pointer_hit=hit_test_pause_pointer(pause_menu,pause_view,layout,physical_keys.mouse_position);")
+string(FIND "${HOST_COMPACT}" "${HOST_POINTER_MAP_SOURCE}"
+    HOST_POINTER_MAP_INDEX)
+if(HOST_POINTER_MAP_INDEX EQUAL -1)
     message(FATAL_ERROR
-        "pause host mouse hit testing must consume that shared layout")
+        "pause host mouse input must consume the state, view, and shared layout through the pure pointer mapper")
 endif()
 
-set(HOST_HIT_TEST_CHAIN
-    "${HOST_VIEW_SOURCE}constPauseMenuLayoutlayout=${HOST_LAYOUT_SOURCE};constautoselected=${HOST_HIT_TEST_SOURCE};")
-string(FIND "${HOST_COMPACT}" "${HOST_HIT_TEST_CHAIN}"
-    HOST_HIT_TEST_CHAIN_INDEX)
-if(HOST_HIT_TEST_CHAIN_INDEX EQUAL -1)
+set(HOST_POINTER_MAP_CHAIN
+    "${HOST_VIEW_SOURCE}constPauseMenuLayoutlayout=${HOST_LAYOUT_SOURCE};${HOST_POINTER_MAP_SOURCE}")
+string(FIND "${HOST_COMPACT}" "${HOST_POINTER_MAP_CHAIN}"
+    HOST_POINTER_MAP_CHAIN_INDEX)
+if(HOST_POINTER_MAP_CHAIN_INDEX EQUAL -1)
     message(FATAL_ERROR
-        "pause host must build the current view, derive its visible-row layout, and hit-test that same layout in one chain")
+        "pause host must build the current view, derive its visible-row layout, and map that same layout in one chain")
 endif()
 
 set(HOST_POINTER_HIT_DEFAULT_SOURCE
@@ -57,12 +58,21 @@ if(HOST_POINTER_HIT_DEFAULT_INDEX EQUAL -1)
 endif()
 
 set(HOST_POINTER_HIT_SOURCE
-    "pause_pointer_row_hit=selected.has_value();")
+    "pause_pointer_row_hit=pause_pointer_hit.intent!=PausePointerIntent::none;")
 string(FIND "${HOST_COMPACT}" "${HOST_POINTER_HIT_SOURCE}"
     HOST_POINTER_HIT_INDEX)
 if(HOST_POINTER_HIT_INDEX EQUAL -1)
     message(FATAL_ERROR
         "pause host must preserve whether the pointer hit a visible row")
+endif()
+
+set(HOST_POINTER_SELECTION_SOURCE
+    "if(pause_pointer_row_hit){pause_menu.selected_row=pause_pointer_hit.row;}")
+string(FIND "${HOST_COMPACT}" "${HOST_POINTER_SELECTION_SOURCE}"
+    HOST_POINTER_SELECTION_INDEX)
+if(HOST_POINTER_SELECTION_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host must select the mapped visible row before applying its intent")
 endif()
 
 set(HOST_ACTIVATE_GATE_SOURCE
@@ -74,14 +84,37 @@ if(HOST_ACTIVATE_GATE_INDEX EQUAL -1)
         "pause host must not activate the selected command from a blank-area click")
 endif()
 
+set(HOST_POINTER_CLEAR_SOURCE
+    "pause_input.up=false;pause_input.down=false;pause_input.left=false;pause_input.right=false;pause_input.activate=false;")
+string(FIND "${HOST_COMPACT}" "${HOST_POINTER_CLEAR_SOURCE}"
+    HOST_POINTER_CLEAR_INDEX)
+if(HOST_POINTER_CLEAR_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "pause host must clear same-frame keyboard directions and activation before applying one pointer intent")
+endif()
+
+foreach(POINTER_INTENT_SOURCE IN ITEMS
+        "casePausePointerIntent::activate:pause_input.activate=true;"
+        "casePausePointerIntent::decrement:pause_input.left=true;"
+        "casePausePointerIntent::increment:pause_input.right=true;")
+    string(FIND "${HOST_COMPACT}" "${POINTER_INTENT_SOURCE}"
+        POINTER_INTENT_INDEX)
+    if(POINTER_INTENT_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "pause host must translate each pointer intent into exactly one pause input")
+    endif()
+endforeach()
+
 set(HOST_UPDATE_SOURCE
     "constPauseCommandpause_command=update_pause_menu(pause_menu,pause_context,pause_input);")
 string(FIND "${HOST_COMPACT}" "${HOST_UPDATE_SOURCE}" HOST_UPDATE_INDEX)
 if(HOST_UPDATE_INDEX EQUAL -1
-        OR NOT HOST_POINTER_HIT_DEFAULT_INDEX LESS HOST_HIT_TEST_INDEX
-        OR NOT HOST_HIT_TEST_INDEX LESS HOST_POINTER_HIT_INDEX
-        OR NOT HOST_POINTER_HIT_INDEX LESS HOST_ACTIVATE_GATE_INDEX
-        OR NOT HOST_ACTIVATE_GATE_INDEX LESS HOST_UPDATE_INDEX)
+        OR NOT HOST_POINTER_HIT_DEFAULT_INDEX LESS HOST_POINTER_MAP_INDEX
+        OR NOT HOST_POINTER_MAP_INDEX LESS HOST_POINTER_HIT_INDEX
+        OR NOT HOST_POINTER_HIT_INDEX LESS HOST_POINTER_SELECTION_INDEX
+        OR NOT HOST_POINTER_SELECTION_INDEX LESS HOST_ACTIVATE_GATE_INDEX
+        OR NOT HOST_ACTIVATE_GATE_INDEX LESS HOST_POINTER_CLEAR_INDEX
+        OR NOT HOST_POINTER_CLEAR_INDEX LESS HOST_UPDATE_INDEX)
     message(FATAL_ERROR
         "pause row hit must gate mouse activation before the pause state update")
 endif()
@@ -101,7 +134,7 @@ endif()
 string(REPLACE "${HOST_LAYOUT_SOURCE}"
     "pause_menu_layout(GetScreenWidth(),GetScreenHeight())"
     MUTATED_HOST_COMPACT "${HOST_COMPACT}")
-string(FIND "${MUTATED_HOST_COMPACT}" "${HOST_HIT_TEST_CHAIN}"
+string(FIND "${MUTATED_HOST_COMPACT}" "${HOST_POINTER_MAP_CHAIN}"
     MUTATED_HOST_CHAIN_INDEX)
 if(NOT MUTATED_HOST_CHAIN_INDEX EQUAL -1)
     message(FATAL_ERROR

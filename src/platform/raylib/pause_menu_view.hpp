@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 namespace arpg::platform {
@@ -53,6 +54,18 @@ struct PauseMenuView final {
     const char* footer{};
 };
 
+enum class PausePointerIntent : std::uint8_t {
+    none,
+    activate,
+    decrement,
+    increment,
+};
+
+struct PausePointerHit final {
+    std::size_t row{kPauseMenuRowCapacity};
+    PausePointerIntent intent{PausePointerIntent::none};
+};
+
 [[nodiscard]] PauseMenuLayout pause_menu_layout(
     int width,
     int height) noexcept;
@@ -83,6 +96,12 @@ struct PauseMenuView final {
     const PauseMenuState& state) noexcept;
 
 [[nodiscard]] std::optional<std::size_t> hit_test_pause_row(
+    const PauseMenuLayout& layout,
+    Vector2 point) noexcept;
+
+[[nodiscard]] PausePointerHit hit_test_pause_pointer(
+    const PauseMenuState& state,
+    const PauseMenuView& view,
     const PauseMenuLayout& layout,
     Vector2 point) noexcept;
 
