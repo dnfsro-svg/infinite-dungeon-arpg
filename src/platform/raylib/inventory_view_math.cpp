@@ -621,12 +621,14 @@ active_skill_loadout_command_after_click(
         state, selection, false);
     for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
         if (!contains(layout.main_slots[index], point)) continue;
-        if (selection.selected_inventory != skills::ActiveSkillId::none
-                && state.slots[index].active == skills::ActiveSkillId::none) {
-            return ActiveSkillLoadoutCommand{
-                ActiveSkillLoadoutActionKind::equip,
-                static_cast<std::uint8_t>(index), 0xFFU,
-                selection.selected_inventory};
+        if (selection.selected_inventory != skills::ActiveSkillId::none) {
+            if (state.slots[index].active == skills::ActiveSkillId::none) {
+                return ActiveSkillLoadoutCommand{
+                    ActiveSkillLoadoutActionKind::equip,
+                    static_cast<std::uint8_t>(index), 0xFFU,
+                    selection.selected_inventory};
+            }
+            return std::nullopt;
         }
         if (selection.selected_slot < state.slots.size()
                 && selection.selected_slot != index

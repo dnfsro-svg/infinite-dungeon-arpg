@@ -203,6 +203,14 @@ arpg::test::Failure inventory_selection_then_empty_slot_emits_equip_command()
         == skills::ActiveSkillId::draw_slash);
 
     command = platform::active_skill_loadout_command_after_click(
+        state, layout, center(layout.main_slots[1U]), selection, false);
+    ARPG_REQUIRE(!command.has_value());
+    ARPG_REQUIRE(selection.selected_inventory
+        == skills::ActiveSkillId::draw_slash);
+    ARPG_REQUIRE(selection.selected_slot
+        == platform::kNoActiveSkillLoadoutSelection);
+
+    command = platform::active_skill_loadout_command_after_click(
         state, layout, center(layout.main_slots[0U]), selection, false);
     ARPG_REQUIRE(command.has_value());
     ARPG_REQUIRE(command->kind
