@@ -18,6 +18,10 @@ namespace platform = arpg::platform;
 namespace settings = arpg::settings;
 
 constexpr float kTransientSeconds = 3.0F;
+constexpr char kExpectedSaveError[] =
+    u8"保存失败，当前进度未保存，请重试";
+static_assert(sizeof(kExpectedSaveError)
+    < platform::HudText96{}.bytes.size());
 
 platform::ControlHints rebound_hints() noexcept {
     settings::SettingsData values = settings::default_settings();
@@ -289,7 +293,12 @@ arpg::test::Failure save_error_and_recovery_are_persistent_and_state_owned() noe
     platform::HudNoticeState state{};
     state.observe(snapshot, snapshot, error_status(), rebound_hints(), true);
     state.update(1000.0F, false);
-    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::save_error);
+    const platform::HudNotice save_error = state.view().primary;
+    ARPG_REQUIRE(save_error.kind == platform::HudNoticeKind::save_error);
+    ARPG_REQUIRE(std::strcmp(
+        save_error.text.bytes.data(), kExpectedSaveError) == 0);
+    ARPG_REQUIRE(!save_error.text.truncated);
+    ARPG_REQUIRE(std::isinf(save_error.seconds_left));
     ARPG_REQUIRE(state.view().secondary.kind
         == platform::HudNoticeKind::recovery_required);
 
@@ -394,6 +403,12 @@ arpg::test::Failure longest_key_notice_is_utf8_safe_and_allocation_free()
         ARPG_REQUIRE(platform::ui_utf8_is_valid(
             state.view().primary.text.bytes.data()));
         ARPG_REQUIRE(!state.view().primary.text.truncated);
+
+        platform::HudNoticeState save_error{};
+        save_error.observe(previous, previous, error_status(), hints, false);
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(
+            save_error.view().primary.text.bytes.data()));
+        ARPG_REQUIRE(!save_error.view().primary.text.truncated);
     }
     ARPG_REQUIRE(arpg::test::allocation_count() == before);
     platform::HudNoticeState state{};
@@ -422,7 +437,8 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
             && platform::death_overlay_font_covers_text(font.shared, expected);
     };
 
-    ARPG_REQUIRE(require_primary(previous, error_status(), false, u8"保存失败"));
+    ARPG_REQUIRE(require_primary(
+        previous, error_status(), false, kExpectedSaveError));
     ARPG_REQUIRE(require_primary(previous, saved_status(), true, u8"需要恢复存档"));
 
     dungeon::DungeonSnapshot current = previous;

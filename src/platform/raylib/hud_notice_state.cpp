@@ -1,6 +1,7 @@
 #include "hud_notice_state.hpp"
 
 #include "dungeon_view_math.hpp"
+#include "ui_text_catalog.hpp"
 #include "ui_utf8.hpp"
 
 #include <cmath>
@@ -189,7 +190,7 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
 
     set_persistent(notices_, dropped_count_, HudNoticeKind::save_error,
         kSaveErrorPriority, status.indicator == SaveIndicator::error,
-        u8"保存失败");
+        ui_text(UiTextId::save_error));
     set_persistent(notices_, dropped_count_, HudNoticeKind::recovery_required,
         kRecoveryPriority, recovery_required, u8"需要恢复存档");
 
