@@ -305,8 +305,11 @@ expect_renderer_mutation_rejected(missing_body_line_draw
 expect_renderer_mutation_rejected(hardcoded_continue_binding
     "build_death_overlay_view(snapshot, continue_binding_label)"
     "build_death_overlay_view(snapshot, \"E\")")
-expect_combat_mutation_rejected(missing_dynamic_binding_forward
-    "death_overlay_.draw(current_hud, material_pack_, interact_binding_label);"
+expect_combat_mutation_rejected(dynamic_interact_binding_forward
+    "death_overlay_.draw(current_hud, material_pack_, stable_key_label(settings::StableKey::e));"
+    "death_overlay_.draw(current_hud, material_pack_, interact_binding_label);")
+expect_combat_mutation_rejected(missing_fixed_e_binding_forward
+    "death_overlay_.draw(current_hud, material_pack_, stable_key_label(settings::StableKey::e));"
     "death_overlay_.draw(current_hud, material_pack_);")
 
 foreach(_dead_condition IN ITEMS "false" "false && font_ready_" "!true" "0 != 0")

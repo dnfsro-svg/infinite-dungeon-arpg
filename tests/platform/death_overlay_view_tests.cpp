@@ -5,6 +5,7 @@
 #include "death_overlay_renderer.hpp"
 #include "death_overlay_view.hpp"
 #include "dungeon_view_math.hpp"
+#include "stable_key_raylib.hpp"
 #include "ui_text_catalog.hpp"
 #include "ui_text_contrast.hpp"
 #include "ui_text_layout.hpp"
@@ -21,6 +22,7 @@ namespace {
 namespace checkpoint = arpg::dungeon::checkpoint;
 namespace dungeon = arpg::dungeon;
 namespace platform = arpg::platform;
+namespace settings = arpg::settings;
 
 dungeon::DungeonSnapshot death_snapshot(
     checkpoint::DeathSourceKind source_kind,
@@ -158,7 +160,8 @@ arpg::test::Failure hidden_without_death_and_maps_complete_recap() noexcept {
     ARPG_REQUIRE(contains(view, "电 30.00%/77.00%"));
     ARPG_REQUIRE(contains(view, "混沌 40.00%/78.00%"));
     ARPG_REQUIRE(contains(view, "第 12 层 → 第 11 层"));
-    ARPG_REQUIRE(std::strcmp(view.prompt.data(), u8"右 Shift：继续") == 0);
+    ARPG_REQUIRE(std::strcmp(view.prompt.data(),
+        u8"右 Shift：继续｜ESC：退出游戏") == 0);
     ARPG_REQUIRE(valid_fixed_view_text(view));
     ARPG_REQUIRE(!contains_formal_english_token(view));
     return {};
@@ -193,17 +196,76 @@ arpg::test::Failure maps_abyss_unknown_and_all_prompt_states() noexcept {
     auto saving = death_snapshot(checkpoint::DeathSourceKind::projectile);
     saving.death->saving = true;
     saving.death->can_continue = false;
-    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(saving, "Q")
-        .prompt.data(), "正在记录死亡") == 0);
+    const auto saving_view = platform::build_death_overlay_view(saving, "Q");
+    ARPG_REQUIRE(std::strcmp(saving_view.prompt.data(),
+        u8"正在记录死亡｜ESC：退出游戏") == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(saving_view.prompt.data()));
+    ARPG_REQUIRE(saving_view.prompt.back() == '\0');
 
     auto failed = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
     failed.death->continue_failed = true;
-    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(failed, "Q")
-        .prompt.data(), "保存失败，Q：重试") == 0);
+    const auto failed_view = platform::build_death_overlay_view(failed, "Q");
+    ARPG_REQUIRE(std::strcmp(failed_view.prompt.data(),
+        u8"保存失败，Q：重试｜ESC：退出游戏") == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(failed_view.prompt.data()));
+    ARPG_REQUIRE(failed_view.prompt.back() == '\0');
 
     auto ready = death_snapshot(checkpoint::DeathSourceKind::monster_attack);
-    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_view(
-        ready, u8"小键盘5").prompt.data(), u8"小键盘5：继续") == 0);
+    const auto ready_view = platform::build_death_overlay_view(
+        ready, u8"小键盘5");
+    ARPG_REQUIRE(std::strcmp(ready_view.prompt.data(),
+        u8"小键盘5：继续｜ESC：退出游戏") == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(ready_view.prompt.data()));
+    ARPG_REQUIRE(ready_view.prompt.back() == '\0');
+
+    const auto right_shift_view = platform::build_death_overlay_view(
+        failed, u8"右 Shift");
+    ARPG_REQUIRE(std::strcmp(right_shift_view.prompt.data(),
+        u8"保存失败，右 Shift：重试｜ESC：退出游戏") == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(right_shift_view.prompt.data()));
+    ARPG_REQUIRE(right_shift_view.prompt.back() == '\0');
+
+    const auto right_control_view = platform::build_death_overlay_view(
+        failed, u8"右 Ctrl");
+    ARPG_REQUIRE(std::strcmp(right_control_view.prompt.data(),
+        u8"保存失败，右 Ctrl：重试｜ESC：退出游戏") == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(right_control_view.prompt.data()));
+    ARPG_REQUIRE(right_control_view.prompt.back() == '\0');
+
+    constexpr const char kLongestStableBindingPrompt[] =
+        u8"保存失败，下方向键：重试｜ESC：退出游戏";
+    static_assert(sizeof(kLongestStableBindingPrompt) == 58U);
+    static_assert(sizeof(kLongestStableBindingPrompt) <= 64U);
+    const auto longest_stable_binding_view = platform::build_death_overlay_view(
+        failed, u8"下方向键");
+    ARPG_REQUIRE(std::strcmp(longest_stable_binding_view.prompt.data(),
+        kLongestStableBindingPrompt) == 0);
+    ARPG_REQUIRE(platform::ui_utf8_is_valid(
+        longest_stable_binding_view.prompt.data()));
+    ARPG_REQUIRE(longest_stable_binding_view.prompt.back() == '\0');
+
+    constexpr const char kFailedPromptPrefix[] = u8"保存失败，";
+    constexpr const char kFailedPromptSuffix[] =
+        u8"：重试｜ESC：退出游戏";
+    for (std::size_t raw = 0U;
+         raw < static_cast<std::size_t>(settings::StableKey::count); ++raw) {
+        const char* label = platform::stable_key_label(
+            static_cast<settings::StableKey>(raw));
+        ARPG_REQUIRE(label != nullptr && label[0] != '\0');
+        const auto stable_binding_view = platform::build_death_overlay_view(
+            failed, label);
+        ARPG_REQUIRE(std::strncmp(stable_binding_view.prompt.data(),
+            kFailedPromptPrefix, sizeof(kFailedPromptPrefix) - 1U) == 0);
+        const char* binding_begin = stable_binding_view.prompt.data()
+            + sizeof(kFailedPromptPrefix) - 1U;
+        const std::size_t label_size = std::strlen(label);
+        ARPG_REQUIRE(std::strncmp(binding_begin, label, label_size) == 0);
+        ARPG_REQUIRE(std::strcmp(binding_begin + label_size,
+            kFailedPromptSuffix) == 0);
+        ARPG_REQUIRE(platform::ui_utf8_is_valid(
+            stable_binding_view.prompt.data()));
+        ARPG_REQUIRE(stable_binding_view.prompt.back() == '\0');
+    }
     return {};
 }
 

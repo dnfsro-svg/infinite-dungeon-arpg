@@ -167,8 +167,9 @@ extract_cpp_function_body("${_view_source}"
     "const char* hazard_name(" _hazard_body _hazard_code)
 foreach(_token IN ITEMS
         "continue_binding_label" "ui_utf8_format(" "u8\"死亡回顾\""
-        "u8\"正在记录死亡\"" "u8\"保存失败，%s：重试\""
-        "u8\"%s：继续\"")
+        "u8\"正在记录死亡｜ESC：退出游戏\""
+        "u8\"保存失败，%s：重试｜ESC：退出游戏\""
+        "u8\"%s：继续｜ESC：退出游戏\"")
     require_token("${_view_body}" "${_token}"
         "T5 formal Chinese view is incomplete")
 endforeach()
@@ -303,8 +304,11 @@ reject_dead_branch("${_draw_code}" "T5 formal renderer")
 extract_cpp_function_body("${_combat_renderer_source}"
     "GroundLootView CombatRenderer::draw(" _combat_draw_body _combat_draw_code)
 require_token("${_combat_draw_body}"
+    "death_overlay_.draw(current_hud, material_pack_, stable_key_label(settings::StableKey::e))"
+    "T5 real consumer must use the fixed E death action binding")
+reject_token("${_combat_draw_body}"
     "death_overlay_.draw(current_hud, material_pack_, interact_binding_label)"
-    "T5 real consumer must forward the live interaction binding")
-reject_dead_branch("${_combat_draw_code}" "T5 dynamic death binding consumer")
+    "T5 death action must not inherit the room interaction binding")
+reject_dead_branch("${_combat_draw_code}" "T5 fixed death binding consumer")
 
 message(STATUS "T5 death-overlay renderer source guard accepted")

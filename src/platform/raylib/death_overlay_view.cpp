@@ -341,13 +341,13 @@ DeathOverlayView build_death_overlay_view(
             && continue_binding_label[0] != '\0'
         ? continue_binding_label : ui_text(UiTextId::unknown);
     if (state.saving) {
-        copy_text(view.prompt, u8"正在记录死亡");
+        copy_text(view.prompt, u8"正在记录死亡｜ESC：退出游戏");
     } else if (state.continue_failed) {
         static_cast<void>(ui_utf8_format(view.prompt.data(), view.prompt.size(),
-            u8"保存失败，%s：重试", binding));
+            u8"保存失败，%s：重试｜ESC：退出游戏", binding));
     } else if (state.can_continue) {
         static_cast<void>(ui_utf8_format(view.prompt.data(), view.prompt.size(),
-            u8"%s：继续", binding));
+            u8"%s：继续｜ESC：退出游戏", binding));
     }
     return view;
 }
