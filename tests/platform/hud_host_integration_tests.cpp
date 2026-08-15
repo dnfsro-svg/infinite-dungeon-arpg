@@ -298,7 +298,11 @@ arpg::test::Failure recovery_screen_view_distinguishes_conflicting_valid_slots()
             u8"两个有效存档冲突。按 N 归档并创建新游戏。",
             u8"存档错误 10｜ESC：退出游戏"},
     }};
+    // sizeof includes the trailing NUL; the full uint8_t error range must fit
+    // the fixed 48-byte buffer without truncation.
     static_assert(sizeof(u8"存档错误 255｜ESC：退出游戏")
+        <= platform::kRecoveryScreenErrorTextCapacity);
+    static_assert(sizeof(u8"故障码 255｜ESC：退出游戏")
         <= platform::kRecoveryScreenErrorTextCapacity);
     constexpr std::array<Vector2, 3U> kScreens{{
         {800.0F, 450.0F}, {1280.0F, 720.0F}, {1920.0F, 1080.0F},
@@ -349,6 +353,26 @@ arpg::test::Failure recovery_screen_view_distinguishes_conflicting_valid_slots()
                 view.panel_color) >= 4.5F);
         }
     }
+
+    status = {};
+    status.indicator = platform::SaveIndicator::error;
+    status.error = arpg::persistence::SaveError::none;
+    status.faulted = true;
+    const platform::RecoveryScreenView faulted =
+        platform::make_recovery_screen_view(status, 1280, 720);
+    ARPG_REQUIRE(std::strcmp(faulted.error_text.data(),
+        u8"故障码 0｜ESC：退出游戏") == 0);
+    ARPG_REQUIRE(std::strcmp(
+        faulted.title, u8"存档提交状态不确定") == 0);
+    ARPG_REQUIRE(std::strcmp(faulted.message,
+        u8"请退出并重启；启动时会重新校验双槽存档。") == 0);
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        font.shared, faulted.title));
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        font.shared, faulted.message));
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        font.shared, faulted.error_text.data()));
+
     const std::uint64_t allocation_count_before =
         arpg::test::allocation_count();
     for (std::size_t iteration{}; iteration < 10000U; ++iteration) {

@@ -9,7 +9,7 @@
 
 namespace arpg::platform {
 
-inline constexpr std::size_t kUiGlyphCapacity = 640U;
+inline constexpr std::size_t kUiGlyphCapacity = 672U;
 inline constexpr std::size_t kUiFontAtlasInstanceCount = 1U;
 inline constexpr std::size_t kUiFontAtlasByteBudget =
     32U * 1024U * 1024U;

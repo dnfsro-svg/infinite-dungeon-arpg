@@ -52,4 +52,40 @@ if(default_text STREQUAL source)
 endif()
 expect_rejected("default-text" "${default_text}")
 
+string(REPLACE
+    "if (runtime.clean_shutdown_state() == CleanShutdownState::ready) {\n                exit_requested = true;\n                continue;"
+    "if (runtime.clean_shutdown_state() == CleanShutdownState::ready\n                    || runtime.clean_shutdown_state()\n                        == CleanShutdownState::faulted) {\n                exit_requested = true;\n                continue;"
+    faulted_auto_exit "${source}")
+if(faulted_auto_exit STREQUAL source)
+    message(FATAL_ERROR "Task 6 faulted auto-exit mutation anchor is missing")
+endif()
+expect_rejected("faulted-auto-exit" "${faulted_auto_exit}")
+
+string(REPLACE
+    "if (runtime.state() == DungeonRuntimeState::recovery_required\n                    || runtime.state() == DungeonRuntimeState::faulted)"
+    "if (runtime.state() == DungeonRuntimeState::recovery_required)"
+    faulted_not_blocked "${source}")
+if(faulted_not_blocked STREQUAL source)
+    message(FATAL_ERROR "Task 6 faulted blocking mutation anchor is missing")
+endif()
+expect_rejected("faulted-not-blocked" "${faulted_not_blocked}")
+
+string(REPLACE
+    "if (recovery_blocked\n                        && (config.stage12_material_background_only\n                            || config.stage12_material_icons_only))"
+    "if (config.stage12_material_background_only\n                        || config.stage12_material_icons_only)"
+    faulted_stage12_exit "${source}")
+if(faulted_stage12_exit STREQUAL source)
+    message(FATAL_ERROR "Task 6 faulted Stage12 mutation anchor is missing")
+endif()
+expect_rejected("faulted-stage12-exit" "${faulted_stage12_exit}")
+
+string(REPLACE
+    "std::optional<std::string> capture_path = recovery_blocked\n                    ? validation_capture_path() : std::nullopt;"
+    "std::optional<std::string> capture_path =\n                    validation_capture_path();"
+    faulted_periodic_capture "${source}")
+if(faulted_periodic_capture STREQUAL source)
+    message(FATAL_ERROR "Task 6 faulted capture mutation anchor is missing")
+endif()
+expect_rejected("faulted-periodic-capture" "${faulted_periodic_capture}")
+
 message(STATUS "Task 6 recovery source guard self-test rejected all mutations")

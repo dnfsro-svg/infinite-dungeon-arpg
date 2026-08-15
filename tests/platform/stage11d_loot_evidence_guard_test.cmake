@@ -1577,9 +1577,9 @@ set(_task7c_exit_lambda
     "constautobegin_clean_exit=[&]()noexcept{if(runtime.state()==DungeonRuntimeState::running&&runtime.session()!=nullptr){if(runtime.clean_shutdown_state()==CleanShutdownState::ready){exit_requested=true;}else{static_cast<void>(runtime.request_clean_shutdown());}return;}exit_requested=true;};")
 set(_task7c_exit_loop "while(!exit_requested){")
 set(_task7c_exit_shutdown_ready
-    "if(runtime.clean_shutdown_state()==CleanShutdownState::ready||runtime.clean_shutdown_state()==CleanShutdownState::faulted){exit_requested=true;continue;}")
+    "if(runtime.clean_shutdown_state()==CleanShutdownState::ready){exit_requested=true;continue;}")
 set(_task7c_exit_stage12_recovery
-    "if(config.stage12_material_background_only||config.stage12_material_icons_only){TraceLog(LOG_ERROR,);exit_requested=true;continue;}")
+    "if(recovery_blocked&&(config.stage12_material_background_only||config.stage12_material_icons_only)){TraceLog(LOG_ERROR,);exit_requested=true;continue;}")
 set(_task7c_exit_residual "${_task7c_host_run_normalized}")
 foreach(_task7c_exit_context IN ITEMS
         declaration lambda loop shutdown_ready stage12_recovery)

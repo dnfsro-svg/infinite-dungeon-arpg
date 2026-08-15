@@ -40,12 +40,12 @@ void visit_synthetic_cjk_codepoints(platform::UiTextVisitor visitor,
 
 void visit_exact_glyph_capacity(platform::UiTextVisitor visitor,
     void* context) noexcept {
-    visit_synthetic_cjk_codepoints(visitor, context, 545);
+    visit_synthetic_cjk_codepoints(visitor, context, 577);
 }
 
 void visit_one_codepoint_over_capacity(platform::UiTextVisitor visitor,
     void* context) noexcept {
-    visit_synthetic_cjk_codepoints(visitor, context, 546);
+    visit_synthetic_cjk_codepoints(visitor, context, 578);
 }
 
 arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
@@ -103,7 +103,7 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
     for (const platform::UiTextId id : kInventoryShellIds)
         ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
             platform::ui_text(id)));
-    ARPG_REQUIRE(plan.codepoint_count == 639U);
+    ARPG_REQUIRE(plan.codepoint_count == 644U);
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
         platform::death_overlay_font_plan(), u8"混沌之眼"));
     ARPG_REQUIRE(platform::hud_font_plan().covers_required_text);
@@ -126,6 +126,7 @@ arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept 
     static_assert(!std::is_move_constructible_v<platform::SharedUiFont>);
     static_assert(!std::is_move_assignable_v<platform::SharedUiFont>);
     static_assert(platform::kUiFontAtlasInstanceCount == 1U);
+    static_assert(platform::kUiGlyphCapacity == 672U);
     static_assert(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
     static_assert(platform::ui_font_atlas_bytes(4096, 4096)
         == 32U * 1024U * 1024U);

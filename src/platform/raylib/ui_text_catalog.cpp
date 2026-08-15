@@ -8,7 +8,7 @@ namespace {
 
 constexpr const char* kUnknown = u8"未知";
 
-constexpr std::array<const char*, 75U> kUiTexts{{
+constexpr std::array<const char*, 78U> kUiTexts{{
     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
@@ -40,7 +40,13 @@ constexpr std::array<const char*, 75U> kUiTexts{{
     u8"已选择：%s · 可用装备已标出 · 右键取消",
     u8"已选择：定向核心 · 右键核心切换 · 右键装备取消",
     u8"两个有效存档冲突。按 N 归档并创建新游戏。",
+    u8"存档提交状态不确定",
+    u8"请退出并重启；启动时会重新校验双槽存档。",
+    u8"故障码 %u｜ESC：退出游戏",
 }};
+
+static_assert(kUiTexts.size()
+    == static_cast<std::size_t>(UiTextId::count));
 
 constexpr std::array<const char*, 18U> kItemBaseNames{{
     u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套", u8"行者战靴", u8"元素护符",

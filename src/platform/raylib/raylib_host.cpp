@@ -188,14 +188,22 @@ RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& sta
     view.error_bounds = {view.panel.x + 40.0F * scale,
         view.panel.y + 186.0F * scale, view.panel.width - 80.0F * scale,
         34.0F * scale};
-    view.title = ui_text(UiTextId::recovery_title);
-    view.message = status.error == persistence::SaveError::conflicting_slots
-        ? ui_text(UiTextId::recovery_conflicting_slots_instruction)
-        : ui_text(UiTextId::recovery_dual_slot_instruction);
-    static_cast<void>(ui_utf8_format(view.error_text.data(),
-        view.error_text.size(), u8"%s %u｜ESC：退出游戏", save_indicator_label(
-            SaveIndicator::error),
-        static_cast<unsigned>(status.error)));
+    if (status.faulted) {
+        view.title = ui_text(UiTextId::save_faulted_title);
+        view.message = ui_text(UiTextId::save_faulted_instruction);
+        static_cast<void>(ui_utf8_format(view.error_text.data(),
+            view.error_text.size(), ui_text(UiTextId::save_faulted_error_format),
+            static_cast<unsigned>(status.error)));
+    } else {
+        view.title = ui_text(UiTextId::recovery_title);
+        view.message = status.error == persistence::SaveError::conflicting_slots
+            ? ui_text(UiTextId::recovery_conflicting_slots_instruction)
+            : ui_text(UiTextId::recovery_dual_slot_instruction);
+        static_cast<void>(ui_utf8_format(view.error_text.data(),
+            view.error_text.size(), u8"%s %u｜ESC：退出游戏",
+            save_indicator_label(SaveIndicator::error),
+            static_cast<unsigned>(status.error)));
+    }
     view.panel_color = style.backing;
     view.title_color = style.danger;
     view.message_color = style.primary;
@@ -675,9 +683,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             host_sync_pause_quit_saving(pause_menu,
                 runtime.clean_shutdown_state(), PauseCommand::none);
-            if (runtime.clean_shutdown_state() == CleanShutdownState::ready
-                    || runtime.clean_shutdown_state()
-                        == CleanShutdownState::faulted) {
+            if (runtime.clean_shutdown_state() == CleanShutdownState::ready) {
                 exit_requested = true;
                 continue;
             }
@@ -715,9 +721,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         validation_runtime.get());
                 }
             }
-            if (runtime.state() == DungeonRuntimeState::recovery_required) {
-                if (config.stage12_material_background_only
-                    || config.stage12_material_icons_only) {
+            if (runtime.state() == DungeonRuntimeState::recovery_required
+                    || runtime.state() == DungeonRuntimeState::faulted) {
+                const bool recovery_blocked = runtime.state()
+                    == DungeonRuntimeState::recovery_required;
+                if (recovery_blocked
+                        && (config.stage12_material_background_only
+                            || config.stage12_material_icons_only)) {
                     TraceLog(LOG_ERROR,
                         "Stage 12 background-only capture entered recovery state");
                     exit_requested = true;
@@ -745,8 +755,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     previous, current, runtime.render_status(), control_hints,
                     GetFrameTime(), true);
                 draw_recovery_screen(shared_ui_font.font(), runtime.render_status());
-                std::optional<std::string> capture_path =
-                    validation_capture_path();
+                std::optional<std::string> capture_path = recovery_blocked
+                    ? validation_capture_path() : std::nullopt;
                 if (frame_input.keys.f12 || frame_input.keys.v) {
                     capture_path = host_screenshot_path(config);
                 }
