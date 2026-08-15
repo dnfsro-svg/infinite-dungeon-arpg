@@ -34,7 +34,9 @@ constexpr const char* kPauseFooter =
     u8"方向键导航｜Enter 选择｜Esc 返回";
 constexpr const char* kPauseRootResetFooter =
     u8"方向键导航｜Enter 选择｜Esc 返回｜R 重置房间";
-constexpr const char* kSettingsFooter =
+constexpr const char* kSettingsSelectionFooter =
+    u8"上下键导航｜Enter 选择｜Esc 返回";
+constexpr const char* kSettingsAdjustmentFooter =
     u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回";
 constexpr const char* kSettingsAudioFooter =
     u8"上下导航｜左右键调整｜点击左减右增｜返回行 Enter｜Esc 返回";
@@ -376,10 +378,10 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
             write_primary(view, 2U, "%s", ui_text(UiTextId::pause_quit));
             return view;
         case PauseScreen::settings: {
-            view.footer = kSettingsFooter;
             switch (state.settings_page) {
                 case PauseSettingsPage::home:
                     view.title = ui_text(UiTextId::settings_title);
+                    view.footer = kSettingsSelectionFooter;
                     view.row_count = 6U;
                     build_settings_home_rows(view);
                     break;
@@ -391,11 +393,13 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
                     break;
                 case PauseSettingsPage::display:
                     view.title = ui_text(UiTextId::settings_display);
+                    view.footer = kSettingsAdjustmentFooter;
                     view.row_count = 4U;
                     build_settings_display_rows(view, state);
                     break;
                 case PauseSettingsPage::bindings:
                     view.title = ui_text(UiTextId::settings_bindings);
+                    view.footer = kSettingsSelectionFooter;
                     view.row_count = 11U;
                     build_settings_bindings_rows(view, state);
                     break;

@@ -432,7 +432,7 @@ test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcep
     ARPG_REQUIRE(view.selected_row == 2U);
     ARPG_REQUIRE(view.message == state.message);
     ARPG_REQUIRE(std::strcmp(view.footer,
-        u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回") == 0);
+        u8"上下键导航｜Enter 选择｜Esc 返回") == 0);
     constexpr const char* kHome[] = {
         u8"音频设置", u8"显示设置", u8"按键设置",
         u8"恢复默认设置", u8"应用", u8"取消",
@@ -480,7 +480,7 @@ test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcep
     ARPG_REQUIRE(std::strcmp(view.title, u8"按键设置") == 0);
     ARPG_REQUIRE(view.row_count == 11U);
     ARPG_REQUIRE(std::strcmp(view.footer,
-        u8"上下键导航｜左右键调整｜Enter 选择｜Esc 返回") == 0);
+        u8"上下键导航｜Enter 选择｜Esc 返回") == 0);
     constexpr const char* kBindingPrimary[] = {
         u8"上移：0", u8"下移：1", u8"左移：2", u8"右移：3",
         u8"轻攻击：4", u8"跳跃：5", u8"挑飞：6", u8"交互：7",
