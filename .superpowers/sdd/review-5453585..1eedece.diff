@@ -1,0 +1,57 @@
+# Review package: 54535857bf283d4533891cd8edcd0291454198d4..1eedececf5b8aafd02c42f5167c9e1a374a0fbb4
+
+## Commits
+1eedece build: add Codex cloud environment scripts
+
+## Files changed
+ scripts/cloud/maintenance.sh | 17 +++++++++++++++++
+ scripts/cloud/setup.sh       | 17 +++++++++++++++++
+ 2 files changed, 34 insertions(+)
+
+## Diff
+diff --git a/scripts/cloud/maintenance.sh b/scripts/cloud/maintenance.sh
+new file mode 100644
+index 0000000..0f4f766
+--- /dev/null
++++ b/scripts/cloud/maintenance.sh
+@@ -0,0 +1,17 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++for tool in cmake ninja g++; do
++  if ! command -v "$tool" >/dev/null 2>&1; then
++    echo "Error: required tool '$tool' was not found in PATH." >&2
++    exit 1
++  fi
++done
++
++script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++repo_root="$(cd -- "$script_dir/../.." && pwd)"
++cd "$repo_root"
++
++cmake --preset linux-gcc-core-debug
++cmake --build --preset linux-gcc-core-debug
++ctest --preset linux-gcc-core-debug --no-tests=error
+diff --git a/scripts/cloud/setup.sh b/scripts/cloud/setup.sh
+new file mode 100644
+index 0000000..d369dff
+--- /dev/null
++++ b/scripts/cloud/setup.sh
+@@ -0,0 +1,17 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++for tool in cmake ninja g++; do
++  if ! command -v "$tool" >/dev/null 2>&1; then
++    echo "Error: required tool '$tool' was not found in PATH." >&2
++    exit 1
++  fi
++done
++
++script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++repo_root="$(cd -- "$script_dir/../.." && pwd)"
++cd "$repo_root"
++
++cmake --preset linux-gcc-core-debug --fresh
++cmake --build --preset linux-gcc-core-debug
++ctest --preset linux-gcc-core-debug --no-tests=error

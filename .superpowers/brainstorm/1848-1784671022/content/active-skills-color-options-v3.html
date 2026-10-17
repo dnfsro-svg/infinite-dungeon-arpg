@@ -1,0 +1,43 @@
+<style>
+  .palette-card{background:#090e16;border:1px solid #31445d;border-radius:14px;overflow:hidden;margin:18px 0;cursor:pointer;box-shadow:0 18px 40px rgba(0,0,0,.35)}
+  .palette-card:hover{border-color:#84c8ff;transform:translateY(-2px)}
+  .palette-card img{display:block;width:100%;height:auto;background:#05070b}
+  .palette-info{padding:15px 18px;background:linear-gradient(180deg,#121d2d,#0b121d)}
+  .palette-info h3{margin:0 0 6px;color:#edf8ff}
+  .palette-info p{margin:0;color:#aabdd1}
+  .swatches{display:flex;gap:8px;margin-top:11px}
+  .swatch{width:34px;height:14px;border-radius:999px;border:1px solid rgba(255,255,255,.25)}
+  .recommended{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#6d4a16;color:#ffe6a8;font-size:11px;vertical-align:2px}
+</style>
+
+<h2>主动技能配色优化</h2>
+<p class="subtitle">三张图只调整颜色、材质和发光层级；动作、角色、构图和24剑阵保持一致。点击你想采用的方案。</p>
+
+<div class="palette-card" data-choice="palette-a-cold-blue" onclick="toggleSelect(this)">
+  <img src="/files/palette-a-cold-blue-v3.png" alt="方案A 冷蓝原版强化">
+  <div class="palette-info">
+    <h3>A · 冷蓝原版强化</h3>
+    <p>白色切割核心、青蓝内光、皇家蓝中层、深靛外缘；接触点用少量琥珀火花。最接近原版冷色气质。</p>
+    <div class="swatches"><span class="swatch" style="background:#f7fbff"></span><span class="swatch" style="background:#9de6ff"></span><span class="swatch" style="background:#2b70d4"></span><span class="swatch" style="background:#0b2259"></span><span class="swatch" style="background:#ffb35f"></span></div>
+  </div>
+</div>
+
+<div class="palette-card" data-choice="palette-b-gold-swords" onclick="toggleSelect(this)">
+  <img src="/files/palette-b-gold-swords-v3.png" alt="方案B 蓝白斩光与古金剑阵">
+  <div class="palette-info">
+    <h3>B · 蓝白斩光 + 古金剑阵 <span class="recommended">推荐</span></h3>
+    <p>拔刀保持冷蓝；暴风式实体剑改为暗钢与古金刃缘，吸附和高速轨迹仍为蓝白。实体剑、能量与命中三层最清楚。</p>
+    <div class="swatches"><span class="swatch" style="background:#f8fbff"></span><span class="swatch" style="background:#82cfff"></span><span class="swatch" style="background:#173c83"></span><span class="swatch" style="background:#d7a94e"></span><span class="swatch" style="background:#5b3b16"></span></div>
+  </div>
+</div>
+
+<div class="palette-card" data-choice="palette-c-indigo-awakening" onclick="toggleSelect(this)">
+  <img src="/files/palette-c-indigo-v3.png" alt="方案C 银蓝与深靛紫觉醒">
+  <div class="palette-info">
+    <h3>C · 银蓝 + 深靛紫觉醒</h3>
+    <p>拔刀保持银蓝；暴风式吸附内圈和远端残影加入深靛紫，中心仍为白蓝。终极感强，但比原版更偏现代。</p>
+    <div class="swatches"><span class="swatch" style="background:#f4f8ff"></span><span class="swatch" style="background:#9bdcff"></span><span class="swatch" style="background:#315ac2"></span><span class="swatch" style="background:#31236f"></span><span class="swatch" style="background:#120d34"></span></div>
+  </div>
+</div>
+
+<p class="subtitle">点击方案后回到聊天告诉我选择；也可以说“用B，但拔刀不要金色命中火花”这类具体调整。</p>

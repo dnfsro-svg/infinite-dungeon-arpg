@@ -1,0 +1,586 @@
+# Review package: b386182..56a497d
+
+## Commits
+56a497d fix: preserve complete abyss HUD details
+
+## Files changed
+ .superpowers/sdd/task-6-report.md        |  8 ++++
+ src/platform/raylib/hud_layout.cpp       |  4 +-
+ src/platform/raylib/hud_renderer.cpp     | 10 +++++
+ src/platform/raylib/hud_renderer.hpp     |  3 ++
+ src/platform/raylib/hud_view_model.cpp   |  8 +++-
+ src/platform/raylib/hud_view_model.hpp   |  2 +
+ tests/platform/hud_font_tests.cpp        |  3 +-
+ tests/platform/hud_layout_tests.cpp      | 20 +++++++++
+ tests/platform/hud_render_plan_tests.cpp | 27 ++++++++++++-
+ tests/platform/hud_view_model_tests.cpp  | 69 +++++++++++++++++++++++++++++---
+ tests/platform/platform_test_main.cpp    |  2 +-
+ 11 files changed, 143 insertions(+), 13 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-6-report.md b/.superpowers/sdd/task-6-report.md
+index 7c6ec5a..d06d0d5 100644
+--- a/.superpowers/sdd/task-6-report.md
++++ b/.superpowers/sdd/task-6-report.md
+@@ -1,12 +1,20 @@
+ # Stage 19 Task 6 实现报告：大型房间渲染与密度 HUD
+ 
++## 审查修复：深渊完整信息与独立缓存键测试
++
++- RED 仅修改测试后，平台套件为 `380 cases, 2 failures`：完整深渊效果缺失，且 1024×704 的目标面板不足以容纳四行；失败原因与 P1 完全一致。
++- 深渊目标面板现使用四个固定容量字段：战斗目标、危险度与完整规则、完整效果、带 `待领奖励`/`未领取` 标签的计数。面板使用 640×120 逻辑尺寸，1024×704 下位于中央且不侵占玩家、导航或战斗排除区域。
++- P2 缓存测试拆为两个独立用例：仅改变 `density_affix` 和仅改变 `initial_monster_count`；每项分别断言 rebuild 增量和对应文本变化。
++- GREEN：平台 `380/380`；HUD 100k 零分配、HUD 边界及 mutation self-test、HUD 证据 guard 及 self-test、platform module boundary 共 `7/7`；dungeon `296/296`、persistence `94/94` 均通过；`git diff --check` 通过（仅换行转换警告）。
++- 修复未修改 density 会话、保存、战斗、相机、37 条房间网格或 Stage 11-C 三项既有语义。
++
+ ## 结论
+ 
+ - HUD 战斗目标改为 `词条 · 怪物 剩余/初始`，普通与深渊均显示实际初始数量；生产 HUD 不再显示波次措辞。
+ - `RoomHudModel` 公开密度词条、初始数量、剩余数量和预格式化副行；缓存键包含词条与初始数量，跨房间不复用旧文字。
+ - 深渊副行继续显示危险等级、规则和待领/未领计数；1024×704 最小布局下完整可读且不截断。
+ - 中文字体固定容量计划补入 `拥挤/密集/兽潮/怪物` 字形；找不到完整中文字体时仍走既有默认字体回退，不新增英文占位词条。
+ - 房间场景新增固定 2 世界单位网格：X 方向 25 条、Y 方向 12 条，共 37 条；纯计划先投影后按屏幕包围盒裁剪。
+ - 地面材质仍作为不拉伸的基础层，滚动网格和四边界线绘制在其上。四角、四门、洞口、危险区、装备和材料都消费 Task 5 同一 `CombatCameraView`。
+ 
+ ## TDD 证据
+diff --git a/src/platform/raylib/hud_layout.cpp b/src/platform/raylib/hud_layout.cpp
+index f29a566..00bf4ef 100644
+--- a/src/platform/raylib/hud_layout.cpp
++++ b/src/platform/raylib/hud_layout.cpp
+@@ -5,22 +5,22 @@
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kLogicalWidth = 1280.0F;
+ constexpr float kLogicalHeight = 720.0F;
+ constexpr float kMinimumScale = 0.8F;
+ constexpr float kMaximumScale = 1.5F;
+ constexpr float kLogicalMargin = 16.0F;
+ constexpr float kPlayerWidth = 300.0F;
+ constexpr float kPlayerHeight = 144.0F;
+-constexpr float kObjectiveWidth = 480.0F;
+-constexpr float kObjectiveHeight = 72.0F;
++constexpr float kObjectiveWidth = 640.0F;
++constexpr float kObjectiveHeight = 120.0F;
+ constexpr float kNavigationWidth = 270.0F;
+ constexpr float kNavigationHeight = 116.0F;
+ constexpr float kPrimaryNoticeWidth = 600.0F;
+ constexpr float kPrimaryNoticeHeight = 36.0F;
+ constexpr float kSecondaryNoticeHeight = 28.0F;
+ constexpr float kNoticeGap = 6.0F;
+ constexpr float kAbyssConfirmationHeight = 56.0F;
+ constexpr float kAbyssConfirmationGap = 8.0F;
+ constexpr float kCombatExclusionX = 360.0F;
+ constexpr float kCombatExclusionY = 148.0F;
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index 5fb973d..8f12cb7 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -155,20 +155,22 @@ ObjectivePanelPlan make_objective_panel_plan(const RoomHudModel& room,
+     if (layout.objective_panel.width <= 0.0F
+         || layout.objective_panel.height <= 0.0F
+         || room.objective.bytes[0] == '\0') {
+         return plan;
+     }
+     plan.visible = true;
+     plan.abyss = room.abyss;
+     plan.bounds = layout.objective_panel;
+     plan.primary = room.objective;
+     plan.secondary = room.secondary;
++    plan.abyss_effect = room.abyss_effect;
++    plan.abyss_rewards = room.abyss_rewards;
+     return plan;
+ }
+ 
+ NavigationPanelPlan make_navigation_panel_plan(const NavigationHudModel& navigation,
+     const HudLayout& layout) noexcept {
+     NavigationPanelPlan plan{};
+     if (layout.navigation_panel.width <= 0.0F
+         || layout.navigation_panel.height <= 0.0F
+         || navigation.primary.bytes[0] == '\0') {
+         return plan;
+@@ -533,20 +535,28 @@ void HudRenderer::draw(const HudViewModel& view,
+         DrawRectangleRounded({objective.bounds.x, objective.bounds.y,
+             objective.bounds.width, objective.bounds.height}, 0.12F, 6,
+             objective.abyss ? Color{47, 18, 47, 228} : Color{7, 10, 17, 220});
+         draw_panel_text(draw_font, objective.bounds, objective.primary,
+             style.objective_primary_font_size * layout.scale,
+             objective.abyss ? palette.chaos : palette.text);
+         HudRect secondary = objective.bounds;
+         secondary.y += 28.0F * layout.scale;
+         draw_panel_text(draw_font, secondary, objective.secondary,
+             style.objective_secondary_font_size * layout.scale, palette.text);
++        HudRect abyss_effect = objective.bounds;
++        abyss_effect.y += 50.0F * layout.scale;
++        draw_panel_text(draw_font, abyss_effect, objective.abyss_effect,
++            style.objective_detail_font_size * layout.scale, palette.text);
++        HudRect abyss_rewards = objective.bounds;
++        abyss_rewards.y += 72.0F * layout.scale;
++        draw_panel_text(draw_font, abyss_rewards, objective.abyss_rewards,
++            style.objective_detail_font_size * layout.scale, palette.text);
+     }
+     if (navigation.visible) {
+         DrawRectangleRounded({navigation.bounds.x, navigation.bounds.y,
+             navigation.bounds.width, navigation.bounds.height}, 0.12F, 6,
+             Color{7, 10, 17, 220});
+         draw_panel_text(draw_font, navigation.bounds, navigation.primary,
+             style.navigation_primary_font_size * layout.scale, palette.text);
+         HudRect ecology = navigation.bounds;
+         ecology.y += 22.0F * layout.scale;
+         draw_panel_text(draw_font, ecology, navigation.ecology,
+diff --git a/src/platform/raylib/hud_renderer.hpp b/src/platform/raylib/hud_renderer.hpp
+index 84f0c92..664cc48 100644
+--- a/src/platform/raylib/hud_renderer.hpp
++++ b/src/platform/raylib/hud_renderer.hpp
+@@ -45,20 +45,22 @@ struct MonsterBarVisualPlan final {
+     std::array<MonsterBarPlan, 3> bars{};
+     bool world_space{true};
+ };
+ 
+ struct ObjectivePanelPlan final {
+     bool visible{};
+     bool abyss{};
+     HudRect bounds{};
+     HudText96 primary{};
+     HudText96 secondary{};
++    HudText96 abyss_effect{};
++    HudText96 abyss_rewards{};
+ };
+ 
+ struct NavigationPanelPlan final {
+     bool visible{};
+     HudRect bounds{};
+     HudText96 primary{};
+     HudText96 ecology{};
+     std::array<NavigationHudModel::Element, 4> elements{};
+     std::uint8_t element_count{};
+ };
+@@ -85,20 +87,21 @@ struct HudTextDrawPlan final {
+     float font_size{};
+ };
+ 
+ struct HudReadabilityStyle final {
+     float panel_minimum_font_size{15.0F};
+     float player_bar_font_size{19.0F};
+     float progression_font_size{17.0F};
+     float status_tag_font_size{15.0F};
+     float objective_primary_font_size{22.0F};
+     float objective_secondary_font_size{18.0F};
++    float objective_detail_font_size{16.0F};
+     float navigation_primary_font_size{20.0F};
+     float navigation_secondary_font_size{18.0F};
+     float navigation_element_font_size{16.0F};
+     int outline_pixels{2};
+ };
+ 
+ [[nodiscard]] PlayerPanelPlan make_player_panel_plan(
+     const PlayerHudModel&, const HudLayout&, float presentation_seconds) noexcept;
+ [[nodiscard]] MonsterBarVisualPlan make_monster_bar_visual_plan(
+     const combat::MonsterSnapshot&) noexcept;
+diff --git a/src/platform/raylib/hud_view_model.cpp b/src/platform/raylib/hud_view_model.cpp
+index 9f2707a..9d75f46 100644
+--- a/src/platform/raylib/hud_view_model.cpp
++++ b/src/platform/raylib/hud_view_model.cpp
+@@ -71,22 +71,26 @@ HudPaletteId element_color(dungeon::DungeonElement ecology) noexcept {
+     }
+     return HudPaletteId::chaos;
+ }
+ 
+ void build_room_objective(RoomHudModel& room,
+     HudBuildDiagnostics& diagnostics,
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+     const AbyssHudValues abyss = abyss_hud_values(snapshot);
+     if (abyss.visible) {
+         format_text(room.secondary, diagnostics,
+-            u8"深渊 %s · %s · 奖励 %u/%u",
+-            abyss.danger_label, abyss.rule_label,
++            u8"深渊 %s · 规则 %s",
++            abyss.danger_label, abyss.rule_label);
++        format_text(room.abyss_effect, diagnostics,
++            "%s", abyss.effect_label);
++        format_text(room.abyss_rewards, diagnostics,
++            u8"待领奖励 %u · 未领取 %u",
+             static_cast<unsigned>(abyss.pending_rewards),
+             static_cast<unsigned>(abyss.unpicked_rewards));
+     }
+ 
+     switch (snapshot.phase) {
+     case dungeon::RoomPhase::combat:
+     case dungeon::RoomPhase::wave_delay:
+         format_text(room.objective, diagnostics, u8"%s · 怪物 %u/%u",
+             room_density_label(snapshot.density_affix),
+             static_cast<unsigned>(snapshot.remaining_targets),
+diff --git a/src/platform/raylib/hud_view_model.hpp b/src/platform/raylib/hud_view_model.hpp
+index d5bfa42..f278c5a 100644
+--- a/src/platform/raylib/hud_view_model.hpp
++++ b/src/platform/raylib/hud_view_model.hpp
+@@ -41,20 +41,22 @@ struct PlayerHudModel final {
+     std::uint64_t required_experience{};
+     float experience_ratio{};
+     std::uint8_t unspent_passive_points{};
+     std::array<HudStatusTagKind, 3> status_tags{};
+     std::uint8_t status_tag_count{};
+ };
+ 
+ struct RoomHudModel final {
+     HudText96 objective{};
+     HudText96 secondary{};
++    HudText96 abyss_effect{};
++    HudText96 abyss_rewards{};
+     bool abyss{};
+     dungeon::RoomDensityAffix density_affix{
+         dungeon::RoomDensityAffix::crowded};
+     std::uint8_t initial_monster_count{};
+     std::uint8_t remaining_targets{};
+ };
+ 
+ struct NavigationHudModel final {
+     std::uint64_t depth{};
+     std::uint64_t floor_room{};
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index 449ab35..8ec06f9 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -15,20 +15,21 @@ namespace platform = arpg::platform;
+ 
+ bool same_color(Color lhs, Color rhs) noexcept {
+     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
+         && lhs.a == rhs.a;
+ }
+ 
+ [[nodiscard]] bool model_texts_are_covered(const platform::HudFontPlan& plan,
+     const platform::HudViewModel& model) noexcept {
+     const platform::HudText96* const texts[] = {
+         &model.room.objective, &model.room.secondary,
++        &model.room.abyss_effect, &model.room.abyss_rewards,
+         &model.navigation.primary, &model.navigation.ecology_label,
+         &model.navigation.elements[0].label, &model.navigation.elements[1].label,
+         &model.navigation.elements[2].label, &model.navigation.elements[3].label,
+     };
+     for (const platform::HudText96* const text : texts) {
+         if (text->bytes[0] != '\0'
+             && !platform::death_overlay_font_covers_text(plan.shared,
+                 text->bytes.data())) {
+             return false;
+         }
+@@ -120,21 +121,21 @@ arpg::test::Failure ground_loot_labels_are_covered_by_the_hud_owned_font() noexc
+     ARPG_REQUIRE(plan.covers_required_text);
+     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+         plan.shared, kGroundLootText));
+     return {};
+ }
+ 
+ arpg::test::Failure task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity() noexcept {
+     const platform::HudFontPlan plan = platform::hud_font_plan();
+     constexpr const char* kTask6Text[] = {
+         u8"深度", u8"层房间", u8"生态", u8"第", u8"波", u8"下一波即将开始",
+-        u8"待领奖励", u8"未领取", u8"正在保存房间", u8"正在处理撤退",
++        u8"待领奖励", u8"未领取", u8"规则", u8"正在保存房间", u8"正在处理撤退",
+         u8"房间状态异常", u8"深渊", u8"火", u8"水", u8"电", u8"混沌",
+         u8"拥挤", u8"密集", u8"兽潮", u8"怪物",
+     };
+ 
+     ARPG_REQUIRE(plan.covers_required_text);
+     ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+     for (const char* text : kTask6Text) {
+         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+     }
+     return {};
+diff --git a/tests/platform/hud_layout_tests.cpp b/tests/platform/hud_layout_tests.cpp
+index 2177621..ff5f725 100644
+--- a/tests/platform/hud_layout_tests.cpp
++++ b/tests/platform/hud_layout_tests.cpp
+@@ -85,20 +85,38 @@ arpg::test::Failure notices_remain_above_the_bottom_abyss_confirmation_area() no
+         ARPG_REQUIRE(!platform::hud_rects_overlap(
+             layout.secondary_notice, confirmation));
+         ARPG_REQUIRE(layout.primary_notice.y + layout.primary_notice.height
+             <= confirmation.y);
+         ARPG_REQUIRE(layout.secondary_notice.y + layout.secondary_notice.height
+             <= layout.primary_notice.y);
+     }
+     return {};
+ }
+ 
++arpg::test::Failure four_line_objective_fits_1024_by_704_between_side_panels() noexcept {
++    const platform::HudLayout layout =
++        platform::make_hud_layout(1024, 704, false);
++    constexpr float kFourLineObjectiveHeight = 120.0F;
++
++    ARPG_REQUIRE(layout.objective_panel.height
++        >= kFourLineObjectiveHeight * layout.scale);
++    ARPG_REQUIRE(platform::hud_rect_inside(
++        layout.objective_panel, layout.safe_area));
++    ARPG_REQUIRE(!platform::hud_rects_overlap(
++        layout.objective_panel, layout.player_panel));
++    ARPG_REQUIRE(!platform::hud_rects_overlap(
++        layout.objective_panel, layout.navigation_panel));
++    ARPG_REQUIRE(!platform::hud_rects_overlap(
++        layout.objective_panel, layout.combat_exclusion));
++    return {};
++}
++
+ arpg::test::Failure debug_panel_is_opt_in_and_keeps_the_combat_exclusion_clear() noexcept {
+     const platform::HudLayout hidden = platform::make_hud_layout(1280, 720, false);
+     const platform::HudLayout visible = platform::make_hud_layout(1280, 720, true);
+ 
+     ARPG_REQUIRE(empty(hidden.debug_panel));
+     ARPG_REQUIRE(!empty(visible.debug_panel));
+     ARPG_REQUIRE(platform::hud_rect_inside(visible.debug_panel, visible.safe_area));
+     ARPG_REQUIRE(!platform::hud_rects_overlap(
+         visible.debug_panel, visible.combat_exclusion));
+     ARPG_REQUIRE(!platform::hud_rects_overlap(
+@@ -139,20 +157,22 @@ arpg::test::Failure hud_rect_helpers_distinguish_touching_from_overlapping() noe
+     ARPG_REQUIRE(!platform::hud_rects_overlap(first, touching));
+     ARPG_REQUIRE(platform::hud_rects_overlap(first, overlapping));
+     ARPG_REQUIRE(platform::hud_rect_inside(contained, first));
+     ARPG_REQUIRE(!platform::hud_rect_inside(overlapping, first));
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"resolution safe layout matrices", &resolution_matrices_are_safe_and_do_not_cover_combat},
+     {"notices above abyss confirmation", &notices_remain_above_the_bottom_abyss_confirmation_area},
++    {"four-line objective at 1024x704",
++        &four_line_objective_fits_1024_by_704_between_side_panels},
+     {"debug layout opt in", &debug_panel_is_opt_in_and_keeps_the_combat_exclusion_clear},
+     {"invalid viewport layout", &invalid_viewports_return_an_empty_layout},
+     {"HUD rectangle helpers", &hud_rect_helpers_distinguish_touching_from_overlapping},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_layout_suite() noexcept {
+     return arpg::test::make_suite("hud_layout", kCases);
+ }
+diff --git a/tests/platform/hud_render_plan_tests.cpp b/tests/platform/hud_render_plan_tests.cpp
+index 20ce7e1..c2bbe47 100644
+--- a/tests/platform/hud_render_plan_tests.cpp
++++ b/tests/platform/hud_render_plan_tests.cpp
+@@ -247,21 +247,26 @@ arpg::test::Failure monster_resource_plan_consumes_snapshot_values_and_palette_i
+     ARPG_REQUIRE(full.bars[2].palette_id == platform::HudPaletteId::experience);
+     return {};
+ }
+ 
+ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_panels() noexcept {
+     const platform::HudLayout layout = platform::make_hud_layout(1024, 704, false);
+     platform::RoomHudModel room{};
+     static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
+         u8"兽潮 · 怪物 19/41"));
+     static_cast<void>(std::snprintf(room.secondary.bytes.data(), room.secondary.bytes.size(),
+-        u8"深渊 ABYSS HIGH · ABYSS FURY · 奖励 2/1"));
++        u8"深渊 ABYSS HIGH · 规则 ABYSS FURY"));
++    static_cast<void>(std::snprintf(room.abyss_effect.bytes.data(),
++        room.abyss_effect.bytes.size(),
++        "Every 240t: warn 45t/radius 1.0, burn 10%% max HP/60t for 180t"));
++    static_cast<void>(std::snprintf(room.abyss_rewards.bytes.data(),
++        room.abyss_rewards.bytes.size(), u8"待领奖励 2 · 未领取 1"));
+     room.density_affix = arpg::dungeon::RoomDensityAffix::horde;
+     room.initial_monster_count = 41U;
+     room.remaining_targets = 19U;
+     room.abyss = true;
+     platform::NavigationHudModel navigation{};
+     static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
+         u8"深度 1 · 层房间 2"));
+     platform::ContextHudModel context{};
+     context.primary_kind = platform::HudNoticeKind::exit_ready;
+     context.primary_abyss = true;
+@@ -271,40 +276,60 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
+     const platform::ObjectivePanelPlan objective =
+         platform::make_objective_panel_plan(room, layout);
+     const platform::NavigationPanelPlan navigation_plan =
+         platform::make_navigation_panel_plan(navigation, layout);
+     const platform::ContextPanelPlan context_plan =
+         platform::make_context_panel_plan(context, layout);
+ 
+     ARPG_REQUIRE(objective.visible);
+     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
+     ARPG_REQUIRE(objective.secondary.bytes == room.secondary.bytes);
++    ARPG_REQUIRE(objective.abyss_effect.bytes == room.abyss_effect.bytes);
++    ARPG_REQUIRE(objective.abyss_rewards.bytes == room.abyss_rewards.bytes);
+     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
+     const platform::HudReadabilityStyle style = platform::hud_readability_style();
+     const platform::HudTextDrawPlan primary_text =
+         platform::make_hud_text_draw_plan(objective.primary,
+             objective.bounds.width - 20.0F,
+             style.objective_primary_font_size * layout.scale,
+             (std::min)(style.objective_primary_font_size * layout.scale,
+                 style.panel_minimum_font_size),
+             &utf8_readability_measure, nullptr);
+     const platform::HudTextDrawPlan secondary_text =
+         platform::make_hud_text_draw_plan(objective.secondary,
+             objective.bounds.width - 20.0F,
+             style.objective_secondary_font_size * layout.scale,
+             (std::min)(style.objective_secondary_font_size * layout.scale,
+                 style.panel_minimum_font_size),
+             &utf8_readability_measure, nullptr);
++    const platform::HudTextDrawPlan effect_text =
++        platform::make_hud_text_draw_plan(objective.abyss_effect,
++            objective.bounds.width - 20.0F,
++            style.objective_detail_font_size * layout.scale,
++            (std::min)(style.objective_detail_font_size * layout.scale,
++                style.panel_minimum_font_size),
++            &utf8_readability_measure, nullptr);
++    const platform::HudTextDrawPlan rewards_text =
++        platform::make_hud_text_draw_plan(objective.abyss_rewards,
++            objective.bounds.width - 20.0F,
++            style.objective_detail_font_size * layout.scale,
++            (std::min)(style.objective_detail_font_size * layout.scale,
++                style.panel_minimum_font_size),
++            &utf8_readability_measure, nullptr);
+     ARPG_REQUIRE(primary_text.visible);
+     ARPG_REQUIRE(!primary_text.truncated);
+     ARPG_REQUIRE(secondary_text.visible);
+     ARPG_REQUIRE(!secondary_text.truncated);
++    ARPG_REQUIRE(effect_text.visible);
++    ARPG_REQUIRE(!effect_text.truncated);
++    ARPG_REQUIRE(rewards_text.visible);
++    ARPG_REQUIRE(!rewards_text.truncated);
+     ARPG_REQUIRE(navigation_plan.visible);
+     ARPG_REQUIRE(navigation_plan.primary.bytes == navigation.primary.bytes);
+     ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));
+     ARPG_REQUIRE(context_plan.primary_visible);
+     ARPG_REQUIRE(context_plan.primary_kind == platform::HudNoticeKind::exit_ready);
+     ARPG_REQUIRE(context_plan.primary_abyss);
+     ARPG_REQUIRE(rect_inside(context_plan.primary_bounds, layout.primary_notice));
+     return {};
+ }
+ 
+diff --git a/tests/platform/hud_view_model_tests.cpp b/tests/platform/hud_view_model_tests.cpp
+index 30f92bc..5abb904 100644
+--- a/tests/platform/hud_view_model_tests.cpp
++++ b/tests/platform/hud_view_model_tests.cpp
+@@ -233,32 +233,86 @@ arpg::test::Failure objective_describes_every_player_visible_room_state() noexce
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+     snapshot.abyss_pending_rewards = 2U;
+     snapshot.abyss_unpicked_rewards = 1U;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"兽潮") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "19/41") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), u8"深渊") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS HIGH") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS FURY") != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "2/1") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.abyss_effect.bytes.data(),
++        "Monsters: damage and attack speed x145%") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
++        u8"待领奖励 2") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
++        u8"未领取 1") != nullptr);
+ 
++    return {};
++}
++
++arpg::test::Failure abyss_objective_preserves_rule_effect_and_labeled_rewards() noexcept {
++    dungeon::DungeonSnapshot snapshot = normal_snapshot();
++    snapshot.is_abyss = true;
++    snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
++    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::hunting_flames;
++    snapshot.abyss_pending_rewards = 12U;
++    snapshot.abyss_unpicked_rewards = 7U;
++    platform::HudViewModel output{};
++
++    platform::build_hud_view_model(output, snapshot, {}, default_hints());
++
++    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
++        "HUNTING FLAMES") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.abyss_effect.bytes.data(),
++        "Every 240t: warn 45t/radius 1.0, burn 10% max HP/60t for 180t")
++        != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
++        u8"待领奖励 12") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
++        u8"未领取 7") != nullptr);
++    ARPG_REQUIRE(!output.room.secondary.truncated);
++    ARPG_REQUIRE(!output.room.abyss_effect.truncated);
++    ARPG_REQUIRE(!output.room.abyss_rewards.truncated);
++    return {};
++}
++
++arpg::test::Failure density_affix_alone_rebuilds_cached_objective() noexcept {
+     platform::HudViewModelProjector projector{};
+-    dungeon::DungeonSnapshot cached = normal_snapshot();
+-    projector.build(output, cached, {}, default_hints());
++    dungeon::DungeonSnapshot snapshot = normal_snapshot();
++    platform::HudViewModel output{};
++    projector.build(output, snapshot, {}, default_hints());
+     const auto before = projector.static_formatting_diagnostics();
+-    cached.density_affix = dungeon::RoomDensityAffix::dense;
+-    cached.initial_monster_count = 22U;
+-    projector.build(output, cached, {}, default_hints());
++
++    snapshot.density_affix = dungeon::RoomDensityAffix::dense;
++    projector.build(output, snapshot, {}, default_hints());
++
+     const auto after = projector.static_formatting_diagnostics();
+     ARPG_REQUIRE(after.objective_rebuilds == before.objective_rebuilds + 1U);
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"密集") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/15") != nullptr);
++    return {};
++}
++
++arpg::test::Failure initial_count_alone_rebuilds_cached_objective() noexcept {
++    platform::HudViewModelProjector projector{};
++    dungeon::DungeonSnapshot snapshot = normal_snapshot();
++    platform::HudViewModel output{};
++    projector.build(output, snapshot, {}, default_hints());
++    const auto before = projector.static_formatting_diagnostics();
++
++    snapshot.initial_monster_count = 22U;
++    projector.build(output, snapshot, {}, default_hints());
++
++    const auto after = projector.static_formatting_diagnostics();
++    ARPG_REQUIRE(after.objective_rebuilds == before.objective_rebuilds + 1U);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"拥挤") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/22") != nullptr);
+     return {};
+ }
+ 
+ arpg::test::Failure navigation_formats_extremes_and_four_shared_element_visuals() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.depth = (std::numeric_limits<std::uint64_t>::max)();
+     snapshot.floor_room_index = (std::numeric_limits<std::uint64_t>::max)();
+     snapshot.biases.fill((std::numeric_limits<std::uint32_t>::max)());
+     platform::HudViewModel output{};
+@@ -397,20 +451,23 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"missing combat snapshot", &absent_combat_snapshot_is_reported},
+     {"resource clamping is non-mutating", &resource_ranges_clamp_without_mutating_snapshot},
+     {"level 100 threshold", &maximum_level_has_no_pending_threshold},
+     {"pending experience text", &pending_experience_is_shown_in_secondary_text},
+     {"status tag capacity", &active_statuses_project_in_fixed_priority_order},
+     {"uint32 navigation biases", &navigation_preserves_all_uint32_biases},
+     {"Chinese objective text", &objective_uses_chinese_target_text},
+     {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},
+     {"truncated secondary text", &truncated_secondary_text_remains_nul_terminated},
+     {"room objective states", &objective_describes_every_player_visible_room_state},
++    {"abyss objective details", &abyss_objective_preserves_rule_effect_and_labeled_rewards},
++    {"density affix cache key", &density_affix_alone_rebuilds_cached_objective},
++    {"initial count cache key", &initial_count_alone_rebuilds_cached_objective},
+     {"navigation extremes and elements", &navigation_formats_extremes_and_four_shared_element_visuals},
+     {"abyss context attachment", &context_attaches_notice_priority_without_changing_abyss_values},
+     {"rebound context hints", &rebound_context_hints_use_committed_e_i_and_p_labels},
+     {"abyss confirmation context semantics", &abyss_confirmation_context_preserves_descent_and_door_meaning_after_rebind},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_view_model_suite() noexcept {
+     return arpg::test::make_suite("hud_view_model", kCases);
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 6fee8ae..fa409d2 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -90,12 +90,12 @@ int main() {
+         material_loot_view_suite(),
+         material_bag_renderer_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 376, "stage 17 active skill UI");
++    return arpg::test::run_suites(suites, 380, "stage 17 active skill UI");
+ }

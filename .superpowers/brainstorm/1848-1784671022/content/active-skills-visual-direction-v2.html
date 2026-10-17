@@ -1,0 +1,65 @@
+<style>
+  .hero-frame{background:#05080d;border:1px solid #334a68;border-radius:14px;overflow:hidden;box-shadow:0 22px 54px rgba(0,0,0,.45);margin:16px 0}
+  .hero-frame img{display:block;width:100%;height:auto}
+  .caption{padding:14px 18px;background:linear-gradient(180deg,#111b2a,#0a111c);border-top:1px solid #253b58}
+  .caption h3{margin:0 0 6px;color:#dff2ff}
+  .caption p{margin:0;color:#9fb4ca}
+  .spec-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+  .spec{background:#0d1725;border:1px solid #2b405b;border-radius:10px;padding:14px}
+  .spec h3{color:#a9dcff;margin-top:0}
+  .spec li{margin:7px 0;color:#c5d4e5}
+  .approval{background:linear-gradient(135deg,#102946,#0b1726);border:1px solid #4c86ba;border-radius:12px;padding:18px;margin-top:18px;cursor:pointer;box-shadow:0 0 28px rgba(60,143,225,.14)}
+  .approval:hover{border-color:#8acbff;transform:translateY(-1px)}
+  .approval h3{margin:0 0 5px;color:#eaf8ff}
+  .approval p{margin:0;color:#aecdE8}
+  .quality-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .pill{padding:4px 9px;border-radius:999px;background:#16395d;color:#c7eaff;font-size:12px}
+</style>
+
+<h2>主动技能重做 · 高完成度视觉目标</h2>
+<p class="subtitle">上一版线框已废弃。下面是接近最终实机画面的特效密度、光影和动作分镜。</p>
+
+<div class="hero-frame">
+  <img src="/files/active-skills-ingame-v2.png" alt="拔刀斩与暴风式高完成度实机概念图">
+  <div class="caption">
+    <h3>最终画面目标</h3>
+    <p>上：单次全周拔刀斩，蓝白高亮核心、深蓝外缘、多目标命中火花。下：24剑阵、中心吸附、空中乱舞与密集残影。</p>
+  </div>
+</div>
+
+<div class="hero-frame">
+  <img src="/files/active-skills-storyboard-v2.png" alt="两个主动技能八阶段动作分镜">
+  <div class="caption">
+    <h3>可实现的完整动作分镜</h3>
+    <p>上排：蓄力 → 出鞘闪光 → 全周命中 → 收招。下排：24剑落阵 → 吸附升空 → 逐剑乱舞 → 落地终结。</p>
+  </div>
+</div>
+
+<div class="spec-grid">
+  <div class="spec">
+    <h3>拔刀斩</h3>
+    <ul>
+      <li>保留原版约半秒蓄力和明显收刀姿态</li>
+      <li>一次椭圆形全周攻击，不再限制为前方矩形</li>
+      <li>仅一把普通武器，无光剑、太刀或追加斩分支</li>
+      <li>命中采用停顿、分层斩光、火花、残屑和震屏</li>
+    </ul>
+  </div>
+  <div class="spec">
+    <h3>极·鬼剑术（暴风式）</h3>
+    <ul>
+      <li>完整24把剑：12把插地、12把悬空</li>
+      <li>敌人持续吸向剑阵中心，并受到高僵直控制</li>
+      <li>角色升空后逐剑高速穿梭，乱舞阶段保持无敌</li>
+      <li>落地终结斩触发垂直光柱、地面爆发和强震屏</li>
+    </ul>
+  </div>
+</div>
+
+<div class="approval" data-choice="approve-high-fidelity-v2" onclick="toggleSelect(this)">
+  <h3>确认：按这套完成度重做</h3>
+  <p>点击后，我会以这两张图作为视觉验收基准，先固化完整设计文档，再拆成战斗机制、特效渲染、音频与验收任务。</p>
+  <div class="quality-bar"><span class="pill">原版长演出</span><span class="pill">24剑实体</span><span class="pill">高密度粒子</span><span class="pill">原版控制节奏</span><span class="pill">无光剑分支</span></div>
+</div>
+
+<p class="subtitle" style="margin-top:14px">如果仍不合格，请直接指出：角色、特效颜色、剑阵密度、动作节奏或画面风格中哪一项不对。</p>

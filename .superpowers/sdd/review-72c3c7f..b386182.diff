@@ -1,0 +1,1162 @@
+# Review package: 72c3c7f..b386182
+
+## Commits
+b386182 feat: render large rooms and density encounter HUD
+
+## Files changed
+ .superpowers/sdd/task-6-report.md                  |  74 +++++++++++++
+ src/platform/raylib/environment_render_plan.hpp    |  97 +++++++++++++++++
+ src/platform/raylib/hud_font.cpp                   |  12 +++
+ src/platform/raylib/hud_layout.cpp                 |   2 +-
+ src/platform/raylib/hud_view_model.cpp             |  41 ++++---
+ src/platform/raylib/hud_view_model.hpp             |  11 +-
+ src/platform/raylib/room_renderer.cpp              |  72 ++++++-------
+ tests/platform/hud_font_tests.cpp                  |   1 +
+ tests/platform/hud_render_plan_tests.cpp           |  44 +++++++-
+ tests/platform/hud_view_model_tests.cpp            |  52 +++++++--
+ .../platform/stage12_environment_render_tests.cpp  | 118 +++++++++++++++++++++
+ 11 files changed, 456 insertions(+), 68 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-6-report.md b/.superpowers/sdd/task-6-report.md
+index 7147a1f..7c6ec5a 100644
+--- a/.superpowers/sdd/task-6-report.md
++++ b/.superpowers/sdd/task-6-report.md
+@@ -1,10 +1,84 @@
++# Stage 19 Task 6 实现报告：大型房间渲染与密度 HUD
++
++## 结论
++
++- HUD 战斗目标改为 `词条 · 怪物 剩余/初始`，普通与深渊均显示实际初始数量；生产 HUD 不再显示波次措辞。
++- `RoomHudModel` 公开密度词条、初始数量、剩余数量和预格式化副行；缓存键包含词条与初始数量，跨房间不复用旧文字。
++- 深渊副行继续显示危险等级、规则和待领/未领计数；1024×704 最小布局下完整可读且不截断。
++- 中文字体固定容量计划补入 `拥挤/密集/兽潮/怪物` 字形；找不到完整中文字体时仍走既有默认字体回退，不新增英文占位词条。
++- 房间场景新增固定 2 世界单位网格：X 方向 25 条、Y 方向 12 条，共 37 条；纯计划先投影后按屏幕包围盒裁剪。
++- 地面材质仍作为不拉伸的基础层，滚动网格和四边界线绘制在其上。四角、四门、洞口、危险区、装备和材料都消费 Task 5 同一 `CombatCameraView`。
++
++## TDD 证据
++
++### RED
++
++生产修改前先扩展 HUD、布局、字体与环境渲染测试。加载 MSVC/Windows SDK include 后执行：
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_platform_tests -- -j1
++```
++
++有效 RED：
++
++```text
++hud_view_model_tests.cpp(156): error C2039: "density_affix": 不是 RoomHudModel 的成员
++hud_view_model_tests.cpp(158): error C2039: "initial_monster_count": 不是 RoomHudModel 的成员
++```
++
++首次未加载 SDK 的 `cmath` 缺失属于环境失败，不计作 RED。
++
++### GREEN 与可读性修复
++
++- 初次生产接入后 25/25 编译成功。
++- 平台运行只剩新的 1024×704 深渊副行截断断言失败；保持完整规则、奖励文字和字体下限不变，仅将顶部目标面板逻辑宽度调整为 480。
++- 最终 `arpg_platform_tests.exe`：`376 cases, 0 failures`。
++
++## 最终验证
++
++```text
++arpg_platform_tests + arpg_game Debug 构建：通过
++platform.units：通过
++stage11c.hud_stress.zero_alloc_100k：通过
++stage11c.architecture.hud_boundaries：通过
++stage11c.architecture.hud_boundaries_self_test：通过
++platform.module_boundary：通过
++stage11c.hud_evidence_guard：通过
++stage11c.hud_evidence_guard_self_test：通过
++fresh dungeon executable：296/296，通过
++fresh persistence executable：94/94，通过
++git diff --check：通过（仅 core.autocrlf 换行提示）
++```
++
++额外运行 `stage11c.hud_evidence_validator_self_test` 时，CTest 依赖拉起旧
++`stage11c.hud_formal` 夹具；其旧清场场景在密度怪群下有 3 个既存失败，
++与 Task 5 报告中的旧固定清场预算问题同类。Task 6 的平台单元、HUD 零分配、
++架构边界和证据源守卫均全绿；未跨范围修改正式验收驱动，留给 Task 7 的全量
++验收更新。
++
++## 变更范围
++
++- `src/platform/raylib/environment_render_plan.hpp`
++- `src/platform/raylib/room_renderer.cpp`
++- `src/platform/raylib/hud_view_model.hpp/.cpp`
++- `src/platform/raylib/hud_layout.cpp`
++- `src/platform/raylib/hud_font.cpp`
++- `tests/platform/hud_view_model_tests.cpp`
++- `tests/platform/hud_render_plan_tests.cpp`
++- `tests/platform/hud_font_tests.cpp`
++- `tests/platform/stage12_environment_render_tests.cpp`
++
++未修改密度公式、会话生命周期、相机几何、保存、战斗或输入。
++
++---
++
+ # Stage 11-D Task 6 报告
+ 
+ ## 状态
+ 
+ 完成 Renderer and Draft Preview Integration，并按真实 RED -> GREEN 执行 TDD。范围停在 ground loot 图标/标签渲染、HUD 字体覆盖和 Host draft/committed policy separation；未实现 pickup feedback（Task 7）或 formal evidence（Task 9）。
+ 
+ ## 实现
+ 
+ - `CombatRenderPlan` 每次由 `CombatRenderer::draw` 构建一次，内部只拥有一个预构建 `GroundLootView`。
+ - room icon 与 HUD label 两个 stage 直接共享同一个 `CombatRenderPlan::ground_loot`；两个 pass 不再各自过滤或重建 ordinal 集。
+diff --git a/src/platform/raylib/environment_render_plan.hpp b/src/platform/raylib/environment_render_plan.hpp
+index 89320f5..b62b772 100644
+--- a/src/platform/raylib/environment_render_plan.hpp
++++ b/src/platform/raylib/environment_render_plan.hpp
+@@ -1,20 +1,117 @@
+ #pragma once
+ 
++#include "combat/room_bounds.hpp"
++#include "combat_view_math.hpp"
++#include "dungeon_view_math.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstddef>
++#include <cstdint>
++
+ namespace arpg::platform {
+ 
+ struct EnvironmentFrameAvailability final {
+     bool floor{};
+     bool door{};
+     bool hole{};
+     bool door_required{};
+     bool hole_required{};
+ };
+ 
++inline constexpr std::array<combat::Vec3, 4> kRoomDoorCenters{{
++    {0.0F, combat::room_bounds::min_y, 0.0F},
++    {0.0F, combat::room_bounds::max_y, 0.0F},
++    {combat::room_bounds::min_x, 0.0F, 0.0F},
++    {combat::room_bounds::max_x, 0.0F, 0.0F},
++}};
++
++inline constexpr std::size_t kRoomVerticalGridLineCount = 25U;
++inline constexpr std::size_t kRoomHorizontalGridLineCount = 12U;
++inline constexpr std::size_t kRoomGridLineCapacity =
++    kRoomVerticalGridLineCount + kRoomHorizontalGridLineCount;
++
++struct RoomProjectedLine final {
++    combat::Vec3 world_start{};
++    combat::Vec3 world_end{};
++    ScreenProjection screen_start{};
++    ScreenProjection screen_end{};
++    bool visible{};
++};
++
++struct RoomGeometryPlan final {
++    std::array<ScreenProjection, 4> corners{};
++    std::array<ScreenProjection, 4> doors{};
++    ScreenProjection hole{};
++    std::array<RoomProjectedLine, kRoomGridLineCapacity> grid_lines{};
++    std::uint8_t grid_line_count{};
++};
++
++[[nodiscard]] inline bool projected_line_intersects_viewport(
++    ScreenProjection start, ScreenProjection end,
++    float width, float height) noexcept {
++    if (!(width > 0.0F) || !(height > 0.0F)
++        || !std::isfinite(width) || !std::isfinite(height)) {
++        return false;
++    }
++    const float minimum_x = (std::min)(start.x, end.x);
++    const float maximum_x = (std::max)(start.x, end.x);
++    const float minimum_y = (std::min)(start.ground_y, end.ground_y);
++    const float maximum_y = (std::max)(start.ground_y, end.ground_y);
++    return maximum_x >= 0.0F && minimum_x <= width
++        && maximum_y >= 0.0F && minimum_y <= height;
++}
++
++[[nodiscard]] inline RoomGeometryPlan make_room_geometry_plan(
++    CombatCameraView view, float width, float height) noexcept {
++    RoomGeometryPlan plan{};
++    constexpr std::array<combat::Vec3, 4> kCorners{{
++        {combat::room_bounds::min_x, combat::room_bounds::min_y, 0.0F},
++        {combat::room_bounds::max_x, combat::room_bounds::min_y, 0.0F},
++        {combat::room_bounds::min_x, combat::room_bounds::max_y, 0.0F},
++        {combat::room_bounds::max_x, combat::room_bounds::max_y, 0.0F},
++    }};
++    for (std::size_t index = 0U; index < kCorners.size(); ++index) {
++        plan.corners[index] = project_combat_position(
++            kCorners[index], view, width, height);
++        plan.doors[index] = project_combat_position(
++            kRoomDoorCenters[index], view, width, height);
++    }
++    plan.hole = project_combat_position(kHoleCenter, view, width, height);
++
++    const auto append_line = [&](combat::Vec3 start,
++                                 combat::Vec3 end) noexcept {
++        RoomProjectedLine& line = plan.grid_lines[plan.grid_line_count++];
++        line.world_start = start;
++        line.world_end = end;
++        line.screen_start = project_combat_position(start, view, width, height);
++        line.screen_end = project_combat_position(end, view, width, height);
++        line.visible = projected_line_intersects_viewport(
++            line.screen_start, line.screen_end, width, height);
++    };
++    for (std::size_t index = 0U;
++         index < kRoomVerticalGridLineCount; ++index) {
++        const float x = combat::room_bounds::min_x
++            + 2.0F * static_cast<float>(index);
++        append_line({x, combat::room_bounds::min_y, 0.0F},
++            {x, combat::room_bounds::max_y, 0.0F});
++    }
++    for (std::size_t index = 0U;
++         index < kRoomHorizontalGridLineCount; ++index) {
++        const float y = combat::room_bounds::min_y
++            + 2.0F * static_cast<float>(index);
++        append_line({combat::room_bounds::min_x, y, 0.0F},
++            {combat::room_bounds::max_x, y, 0.0F});
++    }
++    return plan;
++}
++
+ [[nodiscard]] constexpr bool should_draw_material_environment(
+     EnvironmentFrameAvailability availability) noexcept {
+     return availability.floor
+         && (!availability.door_required || availability.door)
+         && (!availability.hole_required || availability.hole);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_font.cpp b/src/platform/raylib/hud_font.cpp
+index 26c8be5..546cecf 100644
+--- a/src/platform/raylib/hud_font.cpp
++++ b/src/platform/raylib/hud_font.cpp
+@@ -32,44 +32,56 @@ void add_active_skill_codepoints(DeathOverlayFontPlan& plan) noexcept {
+         0x80CC, 0x5305, 0x5173, 0x95ED,
+         0x62D4, 0x5200, 0x65A9,
+         0x6781, 0x00B7, 0x9B3C, 0x5251, 0x672F,
+         0x66B4, 0x98CE, 0x5F0F,
+     };
+     for (const int codepoint : kCodepoints) {
+         add_hud_codepoint(plan, codepoint);
+     }
+ }
+ 
++void add_room_density_codepoints(DeathOverlayFontPlan& plan) noexcept {
++    constexpr int kCodepoints[] = {
++        0x62E5, 0x6324, 0x5BC6, 0x96C6,
++        0x517D, 0x6F6E, 0x602A, 0x7269,
++    };
++    for (const int codepoint : kCodepoints) {
++        add_hud_codepoint(plan, codepoint);
++    }
++}
++
+ }  // namespace
+ 
+ HudFontPlan hud_font_plan() noexcept {
+     HudFontPlan plan{};
+     plan.shared = death_overlay_font_plan();
+     add_ground_loot_codepoints(plan.shared);
+     add_active_skill_codepoints(plan.shared);
++    add_room_density_codepoints(plan.shared);
+     constexpr const char* kRequiredText[] = {
+         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
+         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
+         u8"减速", u8"腐蚀", u8"无敌", u8"深度", u8"层房间", u8"生态",
+         u8"第", u8"波", u8"下一波即将开始", u8"待领奖励", u8"未领取",
+         u8"正在保存房间", u8"正在处理撤退", u8"房间状态异常", u8"深渊",
+         u8"目标", u8"个敌人", u8"待结算经验",
+         u8"需要恢复存档", u8"离开后再次触碰同一出口以放弃全部剩余奖励",
+         u8"再次交互，放弃剩余奖励并下降", u8"进入下一层", u8"进入出口",
+         u8"房间已清理", u8"奖励", u8"升级至级", u8"有未分配被动点",
+         u8"打开背包", u8"打开被动树",
+         u8"普通魔法稀有已拾取未知装备",
+         u8"装备 / 材料", u8"技能石", u8"主动技能石槽",
+         u8"空主技能槽", u8"辅助技能石（只读）", u8"未装备技能石",
+         u8"无", u8"取出", u8"正在保存",
+         u8"技能石背包关闭",
+         u8"拔刀斩", u8"极·鬼剑术（暴风式）",
++        u8"拥挤", u8"密集", u8"兽潮", u8"怪物",
+     };
+     plan.covers_required_text = true;
+     for (const char* text : kRequiredText) {
+         if (!death_overlay_font_covers_text(plan.shared, text)) {
+             plan.covers_required_text = false;
+             break;
+         }
+     }
+     return plan;
+ }
+diff --git a/src/platform/raylib/hud_layout.cpp b/src/platform/raylib/hud_layout.cpp
+index 9dce3a5..f29a566 100644
+--- a/src/platform/raylib/hud_layout.cpp
++++ b/src/platform/raylib/hud_layout.cpp
+@@ -5,21 +5,21 @@
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kLogicalWidth = 1280.0F;
+ constexpr float kLogicalHeight = 720.0F;
+ constexpr float kMinimumScale = 0.8F;
+ constexpr float kMaximumScale = 1.5F;
+ constexpr float kLogicalMargin = 16.0F;
+ constexpr float kPlayerWidth = 300.0F;
+ constexpr float kPlayerHeight = 144.0F;
+-constexpr float kObjectiveWidth = 340.0F;
++constexpr float kObjectiveWidth = 480.0F;
+ constexpr float kObjectiveHeight = 72.0F;
+ constexpr float kNavigationWidth = 270.0F;
+ constexpr float kNavigationHeight = 116.0F;
+ constexpr float kPrimaryNoticeWidth = 600.0F;
+ constexpr float kPrimaryNoticeHeight = 36.0F;
+ constexpr float kSecondaryNoticeHeight = 28.0F;
+ constexpr float kNoticeGap = 6.0F;
+ constexpr float kAbyssConfirmationHeight = 56.0F;
+ constexpr float kAbyssConfirmationGap = 8.0F;
+ constexpr float kCombatExclusionX = 360.0F;
+diff --git a/src/platform/raylib/hud_view_model.cpp b/src/platform/raylib/hud_view_model.cpp
+index 359747b..9f2707a 100644
+--- a/src/platform/raylib/hud_view_model.cpp
++++ b/src/platform/raylib/hud_view_model.cpp
+@@ -70,39 +70,34 @@ HudPaletteId element_color(dungeon::DungeonElement ecology) noexcept {
+     case dungeon::DungeonElement::chaos: return HudPaletteId::chaos;
+     }
+     return HudPaletteId::chaos;
+ }
+ 
+ void build_room_objective(RoomHudModel& room,
+     HudBuildDiagnostics& diagnostics,
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+     const AbyssHudValues abyss = abyss_hud_values(snapshot);
+     if (abyss.visible) {
+-        format_text(room.objective, diagnostics, u8"深渊 %s · %s",
+-            abyss.danger_label, abyss.rule_label);
+-        format_text(room.secondary, diagnostics, u8"待领奖励 %u · 未领取 %u",
++        format_text(room.secondary, diagnostics,
++            u8"深渊 %s · %s · 奖励 %u/%u",
++            abyss.danger_label, abyss.rule_label,
+             static_cast<unsigned>(abyss.pending_rewards),
+             static_cast<unsigned>(abyss.unpicked_rewards));
+-        return;
+     }
+ 
+     switch (snapshot.phase) {
+     case dungeon::RoomPhase::combat:
+-        format_text(room.objective, diagnostics, u8"第 %u/%u 波 · 剩余 %u",
+-            snapshot.wave_count == 0U ? 0U
+-                : static_cast<unsigned>(snapshot.wave_index) + 1U,
+-            static_cast<unsigned>(snapshot.wave_count),
+-            static_cast<unsigned>(snapshot.remaining_targets));
+-        break;
+     case dungeon::RoomPhase::wave_delay:
+-        format_text(room.objective, diagnostics, u8"下一波即将开始 · 剩余 %u",
+-            static_cast<unsigned>(snapshot.remaining_targets));
++        format_text(room.objective, diagnostics, u8"%s · 怪物 %u/%u",
++            room_density_label(snapshot.density_affix),
++            static_cast<unsigned>(snapshot.remaining_targets),
++            static_cast<unsigned>(snapshot.initial_monster_count));
+         break;
+     case dungeon::RoomPhase::cleared:
+     case dungeon::RoomPhase::awaiting_exit:
+         format_text(room.objective, diagnostics, u8"出口已开放");
+         break;
+     case dungeon::RoomPhase::committing:
+         format_text(room.objective, diagnostics, u8"正在保存房间");
+         break;
+     case dungeon::RoomPhase::death_pending:
+         format_text(room.objective, diagnostics, u8"正在处理撤退");
+@@ -165,61 +160,75 @@ void append_text(HudText96& output,
+ }
+ 
+ void increment_saturating(std::uint64_t& value) noexcept {
+     if (value != (std::numeric_limits<std::uint64_t>::max)()) {
+         ++value;
+     }
+ }
+ 
+ }  // namespace
+ 
++const char* room_density_label(
++    dungeon::RoomDensityAffix affix) noexcept {
++    switch (affix) {
++    case dungeon::RoomDensityAffix::crowded: return u8"拥挤";
++    case dungeon::RoomDensityAffix::dense: return u8"密集";
++    case dungeon::RoomDensityAffix::horde: return u8"兽潮";
++    case dungeon::RoomDensityAffix::count: break;
++    }
++    return u8"未知";
++}
++
+ void HudViewModelProjector::build(HudViewModel& output,
+     const dungeon::DungeonSnapshot& snapshot,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& hints) noexcept {
+     output = {};
+ 
+     const ObjectiveKey objective_key{
+         snapshot.is_abyss,
+         snapshot.phase,
+-        snapshot.wave_index,
+-        snapshot.wave_count,
++        snapshot.density_affix,
++        snapshot.initial_monster_count,
+         snapshot.remaining_targets,
+         snapshot.abyss_danger,
+         snapshot.abyss_rule,
+         snapshot.abyss_pending_rewards,
+         snapshot.abyss_unpicked_rewards,
+     };
+     const bool objective_changed = !objective_ready_
+         || objective_key_.is_abyss != objective_key.is_abyss
+         || objective_key_.phase != objective_key.phase
+-        || objective_key_.wave_index != objective_key.wave_index
+-        || objective_key_.wave_count != objective_key.wave_count
++        || objective_key_.density_affix != objective_key.density_affix
++        || objective_key_.initial_monster_count
++            != objective_key.initial_monster_count
+         || objective_key_.remaining_targets != objective_key.remaining_targets
+         || objective_key_.abyss_danger != objective_key.abyss_danger
+         || objective_key_.abyss_rule != objective_key.abyss_rule
+         || objective_key_.abyss_pending_rewards
+             != objective_key.abyss_pending_rewards
+         || objective_key_.abyss_unpicked_rewards
+             != objective_key.abyss_unpicked_rewards;
+     if (objective_changed) {
+         cached_objective_ = {};
+         HudBuildDiagnostics diagnostics{};
+         build_room_objective(cached_objective_, diagnostics, snapshot);
+         cached_objective_truncations_ = diagnostics.truncated_texts;
+         objective_key_ = objective_key;
+         objective_ready_ = true;
+         increment_saturating(
+             static_formatting_diagnostics_.objective_rebuilds);
+     }
+     output.room = cached_objective_;
+     output.room.abyss = snapshot.is_abyss;
++    output.room.density_affix = snapshot.density_affix;
++    output.room.initial_monster_count = snapshot.initial_monster_count;
+     output.room.remaining_targets = snapshot.remaining_targets;
+     output.diagnostics.truncated_texts += cached_objective_truncations_;
+ 
+     if (!control_hints_ready_
+         || control_hints_revision_ != hints.revision) {
+         cached_control_hint_suffix_ = {};
+         HudBuildDiagnostics diagnostics{};
+         format_text(cached_control_hint_suffix_, diagnostics,
+             u8" | %.32s | %.32s", hints.primary.data(), hints.secondary.data());
+         cached_control_hint_truncations_ = diagnostics.truncated_texts;
+diff --git a/src/platform/raylib/hud_view_model.hpp b/src/platform/raylib/hud_view_model.hpp
+index 8c2e48f..d5bfa42 100644
+--- a/src/platform/raylib/hud_view_model.hpp
++++ b/src/platform/raylib/hud_view_model.hpp
+@@ -42,20 +42,23 @@ struct PlayerHudModel final {
+     float experience_ratio{};
+     std::uint8_t unspent_passive_points{};
+     std::array<HudStatusTagKind, 3> status_tags{};
+     std::uint8_t status_tag_count{};
+ };
+ 
+ struct RoomHudModel final {
+     HudText96 objective{};
+     HudText96 secondary{};
+     bool abyss{};
++    dungeon::RoomDensityAffix density_affix{
++        dungeon::RoomDensityAffix::crowded};
++    std::uint8_t initial_monster_count{};
+     std::uint8_t remaining_targets{};
+ };
+ 
+ struct NavigationHudModel final {
+     std::uint64_t depth{};
+     std::uint64_t floor_room{};
+     dungeon::DungeonElement ecology{};
+     std::array<std::uint32_t, 4> biases{};
+     HudText96 primary{};
+     HudText96 ecology_label{};
+@@ -110,22 +113,23 @@ public:
+         const dungeon::DungeonSnapshot& snapshot,
+         const DungeonRenderStatus& runtime_status,
+         const ControlHints& hints) noexcept;
+     [[nodiscard]] HudStaticFormattingDiagnostics
+         static_formatting_diagnostics() const noexcept;
+ 
+ private:
+     struct ObjectiveKey final {
+         bool is_abyss{};
+         dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+-        std::uint8_t wave_index{};
+-        std::uint8_t wave_count{};
++        dungeon::RoomDensityAffix density_affix{
++            dungeon::RoomDensityAffix::crowded};
++        std::uint8_t initial_monster_count{};
+         std::uint8_t remaining_targets{};
+         abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
+         abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
+         std::uint8_t abyss_pending_rewards{};
+         std::uint8_t abyss_unpicked_rewards{};
+     };
+ 
+     struct NavigationKey final {
+         std::uint64_t depth{};
+         std::uint64_t floor_room{};
+@@ -141,17 +145,20 @@ private:
+     std::uint64_t control_hints_revision_{};
+     RoomHudModel cached_objective_{};
+     NavigationHudModel cached_navigation_{};
+     HudText96 cached_control_hint_suffix_{};
+     std::uint32_t cached_objective_truncations_{};
+     std::uint32_t cached_navigation_truncations_{};
+     std::uint32_t cached_control_hint_truncations_{};
+     HudStaticFormattingDiagnostics static_formatting_diagnostics_{};
+ };
+ 
++[[nodiscard]] const char* room_density_label(
++    dungeon::RoomDensityAffix) noexcept;
++
+ void build_hud_view_model(HudViewModel& output,
+     const dungeon::DungeonSnapshot& snapshot,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& hints) noexcept;
+ void attach_notice_view(HudViewModel&, const HudNoticeView&) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index b7380c8..fa46350 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -10,59 +10,40 @@
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+-Vector2 lerp(Vector2 from, Vector2 to, float amount) noexcept {
+-    return {
+-        from.x + (to.x - from.x) * amount,
+-        from.y + (to.y - from.y) * amount,
+-    };
+-}
+-
+ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const Vector2 back_left{width * 0.20F, height * 0.22F};
+     const Vector2 back_right{width * 0.80F, height * 0.22F};
+     const Vector2 floor_left{width * 0.04F, height * 0.92F};
+     const Vector2 floor_right{width * 0.96F, height * 0.92F};
+     DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Color{13, 17, 27, 255}, Color{28, 32, 43, 255});
+     DrawRectangle(static_cast<int>(back_left.x), 0,
+         static_cast<int>(back_right.x - back_left.x),
+         static_cast<int>(back_left.y), Color{31, 37, 51, 255});
+     DrawTriangle({0.0F, 0.0F}, floor_left, back_left, Color{22, 27, 39, 255});
+     DrawTriangle({0.0F, 0.0F}, {0.0F, height}, floor_left, Color{22, 27, 39, 255});
+     DrawTriangle({width, 0.0F}, back_right, floor_right, Color{22, 27, 39, 255});
+     DrawTriangle({width, 0.0F}, floor_right, {width, height}, Color{22, 27, 39, 255});
+     const Rgba8 tint = ecosystem_tint(ecology);
+     const Color floor{tint.r, tint.g, tint.b, 255};
+     DrawTriangle(back_left, floor_left, floor_right, floor);
+     DrawTriangle(back_left, floor_right, back_right, floor);
+-    const Color grid{87, 99, 119, 110};
+-    for (int column = 0; column <= 10; ++column) {
+-        const float amount = static_cast<float>(column) / 10.0F;
+-        DrawLineEx(lerp(back_left, back_right, amount),
+-            lerp(floor_left, floor_right, amount), 1.0F, grid);
+-    }
+-    for (int row = 0; row <= 8; ++row) {
+-        const float linear = static_cast<float>(row) / 8.0F;
+-        const float perspective = linear * linear;
+-        DrawLineEx(lerp(back_left, floor_left, perspective),
+-            lerp(back_right, floor_right, perspective), 1.0F, grid);
+-    }
+ }
+ 
+ bool draw_environment_room(const MaterialPack& material_pack,
+     dungeon::DungeonElement ecology) noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const float scale = (std::max)(width / 1024.0F, height / 704.0F);
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Color{9, 12, 20, 255});
+     return material_pack.draw(select_floor_sprite(ecology),
+@@ -76,42 +57,58 @@ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
+     const HoleVisualMode hole_mode = hole_visual_mode(snapshot);
+     return should_draw_material_environment({
+         material_pack.can_draw(select_floor_sprite(snapshot.ecology)),
+         material_pack.can_draw(select_door_sprite(snapshot.ecology)),
+         material_pack.can_draw(MaterialSpriteId::environment_hole),
+         door_mode != DoorVisualMode::hidden,
+         hole_mode != HoleVisualMode::hidden,
+     });
+ }
+ 
++Vector2 ground_point(ScreenProjection projection) noexcept {
++    return {projection.x, projection.ground_y};
++}
++
++void draw_room_geometry(const RoomGeometryPlan& geometry) noexcept {
++    const Color grid{112, 127, 151, 112};
++    for (std::size_t index = 0U;
++         index < geometry.grid_line_count; ++index) {
++        const RoomProjectedLine& line = geometry.grid_lines[index];
++        if (!line.visible) continue;
++        DrawLineEx(ground_point(line.screen_start),
++            ground_point(line.screen_end), 1.0F, grid);
++    }
++
++    const Color boundary{167, 183, 209, 190};
++    constexpr std::array<std::array<std::size_t, 2>, 4> kEdges{{
++        {{0U, 1U}}, {{2U, 3U}}, {{0U, 2U}}, {{1U, 3U}},
++    }};
++    for (const auto& edge : kEdges) {
++        DrawLineEx(ground_point(geometry.corners[edge[0]]),
++            ground_point(geometry.corners[edge[1]]), 3.0F, boundary);
++    }
++}
++
+ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+-    CombatCameraView view, float width, float height,
++    const RoomGeometryPlan& geometry,
+     const MaterialPack& material_pack,
+     bool draw_material_environment) noexcept {
+     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
+         snapshot.has_active_room, snapshot.exits_open[0]);
+     if (mode == DoorVisualMode::hidden) {
+         return;
+     }
+-    constexpr std::array<combat::Vec3, 4> kDoorCenters{{
+-        {0.0F, combat::room_bounds::min_y, 0.0F},
+-        {0.0F, combat::room_bounds::max_y, 0.0F},
+-        {combat::room_bounds::min_x, 0.0F, 0.0F},
+-        {combat::room_bounds::max_x, 0.0F, 0.0F},
+-    }};
+     constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
+         dungeon::ExitDirection::up, dungeon::ExitDirection::down,
+         dungeon::ExitDirection::left, dungeon::ExitDirection::right}};
+-    for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
+-        const RenderProjection projected = project_render_world(
+-            kDoorCenters[index].x, kDoorCenters[index].y, kDoorCenters[index].z,
+-            view, width, height);
++    for (std::size_t index = 0; index < geometry.doors.size(); ++index) {
++        const ScreenProjection projected = geometry.doors[index];
+         const DoorRenderDecision visual = door_render_decision(mode, kDirections[index]);
+         const Color frame_color{visual.frame.r, visual.frame.g, visual.frame.b, visual.frame.a};
+         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
+         const float door_width = 82.0F * projected.scale;
+         const float door_height = 70.0F * projected.scale;
+         const Rectangle frame{projected.x - door_width * 0.5F,
+             projected.ground_y - door_height, door_width, door_height};
+         if (draw_material_environment) {
+             static_cast<void>(material_pack.draw(select_door_sprite(snapshot.ecology),
+                 {projected.x, projected.ground_y}, false,
+@@ -338,29 +335,26 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
+         const char* label = TextFormat("%s  |  %s",
+             values.danger_label, values.rule_label);
+         const int font_size = 20;
+         DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
+             18, font_size, Color{255, 164, 221, 255});
+     }
+ }
+ 
+ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
+     const MaterialPack& material_pack, bool draw_material_environment,
+-    CombatCameraView view) noexcept {
++    const RoomGeometryPlan& geometry) noexcept {
+     const HoleVisualMode hole = hole_visual_mode(snapshot);
+     if (hole == HoleVisualMode::hidden) {
+         return;
+     }
+-    const RenderProjection projected = project_render_world(kHoleCenter.x,
+-        kHoleCenter.y, kHoleCenter.z, view,
+-        static_cast<float>(GetScreenWidth()),
+-        static_cast<float>(GetScreenHeight()));
++    const ScreenProjection projected = geometry.hole;
+     const int x = static_cast<int>(projected.x);
+     const int y = static_cast<int>(projected.ground_y);
+     Color color{43, 25, 55, 255};
+     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
+     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
+     if (draw_material_environment) {
+         static_cast<void>(material_pack.draw(MaterialSpriteId::environment_hole,
+             {projected.x, projected.ground_y}, false, 0.77F * projected.scale));
+     } else {
+         DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+@@ -379,25 +373,27 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
+ 
+ }  // namespace
+ 
+ void CombatRenderer::draw_room(
+     const dungeon::DungeonSnapshot& current,
+     const GroundLootView& ground_loot,
+     const MaterialLootView& material_loot,
+     CombatCameraView view) const noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
++    const RoomGeometryPlan geometry = make_room_geometry_plan(
++        view, width, height);
+     const bool draw_material_environment = can_draw_room_environment(current,
+         material_pack_) && draw_environment_room(material_pack_, current.ecology);
+     if (!draw_material_environment) {
+         draw_graybox_room(current.ecology);
+     }
++    draw_room_geometry(geometry);
+     draw_abyss(current, static_cast<float>(GetTime()));
+     draw_environment_hazards(current, view, width, height);
+     draw_ground_materials(current, material_loot, view, width, height);
+     draw_ground_items(current, ground_loot, material_pack_, view, width, height);
+-    draw_doors(current, view, width, height,
+-        material_pack_, draw_material_environment);
+-    draw_hole(current, material_pack_, draw_material_environment, view);
++    draw_doors(current, geometry, material_pack_, draw_material_environment);
++    draw_hole(current, material_pack_, draw_material_environment, geometry);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index 833583d..449ab35 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -122,20 +122,21 @@ arpg::test::Failure ground_loot_labels_are_covered_by_the_hud_owned_font() noexc
+         plan.shared, kGroundLootText));
+     return {};
+ }
+ 
+ arpg::test::Failure task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity() noexcept {
+     const platform::HudFontPlan plan = platform::hud_font_plan();
+     constexpr const char* kTask6Text[] = {
+         u8"深度", u8"层房间", u8"生态", u8"第", u8"波", u8"下一波即将开始",
+         u8"待领奖励", u8"未领取", u8"正在保存房间", u8"正在处理撤退",
+         u8"房间状态异常", u8"深渊", u8"火", u8"水", u8"电", u8"混沌",
++        u8"拥挤", u8"密集", u8"兽潮", u8"怪物",
+     };
+ 
+     ARPG_REQUIRE(plan.covers_required_text);
+     ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+     for (const char* text : kTask6Text) {
+         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+     }
+     return {};
+ }
+ 
+diff --git a/tests/platform/hud_render_plan_tests.cpp b/tests/platform/hud_render_plan_tests.cpp
+index f84504b..20ce7e1 100644
+--- a/tests/platform/hud_render_plan_tests.cpp
++++ b/tests/platform/hud_render_plan_tests.cpp
+@@ -34,20 +34,34 @@ bool same_color(Color lhs, Color rhs) noexcept {
+ 
+ [[nodiscard]] platform::HudLayout player_layout() noexcept {
+     return platform::make_hud_layout(1280, 720, false);
+ }
+ 
+ [[nodiscard]] bool rect_inside(platform::HudRect inner,
+     platform::HudRect outer) noexcept {
+     return platform::hud_rect_inside(inner, outer);
+ }
+ 
++float monospace_measure(const char* text, float font_size, void*) noexcept;
++
++float utf8_readability_measure(const char* text,
++    float font_size, void*) noexcept {
++    float units{};
++    if (text == nullptr) return units;
++    const auto* bytes = reinterpret_cast<const unsigned char*>(text);
++    for (std::size_t index{}; bytes[index] != 0U; ++index) {
++        if ((bytes[index] & 0xC0U) == 0x80U) continue;
++        units += bytes[index] < 0x80U ? 0.6F : 1.0F;
++    }
++    return units * font_size;
++}
++
+ arpg::test::Failure health_is_always_the_first_visible_player_bar() noexcept {
+     const platform::PlayerPanelPlan plan = platform::make_player_panel_plan(
+         player_model(), player_layout(), 0.0F);
+ 
+     ARPG_REQUIRE(plan.bar_count == 2U);
+     ARPG_REQUIRE(plan.bars[0].kind == platform::HudBarKind::health);
+     ARPG_REQUIRE(arpg::test::near(plan.bars[0].ratio, 0.75F));
+     ARPG_REQUIRE(rect_inside(plan.bars[0].bounds, player_layout().player_panel));
+     return {};
+ }
+@@ -228,43 +242,69 @@ arpg::test::Failure monster_resource_plan_consumes_snapshot_values_and_palette_i
+     ARPG_REQUIRE(full.bars[1].visible);
+     ARPG_REQUIRE(arpg::test::near(full.bars[1].ratio, 0.0F));
+     ARPG_REQUIRE(full.bars[1].palette_id == platform::HudPaletteId::barrier);
+     ARPG_REQUIRE(full.bars[2].visible);
+     ARPG_REQUIRE(arpg::test::near(full.bars[2].ratio, 0.5F));
+     ARPG_REQUIRE(full.bars[2].palette_id == platform::HudPaletteId::experience);
+     return {};
+ }
+ 
+ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_panels() noexcept {
+-    const platform::HudLayout layout = player_layout();
++    const platform::HudLayout layout = platform::make_hud_layout(1024, 704, false);
+     platform::RoomHudModel room{};
+     static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
+-        u8"第 1/2 波 · 剩余 3"));
++        u8"兽潮 · 怪物 19/41"));
++    static_cast<void>(std::snprintf(room.secondary.bytes.data(), room.secondary.bytes.size(),
++        u8"深渊 ABYSS HIGH · ABYSS FURY · 奖励 2/1"));
++    room.density_affix = arpg::dungeon::RoomDensityAffix::horde;
++    room.initial_monster_count = 41U;
++    room.remaining_targets = 19U;
++    room.abyss = true;
+     platform::NavigationHudModel navigation{};
+     static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
+         u8"深度 1 · 层房间 2"));
+     platform::ContextHudModel context{};
+     context.primary_kind = platform::HudNoticeKind::exit_ready;
+     context.primary_abyss = true;
+     static_cast<void>(std::snprintf(context.primary.bytes.data(), context.primary.bytes.size(),
+         "E to enter exit"));
+ 
+     const platform::ObjectivePanelPlan objective =
+         platform::make_objective_panel_plan(room, layout);
+     const platform::NavigationPanelPlan navigation_plan =
+         platform::make_navigation_panel_plan(navigation, layout);
+     const platform::ContextPanelPlan context_plan =
+         platform::make_context_panel_plan(context, layout);
+ 
+     ARPG_REQUIRE(objective.visible);
+     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
++    ARPG_REQUIRE(objective.secondary.bytes == room.secondary.bytes);
+     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
++    const platform::HudReadabilityStyle style = platform::hud_readability_style();
++    const platform::HudTextDrawPlan primary_text =
++        platform::make_hud_text_draw_plan(objective.primary,
++            objective.bounds.width - 20.0F,
++            style.objective_primary_font_size * layout.scale,
++            (std::min)(style.objective_primary_font_size * layout.scale,
++                style.panel_minimum_font_size),
++            &utf8_readability_measure, nullptr);
++    const platform::HudTextDrawPlan secondary_text =
++        platform::make_hud_text_draw_plan(objective.secondary,
++            objective.bounds.width - 20.0F,
++            style.objective_secondary_font_size * layout.scale,
++            (std::min)(style.objective_secondary_font_size * layout.scale,
++                style.panel_minimum_font_size),
++            &utf8_readability_measure, nullptr);
++    ARPG_REQUIRE(primary_text.visible);
++    ARPG_REQUIRE(!primary_text.truncated);
++    ARPG_REQUIRE(secondary_text.visible);
++    ARPG_REQUIRE(!secondary_text.truncated);
+     ARPG_REQUIRE(navigation_plan.visible);
+     ARPG_REQUIRE(navigation_plan.primary.bytes == navigation.primary.bytes);
+     ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));
+     ARPG_REQUIRE(context_plan.primary_visible);
+     ARPG_REQUIRE(context_plan.primary_kind == platform::HudNoticeKind::exit_ready);
+     ARPG_REQUIRE(context_plan.primary_abyss);
+     ARPG_REQUIRE(rect_inside(context_plan.primary_bounds, layout.primary_notice));
+     return {};
+ }
+ 
+diff --git a/tests/platform/hud_view_model_tests.cpp b/tests/platform/hud_view_model_tests.cpp
+index 0bdd6a2..30f92bc 100644
+--- a/tests/platform/hud_view_model_tests.cpp
++++ b/tests/platform/hud_view_model_tests.cpp
+@@ -16,25 +16,29 @@ platform::ControlHints default_hints() noexcept {
+     platform::ControlHints hints{};
+     static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+         "W Move Up  S Move Down"));
+     static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+         "J Attack  K Jump"));
+     return hints;
+ }
+ 
+ dungeon::DungeonSnapshot normal_snapshot() noexcept {
+     dungeon::DungeonSnapshot snapshot{};
++    snapshot.phase = dungeon::RoomPhase::combat;
+     snapshot.depth = 7U;
+     snapshot.floor_room_index = 3U;
+     snapshot.ecology = dungeon::DungeonElement::water;
+     snapshot.biases = {{11U, 22U, 33U, 44U}};
+     snapshot.remaining_targets = 5U;
++    snapshot.density_affix = dungeon::RoomDensityAffix::crowded;
++    snapshot.base_monster_count = 15U;
++    snapshot.initial_monster_count = 15U;
+     snapshot.progression = {4U, 40U, 3U, 2U};
+     snapshot.combat.emplace();
+     snapshot.combat->player.hp = 80;
+     snapshot.combat->player.max_hp = 100;
+     snapshot.combat->player.barrier = 25;
+     snapshot.combat->player.max_barrier = 50;
+     return snapshot;
+ }
+ 
+ arpg::test::Failure normal_combat_projects_snapshot_values() noexcept {
+@@ -142,22 +146,27 @@ arpg::test::Failure navigation_preserves_all_uint32_biases() noexcept {
+ 
+     ARPG_REQUIRE(output.navigation.biases == snapshot.biases);
+     return {};
+ }
+ 
+ arpg::test::Failure objective_uses_chinese_target_text() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+ 
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"目标") != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5") != nullptr);
++    ARPG_REQUIRE(output.room.density_affix
++        == dungeon::RoomDensityAffix::crowded);
++    ARPG_REQUIRE(output.room.initial_monster_count == 15U);
++    ARPG_REQUIRE(output.room.remaining_targets == 5U);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"拥挤") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"怪物") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/15") != nullptr);
+     return {};
+ }
+ 
+ arpg::test::Failure non_terminated_hint_buffers_are_bounded_and_terminated() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.pending_room_experience = 1U;
+     platform::ControlHints hints{};
+     hints.primary.fill('P');
+     hints.secondary.fill('S');
+     hints.revision = (std::numeric_limits<std::uint64_t>::max)();
+@@ -185,47 +194,72 @@ arpg::test::Failure truncated_secondary_text_remains_nul_terminated() noexcept {
+     platform::build_hud_view_model(output, snapshot, {}, hints);
+ 
+     ARPG_REQUIRE(output.room.secondary.truncated);
+     ARPG_REQUIRE(output.room.secondary.bytes.back() == '\0');
+     ARPG_REQUIRE(output.diagnostics.truncated_texts == 1U);
+     return {};
+ }
+ 
+ arpg::test::Failure objective_describes_every_player_visible_room_state() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+-    snapshot.wave_index = 1U;
+-    snapshot.wave_count = 3U;
++    snapshot.density_affix = dungeon::RoomDensityAffix::horde;
++    snapshot.base_monster_count = 27U;
++    snapshot.initial_monster_count = 27U;
++    snapshot.remaining_targets = 19U;
+     platform::HudViewModel output{};
+ 
+     snapshot.phase = dungeon::RoomPhase::combat;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"第 2/3 波") != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"剩余 5") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"兽潮") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "19/27") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"波") == nullptr);
+ 
+     snapshot.phase = dungeon::RoomPhase::wave_delay;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"下一波") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"兽潮") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "19/27") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"波") == nullptr);
+ 
+     snapshot.phase = dungeon::RoomPhase::cleared;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"出口已开放") != nullptr);
+ 
+     snapshot.phase = dungeon::RoomPhase::committing;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"正在保存") != nullptr);
+ 
+     snapshot.is_abyss = true;
++    snapshot.phase = dungeon::RoomPhase::combat;
++    snapshot.initial_monster_count = 41U;
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
++    snapshot.abyss_pending_rewards = 2U;
++    snapshot.abyss_unpicked_rewards = 1U;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊") != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS HIGH") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"兽潮") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "19/41") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), u8"深渊") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS HIGH") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS FURY") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "2/1") != nullptr);
++
++    platform::HudViewModelProjector projector{};
++    dungeon::DungeonSnapshot cached = normal_snapshot();
++    projector.build(output, cached, {}, default_hints());
++    const auto before = projector.static_formatting_diagnostics();
++    cached.density_affix = dungeon::RoomDensityAffix::dense;
++    cached.initial_monster_count = 22U;
++    projector.build(output, cached, {}, default_hints());
++    const auto after = projector.static_formatting_diagnostics();
++    ARPG_REQUIRE(after.objective_rebuilds == before.objective_rebuilds + 1U);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"密集") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/22") != nullptr);
+     return {};
+ }
+ 
+ arpg::test::Failure navigation_formats_extremes_and_four_shared_element_visuals() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.depth = (std::numeric_limits<std::uint64_t>::max)();
+     snapshot.floor_room_index = (std::numeric_limits<std::uint64_t>::max)();
+     snapshot.biases.fill((std::numeric_limits<std::uint32_t>::max)());
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index aba7e06..aec31cf 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -1,15 +1,23 @@
+ #include "test_framework.hpp"
+ 
+ #include "dungeon/dungeon_types.hpp"
++#include "combat/room_bounds.hpp"
++#include "combat_view_math.hpp"
+ #include "environment_render_plan.hpp"
++#include "ground_loot_view.hpp"
+ #include "material_animation.hpp"
++#include "material_loot_view.hpp"
++#include "render_layout.hpp"
++
++#include <algorithm>
++#include <cmath>
+ 
+ namespace {
+ 
+ arpg::test::Failure environment_maps_each_dungeon_element_to_a_floor_sprite() noexcept {
+     using arpg::dungeon::DungeonElement;
+     using arpg::platform::MaterialSpriteId;
+ 
+     ARPG_REQUIRE(arpg::platform::select_floor_sprite(DungeonElement::fire)
+         != MaterialSpriteId::missing);
+     ARPG_REQUIRE(arpg::platform::select_floor_sprite(DungeonElement::water)
+@@ -23,20 +31,130 @@ arpg::test::Failure environment_maps_each_dungeon_element_to_a_floor_sprite() no
+ 
+ arpg::test::Failure environment_falls_back_atomically_when_a_required_frame_is_missing() noexcept {
+     using arpg::platform::EnvironmentFrameAvailability;
+ 
+     ARPG_REQUIRE(!arpg::platform::should_draw_material_environment(
+         EnvironmentFrameAvailability{true, false, true, true, true}));
+     ARPG_REQUIRE(!arpg::platform::should_draw_material_environment(
+         EnvironmentFrameAvailability{true, true, false, true, true}));
+     ARPG_REQUIRE(arpg::platform::should_draw_material_environment(
+         EnvironmentFrameAvailability{true, true, true, true, true}));
++
++    namespace combat = arpg::combat;
++    namespace platform = arpg::platform;
++    constexpr float kWidth = 1280.0F;
++    constexpr float kHeight = 720.0F;
++    const platform::CombatCameraView center =
++        platform::make_combat_camera_view({}, kWidth, kHeight);
++    const platform::RoomGeometryPlan geometry =
++        platform::make_room_geometry_plan(center, kWidth, kHeight);
++    ARPG_REQUIRE(geometry.grid_line_count == 37U);
++    for (std::size_t index = 0U; index < 25U; ++index) {
++        const float expected_x = combat::room_bounds::min_x
++            + 2.0F * static_cast<float>(index);
++        ARPG_REQUIRE(arpg::test::near(
++            geometry.grid_lines[index].world_start.x, expected_x));
++        ARPG_REQUIRE(arpg::test::near(
++            geometry.grid_lines[index].world_end.x, expected_x));
++    }
++    for (std::size_t index = 25U; index < geometry.grid_line_count; ++index) {
++        const float expected_y = combat::room_bounds::min_y
++            + 2.0F * static_cast<float>(index - 25U);
++        ARPG_REQUIRE(arpg::test::near(
++            geometry.grid_lines[index].world_start.y, expected_y));
++        ARPG_REQUIRE(arpg::test::near(
++            geometry.grid_lines[index].world_end.y, expected_y));
++    }
++    std::size_t visible_grid_lines{};
++    for (std::size_t index = 0U;
++         index < geometry.grid_line_count; ++index) {
++        const auto& line = geometry.grid_lines[index];
++        ARPG_REQUIRE(line.visible
++            == platform::projected_line_intersects_viewport(
++                line.screen_start, line.screen_end, kWidth, kHeight));
++        if (line.visible) ++visible_grid_lines;
++    }
++    ARPG_REQUIRE(visible_grid_lines > 0U);
++    ARPG_REQUIRE(visible_grid_lines < geometry.grid_line_count);
++
++    const auto same_projection = [](platform::ScreenProjection lhs,
++                                     platform::ScreenProjection rhs) noexcept {
++        return arpg::test::near(lhs.x, rhs.x)
++            && arpg::test::near(lhs.y, rhs.y)
++            && arpg::test::near(lhs.ground_y, rhs.ground_y)
++            && arpg::test::near(lhs.scale, rhs.scale);
++    };
++    const combat::Vec3 shared_position{3.0F, 2.0F, 0.0F};
++    const platform::ScreenProjection direct =
++        platform::project_combat_position(shared_position, center,
++            kWidth, kHeight);
++    const platform::RenderProjection room = platform::project_render_world(
++        shared_position.x, shared_position.y, shared_position.z,
++        center, kWidth, kHeight);
++    ARPG_REQUIRE(arpg::test::near(room.x, direct.x));
++    ARPG_REQUIRE(arpg::test::near(room.y, direct.y));
++    ARPG_REQUIRE(arpg::test::near(room.ground_y, direct.ground_y));
++
++    arpg::combat::HazardSnapshot hazard{};
++    hazard.center = shared_position;
++    ARPG_REQUIRE(same_projection(platform::project_hazard_center(
++        hazard, center, kWidth, kHeight), direct));
++
++    arpg::dungeon::DungeonSnapshot snapshot{};
++    snapshot.ground_item_count = 1U;
++    snapshot.ground_items[0].position = shared_position;
++    snapshot.ground_items[0].ordinal = 7U;
++    const platform::GroundLootView loot = platform::build_ground_loot_view(
++        snapshot, arpg::settings::LootFilterMode::show_all,
++        center, kWidth, kHeight);
++    ARPG_REQUIRE(loot.count == 1U);
++    ARPG_REQUIRE(arpg::test::near(loot.labels[0].anchor_x, direct.x));
++    ARPG_REQUIRE(arpg::test::near(loot.labels[0].anchor_y, direct.y));
++
++    snapshot.ground_material_count = 1U;
++    snapshot.ground_materials[0].position = shared_position;
++    snapshot.ground_materials[0].ordinal = 9U;
++    snapshot.ground_materials[0].material = arpg::items::MaterialId::transmute;
++    const platform::MaterialLootView materials =
++        platform::build_material_loot_view(snapshot, center, kWidth, kHeight);
++    ARPG_REQUIRE(materials.count == 1U);
++    ARPG_REQUIRE(arpg::test::near(materials.labels[0].anchor_x, direct.x));
++    ARPG_REQUIRE(arpg::test::near(materials.labels[0].anchor_y, direct.y));
++
++    for (std::size_t index = 0U; index < geometry.doors.size(); ++index) {
++        const platform::ScreenProjection expected =
++            platform::project_combat_position(platform::kRoomDoorCenters[index],
++                center, kWidth, kHeight);
++        ARPG_REQUIRE(same_projection(geometry.doors[index], expected));
++    }
++    ARPG_REQUIRE(same_projection(geometry.hole,
++        platform::project_combat_position(platform::kHoleCenter,
++            center, kWidth, kHeight)));
++
++    const auto inside = [](platform::ScreenProjection point) noexcept {
++        return point.x >= 0.0F && point.x <= kWidth
++            && point.ground_y >= 0.0F && point.ground_y <= kHeight;
++    };
++    const combat::Vec3 edge_players[] = {
++        {0.0F, combat::room_bounds::min_y, 0.0F},
++        {0.0F, combat::room_bounds::max_y, 0.0F},
++        {combat::room_bounds::min_x, 0.0F, 0.0F},
++        {combat::room_bounds::max_x, 0.0F, 0.0F},
++    };
++    constexpr std::size_t kOppositeDoors[] = {1U, 0U, 3U, 2U};
++    for (std::size_t index = 0U; index < 4U; ++index) {
++        const platform::RoomGeometryPlan edge = platform::make_room_geometry_plan(
++            platform::make_combat_camera_view(edge_players[index],
++                kWidth, kHeight), kWidth, kHeight);
++        ARPG_REQUIRE(inside(edge.doors[index]));
++        ARPG_REQUIRE(!inside(edge.doors[kOppositeDoors[index]]));
++    }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"maps every dungeon element to a floor sprite",
+         &environment_maps_each_dungeon_element_to_a_floor_sprite},
+     {"falls back atomically when a required frame is missing",
+         &environment_falls_back_atomically_when_a_required_frame_is_missing},
+ };
+ 

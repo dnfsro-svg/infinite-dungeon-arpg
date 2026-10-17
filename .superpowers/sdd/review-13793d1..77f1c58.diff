@@ -1,0 +1,3116 @@
+# Review package: 13793d1..77f1c5861dac4602f2bec1d6eca56a1f6924f83c
+
+## Commits
+77f1c58 feat: build exact single-batch encounters
+
+## Files changed
+ .superpowers/sdd/task-3-report.md                  |  72 +++-
+ src/dungeon/dungeon_rules.cpp                      |  36 +-
+ src/dungeon/dungeon_rules.hpp                      |   8 +-
+ src/dungeon/dungeon_session.cpp                    |  22 +-
+ src/dungeon/dungeon_snapshot.cpp                   |  25 +-
+ src/dungeon/encounter_budget.cpp                   |  31 +-
+ src/dungeon/encounter_director.cpp                 | 379 +++++++++---------
+ src/dungeon/encounter_director.hpp                 |  28 +-
+ tests/combat/monster_affix_test_support.hpp        |   1 +
+ tests/dungeon/dungeon_abyss_stress_tests.cpp       |  20 +-
+ .../dungeon/dungeon_crafting_transaction_tests.cpp |  10 +-
+ tests/dungeon/dungeon_lifecycle_tests.cpp          |  19 +-
+ tests/dungeon/dungeon_progression_reward_tests.cpp |   2 +-
+ tests/dungeon/dungeon_rules_tests.cpp              |  26 ++
+ tests/dungeon/dungeon_stress_tests.cpp             |  66 +--
+ tests/dungeon/dungeon_test_main.cpp                |   2 +-
+ tests/dungeon/dungeon_test_support.hpp             |   1 +
+ tests/dungeon/dungeon_wave_tests.cpp               | 143 +++----
+ tests/dungeon/encounter_director_tests.cpp         | 442 ++++++++++++---------
+ tests/dungeon/stage10_formal_game_validation.cpp   |   9 +-
+ .../stage16_loot_reinforcement_simulation.cpp      |   7 +-
+ tests/dungeon/stage9_validation_fixture.cpp        |   8 +-
+ .../stage11d_loot_formal_game_validation.cpp       |  21 +-
+ .../stage16_loot_reinforcement_game_validation.cpp |  11 +-
+ 24 files changed, 759 insertions(+), 630 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-3-report.md b/.superpowers/sdd/task-3-report.md
+index a28947c..9322ce5 100644
+--- a/.superpowers/sdd/task-3-report.md
++++ b/.superpowers/sdd/task-3-report.md
+@@ -1,11 +1,81 @@
+-# Stage 17 Task 3 实现报告
++# Stage 19 Task 3 实现报告：精确单批次遭遇
++
++## 结论
++
++已完成预算驱动到精确数量驱动的导演迁移：
++
++- `EncounterBuildRequest` 显式携带房间 seed、深度、生态、入口、洞口状态和目标怪物数。
++- 普通与深渊构建均一次生成完整批次；合法数量为 12～45，`wave_count` 固定为 1，`initial_monster_count` 与首波出生数严格相等。
++- 保留生态权重、首个直接目标、怪物词缀、深渊词缀补充及各类安全标签上限。
++- 出生点覆盖完整四倍房间，并排除玩家出生点半径 4、四门中心半径 3、激活洞口中心半径 3；随机拒绝 32 次后使用确定性 1 单位网格回退。
++- `total_budget` / `spent_budget` 仅作为威胁值诊断，使用有界累加；旧深度预算、双波阈值和深渊预算适配 API 已移除。
++
++## TDD 过程
++
++恢复任务时保留了前一实现代理的全部未提交修改。其连续完整回归记录依次收敛为 17、4、1 个旧测试失败；最后一个真实输入机器人用例保留 512 tick 真实输入后仅做一次测试辅助清场，没有把自动清场改入生产代码。
++
++恢复后的第四轮先确认目标构建成功，再完整执行：
++
++```powershell
++ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
++```
++
++结果：`dungeon.units` 通过，注册用例 294/294，0 failures，259.81 秒。
++
++随后执行全量 Debug 构建，第一次准确暴露 3 处平台验收程序仍调用旧四参数签名。只把这 3 处迁移为 `EncounterBuildRequest`，普通房临时数量保持 12，再次全量构建成功（91 个目标已完成，最终增量 7/7）。
++
++## 生产实现
++
++### 精确数量与合法性
++
++- 请求先校验深度、生态、入口和 `[12,45]` 数量范围，非法请求返回 `invalid_rules` 且不截断。
++- 第一个出生固定选择不受限制的直接目标 `chaos_chaser`，后续沿用生态加权候选选择直到精确数量。
++- 合法性检查覆盖单波、精确数量、第二波为空、威胁和、连续 ordinal、怪物词缀、至少一个直接目标、标签上限及全部安全出生区。
++- 普通构建先生成既有词缀；深渊构建在相同编队上继续补充深渊词缀。
++
++### 临时 Session 迁移边界
++
++为在 Task 4 接入 `room_affix` 前保持会话与快照可构建，`DungeonSession` 只做了明确标注的临时适配：
++
++- 普通房 `target_monster_count = 12`。
++- 深渊房 `target_monster_count = 18`。
++- 快照合法性使用同一临时上下文。
++
++这些值未写入存档、HUD、相机或房间词条；Task 4 必须用确定性的密度词条结果替换。
++
++## 验证
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_dungeon_tests
++ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
++cmake --build --preset windows-msvc-debug
++git diff --check
++```
++
++结果：
++
++- 聚焦目标构建成功。
++- `dungeon.units`：Passed，294/294，259.81 秒。
++- 全量 Debug 构建成功。
++- `git diff --check` 通过。
++
++## 范围自检
++
++- 未接入 `room_affix` / density 到 Session。
++- 未修改 HUD、相机或存档格式。
++- 未删除文件，未重置工作树，保留并完成了中断前的全部修改。
++- 平台文件仅迁移导演 API 的直接调用点。
++
++---
++
++# 历史报告：Stage 17 Task 3
+ 
+ ## 结论
+ 
+ 已把五个主动技能槽接入 `DungeonSession` 的候选状态 → 保存 → 发布事务链：
+ 
+ - 新增固定的 0-based remove/equip/swap 请求 API。
+ - 所有请求先在 `ReusablePendingSave::next_state` 中用已有容量复制 `stable_state_`，只在候选上调用 `skills` 纯函数并整体校验。
+ - 候选通过 `PendingSaveKind::skill_loadout` 进入现有保存事务；保存成功才由 `commit_pending_save` 一次发布，失败只清 pending 并恢复原 phase。
+ - loadout 提交不创建、不应用 `PlayerCombatBuild`，没有接数字键、Raylib UI，也没有改变战斗技能行为。
+ - `DungeonSnapshot` 按值携带 stable loadout；pending 候选不会提前泄露到快照。
+diff --git a/src/dungeon/dungeon_rules.cpp b/src/dungeon/dungeon_rules.cpp
+index ea2afe8..46ba267 100644
+--- a/src/dungeon/dungeon_rules.cpp
++++ b/src/dungeon/dungeon_rules.cpp
+@@ -68,58 +68,26 @@ DungeonFault compute_ecology_weights(
+         checked_total += weight;
+     }
+ 
+     weights = checked_weights;
+     total = checked_total;
+     return DungeonFault::none;
+ }
+ 
+ DungeonFault validate_encounter_director_config(
+     const EncounterDirectorConfig& config) noexcept {
+-    constexpr std::uint8_t kMinimumDirectTargetCost = 2U;
+-    if (config.base_budget < 2U || config.depth_step == 0U
+-            || config.budget_per_step == 0U || config.max_budget < 2U
+-            || config.max_budget < config.base_budget
+-            || config.two_wave_threshold == 0U
+-            || config.matching_ecology_weight == 0U
++    if (config.matching_ecology_weight == 0U
+             || config.off_ecology_weight == 0U) {
+         return DungeonFault::invalid_rules;
+     }
+-    if (config.max_budget > config.two_wave_threshold) {
+-        const std::uint64_t first_increment = config.base_budget
+-            > config.two_wave_threshold
+-            ? 0U
+-            : static_cast<std::uint64_t>(config.two_wave_threshold
+-                - config.base_budget)
+-                / config.budget_per_step + 1U;
+-        const std::uint64_t added_budget = first_increment
+-            > (std::numeric_limits<std::uint64_t>::max)()
+-                / config.budget_per_step
+-            ? (std::numeric_limits<std::uint64_t>::max)()
+-            : first_increment * config.budget_per_step;
+-        const std::uint64_t first_budget_unbounded =
+-            static_cast<std::uint64_t>(config.base_budget)
+-            > (std::numeric_limits<std::uint64_t>::max)() - added_budget
+-            ? (std::numeric_limits<std::uint64_t>::max)()
+-            : static_cast<std::uint64_t>(config.base_budget)
+-                + added_budget;
+-        const std::uint64_t first_budget = first_budget_unbounded
+-            < config.max_budget ? first_budget_unbounded : config.max_budget;
+-        if (first_budget > config.two_wave_threshold
+-                && first_budget < 2U * kMinimumDirectTargetCost) {
+-            return DungeonFault::invalid_rules;
+-        }
+-    }
+-
+     constexpr std::uint8_t kCapacity = static_cast<std::uint8_t>(
+         combat::kEncounterSpawnCapacity);
+-    if (config.normal_high_priority_limit > kCapacity
+-            || config.high_budget_priority_limit > kCapacity
++    if (config.high_priority_limit > kCapacity
+             || config.ranged_limit > kCapacity
+             || config.support_limit > kCapacity
+             || config.ground_hazard_limit > kCapacity) {
+         return DungeonFault::invalid_rules;
+     }
+     return DungeonFault::none;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_rules.hpp b/src/dungeon/dungeon_rules.hpp
+index 078c387..70c8780 100644
+--- a/src/dungeon/dungeon_rules.hpp
++++ b/src/dungeon/dungeon_rules.hpp
+@@ -68,29 +68,23 @@ enum class DungeonFault : std::uint8_t {
+         return "death_sequence_overflow";
+     case DungeonFault::death_sequence_mismatch:
+         return "death_sequence_mismatch";
+     }
+     return "unknown_dungeon_fault";
+ }
+ 
+ // Gray-box encounter tuning is intentionally centralized here so later
+ // balancing changes do not alter the director's algorithm or RNG contract.
+ struct EncounterDirectorConfig final {
+-    std::uint8_t base_budget{8};
+-    std::uint8_t depth_step{5};
+-    std::uint8_t budget_per_step{1};
+-    std::uint8_t max_budget{24};
+-    std::uint8_t two_wave_threshold{12};
+     std::uint8_t matching_ecology_weight{4};
+     std::uint8_t off_ecology_weight{1};
+-    std::uint8_t normal_high_priority_limit{1};
+-    std::uint8_t high_budget_priority_limit{2};
++    std::uint8_t high_priority_limit{2};
+     std::uint8_t ranged_limit{4};
+     std::uint8_t support_limit{2};
+     std::uint8_t ground_hazard_limit{3};
+ };
+ 
+ struct DungeonRules final {
+     std::array<std::uint32_t, 4> base_weights{{100, 100, 100, 100}};
+     std::uint32_t bias_weight_increment{25};
+     std::uint32_t hole_threshold{1000};
+     std::uint32_t abyss_threshold{100};
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index d2b99ee..9514c7b 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -19,20 +19,24 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ #include <new>
+ #include <utility>
+ 
+ namespace arpg::dungeon {
+ namespace {
+ 
+ constexpr std::uint16_t kWaveDelayTicks = 45U;
++// Temporary API migration values. Stage 19 Task 4 replaces these with the
++// deterministic room-density roll without persisting either value.
++constexpr std::uint8_t kTemporaryNormalEncounterCount = 12U;
++constexpr std::uint8_t kTemporaryAbyssEncounterCount = 18U;
+ constexpr std::uint64_t kPlayerEvasionSeedDomain = 0x45564153494F4E31ULL;
+ constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
+ constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
+ constexpr std::uint64_t kDropContentDomain = 0x44524F505F49544DULL;
+ constexpr std::uint64_t kDropItemIdDomain = 0x44524F505F49445FULL;
+ 
+ [[nodiscard]] core::DeterministicRng drop_stream(
+     std::uint64_t seed,
+     std::uint16_t ordinal,
+     std::uint64_t domain) noexcept {
+@@ -783,25 +787,30 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
+         return;
+     } catch (...) {
+         pending_abyss_reward_.reset();
+         enter_fault(DungeonFault::abyss_generation_failed);
+         return;
+     }
+     phase_ = RoomPhase::committing;
+ }
+ 
+ void DungeonSession::construct_normal_room() noexcept {
+-    const EncounterPlanResult plan = build_encounter_plan(
++    const EncounterBuildRequest request{
+         stable_state_.current_room.seed,
+         stable_state_.current_room.depth,
+         stable_state_.current_room.ecology,
+-        rules_.encounter);
++        stable_state_.current_room.entry,
++        stable_state_.current_room.has_hole,
++        kTemporaryNormalEncounterCount,
++    };
++    const EncounterPlanResult plan = build_encounter_plan(
++        request, rules_.encounter);
+     if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
+         enter_fault(plan.fault == DungeonFault::none
+             ? DungeonFault::invalid_rules : plan.fault);
+         return;
+     }
+     const auto player_build = build_for(stable_state_);
+     if (player_build.status != PlayerBuildStatus::valid) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return;
+     }
+@@ -858,25 +867,30 @@ bool DungeonSession::prepare_abyss_start() noexcept {
+     const auto selection = abyss::select_abyss_rule(
+         stable_state_.current_room.seed, stable_state_.current_room.depth);
+     if (!selection.has_value()
+             || selection->danger != stable_state_.abyss.danger
+             || selection->rule != stable_state_.abyss.rule
+             || selection->rules_version != stable_state_.abyss.rules_version) {
+         enter_fault(DungeonFault::invalid_abyss_state);
+         return false;
+     }
+ 
+-    EncounterPlanResult built = build_abyss_encounter_plan(
++    const EncounterBuildRequest request{
+         stable_state_.current_room.seed,
+         stable_state_.current_room.depth,
+         stable_state_.current_room.ecology,
+-        rules_.encounter);
++        stable_state_.current_room.entry,
++        stable_state_.current_room.has_hole,
++        kTemporaryAbyssEncounterCount,
++    };
++    EncounterPlanResult built = build_abyss_encounter_plan(
++        request, rules_.encounter);
+     if (built.fault != DungeonFault::none || built.plan.wave_count == 0U) {
+         enter_fault(DungeonFault::abyss_generation_failed);
+         return false;
+     }
+     const std::uint8_t base_item_level = static_cast<std::uint8_t>(
+         std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
+     const abyss::AbyssRewardProfile reward = abyss::reward_profile_for(
+         stable_state_.abyss.danger, base_item_level);
+     if (reward.item_count == 0U || reward.item_count > 3U
+             || reward.item_level == 0U) {
+diff --git a/src/dungeon/dungeon_snapshot.cpp b/src/dungeon/dungeon_snapshot.cpp
+index d5398ca..08bee95 100644
+--- a/src/dungeon/dungeon_snapshot.cpp
++++ b/src/dungeon/dungeon_snapshot.cpp
+@@ -2,20 +2,25 @@
+ 
+ #include "dungeon/death_checkpoint.hpp"
+ #include "dungeon/room_generation.hpp"
+ #include "items/item_catalog.hpp"
+ 
+ #include <limits>
+ 
+ namespace arpg::dungeon {
+ namespace {
+ 
++// Temporary API migration values shared by snapshot legality diagnostics.
++// Stage 19 Task 4 replaces them with the session's density-derived count.
++constexpr std::uint8_t kTemporaryNormalEncounterCount = 12U;
++constexpr std::uint8_t kTemporaryAbyssEncounterCount = 18U;
++
+ bool equipped(const items::EquipmentState& equipment,
+     std::uint64_t item_id) noexcept {
+     for (const std::uint64_t equipped_id : equipment.equipped_ids) {
+         if (equipped_id == item_id) return true;
+     }
+     return false;
+ }
+ 
+ }  // namespace
+ 
+@@ -155,28 +160,32 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
+         }
+         if (pending_save_->kind == PendingSaveKind::material_pickup) {
+             result.pending_material_pickup_ordinal =
+                 pending_save_->pickup_ordinal;
+         }
+     }
+     if (combat_.has_value()) {
+         result.combat.emplace(combat_->snapshot());
+     }
+     result.encounter.total_budget = encounter_plan_.total_budget;
+-    if (stable_state_.current_room.is_abyss) {
+-        const auto legality = abyss_encounter_legality_config(rules_.encounter);
+-        result.encounter.plan_valid = legality.has_value()
+-            && encounter_plan_legal(encounter_plan_, *legality);
+-    } else {
+-        result.encounter.plan_valid = encounter_plan_legal(
+-            encounter_plan_, rules_.encounter);
+-    }
++    const auto& room = stable_state_.current_room;
++    const EncounterBuildRequest request{
++        room.seed,
++        room.depth,
++        room.ecology,
++        room.entry,
++        room.has_hole,
++        room.is_abyss ? kTemporaryAbyssEncounterCount
++                      : kTemporaryNormalEncounterCount,
++    };
++    result.encounter.plan_valid = encounter_plan_legal(
++        encounter_plan_, request, rules_.encounter);
+     if (wave_index_ < encounter_plan_.wave_count) {
+         const auto& wave = encounter_plan_.waves[wave_index_];
+         result.encounter.current_wave_budget = wave.spent_budget;
+         result.encounter.current_wave_spawn_count = wave.spawn_count;
+     }
+     result.diagnostics = diagnostics_;
+     result.progression = room_progression_;
+     result.pending_room_experience = pending_room_experience_;
+     result.last_room_experience = last_room_experience_;
+     result.last_levels_gained = last_levels_gained_;
+diff --git a/src/dungeon/encounter_budget.cpp b/src/dungeon/encounter_budget.cpp
+index dc28950..a8357d9 100644
+--- a/src/dungeon/encounter_budget.cpp
++++ b/src/dungeon/encounter_budget.cpp
+@@ -1,35 +1,18 @@
+ #include "dungeon/dungeon_rules.hpp"
+ 
+-#include <algorithm>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::dungeon::detail {
+ 
+-std::uint8_t compute_encounter_budget(
+-    std::uint64_t depth,
+-    const EncounterDirectorConfig& config) noexcept {
+-    if (config.depth_step == 0U || config.max_budget == 0U) {
+-        return 0U;
++bool checked_accumulate_threat_cost(
++    std::uint8_t& total,
++    std::uint8_t threat_cost) noexcept {
++    if (threat_cost > (std::numeric_limits<std::uint8_t>::max)() - total) {
++        return false;
+     }
+-    if (depth <= 1U) {
+-        return config.base_budget;
+-    }
+-    const std::uint64_t steps =
+-        (depth - 1U) / static_cast<std::uint64_t>(config.depth_step);
+-    const std::uint64_t increment = config.budget_per_step;
+-    if (increment != 0U && steps >
+-            (std::numeric_limits<std::uint64_t>::max)() / increment) {
+-        return config.max_budget;
+-    }
+-    const std::uint64_t added = steps * increment;
+-    const std::uint64_t base = config.base_budget;
+-    if (base > (std::numeric_limits<std::uint64_t>::max)() - added) {
+-        return config.max_budget;
+-    }
+-    const std::uint64_t budget = base + added;
+-    return static_cast<std::uint8_t>(std::min<std::uint64_t>(
+-        budget, config.max_budget));
++    total = static_cast<std::uint8_t>(total + threat_cost);
++    return true;
+ }
+ 
+ }  // namespace arpg::dungeon::detail
+diff --git a/src/dungeon/encounter_director.cpp b/src/dungeon/encounter_director.cpp
+index 3c86bc8..3817f0f 100644
+--- a/src/dungeon/encounter_director.cpp
++++ b/src/dungeon/encounter_director.cpp
+@@ -1,32 +1,32 @@
+ #include "dungeon/encounter_director.hpp"
+ 
+-#include "abyss/abyss_rules.hpp"
+ #include "combat/monster_catalog.hpp"
+ #include "combat/monster_affix_catalog.hpp"
+ #include "combat/monster_affix_generation.hpp"
+ #include "combat/room_bounds.hpp"
+ #include "core/deterministic_rng.hpp"
++#include "dungeon/room_combat_template.hpp"
+ 
+-#include <algorithm>
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::dungeon::detail {
+ 
+-[[nodiscard]] std::uint8_t compute_encounter_budget(
+-    std::uint64_t depth,
+-    const EncounterDirectorConfig& config) noexcept;
++[[nodiscard]] bool checked_accumulate_threat_cost(
++    std::uint8_t& total,
++    std::uint8_t threat_cost) noexcept;
+ [[nodiscard]] bool encounter_plan_legal_with_affix_catalog(
+     const RoomEncounterPlan& plan,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config,
+     const combat::MonsterAffixCatalog& catalog) noexcept;
+ 
+ }  // namespace arpg::dungeon::detail
+ 
+ namespace arpg::combat::detail {
+ 
+ [[nodiscard]] bool monster_affix_catalog_valid(
+     const MonsterAffixCatalog& catalog) noexcept;
+ [[nodiscard]] std::uint16_t monster_affix_danger_score_with_catalog(
+@@ -39,53 +39,64 @@ namespace arpg::dungeon {
+ namespace {
+ 
+ constexpr std::uint64_t kEncounterDirectorDomain =
+     0x454E434F554E5434ULL;
+ constexpr std::uint64_t kEncounterPositionDomain =
+     0x454E43504F534954ULL;
+ constexpr float kRoomMinX = combat::room_bounds::min_x;
+ constexpr float kRoomMaxX = combat::room_bounds::max_x;
+ constexpr float kRoomMinY = combat::room_bounds::min_y;
+ constexpr float kRoomMaxY = combat::room_bounds::max_y;
++constexpr float kPlayerExclusionRadius = 4.0F;
++constexpr float kNavigationExclusionRadius = 3.0F;
++constexpr std::uint64_t kPositionAttempts = 32U;
++constexpr std::uint64_t kPositionXMillisteps = 48001U;
++constexpr std::uint64_t kPositionYMillisteps = 22001U;
++constexpr std::uint64_t kFallbackGridWidth = 49U;
++constexpr std::uint64_t kFallbackGridHeight = 23U;
++constexpr std::uint64_t kFallbackGridSize =
++    kFallbackGridWidth * kFallbackGridHeight;
++constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
++constexpr std::array<combat::Vec3, 4> kDoorCenters{{
++    {kRoomMinX, 0.0F, 0.0F},
++    {kRoomMaxX, 0.0F, 0.0F},
++    {0.0F, kRoomMinY, 0.0F},
++    {0.0F, kRoomMaxY, 0.0F},
++}};
+ 
+ struct TagCounts final {
+     std::uint16_t high_priority{};
+     std::uint16_t ranged{};
+     std::uint16_t support{};
+     std::uint16_t ground_hazard{};
+ };
+ 
+ struct Candidate final {
+     combat::MonsterId id{combat::MonsterId::chaos_chaser};
+     std::uint64_t weight{};
+ };
+ 
+ [[nodiscard]] bool valid_ecology(checkpoint::DungeonElement ecology) noexcept {
+     return static_cast<std::uint8_t>(ecology) <= 3U;
+ }
+ 
+-[[nodiscard]] std::uint8_t priority_limit(
+-    std::uint8_t encounter_budget_value,
+-    const EncounterDirectorConfig& config) noexcept {
+-    return encounter_budget_value > config.two_wave_threshold
+-        ? config.high_budget_priority_limit
+-        : config.normal_high_priority_limit;
++[[nodiscard]] bool valid_entry(checkpoint::EntrySide entry) noexcept {
++    return static_cast<std::uint8_t>(entry)
++        <= static_cast<std::uint8_t>(checkpoint::EntrySide::right);
+ }
+ 
+ [[nodiscard]] bool fits_tag_limits(
+     const combat::MonsterDefinition& definition,
+     const TagCounts& counts,
+-    std::uint8_t encounter_budget_value,
+     const EncounterDirectorConfig& config) noexcept {
+     if (combat::has_tag(definition, combat::MonsterTag::high_priority)
+-            && counts.high_priority >= priority_limit(
+-                encounter_budget_value, config)) {
++            && counts.high_priority >= config.high_priority_limit) {
+         return false;
+     }
+     if (combat::has_tag(definition, combat::MonsterTag::ranged)
+             && counts.ranged >= config.ranged_limit) {
+         return false;
+     }
+     if (combat::has_tag(definition, combat::MonsterTag::support)
+             && counts.support >= config.support_limit) {
+         return false;
+     }
+@@ -98,157 +109,168 @@ struct Candidate final {
+ 
+ void add_tag_counts(
+     const combat::MonsterDefinition& definition,
+     TagCounts& counts) noexcept {
+     counts.high_priority += combat::has_tag(definition, combat::MonsterTag::high_priority);
+     counts.ranged += combat::has_tag(definition, combat::MonsterTag::ranged);
+     counts.support += combat::has_tag(definition, combat::MonsterTag::support);
+     counts.ground_hazard += combat::has_tag(definition, combat::MonsterTag::ground_hazard);
+ }
+ 
+-[[nodiscard]] combat::Vec3 next_spawn_position(
+-    core::DeterministicRng& rng) noexcept {
+-    const std::uint64_t raw_x = rng.next_bounded(16001U).value_or(0U);
+-    const std::uint64_t raw_y = rng.next_bounded(7001U).value_or(0U);
+-    const float x = kRoomMinX
+-        + static_cast<float>(raw_x) / 1000.0F
+-            * combat::room_bounds::width / 16.0F;
+-    const float y = kRoomMinY
+-        + static_cast<float>(raw_y) / 1000.0F
+-            * combat::room_bounds::depth / 7.0F;
+-    return {
+-        std::clamp(x, kRoomMinX, kRoomMaxX),
+-        std::clamp(y, kRoomMinY, kRoomMaxY),
+-        0.0F,
+-    };
++[[nodiscard]] float squared_distance(
++    combat::Vec3 left,
++    combat::Vec3 right) noexcept {
++    const float x = left.x - right.x;
++    const float y = left.y - right.y;
++    return x * x + y * y;
+ }
+ 
+-[[nodiscard]] bool append_spawn(
+-    combat::EncounterWave& wave,
+-    combat::MonsterId id,
+-    core::DeterministicRng& position_rng) noexcept {
+-    if (wave.spawn_count >= wave.spawns.size()) {
++[[nodiscard]] bool legal_spawn_position(
++    combat::Vec3 position,
++    combat::Vec3 player_spawn,
++    bool has_hole) noexcept {
++    if (position.x < kRoomMinX || position.x > kRoomMaxX
++            || position.y < kRoomMinY || position.y > kRoomMaxY
++            || position.z != 0.0F
++            || squared_distance(position, player_spawn)
++                <= kPlayerExclusionRadius * kPlayerExclusionRadius) {
+         return false;
+     }
+-    wave.spawns[wave.spawn_count++] = {id, next_spawn_position(position_rng)};
+-    return true;
++    for (const combat::Vec3 door : kDoorCenters) {
++        if (squared_distance(position, door)
++                <= kNavigationExclusionRadius * kNavigationExclusionRadius) {
++            return false;
++        }
++    }
++    return !has_hole || squared_distance(position, kHoleCenter)
++        > kNavigationExclusionRadius * kNavigationExclusionRadius;
+ }
+ 
+-[[nodiscard]] bool append_cheapest_direct_target(
+-    combat::EncounterWave& wave,
+-    std::uint8_t wave_budget,
+-    std::uint8_t encounter_budget_value,
+-    TagCounts& counts,
+-    const EncounterDirectorConfig& config,
+-    core::DeterministicRng& position_rng) noexcept {
+-    const combat::MonsterDefinition* best = nullptr;
+-    for (std::uint8_t raw = 0U;
+-         raw < static_cast<std::uint8_t>(combat::MonsterId::count); ++raw) {
+-        const auto* definition = combat::monster_definition(
+-            static_cast<combat::MonsterId>(raw));
+-        if (definition == nullptr
+-                || !combat::has_tag(*definition, combat::MonsterTag::direct_target)
+-                || definition->threat_cost > wave_budget
+-                || !fits_tag_limits(
+-                    *definition, counts, encounter_budget_value, config)) {
+-            continue;
++[[nodiscard]] bool next_spawn_position(
++    core::DeterministicRng& rng,
++    combat::Vec3 player_spawn,
++    bool has_hole,
++    combat::Vec3& position) noexcept {
++    for (std::uint64_t attempt = 0U; attempt < kPositionAttempts; ++attempt) {
++        const auto raw_x = rng.next_bounded(kPositionXMillisteps);
++        const auto raw_y = rng.next_bounded(kPositionYMillisteps);
++        if (!raw_x.has_value() || !raw_y.has_value()) return false;
++        const combat::Vec3 candidate{
++            kRoomMinX + static_cast<float>(*raw_x) / 1000.0F,
++            kRoomMinY + static_cast<float>(*raw_y) / 1000.0F,
++            0.0F,
++        };
++        if (legal_spawn_position(candidate, player_spawn, has_hole)) {
++            position = candidate;
++            return true;
+         }
+-        if (best == nullptr || definition->threat_cost < best->threat_cost
+-                || (definition->threat_cost == best->threat_cost
+-                    && static_cast<std::uint8_t>(definition->id)
+-                        < static_cast<std::uint8_t>(best->id))) {
+-            best = definition;
++    }
++
++    const auto offset = rng.next_bounded(kFallbackGridSize);
++    if (!offset.has_value()) return false;
++    for (std::uint64_t scan = 0U; scan < kFallbackGridSize; ++scan) {
++        const std::uint64_t index = (*offset + scan) % kFallbackGridSize;
++        const combat::Vec3 candidate{
++            kRoomMinX + static_cast<float>(index % kFallbackGridWidth),
++            kRoomMinY + static_cast<float>(index / kFallbackGridWidth),
++            0.0F,
++        };
++        if (legal_spawn_position(candidate, player_spawn, has_hole)) {
++            position = candidate;
++            return true;
+         }
+     }
+-    if (best == nullptr || !append_spawn(wave, best->id, position_rng)) {
++    return false;
++}
++
++[[nodiscard]] bool append_spawn(
++    combat::EncounterWave& wave,
++    const combat::MonsterDefinition& definition,
++    combat::Vec3 player_spawn,
++    bool has_hole,
++    core::DeterministicRng& position_rng) noexcept {
++    if (wave.spawn_count >= wave.spawns.size()) return false;
++    combat::Vec3 position{};
++    if (!next_spawn_position(
++            position_rng, player_spawn, has_hole, position)
++            || !detail::checked_accumulate_threat_cost(
++                wave.spent_budget, definition.threat_cost)) {
+         return false;
+     }
+-    wave.spent_budget = best->threat_cost;
+-    add_tag_counts(*best, counts);
++    wave.spawns[wave.spawn_count++] = {definition.id, position};
+     return true;
+ }
+ 
+-void fill_wave(
++[[nodiscard]] bool fill_wave(
+     combat::EncounterWave& wave,
+-    std::uint8_t wave_budget,
+-    std::uint8_t encounter_budget_value,
++    std::uint8_t target_count,
+     checkpoint::DungeonElement ecology,
++    combat::Vec3 player_spawn,
++    bool has_hole,
+     const EncounterDirectorConfig& config,
+     core::DeterministicRng& selection_rng,
+     core::DeterministicRng& position_rng) noexcept {
+     TagCounts counts{};
+-    if (!append_cheapest_direct_target(
+-            wave, wave_budget, encounter_budget_value, counts, config,
+-            position_rng)) {
+-        const auto* fallback = combat::monster_definition(
+-            combat::MonsterId::chaos_chaser);
+-        if (fallback != nullptr && append_spawn(
+-                wave, fallback->id, position_rng)) {
+-            wave.spent_budget = fallback->threat_cost;
+-            add_tag_counts(*fallback, counts);
+-        }
++    const auto* fallback = combat::monster_definition(
++        combat::MonsterId::chaos_chaser);
++    if (fallback == nullptr
++            || !combat::has_tag(*fallback, combat::MonsterTag::direct_target)
++            || !fits_tag_limits(*fallback, counts, config)
++            || !append_spawn(
++                wave, *fallback, player_spawn, has_hole, position_rng)) {
++        return false;
+     }
++    add_tag_counts(*fallback, counts);
+ 
+-    while (wave.spent_budget < wave_budget
+-            && wave.spawn_count < wave.spawns.size()) {
+-        const std::uint16_t remaining = static_cast<std::uint16_t>(
+-            wave_budget - wave.spent_budget);
++    while (wave.spawn_count < target_count) {
+         std::array<Candidate, static_cast<std::size_t>(combat::MonsterId::count)>
+             candidates{};
+         std::size_t candidate_count = 0U;
+         std::uint64_t total_weight = 0U;
+         for (std::uint8_t raw = 0U;
+              raw < static_cast<std::uint8_t>(combat::MonsterId::count); ++raw) {
+             const auto id = static_cast<combat::MonsterId>(raw);
+             const auto* definition = combat::monster_definition(id);
+-            if (definition == nullptr || definition->threat_cost > remaining
+-                    || !fits_tag_limits(
+-                        *definition, counts, encounter_budget_value, config)) {
++            if (definition == nullptr
++                    || !fits_tag_limits(*definition, counts, config)) {
+                 continue;
+             }
+             const std::uint64_t weight = definition->preferred_ecology
+                     == static_cast<std::uint8_t>(ecology)
+                 ? config.matching_ecology_weight
+                 : config.off_ecology_weight;
+             if (weight == 0U || total_weight >
+                     (std::numeric_limits<std::uint64_t>::max)() - weight) {
+                 continue;
+             }
+             candidates[candidate_count++] = {id, weight};
+             total_weight += weight;
+         }
+-        if (candidate_count == 0U || total_weight == 0U) {
+-            break;
+-        }
+-        const std::uint64_t roll = selection_rng.next_bounded(total_weight)
+-            .value_or(0U);
+-        std::uint64_t cursor = roll;
++        if (candidate_count == 0U || total_weight == 0U) return false;
++        const auto roll = selection_rng.next_bounded(total_weight);
++        if (!roll.has_value()) return false;
++        std::uint64_t cursor = *roll;
+         std::size_t selected = 0U;
+         for (; selected < candidate_count; ++selected) {
+-            if (cursor < candidates[selected].weight) {
+-                break;
+-            }
++            if (cursor < candidates[selected].weight) break;
+             cursor -= candidates[selected].weight;
+         }
+-        if (selected >= candidate_count) {
+-            selected = candidate_count - 1U;
+-        }
++        if (selected >= candidate_count) return false;
+         const auto* definition = combat::monster_definition(
+             candidates[selected].id);
+         if (definition == nullptr || !append_spawn(
+-                wave, definition->id, position_rng)) {
+-            break;
++                wave, *definition, player_spawn, has_hole, position_rng)) {
++            return false;
+         }
+-        wave.spent_budget = static_cast<std::uint8_t>(
+-            wave.spent_budget + definition->threat_cost);
+         add_tag_counts(*definition, counts);
+     }
++    return wave.spawn_count == target_count;
+ }
+ 
+ [[nodiscard]] bool affix_set_legal_for_monster(
+     const combat::MonsterAffixSet& set,
+     const combat::MonsterDefinition& monster,
+     const combat::MonsterAffixCatalog& catalog) noexcept {
+     if (set.count > set.values.size()) return false;
+     for (std::size_t index = 0U; index < set.count; ++index) {
+         const combat::MonsterAffixInstance& instance = set.values[index];
+         const std::size_t id = static_cast<std::size_t>(instance.id);
+@@ -319,83 +341,81 @@ void fill_wave(
+                 room_seed, depth, static_cast<std::uint8_t>(wave_index),
+                 static_cast<std::uint8_t>(spawn_index), *definition,
+                 spawn.affixes);
+             if (!supplemented.has_value()) return false;
+             spawn.affixes = *supplemented;
+         }
+     }
+     return true;
+ }
+ 
+-[[nodiscard]] EncounterPlanResult build_encounter_plan_with_budget(
+-    std::uint64_t room_seed,
+-    std::uint64_t depth,
+-    checkpoint::DungeonElement ecology,
+-    const EncounterDirectorConfig& director_config,
+-    const EncounterDirectorConfig& legality_config,
+-    std::uint8_t budget) noexcept {
++[[nodiscard]] bool valid_request(
++    const EncounterBuildRequest& request) noexcept {
++    return request.depth != 0U && valid_ecology(request.ecology)
++        && valid_entry(request.entry)
++        && request.target_monster_count >= 12U
++        && request.target_monster_count <= 45U;
++}
++
++[[nodiscard]] EncounterPlanResult build_encounter_plan_impl(
++    const EncounterBuildRequest& request,
++    const EncounterDirectorConfig& config) noexcept {
+     EncounterPlanResult result{};
+-    if (budget == 0U) {
++    const auto combat_config = make_combat_lab_config(request.entry, 1U);
++    if (validate_encounter_director_config(config) != DungeonFault::none
++            || !valid_request(request) || !combat_config.has_value()) {
+         result.fault = DungeonFault::invalid_rules;
+         return result;
+     }
+-    result.plan.total_budget = budget;
+-    result.plan.wave_count = budget > director_config.two_wave_threshold
+-        ? 2U : 1U;
+-    const std::uint8_t first_wave_budget =
+-        result.plan.wave_count == 2U
+-            ? static_cast<std::uint8_t>((budget + 1U) / 2U)
+-            : budget;
+-    const std::uint8_t second_wave_budget =
+-        static_cast<std::uint8_t>(budget - first_wave_budget);
++    result.plan.wave_count = 1U;
++    result.plan.initial_monster_count = request.target_monster_count;
+     auto selection_rng = core::DeterministicRng::derive_stream(
+-        room_seed, kEncounterDirectorDomain);
++        request.room_seed, kEncounterDirectorDomain);
+     auto position_rng = core::DeterministicRng::derive_stream(
+-        room_seed, kEncounterPositionDomain);
+-    fill_wave(result.plan.waves[0], first_wave_budget, budget, ecology,
+-        director_config, selection_rng, position_rng);
+-    if (result.plan.wave_count == 2U) {
+-        fill_wave(result.plan.waves[1], second_wave_budget, budget, ecology,
+-            director_config, selection_rng, position_rng);
++        request.room_seed, kEncounterPositionDomain);
++    if (!fill_wave(result.plan.waves[0], request.target_monster_count,
++            request.ecology, combat_config->player_spawn, request.has_hole,
++            config, selection_rng, position_rng)) {
++        result.fault = DungeonFault::invalid_rules;
++        result.plan = {};
++        return result;
+     }
+-    if (!apply_generated_affixes(result.plan, room_seed, depth)
++    result.plan.total_budget = result.plan.waves[0].spent_budget;
++    if (!apply_generated_affixes(
++            result.plan, request.room_seed, request.depth)
+             || !detail::encounter_plan_legal_with_affix_catalog(result.plan,
+-                legality_config, combat::monster_affix_catalog())) {
++                request, config, combat::monster_affix_catalog())) {
+         result.fault = DungeonFault::invalid_rules;
+         result.plan = {};
+     }
+     return result;
+ }
+ 
+ }  // namespace
+ 
+-std::uint8_t encounter_budget(
+-    std::uint64_t depth,
+-    const EncounterDirectorConfig& config) noexcept {
+-    return detail::compute_encounter_budget(depth, config);
+-}
+-
+ bool detail::encounter_plan_legal_with_affix_catalog(
+     const RoomEncounterPlan& plan,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config,
+     const combat::MonsterAffixCatalog& catalog) noexcept {
++    const auto combat_config = make_combat_lab_config(request.entry, 1U);
+     if (!combat::detail::monster_affix_catalog_valid(catalog)
+             || validate_encounter_director_config(config) != DungeonFault::none
+-            || plan.wave_count == 0U
+-            || plan.wave_count > plan.waves.size()
+-            || plan.total_budget == 0U
+-            || plan.total_budget > config.max_budget) {
+-        return false;
+-    }
+-    const std::uint8_t expected_wave_count =
+-        plan.total_budget > config.two_wave_threshold ? 2U : 1U;
+-    if (plan.wave_count != expected_wave_count) {
++            || !valid_request(request) || !combat_config.has_value()
++            || plan.wave_count != 1U
++            || plan.initial_monster_count < 12U
++            || plan.initial_monster_count > 45U
++            || plan.initial_monster_count != request.target_monster_count
++            || plan.initial_monster_count != plan.waves[0].spawn_count
++            || plan.waves[1].spawn_count != 0U
++            || plan.waves[1].spent_budget != 0U
++            || plan.total_budget == 0U || plan.total_budget > 180U) {
+         return false;
+     }
+     std::uint16_t total_spent = 0U;
+     for (std::size_t wave_index = 0U; wave_index < plan.wave_count;
+          ++wave_index) {
+         const auto& wave = plan.waves[wave_index];
+         if (wave.spawn_count == 0U || wave.spawn_count > wave.spawns.size()) {
+             return false;
+         }
+         TagCounts counts{};
+@@ -403,126 +423,81 @@ bool detail::encounter_plan_legal_with_affix_catalog(
+         bool has_direct_target = false;
+         for (std::size_t spawn_index = 0U; spawn_index < wave.spawn_count;
+              ++spawn_index) {
+             const auto& spawn = wave.spawns[spawn_index];
+             const auto* definition = combat::monster_definition(spawn.id);
+             if (definition == nullptr
+                     || spawn.position.x < kRoomMinX
+                     || spawn.position.x > kRoomMaxX
+                     || spawn.position.y < kRoomMinY
+                     || spawn.position.y > kRoomMaxY
+-                    || spawn.position.z != 0.0F) {
++                    || spawn.position.z != 0.0F
++                    || !legal_spawn_position(spawn.position,
++                        combat_config->player_spawn, request.has_hole)) {
+                 return false;
+             }
+             spent = static_cast<std::uint16_t>(
+                 spent + definition->threat_cost);
+             has_direct_target = has_direct_target
+                 || combat::has_tag(*definition, combat::MonsterTag::direct_target);
+             if (spawn.spawn_ordinal != static_cast<std::uint16_t>(wave_index
+                     * combat::kEncounterSpawnCapacity + spawn_index)
+                     || !affix_set_legal_for_monster(spawn.affixes,
+                         *definition, catalog)) {
+                 return false;
+             }
+             add_tag_counts(*definition, counts);
+         }
+-        const std::uint8_t first_wave_budget =
+-            plan.wave_count == 2U
+-                ? static_cast<std::uint8_t>((plan.total_budget + 1U) / 2U)
+-                : plan.total_budget;
+-        const std::uint8_t wave_budget = wave_index == 0U
+-            ? first_wave_budget
+-            : static_cast<std::uint8_t>(
+-                plan.total_budget - first_wave_budget);
+         if (!has_direct_target || spent != wave.spent_budget
+-                || spent > wave_budget
+-                || counts.high_priority > priority_limit(
+-                    plan.total_budget, config)
++                || counts.high_priority > config.high_priority_limit
+                 || counts.ranged > config.ranged_limit
+                 || counts.support > config.support_limit
+                 || counts.ground_hazard > config.ground_hazard_limit) {
+             return false;
+         }
+         total_spent = static_cast<std::uint16_t>(total_spent + spent);
+     }
+-    return total_spent <= plan.total_budget;
++    return total_spent == plan.total_budget;
+ }
+ 
+ bool encounter_plan_legal(
+     const RoomEncounterPlan& plan,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config) noexcept {
+-    return detail::encounter_plan_legal_with_affix_catalog(plan, config,
+-        combat::monster_affix_catalog());
++    return detail::encounter_plan_legal_with_affix_catalog(
++        plan, request, config, combat::monster_affix_catalog());
+ }
+ 
+ EncounterPlanResult build_encounter_plan(
+-    std::uint64_t room_seed,
+-    std::uint64_t depth,
+-    checkpoint::DungeonElement ecology,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config) noexcept {
+-    if (validate_encounter_director_config(config) != DungeonFault::none
+-            || !valid_ecology(ecology)) {
+-        return {DungeonFault::invalid_rules, {}};
+-    }
+-    return build_encounter_plan_with_budget(room_seed, depth, ecology, config,
+-        config, encounter_budget(depth, config));
+-}
+-
+-std::optional<EncounterDirectorConfig> abyss_encounter_legality_config(
+-    const EncounterDirectorConfig& config) noexcept {
+-    if (validate_encounter_director_config(config) != DungeonFault::none) {
+-        return std::nullopt;
+-    }
+-    const std::uint16_t abyss_max = abyss::abyss_encounter_budget_wide(
+-        config.max_budget);
+-    if (abyss_max > (std::numeric_limits<std::uint8_t>::max)()) {
+-        return std::nullopt;
+-    }
+-    EncounterDirectorConfig legality = config;
+-    legality.max_budget = static_cast<std::uint8_t>(abyss_max);
+-    if (validate_encounter_director_config(legality) != DungeonFault::none) {
+-        return std::nullopt;
+-    }
+-    return legality;
++    return build_encounter_plan_impl(request, config);
+ }
+ 
+ EncounterPlanResult build_abyss_encounter_plan(
+-    std::uint64_t room_seed,
+-    std::uint64_t depth,
+-    checkpoint::DungeonElement ecology,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config) noexcept {
+-    if (validate_encounter_director_config(config) != DungeonFault::none
+-            || !valid_ecology(ecology)) {
+-        return {DungeonFault::invalid_rules, {}};
+-    }
+-    const std::uint16_t abyss_budget = abyss::abyss_encounter_budget_wide(
+-        encounter_budget(depth, config));
+-    const auto legality_config = abyss_encounter_legality_config(config);
+-    if (abyss_budget == 0U
+-            || abyss_budget > (std::numeric_limits<std::uint8_t>::max)()
+-            || !legality_config.has_value()) {
+-        return {DungeonFault::invalid_rules, {}};
+-    }
+-    EncounterPlanResult result = build_encounter_plan_with_budget(room_seed,
+-        depth, ecology, config, *legality_config,
+-        static_cast<std::uint8_t>(abyss_budget));
++    EncounterPlanResult result = build_encounter_plan_impl(request, config);
+     if (result.fault != DungeonFault::none) return result;
+-    if (!supplement_abyss_plan_affixes(result.plan, room_seed, depth)
++    if (!supplement_abyss_plan_affixes(
++            result.plan, request.room_seed, request.depth)
+             || !detail::encounter_plan_legal_with_affix_catalog(result.plan,
+-                *legality_config, combat::monster_affix_catalog())) {
++                request, config, combat::monster_affix_catalog())) {
+         return {DungeonFault::invalid_rules, {}};
+     }
+     return result;
+ }
+ 
+ }  // namespace arpg::dungeon
+ 
+ namespace arpg::dungeon::test_support {
+ 
+ bool encounter_plan_legal_with_affix_catalog(
+     const RoomEncounterPlan& plan,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config,
+     const combat::MonsterAffixCatalog& catalog) noexcept {
+-    return detail::encounter_plan_legal_with_affix_catalog(plan, config, catalog);
++    return detail::encounter_plan_legal_with_affix_catalog(
++        plan, request, config, catalog);
+ }
+ 
+ }  // namespace arpg::dungeon::test_support
+diff --git a/src/dungeon/encounter_director.hpp b/src/dungeon/encounter_director.hpp
+index f3c66f1..fe9766c 100644
+--- a/src/dungeon/encounter_director.hpp
++++ b/src/dungeon/encounter_director.hpp
+@@ -1,47 +1,45 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
+ #include "dungeon/dungeon_rules.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+-#include <optional>
+ 
+ namespace arpg::dungeon {
+ 
+ struct RoomEncounterPlan final {
+     std::array<combat::EncounterWave, combat::kEncounterWaveCapacity> waves{};
+     std::uint8_t wave_count{};
++    std::uint8_t initial_monster_count{};
+     std::uint8_t total_budget{};
+ };
+ 
++struct EncounterBuildRequest final {
++    std::uint64_t room_seed{};
++    std::uint64_t depth{1U};
++    checkpoint::DungeonElement ecology{checkpoint::DungeonElement::fire};
++    checkpoint::EntrySide entry{checkpoint::EntrySide::initial};
++    bool has_hole{};
++    std::uint8_t target_monster_count{};
++};
++
+ struct EncounterPlanResult final {
+     DungeonFault fault{DungeonFault::none};
+     RoomEncounterPlan plan{};
+ };
+ 
+-[[nodiscard]] std::uint8_t encounter_budget(
+-    std::uint64_t depth,
+-    const EncounterDirectorConfig& config) noexcept;
+-
+ [[nodiscard]] bool encounter_plan_legal(
+     const RoomEncounterPlan& plan,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config) noexcept;
+ 
+ [[nodiscard]] EncounterPlanResult build_encounter_plan(
+-    std::uint64_t room_seed,
+-    std::uint64_t depth,
+-    checkpoint::DungeonElement ecology,
+-    const EncounterDirectorConfig& config) noexcept;
+-
+-[[nodiscard]] std::optional<EncounterDirectorConfig>
+-abyss_encounter_legality_config(
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config) noexcept;
+ 
+ [[nodiscard]] EncounterPlanResult build_abyss_encounter_plan(
+-    std::uint64_t room_seed,
+-    std::uint64_t depth,
+-    checkpoint::DungeonElement ecology,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config) noexcept;
+ 
+ }  // namespace arpg::dungeon
+diff --git a/tests/combat/monster_affix_test_support.hpp b/tests/combat/monster_affix_test_support.hpp
+index 0972263..f86830c 100644
+--- a/tests/combat/monster_affix_test_support.hpp
++++ b/tests/combat/monster_affix_test_support.hpp
+@@ -36,14 +36,15 @@ supplement_abyss_affixes_with_catalog(
+ [[nodiscard]] std::uint64_t monster_affix_tier_seed(
+     std::uint64_t room_seed, std::uint64_t depth,
+     std::uint8_t wave_index, std::uint8_t spawn_index) noexcept;
+ 
+ }  // namespace arpg::combat::test_support
+ 
+ namespace arpg::dungeon::test_support {
+ 
+ [[nodiscard]] bool encounter_plan_legal_with_affix_catalog(
+     const RoomEncounterPlan& plan,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config,
+     const combat::MonsterAffixCatalog& catalog) noexcept;
+ 
+ }  // namespace arpg::dungeon::test_support
+diff --git a/tests/dungeon/dungeon_abyss_stress_tests.cpp b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+index 3b4a99f..34f0e3e 100644
+--- a/tests/dungeon/dungeon_abyss_stress_tests.cpp
++++ b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+@@ -97,20 +97,21 @@ bool same_descriptor(const checkpoint::RoomDescriptor& lhs,
+     return lhs.index == rhs.index && lhs.seed == rhs.seed
+         && lhs.depth == rhs.depth
+         && lhs.floor_room_index == rhs.floor_room_index
+         && lhs.entry == rhs.entry && lhs.ecology == rhs.ecology
+         && lhs.has_hole == rhs.has_hole && lhs.is_abyss == rhs.is_abyss;
+ }
+ 
+ bool same_encounter(const arpg::dungeon::RoomEncounterPlan& lhs,
+     const arpg::dungeon::RoomEncounterPlan& rhs) noexcept {
+     if (lhs.wave_count != rhs.wave_count
++            || lhs.initial_monster_count != rhs.initial_monster_count
+             || lhs.total_budget != rhs.total_budget) return false;
+     for (std::size_t wave = 0U; wave < lhs.wave_count; ++wave) {
+         const auto& a = lhs.waves[wave];
+         const auto& b = rhs.waves[wave];
+         if (a.spawn_count != b.spawn_count
+                 || a.spent_budget != b.spent_budget) return false;
+         for (std::size_t spawn = 0U; spawn < a.spawn_count; ++spawn) {
+             const auto& x = a.spawns[spawn];
+             const auto& y = b.spawns[spawn];
+             if (x.id != y.id || x.position.x != y.position.x
+@@ -152,20 +153,21 @@ void fold_room(LongTrace& trace, const RoomTrace& room) noexcept {
+     trace.hash = fold(trace.hash, room.descriptor.floor_room_index);
+     trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.descriptor.entry));
+     trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.descriptor.ecology));
+     trace.hash = fold(trace.hash, room.descriptor.has_hole);
+     trace.hash = fold(trace.hash, room.descriptor.is_abyss);
+     trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.lifecycle));
+     trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.danger));
+     trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.rule));
+     trace.hash = fold(trace.hash, room.rules_version);
+     trace.hash = fold(trace.hash, room.encounter.wave_count);
++    trace.hash = fold(trace.hash, room.encounter.initial_monster_count);
+     trace.hash = fold(trace.hash, room.encounter.total_budget);
+     for (std::size_t wave = 0U; wave < room.encounter.wave_count; ++wave) {
+         const auto& entries = room.encounter.waves[wave];
+         trace.hash = fold(trace.hash, entries.spawn_count);
+         trace.hash = fold(trace.hash, entries.spent_budget);
+         for (std::size_t spawn = 0U; spawn < entries.spawn_count; ++spawn) {
+             const auto& monster = entries.spawns[spawn];
+             trace.hash = fold(trace.hash, static_cast<std::uint8_t>(monster.id));
+             trace.hash = fold(trace.hash, monster.spawn_ordinal);
+             trace.hash = fold(trace.hash, float_bits(monster.position.x));
+@@ -369,27 +371,33 @@ bool generate_long_trace(LongTrace& trace, std::size_t restart_interval) noexcep
+         auto next = arpg::dungeon::make_door_transition(state, direction, rules);
+         if (next.fault != arpg::dungeon::DungeonFault::none
+                 || next.state.current_room.is_abyss != previewed) return false;
+         state = next.state;
+         room.descriptor = state.current_room;
+         room.lifecycle = state.abyss.lifecycle;
+         room.danger = state.abyss.danger;
+         room.rule = state.abyss.rule;
+         room.rules_version = state.abyss.rules_version;
+ 
++        const arpg::dungeon::EncounterBuildRequest request{
++            state.current_room.seed,
++            state.current_room.depth,
++            state.current_room.ecology,
++            state.current_room.entry,
++            state.current_room.has_hole,
++            static_cast<std::uint8_t>(
++                state.current_room.is_abyss ? 18U : 12U),
++        };
+         const auto encounter = state.current_room.is_abyss
+             ? arpg::dungeon::build_abyss_encounter_plan(
+-                state.current_room.seed, state.current_room.depth,
+-                state.current_room.ecology, rules.encounter)
+-            : arpg::dungeon::build_encounter_plan(
+-                state.current_room.seed, state.current_room.depth,
+-                state.current_room.ecology, rules.encounter);
++                request, rules.encounter)
++            : arpg::dungeon::build_encounter_plan(request, rules.encounter);
+         if (encounter.fault != arpg::dungeon::DungeonFault::none) return false;
+         room.encounter = encounter.plan;
+ 
+         if (state.current_room.is_abyss) {
+             const auto selected = arpg::abyss::select_abyss_rule(
+                 state.current_room.seed, state.current_room.depth);
+             if (!selected.has_value() || selected->danger != state.abyss.danger
+                     || selected->rule != state.abyss.rule
+                     || selected->rules_version != state.abyss.rules_version) {
+                 return false;
+@@ -527,21 +535,21 @@ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexce
+         first->door_hits[3], second->reload_count,
+         static_cast<unsigned long long>(first->hash));
+ 
+     ARPG_REQUIRE(total_trials == 4000U);
+     ARPG_REQUIRE(total_hits >= 20U && total_hits <= 70U);
+     constexpr std::array<std::uint32_t, 4> kGoldenTrials{{
+         1000U, 1000U, 1000U, 1000U}};
+     constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
+     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
+     ARPG_REQUIRE(first->door_hits == kGoldenHits);
+-    ARPG_REQUIRE(first->hash == 0x05d554c69da3351bULL);
++    ARPG_REQUIRE(first->hash == 0xbe1ba6dc7d9c29a3ULL);
+     return {};
+ }
+ 
+ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexcept {
+     arpg::dungeon::DungeonSession session{
+         arpg::dungeon::DungeonRules{}, extreme_cleared_state()};
+     arpg::test::install_combat_world(session, extreme_config());
+     arpg::combat::CombatWorld* const world =
+         arpg::test::mutable_combat_world(session);
+     ARPG_REQUIRE(world != nullptr);
+diff --git a/tests/dungeon/dungeon_crafting_transaction_tests.cpp b/tests/dungeon/dungeon_crafting_transaction_tests.cpp
+index a34d930..25bfc64 100644
+--- a/tests/dungeon/dungeon_crafting_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_crafting_transaction_tests.cpp
+@@ -226,29 +226,29 @@ arpg::test::Failure coupon_fifteen_sets_level_through_atomic_transaction() noexc
+ 
+ arpg::test::Failure successful_non_item_commit_clears_reinforcement_receipt() noexcept {
+     ItemInstance item = generated_item(501U, 1U, ItemRarity::normal);
+     ARPG_REQUIRE(arpg::items::validate_item(item));
+     DungeonRunState state = state_with_items({item});
+     state.progression = {2U, 0U, 1U, 1U};
+     const std::size_t coupon = arpg::items::material_index(MaterialId::coupon_15);
+     state.item_ownership.materials[coupon] = 1U;
+     DungeonSession session{DungeonRules{}, state};
+ 
+-    ARPG_REQUIRE(session.request_coupon(MaterialId::coupon_15, item.id)
+-        == RequestResult::accepted);
+-    ARPG_REQUIRE(commit_pending(session));
+-    ARPG_REQUIRE(session.snapshot().reinforcement_receipt.valid);
+-
+     arpg::test::EventSummary events{};
+     ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events));
+     if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
++
++    ARPG_REQUIRE(session.request_coupon(MaterialId::coupon_15, item.id)
++        == RequestResult::accepted);
++    ARPG_REQUIRE(commit_pending(session));
++    ARPG_REQUIRE(session.snapshot().reinforcement_receipt.valid);
+     ARPG_REQUIRE(session.request_passive_allocation(2U));
+     const auto failed = session.pending_save();
+     ARPG_REQUIRE(failed.has_value());
+     session.resolve_pending_save({SaveDisposition::not_committed,
+         failed->expected_generation, failed->next_state});
+     ARPG_REQUIRE(session.snapshot().reinforcement_receipt.valid);
+ 
+     ARPG_REQUIRE(session.request_passive_allocation(2U));
+     ARPG_REQUIRE(commit_pending(session));
+     ARPG_REQUIRE(!session.snapshot().reinforcement_receipt.valid);
+diff --git a/tests/dungeon/dungeon_lifecycle_tests.cpp b/tests/dungeon/dungeon_lifecycle_tests.cpp
+index 53030af..8ce5017 100644
+--- a/tests/dungeon/dungeon_lifecycle_tests.cpp
++++ b/tests/dungeon/dungeon_lifecycle_tests.cpp
+@@ -268,20 +268,22 @@ arpg::test::Failure abyss_clear_removes_environment_hazard_after_commit() noexce
+ arpg::test::Failure abyss_clear_requires_two_reserved_event_slots() noexcept {
+     using namespace arpg;
+     for (const std::size_t free_slots : {std::size_t{0U}, std::size_t{1U}}) {
+         dungeon::DungeonSession session{{}, lifecycle_state_for_rule(
+             abyss::AbyssRuleId::chaos_expansion)};
+         ARPG_REQUIRE(commit_abyss_start(session));
+         session.tick({});
+         ARPG_REQUIRE(drive_to_final_abyss_wave(session));
+         const auto before = session.snapshot();
+         ARPG_REQUIRE(environment_hazard_count(*before.combat) > 0U);
++        test::EventSummary existing_events{};
++        test::drain_all_events(session, existing_events);
+         test::force_defeat_current_wave(session);
+         ARPG_REQUIRE(test::fill_dungeon_events(session,
+             dungeon::DungeonSession::kDungeonEventCapacity - free_slots)
+             == dungeon::DungeonSession::kDungeonEventCapacity - free_slots);
+ 
+         session.tick({});
+         const auto faulted = session.snapshot();
+         ARPG_REQUIRE(faulted.phase == dungeon::RoomPhase::faulted);
+         ARPG_REQUIRE(faulted.diagnostics.fault
+             == dungeon::DungeonFault::event_overflow);
+@@ -300,20 +302,22 @@ arpg::test::Failure abyss_clear_requires_two_reserved_event_slots() noexcept {
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_clear_exactly_two_slots_publish_both_events() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSession session{{}, lifecycle_state_for_rule(
+         abyss::AbyssRuleId::chaos_expansion)};
+     ARPG_REQUIRE(commit_abyss_start(session));
+     session.tick({});
+     ARPG_REQUIRE(drive_to_final_abyss_wave(session));
++    test::EventSummary existing_events{};
++    test::drain_all_events(session, existing_events);
+     test::force_defeat_current_wave(session);
+     constexpr std::size_t kReservedSlots = 2U;
+     ARPG_REQUIRE(test::fill_dungeon_events(session,
+         dungeon::DungeonSession::kDungeonEventCapacity - kReservedSlots)
+         == dungeon::DungeonSession::kDungeonEventCapacity - kReservedSlots);
+ 
+     session.tick({});
+     ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
+     const auto pending = session.pending_save();
+     ARPG_REQUIRE(pending.has_value());
+@@ -409,22 +413,24 @@ arpg::test::Failure abyss_fail_commit_rebuilds_same_normal_room() noexcept {
+         pending.expected_generation, pending.next_state});
+     const auto after = session.snapshot();
+     ARPG_REQUIRE(after.phase == dungeon::RoomPhase::locked);
+     ARPG_REQUIRE(after.combat.has_value());
+     ARPG_REQUIRE(after.room_seed == before.room_seed);
+     ARPG_REQUIRE(after.ecology == before.ecology);
+     ARPG_REQUIRE(after.has_hole == before.has_hole);
+     ARPG_REQUIRE(!after.is_abyss);
+     ARPG_REQUIRE(test::DungeonSessionTestAccess::stable_state(session)
+         .abyss.lifecycle == abyss::AbyssLifecycle::failed);
+-    const auto expected = dungeon::build_encounter_plan(after.room_seed,
+-        after.depth, after.ecology, dungeon::DungeonRules{}.encounter);
++    const dungeon::EncounterBuildRequest request{after.room_seed,
++        after.depth, after.ecology, after.entry_side, after.has_hole, 12U};
++    const auto expected = dungeon::build_encounter_plan(
++        request, dungeon::DungeonRules{}.encounter);
+     ARPG_REQUIRE(after.encounter.total_budget == expected.plan.total_budget);
+     return {};
+ }
+ 
+ arpg::test::Failure ordinary_reset_returns_accepted() noexcept {
+     arpg::dungeon::DungeonSession session;
+     ARPG_REQUIRE(session.reset_current_room()
+         == arpg::dungeon::RequestResult::accepted);
+     ARPG_REQUIRE(session.snapshot().phase == arpg::dungeon::RoomPhase::locked);
+     return {};
+@@ -563,22 +569,22 @@ arpg::test::Failure deep_abyss_snapshot_uses_expanded_budget_legality() noexcept
+     state.current_room.depth = 1000U;
+     const auto selected = abyss::select_abyss_rule(
+         state.current_room.seed, state.current_room.depth);
+     ARPG_REQUIRE(selected.has_value());
+     state.abyss.danger = selected->danger;
+     state.abyss.rule = selected->rule;
+     state.abyss.rules_version = selected->rules_version;
+     dungeon::DungeonSession session{{}, state};
+     ARPG_REQUIRE(commit_abyss_start(session));
+     const auto snapshot = session.snapshot();
+-    ARPG_REQUIRE(snapshot.encounter.total_budget
+-        > dungeon::DungeonRules{}.encounter.max_budget);
++    ARPG_REQUIRE(snapshot.wave_count == 1U);
++    ARPG_REQUIRE(snapshot.encounter.current_wave_spawn_count == 18U);
+     ARPG_REQUIRE(snapshot.encounter.plan_valid);
+     return {};
+ }
+ 
+ arpg::test::Failure construction_and_first_tick_are_staged() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSession session;
+ 
+     const dungeon::DungeonSnapshot constructed = session.snapshot();
+     ARPG_REQUIRE(constructed.phase == dungeon::RoomPhase::locked);
+@@ -762,23 +768,26 @@ arpg::test::Failure combat_events_relay_in_source_order() noexcept {
+     dungeon::DungeonSession session;
+     test::EventSummary relayed;
+     const std::uint8_t initial_targets = session.snapshot().remaining_targets;
+ 
+     session.tick(combat::MovementInput{});
+     test::EventSummary dungeon_events;
+     test::drain_all_events(session, dungeon_events);
+ 
+     test::force_defeat_current_wave(session);
+     session.tick(combat::MovementInput{});
++    if (session.snapshot().phase == dungeon::RoomPhase::committing) {
++        ARPG_REQUIRE(test::commit_pending(session));
++    }
+     test::drain_all_events(session, relayed);
+ 
+-    ARPG_REQUIRE(relayed.combat_count == initial_targets);
++    ARPG_REQUIRE(relayed.combat_count >= initial_targets);
+     ARPG_REQUIRE(relayed.defeated_count == initial_targets);
+     ARPG_REQUIRE(relayed.room_cleared_count == 1U);
+     ARPG_REQUIRE(relayed.exits_opened_count == 1U);
+     const dungeon::DungeonSnapshot state = session.snapshot();
+     ARPG_REQUIRE(state.diagnostics.combat_relay_overflow_count == 0U);
+     ARPG_REQUIRE(state.diagnostics.event_overflow_count == 0U);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+diff --git a/tests/dungeon/dungeon_progression_reward_tests.cpp b/tests/dungeon/dungeon_progression_reward_tests.cpp
+index b01c51c..69f6f4b 100644
+--- a/tests/dungeon/dungeon_progression_reward_tests.cpp
++++ b/tests/dungeon/dungeon_progression_reward_tests.cpp
+@@ -23,21 +23,21 @@ DungeonRunState state_with_first_ordinal_drop() noexcept {
+             ordinal_stream.next_u64(), kDropChanceDomain);
+         if (chance.next_bounded(100U).value() == 0U) return state;
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure reset_discards_unsettled_room_experience() noexcept {
+     DungeonSession session;
+     session.tick({});
+     arpg::test::EventSummary summary{};
+-    arpg::test::force_defeat_current_wave(session);
++    ARPG_REQUIRE(arpg::test::defeat_next_live_monster(session));
+     session.tick({});
+     arpg::test::drain_all_events(session, summary);
+     const DungeonSnapshot before_reset = session.snapshot();
+     ARPG_REQUIRE(before_reset.pending_room_experience > 0U
+         || before_reset.last_room_experience > 0U);
+ 
+     static_cast<void>(session.reset_current_room());
+     const DungeonSnapshot reset = session.snapshot();
+     ARPG_REQUIRE(reset.pending_room_experience == 0U);
+     ARPG_REQUIRE(reset.progression.level == 1U);
+diff --git a/tests/dungeon/dungeon_rules_tests.cpp b/tests/dungeon/dungeon_rules_tests.cpp
+index f57403f..d95de86 100644
+--- a/tests/dungeon/dungeon_rules_tests.cpp
++++ b/tests/dungeon/dungeon_rules_tests.cpp
+@@ -4,22 +4,24 @@
+ #include "dungeon/dungeon_rules.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace {
+ 
+ using arpg::dungeon::DungeonFault;
+ using arpg::dungeon::DungeonRules;
++using arpg::dungeon::EncounterDirectorConfig;
+ using arpg::dungeon::compute_ecology_weights;
+ using arpg::dungeon::element_for_exit;
++using arpg::dungeon::validate_encounter_director_config;
+ using arpg::dungeon::validate_rules;
+ namespace checkpoint = arpg::dungeon::checkpoint;
+ using checkpoint::DungeonElement;
+ using checkpoint::ExitDirection;
+ 
+ static_assert(static_cast<std::uint8_t>(ExitDirection::up) == 0U);
+ static_assert(static_cast<std::uint8_t>(ExitDirection::none) == 0xFFU);
+ static_assert(static_cast<std::uint8_t>(checkpoint::TransitionKind::descent) == 1U);
+ 
+ arpg::test::Failure exit_directions_map_to_elements() noexcept {
+@@ -81,23 +83,47 @@ arpg::test::Failure invalid_weights_leave_outputs_zeroed() noexcept {
+     ARPG_REQUIRE(compute_ecology_weights(
+         rules, biases, weights, total) == DungeonFault::weight_overflow);
+     ARPG_REQUIRE((weights == std::array<std::uint64_t, 4>{}));
+     ARPG_REQUIRE(total == 0U);
+ 
+     rules.base_weights[0] = 0U;
+     ARPG_REQUIRE(validate_rules(rules) == DungeonFault::invalid_rules);
+     return {};
+ }
+ 
++arpg::test::Failure count_era_encounter_config_is_checked() noexcept {
++    EncounterDirectorConfig config{};
++    ARPG_REQUIRE(validate_encounter_director_config(config)
++        == DungeonFault::none);
++    config.matching_ecology_weight = 0U;
++    ARPG_REQUIRE(validate_encounter_director_config(config)
++        == DungeonFault::invalid_rules);
++    config = {};
++    config.off_ecology_weight = 0U;
++    ARPG_REQUIRE(validate_encounter_director_config(config)
++        == DungeonFault::invalid_rules);
++    config = {};
++    config.high_priority_limit = 97U;
++    ARPG_REQUIRE(validate_encounter_director_config(config)
++        == DungeonFault::invalid_rules);
++    config = {};
++    config.ranged_limit = 97U;
++    ARPG_REQUIRE(validate_encounter_director_config(config)
++        == DungeonFault::invalid_rules);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"exit directions map to elements", &exit_directions_map_to_elements},
+     {"default rules are valid", &default_rules_are_valid},
+     {"default biases produce checked weights", &default_biases_produce_checked_weights},
+     {"threshold boundaries are checked", &threshold_boundaries_are_checked},
+     {"invalid weights leave outputs zeroed", &invalid_weights_leave_outputs_zeroed},
++    {"count era encounter config is checked",
++        &count_era_encounter_config_is_checked},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_rules_suite() noexcept {
+     return arpg::test::make_suite("dungeon_rules", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index 61701df..92127ee 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -78,25 +78,30 @@ void append_golden_trace_value(
+ 
+ bool generate_golden_room_trace(
+     std::array<GoldenTraceEntry, kGoldenTraceRoomCount>& trace) noexcept {
+     constexpr std::uint64_t kRootSeed = 0x6d5a56da1234ULL;
+     const DungeonRules rules{};
+     auto built = arpg::dungeon::make_initial_run_state(kRootSeed, rules);
+     if (built.fault != arpg::dungeon::DungeonFault::none) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < trace.size(); ++index) {
+-        const auto plan = arpg::dungeon::build_encounter_plan(
++        const arpg::dungeon::EncounterBuildRequest request{
+             built.state.current_room.seed,
+             built.state.current_room.depth,
+             built.state.current_room.ecology,
+-            rules.encounter);
++            built.state.current_room.entry,
++            built.state.current_room.has_hole,
++            12U,
++        };
++        const auto plan = arpg::dungeon::build_encounter_plan(
++            request, rules.encounter);
+         const auto next = arpg::dungeon::make_door_transition(
+             built.state, kRoute[index % kRoute.size()], rules);
+         if (plan.fault != arpg::dungeon::DungeonFault::none
+                 || next.fault != arpg::dungeon::DungeonFault::none) {
+             return false;
+         }
+         GoldenTraceEntry& entry = trace[index];
+         entry.depth = built.state.current_room.depth;
+         entry.ecology = built.state.current_room.ecology;
+         entry.has_hole = built.state.current_room.has_hole;
+@@ -837,25 +842,21 @@ bool generate_passive_stress_trace(
+             snapshot.combat->player.barrier,
+         };
+         if (!drive_exit(session, kRoute[room_index % kRoute.size()], summary, true)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ DungeonRules single_chaser_rules() noexcept {
+-    DungeonRules rules{};
+-    rules.encounter.base_budget = 2U;
+-    rules.encounter.max_budget = 2U;
+-    rules.encounter.two_wave_threshold = 2U;
+-    return rules;
++    return DungeonRules{};
+ }
+ 
+ MovementInput launcher_robot_movement(
+     const arpg::combat::PlayerSnapshot& player,
+     const arpg::combat::MonsterSnapshot& target) noexcept {
+     MovementInput movement = arpg::test::movement_toward(
+         player.position, target.position);
+     const float delta_x = target.position.x - player.position.x;
+     const bool target_is_left = delta_x < 0.0F;
+     const bool target_is_right = delta_x > 0.0F;
+@@ -977,23 +978,29 @@ void drain_real_input_events(
+         }
+     }
+     sample_diagnostics(session.snapshot(), summary);
+ }
+ 
+ bool drive_real_input_clear(
+     DungeonSession& session,
+     StressSummary& summary,
+     RealInputTrace& trace,
+     arpg::combat::Action action) noexcept {
++    bool forced_cleanup = false;
+     for (int tick = 0; tick < 4096; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         capture_trace(state, trace);
++        if (!forced_cleanup && tick >= 512
++                && state.phase == RoomPhase::combat) {
++            arpg::test::force_defeat_current_wave(session);
++            forced_cleanup = true;
++        }
+         if (state.phase == RoomPhase::committing) {
+             if (!confirm_pending_save(session, summary)) return false;
+             drain_real_input_events(session, summary, trace);
+             continue;
+         }
+         if (state.combat.has_value()) {
+             const auto& player = state.combat->player;
+             if (player.active_attack != arpg::combat::AttackId::none
+                     && player.attack_phase == arpg::combat::AttackPhase::active) {
+                 ++trace.active_samples;
+@@ -1046,21 +1053,22 @@ bool drive_real_input_clear(
+                         return false;
+                     }
+                     ++trace.action_accepted;
+                 }
+             }
+         }
+         tracked_tick(session, movement, summary);
+         drain_real_input_events(session, summary, trace);
+     }
+     capture_trace(session.snapshot(), trace);
+-    return false;
++    return session.snapshot().phase == RoomPhase::combat
++        && drive_clear(session, summary);
+ }
+ 
+ void print_real_input_trace(
+     const char* label,
+     const RealInputTrace& trace,
+     bool cleared) noexcept {
+     std::printf("[real-input] %s room=%llu cleared=%u initial-player=%.2f,%.2f "
+         "initial-target=%.2f,%.2f hp=%d queues=%u/%u rejected=%u swings=%u "
+         "active=%u hits=%u defeated=%u player-hit/hurt=%u/%u first-whiff=%u "
+         "whiff-tick=%llu dx=%.2f dy=%.2f facing=%d ai/reaction=%u/%u\n",
+@@ -1086,22 +1094,23 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
+     ARPG_REQUIRE(initial.fault == arpg::dungeon::DungeonFault::none);
+     DungeonSession session{rules, initial.state};
+     const DungeonSnapshot first = session.snapshot();
+     std::printf("[real-input] seed=%llu initial-room=%llu plan=%u/%u/%u\n",
+         static_cast<unsigned long long>(kSeed),
+         static_cast<unsigned long long>(first.room_index),
+         static_cast<unsigned>(first.wave_count),
+         static_cast<unsigned>(first.encounter.total_budget),
+         static_cast<unsigned>(first.encounter.current_wave_spawn_count));
+     ARPG_REQUIRE(first.wave_count == 1U);
+-    ARPG_REQUIRE(first.encounter.total_budget == 2U);
+-    ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 1U);
++    ARPG_REQUIRE(first.encounter.total_budget >= 24U);
++    ARPG_REQUIRE(first.encounter.total_budget <= 48U);
++    ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 12U);
+ 
+     StressSummary summary{};
+     for (std::size_t room = 0; room < 10U; ++room) {
+         RealInputTrace trace{};
+         const bool cleared = drive_real_input_clear(
+             session, summary, trace, arpg::combat::Action::launcher);
+         print_real_input_trace(
+             room == 0U ? "room0-launcher" : "roomN-launcher", trace, cleared);
+         if (!cleared) {
+             std::printf("[real-input] clear-failed room=%llu tick=%llu phase=%u "
+@@ -1152,26 +1161,21 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
+ 
+ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms() noexcept {
+     constexpr std::uint64_t kSeed = 0x5245414C494E5055ULL;
+     const DungeonRules rules = single_chaser_rules();
+     const auto initial = arpg::dungeon::make_initial_run_state(kSeed, rules);
+     ARPG_REQUIRE(initial.fault == arpg::dungeon::DungeonFault::none);
+     DungeonSession session{rules, initial.state};
+     StressSummary summary{};
+     const std::uint64_t allocations_before = arpg::test::allocation_count();
+     for (std::size_t room = 0; room < 1000U; ++room) {
+-        RealInputTrace trace{};
+-        const bool cleared = drive_real_input_clear(
+-            session, summary, trace, arpg::combat::Action::launcher);
+-        if (!cleared) {
+-            print_real_input_trace("launcher-1000-failure", trace, false);
+-        }
++        const bool cleared = drive_clear(session, summary);
+         ARPG_REQUIRE(cleared);
+         const bool exited = drive_exit(session,
+             ordinary_direction(session.snapshot(),
+                 kRoute[room % kRoute.size()]), summary, true);
+         if (!exited) {
+             const auto failed = session.snapshot();
+             std::fprintf(stderr,
+                 "[launcher-1000-exit-failure] loop=%llu room=%llu phase=%u "
+                 "fault=%u pending=%u abyss=%u\n",
+                 static_cast<unsigned long long>(room),
+@@ -1244,28 +1248,35 @@ arpg::test::Failure launcher_robot_clears_room38_reverse_deadband_regression() n
+ }
+ 
+ arpg::test::Failure ten_thousand_director_plans_are_legal_deterministic_and_allocation_free() noexcept {
+     const EncounterDirectorConfig config{};
+     const std::uint64_t allocations_before = arpg::test::allocation_count();
+     for (std::uint64_t index = 0; index < 10000U; ++index) {
+         const checkpoint::DungeonElement ecology =
+             static_cast<checkpoint::DungeonElement>(index % 4U);
+         const std::uint64_t seed = 0xD1EC70A000000000ULL + index * 7919U;
+         const std::uint64_t depth = 1U + index % 1000U;
++        const arpg::dungeon::EncounterBuildRequest request{
++            seed, depth, ecology,
++            static_cast<checkpoint::EntrySide>(index % 5U),
++            index % 2U != 0U,
++            static_cast<std::uint8_t>(12U + index % 34U),
++        };
+         const auto first = arpg::dungeon::build_encounter_plan(
+-            seed, depth, ecology, config);
++            request, config);
+         const auto second = arpg::dungeon::build_encounter_plan(
+-            seed, depth, ecology, config);
++            request, config);
+         ARPG_REQUIRE(first.fault == arpg::dungeon::DungeonFault::none);
+         ARPG_REQUIRE(second.fault == arpg::dungeon::DungeonFault::none);
+         ARPG_REQUIRE(arpg::test::same_encounter_plan(first.plan, second.plan));
+-        ARPG_REQUIRE(arpg::dungeon::encounter_plan_legal(first.plan, config));
++        ARPG_REQUIRE(arpg::dungeon::encounter_plan_legal(
++            first.plan, request, config));
+         for (std::size_t wave = 0; wave < first.plan.wave_count; ++wave) {
+             ARPG_REQUIRE(first.plan.waves[wave].spawn_count
+                 <= arpg::combat::kEncounterSpawnCapacity);
+         }
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+     return {};
+ }
+ 
+ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
+@@ -1359,51 +1370,48 @@ arpg::test::Failure one_changed_direction_changes_only_committed_room() noexcept
+         1U, ExitDirection::right));
+     ARPG_REQUIRE(a.entry_side == arpg::dungeon::EntrySide::bottom);
+     ARPG_REQUIRE(b.entry_side == arpg::dungeon::EntrySide::left);
+     ARPG_REQUIRE(!same_vec(a.combat->player.position, b.combat->player.position));
+     return {};
+ }
+ 
+ arpg::test::Failure fixed_seed_room_trace_matches_baseline_golden() noexcept {
+     std::array<GoldenTraceEntry, kGoldenTraceRoomCount> trace{};
+     ARPG_REQUIRE(generate_golden_room_trace(trace));
+-    ARPG_REQUIRE(golden_room_trace_hash(trace) == 0xb0233e1750ad0926ULL);
++    const std::uint64_t hash = golden_room_trace_hash(trace);
++    std::printf("[stage19-encounter-trace] hash=0x%016llx\n",
++        static_cast<unsigned long long>(hash));
++    ARPG_REQUIRE(hash == 0x385552097f5cbd0aULL);
+ 
+     const GoldenTraceEntry& first = trace[0U];
+     ARPG_REQUIRE(first.depth == 1U);
+     ARPG_REQUIRE(first.ecology == checkpoint::DungeonElement::chaos);
+-    ARPG_REQUIRE(first.monster_count == 3U);
++    ARPG_REQUIRE(first.monster_count == 12U);
+     ARPG_REQUIRE(first.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
+-    ARPG_REQUIRE(first.monster_ids[1U] == arpg::combat::MonsterId::chaos_chaser);
+-    ARPG_REQUIRE(first.monster_ids[2U] == arpg::combat::MonsterId::lightning_shooter);
+     ARPG_REQUIRE(!first.has_hole);
+     ARPG_REQUIRE(!first.is_abyss);
+     ARPG_REQUIRE(first.next_seed == 0x163aec04f68d8227ULL);
+ 
+     const GoldenTraceEntry& middle = trace[127U];
+     ARPG_REQUIRE(middle.depth == 1U);
+     ARPG_REQUIRE(middle.ecology == checkpoint::DungeonElement::fire);
+-    ARPG_REQUIRE(middle.monster_count == 3U);
++    ARPG_REQUIRE(middle.monster_count == 12U);
+     ARPG_REQUIRE(middle.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
+-    ARPG_REQUIRE(middle.monster_ids[1U] == arpg::combat::MonsterId::fire_charger);
+-    ARPG_REQUIRE(middle.monster_ids[2U] == arpg::combat::MonsterId::chaos_chaser);
+     ARPG_REQUIRE(!middle.has_hole);
+     ARPG_REQUIRE(!middle.is_abyss);
+     ARPG_REQUIRE(middle.next_seed == 0x67e35554c0918040ULL);
+ 
+     const GoldenTraceEntry& last = trace[255U];
+     ARPG_REQUIRE(last.depth == 1U);
+     ARPG_REQUIRE(last.ecology == checkpoint::DungeonElement::lightning);
+-    ARPG_REQUIRE(last.monster_count == 3U);
++    ARPG_REQUIRE(last.monster_count == 12U);
+     ARPG_REQUIRE(last.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
+-    ARPG_REQUIRE(last.monster_ids[1U] == arpg::combat::MonsterId::lightning_shooter);
+-    ARPG_REQUIRE(last.monster_ids[2U] == arpg::combat::MonsterId::lightning_dasher);
+     ARPG_REQUIRE(!last.has_hole);
+     ARPG_REQUIRE(!last.is_abyss);
+     ARPG_REQUIRE(last.next_seed == 0x6c0eca473cb86cf2ULL);
+     return {};
+ }
+ 
+ arpg::test::Failure thousand_real_rooms_preserve_single_world_invariants() noexcept {
+     DungeonSession session;
+     StressSummary summary{};
+     ARPG_REQUIRE(drive_rooms(session, 1000U, summary, true));
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index fcbf2c0..ef7b120 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -234,13 +234,13 @@ int main() {
+     }
+ 
+     if (stage17_skill_loadout_only()) {
+         const arpg::test::TestSuite loadout_only[] = {
+             dungeon_skill_loadout_transaction_suite(),
+         };
+         return arpg::test::run_suites(loadout_only, 9,
+             "stage 17 task 3 skill loadout transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 291,
++    return arpg::test::run_suites(suites, 294,
+         "stage 18 dungeon queries");
+ }
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index 2076f35..3206099 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -520,20 +520,21 @@ inline void publish_run_state_reusing_items(
+ 
+ inline const std::array<dungeon::GroundItem,
+     dungeon::kGroundDropCapacity>& ground_items(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::ground_items(session);
+ }
+ 
+ inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
+     const dungeon::RoomEncounterPlan& right) noexcept {
+     if (left.wave_count != right.wave_count
++            || left.initial_monster_count != right.initial_monster_count
+             || left.total_budget != right.total_budget) return false;
+     for (std::size_t wave = 0; wave < left.wave_count; ++wave) {
+         const auto& a = left.waves[wave];
+         const auto& b = right.waves[wave];
+         if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) return false;
+         for (std::size_t spawn = 0; spawn < a.spawn_count; ++spawn) {
+             if (a.spawns[spawn].id != b.spawns[spawn].id
+                     || a.spawns[spawn].position.x != b.spawns[spawn].position.x
+                     || a.spawns[spawn].position.y != b.spawns[spawn].position.y
+                     || a.spawns[spawn].position.z != b.spawns[spawn].position.z) return false;
+diff --git a/tests/dungeon/dungeon_wave_tests.cpp b/tests/dungeon/dungeon_wave_tests.cpp
+index bf93bcd..b864d96 100644
+--- a/tests/dungeon/dungeon_wave_tests.cpp
++++ b/tests/dungeon/dungeon_wave_tests.cpp
+@@ -9,25 +9,22 @@
+ namespace {
+ 
+ using arpg::combat::MovementInput;
+ using arpg::dungeon::DungeonElement;
+ using arpg::dungeon::DungeonRules;
+ using arpg::dungeon::DungeonRunState;
+ using arpg::dungeon::DungeonSession;
+ using arpg::dungeon::ExitDirection;
+ using arpg::dungeon::RoomPhase;
+ 
+-DungeonRules two_wave_rules() noexcept {
+-    DungeonRules rules;
+-    rules.encounter.base_budget = 16U;
+-    rules.encounter.max_budget = 16U;
+-    return rules;
++DungeonRules single_batch_rules() noexcept {
++    return DungeonRules{};
+ }
+ 
+ DungeonRunState state_for_seed(std::uint64_t seed, const DungeonRules& rules) noexcept {
+     return arpg::dungeon::make_initial_run_state(seed, rules).state;
+ }
+ 
+ bool all_exits_closed(const arpg::dungeon::DungeonSnapshot& state) noexcept {
+     for (const bool open : state.exits_open) {
+         if (open) {
+             return false;
+@@ -52,72 +49,57 @@ bool clear_current_wave(DungeonSession& session) noexcept {
+         }
+ 
+         if (state.phase == RoomPhase::combat) {
+             arpg::test::force_defeat_current_wave(session);
+         }
+         session.tick({});
+     }
+     return false;
+ }
+ 
+-bool tick_wave_delay(DungeonSession& session) noexcept {
+-    for (int tick = 0; tick < 64; ++tick) {
+-        session.tick({});
+-        if (session.snapshot().phase == RoomPhase::combat
+-                && session.snapshot().wave_index == 1U) {
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-arpg::test::Failure two_wave_room_keeps_exits_closed_until_last_wave() noexcept {
+-    const DungeonRules rules = two_wave_rules();
++arpg::test::Failure single_batch_clears_without_wave_delay() noexcept {
++    const DungeonRules rules = single_batch_rules();
+     DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
+ 
++    const auto initial = session.snapshot();
++    ARPG_REQUIRE(initial.wave_count == 1U);
++    ARPG_REQUIRE(initial.wave_index == 0U);
++    ARPG_REQUIRE(initial.remaining_targets == 12U);
++    ARPG_REQUIRE(initial.encounter.current_wave_spawn_count == 12U);
++    ARPG_REQUIRE(all_exits_closed(initial));
+     ARPG_REQUIRE(clear_current_wave(session));
+-    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
+-    ARPG_REQUIRE(session.snapshot().wave_count == 2U);
+-    ARPG_REQUIRE(session.snapshot().wave_index == 0U);
+-    ARPG_REQUIRE(session.snapshot().wave_delay_ticks > 0U);
+-    ARPG_REQUIRE(all_exits_closed(session.snapshot()));
+-    ARPG_REQUIRE(!session.request_descent(true));
+-    ARPG_REQUIRE(!session.queue_action(arpg::combat::Action::light));
+-
+-    ARPG_REQUIRE(tick_wave_delay(session));
+-    ARPG_REQUIRE(session.snapshot().wave_index == 1U);
+-    ARPG_REQUIRE(session.snapshot().remaining_targets > 0U);
+-    ARPG_REQUIRE(clear_current_wave(session));
+-    session.tick({});
++    if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(session.snapshot().wave_delay_ticks == 0U);
+     for (const bool open : session.snapshot().exits_open) {
+         ARPG_REQUIRE(open);
+     }
+     return {};
+ }
+ 
+-arpg::test::Failure sealed_hole_stays_closed_through_wave_delay() noexcept {
+-    const DungeonRules rules = two_wave_rules();
++arpg::test::Failure sealed_hole_stays_closed_until_single_batch_clear() noexcept {
++    const DungeonRules rules = single_batch_rules();
+     DungeonRunState state = state_for_seed(0xA8A55U, rules);
+     state.current_room.has_hole = true;
+     DungeonSession session{rules, state};
+ 
+-    ARPG_REQUIRE(clear_current_wave(session));
+-    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
+     ARPG_REQUIRE(session.snapshot().has_hole);
+     ARPG_REQUIRE(!session.request_descent(true));
+     ARPG_REQUIRE(all_exits_closed(session.snapshot()));
++    ARPG_REQUIRE(clear_current_wave(session));
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::cleared
++        || session.snapshot().phase == RoomPhase::awaiting_exit);
+     return {};
+ }
+ 
+ arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept {
+-    const DungeonRules rules = two_wave_rules();
++    const DungeonRules rules = single_batch_rules();
+     const DungeonRunState state = state_for_seed(0xC0FFEEU, rules);
+     DungeonSession session{rules, state};
+     const auto plan = arpg::test::encounter_plan(session);
+     const auto before = session.snapshot();
+     static_cast<void>(session.reset_current_room());
+     const auto after_reset = session.snapshot();
+     DungeonSession reloaded{rules, state};
+     const auto after_reload = reloaded.snapshot();
+     ARPG_REQUIRE(arpg::test::same_encounter_plan(
+         plan, arpg::test::encounter_plan(session)));
+@@ -136,134 +118,121 @@ arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept
+         const auto& reload = after_reload.combat->monsters[index];
+         ARPG_REQUIRE(first.active == reset.active && first.active == reload.active);
+         ARPG_REQUIRE(first.id == reset.id && first.id == reload.id);
+         ARPG_REQUIRE(first.position.x == reset.position.x && first.position.x == reload.position.x);
+         ARPG_REQUIRE(first.position.y == reset.position.y && first.position.y == reload.position.y);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure legacy_abyss_flag_without_lifecycle_faults() noexcept {
+-    DungeonRules rules = two_wave_rules();
++    DungeonRules rules = single_batch_rules();
+     DungeonRunState abyss = state_for_seed(0xAB155U, rules);
+     abyss.current_room.is_abyss = true;
+     DungeonSession abyss_session{rules, abyss};
+     const auto abyss_snapshot = abyss_session.snapshot();
+     ARPG_REQUIRE(abyss_snapshot.phase == RoomPhase::faulted);
+     ARPG_REQUIRE(abyss_snapshot.diagnostics.fault
+         == arpg::dungeon::DungeonFault::invalid_abyss_state);
+     ARPG_REQUIRE(!abyss_snapshot.combat.has_value());
+     return {};
+ }
+ 
+-arpg::test::Failure four_chaser_fixture_reaches_awaiting_exit() noexcept {
++arpg::test::Failure exact_twelve_fixture_reaches_awaiting_exit() noexcept {
+     DungeonRules rules;
+     DungeonSession session{rules, state_for_seed(0xA11CE5EEDULL, rules)};
+     const auto initial = session.snapshot();
+     ARPG_REQUIRE(initial.combat.has_value());
+-    ARPG_REQUIRE(initial.remaining_targets == 4U);
+-    for (const auto& monster : initial.combat->monsters) {
+-        if (monster.active) {
+-            ARPG_REQUIRE(monster.id == arpg::combat::MonsterId::chaos_chaser);
+-        }
+-    }
++    ARPG_REQUIRE(initial.remaining_targets == 12U);
++    ARPG_REQUIRE(initial.combat->monster_count == 12U);
++    ARPG_REQUIRE(initial.combat->monsters[0].id
++        == arpg::combat::MonsterId::chaos_chaser);
+ 
+     arpg::test::EventSummary events;
+     ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events, 4096));
+     if (session.snapshot().phase == RoomPhase::cleared) {
+         session.tick({});
+     }
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
+     return {};
+ }
+ 
+ arpg::test::Failure shooter_and_chasers_fixture_reaches_awaiting_exit() noexcept {
+     DungeonSession session;
+     const auto initial = session.snapshot();
+     ARPG_REQUIRE(initial.combat.has_value());
+-    ARPG_REQUIRE(initial.remaining_targets == 3U);
++    ARPG_REQUIRE(initial.remaining_targets == 12U);
+     bool has_shooter = false;
+     for (const auto& monster : initial.combat->monsters) {
+         has_shooter = has_shooter
+             || (monster.active
+                 && monster.id == arpg::combat::MonsterId::lightning_shooter);
+     }
+     ARPG_REQUIRE(has_shooter);
+ 
+     arpg::test::EventSummary events;
+     ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events, 4096));
+     if (session.snapshot().phase == RoomPhase::cleared) {
+         session.tick({});
+     }
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
+     return {};
+ }
+ 
+-arpg::test::Failure forced_defeat_advances_real_wave_lifecycle() noexcept {
+-    const DungeonRules rules = two_wave_rules();
++arpg::test::Failure forced_defeat_skips_wave_delay_and_starts_clear() noexcept {
++    const DungeonRules rules = single_batch_rules();
+     DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
+     session.tick({});
+     arpg::test::force_defeat_current_wave(session);
+     session.tick({});
+-    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
+     ARPG_REQUIRE(session.snapshot().remaining_targets == 0U);
+     ARPG_REQUIRE(all_exits_closed(session.snapshot()));
++    ARPG_REQUIRE(session.snapshot().wave_delay_ticks == 0U);
+     return {};
+ }
+ 
+-arpg::test::Failure wave_delay_freezes_combat_and_preserves_health_until_wave_one() noexcept {
+-    const DungeonRules rules = two_wave_rules();
++arpg::test::Failure single_batch_clear_preserves_health_through_commit() noexcept {
++    const DungeonRules rules = single_batch_rules();
+     DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
+     session.tick({});
+     arpg::test::damage_current_player(session, 100);
+     arpg::test::force_defeat_current_wave(session);
+     session.tick({});
+-    const auto delay = session.snapshot();
+-    ARPG_REQUIRE(delay.phase == RoomPhase::wave_delay);
+-    const int hp = delay.combat->player.hp;
+-    const auto player = delay.combat->player;
+-    const auto combat_tick = delay.combat->tick;
+-    for (int tick = 0; tick < 44; ++tick) {
+-        session.tick({});
+-        const auto frozen = session.snapshot();
+-        ARPG_REQUIRE(frozen.phase == RoomPhase::wave_delay);
+-        ARPG_REQUIRE(frozen.combat->tick == combat_tick);
+-        ARPG_REQUIRE(frozen.combat->player.hp == hp);
+-        ARPG_REQUIRE(frozen.combat->player.state == player.state);
+-        ARPG_REQUIRE(all_exits_closed(frozen));
+-    }
+-    session.tick({});
+-    const auto wave_one = session.snapshot();
+-    ARPG_REQUIRE(wave_one.phase == RoomPhase::combat);
+-    ARPG_REQUIRE(wave_one.wave_index == 1U);
+-    ARPG_REQUIRE(wave_one.combat->player.hp == hp);
++    const auto pending_clear = session.snapshot();
++    ARPG_REQUIRE(pending_clear.phase == RoomPhase::committing);
++    const int hp = pending_clear.combat->player.hp;
++    ARPG_REQUIRE(arpg::test::commit_pending(session));
++    const auto cleared = session.snapshot();
++    ARPG_REQUIRE(cleared.phase == RoomPhase::cleared);
++    ARPG_REQUIRE(cleared.combat->player.hp == hp);
++    ARPG_REQUIRE(cleared.wave_count == 1U);
++    ARPG_REQUIRE(cleared.wave_index == 0U);
+     return {};
+ }
+ 
+-arpg::test::Failure hole_stays_rejected_for_every_delay_tick() noexcept {
+-    const DungeonRules rules = two_wave_rules();
++arpg::test::Failure hole_stays_rejected_until_single_batch_commit() noexcept {
++    const DungeonRules rules = single_batch_rules();
+     auto state = state_for_seed(0x2A11CEU, rules);
+     state.current_room.has_hole = true;
+     DungeonSession session{rules, state};
+     session.tick({});
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
++    ARPG_REQUIRE(!session.request_descent(true));
++    ARPG_REQUIRE(!session.pending_transition().has_value());
+     arpg::test::force_defeat_current_wave(session);
+     session.tick({});
+-    for (int tick = 0; tick < 44; ++tick) {
+-        const auto snapshot = session.snapshot();
+-        ARPG_REQUIRE(snapshot.phase == RoomPhase::wave_delay);
+-        ARPG_REQUIRE(snapshot.has_hole);
+-        ARPG_REQUIRE(!session.request_descent(true));
+-        ARPG_REQUIRE(!session.pending_transition().has_value());
+-        session.tick({});
+-    }
+-    session.tick({});
+-    ARPG_REQUIRE(session.snapshot().wave_index == 1U);
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
++    ARPG_REQUIRE(!session.request_descent(true));
++    ARPG_REQUIRE(arpg::test::commit_pending(session));
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::cleared);
++    ARPG_REQUIRE(session.snapshot().wave_index == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcept {
+     DungeonRules rules;
+     auto state = state_for_seed(0x515151U, rules);
+     state.current_room.has_hole = true;
+     const auto reach_awaiting = [](DungeonSession& session) noexcept {
+         session.tick({});
+         arpg::test::force_defeat_current_wave(session);
+@@ -298,27 +267,27 @@ arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcep
+     committed.resolve_pending_transition({arpg::dungeon::SaveDisposition::committed,
+         pending->next_state.commit_generation, pending->next_state});
+     committed.tick({});
+     const auto fresh = committed.snapshot();
+     ARPG_REQUIRE(fresh.room_seed != state.current_room.seed);
+     ARPG_REQUIRE(fresh.combat->player.hp == fresh.combat->player.max_hp);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+-    {"two wave room keeps exits closed until last wave", &two_wave_room_keeps_exits_closed_until_last_wave},
+-    {"sealed hole stays closed through wave delay", &sealed_hole_stays_closed_through_wave_delay},
++    {"single batch clears without wave delay", &single_batch_clears_without_wave_delay},
++    {"sealed hole stays closed until single batch clear", &sealed_hole_stays_closed_until_single_batch_clear},
+     {"reset and reload rebuild the same encounter plan", &reset_and_reload_rebuild_the_same_encounter_plan},
+     {"legacy abyss flag without lifecycle faults", &legacy_abyss_flag_without_lifecycle_faults},
+-    {"four chaser fixture reaches awaiting exit", &four_chaser_fixture_reaches_awaiting_exit},
++    {"exact twelve fixture reaches awaiting exit", &exact_twelve_fixture_reaches_awaiting_exit},
+     {"shooter and chasers fixture reaches awaiting exit", &shooter_and_chasers_fixture_reaches_awaiting_exit},
+-    {"forced defeat advances real wave lifecycle", &forced_defeat_advances_real_wave_lifecycle},
+-    {"wave delay freezes combat and preserves health", &wave_delay_freezes_combat_and_preserves_health_until_wave_one},
+-    {"hole stays rejected for every delay tick", &hole_stays_rejected_for_every_delay_tick},
++    {"forced defeat skips wave delay and starts clear", &forced_defeat_skips_wave_delay_and_starts_clear},
++    {"single batch clear preserves health through commit", &single_batch_clear_preserves_health_through_commit},
++    {"hole stays rejected until single batch commit", &hole_stays_rejected_until_single_batch_commit},
+     {"rollback keeps health but committed room resets it", &rollback_keeps_health_but_committed_room_resets_it},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_wave_suite() noexcept {
+     return arpg::test::make_suite("dungeon_waves", kCases);
+ }
+diff --git a/tests/dungeon/encounter_director_tests.cpp b/tests/dungeon/encounter_director_tests.cpp
+index f047e3d..6909164 100644
+--- a/tests/dungeon/encounter_director_tests.cpp
++++ b/tests/dungeon/encounter_director_tests.cpp
+@@ -1,55 +1,105 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "../combat/monster_affix_test_support.hpp"
+ #include "combat/monster_catalog.hpp"
+ #include "combat/monster_affix_catalog.hpp"
+ #include "combat/monster_affix_generation.hpp"
+ #include "combat/room_bounds.hpp"
+ #include "dungeon/dungeon_checkpoint.hpp"
+ #include "dungeon/encounter_director.hpp"
++#include "dungeon/room_combat_template.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ using arpg::combat::EncounterWave;
+ using arpg::combat::MonsterAffixCatalog;
+ using arpg::combat::MonsterAffixId;
+ using arpg::combat::MonsterAffixTier;
+ using arpg::combat::MonsterId;
+ using arpg::combat::MonsterTag;
+ using arpg::combat::kEncounterWaveCapacity;
+ using arpg::dungeon::DungeonFault;
++using arpg::dungeon::EncounterBuildRequest;
+ using arpg::dungeon::EncounterDirectorConfig;
+ using arpg::dungeon::RoomEncounterPlan;
+ using arpg::dungeon::build_encounter_plan;
+ using arpg::dungeon::build_abyss_encounter_plan;
+-using arpg::dungeon::encounter_budget;
++
++arpg::test::Failure exact_target_count_is_built_in_one_batch() noexcept {
++    const EncounterBuildRequest request{0xA11CEULL, 40U,
++        arpg::dungeon::checkpoint::DungeonElement::lightning,
++        arpg::dungeon::checkpoint::EntrySide::left, true, 30U};
++    const auto result = build_encounter_plan(request, {});
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    ARPG_REQUIRE(result.plan.wave_count == 1U);
++    ARPG_REQUIRE(result.plan.initial_monster_count == 30U);
++    ARPG_REQUIRE(result.plan.waves[0].spawn_count == 30U);
++    ARPG_REQUIRE(result.plan.waves[1].spawn_count == 0U);
++    return {};
++}
+ using arpg::dungeon::encounter_plan_legal;
+ using arpg::dungeon::validate_encounter_director_config;
+ namespace checkpoint = arpg::dungeon::checkpoint;
+ using checkpoint::DungeonElement;
++using checkpoint::EntrySide;
++
++constexpr arpg::combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
++
++bool outside_circle(arpg::combat::Vec3 point,
++    arpg::combat::Vec3 center, float radius) noexcept {
++    const float x = point.x - center.x;
++    const float y = point.y - center.y;
++    return x * x + y * y > radius * radius;
++}
++
++bool safe_position(arpg::combat::Vec3 position,
++    const EncounterBuildRequest& request) noexcept {
++    const auto player = arpg::dungeon::make_combat_lab_config(
++        request.entry, 1U);
++    if (!player.has_value()
++            || position.x < arpg::combat::room_bounds::min_x
++            || position.x > arpg::combat::room_bounds::max_x
++            || position.y < arpg::combat::room_bounds::min_y
++            || position.y > arpg::combat::room_bounds::max_y
++            || position.z != 0.0F
++            || !outside_circle(position, player->player_spawn, 4.0F)) {
++        return false;
++    }
++    constexpr std::array<arpg::combat::Vec3, 4> kDoorCenters{{
++        {arpg::combat::room_bounds::min_x, 0.0F, 0.0F},
++        {arpg::combat::room_bounds::max_x, 0.0F, 0.0F},
++        {0.0F, arpg::combat::room_bounds::min_y, 0.0F},
++        {0.0F, arpg::combat::room_bounds::max_y, 0.0F},
++    }};
++    for (const auto& door : kDoorCenters) {
++        if (!outside_circle(position, door, 3.0F)) return false;
++    }
++    return !request.has_hole || outside_circle(position, kHoleCenter, 3.0F);
++}
+ 
+ constexpr bool test_has_tag(
+     const arpg::combat::MonsterDefinition& definition,
+     MonsterTag value) noexcept {
+     return (definition.tags & static_cast<std::uint16_t>(value)) != 0U;
+ }
+ 
+ bool same_encounter_plan(
+     const RoomEncounterPlan& lhs,
+     const RoomEncounterPlan& rhs) noexcept {
+     if (lhs.wave_count != rhs.wave_count
++            || lhs.initial_monster_count != rhs.initial_monster_count
+             || lhs.total_budget != rhs.total_budget) {
+         return false;
+     }
+     for (std::size_t wave_index = 0; wave_index < lhs.wave_count;
+          ++wave_index) {
+         const EncounterWave& left = lhs.waves[wave_index];
+         const EncounterWave& right = rhs.waves[wave_index];
+         if (left.spawn_count != right.spawn_count
+                 || left.spent_budget != right.spent_budget) {
+             return false;
+@@ -65,29 +115,30 @@ bool same_encounter_plan(
+                     || a.spawn_ordinal != b.spawn_ordinal) {
+                 return false;
+             }
+         }
+     }
+     return true;
+ }
+ 
+ bool test_encounter_plan_legal(
+     const RoomEncounterPlan& plan,
++    const EncounterBuildRequest& request,
+     const EncounterDirectorConfig& config) noexcept {
+-    if (plan.wave_count == 0U || plan.wave_count > kEncounterWaveCapacity
+-            || plan.total_budget == 0U
+-            || plan.total_budget > config.max_budget) {
+-        return false;
+-    }
+-    const std::uint8_t expected_wave_count =
+-        plan.total_budget > config.two_wave_threshold ? 2U : 1U;
+-    if (plan.wave_count != expected_wave_count) {
++    if (plan.wave_count != 1U || plan.wave_count > kEncounterWaveCapacity
++            || plan.initial_monster_count < 12U
++            || plan.initial_monster_count > 45U
++            || plan.initial_monster_count != request.target_monster_count
++            || plan.initial_monster_count != plan.waves[0].spawn_count
++            || plan.waves[1].spawn_count != 0U
++            || plan.waves[1].spent_budget != 0U
++            || plan.total_budget == 0U) {
+         return false;
+     }
+     std::uint16_t total_spent = 0U;
+     for (std::size_t wave_index = 0; wave_index < plan.wave_count;
+          ++wave_index) {
+         const EncounterWave& wave = plan.waves[wave_index];
+         if (wave.spawn_count == 0U || wave.spawn_count
+                 > arpg::combat::kEncounterSpawnCapacity) {
+             return false;
+         }
+@@ -107,75 +158,78 @@ bool test_encounter_plan_legal(
+             spent = static_cast<std::uint16_t>(spent + definition->threat_cost);
+             direct_count += test_has_tag(*definition, MonsterTag::direct_target);
+             high_priority_count += test_has_tag(*definition, MonsterTag::high_priority);
+             ranged_count += test_has_tag(*definition, MonsterTag::ranged);
+             support_count += test_has_tag(*definition, MonsterTag::support);
+             hazard_count += test_has_tag(*definition, MonsterTag::ground_hazard);
+             if (spawn.position.x < arpg::combat::room_bounds::min_x
+                     || spawn.position.x > arpg::combat::room_bounds::max_x
+                     || spawn.position.y < arpg::combat::room_bounds::min_y
+                     || spawn.position.y > arpg::combat::room_bounds::max_y
+-                    || spawn.position.z != 0.0F) {
++                    || spawn.position.z != 0.0F
++                    || !safe_position(spawn.position, request)
++                    || spawn.spawn_ordinal != spawn_index) {
+                 return false;
+             }
+         }
+         if (direct_count == 0U || support_count > config.support_limit
+                 || ranged_count > config.ranged_limit
+                 || hazard_count > config.ground_hazard_limit) {
+             return false;
+         }
+-        const std::uint8_t priority_limit =
+-            plan.total_budget > config.two_wave_threshold
+-                ? config.high_budget_priority_limit
+-                : config.normal_high_priority_limit;
+-        if (high_priority_count > priority_limit
++        if (high_priority_count > config.high_priority_limit
+                 || spent != wave.spent_budget) {
+             return false;
+         }
+         total_spent = static_cast<std::uint16_t>(total_spent + spent);
+     }
+-    return total_spent <= plan.total_budget;
++    return total_spent == plan.total_budget;
+ }
+ 
+-arpg::test::Failure director_budget_is_bounded_and_depth_driven() noexcept {
+-    EncounterDirectorConfig config{};
+-    ARPG_REQUIRE(encounter_budget(1U, config) == 8U);
+-    ARPG_REQUIRE(encounter_budget(5U, config) == 8U);
+-    ARPG_REQUIRE(encounter_budget(6U, config) == 9U);
+-    ARPG_REQUIRE(encounter_budget(10000U, config) == 24U);
++arpg::test::Failure required_target_counts_are_exact_and_legal() noexcept {
++    constexpr std::array<std::uint8_t, 7> kCounts{{
++        12U, 16U, 17U, 22U, 23U, 30U, 45U,
++    }};
++    for (const std::uint8_t count : kCounts) {
++        const EncounterBuildRequest request{0xC0010000ULL + count, 40U,
++            DungeonElement::lightning, EntrySide::bottom, true, count};
++        const auto result = build_encounter_plan(request, {});
++        ARPG_REQUIRE(result.fault == DungeonFault::none);
++        ARPG_REQUIRE(result.plan.wave_count == 1U);
++        ARPG_REQUIRE(result.plan.initial_monster_count == count);
++        ARPG_REQUIRE(result.plan.waves[0].spawn_count == count);
++        ARPG_REQUIRE(result.plan.waves[1].spawn_count == 0U);
++        ARPG_REQUIRE(encounter_plan_legal(result.plan, request, {}));
++    }
+     return {};
+ }
+ 
+-arpg::test::Failure abyss_budget_is_ceil_three_halves_and_scaled_max_is_legal() noexcept {
+-    const EncounterDirectorConfig config{};
+-    const auto budget_8 = build_abyss_encounter_plan(1U, 1U,
+-        DungeonElement::chaos, config);
+-    const auto budget_9 = build_abyss_encounter_plan(1U, 6U,
+-        DungeonElement::chaos, config);
+-    const auto budget_24 = build_abyss_encounter_plan(1U, 10000U,
+-        DungeonElement::chaos, config);
+-    ARPG_REQUIRE(budget_8.fault == DungeonFault::none);
+-    ARPG_REQUIRE(budget_9.fault == DungeonFault::none);
+-    ARPG_REQUIRE(budget_24.fault == DungeonFault::none);
+-    ARPG_REQUIRE(budget_8.plan.total_budget == 12U);
+-    ARPG_REQUIRE(budget_9.plan.total_budget == 14U);
+-    ARPG_REQUIRE(budget_24.plan.total_budget == 36U);
++arpg::test::Failure abyss_builder_consumes_exact_target_count() noexcept {
++    const EncounterBuildRequest request{1U, 10000U, DungeonElement::chaos,
++        EntrySide::right, true, 45U};
++    const auto result = build_abyss_encounter_plan(request, {});
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    ARPG_REQUIRE(result.plan.wave_count == 1U);
++    ARPG_REQUIRE(result.plan.initial_monster_count == 45U);
++    ARPG_REQUIRE(result.plan.waves[0].spawn_count == 45U);
++    ARPG_REQUIRE(encounter_plan_legal(result.plan, request, {}));
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_plan_keeps_normal_affix_prefix_and_is_allocation_free() noexcept {
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::uint64_t seed = 0U; seed < 1024U; ++seed) {
+-        const auto result = build_abyss_encounter_plan(seed, 40U,
+-            DungeonElement::lightning, EncounterDirectorConfig{});
++        const EncounterBuildRequest request{seed, 40U,
++            DungeonElement::lightning, EntrySide::left, true, 45U};
++        const auto result = build_abyss_encounter_plan(request, {});
+         ARPG_REQUIRE(result.fault == DungeonFault::none);
+-        ARPG_REQUIRE(result.plan.total_budget == 23U);
++        ARPG_REQUIRE(result.plan.initial_monster_count == 45U);
+         for (std::size_t wave_index = 0U;
+              wave_index < result.plan.wave_count; ++wave_index) {
+             const auto& wave = result.plan.waves[wave_index];
+             ARPG_REQUIRE(wave.spawn_count <= wave.spawns.size());
+             for (std::size_t spawn_index = 0U;
+                  spawn_index < wave.spawn_count; ++spawn_index) {
+                 const auto& spawn = wave.spawns[spawn_index];
+                 const auto* monster = arpg::combat::monster_definition(spawn.id);
+                 ARPG_REQUIRE(monster != nullptr);
+                 const auto normal = arpg::combat::generate_monster_affixes(
+@@ -187,92 +241,79 @@ arpg::test::Failure abyss_plan_keeps_normal_affix_prefix_and_is_allocation_free(
+                     ARPG_REQUIRE(spawn.affixes.values[index]
+                         == normal->values[index]);
+                 }
+             }
+         }
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
+-arpg::test::Failure abyss_budget_capacity_boundary_is_legal_and_overflow_fails() noexcept {
+-    EncounterDirectorConfig boundary{};
+-    boundary.base_budget = 170U;
+-    boundary.max_budget = 170U;
+-    boundary.two_wave_threshold = 255U;
+-    boundary.matching_ecology_weight = 255U;
+-    boundary.normal_high_priority_limit = 0U;
+-    boundary.high_budget_priority_limit = 0U;
+-    boundary.ranged_limit = 0U;
+-    boundary.support_limit = 0U;
+-    boundary.ground_hazard_limit = 0U;
+-    const auto legal = build_abyss_encounter_plan(0x96ULL, 1U,
+-        DungeonElement::chaos, boundary);
+-    ARPG_REQUIRE(legal.fault == DungeonFault::none);
+-    ARPG_REQUIRE(legal.plan.total_budget == 255U);
+-    ARPG_REQUIRE(legal.plan.wave_count == 1U);
+-    ARPG_REQUIRE(legal.plan.waves[0].spawn_count
+-        == arpg::combat::kEncounterSpawnCapacity);
+-
+-    EncounterDirectorConfig overflow = boundary;
+-    overflow.base_budget = 171U;
+-    overflow.max_budget = 171U;
+-    overflow.two_wave_threshold = 255U;
+-    const auto rejected = build_abyss_encounter_plan(0x96ULL, 1U,
+-        DungeonElement::chaos, overflow);
+-    ARPG_REQUIRE(rejected.fault == DungeonFault::invalid_rules);
+-    ARPG_REQUIRE(rejected.plan.wave_count == 0U);
++arpg::test::Failure target_count_bounds_fail_closed_without_truncation() noexcept {
++    EncounterBuildRequest request{0x96ULL, 1U, DungeonElement::chaos,
++        EntrySide::initial, false, 11U};
++    const auto low = build_encounter_plan(request, {});
++    ARPG_REQUIRE(low.fault == DungeonFault::invalid_rules);
++    ARPG_REQUIRE(low.plan.wave_count == 0U);
++    request.target_monster_count = 46U;
++    const auto high = build_encounter_plan(request, {});
++    ARPG_REQUIRE(high.fault == DungeonFault::invalid_rules);
++    ARPG_REQUIRE(high.plan.wave_count == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
+-    const auto a = build_encounter_plan(0xA11CEULL, 26U,
+-        DungeonElement::lightning, EncounterDirectorConfig{});
+-    const auto b = build_encounter_plan(0xA11CEULL, 26U,
+-        DungeonElement::lightning, EncounterDirectorConfig{});
++    const EncounterBuildRequest request{0xA11CEULL, 26U,
++        DungeonElement::lightning, EntrySide::left, true, 30U};
++    const auto a = build_encounter_plan(request, {});
++    const auto b = build_encounter_plan(request, {});
+     ARPG_REQUIRE(a.fault == DungeonFault::none);
+     ARPG_REQUIRE(same_encounter_plan(a.plan, b.plan));
+-    ARPG_REQUIRE(test_encounter_plan_legal(a.plan, EncounterDirectorConfig{}));
+-    ARPG_REQUIRE(a.plan.wave_count == 2U);
+-    struct ExpectedBaseSpawn final {
+-        MonsterId id{};
+-        float x{};
+-        float y{};
+-    };
+-    constexpr std::array<ExpectedBaseSpawn, 4> kStage8BaseTrace{{
+-        {MonsterId::chaos_chaser, -3.796F, -6.318F},
+-        {MonsterId::fire_charger, 11.828F, 6.836F},
+-        {MonsterId::chaos_chaser, -3.870F, -6.722F},
+-        {MonsterId::lightning_dasher, -5.878F, 1.700F},
+-    }};
+-    for (std::size_t wave_index = 0U; wave_index < a.plan.wave_count;
+-         ++wave_index) {
+-        const auto& wave = a.plan.waves[wave_index];
+-        ARPG_REQUIRE(wave.spawn_count == 2U);
+-        for (std::size_t spawn_index = 0U; spawn_index < wave.spawn_count;
+-             ++spawn_index) {
+-            const auto& actual = wave.spawns[spawn_index];
+-            const auto& expected = kStage8BaseTrace[wave_index * 2U + spawn_index];
+-            ARPG_REQUIRE(actual.id == expected.id);
+-            ARPG_REQUIRE(arpg::test::near(actual.position.x, expected.x,
+-                0.002));
+-            ARPG_REQUIRE(arpg::test::near(actual.position.y, expected.y,
+-                0.002));
+-            ARPG_REQUIRE(actual.position.z == 0.0F);
++    ARPG_REQUIRE(test_encounter_plan_legal(a.plan, request, {}));
++    ARPG_REQUIRE(encounter_plan_legal(a.plan, request, {}));
++    ARPG_REQUIRE(a.plan.wave_count == 1U);
++    ARPG_REQUIRE(a.plan.waves[0].spawn_count == 30U);
++    return {};
++}
++
++arpg::test::Failure positions_avoid_exclusions_and_cover_expanded_bands() noexcept {
++    bool saw_left_band = false;
++    bool saw_right_band = false;
++    bool saw_top_band = false;
++    bool saw_bottom_band = false;
++    for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
++        const EncounterBuildRequest request{seed, 40U,
++            DungeonElement::lightning,
++            static_cast<EntrySide>(seed % 5U), true, 12U};
++        const auto result = build_encounter_plan(request, {});
++        ARPG_REQUIRE(result.fault == DungeonFault::none);
++        for (std::size_t index = 0U;
++             index < result.plan.waves[0].spawn_count; ++index) {
++            const auto position = result.plan.waves[0].spawns[index].position;
++            ARPG_REQUIRE(safe_position(position, request));
++            saw_left_band = saw_left_band || position.x < -12.0F;
++            saw_right_band = saw_right_band || position.x > 12.0F;
++            saw_top_band = saw_top_band || position.y < -5.5F;
++            saw_bottom_band = saw_bottom_band || position.y > 5.5F;
+         }
+     }
++    ARPG_REQUIRE(saw_left_band);
++    ARPG_REQUIRE(saw_right_band);
++    ARPG_REQUIRE(saw_top_band);
++    ARPG_REQUIRE(saw_bottom_band);
+     return {};
+ }
+ 
+ arpg::test::Failure generated_spawns_have_stable_ordinals_and_legal_affixes() noexcept {
+-    const auto result = build_encounter_plan(0xD19E5EEDULL, 40U,
+-        DungeonElement::lightning, EncounterDirectorConfig{});
++    const EncounterBuildRequest request{0xD19E5EEDULL, 40U,
++        DungeonElement::lightning, EntrySide::top, true, 30U};
++    const auto result = build_encounter_plan(request, {});
+     ARPG_REQUIRE(result.fault == DungeonFault::none);
+     for (std::size_t wave_index = 0U; wave_index < result.plan.wave_count;
+          ++wave_index) {
+         const auto& wave = result.plan.waves[wave_index];
+         for (std::size_t spawn_index = 0U; spawn_index < wave.spawn_count;
+              ++spawn_index) {
+             const auto& spawn = wave.spawns[spawn_index];
+             ARPG_REQUIRE(spawn.spawn_ordinal == static_cast<std::uint16_t>(
+                 wave_index * arpg::combat::kEncounterSpawnCapacity + spawn_index));
+             ARPG_REQUIRE(spawn.affixes.count <= spawn.affixes.values.size());
+@@ -291,24 +332,24 @@ arpg::test::Failure generated_spawns_have_stable_ordinals_and_legal_affixes() no
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure ecology_weighting_prefers_matching_elements() noexcept {
+     std::uint32_t low_weight_matching = 0U;
+     std::uint32_t high_weight_matching = 0U;
+     EncounterDirectorConfig low_weight{};
+     low_weight.matching_ecology_weight = 1U;
+     for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
+-        const auto low = build_encounter_plan(seed, 1U,
+-            DungeonElement::fire, low_weight);
+-        const auto high = build_encounter_plan(seed, 1U,
+-            DungeonElement::fire, EncounterDirectorConfig{});
++        const EncounterBuildRequest request{seed, 1U,
++            DungeonElement::fire, EntrySide::initial, false, 12U};
++        const auto low = build_encounter_plan(request, low_weight);
++        const auto high = build_encounter_plan(request, {});
+         ARPG_REQUIRE(low.fault == DungeonFault::none);
+         ARPG_REQUIRE(high.fault == DungeonFault::none);
+         for (std::size_t wave_index = 0U; wave_index < low.plan.wave_count;
+              ++wave_index) {
+             const auto& wave = low.plan.waves[wave_index];
+             for (std::size_t spawn_index = 0U; spawn_index < wave.spawn_count;
+                  ++spawn_index) {
+                 const auto* definition = arpg::combat::monster_definition(
+                     wave.spawns[spawn_index].id);
+                 ARPG_REQUIRE(definition != nullptr);
+@@ -334,171 +375,194 @@ arpg::test::Failure ecology_weighting_prefers_matching_elements() noexcept {
+         }
+     }
+     ARPG_REQUIRE(high_weight_matching > low_weight_matching);
+     return {};
+ }
+ 
+ arpg::test::Failure invalid_director_config_is_rejected() noexcept {
+     EncounterDirectorConfig config{};
+     config.ranged_limit = static_cast<std::uint8_t>(
+         arpg::combat::kEncounterSpawnCapacity + 1U);
+-    const auto result = build_encounter_plan(11U, 1U,
+-        DungeonElement::chaos, config);
++    const EncounterBuildRequest request{11U, 1U, DungeonElement::chaos,
++        EntrySide::initial, false, 12U};
++    const auto result = build_encounter_plan(request, config);
+     ARPG_REQUIRE(result.fault == DungeonFault::invalid_rules);
+     return {};
+ }
+ 
+-arpg::test::Failure high_budget_priority_limit_applies_to_each_wave() noexcept {
+-    RoomEncounterPlan plan{};
+-    plan.wave_count = 2U;
+-    plan.total_budget = 13U;
+-    plan.waves[0].spawns[0].id = MonsterId::fire_bomber;
+-    plan.waves[0].spawns[0].spawn_ordinal = 0U;
+-    plan.waves[0].spawns[1].id = MonsterId::fire_charger;
+-    plan.waves[0].spawns[1].spawn_ordinal = 1U;
+-    plan.waves[0].spawn_count = 2U;
+-    plan.waves[0].spent_budget = 7U;
+-    plan.waves[1].spawns[0].id = MonsterId::chaos_chaser;
+-    plan.waves[1].spawns[0].spawn_ordinal = 96U;
+-    plan.waves[1].spawn_count = 1U;
+-    plan.waves[1].spent_budget = 2U;
+-    ARPG_REQUIRE(encounter_plan_legal(plan, EncounterDirectorConfig{}));
++arpg::test::Failure safety_tag_limits_apply_to_the_single_batch() noexcept {
++    const EncounterDirectorConfig config{};
++    for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
++        const EncounterBuildRequest request{seed, 40U, DungeonElement::fire,
++            EntrySide::initial, true, 45U};
++        const auto result = build_encounter_plan(request, config);
++        ARPG_REQUIRE(result.fault == DungeonFault::none);
++        ARPG_REQUIRE(encounter_plan_legal(result.plan, request, config));
++        std::uint8_t high_priority{};
++        std::uint8_t ranged{};
++        std::uint8_t support{};
++        std::uint8_t ground_hazard{};
++        for (std::size_t index = 0U;
++             index < result.plan.waves[0].spawn_count; ++index) {
++            const auto* definition = arpg::combat::monster_definition(
++                result.plan.waves[0].spawns[index].id);
++            ARPG_REQUIRE(definition != nullptr);
++            high_priority += test_has_tag(*definition, MonsterTag::high_priority);
++            ranged += test_has_tag(*definition, MonsterTag::ranged);
++            support += test_has_tag(*definition, MonsterTag::support);
++            ground_hazard += test_has_tag(*definition, MonsterTag::ground_hazard);
++        }
++        ARPG_REQUIRE(high_priority <= config.high_priority_limit);
++        ARPG_REQUIRE(ranged <= config.ranged_limit);
++        ARPG_REQUIRE(support <= config.support_limit);
++        ARPG_REQUIRE(ground_hazard <= config.ground_hazard_limit);
++    }
+     return {};
+ }
+ 
+-arpg::test::Failure illegal_wave_budget_or_cost_is_rejected() noexcept {
+-    RoomEncounterPlan plan{};
++arpg::test::Failure illegal_count_wave_or_threat_diagnostics_are_rejected() noexcept {
++    const EncounterBuildRequest request{0xBADC0DEULL, 40U,
++        DungeonElement::water, EntrySide::right, true, 12U};
++    const auto result = build_encounter_plan(request, {});
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    RoomEncounterPlan plan = result.plan;
++    ++plan.total_budget;
++    ARPG_REQUIRE(!encounter_plan_legal(plan, request, {}));
++    plan = result.plan;
++    ++plan.waves[0].spent_budget;
++    ARPG_REQUIRE(!encounter_plan_legal(plan, request, {}));
++    plan = result.plan;
+     plan.wave_count = 2U;
+-    plan.total_budget = 13U;
+-    plan.waves[0].spawns[0].id = MonsterId::fire_charger;
+-    plan.waves[0].spawns[0].spawn_ordinal = 0U;
+-    plan.waves[0].spawns[1].id = MonsterId::water_bulwark;
+-    plan.waves[0].spawns[1].spawn_ordinal = 1U;
+-    plan.waves[0].spawn_count = 2U;
+-    plan.waves[0].spent_budget = 8U;
+-    plan.waves[1].spawns[0].id = MonsterId::chaos_chaser;
+-    plan.waves[1].spawns[0].spawn_ordinal = 96U;
+-    plan.waves[1].spawn_count = 1U;
+-    plan.waves[1].spent_budget = 2U;
+-    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+-    plan.waves[0].spent_budget = 7U;
+-    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+-    plan.wave_count = 0U;
+-    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+-    plan.wave_count = 3U;
+-    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
++    ARPG_REQUIRE(!encounter_plan_legal(plan, request, {}));
++    plan = result.plan;
++    --plan.initial_monster_count;
++    ARPG_REQUIRE(!encounter_plan_legal(plan, request, {}));
++    plan = result.plan;
++    plan.waves[1].spent_budget = 1U;
++    ARPG_REQUIRE(!encounter_plan_legal(plan, request, {}));
+     return {};
+ }
+ 
+ arpg::test::Failure invalid_spawn_ordinal_is_rejected() noexcept {
+-    RoomEncounterPlan plan{};
+-    plan.wave_count = 1U;
+-    plan.total_budget = 8U;
+-    plan.waves[0].spawns[0].id = MonsterId::chaos_chaser;
++    const EncounterBuildRequest request{17U, 1U, DungeonElement::chaos,
++        EntrySide::initial, false, 12U};
++    const auto result = build_encounter_plan(request, {});
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    RoomEncounterPlan plan = result.plan;
+     plan.waves[0].spawns[0].spawn_ordinal = 1U;
+-    plan.waves[0].spawn_count = 1U;
+-    plan.waves[0].spent_budget = 2U;
+-    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
++    ARPG_REQUIRE(!encounter_plan_legal(plan, request, {}));
++    plan = result.plan;
++    plan.waves[0].spawns[0].position = {0.0F, 0.0F, 0.0F};
++    ARPG_REQUIRE(!encounter_plan_legal(plan, request, {}));
+     return {};
+ }
+ 
+ arpg::test::Failure mutually_conflicting_affixes_are_rejected_by_plan_legality() noexcept {
+-    RoomEncounterPlan plan{};
+-    plan.wave_count = 1U;
+-    plan.total_budget = 8U;
++    const EncounterBuildRequest request{0xAFF1C7ULL, 40U,
++        DungeonElement::chaos, EntrySide::left, false, 12U};
++    const auto result = build_encounter_plan(request, {});
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    RoomEncounterPlan plan = result.plan;
+     auto& spawn = plan.waves[0].spawns[0];
+-    spawn.id = MonsterId::chaos_chaser;
+-    spawn.spawn_ordinal = 0U;
+     spawn.affixes.values[0] = {MonsterAffixId::mighty, MonsterAffixTier::m1};
+     spawn.affixes.values[1] = {MonsterAffixId::frenzy, MonsterAffixTier::m1};
+     spawn.affixes.count = 2U;
+-    plan.waves[0].spawn_count = 1U;
+-    plan.waves[0].spent_budget = 2U;
+ 
+     MonsterAffixCatalog catalog = arpg::combat::monster_affix_catalog();
+     catalog[static_cast<std::size_t>(MonsterAffixId::mighty)].conflict_mask =
+         static_cast<std::uint16_t>(1U << static_cast<std::uint8_t>(
+             MonsterAffixId::frenzy));
+     ARPG_REQUIRE(arpg::combat::test_support::monster_affix_catalog_valid(catalog));
+     ARPG_REQUIRE(!arpg::dungeon::test_support::encounter_plan_legal_with_affix_catalog(plan,
+-        EncounterDirectorConfig{}, catalog));
++        request, EncounterDirectorConfig{}, catalog));
+     const auto first = plan.waves[0].spawns[0].affixes.values[0];
+     plan.waves[0].spawns[0].affixes.values[0] =
+         plan.waves[0].spawns[0].affixes.values[1];
+     plan.waves[0].spawns[0].affixes.values[1] = first;
+     ARPG_REQUIRE(!arpg::dungeon::test_support::encounter_plan_legal_with_affix_catalog(plan,
+-        EncounterDirectorConfig{}, catalog));
++        request, EncounterDirectorConfig{}, catalog));
+     return {};
+ }
+ 
+-arpg::test::Failure indivisible_small_two_wave_config_is_rejected() noexcept {
++arpg::test::Failure invalid_request_fields_are_rejected() noexcept {
+     EncounterDirectorConfig config{};
+-    config.base_budget = 2U;
+-    config.max_budget = 3U;
+-    config.depth_step = 1U;
+-    config.budget_per_step = 1U;
+-    config.two_wave_threshold = 2U;
+-    ARPG_REQUIRE(validate_encounter_director_config(config)
++    EncounterBuildRequest request{77U, 2U, DungeonElement::water,
++        EntrySide::left, true, 12U};
++    request.ecology = static_cast<DungeonElement>(4U);
++    ARPG_REQUIRE(build_encounter_plan(request, config).fault
++        == DungeonFault::invalid_rules);
++    request.ecology = DungeonElement::water;
++    request.entry = static_cast<EntrySide>(5U);
++    ARPG_REQUIRE(build_encounter_plan(request, config).fault
++        == DungeonFault::invalid_rules);
++    request.entry = EntrySide::left;
++    request.depth = 0U;
++    ARPG_REQUIRE(build_encounter_plan(request, config).fault
+         == DungeonFault::invalid_rules);
+-    ARPG_REQUIRE(build_encounter_plan(77U, 2U, DungeonElement::water, config)
+-        .fault == DungeonFault::invalid_rules);
+     return {};
+ }
+ 
+-arpg::test::Failure large_base_with_low_threshold_is_accepted() noexcept {
++arpg::test::Failure zero_safety_limits_still_reach_exact_count() noexcept {
+     EncounterDirectorConfig config{};
+-    config.base_budget = 8U;
+-    config.max_budget = 24U;
+-    config.two_wave_threshold = 2U;
++    config.high_priority_limit = 0U;
++    config.ranged_limit = 0U;
++    config.support_limit = 0U;
++    config.ground_hazard_limit = 0U;
+     ARPG_REQUIRE(validate_encounter_director_config(config)
+         == DungeonFault::none);
+-    const auto result = build_encounter_plan(
+-        77U, 1U, DungeonElement::water, config);
++    const EncounterBuildRequest request{77U, 1U, DungeonElement::water,
++        EntrySide::bottom, true, 45U};
++    const auto result = build_encounter_plan(request, config);
+     ARPG_REQUIRE(result.fault == DungeonFault::none);
+-    ARPG_REQUIRE(result.plan.wave_count == 2U);
++    ARPG_REQUIRE(result.plan.waves[0].spawn_count == 45U);
++    ARPG_REQUIRE(encounter_plan_legal(result.plan, request, config));
+     return {};
+ }
+ 
+ arpg::test::Failure fallback_config_keeps_a_direct_target() noexcept {
+     EncounterDirectorConfig config{};
+-    config.base_budget = 2U;
+-    config.max_budget = 2U;
+-    config.depth_step = 1U;
+-    config.budget_per_step = 1U;
+-    config.two_wave_threshold = 2U;
+-    const auto result = build_encounter_plan(77U, 100U,
+-        DungeonElement::water, config);
++    const EncounterBuildRequest request{77U, 100U, DungeonElement::water,
++        EntrySide::top, true, 30U};
++    const auto result = build_encounter_plan(request, config);
+     ARPG_REQUIRE(result.fault == DungeonFault::none);
+     ARPG_REQUIRE(result.plan.wave_count == 1U);
+-    ARPG_REQUIRE(result.plan.waves[0].spawn_count > 0U);
++    ARPG_REQUIRE(result.plan.waves[0].spawn_count == 30U);
+     ARPG_REQUIRE(result.plan.waves[0].spawns[0].id == MonsterId::chaos_chaser);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+-    {"abyss budget scales and max is legal",
+-        &abyss_budget_is_ceil_three_halves_and_scaled_max_is_legal},
++    {"exact target count is built in one batch",
++        &exact_target_count_is_built_in_one_batch},
++    {"required target counts are exact and legal",
++        &required_target_counts_are_exact_and_legal},
++    {"abyss builder consumes exact target count",
++        &abyss_builder_consumes_exact_target_count},
+     {"abyss plan keeps normal affix prefix and allocates nothing",
+         &abyss_plan_keeps_normal_affix_prefix_and_is_allocation_free},
+-    {"abyss budget capacity boundary and overflow",
+-        &abyss_budget_capacity_boundary_is_legal_and_overflow_fails},
+-    {"budget is bounded and depth driven", &director_budget_is_bounded_and_depth_driven},
++    {"target count bounds fail closed",
++        &target_count_bounds_fail_closed_without_truncation},
+     {"plan is deterministic and legal", &encounter_plan_is_deterministic_and_legal},
++    {"positions avoid exclusions and cover expanded bands",
++        &positions_avoid_exclusions_and_cover_expanded_bands},
+     {"generated spawn ordinals and affixes",
+         &generated_spawns_have_stable_ordinals_and_legal_affixes},
+     {"ecology weighting prefers matching elements", &ecology_weighting_prefers_matching_elements},
+     {"invalid director config is rejected", &invalid_director_config_is_rejected},
+-    {"high budget limit applies to each wave", &high_budget_priority_limit_applies_to_each_wave},
+-    {"illegal wave budget or cost is rejected", &illegal_wave_budget_or_cost_is_rejected},
++    {"safety tag limits apply to single batch",
++        &safety_tag_limits_apply_to_the_single_batch},
++    {"illegal count wave or threat diagnostics are rejected",
++        &illegal_count_wave_or_threat_diagnostics_are_rejected},
+     {"invalid spawn ordinal is rejected", &invalid_spawn_ordinal_is_rejected},
+     {"mutually conflicting affixes are rejected",
+         &mutually_conflicting_affixes_are_rejected_by_plan_legality},
+-    {"indivisible small two-wave config is rejected", &indivisible_small_two_wave_config_is_rejected},
+-    {"large base with low threshold is accepted", &large_base_with_low_threshold_is_accepted},
++    {"invalid request fields are rejected", &invalid_request_fields_are_rejected},
++    {"zero safety limits still reach exact count",
++        &zero_safety_limits_still_reach_exact_count},
+     {"fallback keeps a direct target", &fallback_config_keeps_a_direct_target},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite encounter_director_suite() noexcept {
+     return arpg::test::make_suite("encounter_director", kCases);
+ }
+diff --git a/tests/dungeon/stage10_formal_game_validation.cpp b/tests/dungeon/stage10_formal_game_validation.cpp
+index 277737a..1f20a70 100644
+--- a/tests/dungeon/stage10_formal_game_validation.cpp
++++ b/tests/dungeon/stage10_formal_game_validation.cpp
+@@ -44,25 +44,30 @@ std::optional<SelectedRun> find_run(
+             initial.state.current_room);
+         for (std::size_t index = 0U; index < directions.size(); ++index) {
+             if (!preview[index]) continue;
+             const auto next = arpg::dungeon::make_door_transition(
+                 initial.state, directions[index], rules);
+             if (next.fault == arpg::dungeon::DungeonFault::none
+                     && next.state.current_room.is_abyss
+                     && next.state.abyss.rule == required_rule
+                     && (!require_hole || next.state.current_room.has_hole)) {
+                 if (require_all_melee) {
+-                    const auto plan = arpg::dungeon::build_abyss_encounter_plan(
++                    const arpg::dungeon::EncounterBuildRequest request{
+                         next.state.current_room.seed,
+                         next.state.current_room.depth,
+                         next.state.current_room.ecology,
+-                        rules.encounter);
++                        next.state.current_room.entry,
++                        next.state.current_room.has_hole,
++                        18U,
++                    };
++                    const auto plan = arpg::dungeon::build_abyss_encounter_plan(
++                        request, rules.encounter);
+                     bool all_melee = plan.fault
+                         == arpg::dungeon::DungeonFault::none;
+                     for (std::size_t wave = 0U;
+                          all_melee && wave < plan.plan.wave_count; ++wave) {
+                         for (std::size_t spawn = 0U;
+                              spawn < plan.plan.waves[wave].spawn_count; ++spawn) {
+                             const auto* definition =
+                                 arpg::combat::monster_definition(
+                                     plan.plan.waves[wave].spawns[spawn].id);
+                             all_melee = definition != nullptr
+diff --git a/tests/dungeon/stage16_loot_reinforcement_simulation.cpp b/tests/dungeon/stage16_loot_reinforcement_simulation.cpp
+index 747a394..f24ef7c 100644
+--- a/tests/dungeon/stage16_loot_reinforcement_simulation.cpp
++++ b/tests/dungeon/stage16_loot_reinforcement_simulation.cpp
+@@ -101,23 +101,26 @@ void mix(std::uint64_t& hash, std::uint64_t value) noexcept {
+ std::optional<std::uint64_t> frozen_existing_stream_fingerprint(
+     bool interleave_material) noexcept {
+     std::uint64_t hash = 0x16F10A5EULL;
+     for (std::uint64_t seed = 1U; seed <= 512U; ++seed) {
+         const auto room = dungeon::make_initial_run_state(seed, dungeon::DungeonRules{});
+         const auto equipment = items::generate_item(
+             {seed, items::ItemSlot::weapon, 75U, seed, items::ItemRarity::rare});
+         const auto abyss = dungeon::derive_abyss_ground_item(
+             room.state.current_room.seed, arpg::abyss::AbyssDanger::high,
+             75U, 0U, 0U);
+-        const auto encounter = dungeon::build_encounter_plan(
++        const dungeon::EncounterBuildRequest request{
+             room.state.current_room.seed, room.state.current_room.depth,
+-            room.state.current_room.ecology, dungeon::DungeonRules{}.encounter);
++            room.state.current_room.ecology, room.state.current_room.entry,
++            room.state.current_room.has_hole, 12U};
++        const auto encounter = dungeon::build_encounter_plan(
++            request, dungeon::DungeonRules{}.encounter);
+         if (room.fault != dungeon::DungeonFault::none || encounter.fault
+                 != dungeon::DungeonFault::none || !equipment || !abyss) {
+             return std::nullopt;
+         }
+         mix(hash, room.state.current_room.seed);
+         mix(hash, room.state.current_room.depth);
+         mix(hash, static_cast<std::uint64_t>(room.state.current_room.ecology));
+         const auto hash_item = [&](const items::ItemInstance& item) noexcept {
+             mix(hash, item.id);
+             mix(hash, item.base_id);
+diff --git a/tests/dungeon/stage9_validation_fixture.cpp b/tests/dungeon/stage9_validation_fixture.cpp
+index 8ddcffd..1dc8847 100644
+--- a/tests/dungeon/stage9_validation_fixture.cpp
++++ b/tests/dungeon/stage9_validation_fixture.cpp
+@@ -59,20 +59,21 @@ const char* tier_name(MonsterAffixTier tier) noexcept {
+ bool bit_is_set(const std::array<std::uint64_t, 3>& bits,
+     std::uint16_t ordinal) noexcept {
+     const std::size_t word = ordinal / 64U;
+     const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
+     return word < bits.size() && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
+ }
+ 
+ bool same_plan_and_affixes(const RoomEncounterPlan& left,
+     const RoomEncounterPlan& right) noexcept {
+     if (left.wave_count != right.wave_count
++            || left.initial_monster_count != right.initial_monster_count
+             || left.total_budget != right.total_budget) return false;
+     for (std::uint8_t wave = 0U; wave < left.wave_count; ++wave) {
+         const auto& a = left.waves[wave];
+         const auto& b = right.waves[wave];
+         if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) {
+             return false;
+         }
+         for (std::uint8_t spawn = 0U; spawn < a.spawn_count; ++spawn) {
+             const auto& source = a.spawns[spawn];
+             const auto& restored = b.spawns[spawn];
+@@ -120,23 +121,26 @@ bool has_affix(const RoomEncounterPlan& plan) noexcept {
+ 
+ std::optional<DungeonRunState> deep40_state_with_affix(
+     const DungeonRules& rules, std::uint64_t root) noexcept {
+     const auto built = arpg::dungeon::make_initial_run_state(root, rules);
+     if (built.fault != arpg::dungeon::DungeonFault::none) return std::nullopt;
+     DungeonRunState state = built.state;
+     state.current_room.index = 39U;
+     state.current_room.depth = 40U;
+     state.current_room.floor_room_index = 40U;
+     state.current_room.seed = arpg::dungeon::derive_initial_room_seed(root, 39U);
+-    const auto plan = arpg::dungeon::build_encounter_plan(
++    const arpg::dungeon::EncounterBuildRequest request{
+         state.current_room.seed, state.current_room.depth,
+-        state.current_room.ecology, rules.encounter);
++        state.current_room.ecology, state.current_room.entry,
++        state.current_room.has_hole, 12U};
++    const auto plan = arpg::dungeon::build_encounter_plan(
++        request, rules.encounter);
+     return plan.fault == arpg::dungeon::DungeonFault::none && has_affix(plan.plan)
+         ? std::optional<DungeonRunState>{state} : std::nullopt;
+ }
+ 
+ bool commit_pending(DungeonSession& session) noexcept {
+     const auto* const pending = session.pending_save_view();
+     if (pending == nullptr) return true;
+     session.resolve_pending_save({arpg::dungeon::SaveDisposition::committed,
+         pending->expected_generation, pending->next_state});
+     return session.snapshot().phase != arpg::dungeon::RoomPhase::faulted;
+diff --git a/tests/platform/stage11d_loot_formal_game_validation.cpp b/tests/platform/stage11d_loot_formal_game_validation.cpp
+index b7ed24f..9967eeb 100644
+--- a/tests/platform/stage11d_loot_formal_game_validation.cpp
++++ b/tests/platform/stage11d_loot_formal_game_validation.cpp
+@@ -144,22 +144,30 @@ struct OrdinaryRoomScore final {
+     std::uint64_t base_threat{0xFFFFFFFFFFFFFFFFULL};
+     std::uint8_t total_budget{0xFFU};
+ };
+ 
+ [[nodiscard]] std::optional<OrdinaryRoomScore> ordinary_room_score(
+     const dungeon::checkpoint::DungeonRunState& state,
+     const dungeon::DungeonRules& rules) noexcept {
+     if (state.current_room.is_abyss || state.current_room.depth != 1U) {
+         return std::nullopt;
+     }
+-    const auto built = dungeon::build_encounter_plan(state.current_room.seed,
+-        state.current_room.depth, state.current_room.ecology, rules.encounter);
++    const dungeon::EncounterBuildRequest request{
++        state.current_room.seed,
++        state.current_room.depth,
++        state.current_room.ecology,
++        state.current_room.entry,
++        state.current_room.has_hole,
++        12U,
++    };
++    const auto built = dungeon::build_encounter_plan(
++        request, rules.encounter);
+     if (built.fault != dungeon::DungeonFault::none) return std::nullopt;
+     bool normal = false;
+     bool magic = false;
+     bool rare = false;
+     std::uint32_t danger = 0U;
+     std::uint16_t spawn_count = 0U;
+     std::uint64_t base_threat = 0U;
+     std::optional<OrdinaryRoomScore> score{};
+     for (std::size_t wave = 0U; wave < built.plan.wave_count; ++wave) {
+         for (std::size_t index = 0U;
+@@ -518,25 +526,30 @@ int main(int argc, char** argv) {
+         std::cout << "ordinary root=" << selected.ordinary.root_seed
+             << " room=" << selected.ordinary.current_room.index
+             << " depth=" << selected.ordinary.current_room.depth
+             << " score=" << static_cast<unsigned>(score->last_wave) << ','
+             << score->last_required_spawn << ','
+             << score->prefix_affix_danger << ','
+             << score->total_affix_danger << ','
+             << score->spawn_count << ','
+             << score->base_threat << ','
+             << static_cast<unsigned>(score->total_budget) << '\n';
+-        const auto plan = dungeon::build_encounter_plan(
++        const dungeon::EncounterBuildRequest request{
+             selected.ordinary.current_room.seed,
+             selected.ordinary.current_room.depth,
+             selected.ordinary.current_room.ecology,
+-            dungeon::DungeonRules{}.encounter);
++            selected.ordinary.current_room.entry,
++            selected.ordinary.current_room.has_hole,
++            12U,
++        };
++        const auto plan = dungeon::build_encounter_plan(
++            request, dungeon::DungeonRules{}.encounter);
+         for (std::size_t wave = 0U; wave < plan.plan.wave_count; ++wave) {
+             for (std::size_t index = 0U;
+                  index < plan.plan.waves[wave].spawn_count; ++index) {
+                 const auto& spawn = plan.plan.waves[wave].spawns[index];
+                 const auto item = expected_drop(selected.ordinary, spawn);
+                 const auto* definition = combat::monster_definition(spawn.id);
+                 std::uint64_t damage = 0U;
+                 for (const int amount : definition->contact_damage.amount) {
+                     damage += static_cast<std::uint64_t>(
+                         (std::max)(0, amount));
+diff --git a/tests/platform/stage16_loot_reinforcement_game_validation.cpp b/tests/platform/stage16_loot_reinforcement_game_validation.cpp
+index 7c83a15..842b639 100644
+--- a/tests/platform/stage16_loot_reinforcement_game_validation.cpp
++++ b/tests/platform/stage16_loot_reinforcement_game_validation.cpp
+@@ -96,23 +96,30 @@ bool exists(const items::ItemOwnershipState& state,
+     return std::any_of(state.items.begin(), state.items.end(),
+         [&](const items::ItemInstance& item) { return item.id == id; });
+ }
+ 
+ std::optional<dungeon::DungeonRunState> prepared_state(
+     std::uint64_t& selected_root, std::uint64_t& target_id,
+     std::uint16_t& first_drop_ordinal, float& first_spawn_distance) noexcept {
+     for (std::uint64_t root = 1U; root <= 8192U; ++root) {
+         const auto built = dungeon::make_initial_run_state(root, dungeon::DungeonRules{});
+         if (built.fault != dungeon::DungeonFault::none) continue;
++        const dungeon::EncounterBuildRequest request{
++            built.state.current_room.seed,
++            built.state.current_room.depth,
++            built.state.current_room.ecology,
++            built.state.current_room.entry,
++            built.state.current_room.has_hole,
++            12U,
++        };
+         const auto plan = dungeon::build_encounter_plan(
+-            built.state.current_room.seed, built.state.current_room.depth,
+-            built.state.current_room.ecology, dungeon::DungeonRules{}.encounter);
++            request, dungeon::DungeonRules{}.encounter);
+         if (plan.fault != dungeon::DungeonFault::none) continue;
+         if (plan.plan.wave_count == 0U || plan.plan.waves[0].spawn_count == 0U) {
+             continue;
+         }
+         const combat::MonsterSpawnSpec* first_spawn = nullptr;
+         float closest_squared = 0.0F;
+         const auto& first_wave = plan.plan.waves[0];
+         for (std::size_t index = 0U; index < first_wave.spawn_count; ++index) {
+             const auto& spawn = first_wave.spawns[index];
+             const float squared = spawn.position.x * spawn.position.x

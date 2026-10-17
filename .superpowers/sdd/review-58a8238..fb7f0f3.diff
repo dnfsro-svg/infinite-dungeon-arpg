@@ -1,0 +1,1193 @@
+# Review package: 58a8238dd69767dc80a2b0e36cc3e8a4840b5ac4..fb7f0f3
+
+## Commits
+fb7f0f3 feat: expand combat room to four times area
+
+## Files changed
+ src/combat/room_bounds.hpp                   |  8 +++----
+ src/dungeon/room_combat_template.cpp         |  8 +++----
+ tests/combat/break_stress_tests.cpp          | 14 +++++++-----
+ tests/combat/monster_affix_trigger_tests.cpp | 15 +++++++------
+ tests/combat/monster_special_tests.cpp       | 15 +++++++------
+ tests/combat/movement_jump_tests.cpp         | 20 ++++++++++++-----
+ tests/dungeon/dungeon_abyss_reward_tests.cpp | 15 +++++++------
+ tests/dungeon/dungeon_abyss_stress_tests.cpp |  5 +++--
+ tests/dungeon/dungeon_affix_stress_tests.cpp |  9 ++++----
+ tests/dungeon/dungeon_navigation_tests.cpp   | 33 ++++++++++++++--------------
+ tests/dungeon/dungeon_stress_tests.cpp       |  4 ++--
+ tests/dungeon/dungeon_transaction_tests.cpp  |  4 ++--
+ tests/dungeon/encounter_director_tests.cpp   | 15 ++++++++-----
+ tests/dungeon/room_generation_tests.cpp      |  9 ++++----
+ tests/dungeon/stage10_validation_fixture.cpp |  9 ++++----
+ 15 files changed, 102 insertions(+), 81 deletions(-)
+
+## Diff
+diff --git a/src/combat/room_bounds.hpp b/src/combat/room_bounds.hpp
+index bbb09bb..5059506 100644
+--- a/src/combat/room_bounds.hpp
++++ b/src/combat/room_bounds.hpp
+@@ -1,12 +1,12 @@
+ #pragma once
+ 
+ namespace arpg::combat::room_bounds {
+ 
+-inline constexpr float min_x = -12.0F;
+-inline constexpr float max_x = 12.0F;
+-inline constexpr float min_y = -5.5F;
+-inline constexpr float max_y = 5.5F;
++inline constexpr float min_x = -24.0F;
++inline constexpr float max_x = 24.0F;
++inline constexpr float min_y = -11.0F;
++inline constexpr float max_y = 11.0F;
+ inline constexpr float width = max_x - min_x;
+ inline constexpr float depth = max_y - min_y;
+ 
+ }  // namespace arpg::combat::room_bounds
+diff --git a/src/dungeon/room_combat_template.cpp b/src/dungeon/room_combat_template.cpp
+index 05cf5f9..1eaf4d3 100644
+--- a/src/dungeon/room_combat_template.cpp
++++ b/src/dungeon/room_combat_template.cpp
+@@ -9,41 +9,41 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
+         return std::nullopt;
+     }
+ 
+     combat::CombatLabConfig config;
+     config.respawn_defeated_dummies = false;
+ 
+     switch (entry) {
+     case checkpoint::EntrySide::initial:
+         break;
+     case checkpoint::EntrySide::left:
+-        config.player_spawn = {-10.50F, 0.0F, 0.0F};
++        config.player_spawn = {-22.50F, 0.0F, 0.0F};
+         break;
+     case checkpoint::EntrySide::right:
+-        config.player_spawn = {10.50F, 0.0F, 0.0F};
++        config.player_spawn = {22.50F, 0.0F, 0.0F};
+         config.dummy_spawns = {{
+             {-2.30F, -0.35F, 0.0F},
+             {-2.80F, 0.0F, 0.0F},
+             {-3.30F, 0.35F, 0.0F},
+         }};
+         config.initial_facing = combat::Facing::left;
+         break;
+     case checkpoint::EntrySide::top:
+-        config.player_spawn = {0.0F, -4.75F, 0.0F};
++        config.player_spawn = {0.0F, -10.25F, 0.0F};
+         config.dummy_spawns = {{
+             {2.30F, 2.30F, 0.0F},
+             {2.80F, 2.30F, 0.0F},
+             {3.30F, 2.30F, 0.0F},
+         }};
+         break;
+     case checkpoint::EntrySide::bottom:
+-        config.player_spawn = {0.0F, 4.75F, 0.0F};
++        config.player_spawn = {0.0F, 10.25F, 0.0F};
+         config.dummy_spawns = {{
+             {2.30F, -2.30F, 0.0F},
+             {2.80F, -2.30F, 0.0F},
+             {3.30F, -2.30F, 0.0F},
+         }};
+         break;
+     }
+     return config;
+ }
+ 
+diff --git a/tests/combat/break_stress_tests.cpp b/tests/combat/break_stress_tests.cpp
+index 70c31ad..d05120b 100644
+--- a/tests/combat/break_stress_tests.cpp
++++ b/tests/combat/break_stress_tests.cpp
+@@ -1,35 +1,36 @@
+ #include "allocation_probe.hpp"
+ #include "combat_test_support.hpp"
+ #include "test_framework.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ #include "combat/monster_pool.hpp"
++#include "combat/room_bounds.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::drain_events;
+ using arpg::test::finish_attack;
+ using arpg::test::tick_n;
+ 
+ CombatLabConfig heavy_target_config() noexcept {
+     CombatLabConfig config;
+-    config.player_spawn = Vec3{10.6F, 0.0F, 0.0F};
+-    config.dummy_spawns = {{{-11.0F, 5.0F, 0.0F},
+-                            {-11.0F, -5.0F, 0.0F},
+-                            {11.8F, 0.0F, 0.0F}}};
++    config.player_spawn = Vec3{room_bounds::max_x - 1.4F, 0.0F, 0.0F};
++    config.dummy_spawns = {{{room_bounds::min_x + 1.0F, room_bounds::max_y - 0.5F, 0.0F},
++                            {room_bounds::min_x + 1.0F, room_bounds::min_y + 0.5F, 0.0F},
++                            {room_bounds::max_x - 0.2F, 0.0F, 0.0F}}};
+     return config;
+ }
+ 
+ bool start_action_and_reach_hit(
+     CombatWorld& world,
+     Action action,
+     int startup_ticks) noexcept {
+     if (!world.queue_action(action)) {
+         return false;
+     }
+@@ -149,21 +150,22 @@ bool wait_for_armor_restore(CombatWorld& world) noexcept {
+ 
+ arpg::test::Failure armored_launcher_suppresses_control_before_break() noexcept {
+     CombatWorld launcher{heavy_target_config()};
+     ARPG_REQUIRE(start_action_and_reach_hit(launcher, Action::launcher, 7));
+     CombatSnapshot snapshot = launcher.snapshot();
+     const MonsterSnapshot& launched = snapshot.monsters[2];
+     ARPG_REQUIRE(launched.hp == 662);
+     ARPG_REQUIRE(launched.break_value == 102);
+     ARPG_REQUIRE(launched.armor == ArmorState::armored);
+     ARPG_REQUIRE(launched.reaction == ReactionState::idle);
+-    ARPG_REQUIRE(vec_equal(launched.position, Vec3{11.8F, 0.0F, 0.0F}));
++    ARPG_REQUIRE(vec_equal(
++        launched.position, Vec3{room_bounds::max_x - 0.2F, 0.0F, 0.0F}));
+     ARPG_REQUIRE(vec_equal(launched.velocity, Vec3{}));
+     ARPG_REQUIRE(launched.hit_stop_ticks == 5);
+     while (const auto event = launcher.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::break_started);
+     }
+ 
+     CombatWorld repeated{heavy_target_config()};
+     ARPG_REQUIRE(launcher_hit_and_finish(repeated));
+     snapshot = repeated.snapshot();
+     ARPG_REQUIRE(snapshot.monsters[2].hp == 662);
+@@ -230,21 +232,21 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
+     snapshot = world.snapshot();
+     ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::broken);
+     ARPG_REQUIRE(snapshot.monsters[2].break_window_ticks == 1);
+     world.tick(MovementInput{});
+     snapshot = world.snapshot();
+     ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::armored);
+     ARPG_REQUIRE(snapshot.monsters[2].break_value == 120);
+     ARPG_REQUIRE(snapshot.monsters[2].break_window_ticks == 0);
+ 
+     CombatLabConfig independent_config = heavy_target_config();
+-    independent_config.dummy_spawns[0] = Vec3{9.0F, 0.0F, 0.0F};
++    independent_config.dummy_spawns[0] = Vec3{room_bounds::max_x - 3.0F, 0.0F, 0.0F};
+     CombatWorld independent{independent_config};
+     for (int hit = 0; hit < 7; ++hit) {
+         ARPG_REQUIRE(launcher_hit_and_finish(independent));
+         drain_events(independent);
+     }
+     for (int tick = 0; tick < 24; ++tick) {
+         independent.tick(MovementInput{-1, 0});
+     }
+     ARPG_REQUIRE(start_action_and_reach_hit(independent, Action::light, 5));
+     snapshot = independent.snapshot();
+diff --git a/tests/combat/monster_affix_trigger_tests.cpp b/tests/combat/monster_affix_trigger_tests.cpp
+index 722cd02..5523a11 100644
+--- a/tests/combat/monster_affix_trigger_tests.cpp
++++ b/tests/combat/monster_affix_trigger_tests.cpp
+@@ -1,15 +1,16 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
++#include "combat/room_bounds.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ 
+ const HazardSnapshot* find_hazard(
+@@ -192,21 +193,21 @@ arpg::test::Failure chain_lightning_warns_after_a_direct_hit() noexcept {
+ }
+ 
+ arpg::test::Failure chain_projectile_end_paths_warn_once_without_recursion() noexcept {
+     struct EndCase final {
+         Vec3 position;
+         Vec3 velocity;
+         std::uint16_t lifetime_ticks;
+     };
+     constexpr std::array<EndCase, 3> kEndCases{{
+         {{0.0F, 0.0F, 0.0F}, {}, 30U},       // hit player
+-        {{12.1F, 0.0F, 0.0F}, {}, 30U},      // leave room bounds
++        {{room_bounds::max_x + 0.1F, 0.0F, 0.0F}, {}, 30U},  // leave room bounds
+         {{8.0F, 0.0F, 0.0F}, {}, 1U},        // expire
+     }};
+ 
+     for (const EndCase& end_case : kEndCases) {
+         CombatWorld world{affixed_encounter(
+             MonsterId::chaos_chaser, MonsterAffixId::chain_lightning,
+             MonsterAffixTier::m1, Vec3{8.0F, 0.0F, 0.0F})};
+         const MonsterSnapshot owner_snapshot = world.snapshot().monsters[0];
+         const MonsterHandle owner{0U, owner_snapshot.generation};
+         ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::spawn_projectile(
+@@ -460,34 +461,34 @@ arpg::test::Failure full_hazard_pool_cleans_owner_when_death_blast_creation_fail
+         }
+     }
+     ARPG_REQUIRE(death_warning_count == 0);
+     ARPG_REQUIRE(defeated_count == 1);
+     return {};
+ }
+ 
+ arpg::test::Failure blink_assault_warns_then_clamps_and_empowers() noexcept {
+     CombatWorld world{affixed_encounter(
+         MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
+-        MonsterAffixTier::m3, Vec3{11.9F, 0.0F, 0.0F})};
++        MonsterAffixTier::m3, Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
+     arpg::test::tick_n(world, 240);
+     const CombatSnapshot warning = world.snapshot();
+     ARPG_REQUIRE(warning.monsters[0].affix_warning == MonsterAffixWarning::blink);
+     arpg::test::tick_n(world, 30);
+-    ARPG_REQUIRE(world.snapshot().monsters[0].position.x <= 12.0F);
++    ARPG_REQUIRE(world.snapshot().monsters[0].position.x <= room_bounds::max_x);
+     return {};
+ }
+ 
+ arpg::test::Failure blink_warning_pauses_ai_then_real_hit_consumes_frenzied_empowerment() noexcept {
+     CombatWorld world{dual_affixed_encounter(
+         MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
+         MonsterAffixTier::m3, MonsterAffixId::frenzy, MonsterAffixTier::m3,
+-        Vec3{11.9F, 0.0F, 0.0F})};
++        Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
+     arpg::test::tick_n(world, 240);
+     const MonsterSnapshot warning = world.snapshot().monsters[0];
+     const int hp_before_warning = world.snapshot().player.hp;
+     ARPG_REQUIRE(warning.affix_warning == MonsterAffixWarning::blink);
+     ARPG_REQUIRE(warning.affix_warning_ticks == 30U);
+ 
+     arpg::test::tick_n(world, 29);
+     const MonsterSnapshot paused = world.snapshot().monsters[0];
+     ARPG_REQUIRE(paused.affix_warning == MonsterAffixWarning::blink);
+     ARPG_REQUIRE(paused.affix_warning_ticks == 1U);
+@@ -556,31 +557,31 @@ arpg::test::Failure tiered_multishot_and_burning_values_are_frozen() noexcept {
+ }
+ 
+ arpg::test::Failure tiered_blink_cooldowns_and_warnings_are_frozen() noexcept {
+     constexpr MonsterAffixTier kTiers[] = {
+         MonsterAffixTier::m1, MonsterAffixTier::m2, MonsterAffixTier::m3};
+     constexpr int kCooldowns[] = {480, 360, 240};
+     constexpr int kWarnings[] = {42, 36, 30};
+     for (std::size_t index = 0U; index < 3U; ++index) {
+         CombatWorld world{affixed_encounter(
+             MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
+-            kTiers[index], Vec3{11.9F, 0.0F, 0.0F})};
++        kTiers[index], Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
+         arpg::test::tick_n(world, kCooldowns[index]);
+         const auto warning = world.snapshot().monsters[0];
+         ARPG_REQUIRE(warning.affix_warning == MonsterAffixWarning::blink);
+         ARPG_REQUIRE(warning.affix_warning_ticks == kWarnings[index]);
+         arpg::test::tick_n(world, kWarnings[index]);
+         const auto blinked = world.snapshot().monsters[0];
+         ARPG_REQUIRE(blinked.affix_warning == MonsterAffixWarning::none);
+         ARPG_REQUIRE(blinked.blink_empowered);
+-        ARPG_REQUIRE(blinked.position.x >= -12.0F);
+-        ARPG_REQUIRE(blinked.position.x <= 12.0F);
++        ARPG_REQUIRE(blinked.position.x >= room_bounds::min_x);
++        ARPG_REQUIRE(blinked.position.x <= room_bounds::max_x);
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"multishot fanned projectiles", &multishot_spawns_four_fanned_projectiles},
+     {"burning ground periodic hazard", &burning_ground_spawns_periodic_hazard},
+     {"chain lightning direct-hit warning", &chain_lightning_warns_after_a_direct_hit},
+     {"chain projectile end paths are once-only", &chain_projectile_end_paths_warn_once_without_recursion},
+     {"burning ground damage interval and lifetime", &burning_ground_deals_fire_every_30_ticks_and_expires_per_tier},
+diff --git a/tests/combat/monster_special_tests.cpp b/tests/combat/monster_special_tests.cpp
+index e032cf8..8be5573 100644
+--- a/tests/combat/monster_special_tests.cpp
++++ b/tests/combat/monster_special_tests.cpp
+@@ -1,15 +1,16 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
++#include "combat/room_bounds.hpp"
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::tick_n;
+ 
+ CombatEncounterConfig encounter_for(
+     MonsterId id,
+     Vec3 monster_position,
+     Vec3 player_position = {}) noexcept {
+@@ -56,35 +57,35 @@ arpg::test::Failure bomber_warns_then_explodes_once_and_self_defeats() noexcept
+         ARPG_REQUIRE(!event->reward_eligible);
+     }
+     ARPG_REQUIRE(saw_self_defeat);
+     tick_n(world, 90);
+     ARPG_REQUIRE(world.snapshot().player.hp == after_explosion);
+     return {};
+ }
+ 
+ arpg::test::Failure charger_captures_line_and_clamps_burst_to_room() noexcept {
+     CombatWorld world{encounter_for(
+-        MonsterId::fire_charger, Vec3{11.90F, 0.0F, 0.0F},
+-        Vec3{-12.0F, 0.0F, 0.0F})};
+-    ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::telegraph, 800));
++        MonsterId::fire_charger, Vec3{room_bounds::max_x - 0.10F, 0.0F, 0.0F},
++        Vec3{room_bounds::min_x, 0.0F, 0.0F})};
++    ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::telegraph, 1600));
+     const auto warning = world.snapshot().monsters[0];
+     tick_n(world, 20, MovementInput{1, 1});
+     ARPG_REQUIRE(world.snapshot().monsters[0].position.x == warning.position.x);
+     ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::active));
+     const float active_start_x = world.snapshot().monsters[0].position.x;
+     for (int tick = 0; tick < 18; ++tick) {
+         world.tick(MovementInput{1, 1});
+         const auto charger = world.snapshot().monsters[0];
+-        ARPG_REQUIRE(charger.position.x >= -12.0F);
+-        ARPG_REQUIRE(charger.position.x <= 12.0F);
+-        ARPG_REQUIRE(charger.position.y >= -5.5F);
+-        ARPG_REQUIRE(charger.position.y <= 5.5F);
++        ARPG_REQUIRE(charger.position.x >= room_bounds::min_x);
++        ARPG_REQUIRE(charger.position.x <= room_bounds::max_x);
++        ARPG_REQUIRE(charger.position.y >= room_bounds::min_y);
++        ARPG_REQUIRE(charger.position.y <= room_bounds::max_y);
+     }
+     const auto complete = world.snapshot().monsters[0];
+     ARPG_REQUIRE(complete.position.x < active_start_x);
+     ARPG_REQUIRE(complete.position.y == 0.0F);
+     return {};
+ }
+ 
+ arpg::test::Failure dasher_has_short_warning_burst_and_recovery_gap() noexcept {
+     CombatWorld world{encounter_for(
+         MonsterId::lightning_dasher, Vec3{3.0F, 0.0F, 0.0F})};
+diff --git a/tests/combat/movement_jump_tests.cpp b/tests/combat/movement_jump_tests.cpp
+index 3a26890..a71c890 100644
+--- a/tests/combat/movement_jump_tests.cpp
++++ b/tests/combat/movement_jump_tests.cpp
+@@ -1,23 +1,31 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat/combat_world.hpp"
++#include "combat/room_bounds.hpp"
+ 
+ #include "abyss/abyss_rules.hpp"
+ 
+ #include <cmath>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ 
++static_assert(room_bounds::min_x == -24.0F);
++static_assert(room_bounds::max_x == 24.0F);
++static_assert(room_bounds::min_y == -11.0F);
++static_assert(room_bounds::max_y == 11.0F);
++static_assert(room_bounds::width == 48.0F);
++static_assert(room_bounds::depth == 22.0F);
++
+ constexpr double kFloatTolerance = 1.0e-4;
+ 
+ arpg::test::Failure ground_motion_is_fixed_and_diagonal_is_normalized() noexcept {
+     CombatWorld right_world;
+     for (int tick = 0; tick < 60; ++tick) {
+         right_world.tick(MovementInput{1, 0});
+     }
+ 
+     const CombatSnapshot right = right_world.snapshot();
+     ARPG_REQUIRE(arpg::test::near(right.player.position.x, 5.4, kFloatTolerance));
+@@ -45,34 +53,34 @@ arpg::test::Failure ground_motion_is_fixed_and_diagonal_is_normalized() noexcept
+     ARPG_REQUIRE(arpg::test::near(distance, 2.7, kFloatTolerance));
+     return {};
+ }
+ 
+ arpg::test::Failure room_clamps_facing_and_reset_are_stable() noexcept {
+     CombatLabConfig config;
+     config.player_spawn = Vec3{1.0F, -1.0F, 0.0F};
+     config.dummy_spawns[0] = Vec3{2.0F, -1.0F, 0.0F};
+     CombatWorld world{config};
+ 
+-    for (int tick = 0; tick < 200; ++tick) {
++    for (int tick = 0; tick < 400; ++tick) {
+         world.tick(MovementInput{1, 1});
+     }
+     CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 12.0));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 5.5));
++    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, room_bounds::max_x));
++    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, room_bounds::max_y));
+ 
+-    for (int tick = 0; tick < 400; ++tick) {
++    for (int tick = 0; tick < 800; ++tick) {
+         world.tick(MovementInput{-1, -1});
+     }
+     world.tick(MovementInput{0, 1});
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, -12.0));
+-    ARPG_REQUIRE(snapshot.player.position.y > -5.5F);
++    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, room_bounds::min_x));
++    ARPG_REQUIRE(snapshot.player.position.y > room_bounds::min_y);
+     ARPG_REQUIRE(snapshot.player.facing == Facing::left);
+ 
+     for (int action = 0; action < 32; ++action) {
+         ARPG_REQUIRE(world.queue_action(Action::light));
+     }
+     ARPG_REQUIRE(!world.queue_action(Action::light));
+     ARPG_REQUIRE(world.snapshot().diagnostics.input_overflow_count == 1);
+ 
+     world.reset();
+     snapshot = world.snapshot();
+diff --git a/tests/dungeon/dungeon_abyss_reward_tests.cpp b/tests/dungeon/dungeon_abyss_reward_tests.cpp
+index 98d118d..df7dc07 100644
+--- a/tests/dungeon/dungeon_abyss_reward_tests.cpp
++++ b/tests/dungeon/dungeon_abyss_reward_tests.cpp
+@@ -1,16 +1,17 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "dungeon_test_support.hpp"
+ 
+ #include "dungeon/abyss_reward.hpp"
++#include "combat/room_bounds.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/dungeon_session.hpp"
+ #include "abyss/abyss_rewards.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "items/item_generation.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+@@ -753,21 +754,21 @@ arpg::test::Failure generated_unrebuilt_reward_still_counts_and_warns() noexcept
+     using arpg::dungeon::ExitDirection;
+     DungeonRunState state = cleared_abyss_state(AbyssDanger::low);
+     state.abyss.generated_mask = 1U;
+     state.abyss.reward_revision = 1U;
+     DungeonSession session{DungeonRules{}, state};
+     const GroundItem* reward = abyss_ground(session, 0U);
+     ARPG_REQUIRE(reward != nullptr);
+     arpg::test::clear_ground_item(session, reward->drop_ordinal);
+     fill_ground_pool(session);
+     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+-    set_player_position(session, {-12.0F, 0.0F, 0.0F});
++    set_player_position(session, {arpg::combat::room_bounds::min_x, 0.0F, 0.0F});
+ 
+     ARPG_REQUIRE(session.snapshot().abyss_pending_rewards == 0U);
+     ARPG_REQUIRE(session.snapshot().abyss_unpicked_rewards == 1U);
+     attempt_exit(session, ExitDirection::left);
+     ARPG_REQUIRE(session.snapshot().abyss_exit_confirmation_armed);
+     const auto warning = session.try_pop_event();
+     ARPG_REQUIRE(warning.has_value());
+     ARPG_REQUIRE(warning->kind
+         == arpg::dungeon::DungeonEventKind::abyss_exit_warning);
+     ARPG_REQUIRE(warning->abyss_pending_rewards == 0U);
+@@ -846,39 +847,39 @@ arpg::test::Failure cleared_abyss_reset_is_rejected_without_state_drift() noexce
+             ARPG_REQUIRE(session.pending_save()->kind
+                 == PendingSaveKind::abyss_reward_materialized);
+         } else if (index == 1U) {
+             const GroundItem* reward = abyss_ground(session, 0U);
+             ARPG_REQUIRE(reward != nullptr);
+             set_player_position(session, reward->position);
+             ARPG_REQUIRE(session.request_pickup(reward->drop_ordinal)
+                 == arpg::dungeon::RequestResult::accepted);
+         } else {
+             arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+-            set_player_position(session, {-12.0F, 0.0F, 0.0F});
++            set_player_position(session, {arpg::combat::room_bounds::min_x, 0.0F, 0.0F});
+             attempt_exit(session, arpg::dungeon::ExitDirection::left);
+             ARPG_REQUIRE(session.pending_save().has_value());
+             ARPG_REQUIRE(session.pending_save()->kind
+                 == PendingSaveKind::transition);
+         }
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_door_confirmation_warns_and_abandons_atomically() noexcept {
+     using arpg::dungeon::ExitDirection;
+     using arpg::dungeon::TransitionKind;
+     DungeonRunState state = cleared_abyss_state(AbyssDanger::high);
+     state.abyss.generated_mask = 7U;
+     state.abyss.reward_revision = 3U;
+     DungeonSession session{DungeonRules{}, state};
+     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+-    set_player_position(session, {-12.0F, 0.0F, 0.0F});
++    set_player_position(session, {arpg::combat::room_bounds::min_x, 0.0F, 0.0F});
+ 
+     attempt_exit(session, ExitDirection::left);
+     const auto armed = session.snapshot();
+     ARPG_REQUIRE(!session.pending_save().has_value());
+     ARPG_REQUIRE(armed.abyss_pending_rewards == 0U);
+     ARPG_REQUIRE(armed.abyss_unpicked_rewards == 3U);
+     ARPG_REQUIRE(armed.abyss_exit_confirmation_armed);
+     ARPG_REQUIRE(armed.abyss_exit_confirmation_transition
+         == TransitionKind::door);
+     ARPG_REQUIRE(armed.abyss_exit_confirmation_direction
+@@ -930,21 +931,21 @@ arpg::test::Failure abyss_door_abandon_counts_only_ungenerated_rewards() noexcep
+     using arpg::dungeon::TransitionKind;
+     DungeonRunState state = cleared_abyss_state(AbyssDanger::high);
+     state.abyss.generated_mask = 1U;
+     state.abyss.reward_revision = 1U;
+     DungeonSession session{DungeonRules{}, state};
+     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+     const GroundItem* generated = abyss_ground(session, 0U);
+     ARPG_REQUIRE(generated != nullptr);
+     const std::uint16_t generated_ground_ordinal = generated->drop_ordinal;
+     fill_ground_pool(session, generated_ground_ordinal);
+-    set_player_position(session, {-12.0F, 0.0F, 0.0F});
++    set_player_position(session, {arpg::combat::room_bounds::min_x, 0.0F, 0.0F});
+ 
+     session.tick({-1, 0});
+     const auto armed = session.snapshot();
+     ARPG_REQUIRE(!session.pending_save().has_value());
+     ARPG_REQUIRE(armed.abyss_pending_rewards == 2U);
+     ARPG_REQUIRE(armed.abyss_unpicked_rewards == 1U);
+     ARPG_REQUIRE(armed.abyss_exit_confirmation_armed);
+     const auto warning = session.try_pop_event();
+     ARPG_REQUIRE(warning.has_value());
+     ARPG_REQUIRE(warning->kind
+@@ -994,30 +995,30 @@ arpg::test::Failure abyss_confirmation_invalidates_on_key_range_revision_and_cap
+     auto direction = std::make_unique<DungeonSession>(DungeonRules{}, state);
+     arpg::test::set_phase(*direction, RoomPhase::awaiting_exit);
+     attempt_exit(*direction, ExitDirection::left);
+     ARPG_REQUIRE(direction->snapshot().abyss_exit_confirmation_armed);
+     attempt_exit(*direction, ExitDirection::right);
+     ARPG_REQUIRE(!direction->snapshot().abyss_exit_confirmation_armed);
+     ARPG_REQUIRE(!direction->pending_save().has_value());
+ 
+     auto range = std::make_unique<DungeonSession>(DungeonRules{}, state);
+     arpg::test::set_phase(*range, RoomPhase::awaiting_exit);
+-    set_player_position(*range, {-12.0F, 0.0F, 0.0F});
++    set_player_position(*range, {arpg::combat::room_bounds::min_x, 0.0F, 0.0F});
+     attempt_exit(*range, ExitDirection::left);
+     ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_armed);
+     set_player_position(*range, {8.0F, 3.0F, 0.0F});
+     range->tick({});
+     ARPG_REQUIRE(!range->snapshot().abyss_exit_confirmation_armed);
+ 
+     auto revision = std::make_unique<DungeonSession>(DungeonRules{}, state);
+     arpg::test::set_phase(*revision, RoomPhase::awaiting_exit);
+-    set_player_position(*revision, {-12.0F, 0.0F, 0.0F});
++    set_player_position(*revision, {arpg::combat::room_bounds::min_x, 0.0F, 0.0F});
+     attempt_exit(*revision, ExitDirection::left);
+     const std::uint16_t claim = abyss_ground(*revision, 0U)->drop_ordinal;
+     set_player_position(*revision,
+         arpg::test::ground_items(*revision)[claim].position);
+     ARPG_REQUIRE(revision->request_pickup(claim)
+         == arpg::dungeon::RequestResult::accepted);
+     ARPG_REQUIRE(!revision->snapshot().abyss_exit_confirmation_armed);
+ 
+     auto full_events = std::make_unique<DungeonSession>(DungeonRules{}, state);
+     arpg::test::set_phase(*full_events, RoomPhase::awaiting_exit);
+@@ -1087,21 +1088,21 @@ arpg::test::Failure abyss_abandon_failure_stays_and_next_resolution_overwrites()
+     state.abyss.generated_mask = 3U;
+     state.abyss.reward_revision = 2U;
+     state.last_abyss_resolution.valid = true;
+     state.last_abyss_resolution.room_seed = 0xBADU;
+     state.last_abyss_resolution.total = 3U;
+     state.last_abyss_resolution.generated = 3U;
+     state.last_abyss_resolution.claimed = 3U;
+ 
+     DungeonSession failed{DungeonRules{}, state};
+     arpg::test::set_phase(failed, RoomPhase::awaiting_exit);
+-    set_player_position(failed, {12.0F, 0.0F, 0.0F});
++    set_player_position(failed, {arpg::combat::room_bounds::max_x, 0.0F, 0.0F});
+     attempt_exit(failed, ExitDirection::right);
+     failed.tick({});
+     attempt_exit(failed, ExitDirection::right);
+     const auto pending = *failed.pending_save();
+     failed.resolve_pending_save({SaveDisposition::not_committed,
+         pending.expected_generation, pending.next_state});
+     ARPG_REQUIRE(failed.snapshot().phase == RoomPhase::faulted);
+     ARPG_REQUIRE(failed.snapshot().room_seed == state.current_room.seed);
+     ARPG_REQUIRE(abyss_ground(failed, 0U) != nullptr);
+     ARPG_REQUIRE(arpg::test::stable_state(failed).abyss.generated_mask == 3U);
+diff --git a/tests/dungeon/dungeon_abyss_stress_tests.cpp b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+index db53c0d..3b4a99f 100644
+--- a/tests/dungeon/dungeon_abyss_stress_tests.cpp
++++ b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+@@ -1,19 +1,20 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "combat_test_support.hpp"
+ #include "dungeon_test_support.hpp"
+ 
+ #include "abyss/abyss_rewards.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "combat/combat_world.hpp"
++#include "combat/room_bounds.hpp"
+ #include "dungeon/abyss_reward.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/encounter_director.hpp"
+ #include "dungeon/room_generation.hpp"
+ #include "persistence/checkpoint_codec.hpp"
+ #include "items/item_generation.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+@@ -312,21 +313,21 @@ ResolutionTrace production_resolution(
+         arpg::test::set_player_position(session, reward_position);
+         if (reward_index == 0xFFFFU
+                 || session.request_pickup(reward_index)
+                     != arpg::dungeon::RequestResult::accepted
+                 || !commit_pending(session)) {
+             return fail(4);
+         }
+     }
+ 
+     arpg::test::fill_ground_pool(session, ground_prototype());
+-    arpg::test::set_player_position(session, {12.0F, 0.0F, 0.0F});
++    arpg::test::set_player_position(session, {arpg::combat::room_bounds::max_x, 0.0F, 0.0F});
+     session.tick({1, 0});
+     const auto warned = session.snapshot();
+     bool warning_event = false;
+     while (const auto event = session.try_pop_event()) {
+         if (event->kind == arpg::dungeon::DungeonEventKind::abyss_exit_warning
+                 && event->transition
+                     == arpg::dungeon::TransitionKind::door
+                 && event->direction
+                     == arpg::dungeon::ExitDirection::right) {
+             warning_event = true;
+@@ -526,21 +527,21 @@ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexce
+         first->door_hits[3], second->reload_count,
+         static_cast<unsigned long long>(first->hash));
+ 
+     ARPG_REQUIRE(total_trials == 4000U);
+     ARPG_REQUIRE(total_hits >= 20U && total_hits <= 70U);
+     constexpr std::array<std::uint32_t, 4> kGoldenTrials{{
+         1000U, 1000U, 1000U, 1000U}};
+     constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
+     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
+     ARPG_REQUIRE(first->door_hits == kGoldenHits);
+-    ARPG_REQUIRE(first->hash == 0xe102b17e6423351bULL);
++    ARPG_REQUIRE(first->hash == 0x05d554c69da3351bULL);
+     return {};
+ }
+ 
+ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexcept {
+     arpg::dungeon::DungeonSession session{
+         arpg::dungeon::DungeonRules{}, extreme_cleared_state()};
+     arpg::test::install_combat_world(session, extreme_config());
+     arpg::combat::CombatWorld* const world =
+         arpg::test::mutable_combat_world(session);
+     ARPG_REQUIRE(world != nullptr);
+diff --git a/tests/dungeon/dungeon_affix_stress_tests.cpp b/tests/dungeon/dungeon_affix_stress_tests.cpp
+index 6493364..c32e26b 100644
+--- a/tests/dungeon/dungeon_affix_stress_tests.cpp
++++ b/tests/dungeon/dungeon_affix_stress_tests.cpp
+@@ -1,18 +1,19 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "combat_test_support.hpp"
+ #include "dungeon_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ #include "combat/monster_affix_generation.hpp"
++#include "combat/room_bounds.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "persistence/checkpoint_codec.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstring>
+ #include <cstdio>
+ #include <memory>
+ 
+@@ -365,24 +366,24 @@ bool record_drops_and_claim(RoomTrace& trace, DungeonSession& session,
+ }
+ 
+ bool transition_room(DungeonSession& session, std::size_t room) noexcept {
+     constexpr std::array<ExitDirection, 4> kDirections{{
+         ExitDirection::up, ExitDirection::right,
+         ExitDirection::down, ExitDirection::left,
+     }};
+     const ExitDirection direction = kDirections[room % kDirections.size()];
+     arpg::combat::Vec3 door_position{};
+     switch (direction) {
+-    case ExitDirection::up: door_position.y = -5.5F; break;
+-    case ExitDirection::down: door_position.y = 5.5F; break;
+-    case ExitDirection::left: door_position.x = -12.0F; break;
+-    case ExitDirection::right: door_position.x = 12.0F; break;
++    case ExitDirection::up: door_position.y = arpg::combat::room_bounds::min_y; break;
++    case ExitDirection::down: door_position.y = arpg::combat::room_bounds::max_y; break;
++    case ExitDirection::left: door_position.x = arpg::combat::room_bounds::min_x; break;
++    case ExitDirection::right: door_position.x = arpg::combat::room_bounds::max_x; break;
+     case ExitDirection::none: return false;
+     }
+     for (int attempt = 0; attempt < 16; ++attempt) {
+         if (session.snapshot().phase == RoomPhase::committing) {
+             if (!commit_pending(session)) return false;
+             if (session.snapshot().phase == RoomPhase::transitioning) break;
+             continue;
+         }
+         arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+         arpg::test::set_player_position(session, door_position);
+diff --git a/tests/dungeon/dungeon_navigation_tests.cpp b/tests/dungeon/dungeon_navigation_tests.cpp
+index e09eda8..7f4ea29 100644
+--- a/tests/dungeon/dungeon_navigation_tests.cpp
++++ b/tests/dungeon/dungeon_navigation_tests.cpp
+@@ -1,15 +1,16 @@
+ #include "test_framework.hpp"
+ 
+ #include "dungeon_test_support.hpp"
+ 
+ #include "abyss/abyss_rules.hpp"
++#include "combat/room_bounds.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/room_generation.hpp"
+ #include "dungeon/room_navigation.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ #include <limits>
+ #include <type_traits>
+ 
+ namespace {
+@@ -81,30 +82,30 @@ MovementInput alignment(const DungeonSnapshot& state, ExitDirection direction) n
+         movement.y = position.y > kTolerance ? -1
+             : (position.y < -kTolerance ? 1 : 0);
+     } else {
+         movement.x = position.x > kTolerance ? -1
+             : (position.x < -kTolerance ? 1 : 0);
+     }
+     return movement;
+ }
+ 
+ bool commit_exit(DungeonSession& session, ExitDirection direction) noexcept {
+-    for (int tick = 0; tick < 256; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         const MovementInput movement = alignment(state, direction);
+         if (movement.x == 0 && movement.y == 0) {
+             break;
+         }
+         session.tick(movement);
+         drain_dungeon(session);
+     }
+-    for (int tick = 0; tick < 256; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         session.tick(outward(direction));
+         drain_combat(session);
+         if (session.snapshot().phase == RoomPhase::committing) {
+             return arpg::test::commit_pending(session)
+                 && session.snapshot().phase == RoomPhase::transitioning;
+         }
+         if (session.snapshot().phase == RoomPhase::transitioning) {
+             return true;
+         }
+         while (session.try_pop_event().has_value()) {
+@@ -141,30 +142,30 @@ bool clear_without_dungeon_drain(DungeonSession& session) noexcept {
+         session.tick(movement);
+         drain_combat(session);
+     }
+     return false;
+ }
+ 
+ bool request_without_dungeon_drain(
+     DungeonSession& session,
+     ExitDirection direction,
+     RoomPhase expected_phase) noexcept {
+-    for (int tick = 0; tick < 256; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         const MovementInput movement = alignment(state, direction);
+         if (movement.x == 0 && movement.y == 0) {
+             break;
+         }
+         session.tick(movement);
+         drain_combat(session);
+     }
+-    for (int tick = 0; tick < 256; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         session.tick(outward(direction));
+         drain_combat(session);
+         const DungeonSnapshot state = session.snapshot();
+         if (expected_phase == RoomPhase::transitioning
+                 && state.phase == RoomPhase::transitioning) {
+             return true;
+         }
+         if (expected_phase == RoomPhase::awaiting_exit
+                 && state.phase == RoomPhase::awaiting_exit
+                 && state.diagnostics.room_index_overflow) {
+@@ -188,39 +189,39 @@ bool advance_without_dungeon_drain(
+         return false;
+     }
+     session.tick(outward(direction));
+     drain_combat(session);
+     return session.snapshot().phase == RoomPhase::combat;
+ }
+ #endif
+ 
+ arpg::test::Failure exact_apertures_accept_outward_input() noexcept {
+     using arpg::dungeon::requested_exit;
+-    ARPG_REQUIRE(requested_exit(Vec3{-12.0F, 0.90F, 4.0F}, {-1, 0})
++    ARPG_REQUIRE(requested_exit(Vec3{-24.0F, 0.90F, 0.0F}, {-1, 0})
+         == ExitDirection::left);
+-    ARPG_REQUIRE(requested_exit(Vec3{12.0F, -0.90F, 0.0F}, {1, 0})
++    ARPG_REQUIRE(requested_exit(Vec3{24.0F, -0.90F, 0.0F}, {1, 0})
+         == ExitDirection::right);
+-    ARPG_REQUIRE(requested_exit(Vec3{1.50F, -5.5F, 0.0F}, {0, -1})
++    ARPG_REQUIRE(requested_exit(Vec3{1.50F, -11.0F, 0.0F}, {0, -1})
+         == ExitDirection::up);
+-    ARPG_REQUIRE(requested_exit(Vec3{-1.50F, 5.5F, 0.0F}, {0, 1})
++    ARPG_REQUIRE(requested_exit(Vec3{-1.50F, 11.0F, 0.0F}, {0, 1})
+         == ExitDirection::down);
+     return {};
+ }
+ 
+ arpg::test::Failure invalid_physical_requests_are_rejected() noexcept {
+     using arpg::dungeon::requested_exit;
+-    ARPG_REQUIRE(!requested_exit(Vec3{-12.0F, 0.0F, 0.0F}, {1, 0}));
+-    ARPG_REQUIRE(!requested_exit(Vec3{-11.99F, 0.0F, 0.0F}, {-1, 0}));
+-    ARPG_REQUIRE(!requested_exit(Vec3{-12.0F, 0.91F, 0.0F}, {-1, 0}));
+-    ARPG_REQUIRE(!requested_exit(Vec3{12.0F, -0.91F, 0.0F}, {1, 0}));
+-    ARPG_REQUIRE(!requested_exit(Vec3{1.51F, -5.5F, 0.0F}, {0, -1}));
+-    ARPG_REQUIRE(!requested_exit(Vec3{-1.51F, 5.5F, 0.0F}, {0, 1}));
++    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::min_x, 0.0F, 0.0F}, {1, 0}));
++    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::min_x + 0.01F, 0.0F, 0.0F}, {-1, 0}));
++    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::min_x, 0.91F, 0.0F}, {-1, 0}));
++    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::max_x, -0.91F, 0.0F}, {1, 0}));
++    ARPG_REQUIRE(!requested_exit(Vec3{1.51F, arpg::combat::room_bounds::min_y, 0.0F}, {0, -1}));
++    ARPG_REQUIRE(!requested_exit(Vec3{-1.51F, arpg::combat::room_bounds::max_y, 0.0F}, {0, 1}));
+     return {};
+ }
+ 
+ arpg::test::Failure first_exit_commits_destroys_and_removes_combat() noexcept {
+     DungeonSession session;
+     drain_dungeon(session);
+     ARPG_REQUIRE(clear_and_await(session));
+     drain_dungeon(session);
+ 
+     const DungeonSnapshot before = session.snapshot();
+@@ -268,21 +269,21 @@ arpg::test::Failure transition_and_combat_start_are_separate_ticks() noexcept {
+     }
+     const DungeonSnapshot locked = session.snapshot();
+     ARPG_REQUIRE(locked.session_tick == transition.session_tick + 1U);
+     ARPG_REQUIRE(locked.phase == RoomPhase::locked);
+     ARPG_REQUIRE(locked.room_index == 1U);
+     ARPG_REQUIRE(locked.entry_side == arpg::dungeon::EntrySide::bottom);
+     ARPG_REQUIRE(locked.has_active_room);
+     ARPG_REQUIRE(locked.combat.has_value());
+     ARPG_REQUIRE(locked.combat->tick == 0U);
+     ARPG_REQUIRE(locked.combat->player.position.x == 0.0F);
+-    ARPG_REQUIRE(locked.combat->player.position.y == 4.75F);
++    ARPG_REQUIRE(locked.combat->player.position.y == 10.25F);
+ 
+     session.tick(outward(ExitDirection::up));
+     const ExitEvents events = drain_dungeon(session);
+     const DungeonSnapshot combat = session.snapshot();
+     ARPG_REQUIRE(combat.phase == RoomPhase::combat);
+     ARPG_REQUIRE(combat.combat->tick == 0U);
+     ARPG_REQUIRE(events.count == 2U);
+     ARPG_REQUIRE(events.values[0].kind == DungeonEventKind::room_entered);
+     ARPG_REQUIRE(events.values[1].kind == DungeonEventKind::combat_started);
+     return {};
+@@ -326,21 +327,21 @@ arpg::test::Failure contact_and_held_inputs_never_duplicate_rooms() noexcept {
+ }
+ 
+ arpg::test::Failure maximum_index_faults_once_without_destroying() noexcept {
+     arpg::dungeon::DungeonSessionConfig config;
+     config.initial_room_index = (std::numeric_limits<std::uint64_t>::max)();
+     DungeonSession session{config};
+     ARPG_REQUIRE(clear_and_await(session));
+     drain_dungeon(session);
+ 
+     const DungeonSnapshot before = session.snapshot();
+-    for (int tick = 0; tick < 256; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         session.tick(outward(ExitDirection::left));
+         drain_combat(session);
+         if (session.snapshot().diagnostics.room_index_overflow) {
+             break;
+         }
+     }
+     const DungeonSnapshot faulted = session.snapshot();
+     const ExitEvents first = drain_dungeon(session);
+     ARPG_REQUIRE(faulted.phase == RoomPhase::faulted);
+     ARPG_REQUIRE(faulted.has_active_room);
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index 63df1ad..61701df 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -594,35 +594,35 @@ bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
+         drain(session, summary);
+     }
+     return false;
+ }
+ 
+ bool drive_to_transition(
+     DungeonSession& session,
+     ExitDirection direction,
+     StressSummary& summary,
+     std::uint64_t& transition_room_index) noexcept {
+-    for (int tick = 0; tick < 512; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         if (state.phase == RoomPhase::committing) {
+             if (!confirm_pending_save(session, summary)) return false;
+             drain(session, summary);
+             continue;
+         }
+         const MovementInput movement = align_center(state, direction);
+         if (movement.x == 0 && movement.y == 0) {
+             break;
+         }
+         tracked_tick(session, movement, summary);
+         drain(session, summary);
+     }
+-    for (int tick = 0; tick < 512; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         tracked_tick(session, outward(direction), summary);
+         drain(session, summary);
+         if (session.snapshot().phase == RoomPhase::committing) {
+             if (!confirm_pending_save(session, summary)) {
+                 return false;
+             }
+             drain(session, summary);
+         }
+         if (session.snapshot().abyss_exit_confirmation_armed) {
+             tracked_tick(session, {}, summary);
+diff --git a/tests/dungeon/dungeon_transaction_tests.cpp b/tests/dungeon/dungeon_transaction_tests.cpp
+index 9075107..b8478a8 100644
+--- a/tests/dungeon/dungeon_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_transaction_tests.cpp
+@@ -323,42 +323,42 @@ bool drive_to_open_door(
+         break;
+     case ExitDirection::left:
+         outward = {-1, 0};
+         break;
+     case ExitDirection::right:
+         outward = {1, 0};
+         break;
+     case ExitDirection::none:
+         return false;
+     }
+-    for (int tick = 0; tick < 256; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         const auto state = session.snapshot();
+         MovementInput movement{};
+         if (!state.combat.has_value()) {
+             return false;
+         }
+         if (direction == ExitDirection::left
+                 || direction == ExitDirection::right) {
+             movement.y = state.combat->player.position.y > 0.1F ? -1
+                 : (state.combat->player.position.y < -0.1F ? 1 : 0);
+         } else {
+             movement.x = state.combat->player.position.x > 0.1F ? -1
+                 : (state.combat->player.position.x < -0.1F ? 1 : 0);
+         }
+         if (movement.x == 0 && movement.y == 0) {
+             break;
+         }
+         session.tick(movement);
+         arpg::test::EventSummary ignored;
+         arpg::test::drain_all_events(session, ignored);
+     }
+-    for (int tick = 0; tick < 256; ++tick) {
++    for (int tick = 0; tick < 640; ++tick) {
+         session.tick(outward);
+         arpg::test::EventSummary ignored;
+         arpg::test::drain_all_events(session, ignored);
+         if (session.snapshot().phase == RoomPhase::committing) {
+             return true;
+         }
+     }
+     return false;
+ }
+ 
+diff --git a/tests/dungeon/encounter_director_tests.cpp b/tests/dungeon/encounter_director_tests.cpp
+index d1c44b3..f047e3d 100644
+--- a/tests/dungeon/encounter_director_tests.cpp
++++ b/tests/dungeon/encounter_director_tests.cpp
+@@ -1,17 +1,18 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "../combat/monster_affix_test_support.hpp"
+ #include "combat/monster_catalog.hpp"
+ #include "combat/monster_affix_catalog.hpp"
+ #include "combat/monster_affix_generation.hpp"
++#include "combat/room_bounds.hpp"
+ #include "dungeon/dungeon_checkpoint.hpp"
+ #include "dungeon/encounter_director.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ using arpg::combat::EncounterWave;
+@@ -102,22 +103,24 @@ bool test_encounter_plan_legal(
+             const auto* definition = arpg::combat::monster_definition(spawn.id);
+             if (definition == nullptr) {
+                 return false;
+             }
+             spent = static_cast<std::uint16_t>(spent + definition->threat_cost);
+             direct_count += test_has_tag(*definition, MonsterTag::direct_target);
+             high_priority_count += test_has_tag(*definition, MonsterTag::high_priority);
+             ranged_count += test_has_tag(*definition, MonsterTag::ranged);
+             support_count += test_has_tag(*definition, MonsterTag::support);
+             hazard_count += test_has_tag(*definition, MonsterTag::ground_hazard);
+-            if (spawn.position.x < -8.0F || spawn.position.x > 8.0F
+-                    || spawn.position.y < -3.5F || spawn.position.y > 3.5F
++            if (spawn.position.x < arpg::combat::room_bounds::min_x
++                    || spawn.position.x > arpg::combat::room_bounds::max_x
++                    || spawn.position.y < arpg::combat::room_bounds::min_y
++                    || spawn.position.y > arpg::combat::room_bounds::max_y
+                     || spawn.position.z != 0.0F) {
+                 return false;
+             }
+         }
+         if (direct_count == 0U || support_count > config.support_limit
+                 || ranged_count > config.ranged_limit
+                 || hazard_count > config.ground_hazard_limit) {
+             return false;
+         }
+         const std::uint8_t priority_limit =
+@@ -229,24 +232,24 @@ arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
+     ARPG_REQUIRE(a.fault == DungeonFault::none);
+     ARPG_REQUIRE(same_encounter_plan(a.plan, b.plan));
+     ARPG_REQUIRE(test_encounter_plan_legal(a.plan, EncounterDirectorConfig{}));
+     ARPG_REQUIRE(a.plan.wave_count == 2U);
+     struct ExpectedBaseSpawn final {
+         MonsterId id{};
+         float x{};
+         float y{};
+     };
+     constexpr std::array<ExpectedBaseSpawn, 4> kStage8BaseTrace{{
+-        {MonsterId::chaos_chaser, -1.898F, -3.159F},
+-        {MonsterId::fire_charger, 5.914F, 3.418F},
+-        {MonsterId::chaos_chaser, -1.935F, -3.361F},
+-        {MonsterId::lightning_dasher, -2.939F, 0.850F},
++        {MonsterId::chaos_chaser, -3.796F, -6.318F},
++        {MonsterId::fire_charger, 11.828F, 6.836F},
++        {MonsterId::chaos_chaser, -3.870F, -6.722F},
++        {MonsterId::lightning_dasher, -5.878F, 1.700F},
+     }};
+     for (std::size_t wave_index = 0U; wave_index < a.plan.wave_count;
+          ++wave_index) {
+         const auto& wave = a.plan.waves[wave_index];
+         ARPG_REQUIRE(wave.spawn_count == 2U);
+         for (std::size_t spawn_index = 0U; spawn_index < wave.spawn_count;
+              ++spawn_index) {
+             const auto& actual = wave.spawns[spawn_index];
+             const auto& expected = kStage8BaseTrace[wave_index * 2U + spawn_index];
+             ARPG_REQUIRE(actual.id == expected.id);
+diff --git a/tests/dungeon/room_generation_tests.cpp b/tests/dungeon/room_generation_tests.cpp
+index 771afcf..c3d5d6e 100644
+--- a/tests/dungeon/room_generation_tests.cpp
++++ b/tests/dungeon/room_generation_tests.cpp
+@@ -1,13 +1,14 @@
+ #include "test_framework.hpp"
+ 
+ #include "abyss/abyss_rules.hpp"
++#include "combat/room_bounds.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/room_combat_template.hpp"
+ #include "dungeon/room_generation.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace {
+@@ -238,35 +239,35 @@ arpg::test::Failure entry_templates_preserve_stage_two_layout() noexcept {
+     const auto right = make_combat_lab_config(EntrySide::right, 1U);
+     const auto top = make_combat_lab_config(EntrySide::top, 1U);
+     const auto bottom = make_combat_lab_config(EntrySide::bottom, 1U);
+     ARPG_REQUIRE(initial.has_value() && left.has_value() && right.has_value()
+         && top.has_value() && bottom.has_value());
+     ARPG_REQUIRE(same_position(initial->player_spawn, 0.0F, 0.0F));
+     ARPG_REQUIRE(initial->initial_facing == Facing::right);
+     ARPG_REQUIRE(same_position(initial->dummy_spawns[0], 2.30F, -0.35F));
+     ARPG_REQUIRE(same_position(initial->dummy_spawns[1], 2.80F, 0.0F));
+     ARPG_REQUIRE(same_position(initial->dummy_spawns[2], 3.30F, 0.35F));
+-    ARPG_REQUIRE(same_position(left->player_spawn, -10.50F, 0.0F));
++    ARPG_REQUIRE(same_position(left->player_spawn, -22.50F, 0.0F));
+     ARPG_REQUIRE(left->initial_facing == Facing::right);
+     ARPG_REQUIRE(same_position(left->dummy_spawns[0], 2.30F, -0.35F));
+     ARPG_REQUIRE(same_position(left->dummy_spawns[1], 2.80F, 0.0F));
+     ARPG_REQUIRE(same_position(left->dummy_spawns[2], 3.30F, 0.35F));
+-    ARPG_REQUIRE(same_position(right->player_spawn, 10.50F, 0.0F));
++    ARPG_REQUIRE(same_position(right->player_spawn, 22.50F, 0.0F));
+     ARPG_REQUIRE(right->initial_facing == Facing::left);
+     ARPG_REQUIRE(same_position(right->dummy_spawns[0], -2.30F, -0.35F));
+     ARPG_REQUIRE(same_position(right->dummy_spawns[1], -2.80F, 0.0F));
+     ARPG_REQUIRE(same_position(right->dummy_spawns[2], -3.30F, 0.35F));
+-    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F, -4.75F));
++    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F, -10.25F));
+     ARPG_REQUIRE(same_position(top->dummy_spawns[0], 2.30F, 2.30F));
+     ARPG_REQUIRE(same_position(top->dummy_spawns[1], 2.80F, 2.30F));
+     ARPG_REQUIRE(same_position(top->dummy_spawns[2], 3.30F, 2.30F));
+-    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F, 4.75F));
++    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F, 10.25F));
+     ARPG_REQUIRE(same_position(bottom->dummy_spawns[0], 2.30F, -2.30F));
+     ARPG_REQUIRE(same_position(bottom->dummy_spawns[1], 2.80F, -2.30F));
+     ARPG_REQUIRE(same_position(bottom->dummy_spawns[2], 3.30F, -2.30F));
+     ARPG_REQUIRE(!initial->respawn_defeated_dummies);
+     ARPG_REQUIRE(!left->respawn_defeated_dummies);
+     ARPG_REQUIRE(!right->respawn_defeated_dummies);
+     ARPG_REQUIRE(!top->respawn_defeated_dummies);
+     ARPG_REQUIRE(!bottom->respawn_defeated_dummies);
+     return {};
+ }
+diff --git a/tests/dungeon/stage10_validation_fixture.cpp b/tests/dungeon/stage10_validation_fixture.cpp
+index 9c68b5b..8f9f681 100644
+--- a/tests/dungeon/stage10_validation_fixture.cpp
++++ b/tests/dungeon/stage10_validation_fixture.cpp
+@@ -1,11 +1,12 @@
+ #include "abyss/abyss_rules.hpp"
++#include "combat/room_bounds.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/dungeon_session.hpp"
+ #include "dungeon/room_generation.hpp"
+ #include "items/item_generation.hpp"
+ #include "persistence/save_store.hpp"
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstdint>
+@@ -313,24 +314,24 @@ bool claim_reward(DungeonSession& session,
+               << " pending=" << failed.abyss_pending_rewards
+               << " unpicked=" << failed.abyss_unpicked_rewards
+               << " phase=" << static_cast<unsigned>(failed.phase)
+               << " fault=" << static_cast<unsigned>(failed.diagnostics.fault)
+               << '\n';
+     return false;
+ }
+ 
+ Vec3 door_position(ExitDirection direction) noexcept {
+     switch (direction) {
+-    case ExitDirection::up: return {0.0F, -5.5F, 0.0F};
+-    case ExitDirection::down: return {0.0F, 5.5F, 0.0F};
+-    case ExitDirection::left: return {-12.0F, 0.0F, 0.0F};
+-    case ExitDirection::right: return {12.0F, 0.0F, 0.0F};
++    case ExitDirection::up: return {0.0F, arpg::combat::room_bounds::min_y, 0.0F};
++    case ExitDirection::down: return {0.0F, arpg::combat::room_bounds::max_y, 0.0F};
++    case ExitDirection::left: return {arpg::combat::room_bounds::min_x, 0.0F, 0.0F};
++    case ExitDirection::right: return {arpg::combat::room_bounds::max_x, 0.0F, 0.0F};
+     case ExitDirection::none: return {};
+     }
+     return {};
+ }
+ 
+ MovementInput exit_movement(Vec3 player, ExitDirection direction) noexcept {
+     MovementInput movement = movement_toward(player, door_position(direction));
+     switch (direction) {
+     case ExitDirection::up: movement.y = -1; break;
+     case ExitDirection::down: movement.y = 1; break;

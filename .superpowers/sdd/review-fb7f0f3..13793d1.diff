@@ -1,0 +1,340 @@
+# Review package: fb7f0f3..13793d1
+
+## Commits
+13793d1 test: cover room density affix ranges
+f0c3cbc feat: add deterministic room density affixes
+
+## Files changed
+ src/dungeon/CMakeLists.txt          |   1 +
+ src/dungeon/room_affix.cpp          |  57 ++++++++++++++++++++
+ src/dungeon/room_affix.hpp          |  34 ++++++++++++
+ tests/dungeon/CMakeLists.txt        |   1 +
+ tests/dungeon/dungeon_test_main.cpp |   4 +-
+ tests/dungeon/room_affix_tests.cpp  | 101 ++++++++++++++++++++++++++++++++++++
+ 6 files changed, 197 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/dungeon/CMakeLists.txt b/src/dungeon/CMakeLists.txt
+index 4c21dd3..30cebaf 100644
+--- a/src/dungeon/CMakeLists.txt
++++ b/src/dungeon/CMakeLists.txt
+@@ -4,20 +4,21 @@ add_library(arpg_dungeon STATIC
+     dungeon_rules.cpp
+     encounter_director.cpp
+     encounter_budget.cpp
+     dungeon_session.cpp
+     dungeon_transition.cpp
+     dungeon_snapshot.cpp
+     death_checkpoint.cpp
+     dungeon_progression.cpp
+     material_loot.cpp
+     room_generation.cpp
++    room_affix.cpp
+     room_combat_template.cpp
+     room_navigation.cpp)
+ 
+ target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_dungeon PUBLIC cxx_std_17)
+ target_link_libraries(arpg_dungeon PUBLIC arpg_combat arpg_progression arpg_passives arpg_items arpg_skills PRIVATE arpg_core arpg_abyss)
+ arpg_enable_project_warnings(arpg_dungeon)
+ if(MSVC)
+     target_compile_options(arpg_dungeon PUBLIC /EHsc)
+ endif()
+diff --git a/src/dungeon/room_affix.cpp b/src/dungeon/room_affix.cpp
+new file mode 100644
+index 0000000..8f227a1
+--- /dev/null
++++ b/src/dungeon/room_affix.cpp
+@@ -0,0 +1,57 @@
++#include "dungeon/room_affix.hpp"
++
++#include "core/deterministic_rng.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::dungeon {
++namespace {
++
++constexpr std::array<RoomDensityDefinition, 3> kDefinitions{{
++    {RoomDensityAffix::crowded, 50U, 12U, 16U},
++    {RoomDensityAffix::dense, 35U, 17U, 22U},
++    {RoomDensityAffix::horde, 15U, 23U, 30U},
++}};
++
++constexpr std::uint64_t kAffixDomain = 0x524F4F4D5F414646ULL;
++constexpr std::uint64_t kCountDomain = 0x524F4F4D5F434E54ULL;
++
++[[nodiscard]] const RoomDensityDefinition& select_definition(
++    std::uint64_t room_seed) noexcept {
++    auto stream = core::DeterministicRng::derive_stream(room_seed, kAffixDomain);
++    const std::uint64_t selection = stream.next_bounded(100U).value_or(0U);
++    std::uint64_t upper_bound = 0U;
++    for (const RoomDensityDefinition& definition : kDefinitions) {
++        upper_bound += definition.weight;
++        if (selection < upper_bound) return definition;
++    }
++    return kDefinitions.back();
++}
++
++}  // namespace
++
++const RoomDensityDefinition* room_density_definition(
++    RoomDensityAffix affix) noexcept {
++    const std::size_t index = static_cast<std::size_t>(affix);
++    if (index >= kDefinitions.size()) return nullptr;
++    return &kDefinitions[index];
++}
++
++RoomDensityRoll roll_room_density(
++    std::uint64_t room_seed,
++    bool is_abyss) noexcept {
++    const RoomDensityDefinition& definition = select_definition(room_seed);
++    auto stream = core::DeterministicRng::derive_stream(room_seed, kCountDomain);
++    const std::uint64_t span = static_cast<std::uint64_t>(
++        definition.maximum - definition.minimum + 1U);
++    const std::uint8_t base_count = static_cast<std::uint8_t>(
++        definition.minimum + stream.next_bounded(span).value_or(0U));
++    const std::uint8_t monster_count = is_abyss
++        ? static_cast<std::uint8_t>((base_count * 3U + 1U) / 2U)
++        : base_count;
++    return {definition.id, base_count, monster_count};
++}
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/room_affix.hpp b/src/dungeon/room_affix.hpp
+new file mode 100644
+index 0000000..a100f4a
+--- /dev/null
++++ b/src/dungeon/room_affix.hpp
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include <cstdint>
++
++namespace arpg::dungeon {
++
++enum class RoomDensityAffix : std::uint8_t {
++    crowded,
++    dense,
++    horde,
++    count,
++};
++
++struct RoomDensityDefinition final {
++    RoomDensityAffix id{RoomDensityAffix::crowded};
++    std::uint8_t weight{};
++    std::uint8_t minimum{};
++    std::uint8_t maximum{};
++};
++
++struct RoomDensityRoll final {
++    RoomDensityAffix affix{RoomDensityAffix::crowded};
++    std::uint8_t base_count{};
++    std::uint8_t monster_count{};
++};
++
++[[nodiscard]] RoomDensityRoll roll_room_density(
++    std::uint64_t room_seed,
++    bool is_abyss) noexcept;
++
++[[nodiscard]] const RoomDensityDefinition* room_density_definition(
++    RoomDensityAffix affix) noexcept;
++
++}  // namespace arpg::dungeon
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 29fb77e..d957189 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -1,19 +1,20 @@
+ add_executable(arpg_dungeon_tests
+     ../core/allocation_probe.cpp
+     dungeon_test_main.cpp
+     death_checkpoint_tests.cpp
+     dungeon_death_lifecycle_tests.cpp
+     dungeon_death_stress_tests.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
++    room_affix_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_query_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_crafting_transaction_tests.cpp
+     dungeon_skill_loadout_transaction_tests.cpp
+     dungeon_skill_cast_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 7f4eeca..fcbf2c0 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -1,20 +1,21 @@
+ #include "test_framework.hpp"
+ 
+ #include <cstdlib>
+ 
+ #if defined(_WIN32) && defined(_DEBUG)
+ #include <crtdbg.h>
+ #include <cstdlib>
+ #endif
+ 
+ arpg::test::TestSuite room_generation_suite() noexcept;
++arpg::test::TestSuite room_affix_suite() noexcept;
+ arpg::test::TestSuite death_checkpoint_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_query_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+@@ -133,20 +134,21 @@ int main() {
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+ #endif
+     const arpg::test::TestSuite suites[] = {
+         room_generation_suite(),
++        room_affix_suite(),
+         death_checkpoint_suite(),
+         dungeon_death_lifecycle_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_query_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+@@ -232,13 +234,13 @@ int main() {
+     }
+ 
+     if (stage17_skill_loadout_only()) {
+         const arpg::test::TestSuite loadout_only[] = {
+             dungeon_skill_loadout_transaction_suite(),
+         };
+         return arpg::test::run_suites(loadout_only, 9,
+             "stage 17 task 3 skill loadout transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 287,
++    return arpg::test::run_suites(suites, 291,
+         "stage 18 dungeon queries");
+ }
+diff --git a/tests/dungeon/room_affix_tests.cpp b/tests/dungeon/room_affix_tests.cpp
+new file mode 100644
+index 0000000..4b3a7f2
+--- /dev/null
++++ b/tests/dungeon/room_affix_tests.cpp
+@@ -0,0 +1,101 @@
++#include "test_framework.hpp"
++
++#include "allocation_probe.hpp"
++#include "dungeon/room_affix.hpp"
++
++#include <array>
++#include <cstdint>
++
++namespace {
++
++arpg::test::Failure catalog_has_required_weights_and_ranges() noexcept {
++    using namespace arpg::dungeon;
++    const auto* crowded = room_density_definition(RoomDensityAffix::crowded);
++    const auto* dense = room_density_definition(RoomDensityAffix::dense);
++    const auto* horde = room_density_definition(RoomDensityAffix::horde);
++    ARPG_REQUIRE(crowded != nullptr);
++    ARPG_REQUIRE(dense != nullptr);
++    ARPG_REQUIRE(horde != nullptr);
++    ARPG_REQUIRE(crowded->weight == 50U);
++    ARPG_REQUIRE(crowded->minimum == 12U);
++    ARPG_REQUIRE(crowded->maximum == 16U);
++    ARPG_REQUIRE(dense->weight == 35U);
++    ARPG_REQUIRE(dense->minimum == 17U);
++    ARPG_REQUIRE(dense->maximum == 22U);
++    ARPG_REQUIRE(horde->weight == 15U);
++    ARPG_REQUIRE(horde->minimum == 23U);
++    ARPG_REQUIRE(horde->maximum == 30U);
++    return {};
++}
++
++arpg::test::Failure abyss_preserves_base_roll_and_scales_count() noexcept {
++    using namespace arpg::dungeon;
++    for (std::uint64_t seed = 0; seed < 10000U; ++seed) {
++        const RoomDensityRoll normal = roll_room_density(seed, false);
++        const RoomDensityRoll abyss = roll_room_density(seed, true);
++        ARPG_REQUIRE(abyss.affix == normal.affix);
++        ARPG_REQUIRE(abyss.base_count == normal.base_count);
++        ARPG_REQUIRE(abyss.monster_count
++            == static_cast<std::uint8_t>((normal.base_count * 3U + 1U) / 2U));
++        ARPG_REQUIRE(abyss.monster_count <= 45U);
++    }
++    return {};
++}
++
++arpg::test::Failure weighted_distribution_covers_every_inclusive_endpoint() noexcept {
++    using namespace arpg::dungeon;
++    std::array<std::uint32_t, 3> affix_counts{};
++    std::array<bool, 31> endpoints{};
++    for (std::uint64_t seed = 0; seed < 100000U; ++seed) {
++        const RoomDensityRoll roll = roll_room_density(seed, false);
++        const auto index = static_cast<std::size_t>(roll.affix);
++        const auto* definition = room_density_definition(roll.affix);
++        ARPG_REQUIRE(index < affix_counts.size());
++        ARPG_REQUIRE(definition != nullptr);
++        ARPG_REQUIRE(roll.base_count >= definition->minimum);
++        ARPG_REQUIRE(roll.base_count <= definition->maximum);
++        ++affix_counts[index];
++        endpoints[roll.base_count] = true;
++    }
++    constexpr std::array<std::uint32_t, 3> expected{{50000U, 35000U, 15000U}};
++    for (std::size_t index = 0; index < affix_counts.size(); ++index) {
++        const std::uint32_t deviation = affix_counts[index] > expected[index]
++            ? affix_counts[index] - expected[index]
++            : expected[index] - affix_counts[index];
++        ARPG_REQUIRE(deviation < 1000U);
++    }
++    for (std::uint8_t count = 12U; count <= 30U; ++count) {
++        ARPG_REQUIRE(endpoints[count]);
++    }
++    return {};
++}
++
++arpg::test::Failure rolls_are_repeatable_and_allocate_nothing() noexcept {
++    using namespace arpg::dungeon;
++    for (std::uint64_t seed = 0; seed < 100000U; ++seed) {
++        const RoomDensityRoll first = roll_room_density(seed, (seed & 1U) != 0U);
++        const RoomDensityRoll second = roll_room_density(seed, (seed & 1U) != 0U);
++        ARPG_REQUIRE(first.affix == second.affix);
++        ARPG_REQUIRE(first.base_count == second.base_count);
++        ARPG_REQUIRE(first.monster_count == second.monster_count);
++    }
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (std::uint64_t seed = 0; seed < 100000U; ++seed) {
++        static_cast<void>(roll_room_density(seed, (seed & 1U) != 0U));
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == before);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"catalog has required weights and ranges", &catalog_has_required_weights_and_ranges},
++    {"abyss preserves base roll and scales count", &abyss_preserves_base_roll_and_scales_count},
++    {"weighted distribution covers every inclusive endpoint", &weighted_distribution_covers_every_inclusive_endpoint},
++    {"rolls are repeatable and allocate nothing", &rolls_are_repeatable_and_allocate_nothing},
++};
++
++}  // namespace
++
++arpg::test::TestSuite room_affix_suite() noexcept {
++    return arpg::test::make_suite("room_affix", kCases);
++}

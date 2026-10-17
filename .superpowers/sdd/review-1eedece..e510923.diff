@@ -1,0 +1,173 @@
+# Review package: 1eedececf5b8aafd02c42f5167c9e1a374a0fbb4..e5109231ed4fe40ae0e8d05a6f7256baee9d8e09
+
+## Commits
+e510923 ci: build core tests and Windows game in cloud
+
+## Files changed
+ .github/workflows/build-and-test.yml | 45 ++++++++++++++++++++++++++++++++++++
+ scripts/Configure.ps1                |  4 ++--
+ tests/cloud/cloud_readiness_test.py  | 36 ++++++++++++++++++++++++++++-
+ 3 files changed, 82 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/.github/workflows/build-and-test.yml b/.github/workflows/build-and-test.yml
+new file mode 100644
+index 0000000..9f9f4c5
+--- /dev/null
++++ b/.github/workflows/build-and-test.yml
+@@ -0,0 +1,45 @@
++name: Build and Test
++
++on:
++  push:
++  pull_request:
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++concurrency:
++  group: build-and-test-${{ github.workflow }}-${{ github.ref }}
++  cancel-in-progress: true
++
++jobs:
++  ubuntu-core-tests:
++    runs-on: ubuntu-latest
++    timeout-minutes: 20
++    steps:
++      # v4.2.2
++      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
++      - name: Install build tools
++        run: sudo apt-get update && sudo apt-get install --yes cmake ninja-build g++
++      - name: Configure, build, and test core
++        run: bash scripts/cloud/setup.sh
++
++  windows-full-build:
++    runs-on: windows-2022
++    timeout-minutes: 30
++    steps:
++      # v4.2.2
++      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
++      - name: Test Windows debug build
++        shell: pwsh
++        run: .\scripts\Test.ps1 -Preset windows-msvc-debug
++      - name: Build Windows release artifact
++        shell: pwsh
++        run: .\scripts\Build.ps1 -Preset windows-msvc-release
++      - name: Upload Windows artifact
++        # v4.6.2
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
++        with:
++          name: infinite-dungeon-arpg-windows-x64
++          path: out/build/windows-msvc-release/bin/**
++          if-no-files-found: error
+diff --git a/scripts/Configure.ps1 b/scripts/Configure.ps1
+index c31cf65..4d3be3e 100644
+--- a/scripts/Configure.ps1
++++ b/scripts/Configure.ps1
+@@ -25,28 +25,28 @@ function Invoke-ArpgNative {
+ 
+ function Enter-ArpgMsvcEnvironment {
+     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+     if (-not (Test-Path -LiteralPath $vswhere)) {
+         throw "vswhere.exe not found: $vswhere"
+     }
+ 
+     $vswhereArgs = @(
+         '-latest',
+         '-version', '[17.0,18.0)',
+-        '-products', 'Microsoft.VisualStudio.Product.BuildTools',
++        '-products', '*',
+         '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+         'Microsoft.VisualStudio.Component.Windows11SDK.26100',
+         '-property', 'installationPath'
+     )
+     $installPath = & $vswhere @vswhereArgs
+     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($installPath)) {
+-        throw 'VS 2022 Build Tools with MSVC x64 and SDK 26100 not found'
++        throw 'VS 2022 with MSVC x64 and SDK 26100 not found'
+     }
+ 
+     $installPath = ($installPath | Select-Object -First 1).Trim()
+     $devShell = Join-Path $installPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+     if (-not (Test-Path -LiteralPath $devShell)) {
+         throw "Developer PowerShell module not found: $devShell"
+     }
+ 
+     Import-Module $devShell -Force
+     Enter-VsDevShell -VsInstallPath $installPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64 -winsdk=10.0.26100.0' | Out-Null
+diff --git a/tests/cloud/cloud_readiness_test.py b/tests/cloud/cloud_readiness_test.py
+index 054ea45..3b13263 100644
+--- a/tests/cloud/cloud_readiness_test.py
++++ b/tests/cloud/cloud_readiness_test.py
+@@ -181,21 +181,21 @@ class CloudReadinessContractTest(unittest.TestCase):
+         for command in expected_maintenance_commands:
+             self.assertTrue(
+                 self._has_exact_tokens(maintenance_commands, command),
+                 f"scripts/cloud/maintenance.sh must run: {' '.join(command)}",
+             )
+ 
+     def test_ci_workflow_runs_ubuntu_core_tests_and_windows_full_build(self):
+         workflow = self._read_required_file(".github/workflows/build-and-test.yml")
+         jobs = self._workflow_jobs(workflow)
+         ubuntu_job = self._job_using_runner(jobs, "ubuntu-latest")
+-        windows_job = self._job_using_runner(jobs, "windows-latest")
++        windows_job = self._job_using_runner(jobs, "windows-2022")
+         ubuntu_commands = self._workflow_run_commands(ubuntu_job)
+         windows_commands = self._workflow_run_commands(windows_job)
+ 
+         self.assertTrue(
+             self._has_run_command(ubuntu_commands, "bash scripts/cloud/setup.sh"),
+             "Ubuntu job must run: bash scripts/cloud/setup.sh",
+         )
+         self.assertTrue(
+             self._has_run_command(
+                 windows_commands,
+@@ -204,13 +204,47 @@ class CloudReadinessContractTest(unittest.TestCase):
+             "Windows job must run: .\\scripts\\Test.ps1 -Preset windows-msvc-debug",
+         )
+         self.assertTrue(
+             self._has_run_command(
+                 windows_commands,
+                 ".\\scripts\\Build.ps1 -Preset windows-msvc-release",
+             ),
+             "Windows job must run: .\\scripts\\Build.ps1 -Preset windows-msvc-release",
+         )
+ 
++    def test_ci_workflow_pins_permissions_and_official_actions(self):
++        workflow = self._read_required_file(".github/workflows/build-and-test.yml")
++
++        self.assertIn(
++            "permissions:\n  contents: read",
++            workflow,
++            "Workflow must request read-only repository contents permission",
++        )
++        self.assertIn(
++            "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
++            workflow,
++            "Checkout action must be pinned to the approved full SHA",
++        )
++        self.assertIn(
++            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
++            workflow,
++            "Artifact action must be pinned to the approved full SHA",
++        )
++
++    def test_configure_accepts_all_vs_2022_products_with_required_components(self):
++        script = self._read_required_file("scripts/Configure.ps1")
++
++        self.assertIn("'-products', '*'", script)
++        self.assertIn("'-version', '[17.0,18.0)'", script)
++        self.assertIn(
++            "'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'", script
++        )
++        self.assertIn(
++            "'Microsoft.VisualStudio.Component.Windows11SDK.26100'", script
++        )
++        self.assertIn(
++            "VS 2022 with MSVC x64 and SDK 26100 not found", script
++        )
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

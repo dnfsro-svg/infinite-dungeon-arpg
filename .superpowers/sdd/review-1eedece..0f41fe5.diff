@@ -1,0 +1,55 @@
+# Review package: 1eedececf5b8aafd02c42f5167c9e1a374a0fbb4..0f41fe5d36082110d540c2ee67ea078c0b0aa7f7
+
+## Commits
+0f41fe5 ci: build core tests and Windows game
+
+## Files changed
+ .github/workflows/build-and-test.yml | 39 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+## Diff
+diff --git a/.github/workflows/build-and-test.yml b/.github/workflows/build-and-test.yml
+new file mode 100644
+index 0000000..975086a
+--- /dev/null
++++ b/.github/workflows/build-and-test.yml
+@@ -0,0 +1,39 @@
++name: Build and Test
++
++on:
++  push:
++  pull_request:
++  workflow_dispatch:
++
++concurrency:
++  group: build-and-test-${{ github.workflow }}-${{ github.ref }}
++  cancel-in-progress: true
++
++jobs:
++  ubuntu-core-tests:
++    runs-on: ubuntu-latest
++    timeout-minutes: 20
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install build tools
++        run: sudo apt-get update && sudo apt-get install --yes cmake ninja-build g++
++      - name: Configure, build, and test core
++        run: bash scripts/cloud/setup.sh
++
++  windows-full-build:
++    runs-on: windows-latest
++    timeout-minutes: 30
++    steps:
++      - uses: actions/checkout@v4
++      - name: Test Windows debug build
++        shell: pwsh
++        run: .\scripts\Test.ps1 -Preset windows-msvc-debug
++      - name: Build Windows release artifact
++        shell: pwsh
++        run: .\scripts\Build.ps1 -Preset windows-msvc-release
++      - name: Upload Windows artifact
++        uses: actions/upload-artifact@v4
++        with:
++          name: infinite-dungeon-arpg-windows-x64
++          path: out/build/windows-msvc-release/bin/**
++          if-no-files-found: error

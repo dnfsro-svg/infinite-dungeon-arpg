@@ -1,0 +1,17 @@
+[real-input] seed=5928216280406315093 initial-room=0 plan=1/31/12
+[real-input] room0-launcher room=0 cleared=1 initial-player=0.00,0.00 initial-target=-4.01,-1.95 hp=280 queues=10/10 rejected=0 swings=10 active=99 hits=12 defeated=12/0 player-hit/hurt=2/2 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=1 cleared=1 initial-player=0.00,10.25 initial-target=-0.94,5.13 hp=700 queues=13/13 rejected=0 swings=13 active=109 hits=16 defeated=16/0 player-hit/hurt=3/3 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=2 cleared=1 initial-player=-22.50,0.00 initial-target=-11.60,-8.53 hp=260 queues=15/15 rejected=0 swings=15 active=147 hits=21 defeated=21/0 player-hit/hurt=5/5 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=3 cleared=1 initial-player=0.00,-10.25 initial-target=7.13,-4.21 hp=260 queues=12/12 rejected=0 swings=12 active=100 hits=14 defeated=14/0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=4 cleared=1 initial-player=22.50,0.00 initial-target=20.88,4.01 hp=240 queues=13/13 rejected=0 swings=13 active=114 hits=25 defeated=25/0 player-hit/hurt=7/7 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=5 cleared=1 initial-player=0.00,10.25 initial-target=-4.72,6.72 hp=300 queues=12/12 rejected=0 swings=12 active=110 hits=16 defeated=16/0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=6 cleared=1 initial-player=-22.50,0.00 initial-target=-15.13,-4.32 hp=260 queues=12/12 rejected=0 swings=12 active=100 hits=12 defeated=12/0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=7 cleared=1 initial-player=0.00,-10.25 initial-target=7.70,-4.30 hp=420 queues=10/10 rejected=0 swings=10 active=82 hits=12 defeated=12/0 player-hit/hurt=2/2 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=8 cleared=1 initial-player=22.50,0.00 initial-target=20.43,-4.41 hp=240 queues=14/14 rejected=0 swings=14 active=127 hits=17 defeated=17/0 player-hit/hurt=4/4 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[real-input] roomN-launcher room=9 cleared=1 initial-player=0.00,10.25 initial-target=2.25,6.94 hp=280 queues=12/12 rejected=0 swings=12 active=130 hits=14 defeated=14/0 player-hit/hurt=5/5 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0
+[assisted-clear] rooms=1000 allocation-delta=11998 save-boundaries=1792 save-alloc=11018 room-loads=1000 room-load-alloc=980 unexpected=0 overflow=0/0/0/0
+[stage19-encounter-trace] hash=0x58fdb223c26bd06a
+[stress] exits=1000 index=1000 allocation_before=26692 allocation_after=38838 delta=12146 save-boundaries=1809 save-alloc=11152 room-loads=994 room-load-alloc=994 unexpected=0 dungeon_overflow=0 relay_overflow=0 combat_overflow=0 input_overflow=0
+[stage10-abyss-stress] hits=36/4000 directions=9/11/9/7 reloads=27 hash=0xbe1ba6dc7d9c29a3
+[stage10-abyss-stress] ticks=600 allocations=0 pools=96/384/96/192 saturation=204/481/601
+296 cases, 0 failures

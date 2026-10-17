@@ -162,3 +162,41 @@ Task 5 新增 9 个用例覆盖：三档可见性与 builder 过滤、深渊绕�
 - 本任务只产生 ViewModel；后续 renderer 必须消费 `text_color`/`border_color`/`abyss`，当前没有实际 Draw 或字体覆盖验证，符合 Task 5 边界。
 - 192 个极端同锚点标签在安全区顶部可重叠，这是任务允许的有界退化；不会越界或分配。
 - 共享 `out/build/windows-msvc-debug` 在当前执行身份下不可写，因此验证使用独立 `out/build/task5-debug`；编译器为 MSVC 19.44.35228.0、Windows SDK 10.0.26100.0。
+
+---
+
+# Stage 19 Task 5 P2 测试补强报告
+
+## 范围
+
+仅修改相机数学测试和平台套件总用例数（374 -> 376）；未保留任何生产相机、HUD、density、session、save 或 dungeon runtime 改动。
+
+## 新覆盖
+
+- 非零 Y 相机中心时，玩家投影同时断言水平中心和既定 ground band 的纵向中心锚点（720p 为 453.6px）。该锚点是现有 0.38..0.88 投影带的中心，不改变生产镜头构图。
+- 四个 X/Y clamp 边界分别断言对应可见房间边界的精确投影与 viewport 内性；前/后 Y 边界覆盖 633.6px / 273.6px。
+- 新增不调用任何生产投影辅助函数的解析 ground 反推，用独立公式对四个非零世界坐标做 world -> screen -> world 往返断言。
+
+## TDD 证据
+
+### RED
+
+测试新增后，临时将生产 `ground_y` 故意偏移 `+1.0F`，构建并运行平台套件。新增测试立即报出：
+
+```text
+[FAIL] combat_view_math.camera projection independent round trip
+[FAIL] combat_view_math.back and front projection
+```
+
+随后立刻使用补丁恢复原生产行；该生产改动未保留。
+
+### GREEN
+
+```powershell
+cmake --build --preset windows-msvc-debug --target arpg_platform_tests
+out/build/windows-msvc-debug/bin/arpg_platform_tests.exe
+```
+
+构建成功；376 cases 中无任何 `combat_view_math` 失败。当前平台全套仍有 9 项既有 `dungeon_runtime` 失败，均未触碰且与本次测试无关；验证脚本明确只允许这些已知失败，最终退出码为 0。
+
+`git diff --check` 通过。

@@ -1,0 +1,11 @@
+Test project E:/game/.worktrees/stage19-large-density-rooms/out/build/windows-msvc-debug
+    Start 5: dungeon.units
+1/1 Test #5: dungeon.units ....................   Passed  259.81 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+dungeon     = 259.81 sec*proc (1 test)
+headless    = 259.81 sec*proc (1 test)
+
+Total Test time (real) = 259.84 sec

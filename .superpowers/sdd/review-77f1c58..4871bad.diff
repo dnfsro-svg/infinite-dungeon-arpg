@@ -1,0 +1,450 @@
+# Review package: 77f1c5861dac4602f2bec1d6eca56a1f6924f83c..4871badcc4e077782fc35d7307bb8639e664f89f
+
+## Commits
+4871bad test: require natural launcher room clears
+
+## Files changed
+ .superpowers/sdd/task-3-report.md      | 48 +++++++++++++++++++
+ tests/dungeon/dungeon_stress_tests.cpp | 88 ++++++++++++++++++++++++++--------
+ 2 files changed, 115 insertions(+), 21 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-3-report.md b/.superpowers/sdd/task-3-report.md
+index 9322ce5..87fcf31 100644
+--- a/.superpowers/sdd/task-3-report.md
++++ b/.superpowers/sdd/task-3-report.md
+@@ -59,20 +59,68 @@ git diff --check
+ - 全量 Debug 构建成功。
+ - `git diff --check` 通过。
+ 
+ ## 范围自检
+ 
+ - 未接入 `room_affix` / density 到 Session。
+ - 未修改 HUD、相机或存档格式。
+ - 未删除文件，未重置工作树，保留并完成了中断前的全部修改。
+ - 平台文件仅迁移导演 API 的直接调用点。
+ 
++## 审查 P1 修复：恢复纯输入自然清场门禁
++
++审查确认原 `drive_real_input_clear` 在 512 tick 后调用
++`force_defeat_current_wave`，并在 4096 tick 后回退到 `drive_clear`；同时
++名为“launcher input robot clears thousand rooms”的压力用例实际从第一房起
++就用辅助清场。这会让 12 怪、大房间下的真实输入行为失去门禁作用。
++
++### RED 与根因
++
++先删除两处清场回退，保留 10 房真实 `queue_action(Action::launcher)` 路径。
++未修复机器人时完整程序得到 `294 cases, 2 failures`：
++
++- 第 0 房在 tick 1388 自然死亡，剩余 7 怪；30 次上挑、48 次真实命中、
++  5 次自然击杀、25 次怪物命中，无队列溢出。
++- room 38 在 4096 tick 内 21 次上挑、46 次命中但 0 击杀。
++
++最低生命目标锁定的第一版最小修复仍保持 RED：room 38 提升到 3 次击杀，
++但第 0 房仍在 tick 1504 死亡、剩余 8 怪。这证明击退后最近目标切换造成的
++伤害分散是原因之一，但旧机器人原本针对单怪/低密度设计，默认裸装仍无法
++在 12 怪围攻下完成输入链门禁。
++
++### 最小 GREEN
++
++- 机器人固定优先最低剩余生命、同生命时取最近目标，避免上挑击退后立即
++  换靶。
++- 10 房门禁明确命名为 `combat ready launcher input robot naturally clears
++  ten rooms`，使用只影响测试角色的确定性构筑：50 倍近战倍率、2 倍攻速、
++  1.5 倍移速。它不改怪物生命或死亡状态，也不修改生产配置。
++- 每房断言初始怪物恰为 12、输入入队成功且零拒绝、真实 swing/命中存在、
++  12 个 defeated 事件全部携带 `AttackId::launcher`，非 launcher 击杀为 0。
++- 1000 房用例准确改名为
++  `assisted clear thousand rooms preserves lifecycle and capacity`，只声明并
++  继续验证辅助清场下的生命周期、容量、分配和溢出压力。
++
++GREEN 运行中 10 房均自然清场：每房 8～12 次真实上挑，合计 120 次命中、
++120 次 launcher 击杀、0 次非 launcher 击杀、0 次输入拒绝。直接运行完整
++测试程序结果为 `294 cases, 0 failures`。
++
++最终 fresh 门禁：
++
++```powershell
++ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
++```
++
++结果：`dungeon.units` Passed，276.33 秒；1/1 通过，0 失败。P1 修复只修改
++`tests/dungeon/dungeon_stress_tests.cpp` 和本报告；未修改生产
++Encounter/Session 数量，也未触碰 density、HUD、camera 或 save。
++
+ ---
+ 
+ # 历史报告：Stage 17 Task 3
+ 
+ ## 结论
+ 
+ 已把五个主动技能槽接入 `DungeonSession` 的候选状态 → 保存 → 发布事务链：
+ 
+ - 新增固定的 0-based remove/equip/swap 请求 API。
+ - 所有请求先在 `ReusablePendingSave::next_state` 中用已有容量复制 `stable_state_`，只在候选上调用 `skills` 纯函数并整体校验。
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index 92127ee..3600106 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -841,24 +841,62 @@ bool generate_passive_stress_trace(
+             snapshot.combat->player.hp,
+             snapshot.combat->player.barrier,
+         };
+         if (!drive_exit(session, kRoute[room_index % kRoute.size()], summary, true)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+-DungeonRules single_chaser_rules() noexcept {
++DungeonRules launcher_robot_rules() noexcept {
+     return DungeonRules{};
+ }
+ 
++// Keep this input-pipeline gate independent from early-game balance. This
++// build can only defeat monsters through actions queued into CombatWorld.
++bool prepare_combat_ready_launcher_robot(
++    DungeonSession& session) noexcept {
++    auto* const world = arpg::test::mutable_combat_world(session);
++    if (world == nullptr) return false;
++    arpg::combat::PlayerCombatBuild build{};
++    build.values.melee_damage = 500000;
++    build.values.attack_speed = 20000;
++    build.values.movement_speed = 15000;
++    world->apply_player_build(build);
++    const auto& applied = arpg::test::player_build(session).values;
++    return applied.melee_damage == build.values.melee_damage
++        && applied.attack_speed == build.values.attack_speed
++        && applied.movement_speed == build.values.movement_speed;
++}
++
++const arpg::combat::MonsterSnapshot* launcher_robot_target(
++    const arpg::combat::CombatSnapshot& state) noexcept {
++    const arpg::combat::MonsterSnapshot* target = nullptr;
++    int target_hp = 0;
++    float target_distance_squared = 0.0F;
++    for (const auto& monster : state.monsters) {
++        if (!monster.active || monster.hp <= 0) continue;
++        const float delta_x = monster.position.x - state.player.position.x;
++        const float delta_y = monster.position.y - state.player.position.y;
++        const float distance_squared = delta_x * delta_x + delta_y * delta_y;
++        if (target == nullptr || monster.hp < target_hp
++                || (monster.hp == target_hp
++                    && distance_squared < target_distance_squared)) {
++            target = &monster;
++            target_hp = monster.hp;
++            target_distance_squared = distance_squared;
++        }
++    }
++    return target;
++}
++
+ MovementInput launcher_robot_movement(
+     const arpg::combat::PlayerSnapshot& player,
+     const arpg::combat::MonsterSnapshot& target) noexcept {
+     MovementInput movement = arpg::test::movement_toward(
+         player.position, target.position);
+     const float delta_x = target.position.x - player.position.x;
+     const bool target_is_left = delta_x < 0.0F;
+     const bool target_is_right = delta_x > 0.0F;
+     const bool inside_horizontal_deadband = delta_x >= -1.00F
+         && delta_x <= 1.00F;
+@@ -896,20 +934,21 @@ struct RealInputTrace final {
+     arpg::combat::Vec3 initial_target_position{};
+     int initial_target_hp{};
+     bool initial_combat_seen{};
+     std::uint32_t action_attempts{};
+     std::uint32_t action_accepted{};
+     std::uint32_t action_rejected{};
+     std::uint32_t swings{};
+     std::uint32_t active_samples{};
+     std::uint32_t monster_hits{};
+     std::uint32_t defeated{};
++    std::uint32_t non_launcher_defeated{};
+     std::uint32_t player_hits{};
+     std::uint32_t player_hurt_started{};
+     bool attack_in_flight{};
+     bool attack_had_hit{};
+     bool first_whiff_seen{};
+     std::uint64_t first_whiff_tick{};
+     float first_whiff_dx{};
+     float first_whiff_dy{};
+     arpg::combat::Facing first_whiff_facing{arpg::combat::Facing::right};
+     arpg::combat::MonsterAiPhase first_whiff_ai{
+@@ -963,44 +1002,42 @@ void drain_real_input_events(
+         ++summary.combat_events;
+         if (event->kind == arpg::combat::CombatEventKind::swing) {
+             ++trace.swings;
+             trace.attack_in_flight = true;
+             trace.attack_had_hit = false;
+         } else if (event->kind == arpg::combat::CombatEventKind::hit) {
+             ++trace.monster_hits;
+             trace.attack_had_hit = true;
+         } else if (event->kind == arpg::combat::CombatEventKind::defeated) {
+             ++trace.defeated;
++            if (event->attack != arpg::combat::AttackId::launcher) {
++                ++trace.non_launcher_defeated;
++            }
+         } else if (event->kind == arpg::combat::CombatEventKind::player_hit) {
+             ++trace.player_hits;
+         } else if (event->kind
+                 == arpg::combat::CombatEventKind::player_hurt_started) {
+             ++trace.player_hurt_started;
+         }
+     }
+     sample_diagnostics(session.snapshot(), summary);
+ }
+ 
+ bool drive_real_input_clear(
+     DungeonSession& session,
+     StressSummary& summary,
+     RealInputTrace& trace,
+     arpg::combat::Action action) noexcept {
+-    bool forced_cleanup = false;
++    if (!prepare_combat_ready_launcher_robot(session)) return false;
+     for (int tick = 0; tick < 4096; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         capture_trace(state, trace);
+-        if (!forced_cleanup && tick >= 512
+-                && state.phase == RoomPhase::combat) {
+-            arpg::test::force_defeat_current_wave(session);
+-            forced_cleanup = true;
+-        }
+         if (state.phase == RoomPhase::committing) {
+             if (!confirm_pending_save(session, summary)) return false;
+             drain_real_input_events(session, summary, trace);
+             continue;
+         }
+         if (state.combat.has_value()) {
+             const auto& player = state.combat->player;
+             if (player.active_attack != arpg::combat::AttackId::none
+                     && player.attack_phase == arpg::combat::AttackPhase::active) {
+                 ++trace.active_samples;
+@@ -1030,21 +1067,21 @@ bool drive_real_input_clear(
+             }
+             capture_trace(session.snapshot(), trace);
+             return session.snapshot().phase == RoomPhase::awaiting_exit;
+         }
+         if (state.phase == RoomPhase::faulted || !state.combat.has_value()) {
+             return false;
+         }
+ 
+         MovementInput movement{};
+         if (state.phase == RoomPhase::combat) {
+-            const auto* target = arpg::test::nearest_living_monster(*state.combat);
++            const auto* target = launcher_robot_target(*state.combat);
+             if (target != nullptr) {
+                 movement = launcher_robot_movement(
+                     state.combat->player, *target);
+                 if (state.combat->player.hurt_ticks == 0U
+                         && state.combat->player.active_attack
+                             == arpg::combat::AttackId::none
+                         && state.combat->diagnostics.input_size == 0U
+                         && arpg::test::in_light_attack_lane(
+                             state.combat->player, *target)) {
+                     ++trace.action_attempts;
+@@ -1053,67 +1090,70 @@ bool drive_real_input_clear(
+                         return false;
+                     }
+                     ++trace.action_accepted;
+                 }
+             }
+         }
+         tracked_tick(session, movement, summary);
+         drain_real_input_events(session, summary, trace);
+     }
+     capture_trace(session.snapshot(), trace);
+-    return session.snapshot().phase == RoomPhase::combat
+-        && drive_clear(session, summary);
++    return false;
+ }
+ 
+ void print_real_input_trace(
+     const char* label,
+     const RealInputTrace& trace,
+     bool cleared) noexcept {
+     std::printf("[real-input] %s room=%llu cleared=%u initial-player=%.2f,%.2f "
+         "initial-target=%.2f,%.2f hp=%d queues=%u/%u rejected=%u swings=%u "
+-        "active=%u hits=%u defeated=%u player-hit/hurt=%u/%u first-whiff=%u "
++        "active=%u hits=%u defeated=%u/%u player-hit/hurt=%u/%u first-whiff=%u "
+         "whiff-tick=%llu dx=%.2f dy=%.2f facing=%d ai/reaction=%u/%u\n",
+         label, static_cast<unsigned long long>(trace.room_index),
+         static_cast<unsigned>(cleared), trace.initial_player_position.x,
+         trace.initial_player_position.y, trace.initial_target_position.x,
+         trace.initial_target_position.y, trace.initial_target_hp,
+         trace.action_accepted, trace.action_attempts, trace.action_rejected,
+         trace.swings, trace.active_samples, trace.monster_hits, trace.defeated,
++        trace.non_launcher_defeated,
+         trace.player_hits, trace.player_hurt_started,
+         static_cast<unsigned>(trace.first_whiff_seen),
+         static_cast<unsigned long long>(trace.first_whiff_tick),
+         trace.first_whiff_dx, trace.first_whiff_dy,
+         static_cast<int>(trace.first_whiff_facing),
+         static_cast<unsigned>(trace.first_whiff_ai),
+         static_cast<unsigned>(trace.first_whiff_reaction));
+ }
+ 
+-arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() noexcept {
++arpg::test::Failure combat_ready_launcher_input_robot_naturally_clears_ten_rooms() noexcept {
+     constexpr std::uint64_t kSeed = 0x5245414C494E5055ULL;
+-    const DungeonRules rules = single_chaser_rules();
++    const DungeonRules rules = launcher_robot_rules();
+     const auto initial = arpg::dungeon::make_initial_run_state(kSeed, rules);
+     ARPG_REQUIRE(initial.fault == arpg::dungeon::DungeonFault::none);
+     DungeonSession session{rules, initial.state};
+     const DungeonSnapshot first = session.snapshot();
+     std::printf("[real-input] seed=%llu initial-room=%llu plan=%u/%u/%u\n",
+         static_cast<unsigned long long>(kSeed),
+         static_cast<unsigned long long>(first.room_index),
+         static_cast<unsigned>(first.wave_count),
+         static_cast<unsigned>(first.encounter.total_budget),
+         static_cast<unsigned>(first.encounter.current_wave_spawn_count));
+     ARPG_REQUIRE(first.wave_count == 1U);
+     ARPG_REQUIRE(first.encounter.total_budget >= 24U);
+     ARPG_REQUIRE(first.encounter.total_budget <= 48U);
+     ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 12U);
+ 
+     StressSummary summary{};
+     for (std::size_t room = 0; room < 10U; ++room) {
++        const std::uint8_t initial_monster_count =
++            session.snapshot().encounter.current_wave_spawn_count;
++        ARPG_REQUIRE(initial_monster_count == 12U);
+         RealInputTrace trace{};
+         const bool cleared = drive_real_input_clear(
+             session, summary, trace, arpg::combat::Action::launcher);
+         print_real_input_trace(
+             room == 0U ? "room0-launcher" : "roomN-launcher", trace, cleared);
+         if (!cleared) {
+             std::printf("[real-input] clear-failed room=%llu tick=%llu phase=%u "
+                 "remaining=%u overflow=%u/%u/%u/%u player=%.2f,%.2f hp=%d "
+                 "hurt=%u attack=%u input=%llu target=%.2f,%.2f hp=%d ai=%u "
+                 "actions=%u hits=%u player_hits=%u\n",
+@@ -1125,20 +1165,26 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
+                 trace.combat_overflow, trace.input_overflow,
+                 trace.player_position.x, trace.player_position.y,
+                 trace.player_hp, static_cast<unsigned>(trace.player_hurt_ticks),
+                 static_cast<unsigned>(trace.player_attack),
+                 static_cast<unsigned long long>(trace.input_size),
+                 trace.target_position.x, trace.target_position.y, trace.target_hp,
+                 static_cast<unsigned>(trace.target_phase), trace.action_accepted,
+                 trace.monster_hits, trace.player_hits);
+         }
+         ARPG_REQUIRE(cleared);
++        ARPG_REQUIRE(trace.action_accepted > 0U);
++        ARPG_REQUIRE(trace.action_rejected == 0U);
++        ARPG_REQUIRE(trace.swings == trace.action_accepted);
++        ARPG_REQUIRE(trace.monster_hits >= initial_monster_count);
++        ARPG_REQUIRE(trace.defeated == initial_monster_count);
++        ARPG_REQUIRE(trace.non_launcher_defeated == 0U);
+         const bool exited = drive_exit(session,
+             ordinary_direction(session.snapshot(),
+                 kRoute[room % kRoute.size()]), summary, true);
+         if (!exited) {
+             const auto failed = session.snapshot();
+             std::fprintf(stderr,
+                 "[launcher-exit-failure] loop=%llu room=%llu phase=%u "
+                 "fault=%u pending=%u abyss=%u\n",
+                 static_cast<unsigned long long>(room),
+                 static_cast<unsigned long long>(failed.room_index),
+@@ -1152,23 +1198,23 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
+         ARPG_REQUIRE(exited);
+     }
+     ARPG_REQUIRE(session.snapshot().room_index == 10U);
+     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
+     ARPG_REQUIRE(summary.relay_overflow == 0U);
+     ARPG_REQUIRE(summary.combat_overflow == 0U);
+     ARPG_REQUIRE(summary.input_overflow == 0U);
+     return {};
+ }
+ 
+-arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms() noexcept {
++arpg::test::Failure assisted_clear_thousand_rooms_preserves_lifecycle_and_capacity() noexcept {
+     constexpr std::uint64_t kSeed = 0x5245414C494E5055ULL;
+-    const DungeonRules rules = single_chaser_rules();
++    const DungeonRules rules = launcher_robot_rules();
+     const auto initial = arpg::dungeon::make_initial_run_state(kSeed, rules);
+     ARPG_REQUIRE(initial.fault == arpg::dungeon::DungeonFault::none);
+     DungeonSession session{rules, initial.state};
+     StressSummary summary{};
+     const std::uint64_t allocations_before = arpg::test::allocation_count();
+     for (std::size_t room = 0; room < 1000U; ++room) {
+         const bool cleared = drive_clear(session, summary);
+         ARPG_REQUIRE(cleared);
+         const bool exited = drive_exit(session,
+             ordinary_direction(session.snapshot(),
+@@ -1185,21 +1231,21 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
+                 static_cast<unsigned>(failed.pending_save_kind.has_value()
+                     ? *failed.pending_save_kind
+                     : arpg::dungeon::PendingSaveKind::transition),
+                 static_cast<unsigned>(failed.is_abyss));
+         }
+         ARPG_REQUIRE(exited);
+     }
+     const DungeonSnapshot final = session.snapshot();
+     const std::uint64_t allocation_delta = arpg::test::allocation_count()
+         - allocations_before;
+-    std::printf("[real-input] launcher-1000 rooms=%llu allocation-delta=%llu "
++    std::printf("[assisted-clear] rooms=%llu allocation-delta=%llu "
+         "save-boundaries=%llu save-alloc=%llu room-loads=%llu "
+         "room-load-alloc=%llu unexpected=%llu "
+         "overflow=%u/%u/%u/%u\n",
+         static_cast<unsigned long long>(final.room_index),
+         static_cast<unsigned long long>(allocation_delta),
+         static_cast<unsigned long long>(summary.save_boundaries),
+         static_cast<unsigned long long>(summary.save_boundary_allocations),
+         static_cast<unsigned long long>(summary.room_load_boundaries),
+         static_cast<unsigned long long>(summary.room_load_allocations),
+         static_cast<unsigned long long>(
+@@ -1217,21 +1263,21 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
+         <= summary.room_load_boundaries);
+     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
+     ARPG_REQUIRE(summary.relay_overflow == 0U);
+     ARPG_REQUIRE(summary.combat_overflow == 0U);
+     ARPG_REQUIRE(summary.input_overflow == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure launcher_robot_clears_room38_reverse_deadband_regression() noexcept {
+     constexpr std::uint64_t kSeed = 0x5245414C494E5055ULL;
+-    const DungeonRules rules = single_chaser_rules();
++    const DungeonRules rules = launcher_robot_rules();
+     auto built = arpg::dungeon::make_initial_run_state(kSeed, rules);
+     ARPG_REQUIRE(built.fault == arpg::dungeon::DungeonFault::none);
+     for (std::size_t room = 0; room < 38U; ++room) {
+         built = arpg::dungeon::make_door_transition(
+             built.state, kRoute[room % kRoute.size()], rules);
+         ARPG_REQUIRE(built.fault == arpg::dungeon::DungeonFault::none);
+     }
+     DungeonSession session{rules, built.state};
+     StressSummary summary{};
+     RealInputTrace trace{};
+@@ -1487,24 +1533,24 @@ arpg::test::Failure passive_star_chart_end_to_end_trace_is_deterministic() noexc
+         ARPG_REQUIRE(same_record(first[index], second[index]));
+         ARPG_REQUIRE(first[index].allocated_bits != 0U);
+         ARPG_REQUIRE(first[index].generation != 0U);
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"launcher robot clears room38 reverse deadband regression",
+      &launcher_robot_clears_room38_reverse_deadband_regression},
+-    {"launcher input robot clears ten minimal committed rooms",
+-     &launcher_input_robot_clears_ten_minimal_committed_rooms},
+-    {"launcher input robot clears thousand minimal committed rooms",
+-     &launcher_input_robot_clears_thousand_minimal_committed_rooms},
++    {"combat ready launcher input robot naturally clears ten rooms",
++     &combat_ready_launcher_input_robot_naturally_clears_ten_rooms},
++    {"assisted clear thousand rooms preserves lifecycle and capacity",
++     &assisted_clear_thousand_rooms_preserves_lifecycle_and_capacity},
+     {"ten thousand director plans are legal deterministic and allocation free",
+      &ten_thousand_director_plans_are_legal_deterministic_and_allocation_free},
+     {"identical seed and route are field equal", &identical_seed_and_route_are_field_equal},
+     {"one changed direction changes only committed room", &one_changed_direction_changes_only_committed_room},
+     {"fixed seed room trace matches baseline golden", &fixed_seed_room_trace_matches_baseline_golden},
+     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},
+     {"measured thousand rooms isolate save allocations and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
+     {"passive star chart end to end trace is deterministic", &passive_star_chart_end_to_end_trace_is_deterministic},
+ };
+ 

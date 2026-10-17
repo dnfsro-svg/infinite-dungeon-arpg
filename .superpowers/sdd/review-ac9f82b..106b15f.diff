@@ -1,0 +1,168 @@
+# Review package: ac9f82b222be73d80c00e0d871c2dbd0f814623a..106b15fc399a3c30762e69c1d214a32e8b557287
+
+## Commits
+106b15f build: add Linux core-only CMake preset
+
+## Files changed
+ CMakeLists.txt    | 45 +++++++++++++++++++++++++++++----------------
+ CMakePresets.json | 22 ++++++++++++++++++++++
+ 2 files changed, 51 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a66ae65..f26234b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,49 +1,62 @@
+ cmake_minimum_required(VERSION 3.25)
+ 
+ project(infinite_dungeon_arpg VERSION 0.1.0 LANGUAGES C CXX)
+ include(cmake/NormalizeMsvcShowIncludes.cmake)
+ 
+ option(ARPG_BUILD_GRAPHICS "Build the raylib host and game executable" ON)
+ option(ARPG_BUILD_PERFORMANCE_PROBES "Build local performance probes" OFF)
+ 
+-if(NOT MSVC)
+-    message(FATAL_ERROR "Stage 0 requires MSVC")
+-endif()
++if(WIN32)
++    if(NOT MSVC)
++        message(FATAL_ERROR "Stage 0 requires MSVC")
++    endif()
+ 
+-if(NOT MSVC_VERSION EQUAL 1944)
+-    message(FATAL_ERROR
+-        "Stage 0 requires MSVC 19.44; detected "
+-        "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+-endif()
++    if(NOT MSVC_VERSION EQUAL 1944)
++        message(FATAL_ERROR
++            "Stage 0 requires MSVC 19.44; detected "
++            "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
++    endif()
+ 
+-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+-    message(FATAL_ERROR "Stage 0 requires an x64 target")
+-endif()
++    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
++        message(FATAL_ERROR "Stage 0 requires an x64 target")
++    endif()
+ 
+-string(REGEX REPLACE "[/\\\\]+$" "" ARPG_WINDOWS_SDK "$ENV{WindowsSDKVersion}")
+-if(NOT ARPG_WINDOWS_SDK STREQUAL "10.0.26100.0")
+-    message(FATAL_ERROR
+-        "Stage 0 requires Windows SDK 10.0.26100.0; detected "
+-        "'${ARPG_WINDOWS_SDK}'")
++    string(REGEX REPLACE "[/\\\\]+$" "" ARPG_WINDOWS_SDK "$ENV{WindowsSDKVersion}")
++    if(NOT ARPG_WINDOWS_SDK STREQUAL "10.0.26100.0")
++        message(FATAL_ERROR
++            "Stage 0 requires Windows SDK 10.0.26100.0; detected "
++            "'${ARPG_WINDOWS_SDK}'")
++    endif()
++else()
++    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
++        message(FATAL_ERROR "Linux core builds require GCC or Clang")
++    endif()
++
++    if(ARPG_BUILD_GRAPHICS)
++        message(FATAL_ERROR
++            "Non-Windows builds are core-only; set ARPG_BUILD_GRAPHICS=OFF")
++    endif()
+ endif()
+ 
+ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ set(CMAKE_CXX_EXTENSIONS OFF)
+ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ 
+ function(arpg_enable_project_warnings target_name)
+     if(MSVC)
+         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
++    else()
++        target_compile_options("${target_name}" PRIVATE -Wall -Wextra -Wpedantic)
+     endif()
+ endfunction()
+ 
+ include(CTest)
+ add_subdirectory(src/core)
+ add_subdirectory(src/abyss)
+ add_subdirectory(src/skills)
+ add_subdirectory(src/combat)
+ add_subdirectory(src/progression)
+ add_subdirectory(src/modifiers)
+diff --git a/CMakePresets.json b/CMakePresets.json
+index bf81d2c..ccd0448 100644
+--- a/CMakePresets.json
++++ b/CMakePresets.json
+@@ -32,47 +32,69 @@
+         "CMAKE_BUILD_TYPE": "Release"
+       }
+     },
+     {
+       "name": "windows-msvc-core-debug",
+       "inherits": "windows-msvc-debug",
+       "displayName": "Windows MSVC Core-only Debug",
+       "cacheVariables": {
+         "ARPG_BUILD_GRAPHICS": "OFF"
+       }
++    },
++    {
++      "name": "linux-gcc-core-debug",
++      "displayName": "Linux GCC Core-only Debug",
++      "generator": "Ninja",
++      "binaryDir": "${sourceDir}/out/build/${presetName}",
++      "cacheVariables": {
++        "BUILD_TESTING": "ON",
++        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
++        "ARPG_BUILD_GRAPHICS": "OFF",
++        "CMAKE_BUILD_TYPE": "Debug"
++      }
+     }
+   ],
+   "buildPresets": [
+     {
+       "name": "windows-msvc-debug",
+       "configurePreset": "windows-msvc-debug"
+     },
+     {
+       "name": "windows-msvc-release",
+       "configurePreset": "windows-msvc-release"
+     },
+     {
+       "name": "windows-msvc-core-debug",
+       "configurePreset": "windows-msvc-core-debug"
++    },
++    {
++      "name": "linux-gcc-core-debug",
++      "configurePreset": "linux-gcc-core-debug"
+     }
+   ],
+   "testPresets": [
+     {
+       "name": "windows-msvc-debug",
+       "configurePreset": "windows-msvc-debug",
+       "output": { "outputOnFailure": true },
+       "execution": { "stopOnFailure": true }
+     },
+     {
+       "name": "windows-msvc-release",
+       "configurePreset": "windows-msvc-release",
+       "output": { "outputOnFailure": true },
+       "execution": { "stopOnFailure": true }
+     },
+     {
+       "name": "windows-msvc-core-debug",
+       "configurePreset": "windows-msvc-core-debug",
+       "output": { "outputOnFailure": true },
+       "execution": { "stopOnFailure": true }
++    },
++    {
++      "name": "linux-gcc-core-debug",
++      "configurePreset": "linux-gcc-core-debug",
++      "output": { "outputOnFailure": true },
++      "execution": { "stopOnFailure": true }
+     }
+   ]
+ }

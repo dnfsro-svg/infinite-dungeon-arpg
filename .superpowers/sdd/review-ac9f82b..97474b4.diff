@@ -1,0 +1,248 @@
+# Review package: ac9f82b222be73d80c00e0d871c2dbd0f814623a..97474b4061c039d93adea1a4e93203bd5249fb4a
+
+## Commits
+97474b4 build: fix Linux core cloud preset review findings
+106b15f build: add Linux core-only CMake preset
+
+## Files changed
+ CMakeLists.txt                      | 49 +++++++++++++++++++++++++------------
+ CMakePresets.json                   | 27 ++++++++++++++++++++
+ tests/cloud/cloud_readiness_test.py | 29 ++++++++++++++++++++++
+ 3 files changed, 89 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a66ae65..f6a29af 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,49 +1,66 @@
+ cmake_minimum_required(VERSION 3.25)
+ 
+ project(infinite_dungeon_arpg VERSION 0.1.0 LANGUAGES C CXX)
+ include(cmake/NormalizeMsvcShowIncludes.cmake)
+ 
+ option(ARPG_BUILD_GRAPHICS "Build the raylib host and game executable" ON)
+ option(ARPG_BUILD_PERFORMANCE_PROBES "Build local performance probes" OFF)
+ 
+-if(NOT MSVC)
+-    message(FATAL_ERROR "Stage 0 requires MSVC")
+-endif()
++if(WIN32)
++    if(NOT MSVC)
++        message(FATAL_ERROR "Stage 0 requires MSVC")
++    endif()
+ 
+-if(NOT MSVC_VERSION EQUAL 1944)
+-    message(FATAL_ERROR
+-        "Stage 0 requires MSVC 19.44; detected "
+-        "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+-endif()
++    if(NOT MSVC_VERSION EQUAL 1944)
++        message(FATAL_ERROR
++            "Stage 0 requires MSVC 19.44; detected "
++            "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
++    endif()
+ 
+-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+-    message(FATAL_ERROR "Stage 0 requires an x64 target")
+-endif()
++    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
++        message(FATAL_ERROR "Stage 0 requires an x64 target")
++    endif()
+ 
+-string(REGEX REPLACE "[/\\\\]+$" "" ARPG_WINDOWS_SDK "$ENV{WindowsSDKVersion}")
+-if(NOT ARPG_WINDOWS_SDK STREQUAL "10.0.26100.0")
+-    message(FATAL_ERROR
+-        "Stage 0 requires Windows SDK 10.0.26100.0; detected "
+-        "'${ARPG_WINDOWS_SDK}'")
++    string(REGEX REPLACE "[/\\\\]+$" "" ARPG_WINDOWS_SDK "$ENV{WindowsSDKVersion}")
++    if(NOT ARPG_WINDOWS_SDK STREQUAL "10.0.26100.0")
++        message(FATAL_ERROR
++            "Stage 0 requires Windows SDK 10.0.26100.0; detected "
++            "'${ARPG_WINDOWS_SDK}'")
++    endif()
++else()
++    if(
++        NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$"
++        OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$"
++    )
++        message(FATAL_ERROR
++            "Non-Windows core builds require GNU or Clang C and CXX compilers")
++    endif()
++
++    if(ARPG_BUILD_GRAPHICS)
++        message(FATAL_ERROR
++            "Non-Windows builds are core-only; set ARPG_BUILD_GRAPHICS=OFF")
++    endif()
+ endif()
+ 
+ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ set(CMAKE_CXX_EXTENSIONS OFF)
+ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ 
+ function(arpg_enable_project_warnings target_name)
+     if(MSVC)
+         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
++    else()
++        target_compile_options("${target_name}" PRIVATE -Wall -Wextra -Wpedantic)
+     endif()
+ endfunction()
+ 
+ include(CTest)
+ add_subdirectory(src/core)
+ add_subdirectory(src/abyss)
+ add_subdirectory(src/skills)
+ add_subdirectory(src/combat)
+ add_subdirectory(src/progression)
+ add_subdirectory(src/modifiers)
+diff --git a/CMakePresets.json b/CMakePresets.json
+index bf81d2c..136e968 100644
+--- a/CMakePresets.json
++++ b/CMakePresets.json
+@@ -32,47 +32,74 @@
+         "CMAKE_BUILD_TYPE": "Release"
+       }
+     },
+     {
+       "name": "windows-msvc-core-debug",
+       "inherits": "windows-msvc-debug",
+       "displayName": "Windows MSVC Core-only Debug",
+       "cacheVariables": {
+         "ARPG_BUILD_GRAPHICS": "OFF"
+       }
++    },
++    {
++      "name": "linux-gcc-core-debug",
++      "displayName": "Linux GCC Core-only Debug",
++      "generator": "Ninja",
++      "binaryDir": "${sourceDir}/out/build/${presetName}",
++      "cacheVariables": {
++        "BUILD_TESTING": "ON",
++        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
++        "ARPG_BUILD_GRAPHICS": "OFF",
++        "CMAKE_BUILD_TYPE": "Debug"
++      }
+     }
+   ],
+   "buildPresets": [
+     {
+       "name": "windows-msvc-debug",
+       "configurePreset": "windows-msvc-debug"
+     },
+     {
+       "name": "windows-msvc-release",
+       "configurePreset": "windows-msvc-release"
+     },
+     {
+       "name": "windows-msvc-core-debug",
+       "configurePreset": "windows-msvc-core-debug"
++    },
++    {
++      "name": "linux-gcc-core-debug",
++      "configurePreset": "linux-gcc-core-debug"
+     }
+   ],
+   "testPresets": [
+     {
+       "name": "windows-msvc-debug",
+       "configurePreset": "windows-msvc-debug",
+       "output": { "outputOnFailure": true },
+       "execution": { "stopOnFailure": true }
+     },
+     {
+       "name": "windows-msvc-release",
+       "configurePreset": "windows-msvc-release",
+       "output": { "outputOnFailure": true },
+       "execution": { "stopOnFailure": true }
+     },
+     {
+       "name": "windows-msvc-core-debug",
+       "configurePreset": "windows-msvc-core-debug",
+       "output": { "outputOnFailure": true },
+       "execution": { "stopOnFailure": true }
++    },
++    {
++      "name": "linux-gcc-core-debug",
++      "configurePreset": "linux-gcc-core-debug",
++      "output": { "outputOnFailure": true },
++      "execution": { "stopOnFailure": true },
++      "filter": {
++        "exclude": {
++          "name": "^(stage14\\.audio_sources|stage15\\.audio_sources|stage15\\.audio_sources_self_test)$"
++        }
++      }
+     }
+   ]
+ }
+diff --git a/tests/cloud/cloud_readiness_test.py b/tests/cloud/cloud_readiness_test.py
+index cb463c6..0233d4f 100644
+--- a/tests/cloud/cloud_readiness_test.py
++++ b/tests/cloud/cloud_readiness_test.py
+@@ -1,14 +1,15 @@
+ """Codex Cloud migration readiness contract."""
+ 
+ import json
+ from pathlib import Path
++import re
+ import shlex
+ import unittest
+ 
+ 
+ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+ LINUX_CORE_PRESET = "linux-gcc-core-debug"
+ 
+ 
+ class CloudReadinessContractTest(unittest.TestCase):
+     def _load_presets(self):
+@@ -142,20 +143,48 @@ class CloudReadinessContractTest(unittest.TestCase):
+         self.assertEqual("Debug", cache_variables.get("CMAKE_BUILD_TYPE"))
+ 
+     def test_linux_core_debug_has_matching_build_and_test_presets(self):
+         presets = self._load_presets()
+         build = self._preset_by_name(presets, "buildPresets", LINUX_CORE_PRESET)
+         test = self._preset_by_name(presets, "testPresets", LINUX_CORE_PRESET)
+ 
+         self.assertEqual(LINUX_CORE_PRESET, build.get("configurePreset"))
+         self.assertEqual(LINUX_CORE_PRESET, test.get("configurePreset"))
+ 
++    def test_non_windows_gate_requires_gnu_or_clang_for_c_and_cxx(self):
++        cmake = self._read_required_file("CMakeLists.txt")
++
++        self.assertRegex(
++            cmake,
++            re.compile(
++                r'if\(\s*NOT\s+CMAKE_C_COMPILER_ID\s+MATCHES\s+'
++                r'"\^\(GNU\|Clang\)\$"'
++                r'\s+OR\s+NOT\s+CMAKE_CXX_COMPILER_ID\s+MATCHES\s+'
++                r'"\^\(GNU\|Clang\)\$"\s*\)'
++            ),
++            "Non-Windows gate must require GNU or Clang for both C and CXX",
++        )
++        self.assertIn(
++            "Non-Windows core builds require GNU or Clang C and CXX compilers",
++            cmake,
++        )
++
++    def test_linux_core_debug_excludes_only_windows_powershell_audio_tests(self):
++        presets = self._load_presets()
++        test = self._preset_by_name(presets, "testPresets", LINUX_CORE_PRESET)
++
++        self.assertEqual(
++            r"^(stage14\.audio_sources|stage15\.audio_sources|"
++            r"stage15\.audio_sources_self_test)$",
++            test.get("filter", {}).get("exclude", {}).get("name"),
++        )
++
+     def test_cloud_setup_and_maintenance_run_configure_build_and_ctest(self):
+         setup_commands = self._shell_commands("scripts/cloud/setup.sh")
+         maintenance_commands = self._shell_commands("scripts/cloud/maintenance.sh")
+         expected_setup_commands = (
+             ("cmake", "--preset", LINUX_CORE_PRESET, "--fresh"),
+             ("cmake", "--build", "--preset", LINUX_CORE_PRESET),
+             ("ctest", "--preset", LINUX_CORE_PRESET, "--no-tests=error"),
+         )
+         expected_maintenance_commands = (
+             ("cmake", "--preset", LINUX_CORE_PRESET),

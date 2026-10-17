@@ -1,0 +1,72 @@
+<style>
+  .skill-stage{background:linear-gradient(180deg,#10192a,#07101c);border:1px solid #38506f;border-radius:14px;padding:18px;min-height:230px;position:relative;overflow:hidden;color:#eef6ff}
+  .floor{position:absolute;left:4%;right:4%;bottom:34px;height:2px;background:linear-gradient(90deg,transparent,#58718e,#58718e,transparent);box-shadow:0 12px 28px #000}
+  .fighter{position:absolute;bottom:36px;width:30px;height:62px;border-radius:15px 15px 8px 8px;background:linear-gradient(90deg,#dbe8f3,#65758b);box-shadow:0 0 18px #bce4ff}
+  .blade{position:absolute;width:84px;height:5px;border-radius:5px;background:linear-gradient(90deg,#fff,#9ed7ff,#446fa8);box-shadow:0 0 9px #8fd3ff;transform-origin:0 50%}
+  .arc{position:absolute;border:6px solid #91d4ff;border-left-color:transparent;border-bottom-color:transparent;border-radius:50%;filter:drop-shadow(0 0 8px #439dff)}
+  .enemy{position:absolute;bottom:36px;width:24px;height:45px;border-radius:10px;background:#772d3e;box-shadow:0 0 10px #d34867}
+  .sword{position:absolute;width:4px;height:36px;background:linear-gradient(#eaf8ff,#90c5ef 65%,#172e57);box-shadow:0 0 6px #75c8ff;transform-origin:50% 80%}
+  .pull{position:absolute;border:1px dashed #6fc9ff;border-radius:50%;box-shadow:0 0 24px inset #2760a8}
+  .timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
+  .beat{background:#111d2d;border:1px solid #334a66;border-radius:7px;padding:7px;text-align:center;font-size:12px;color:#bcd0e5}
+  .tag{display:inline-block;background:#173c65;color:#bfe4ff;padding:3px 8px;border-radius:999px;font-size:11px;margin:2px}
+  .fidelity{font-weight:700;color:#93d8ff}
+</style>
+
+<h2>两个主动技能：原版画面忠实度</h2>
+<p class="subtitle">无光剑/太刀分支。请重点看动作阶段、范围、颜色与暴风式剑阵密度。</p>
+
+<div class="cards">
+  <div class="card" data-choice="classic-faithful" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="skill-stage">
+        <div class="label">拔刀斩 · 原版椭圆全周斩</div>
+        <div class="floor"></div>
+        <div class="fighter" style="left:22%"></div>
+        <div class="blade" style="left:24%;bottom:72px;transform:rotate(-8deg)"></div>
+        <div class="arc" style="left:8%;bottom:26px;width:285px;height:120px;transform:rotate(-12deg)"></div>
+        <div class="arc" style="left:13%;bottom:38px;width:235px;height:90px;border-width:2px;opacity:.7;transform:rotate(166deg)"></div>
+        <div class="enemy" style="left:64%"></div><div class="enemy" style="left:78%;height:52px"></div>
+      </div>
+      <div class="skill-stage" style="margin-top:8px;height:245px">
+        <div class="label">极·鬼剑术（暴风式） · 24剑阵</div>
+        <div class="floor"></div>
+        <div class="pull" style="left:23%;right:14%;bottom:26px;height:145px"></div>
+        <div class="fighter" style="left:49%;bottom:116px;transform:rotate(12deg)"></div>
+        <div class="enemy" style="left:36%"></div><div class="enemy" style="left:61%"></div>
+        <div class="sword" style="left:27%;bottom:40px;transform:rotate(-25deg)"></div><div class="sword" style="left:34%;bottom:40px;transform:rotate(-17deg)"></div><div class="sword" style="left:41%;bottom:40px;transform:rotate(-8deg)"></div><div class="sword" style="left:48%;bottom:40px"></div><div class="sword" style="left:55%;bottom:40px;transform:rotate(8deg)"></div><div class="sword" style="left:62%;bottom:40px;transform:rotate(17deg)"></div><div class="sword" style="left:69%;bottom:40px;transform:rotate(25deg)"></div>
+        <div class="sword" style="left:27%;bottom:168px;transform:rotate(205deg)"></div><div class="sword" style="left:34%;bottom:176px;transform:rotate(197deg)"></div><div class="sword" style="left:41%;bottom:181px;transform:rotate(188deg)"></div><div class="sword" style="left:48%;bottom:184px;transform:rotate(180deg)"></div><div class="sword" style="left:55%;bottom:181px;transform:rotate(172deg)"></div><div class="sword" style="left:62%;bottom:176px;transform:rotate(163deg)"></div><div class="sword" style="left:69%;bottom:168px;transform:rotate(155deg)"></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · 原版忠实重做（推荐）</h3>
+      <p><span class="fidelity">完整动作：</span>拔刀前蓄力、全周椭圆蓝白斩光；暴风式抛出24剑、12剑插地、12剑浮空、吸附、空中逐剑乱舞、落地终结。</p>
+      <div><span class="tag">原版长演出</span><span class="tag">乱舞期无敌</span><span class="tag">高密度残影</span><span class="tag">屏幕震动</span></div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="classic-lite" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="skill-stage" style="min-height:190px">
+        <div class="label">相同机制 · 粒子与剑影减半</div>
+        <div class="floor"></div><div class="fighter" style="left:26%"></div>
+        <div class="arc" style="left:14%;bottom:31px;width:230px;height:95px;border-width:4px"></div>
+        <div class="sword" style="left:55%;bottom:42px"></div><div class="sword" style="left:62%;bottom:42px"></div><div class="sword" style="left:69%;bottom:42px"></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B · 原版结构、低资源表现</h3><p>动作阶段完全保留，但剑影、残影和冲击波数量减半。更省资源，画面达不到原版密度。</p></div>
+  </div>
+
+  <div class="card" data-choice="modern-compressed" onclick="toggleSelect(this)">
+    <div class="card-image"><div class="skill-stage" style="min-height:190px"><div class="label">压缩演出</div><div class="floor"></div><div class="fighter" style="left:28%"></div><div class="blade" style="left:31%;bottom:75px"></div><div class="pull" style="left:48%;right:16%;bottom:28px;height:92px"></div></div></div>
+    <div class="card-body"><h3>C · 现代快节奏改编</h3><p>保留轮廓但压缩为短演出，刷房更快；不满足“原版画面与原版节奏”。</p></div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>A 方案动作节拍</h3>
+  <div class="timeline"><div class="beat">拔刀：收刀蓄力</div><div class="beat">蓝白椭圆斩光</div><div class="beat">命中停顿/震屏</div><div class="beat">收招归鞘</div></div>
+  <div class="timeline"><div class="beat">暴风：抛出24剑</div><div class="beat">剑阵吸附/升空</div><div class="beat">逐剑高速乱舞</div><div class="beat">落地终结冲击</div></div>
+</div>
+
+<p class="subtitle">点击 A 确认原版忠实方向；如果颜色、范围或剑阵构图需要调整，直接在聊天里说。</p>
