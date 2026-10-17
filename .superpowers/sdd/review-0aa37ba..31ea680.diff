@@ -1,0 +1,1962 @@
+# Review package: 0aa37ba..31ea680
+
+## Commits
+31ea680 feat: add fixed monster runtime pool
+
+## Files changed
+ src/combat/CMakeLists.txt             |   1 +
+ src/combat/combat_types.hpp           |  21 ++++-
+ src/combat/combat_world.cpp           | 118 +++++++++++++++++++-----
+ src/combat/combat_world.hpp           |  31 +++----
+ src/combat/hit_resolution.cpp         |  14 +--
+ src/combat/monster_pool.cpp           | 134 +++++++++++++++++++++++++++
+ src/combat/monster_pool.hpp           |  63 +++++++++++++
+ src/combat/target_simulation.cpp      |   8 +-
+ tests/combat/CMakeLists.txt           |   1 +
+ tests/combat/break_stress_tests.cpp   | 112 +++++++++++------------
+ tests/combat/combat_config_tests.cpp  |   4 +-
+ tests/combat/combat_test_main.cpp     |   4 +-
+ tests/combat/dummy_reaction_tests.cpp | 164 +++++++++++++++++-----------------
+ tests/combat/hit_resolution_tests.cpp |  40 ++++-----
+ tests/combat/monster_pool_tests.cpp   | 115 ++++++++++++++++++++++++
+ tests/combat/movement_jump_tests.cpp  |   2 +-
+ 16 files changed, 616 insertions(+), 216 deletions(-)
+
+## Diff
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+index 80c642c..fb503b3 100644
+--- a/src/combat/CMakeLists.txt
++++ b/src/combat/CMakeLists.txt
+@@ -1,16 +1,17 @@
+ add_library(arpg_combat STATIC
+     attack_catalog.cpp
+     combat_collision.cpp
+     combat_world.cpp
+     hit_resolution.cpp
+     input_buffer.cpp
+     monster_catalog.cpp
++    monster_pool.cpp
+     player_simulation.cpp
+     target_simulation.cpp)
+ 
+ target_include_directories(arpg_combat
+     PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_combat PUBLIC cxx_std_17)
+ target_link_libraries(arpg_combat PRIVATE arpg_core)
+ 
+ arpg_enable_project_warnings(arpg_combat)
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index 7347727..e70b1c7 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -190,52 +190,71 @@ struct CombatLabConfig final {
+     Vec3 player_spawn{0.0F, 0.0F, 0.0F};
+     std::array<Vec3, kDummyCount> dummy_spawns{{
+         {2.30F, -0.35F, 0.0F},
+         {2.80F, 0.0F, 0.0F},
+         {3.30F, 0.35F, 0.0F},
+     }};
+     Facing initial_facing{Facing::right};
+     bool respawn_defeated_dummies{true};
+ };
+ 
++struct CombatEncounterConfig final {
++    Vec3 player_spawn{};
++    Facing initial_facing{Facing::right};
++    EncounterWave wave{};
++    bool reset_player_health{true};
++};
++
+ struct PlayerSnapshot final {
+     Vec3 position{};
+     Vec3 velocity{};
+     Facing facing{Facing::right};
+     PlayerState state{PlayerState::idle};
+     AttackId active_attack{AttackId::none};
+     AttackPhase attack_phase{AttackPhase::finished};
+     std::uint16_t attack_elapsed_ticks{};
+     std::uint8_t combo_stage{};
+     std::uint16_t hit_stop_ticks{};
+     bool air_attack_available{true};
+ };
+ 
+-struct DummySnapshot final {
++struct MonsterSnapshot final {
++    bool active{};
++    std::uint16_t generation{};
++    MonsterId id{MonsterId::chaos_chaser};
++    Vec3 spawn{};
+     Vec3 position{};
+     Vec3 velocity{};
+     DummyKind kind{DummyKind::light};
++    Facing facing{Facing::right};
+     ReactionState reaction{ReactionState::idle};
+     ArmorState armor{ArmorState::none};
+     int hp{};
+     int max_hp{};
+     int break_value{};
+     int max_break{};
+     std::uint16_t break_window_ticks{};
+     std::uint16_t hit_stop_ticks{};
+ };
+ 
++// Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
++// this compatibility name after all consumers use MonsterSnapshot.
++using DummySnapshot = MonsterSnapshot;
++
+ struct CombatDiagnostics final {
+     std::size_t input_size{};
+     std::uint32_t input_expired_count{};
+     std::uint32_t input_overflow_count{};
+     std::uint32_t event_overflow_count{};
+ };
+ 
+ struct CombatSnapshot final {
+     std::uint64_t tick{};
+     PlayerSnapshot player{};
++    std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
++    std::size_t monster_count{};
++    // Compatibility projection only; runtime state is owned by monsters.
+     std::array<DummySnapshot, kDummyCount> dummies{};
+     CombatDiagnostics diagnostics{};
+ };
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 410c1f2..5b13e2c 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -1,46 +1,59 @@
+ #include "combat/combat_world.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
++#include "combat/monster_catalog.hpp"
+ 
+ #include <array>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+ constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
+ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
+ 
+ }  // namespace
+ 
+-CombatWorld::CombatWorld(CombatLabConfig config) noexcept : config_(config) {
++CombatWorld::CombatWorld(CombatLabConfig config) noexcept
++    : legacy_config_(config), legacy_mode_(true) {
++    encounter_config_.player_spawn = config.player_spawn;
++    encounter_config_.initial_facing = config.initial_facing;
++    initialize_runtime();
++}
++
++CombatWorld::CombatWorld(CombatEncounterConfig config) noexcept
++    : encounter_config_(config), legacy_mode_(false) {
+     initialize_runtime();
+ }
+ 
+ bool CombatWorld::queue_action(Action action) noexcept {
+     return input_buffer_.push(action);
+ }
+ 
+ void CombatWorld::tick(MovementInput movement) noexcept {
+     const bool player_frozen = player_.hit_stop_ticks != 0;
+     if (player_frozen) {
+         --player_.hit_stop_ticks;
+     } else {
+         simulate_player(movement);
+     }
+ 
+-    for (std::size_t index = 0; index < dummies_.size(); ++index) {
+-        DummyRuntime& dummy = dummies_[index];
+-        const bool dummy_frozen = dummy.hit_stop_ticks != 0;
++    for (MonsterRuntime& monster : monsters_.slots()) {
++        if (!monster.active) {
++            continue;
++        }
++        const bool dummy_frozen = monster.hit_stop_ticks != 0;
+         if (dummy_frozen) {
+-            --dummy.hit_stop_ticks;
++            --monster.hit_stop_ticks;
+         } else {
++            const std::size_t index = static_cast<std::size_t>(
++                &monster - monsters_.slots().data());
+             simulate_target(index);
+         }
+     }
+ 
+     if (!player_frozen) {
+         resolve_attack_hits();
+     }
+ 
+     input_buffer_.age(player_frozen);
+     ++tick_;
+@@ -50,46 +63,95 @@ void CombatWorld::reset() noexcept {
+     initialize_runtime();
+ 
+     CombatEvent reset_event{};
+     reset_event.kind = CombatEventKind::reset;
+     reset_event.tick = 0;
+     reset_event.position = player_.position;
+     emit_event(reset_event);
+ }
+ 
+ void CombatWorld::initialize_runtime() noexcept {
+-    player_ = PlayerRuntime{};
+-    player_.position = config_.player_spawn;
+-    player_.facing = config_.initial_facing;
+-
+-    for (std::size_t index = 0; index < dummies_.size(); ++index) {
+-        DummyRuntime dummy{};
+-        dummy.kind = static_cast<DummyKind>(index);
+-        dummy.spawn = config_.dummy_spawns[index];
+-        dummy.position = dummy.spawn;
+-        dummy.max_hp = kDummyHitPoints[index];
+-        dummy.hp = dummy.max_hp;
+-        dummy.max_break = kDummyBreakValues[index];
+-        dummy.break_value = dummy.max_break;
+-        dummy.armor = index == 2 ? ArmorState::armored : ArmorState::none;
+-        dummies_[index] = dummy;
++    initialize_player();
++    monsters_.clear();
++    if (legacy_mode_) {
++        initialize_legacy_monsters();
++    } else {
++        static_cast<void>(load_wave(encounter_config_.wave));
+     }
+ 
+     attack_ = AttackRuntime{};
+     input_buffer_.clear();
+     input_buffer_.reset_diagnostics();
+     while (events_.try_pop().has_value()) {
+     }
+     tick_ = 0;
+     event_overflow_count_ = 0;
+ }
+ 
++void CombatWorld::initialize_player() noexcept {
++    player_ = PlayerRuntime{};
++    player_.position = encounter_config_.player_spawn;
++    player_.facing = encounter_config_.initial_facing;
++}
++
++void CombatWorld::initialize_legacy_monsters() noexcept {
++    for (std::size_t index = 0; index < kDummyCount; ++index) {
++        const auto handle = monsters_.spawn(
++            index == 0U ? MonsterId::fire_bomber
++                        : index == 1U ? MonsterId::fire_charger
++                                      : MonsterId::water_bulwark,
++            legacy_config_.dummy_spawns[index]);
++        if (!handle.has_value()) {
++            continue;
++        }
++        MonsterRuntime* monster = monsters_.get(*handle);
++        if (monster == nullptr) {
++            continue;
++        }
++        monster->kind = static_cast<DummyKind>(index);
++        monster->max_hp = kDummyHitPoints[index];
++        monster->hp = monster->max_hp;
++        monster->max_break = kDummyBreakValues[index];
++        monster->break_value = monster->max_break;
++        monster->armor = index == 2U ? ArmorState::armored : ArmorState::none;
++    }
++}
++
++bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
++    if (wave.spawn_count > kEncounterSpawnCapacity) {
++        return false;
++    }
++
++    for (std::size_t index = 0; index < wave.spawn_count; ++index) {
++        if (monster_definition(wave.spawns[index].id) == nullptr) {
++            return false;
++        }
++    }
++
++    monsters_.clear();
++    for (std::size_t index = 0; index < wave.spawn_count; ++index) {
++        const auto handle = monsters_.spawn(
++            wave.spawns[index].id, wave.spawns[index].position);
++        if (!handle.has_value()) {
++            monsters_.clear();
++            return false;
++        }
++    }
++    encounter_config_.wave = wave;
++    legacy_mode_ = false;
++    return true;
++}
++
++std::size_t CombatWorld::active_monster_count() const noexcept {
++    return monsters_.active_count();
++}
++
+ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+ CombatSnapshot CombatWorld::snapshot() const noexcept {
+     CombatSnapshot result{};
+     result.tick = tick_;
+     result.player = PlayerSnapshot{
+         player_.position,
+         player_.velocity,
+@@ -99,37 +161,47 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+         attack_.id == AttackId::none
+             ? AttackPhase::finished
+             : attack_phase_at(
+                   *find_attack_definition(attack_.id), attack_.elapsed_ticks),
+         attack_.elapsed_ticks,
+         player_.combo_stage,
+         player_.hit_stop_ticks,
+         player_.air_attack_available,
+     };
+ 
+-    for (std::size_t index = 0; index < dummies_.size(); ++index) {
+-        const DummyRuntime& dummy = dummies_[index];
+-        result.dummies[index] = DummySnapshot{
++    for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
++        const MonsterRuntime& dummy = monsters_.slots()[index];
++        result.monsters[index] = MonsterSnapshot{
++            dummy.active,
++            dummy.generation,
++            dummy.id,
++            dummy.spawn,
+             dummy.position,
+             dummy.velocity,
+             dummy.kind,
++            dummy.facing,
+             dummy.reaction,
+             dummy.armor,
+             dummy.hp,
+             dummy.max_hp,
+             dummy.break_value,
+             dummy.max_break,
+             dummy.break_window_ticks,
+             dummy.hit_stop_ticks,
+         };
+     }
+ 
++    result.monster_count = monsters_.active_count();
++    for (std::size_t index = 0; index < kDummyCount; ++index) {
++        result.dummies[index] = result.monsters[index];
++    }
++
+     result.diagnostics = CombatDiagnostics{
+         input_buffer_.size(),
+         input_buffer_.expired_count(),
+         input_buffer_.overflow_count(),
+         event_overflow_count_,
+     };
+     return result;
+ }
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index c4d4345..68acb87 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -1,80 +1,73 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
+ #include "combat/input_buffer.hpp"
++#include "combat/monster_pool.hpp"
+ #include "core/bounded_queue.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::combat {
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
++    explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     void tick(MovementInput movement) noexcept;
+     void reset() noexcept;
++    [[nodiscard]] bool load_wave(const EncounterWave& wave) noexcept;
++    [[nodiscard]] std::size_t active_monster_count() const noexcept;
+     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+ 
+ private:
+     struct PlayerRuntime final {
+         Vec3 position{};
+         Vec3 velocity{};
+         Facing facing{Facing::right};
+         PlayerState state{PlayerState::idle};
+         std::uint8_t combo_stage{};
+         std::uint16_t hit_stop_ticks{};
+         bool air_attack_available{true};
+     };
+ 
+-    struct DummyRuntime final {
+-        DummyKind kind{DummyKind::light};
+-        Vec3 spawn{};
+-        Vec3 position{};
+-        Vec3 velocity{};
+-        ReactionState reaction{ReactionState::idle};
+-        ArmorState armor{ArmorState::none};
+-        std::uint16_t reaction_ticks{};
+-        std::uint16_t break_window_ticks{};
+-        std::uint16_t hit_stop_ticks{};
+-        int hp{};
+-        int max_hp{};
+-        int break_value{};
+-        int max_break{};
+-    };
+-
+     struct AttackRuntime final {
+         AttackId id{AttackId::none};
+         std::uint16_t elapsed_ticks{};
+         bool connected{};
+         bool impact_event_emitted{};
+-        std::array<bool, kDummyCount> hit_targets{};
++        std::array<bool, kMonsterCapacity> hit_targets{};
+     };
+ 
+     void simulate_player(MovementInput movement) noexcept;
+     void simulate_target(std::size_t index) noexcept;
+     void apply_dummy_impact(
+         std::size_t index,
+         const AttackDefinition& definition) noexcept;
+     void respawn_dummy(std::size_t index) noexcept;
+     void apply_attack_assist(const AttackDefinition& definition) noexcept;
+     void resolve_attack_hits() noexcept;
+     void emit_event(const CombatEvent& event) noexcept;
+     void initialize_runtime() noexcept;
+ 
+-    CombatLabConfig config_{};
++    void initialize_player() noexcept;
++    void initialize_legacy_monsters() noexcept;
++
++    CombatEncounterConfig encounter_config_{};
++    CombatLabConfig legacy_config_{};
++    bool legacy_mode_{true};
+     PlayerRuntime player_{};
+-    std::array<DummyRuntime, kDummyCount> dummies_{};
++    MonsterPool monsters_{};
+     AttackRuntime attack_{};
+     InputBuffer input_buffer_{};
+     core::BoundedQueue<CombatEvent, 64> events_{};
+     std::uint64_t tick_{};
+     std::uint32_t event_overflow_count_{};
+ };
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 7545859..8b8df7e 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -37,22 +37,22 @@ void CombatWorld::emit_event(const CombatEvent& event) noexcept {
+ }
+ 
+ void CombatWorld::apply_attack_assist(
+     const AttackDefinition& definition) noexcept {
+     const Aabb attack_box = make_world_aabb(
+         definition.local_hitbox, player_.position, player_.facing);
+     const bool facing_right = player_.facing == Facing::right;
+     float best_gap = std::numeric_limits<float>::max();
+     float best_correction = 0.0F;
+ 
+-    for (std::size_t index = 0; index < dummies_.size(); ++index) {
+-        const DummyRuntime& dummy = dummies_[index];
++    for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
++        const MonsterRuntime& dummy = monsters_.slots()[index];
+         const float relative_x = dummy.position.x - player_.position.x;
+         if (dummy.hp <= 0
+             || dummy.reaction == ReactionState::defeated
+             || dummy.reaction == ReactionState::respawning
+             || (facing_right && relative_x < 0.0F)
+                 || (!facing_right && relative_x > 0.0F)
+                 || std::fabs(dummy.position.y - player_.position.y)
+                 > kAttackAssistMaxDepth) {
+             continue;
+         }
+@@ -86,24 +86,24 @@ void CombatWorld::resolve_attack_hits() noexcept {
+ 
+     const AttackDefinition* definition = find_attack_definition(attack_.id);
+     if (definition == nullptr
+         || attack_phase_at(*definition, attack_.elapsed_ticks)
+                != AttackPhase::active) {
+         return;
+     }
+ 
+     const Aabb attack_box = make_world_aabb(
+         definition->local_hitbox, player_.position, player_.facing);
+-    std::array<std::uint8_t, kDummyCount> hit_indices{};
++    std::array<std::uint8_t, kMonsterCapacity> hit_indices{};
+     std::size_t hit_count = 0;
+-    for (std::size_t index = 0; index < dummies_.size(); ++index) {
+-        const DummyRuntime& dummy = dummies_[index];
++    for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
++        const MonsterRuntime& dummy = monsters_.slots()[index];
+         if (attack_.hit_targets[index]
+             || dummy.hp <= 0
+             || dummy.reaction == ReactionState::defeated
+             || dummy.reaction == ReactionState::respawning) {
+             continue;
+         }
+         if (overlaps_inclusive(
+                 attack_box,
+                 make_dummy_hurtbox(dummy.kind, dummy.position))) {
+             hit_indices[hit_count] = static_cast<std::uint8_t>(index);
+@@ -111,21 +111,21 @@ void CombatWorld::resolve_attack_hits() noexcept {
+         }
+     }
+ 
+     if (hit_count == 0) {
+         return;
+     }
+ 
+     const std::uint16_t hit_stop = hit_stop_for(definition->feedback);
+     for (std::size_t collected = 0; collected < hit_count; ++collected) {
+         const std::size_t index = hit_indices[collected];
+-        DummyRuntime& dummy = dummies_[index];
++        MonsterRuntime& dummy = monsters_.slots()[index];
+         attack_.hit_targets[index] = true;
+         attack_.connected = true;
+         dummy.hp = std::max(0, dummy.hp - definition->damage);
+         bool starts_break = false;
+         bool accepts_impact = dummy.armor != ArmorState::armored;
+         if (dummy.hp != 0 && dummy.armor == ArmorState::armored) {
+             dummy.break_value = std::max(
+                 0, dummy.break_value - definition->break_damage);
+             if (dummy.break_value == 0) {
+                 dummy.armor = ArmorState::broken;
+@@ -165,16 +165,16 @@ void CombatWorld::resolve_attack_hits() noexcept {
+ 
+     player_.hit_stop_ticks = std::max(player_.hit_stop_ticks, hit_stop);
+     if (!attack_.impact_event_emitted) {
+         attack_.impact_event_emitted = true;
+         CombatEvent summary{};
+         summary.kind = CombatEventKind::impact_summary;
+         summary.tick = tick_;
+         summary.attack = definition->id;
+         summary.hit_count = static_cast<std::uint8_t>(hit_count);
+         summary.feedback = definition->feedback;
+-        summary.position = dummies_[hit_indices[0]].position;
++        summary.position = monsters_.slots()[hit_indices[0]].position;
+         emit_event(summary);
+     }
+ }
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/monster_pool.cpp b/src/combat/monster_pool.cpp
+new file mode 100644
+index 0000000..2f72008
+--- /dev/null
++++ b/src/combat/monster_pool.cpp
+@@ -0,0 +1,134 @@
++#include "combat/monster_pool.hpp"
++
++#include "combat/monster_catalog.hpp"
++
++#include <cstddef>
++
++namespace arpg::combat {
++namespace {
++
++DummyKind kind_for(MonsterId id) noexcept {
++    switch (id) {
++    case MonsterId::fire_bomber:
++    case MonsterId::lightning_shooter:
++    case MonsterId::water_support:
++        return DummyKind::normal;
++    case MonsterId::fire_charger:
++    case MonsterId::water_bulwark:
++    case MonsterId::chaos_hazard:
++        return DummyKind::heavy;
++    case MonsterId::lightning_dasher:
++    case MonsterId::chaos_chaser:
++    case MonsterId::count:
++        return DummyKind::light;
++    }
++    return DummyKind::normal;
++}
++
++}  // namespace
++
++void MonsterPool::advance_generation(MonsterRuntime& runtime) noexcept {
++    if (runtime.generation == 0xFFFFU) {
++        runtime.generation = 1U;
++    } else {
++        ++runtime.generation;
++        if (runtime.generation == 0U) {
++            runtime.generation = 1U;
++        }
++    }
++}
++
++void MonsterPool::clear() noexcept {
++    active_count_ = 0U;
++    for (MonsterRuntime& runtime : slots_) {
++        advance_generation(runtime);
++        const std::uint16_t generation = runtime.generation;
++        runtime = MonsterRuntime{};
++        runtime.generation = generation;
++    }
++}
++
++std::optional<MonsterHandle> MonsterPool::spawn(
++    MonsterId id,
++    Vec3 position) noexcept {
++    const MonsterDefinition* definition = monster_definition(id);
++    if (definition == nullptr) {
++        return std::nullopt;
++    }
++
++    for (std::size_t index = 0; index < slots_.size(); ++index) {
++        MonsterRuntime& runtime = slots_[index];
++        if (runtime.active) {
++            continue;
++        }
++
++        advance_generation(runtime);
++        const std::uint16_t generation = runtime.generation;
++        runtime = MonsterRuntime{};
++        runtime.active = true;
++        runtime.generation = generation;
++        runtime.id = id;
++        runtime.kind = kind_for(id);
++        runtime.spawn = position;
++        runtime.position = position;
++        runtime.max_hp = definition->max_hp;
++        runtime.hp = definition->max_hp;
++        runtime.max_break = definition->max_break;
++        runtime.break_value = definition->max_break;
++        runtime.armor = definition->max_break > 0
++            ? ArmorState::armored : ArmorState::none;
++        ++active_count_;
++        return MonsterHandle{
++            static_cast<std::uint16_t>(index), generation};
++    }
++    return std::nullopt;
++}
++
++bool MonsterPool::destroy(MonsterHandle handle) noexcept {
++    MonsterRuntime* runtime = get(handle);
++    if (runtime == nullptr) {
++        return false;
++    }
++    advance_generation(*runtime);
++    const std::uint16_t generation = runtime->generation;
++    *runtime = MonsterRuntime{};
++    runtime->generation = generation;
++    --active_count_;
++    return true;
++}
++
++std::size_t MonsterPool::active_count() const noexcept {
++    return active_count_;
++}
++
++MonsterRuntime* MonsterPool::get(MonsterHandle handle) noexcept {
++    if (handle.index >= slots_.size()) {
++        return nullptr;
++    }
++    MonsterRuntime& runtime = slots_[handle.index];
++    if (!runtime.active || runtime.generation != handle.generation) {
++        return nullptr;
++    }
++    return &runtime;
++}
++
++const MonsterRuntime* MonsterPool::get(MonsterHandle handle) const noexcept {
++    if (handle.index >= slots_.size()) {
++        return nullptr;
++    }
++    const MonsterRuntime& runtime = slots_[handle.index];
++    if (!runtime.active || runtime.generation != handle.generation) {
++        return nullptr;
++    }
++    return &runtime;
++}
++
++const std::array<MonsterRuntime, kMonsterCapacity>& MonsterPool::slots() const noexcept {
++    return slots_;
++}
++
++std::array<MonsterRuntime, kMonsterCapacity>& MonsterPool::slots() noexcept {
++    return slots_;
++}
++
++}  // namespace arpg::combat
+diff --git a/src/combat/monster_pool.hpp b/src/combat/monster_pool.hpp
+new file mode 100644
+index 0000000..153eeea
+--- /dev/null
++++ b/src/combat/monster_pool.hpp
+@@ -0,0 +1,63 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++
++namespace arpg::combat {
++
++struct MonsterRuntime final {
++    bool active{};
++    std::uint16_t generation{};
++    MonsterId id{MonsterId::chaos_chaser};
++    DummyKind kind{DummyKind::normal};
++    Vec3 spawn{};
++    Vec3 position{};
++    Vec3 velocity{};
++    Facing facing{Facing::right};
++    ReactionState reaction{ReactionState::idle};
++    ArmorState armor{ArmorState::none};
++    std::uint16_t reaction_ticks{};
++    std::uint16_t ai_phase{};
++    std::uint16_t ai_ticks{};
++    int hp{};
++    int max_hp{};
++    int break_value{};
++    int max_break{};
++    int shield{};
++    std::uint16_t shield_ticks{};
++    std::uint16_t break_window_ticks{};
++    std::uint16_t hit_stop_ticks{};
++    std::uint16_t owner_transient_counter{};
++};
++
++struct MonsterHandle final {
++    std::uint16_t index{0xFFFF};
++    std::uint16_t generation{};
++};
++
++class MonsterPool final {
++public:
++    void clear() noexcept;
++    [[nodiscard]] std::optional<MonsterHandle> spawn(
++        MonsterId id, Vec3 position) noexcept;
++    [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
++    [[nodiscard]] std::size_t active_count() const noexcept;
++    [[nodiscard]] MonsterRuntime* get(MonsterHandle handle) noexcept;
++    [[nodiscard]] const MonsterRuntime* get(MonsterHandle handle) const noexcept;
++    [[nodiscard]] const std::array<MonsterRuntime, kMonsterCapacity>&
++    slots() const noexcept;
++    [[nodiscard]] std::array<MonsterRuntime, kMonsterCapacity>&
++    slots() noexcept;
++
++private:
++    static void advance_generation(MonsterRuntime& runtime) noexcept;
++
++    std::array<MonsterRuntime, kMonsterCapacity> slots_{};
++    std::size_t active_count_{};
++};
++
++}  // namespace arpg::combat
+diff --git a/src/combat/target_simulation.cpp b/src/combat/target_simulation.cpp
+index 379f5a9..a575dbc 100644
+--- a/src/combat/target_simulation.cpp
++++ b/src/combat/target_simulation.cpp
+@@ -29,21 +29,21 @@ std::uint16_t reaction_ticks(
+     const std::uint32_t scaled =
+         static_cast<std::uint32_t>(base_ticks) * 5U;
+     return static_cast<std::uint16_t>((scaled + 3U) / 4U);
+ }
+ 
+ }  // namespace
+ 
+ void CombatWorld::apply_dummy_impact(
+     std::size_t index,
+     const AttackDefinition& definition) noexcept {
+-    DummyRuntime& dummy = dummies_[index];
++    MonsterRuntime& dummy = monsters_.slots()[index];
+     if (dummy.hp == 0) {
+         dummy.reaction = ReactionState::defeated;
+         dummy.reaction_ticks = kRespawnTicks;
+         dummy.break_window_ticks = 0;
+         dummy.velocity = Vec3{};
+ 
+         CombatEvent defeated{};
+         defeated.kind = CombatEventKind::defeated;
+         defeated.tick = tick_;
+         defeated.attack = definition.id;
+@@ -102,21 +102,21 @@ void CombatWorld::apply_dummy_impact(
+         dummy.velocity.x =
+             facing * definition.knockback_speed * scale;
+         dummy.velocity.z = definition.launch_speed * scale;
+         dummy.reaction = ReactionState::airborne;
+         dummy.reaction_ticks = 0;
+         break;
+     }
+ }
+ 
+ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
+-    DummyRuntime& dummy = dummies_[index];
++    MonsterRuntime& dummy = monsters_.slots()[index];
+     dummy.position = dummy.spawn;
+     dummy.velocity = Vec3{};
+     dummy.reaction = ReactionState::respawning;
+     dummy.armor = dummy.kind == DummyKind::heavy
+                       ? ArmorState::armored
+                       : ArmorState::none;
+     dummy.reaction_ticks = 0;
+     dummy.break_window_ticks = 0;
+     dummy.hit_stop_ticks = 0;
+     dummy.hp = dummy.max_hp;
+@@ -124,21 +124,21 @@ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
+ 
+     CombatEvent respawned{};
+     respawned.kind = CombatEventKind::respawned;
+     respawned.tick = tick_;
+     respawned.target_index = static_cast<std::uint8_t>(index);
+     respawned.position = dummy.position;
+     emit_event(respawned);
+ }
+ 
+ void CombatWorld::simulate_target(std::size_t index) noexcept {
+-    DummyRuntime& dummy = dummies_[index];
++    MonsterRuntime& dummy = monsters_.slots()[index];
+ 
+     if (dummy.armor == ArmorState::broken
+         && dummy.reaction != ReactionState::defeated
+         && dummy.reaction != ReactionState::respawning
+         && dummy.break_window_ticks != 0) {
+         --dummy.break_window_ticks;
+         if (dummy.break_window_ticks == 0) {
+             dummy.armor = ArmorState::armored;
+             dummy.break_value = dummy.max_break;
+         }
+@@ -207,21 +207,21 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
+     case ReactionState::rising:
+         if (dummy.reaction_ticks != 0) {
+             --dummy.reaction_ticks;
+         }
+         if (dummy.reaction_ticks == 0) {
+             dummy.reaction = ReactionState::idle;
+             dummy.velocity = Vec3{};
+         }
+         return;
+     case ReactionState::defeated:
+-        if (!config_.respawn_defeated_dummies) {
++        if (!legacy_mode_ || !legacy_config_.respawn_defeated_dummies) {
+             return;
+         }
+         if (dummy.reaction_ticks != 0) {
+             --dummy.reaction_ticks;
+         }
+         if (dummy.reaction_ticks == 0) {
+             respawn_dummy(index);
+         }
+         return;
+     case ReactionState::respawning:
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index c261948..5486f8f 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -2,20 +2,21 @@ add_executable(arpg_combat_tests
+     ../core/allocation_probe.cpp
+     combat_test_main.cpp
+     attack_catalog_tests.cpp
+     attack_state_tests.cpp
+     break_stress_tests.cpp
+     combat_config_tests.cpp
+     dummy_reaction_tests.cpp
+     hit_resolution_tests.cpp
+     input_buffer_tests.cpp
+     monster_catalog_tests.cpp
++    monster_pool_tests.cpp
+     movement_jump_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+ add_test(NAME combat.units COMMAND arpg_combat_tests)
+ set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/break_stress_tests.cpp b/tests/combat/break_stress_tests.cpp
+index c5abfbe..ea6adf5 100644
+--- a/tests/combat/break_stress_tests.cpp
++++ b/tests/combat/break_stress_tests.cpp
+@@ -62,22 +62,22 @@ bool snapshot_equal(
+         || lhs.player.active_attack != rhs.player.active_attack
+         || lhs.player.attack_phase != rhs.player.attack_phase
+         || lhs.player.attack_elapsed_ticks != rhs.player.attack_elapsed_ticks
+         || lhs.player.combo_stage != rhs.player.combo_stage
+         || lhs.player.hit_stop_ticks != rhs.player.hit_stop_ticks
+         || lhs.player.air_attack_available != rhs.player.air_attack_available) {
+         return false;
+     }
+ 
+     for (std::size_t index = 0; index < kDummyCount; ++index) {
+-        const DummySnapshot& left = lhs.dummies[index];
+-        const DummySnapshot& right = rhs.dummies[index];
++        const MonsterSnapshot& left = lhs.monsters[index];
++        const MonsterSnapshot& right = rhs.monsters[index];
+         if (!vec_equal(left.position, right.position)
+             || !vec_equal(left.velocity, right.velocity)
+             || left.kind != right.kind
+             || left.reaction != right.reaction
+             || left.armor != right.armor
+             || left.hp != right.hp
+             || left.max_hp != right.max_hp
+             || left.break_value != right.break_value
+             || left.max_break != right.max_break
+             || left.break_window_ticks != right.break_window_ticks
+@@ -115,100 +115,100 @@ bool launcher_hit_and_finish(CombatWorld& world) noexcept {
+     if (!start_action_and_reach_hit(world, Action::launcher, 7)) {
+         return false;
+     }
+     return finish_attack(world, 100);
+ }
+ 
+ bool wait_for_target_grounded(
+     CombatWorld& world,
+     std::size_t target_index) noexcept {
+     for (int tick = 0; tick < 240; ++tick) {
+-        const DummySnapshot& target =
+-            world.snapshot().dummies[target_index];
++        const MonsterSnapshot& target =
++            world.snapshot().monsters[target_index];
+         if (target.position.z == 0.0F
+             && target.reaction != ReactionState::airborne) {
+             return true;
+         }
+         world.tick(MovementInput{});
+     }
+-    const DummySnapshot& target = world.snapshot().dummies[target_index];
++    const MonsterSnapshot& target = world.snapshot().monsters[target_index];
+     return target.position.z == 0.0F
+         && target.reaction != ReactionState::airborne;
+ }
+ 
+ bool wait_for_armor_restore(CombatWorld& world) noexcept {
+     for (int tick = 0; tick < 260; ++tick) {
+-        if (world.snapshot().dummies[2].armor == ArmorState::armored) {
++        if (world.snapshot().monsters[2].armor == ArmorState::armored) {
+             return true;
+         }
+         world.tick(MovementInput{});
+     }
+-    return world.snapshot().dummies[2].armor == ArmorState::armored;
++    return world.snapshot().monsters[2].armor == ArmorState::armored;
+ }
+ 
+ arpg::test::Failure armored_launcher_suppresses_control_before_break() noexcept {
+     CombatWorld launcher{heavy_target_config()};
+     ARPG_REQUIRE(start_action_and_reach_hit(launcher, Action::launcher, 7));
+     CombatSnapshot snapshot = launcher.snapshot();
+-    const DummySnapshot& launched = snapshot.dummies[2];
++    const MonsterSnapshot& launched = snapshot.monsters[2];
+     ARPG_REQUIRE(launched.hp == 662);
+     ARPG_REQUIRE(launched.break_value == 102);
+     ARPG_REQUIRE(launched.armor == ArmorState::armored);
+     ARPG_REQUIRE(launched.reaction == ReactionState::idle);
+     ARPG_REQUIRE(vec_equal(launched.position, Vec3{7.2F, 0.0F, 0.0F}));
+     ARPG_REQUIRE(vec_equal(launched.velocity, Vec3{}));
+     ARPG_REQUIRE(launched.hit_stop_ticks == 5);
+     while (const auto event = launcher.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::break_started);
+     }
+ 
+     CombatWorld repeated{heavy_target_config()};
+     ARPG_REQUIRE(launcher_hit_and_finish(repeated));
+     snapshot = repeated.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].hp == 662);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 102);
+-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
+-    ARPG_REQUIRE(vec_equal(snapshot.dummies[2].velocity, Vec3{}));
++    ARPG_REQUIRE(snapshot.monsters[2].hp == 662);
++    ARPG_REQUIRE(snapshot.monsters[2].break_value == 102);
++    ARPG_REQUIRE(snapshot.monsters[2].reaction == ReactionState::idle);
++    ARPG_REQUIRE(vec_equal(snapshot.monsters[2].velocity, Vec3{}));
+     drain_events(repeated);
+     ARPG_REQUIRE(launcher_hit_and_finish(repeated));
+     snapshot = repeated.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].hp == 624);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 84);
+-    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::armored);
+-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
+-    ARPG_REQUIRE(vec_equal(snapshot.dummies[2].velocity, Vec3{}));
++    ARPG_REQUIRE(snapshot.monsters[2].hp == 624);
++    ARPG_REQUIRE(snapshot.monsters[2].break_value == 84);
++    ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::armored);
++    ARPG_REQUIRE(snapshot.monsters[2].reaction == ReactionState::idle);
++    ARPG_REQUIRE(vec_equal(snapshot.monsters[2].velocity, Vec3{}));
+     return {};
+ }
+ 
+ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
+     CombatWorld world{heavy_target_config()};
+     for (int hit = 0; hit < 6; ++hit) {
+         ARPG_REQUIRE(launcher_hit_and_finish(world));
+         drain_events(world);
+     }
+     CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].hp == 472);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 12);
+-    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::armored);
++    ARPG_REQUIRE(snapshot.monsters[2].hp == 472);
++    ARPG_REQUIRE(snapshot.monsters[2].break_value == 12);
++    ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::armored);
+ 
+     ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].hp == 434);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 0);
+-    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::broken);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_window_ticks == 180);
+-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[2].hp == 434);
++    ARPG_REQUIRE(snapshot.monsters[2].break_value == 0);
++    ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::broken);
++    ARPG_REQUIRE(snapshot.monsters[2].break_window_ticks == 180);
++    ARPG_REQUIRE(snapshot.monsters[2].reaction == ReactionState::airborne);
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[2].velocity.x, 1.2, 1.0e-4));
++        snapshot.monsters[2].velocity.x, 1.2, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[2].velocity.z, 9.5, 1.0e-4));
+-    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 5);
++        snapshot.monsters[2].velocity.z, 9.5, 1.0e-4));
++    ARPG_REQUIRE(snapshot.monsters[2].hit_stop_ticks == 5);
+ 
+     std::array<CombatEventKind, 4> kinds{};
+     int event_count = 0;
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event_count < 4);
+         kinds[static_cast<std::size_t>(event_count)] = event->kind;
+         if (event->kind == CombatEventKind::break_started) {
+             ARPG_REQUIRE(event->attack == AttackId::launcher);
+             ARPG_REQUIRE(event->target_index == 2);
+             ARPG_REQUIRE(event->feedback == FeedbackLevel::medium);
+@@ -216,117 +216,117 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
+         }
+         ++event_count;
+     }
+     ARPG_REQUIRE(event_count == 4);
+     ARPG_REQUIRE(kinds[0] == CombatEventKind::swing);
+     ARPG_REQUIRE(kinds[1] == CombatEventKind::hit);
+     ARPG_REQUIRE(kinds[2] == CombatEventKind::break_started);
+     ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
+ 
+     tick_n(world, 5);
+-    ARPG_REQUIRE(world.snapshot().dummies[2].break_window_ticks == 180);
++    ARPG_REQUIRE(world.snapshot().monsters[2].break_window_ticks == 180);
+     tick_n(world, 179);
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::broken);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_window_ticks == 1);
++    ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::broken);
++    ARPG_REQUIRE(snapshot.monsters[2].break_window_ticks == 1);
+     world.tick(MovementInput{});
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::armored);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 120);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_window_ticks == 0);
++    ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::armored);
++    ARPG_REQUIRE(snapshot.monsters[2].break_value == 120);
++    ARPG_REQUIRE(snapshot.monsters[2].break_window_ticks == 0);
+ 
+     CombatLabConfig independent_config = heavy_target_config();
+     independent_config.dummy_spawns[0] = Vec3{4.0F, 0.0F, 0.0F};
+     CombatWorld independent{independent_config};
+     for (int hit = 0; hit < 7; ++hit) {
+         ARPG_REQUIRE(launcher_hit_and_finish(independent));
+         drain_events(independent);
+     }
+     for (int tick = 0; tick < 24; ++tick) {
+         independent.tick(MovementInput{-1, 0});
+     }
+     ARPG_REQUIRE(start_action_and_reach_hit(independent, Action::light, 5));
+     snapshot = independent.snapshot();
+     ARPG_REQUIRE(snapshot.player.hit_stop_ticks == 3);
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
+-    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 0);
+-    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::broken);
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
++    ARPG_REQUIRE(snapshot.monsters[2].hit_stop_ticks == 0);
++    ARPG_REQUIRE(snapshot.monsters[2].armor == ArmorState::broken);
+     const std::uint16_t independent_window =
+-        snapshot.dummies[2].break_window_ticks;
++        snapshot.monsters[2].break_window_ticks;
+     ARPG_REQUIRE(independent_window > 3);
+     tick_n(independent, 3);
+     ARPG_REQUIRE(
+-        independent.snapshot().dummies[2].break_window_ticks
++        independent.snapshot().monsters[2].break_window_ticks
+         == independent_window - 3);
+ 
+     CombatWorld reaction{heavy_target_config()};
+     for (int hit = 0; hit < 7; ++hit) {
+         ARPG_REQUIRE(launcher_hit_and_finish(reaction));
+         drain_events(reaction);
+     }
+     for (int tick = 0; tick < 260; ++tick) {
+-        if (reaction.snapshot().dummies[2].break_window_ticks <= 22) {
++        if (reaction.snapshot().monsters[2].break_window_ticks <= 22) {
+             break;
+         }
+         reaction.tick(MovementInput{});
+     }
+-    ARPG_REQUIRE(reaction.snapshot().dummies[2].break_window_ticks <= 22);
+-    ARPG_REQUIRE(reaction.snapshot().dummies[2].armor == ArmorState::broken);
++    ARPG_REQUIRE(reaction.snapshot().monsters[2].break_window_ticks <= 22);
++    ARPG_REQUIRE(reaction.snapshot().monsters[2].armor == ArmorState::broken);
+     ARPG_REQUIRE(start_action_and_reach_hit(reaction, Action::launcher, 7));
+-    ARPG_REQUIRE(reaction.snapshot().dummies[2].reaction
++    ARPG_REQUIRE(reaction.snapshot().monsters[2].reaction
+                  == ReactionState::airborne);
+     ARPG_REQUIRE(wait_for_armor_restore(reaction));
+     snapshot = reaction.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[2].reaction == ReactionState::airborne);
+     return {};
+ }
+ 
+ arpg::test::Failure defeated_has_priority_over_break_recovery() noexcept {
+     CombatWorld world{heavy_target_config()};
+     for (int hit = 0; hit < 18; ++hit) {
+         ARPG_REQUIRE(launcher_hit_and_finish(world));
+         ARPG_REQUIRE(wait_for_target_grounded(world, 2));
+         drain_events(world);
+     }
+     const CombatSnapshot pre_defeat = world.snapshot();
+-    ARPG_REQUIRE(pre_defeat.dummies[2].hp == 16);
+-    ARPG_REQUIRE(pre_defeat.dummies[2].armor == ArmorState::broken);
+-    ARPG_REQUIRE(pre_defeat.dummies[2].break_window_ticks > 0);
++    ARPG_REQUIRE(pre_defeat.monsters[2].hp == 16);
++    ARPG_REQUIRE(pre_defeat.monsters[2].armor == ArmorState::broken);
++    ARPG_REQUIRE(pre_defeat.monsters[2].break_window_ticks > 0);
+ 
+     ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
+     const CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[2].hp == 0);
+-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::defeated);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_window_ticks == 0);
+-    ARPG_REQUIRE(vec_equal(snapshot.dummies[2].velocity, Vec3{}));
++    ARPG_REQUIRE(snapshot.monsters[2].hp == 0);
++    ARPG_REQUIRE(snapshot.monsters[2].reaction == ReactionState::defeated);
++    ARPG_REQUIRE(snapshot.monsters[2].break_window_ticks == 0);
++    ARPG_REQUIRE(vec_equal(snapshot.monsters[2].velocity, Vec3{}));
+ 
+     std::array<CombatEventKind, 4> kinds{};
+     int event_count = 0;
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::break_started);
+         ARPG_REQUIRE(event_count < 4);
+         kinds[static_cast<std::size_t>(event_count)] = event->kind;
+         ++event_count;
+     }
+     ARPG_REQUIRE(event_count == 4);
+     ARPG_REQUIRE(kinds[0] == CombatEventKind::swing);
+     ARPG_REQUIRE(kinds[1] == CombatEventKind::hit);
+     ARPG_REQUIRE(kinds[2] == CombatEventKind::defeated);
+     ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
+ 
+     tick_n(world, 5);
+     tick_n(world, 90);
+     const CombatSnapshot respawned = world.snapshot();
+-    ARPG_REQUIRE(respawned.dummies[2].reaction == ReactionState::respawning);
+-    ARPG_REQUIRE(respawned.dummies[2].armor == ArmorState::armored);
+-    ARPG_REQUIRE(respawned.dummies[2].break_value == 120);
+-    ARPG_REQUIRE(respawned.dummies[2].hp == 700);
++    ARPG_REQUIRE(respawned.monsters[2].reaction == ReactionState::respawning);
++    ARPG_REQUIRE(respawned.monsters[2].armor == ArmorState::armored);
++    ARPG_REQUIRE(respawned.monsters[2].break_value == 120);
++    ARPG_REQUIRE(respawned.monsters[2].hp == 700);
+     int respawn_events = 0;
+     while (const auto event = world.try_pop_event()) {
+         if (event->kind == CombatEventKind::respawned) {
+             ++respawn_events;
+         }
+     }
+     ARPG_REQUIRE(respawn_events == 1);
+     return {};
+ }
+ 
+@@ -335,21 +335,21 @@ arpg::test::Failure reset_reconstructs_runtime_and_emits_once() noexcept {
+     CombatWorld fresh{config};
+     ARPG_REQUIRE(!fresh.try_pop_event().has_value());
+ 
+     CombatWorld world{config};
+     ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
+     for (std::size_t index = 0; index < InputBuffer::kCapacity; ++index) {
+         ARPG_REQUIRE(world.queue_action(Action::light));
+     }
+     ARPG_REQUIRE(!world.queue_action(Action::light));
+     ARPG_REQUIRE(world.snapshot().diagnostics.input_overflow_count == 1);
+-    ARPG_REQUIRE(world.snapshot().dummies[2].hp < 700);
++    ARPG_REQUIRE(world.snapshot().monsters[2].hp < 700);
+ 
+     world.reset();
+     const CombatSnapshot reset_snapshot = world.snapshot();
+     ARPG_REQUIRE(snapshot_equal(reset_snapshot, fresh.snapshot()));
+     const auto event = world.try_pop_event();
+     ARPG_REQUIRE(event.has_value());
+     ARPG_REQUIRE(event->kind == CombatEventKind::reset);
+     ARPG_REQUIRE(event->tick == 0);
+     ARPG_REQUIRE(event->attack == AttackId::none);
+     ARPG_REQUIRE(event->target_index == 0xFF);
+diff --git a/tests/combat/combat_config_tests.cpp b/tests/combat/combat_config_tests.cpp
+index be8d2c7..052c218 100644
+--- a/tests/combat/combat_config_tests.cpp
++++ b/tests/combat/combat_config_tests.cpp
+@@ -29,22 +29,22 @@ arpg::test::Failure disabled_respawn_stays_defeated() noexcept {
+     CombatWorld world{config};
+     for (int hit = 0; hit < 11; ++hit) {
+         ARPG_REQUIRE(world.queue_action(Action::light));
+         world.tick(MovementInput{});
+         ARPG_REQUIRE(finish_attack(world, 80));
+     }
+     for (int tick = 0; tick < 120; ++tick) {
+         world.tick(MovementInput{});
+     }
+     const CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 0);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::defeated);
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::respawned);
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"configured facing survives reset", &configured_facing_survives_reset},
+     {"disabled respawn stays defeated", &disabled_respawn_stays_defeated},
+ };
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 87e7239..d04c5fe 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -2,26 +2,28 @@
+ 
+ arpg::test::TestSuite attack_catalog_suite() noexcept;
+ arpg::test::TestSuite attack_state_suite() noexcept;
+ arpg::test::TestSuite break_stress_suite() noexcept;
+ arpg::test::TestSuite combat_config_suite() noexcept;
+ arpg::test::TestSuite dummy_reaction_suite() noexcept;
+ arpg::test::TestSuite input_buffer_suite() noexcept;
+ arpg::test::TestSuite movement_jump_suite() noexcept;
+ arpg::test::TestSuite hit_resolution_suite() noexcept;
+ arpg::test::TestSuite monster_catalog_suite() noexcept;
++arpg::test::TestSuite monster_pool_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+         attack_state_suite(),
+         break_stress_suite(),
+         combat_config_suite(),
+         dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
+         monster_catalog_suite(),
++        monster_pool_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 34, "stage 4 task 1");
++    return arpg::test::run_suites(suites, 39, "stage 4 task 3");
+ }
+diff --git a/tests/combat/dummy_reaction_tests.cpp b/tests/combat/dummy_reaction_tests.cpp
+index 0a94441..cea6a3f 100644
+--- a/tests/combat/dummy_reaction_tests.cpp
++++ b/tests/combat/dummy_reaction_tests.cpp
+@@ -54,247 +54,247 @@ bool start_j2_after_j1_hit(CombatWorld& world) noexcept {
+     return world.snapshot().player.active_attack == AttackId::j2;
+ }
+ 
+ arpg::test::Failure j1_hitstun_uses_local_frozen_ticks() noexcept {
+     CombatWorld world{light_and_normal_config()};
+     ARPG_REQUIRE(world.queue_action(Action::light));
+     world.tick(MovementInput{});
+     tick_n(world, 5);
+ 
+     CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
+-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 3);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
++    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 3);
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[0].position.x, 1.20, 1.0e-4));
++        snapshot.monsters[0].position.x, 1.20, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[1].position.x, 1.20, 1.0e-4));
++        snapshot.monsters[1].position.x, 1.20, 1.0e-4));
+ 
+     tick_n(world, 3);
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 0);
+-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 0);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 0);
++    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 0);
+ 
+     tick_n(world, 9);
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
+     world.tick(MovementInput{});
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::idle);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::idle);
+     tick_n(world, 2);
+     ARPG_REQUIRE(
+-        world.snapshot().dummies[0].reaction == ReactionState::hitstun);
++        world.snapshot().monsters[0].reaction == ReactionState::hitstun);
+     world.tick(MovementInput{});
+-    ARPG_REQUIRE(world.snapshot().dummies[0].reaction == ReactionState::idle);
++    ARPG_REQUIRE(world.snapshot().monsters[0].reaction == ReactionState::idle);
+     return {};
+ }
+ 
+ arpg::test::Failure j2_knockback_scales_for_light_and_normal() noexcept {
+     CombatWorld world{light_and_normal_config()};
+     ARPG_REQUIRE(start_j2_after_j1_hit(world));
+     tick_n(world, 6);
+ 
+     CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.x, 2.75, 1.0e-4));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 2.20, 1.0e-4));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 1.20, 1.0e-4));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].velocity.x, 2.75, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.x, 2.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.x, 1.20, 1.0e-4));
+ 
+     tick_n(world, 5);
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 1.20, 1.0e-4));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.x, 1.20, 1.0e-4));
+     world.tick(MovementInput{});
+     snapshot = world.snapshot();
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[0].position.x, 1.20 + 2.75 / 60.0, 1.0e-4));
++        snapshot.monsters[0].position.x, 1.20 + 2.75 / 60.0, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[1].position.x, 1.20 + 2.20 / 60.0, 1.0e-4));
++        snapshot.monsters[1].position.x, 1.20 + 2.20 / 60.0, 1.0e-4));
+     return {};
+ }
+ 
+ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
+     CombatWorld world{normal_target_config()};
+     ARPG_REQUIRE(world.queue_action(Action::launcher));
+     world.tick(MovementInput{});
+     tick_n(world, 7);
+ 
+     CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 5);
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 1.2, 1.0e-4));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 5);
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.z, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.x, 1.2, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 9.5, 1.0e-4));
+     drain_events(world);
+ 
+     tick_n(world, 5);
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.z, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 9.5, 1.0e-4));
+     world.tick(MovementInput{});
+     snapshot = world.snapshot();
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[1].position.z, 9.5 / 60.0, 1.0e-4));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.1, 1.0e-4));
++        snapshot.monsters[1].position.z, 9.5 / 60.0, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 9.1, 1.0e-4));
+ 
+     for (int tick = 0;
+          tick < 120
+-         && world.snapshot().dummies[1].reaction != ReactionState::knockdown;
++         && world.snapshot().monsters[1].reaction != ReactionState::knockdown;
+          ++tick) {
+         world.tick(MovementInput{});
+     }
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 0.0));
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::knockdown);
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.z, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 0.0));
+     int landing_events = 0;
+     while (const auto event = world.try_pop_event()) {
+         if (event->kind == CombatEventKind::landing) {
+             ++landing_events;
+             ARPG_REQUIRE(event->target_index == 1);
+             ARPG_REQUIRE(arpg::test::near(event->position.z, 0.0));
+         }
+     }
+     ARPG_REQUIRE(landing_events == 1);
+     tick_n(world, 44);
+     ARPG_REQUIRE(
+-        world.snapshot().dummies[1].reaction == ReactionState::knockdown);
++        world.snapshot().monsters[1].reaction == ReactionState::knockdown);
+     world.tick(MovementInput{});
+-    ARPG_REQUIRE(world.snapshot().dummies[1].reaction == ReactionState::rising);
++    ARPG_REQUIRE(world.snapshot().monsters[1].reaction == ReactionState::rising);
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::landing);
+     }
+ 
+     CombatWorld airborne_followup{normal_target_config()};
+     ARPG_REQUIRE(airborne_followup.queue_action(Action::launcher));
+     airborne_followup.tick(MovementInput{});
+     tick_n(airborne_followup, 7);
+     ARPG_REQUIRE(finish_attack(airborne_followup, 128));
+     ARPG_REQUIRE(
+-        airborne_followup.snapshot().dummies[1].reaction
++        airborne_followup.snapshot().monsters[1].reaction
+         == ReactionState::airborne);
+     ARPG_REQUIRE(airborne_followup.queue_action(Action::light));
+     airborne_followup.tick(MovementInput{});
+     tick_n(airborne_followup, 5);
+     snapshot = airborne_followup.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 3);
+-    const float frozen_z = snapshot.dummies[1].position.z;
+-    const float frozen_velocity_z = snapshot.dummies[1].velocity.z;
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 3);
++    const float frozen_z = snapshot.monsters[1].position.z;
++    const float frozen_velocity_z = snapshot.monsters[1].velocity.z;
+     tick_n(airborne_followup, 3);
+     snapshot = airborne_followup.snapshot();
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[1].position.z, frozen_z, 1.0e-4));
++        snapshot.monsters[1].position.z, frozen_z, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[1].velocity.z, frozen_velocity_z, 1.0e-4));
++        snapshot.monsters[1].velocity.z, frozen_velocity_z, 1.0e-4));
+     airborne_followup.tick(MovementInput{});
+     snapshot = airborne_followup.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
+     ARPG_REQUIRE(!arpg::test::near(
+-        snapshot.dummies[1].position.z, frozen_z, 1.0e-4));
++        snapshot.monsters[1].position.z, frozen_z, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[1].velocity.z,
++        snapshot.monsters[1].velocity.z,
+         frozen_velocity_z - 24.0 / 60.0,
+         1.0e-4));
+ 
+     CombatLabConfig independent_config;
+     independent_config.dummy_spawns = {{{-1.20F, 0.0F, 0.0F},
+                                         {1.80F, 0.0F, 0.0F},
+                                         {7.00F, -3.0F, 0.0F}}};
+     CombatWorld independent{independent_config};
+     ARPG_REQUIRE(independent.queue_action(Action::launcher));
+     independent.tick(MovementInput{});
+     tick_n(independent, 7);
+     ARPG_REQUIRE(finish_attack(independent, 128));
+     ARPG_REQUIRE(
+-        independent.snapshot().dummies[1].reaction
++        independent.snapshot().monsters[1].reaction
+         == ReactionState::airborne);
+     independent.tick(MovementInput{-1, 0});
+     ARPG_REQUIRE(independent.snapshot().player.facing == Facing::left);
+     ARPG_REQUIRE(independent.queue_action(Action::light));
+     independent.tick(MovementInput{});
+     tick_n(independent, 5);
+     snapshot = independent.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
+-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 0);
+-    const float independent_z = snapshot.dummies[1].position.z;
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
++    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 0);
++    const float independent_z = snapshot.monsters[1].position.z;
+     tick_n(independent, 3);
+     snapshot = independent.snapshot();
+     ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 5);
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 0);
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 0);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
+     ARPG_REQUIRE(!arpg::test::near(
+-        snapshot.dummies[1].position.z, independent_z, 1.0e-4));
++        snapshot.monsters[1].position.z, independent_z, 1.0e-4));
+     return {};
+ }
+ 
+ arpg::test::Failure knockdown_and_rising_have_exact_boundaries() noexcept {
+     CombatWorld j3{normal_target_config()};
+     ARPG_REQUIRE(start_j2_after_j1_hit(j3));
+     tick_n(j3, 6);
+     tick_n(j3, 5);
+     tick_n(j3, 3);
+     ARPG_REQUIRE(j3.snapshot().player.attack_elapsed_ticks == 9);
+     ARPG_REQUIRE(j3.queue_action(Action::light));
+     j3.tick(MovementInput{});
+     ARPG_REQUIRE(j3.snapshot().player.active_attack == AttackId::j3);
+     tick_n(j3, 8);
+     CombatSnapshot snapshot = j3.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 5.0, 1.0e-4));
+-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 7);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::knockdown);
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.x, 5.0, 1.0e-4));
++    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 7);
+     tick_n(j3, 7);
+     tick_n(j3, 44);
+     ARPG_REQUIRE(
+-        j3.snapshot().dummies[1].reaction == ReactionState::knockdown);
++        j3.snapshot().monsters[1].reaction == ReactionState::knockdown);
+     j3.tick(MovementInput{});
+-    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::rising);
++    ARPG_REQUIRE(j3.snapshot().monsters[1].reaction == ReactionState::rising);
+     tick_n(j3, 29);
+-    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::rising);
++    ARPG_REQUIRE(j3.snapshot().monsters[1].reaction == ReactionState::rising);
+     j3.tick(MovementInput{});
+-    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::idle);
++    ARPG_REQUIRE(j3.snapshot().monsters[1].reaction == ReactionState::idle);
+     return {};
+ }
+ 
+ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
+     CombatWorld world{single_target_config()};
+     ARPG_REQUIRE(start_j2_after_j1_hit(world));
+     tick_n(world, 6);
+     ARPG_REQUIRE(finish_attack(world, 128));
+     drain_events(world);
+ 
+     for (int attack = 0; attack < 8; ++attack) {
+         ARPG_REQUIRE(world.queue_action(Action::light));
+         world.tick(MovementInput{});
+         tick_n(world, 5);
+         ARPG_REQUIRE(finish_attack(world, 128));
+         drain_events(world);
+     }
+ 
+-    ARPG_REQUIRE(world.snapshot().dummies[0].hp == 14);
++    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 14);
+     ARPG_REQUIRE(world.queue_action(Action::light));
+     world.tick(MovementInput{});
+     tick_n(world, 5);
+     CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.x, 0.0));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.z, 0.0));
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 0);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::defeated);
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].velocity.x, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].velocity.z, 0.0));
+ 
+     std::array<CombatEventKind, 4> kinds{};
+     std::size_t event_count = 0;
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event_count < kinds.size());
+         kinds[event_count] = event->kind;
+         if (event->kind == CombatEventKind::defeated) {
+             ARPG_REQUIRE(event->attack == AttackId::j1);
+             ARPG_REQUIRE(event->target_index == 0);
+         }
+@@ -306,64 +306,64 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
+     ARPG_REQUIRE(kinds[2] == CombatEventKind::defeated);
+     ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
+ 
+     tick_n(world, 3);
+     ARPG_REQUIRE(finish_attack(world, 128));
+     drain_events(world);
+     ARPG_REQUIRE(world.queue_action(Action::light));
+     world.tick(MovementInput{});
+     tick_n(world, 5);
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 0);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::defeated);
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event->kind == CombatEventKind::swing);
+     }
+     ARPG_REQUIRE(finish_attack(world, 128));
+     drain_events(world);
+ 
+     tick_n(world, 53);
+     ARPG_REQUIRE(world.queue_action(Action::light));
+     world.tick(MovementInput{});
+     tick_n(world, 5);
+     ARPG_REQUIRE(
+-        world.snapshot().dummies[0].reaction == ReactionState::defeated);
++        world.snapshot().monsters[0].reaction == ReactionState::defeated);
+     world.tick(MovementInput{});
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::respawning);
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == snapshot.dummies[0].max_hp);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::respawning);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == snapshot.monsters[0].max_hp);
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[0].position.x, 1.20, 1.0e-4));
++        snapshot.monsters[0].position.x, 1.20, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[0].position.y, 0.0, 1.0e-4));
++        snapshot.monsters[0].position.y, 0.0, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(
+-        snapshot.dummies[0].position.z, 0.0, 1.0e-4));
++        snapshot.monsters[0].position.z, 0.0, 1.0e-4));
+ 
+     int respawn_events = 0;
+     int respawn_tick_hits = 0;
+     while (const auto event = world.try_pop_event()) {
+         if (event->kind == CombatEventKind::respawned) {
+             ++respawn_events;
+             ARPG_REQUIRE(event->target_index == 0);
+             ARPG_REQUIRE(event->attack == AttackId::none);
+             ARPG_REQUIRE(arpg::test::near(
+                 event->position.x, 1.20, 1.0e-4));
+         } else if (event->kind == CombatEventKind::hit) {
+             ++respawn_tick_hits;
+         }
+     }
+     ARPG_REQUIRE(respawn_events == 1);
+     ARPG_REQUIRE(respawn_tick_hits == 0);
+     world.tick(MovementInput{});
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == 272);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 272);
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::respawned);
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"J1 light and normal hitstun", &j1_hitstun_uses_local_frozen_ticks},
+     {"J2 light and normal knockback", &j2_knockback_scales_for_light_and_normal},
+     {"launcher gravity and landing", &launcher_integrates_then_lands_in_knockdown},
+diff --git a/tests/combat/hit_resolution_tests.cpp b/tests/combat/hit_resolution_tests.cpp
+index f72762c..7e642d7 100644
+--- a/tests/combat/hit_resolution_tests.cpp
++++ b/tests/combat/hit_resolution_tests.cpp
+@@ -109,100 +109,100 @@ arpg::test::Failure attack_assist_is_single_bounded_and_x_only() noexcept {
+     CombatLabConfig defeated_config;
+     defeated_config.dummy_spawns = {{{2.13F, 0.0F, 0.0F},
+                                      {3.51F, 0.0F, 0.0F},
+                                      {7.00F, 3.0F, 0.0F}}};
+     CombatWorld defeated{defeated_config};
+     for (int attack = 0; attack < 11; ++attack) {
+         ARPG_REQUIRE(defeated.queue_action(Action::light));
+         defeated.tick(MovementInput{});
+         ARPG_REQUIRE(finish_attack(defeated, 80));
+     }
+-    ARPG_REQUIRE(defeated.snapshot().dummies[0].hp == 0);
+-    ARPG_REQUIRE(defeated.snapshot().dummies[1].hp > 0);
++    ARPG_REQUIRE(defeated.snapshot().monsters[0].hp == 0);
++    ARPG_REQUIRE(defeated.snapshot().monsters[1].hp > 0);
+     ARPG_REQUIRE(defeated.queue_action(Action::light));
+     defeated.tick(MovementInput{});
+     ARPG_REQUIRE(arpg::test::near(
+         defeated.snapshot().player.position.x, 1.46, 1.0e-4));
+     return {};
+ }
+ 
+ arpg::test::Failure one_attack_hits_one_target_once_across_active_ticks() noexcept {
+     CombatLabConfig config;
+     config.dummy_spawns = {{{1.20F, 0.0F, 0.0F},
+                             {5.00F, 2.0F, 0.0F},
+                             {6.00F, -2.0F, 0.0F}}};
+     CombatWorld world{config};
+     ARPG_REQUIRE(world.queue_action(Action::light));
+     world.tick(MovementInput{});
+     tick_n(world, 5);
+ 
+     CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == 272);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 272);
+     ARPG_REQUIRE(snapshot.player.hit_stop_ticks == 3);
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
+ 
+     int hit_events = 0;
+     int summaries = 0;
+     while (const auto event = world.try_pop_event()) {
+         if (event->kind == CombatEventKind::hit) {
+             ++hit_events;
+             ARPG_REQUIRE(event->target_index == 0);
+             ARPG_REQUIRE(event->value == 28);
+         } else if (event->kind == CombatEventKind::impact_summary) {
+             ++summaries;
+             ARPG_REQUIRE(event->hit_count == 1);
+             ARPG_REQUIRE(event->feedback == FeedbackLevel::light);
+         }
+     }
+     ARPG_REQUIRE(hit_events == 1);
+     ARPG_REQUIRE(summaries == 1);
+ 
+     tick_n(world, 8);
+     snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == 272);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 272);
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::hit);
+         ARPG_REQUIRE(event->kind != CombatEventKind::impact_summary);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexcept {
+     CombatLabConfig config;
+     config.dummy_spawns = {{{1.20F, 0.0F, 0.0F},
+                             {1.20F, 0.0F, 0.0F},
+                             {1.20F, 0.0F, 0.0F}}};
+     CombatWorld world{config};
+     ARPG_REQUIRE(world.queue_action(Action::launcher));
+     world.tick(MovementInput{});
+     tick_n(world, 7);
+ 
+     const CombatSnapshot snapshot = world.snapshot();
+-    ARPG_REQUIRE(snapshot.dummies[0].hp == 262);
+-    ARPG_REQUIRE(snapshot.dummies[1].hp == 412);
+-    ARPG_REQUIRE(snapshot.dummies[2].hp == 662);
+-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 102);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 262);
++    ARPG_REQUIRE(snapshot.monsters[1].hp == 412);
++    ARPG_REQUIRE(snapshot.monsters[2].hp == 662);
++    ARPG_REQUIRE(snapshot.monsters[2].break_value == 102);
+     ARPG_REQUIRE(snapshot.player.hit_stop_ticks == 5);
+-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 5);
+-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 5);
+-    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 5);
+-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::airborne);
+-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
++    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 5);
++    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 5);
++    ARPG_REQUIRE(snapshot.monsters[2].hit_stop_ticks == 5);
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[2].reaction == ReactionState::idle);
+     ARPG_REQUIRE(
+-        arpg::test::near(snapshot.dummies[0].velocity.x, 1.5, 1.0e-4));
++        arpg::test::near(snapshot.monsters[0].velocity.x, 1.5, 1.0e-4));
+     ARPG_REQUIRE(
+-        arpg::test::near(snapshot.dummies[0].velocity.z, 11.875, 1.0e-4));
++        arpg::test::near(snapshot.monsters[0].velocity.z, 11.875, 1.0e-4));
+     ARPG_REQUIRE(
+-        arpg::test::near(snapshot.dummies[1].velocity.x, 1.2, 1.0e-4));
++        arpg::test::near(snapshot.monsters[1].velocity.x, 1.2, 1.0e-4));
+     ARPG_REQUIRE(
+-        arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
++        arpg::test::near(snapshot.monsters[1].velocity.z, 9.5, 1.0e-4));
+ 
+     std::array<std::uint8_t, kDummyCount> hit_order{{0xFF, 0xFF, 0xFF}};
+     int hit_events = 0;
+     int summaries = 0;
+     int event_index = 0;
+     while (const auto event = world.try_pop_event()) {
+         if (event->kind == CombatEventKind::swing) {
+             ARPG_REQUIRE(event_index == 0);
+         } else if (event->kind == CombatEventKind::hit) {
+             ARPG_REQUIRE(event_index == hit_events + 1);
+@@ -232,21 +232,21 @@ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexc
+ arpg::test::Failure hit_confirm_opens_j1_cancel_at_eight_not_thirteen() noexcept {
+     CombatLabConfig hit_config;
+     hit_config.dummy_spawns = {{{1.20F, 0.0F, 0.0F},
+                                 {5.00F, 2.0F, 0.0F},
+                                 {6.00F, -2.0F, 0.0F}}};
+     CombatWorld hit{hit_config};
+     ARPG_REQUIRE(hit.queue_action(Action::light));
+     hit.tick(MovementInput{});
+     tick_n(hit, 5);
+     ARPG_REQUIRE(hit.snapshot().player.attack_elapsed_ticks == 5);
+-    ARPG_REQUIRE(hit.snapshot().dummies[0].hp == 272);
++    ARPG_REQUIRE(hit.snapshot().monsters[0].hp == 272);
+     tick_n(hit, 3);
+     tick_n(hit, 3);
+     ARPG_REQUIRE(hit.snapshot().player.attack_elapsed_ticks == 8);
+     ARPG_REQUIRE(hit.queue_action(Action::light));
+     hit.tick(MovementInput{});
+     ARPG_REQUIRE(hit.snapshot().player.active_attack == AttackId::j2);
+     ARPG_REQUIRE(hit.snapshot().player.attack_elapsed_ticks == 0);
+ 
+     CombatLabConfig whiff_config;
+     whiff_config.dummy_spawns = {{{5.00F, 2.0F, 0.0F},
+diff --git a/tests/combat/monster_pool_tests.cpp b/tests/combat/monster_pool_tests.cpp
+new file mode 100644
+index 0000000..1a82230
+--- /dev/null
++++ b/tests/combat/monster_pool_tests.cpp
+@@ -0,0 +1,115 @@
++#include "test_framework.hpp"
++
++#include "combat/combat_world.hpp"
++#include "combat/monster_pool.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace {
++
++using namespace arpg::combat;
++
++arpg::test::Failure pool_allocates_first_free_slot_deterministically() noexcept {
++    MonsterPool pool;
++    const auto first = pool.spawn(MonsterId::fire_bomber, Vec3{1.0F, 2.0F, 0.0F});
++    const auto second = pool.spawn(MonsterId::water_bulwark, Vec3{3.0F, 4.0F, 0.0F});
++    ARPG_REQUIRE(first.has_value());
++    ARPG_REQUIRE(second.has_value());
++    ARPG_REQUIRE(first->index == 0U);
++    ARPG_REQUIRE(second->index == 1U);
++    ARPG_REQUIRE(pool.active_count() == 2U);
++    ARPG_REQUIRE(pool.get(*first) != nullptr);
++    ARPG_REQUIRE(pool.get(*second)->id == MonsterId::water_bulwark);
++    ARPG_REQUIRE(pool.get(*first)->position.x == 1.0F);
++    return {};
++}
++
++arpg::test::Failure pool_rejects_stale_handle_after_destroy_and_reuse() noexcept {
++    MonsterPool pool;
++    const auto original = pool.spawn(MonsterId::fire_charger, Vec3{});
++    ARPG_REQUIRE(original.has_value());
++    ARPG_REQUIRE(pool.destroy(*original));
++    ARPG_REQUIRE(pool.active_count() == 0U);
++    ARPG_REQUIRE(pool.get(*original) == nullptr);
++
++    const auto replacement = pool.spawn(MonsterId::chaos_chaser, Vec3{5.0F, 0.0F, 0.0F});
++    ARPG_REQUIRE(replacement.has_value());
++    ARPG_REQUIRE(replacement->index == original->index);
++    ARPG_REQUIRE(replacement->generation != original->generation);
++    ARPG_REQUIRE(pool.get(*original) == nullptr);
++    ARPG_REQUIRE(pool.get(*replacement) != nullptr);
++    ARPG_REQUIRE(!pool.destroy(*original));
++    ARPG_REQUIRE(pool.active_count() == 1U);
++    return {};
++}
++
++arpg::test::Failure pool_rejects_97th_spawn_without_mutating_full_slots() noexcept {
++    MonsterPool pool;
++    std::array<MonsterHandle, kMonsterCapacity> handles{};
++    for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
++        const auto handle = pool.spawn(
++            MonsterId::lightning_shooter,
++            Vec3{static_cast<float>(index), 0.0F, 0.0F});
++        ARPG_REQUIRE(handle.has_value());
++        ARPG_REQUIRE(handle->index == index);
++        handles[index] = *handle;
++    }
++    const auto before = pool.slots();
++    ARPG_REQUIRE(!pool.spawn(MonsterId::chaos_hazard, Vec3{99.0F, 0.0F, 0.0F}));
++    ARPG_REQUIRE(pool.active_count() == kMonsterCapacity);
++    for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
++        const MonsterRuntime* runtime = pool.get(handles[index]);
++        ARPG_REQUIRE(runtime != nullptr);
++        ARPG_REQUIRE(runtime->active);
++        ARPG_REQUIRE(runtime->id == before[index].id);
++        ARPG_REQUIRE(runtime->position.x == before[index].position.x);
++    }
++    return {};
++}
++
++arpg::test::Failure pool_clear_deactivates_all_slots_and_reuses_slot_zero() noexcept {
++    MonsterPool pool;
++    const auto old = pool.spawn(MonsterId::fire_bomber, Vec3{});
++    ARPG_REQUIRE(old.has_value());
++    pool.clear();
++    ARPG_REQUIRE(pool.active_count() == 0U);
++    ARPG_REQUIRE(pool.get(*old) == nullptr);
++    const auto fresh = pool.spawn(MonsterId::water_support, Vec3{});
++    ARPG_REQUIRE(fresh.has_value());
++    ARPG_REQUIRE(fresh->index == 0U);
++    ARPG_REQUIRE(fresh->generation != old->generation);
++    return {};
++}
++
++arpg::test::Failure encounter_wave_load_populates_snapshot_active_count() noexcept {
++    EncounterWave wave{};
++    wave.spawn_count = 2U;
++    wave.spawns[0] = MonsterSpawnSpec{MonsterId::fire_bomber, Vec3{2.0F, 0.0F, 0.0F}};
++    wave.spawns[1] = MonsterSpawnSpec{MonsterId::chaos_hazard, Vec3{4.0F, 1.0F, 0.0F}};
++    CombatEncounterConfig config{};
++    config.wave = wave;
++    CombatWorld world{config};
++    const CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.monster_count == 2U);
++    ARPG_REQUIRE(world.active_monster_count() == 2U);
++    ARPG_REQUIRE(snapshot.monsters[0].active);
++    ARPG_REQUIRE(snapshot.monsters[0].id == MonsterId::fire_bomber);
++    ARPG_REQUIRE(snapshot.monsters[1].id == MonsterId::chaos_hazard);
++    ARPG_REQUIRE(snapshot.monsters[1].position.x == 4.0F);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"first-free deterministic allocation", &pool_allocates_first_free_slot_deterministically},
++    {"stale handle rejection", &pool_rejects_stale_handle_after_destroy_and_reuse},
++    {"full capacity rejection", &pool_rejects_97th_spawn_without_mutating_full_slots},
++    {"clear reset and reuse", &pool_clear_deactivates_all_slots_and_reuses_slot_zero},
++    {"wave snapshot active count", &encounter_wave_load_populates_snapshot_active_count},
++};
++
++}  // namespace
++
++arpg::test::TestSuite monster_pool_suite() noexcept {
++    return arpg::test::make_suite("monster_pool", kCases);
++}
+diff --git a/tests/combat/movement_jump_tests.cpp b/tests/combat/movement_jump_tests.cpp
+index 42543bb..89b31a4 100644
+--- a/tests/combat/movement_jump_tests.cpp
++++ b/tests/combat/movement_jump_tests.cpp
+@@ -70,21 +70,21 @@ arpg::test::Failure room_clamps_facing_and_reset_are_stable() noexcept {
+         ARPG_REQUIRE(world.queue_action(Action::light));
+     }
+     ARPG_REQUIRE(!world.queue_action(Action::light));
+     ARPG_REQUIRE(world.snapshot().diagnostics.input_overflow_count == 1);
+ 
+     world.reset();
+     snapshot = world.snapshot();
+     ARPG_REQUIRE(snapshot.tick == 0);
+     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 1.0));
+     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, -1.0));
+-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 2.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].position.x, 2.0));
+     ARPG_REQUIRE(snapshot.player.state == PlayerState::idle);
+     ARPG_REQUIRE(snapshot.diagnostics.input_size == 0);
+     ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 0);
+     ARPG_REQUIRE(snapshot.diagnostics.input_overflow_count == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure jump_arc_has_deterministic_apex_and_one_landing_tick() noexcept {
+     CombatWorld world;
+     ARPG_REQUIRE(world.queue_action(Action::jump));

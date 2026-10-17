@@ -1,0 +1,591 @@
+# Review package: 31ea680..dfa3b95
+
+## Commits
+dfa3b95 fix: harden monster pool migration
+
+## Files changed
+ src/combat/combat_world.cpp         |  32 +++++++++--
+ src/combat/combat_world.hpp         |   1 +
+ src/combat/hit_resolution.cpp       |  12 ++---
+ src/combat/monster_pool.cpp         |   4 --
+ src/combat/monster_pool.hpp         |   5 +-
+ src/combat/target_simulation.cpp    |   6 +--
+ tests/combat/combat_test_main.cpp   |   2 +-
+ tests/combat/monster_pool_tests.cpp | 102 +++++++++++++++++++++++++++++++++++-
+ 8 files changed, 143 insertions(+), 21 deletions(-)
+
+## Diff
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 5b13e2c..5d7c598 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -30,30 +30,30 @@ bool CombatWorld::queue_action(Action action) noexcept {
+ }
+ 
+ void CombatWorld::tick(MovementInput movement) noexcept {
+     const bool player_frozen = player_.hit_stop_ticks != 0;
+     if (player_frozen) {
+         --player_.hit_stop_ticks;
+     } else {
+         simulate_player(movement);
+     }
+ 
+-    for (MonsterRuntime& monster : monsters_.slots()) {
++    for (MonsterRuntime& monster : monsters_.slots_) {
+         if (!monster.active) {
+             continue;
+         }
+         const bool dummy_frozen = monster.hit_stop_ticks != 0;
+         if (dummy_frozen) {
+             --monster.hit_stop_ticks;
+         } else {
+             const std::size_t index = static_cast<std::size_t>(
+-                &monster - monsters_.slots().data());
++                &monster - monsters_.slots_.data());
+             simulate_target(index);
+         }
+     }
+ 
+     if (!player_frozen) {
+         resolve_attack_hits();
+     }
+ 
+     input_buffer_.age(player_frozen);
+     ++tick_;
+@@ -129,29 +129,45 @@ bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
+ 
+     monsters_.clear();
+     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
+         const auto handle = monsters_.spawn(
+             wave.spawns[index].id, wave.spawns[index].position);
+         if (!handle.has_value()) {
+             monsters_.clear();
+             return false;
+         }
+     }
++    attack_ = AttackRuntime{};
++    input_buffer_.clear();
++    input_buffer_.reset_diagnostics();
++    while (events_.try_pop().has_value()) {
++    }
++    event_overflow_count_ = 0U;
+     encounter_config_.wave = wave;
+     legacy_mode_ = false;
+     return true;
+ }
+ 
+ std::size_t CombatWorld::active_monster_count() const noexcept {
+     return monsters_.active_count();
+ }
+ 
++bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
++    if (!monsters_.destroy(handle)) {
++        return false;
++    }
++    if (handle.index < attack_.hit_targets.size()) {
++        attack_.hit_targets[handle.index] = false;
++    }
++    return true;
++}
++
+ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+ CombatSnapshot CombatWorld::snapshot() const noexcept {
+     CombatSnapshot result{};
+     result.tick = tick_;
+     result.player = PlayerSnapshot{
+         player_.position,
+         player_.velocity,
+@@ -184,22 +200,30 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+             dummy.hp,
+             dummy.max_hp,
+             dummy.break_value,
+             dummy.max_break,
+             dummy.break_window_ticks,
+             dummy.hit_stop_ticks,
+         };
+     }
+ 
+     result.monster_count = monsters_.active_count();
+-    for (std::size_t index = 0; index < kDummyCount; ++index) {
+-        result.dummies[index] = result.monsters[index];
++    std::size_t compatibility_index = 0U;
++    for (std::size_t index = 0;
++         index < monsters_.slots().size()
++             && compatibility_index < kDummyCount;
++         ++index) {
++        if (!result.monsters[index].active) {
++            continue;
++        }
++        result.dummies[compatibility_index] = result.monsters[index];
++        ++compatibility_index;
+     }
+ 
+     result.diagnostics = CombatDiagnostics{
+         input_buffer_.size(),
+         input_buffer_.expired_count(),
+         input_buffer_.overflow_count(),
+         event_overflow_count_,
+     };
+     return result;
+ }
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index 68acb87..307765d 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -14,20 +14,21 @@ namespace arpg::combat {
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     void tick(MovementInput movement) noexcept;
+     void reset() noexcept;
+     [[nodiscard]] bool load_wave(const EncounterWave& wave) noexcept;
++    [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_monster_count() const noexcept;
+     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+ 
+ private:
+     struct PlayerRuntime final {
+         Vec3 position{};
+         Vec3 velocity{};
+         Facing facing{Facing::right};
+         PlayerState state{PlayerState::idle};
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 8b8df7e..14a7809 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -37,22 +37,22 @@ void CombatWorld::emit_event(const CombatEvent& event) noexcept {
+ }
+ 
+ void CombatWorld::apply_attack_assist(
+     const AttackDefinition& definition) noexcept {
+     const Aabb attack_box = make_world_aabb(
+         definition.local_hitbox, player_.position, player_.facing);
+     const bool facing_right = player_.facing == Facing::right;
+     float best_gap = std::numeric_limits<float>::max();
+     float best_correction = 0.0F;
+ 
+-    for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
+-        const MonsterRuntime& dummy = monsters_.slots()[index];
++    for (std::size_t index = 0; index < monsters_.slots_.size(); ++index) {
++        const MonsterRuntime& dummy = monsters_.slots_[index];
+         const float relative_x = dummy.position.x - player_.position.x;
+         if (dummy.hp <= 0
+             || dummy.reaction == ReactionState::defeated
+             || dummy.reaction == ReactionState::respawning
+             || (facing_right && relative_x < 0.0F)
+                 || (!facing_right && relative_x > 0.0F)
+                 || std::fabs(dummy.position.y - player_.position.y)
+                 > kAttackAssistMaxDepth) {
+             continue;
+         }
+@@ -88,22 +88,22 @@ void CombatWorld::resolve_attack_hits() noexcept {
+     if (definition == nullptr
+         || attack_phase_at(*definition, attack_.elapsed_ticks)
+                != AttackPhase::active) {
+         return;
+     }
+ 
+     const Aabb attack_box = make_world_aabb(
+         definition->local_hitbox, player_.position, player_.facing);
+     std::array<std::uint8_t, kMonsterCapacity> hit_indices{};
+     std::size_t hit_count = 0;
+-    for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
+-        const MonsterRuntime& dummy = monsters_.slots()[index];
++    for (std::size_t index = 0; index < monsters_.slots_.size(); ++index) {
++        const MonsterRuntime& dummy = monsters_.slots_[index];
+         if (attack_.hit_targets[index]
+             || dummy.hp <= 0
+             || dummy.reaction == ReactionState::defeated
+             || dummy.reaction == ReactionState::respawning) {
+             continue;
+         }
+         if (overlaps_inclusive(
+                 attack_box,
+                 make_dummy_hurtbox(dummy.kind, dummy.position))) {
+             hit_indices[hit_count] = static_cast<std::uint8_t>(index);
+@@ -111,21 +111,21 @@ void CombatWorld::resolve_attack_hits() noexcept {
+         }
+     }
+ 
+     if (hit_count == 0) {
+         return;
+     }
+ 
+     const std::uint16_t hit_stop = hit_stop_for(definition->feedback);
+     for (std::size_t collected = 0; collected < hit_count; ++collected) {
+         const std::size_t index = hit_indices[collected];
+-        MonsterRuntime& dummy = monsters_.slots()[index];
++        MonsterRuntime& dummy = monsters_.slots_[index];
+         attack_.hit_targets[index] = true;
+         attack_.connected = true;
+         dummy.hp = std::max(0, dummy.hp - definition->damage);
+         bool starts_break = false;
+         bool accepts_impact = dummy.armor != ArmorState::armored;
+         if (dummy.hp != 0 && dummy.armor == ArmorState::armored) {
+             dummy.break_value = std::max(
+                 0, dummy.break_value - definition->break_damage);
+             if (dummy.break_value == 0) {
+                 dummy.armor = ArmorState::broken;
+@@ -165,16 +165,16 @@ void CombatWorld::resolve_attack_hits() noexcept {
+ 
+     player_.hit_stop_ticks = std::max(player_.hit_stop_ticks, hit_stop);
+     if (!attack_.impact_event_emitted) {
+         attack_.impact_event_emitted = true;
+         CombatEvent summary{};
+         summary.kind = CombatEventKind::impact_summary;
+         summary.tick = tick_;
+         summary.attack = definition->id;
+         summary.hit_count = static_cast<std::uint8_t>(hit_count);
+         summary.feedback = definition->feedback;
+-        summary.position = monsters_.slots()[hit_indices[0]].position;
++        summary.position = monsters_.slots_[hit_indices[0]].position;
+         emit_event(summary);
+     }
+ }
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/monster_pool.cpp b/src/combat/monster_pool.cpp
+index 2f72008..b52ef11 100644
+--- a/src/combat/monster_pool.cpp
++++ b/src/combat/monster_pool.cpp
+@@ -120,15 +120,11 @@ const MonsterRuntime* MonsterPool::get(MonsterHandle handle) const noexcept {
+     if (!runtime.active || runtime.generation != handle.generation) {
+         return nullptr;
+     }
+     return &runtime;
+ }
+ 
+ const std::array<MonsterRuntime, kMonsterCapacity>& MonsterPool::slots() const noexcept {
+     return slots_;
+ }
+ 
+-std::array<MonsterRuntime, kMonsterCapacity>& MonsterPool::slots() noexcept {
+-    return slots_;
+-}
+-
+ }  // namespace arpg::combat
+diff --git a/src/combat/monster_pool.hpp b/src/combat/monster_pool.hpp
+index 153eeea..d415458 100644
+--- a/src/combat/monster_pool.hpp
++++ b/src/combat/monster_pool.hpp
+@@ -2,20 +2,22 @@
+ 
+ #include "combat/combat_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::combat {
+ 
++class CombatWorld;
++
+ struct MonsterRuntime final {
+     bool active{};
+     std::uint16_t generation{};
+     MonsterId id{MonsterId::chaos_chaser};
+     DummyKind kind{DummyKind::normal};
+     Vec3 spawn{};
+     Vec3 position{};
+     Vec3 velocity{};
+     Facing facing{Facing::right};
+     ReactionState reaction{ReactionState::idle};
+@@ -43,21 +45,20 @@ class MonsterPool final {
+ public:
+     void clear() noexcept;
+     [[nodiscard]] std::optional<MonsterHandle> spawn(
+         MonsterId id, Vec3 position) noexcept;
+     [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_count() const noexcept;
+     [[nodiscard]] MonsterRuntime* get(MonsterHandle handle) noexcept;
+     [[nodiscard]] const MonsterRuntime* get(MonsterHandle handle) const noexcept;
+     [[nodiscard]] const std::array<MonsterRuntime, kMonsterCapacity>&
+     slots() const noexcept;
+-    [[nodiscard]] std::array<MonsterRuntime, kMonsterCapacity>&
+-    slots() noexcept;
+ 
+ private:
++    friend class CombatWorld;
+     static void advance_generation(MonsterRuntime& runtime) noexcept;
+ 
+     std::array<MonsterRuntime, kMonsterCapacity> slots_{};
+     std::size_t active_count_{};
+ };
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/target_simulation.cpp b/src/combat/target_simulation.cpp
+index a575dbc..cc3ce3d 100644
+--- a/src/combat/target_simulation.cpp
++++ b/src/combat/target_simulation.cpp
+@@ -29,21 +29,21 @@ std::uint16_t reaction_ticks(
+     const std::uint32_t scaled =
+         static_cast<std::uint32_t>(base_ticks) * 5U;
+     return static_cast<std::uint16_t>((scaled + 3U) / 4U);
+ }
+ 
+ }  // namespace
+ 
+ void CombatWorld::apply_dummy_impact(
+     std::size_t index,
+     const AttackDefinition& definition) noexcept {
+-    MonsterRuntime& dummy = monsters_.slots()[index];
++    MonsterRuntime& dummy = monsters_.slots_[index];
+     if (dummy.hp == 0) {
+         dummy.reaction = ReactionState::defeated;
+         dummy.reaction_ticks = kRespawnTicks;
+         dummy.break_window_ticks = 0;
+         dummy.velocity = Vec3{};
+ 
+         CombatEvent defeated{};
+         defeated.kind = CombatEventKind::defeated;
+         defeated.tick = tick_;
+         defeated.attack = definition.id;
+@@ -102,21 +102,21 @@ void CombatWorld::apply_dummy_impact(
+         dummy.velocity.x =
+             facing * definition.knockback_speed * scale;
+         dummy.velocity.z = definition.launch_speed * scale;
+         dummy.reaction = ReactionState::airborne;
+         dummy.reaction_ticks = 0;
+         break;
+     }
+ }
+ 
+ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
+-    MonsterRuntime& dummy = monsters_.slots()[index];
++    MonsterRuntime& dummy = monsters_.slots_[index];
+     dummy.position = dummy.spawn;
+     dummy.velocity = Vec3{};
+     dummy.reaction = ReactionState::respawning;
+     dummy.armor = dummy.kind == DummyKind::heavy
+                       ? ArmorState::armored
+                       : ArmorState::none;
+     dummy.reaction_ticks = 0;
+     dummy.break_window_ticks = 0;
+     dummy.hit_stop_ticks = 0;
+     dummy.hp = dummy.max_hp;
+@@ -124,21 +124,21 @@ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
+ 
+     CombatEvent respawned{};
+     respawned.kind = CombatEventKind::respawned;
+     respawned.tick = tick_;
+     respawned.target_index = static_cast<std::uint8_t>(index);
+     respawned.position = dummy.position;
+     emit_event(respawned);
+ }
+ 
+ void CombatWorld::simulate_target(std::size_t index) noexcept {
+-    MonsterRuntime& dummy = monsters_.slots()[index];
++    MonsterRuntime& dummy = monsters_.slots_[index];
+ 
+     if (dummy.armor == ArmorState::broken
+         && dummy.reaction != ReactionState::defeated
+         && dummy.reaction != ReactionState::respawning
+         && dummy.break_window_ticks != 0) {
+         --dummy.break_window_ticks;
+         if (dummy.break_window_ticks == 0) {
+             dummy.armor = ArmorState::armored;
+             dummy.break_value = dummy.max_break;
+         }
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index d04c5fe..0b02200 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -18,12 +18,12 @@ int main() {
+         break_stress_suite(),
+         combat_config_suite(),
+         dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
+         monster_catalog_suite(),
+         monster_pool_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 39, "stage 4 task 3");
++    return arpg::test::run_suites(suites, 42, "stage 4 task 3");
+ }
+diff --git a/tests/combat/monster_pool_tests.cpp b/tests/combat/monster_pool_tests.cpp
+index 1a82230..1431cfd 100644
+--- a/tests/combat/monster_pool_tests.cpp
++++ b/tests/combat/monster_pool_tests.cpp
+@@ -1,22 +1,28 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ #include "combat/monster_pool.hpp"
+ 
+ #include <array>
+ #include <cstddef>
++#include <type_traits>
++#include <utility>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ 
++static_assert(std::is_same_v<
++    decltype(std::declval<MonsterPool&>().slots()),
++    const std::array<MonsterRuntime, kMonsterCapacity>&>);
++
+ arpg::test::Failure pool_allocates_first_free_slot_deterministically() noexcept {
+     MonsterPool pool;
+     const auto first = pool.spawn(MonsterId::fire_bomber, Vec3{1.0F, 2.0F, 0.0F});
+     const auto second = pool.spawn(MonsterId::water_bulwark, Vec3{3.0F, 4.0F, 0.0F});
+     ARPG_REQUIRE(first.has_value());
+     ARPG_REQUIRE(second.has_value());
+     ARPG_REQUIRE(first->index == 0U);
+     ARPG_REQUIRE(second->index == 1U);
+     ARPG_REQUIRE(pool.active_count() == 2U);
+     ARPG_REQUIRE(pool.get(*first) != nullptr);
+@@ -54,23 +60,40 @@ arpg::test::Failure pool_rejects_97th_spawn_without_mutating_full_slots() noexce
+         ARPG_REQUIRE(handle.has_value());
+         ARPG_REQUIRE(handle->index == index);
+         handles[index] = *handle;
+     }
+     const auto before = pool.slots();
+     ARPG_REQUIRE(!pool.spawn(MonsterId::chaos_hazard, Vec3{99.0F, 0.0F, 0.0F}));
+     ARPG_REQUIRE(pool.active_count() == kMonsterCapacity);
+     for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
+         const MonsterRuntime* runtime = pool.get(handles[index]);
+         ARPG_REQUIRE(runtime != nullptr);
+-        ARPG_REQUIRE(runtime->active);
++        ARPG_REQUIRE(runtime->active == before[index].active);
++        ARPG_REQUIRE(runtime->generation == before[index].generation);
+         ARPG_REQUIRE(runtime->id == before[index].id);
++        ARPG_REQUIRE(runtime->kind == before[index].kind);
+         ARPG_REQUIRE(runtime->position.x == before[index].position.x);
++        ARPG_REQUIRE(runtime->position.y == before[index].position.y);
++        ARPG_REQUIRE(runtime->position.z == before[index].position.z);
++        ARPG_REQUIRE(runtime->velocity.x == before[index].velocity.x);
++        ARPG_REQUIRE(runtime->velocity.y == before[index].velocity.y);
++        ARPG_REQUIRE(runtime->velocity.z == before[index].velocity.z);
++        ARPG_REQUIRE(runtime->reaction == before[index].reaction);
++        ARPG_REQUIRE(runtime->armor == before[index].armor);
++        ARPG_REQUIRE(runtime->ai_phase == before[index].ai_phase);
++        ARPG_REQUIRE(runtime->ai_ticks == before[index].ai_ticks);
++        ARPG_REQUIRE(runtime->hp == before[index].hp);
++        ARPG_REQUIRE(runtime->max_hp == before[index].max_hp);
++        ARPG_REQUIRE(runtime->break_value == before[index].break_value);
++        ARPG_REQUIRE(runtime->max_break == before[index].max_break);
++        ARPG_REQUIRE(runtime->break_window_ticks == before[index].break_window_ticks);
++        ARPG_REQUIRE(runtime->hit_stop_ticks == before[index].hit_stop_ticks);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure pool_clear_deactivates_all_slots_and_reuses_slot_zero() noexcept {
+     MonsterPool pool;
+     const auto old = pool.spawn(MonsterId::fire_bomber, Vec3{});
+     ARPG_REQUIRE(old.has_value());
+     pool.clear();
+     ARPG_REQUIRE(pool.active_count() == 0U);
+@@ -93,23 +116,100 @@ arpg::test::Failure encounter_wave_load_populates_snapshot_active_count() noexce
+     const CombatSnapshot snapshot = world.snapshot();
+     ARPG_REQUIRE(snapshot.monster_count == 2U);
+     ARPG_REQUIRE(world.active_monster_count() == 2U);
+     ARPG_REQUIRE(snapshot.monsters[0].active);
+     ARPG_REQUIRE(snapshot.monsters[0].id == MonsterId::fire_bomber);
+     ARPG_REQUIRE(snapshot.monsters[1].id == MonsterId::chaos_hazard);
+     ARPG_REQUIRE(snapshot.monsters[1].position.x == 4.0F);
+     return {};
+ }
+ 
++arpg::test::Failure compatibility_projection_packs_active_slots_after_destroy() noexcept {
++    EncounterWave wave{};
++    wave.spawn_count = 3U;
++    wave.spawns[0] = MonsterSpawnSpec{MonsterId::fire_bomber, Vec3{2.0F, 0.0F, 0.0F}};
++    wave.spawns[1] = MonsterSpawnSpec{MonsterId::water_support, Vec3{3.0F, 0.0F, 0.0F}};
++    wave.spawns[2] = MonsterSpawnSpec{MonsterId::chaos_hazard, Vec3{4.0F, 0.0F, 0.0F}};
++    CombatEncounterConfig config{};
++    config.wave = wave;
++    CombatWorld world{config};
++    CombatSnapshot before = world.snapshot();
++    ARPG_REQUIRE(world.destroy_monster(MonsterHandle{
++        0U, before.monsters[0].generation}));
++    CombatSnapshot after = world.snapshot();
++    ARPG_REQUIRE(after.monster_count == 2U);
++    ARPG_REQUIRE(after.dummies[0].active);
++    ARPG_REQUIRE(after.dummies[0].id == MonsterId::water_support);
++    ARPG_REQUIRE(after.dummies[1].active);
++    ARPG_REQUIRE(after.dummies[1].id == MonsterId::chaos_hazard);
++    ARPG_REQUIRE(!after.dummies[2].active);
++    return {};
++}
++
++arpg::test::Failure load_wave_clears_attack_input_and_old_events() noexcept {
++    CombatLabConfig legacy{};
++    legacy.dummy_spawns = {{{2.13F, 0.0F, 0.0F},
++                            {6.0F, 3.0F, 0.0F},
++                            {7.0F, -3.0F, 0.0F}}};
++    CombatWorld world{legacy};
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    for (int tick = 0; tick < 10; ++tick) {
++        world.tick(MovementInput{});
++    }
++
++    EncounterWave wave{};
++    wave.spawn_count = 1U;
++    wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::chaos_chaser, Vec3{2.13F, 0.0F, 0.0F}};
++    ARPG_REQUIRE(world.load_wave(wave));
++    ARPG_REQUIRE(world.snapshot().player.active_attack == AttackId::none);
++    ARPG_REQUIRE(world.snapshot().diagnostics.input_size == 0U);
++    ARPG_REQUIRE(!world.try_pop_event().has_value());
++
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    for (int tick = 0; tick < 20; ++tick) {
++        world.tick(MovementInput{});
++    }
++    ARPG_REQUIRE(world.snapshot().monsters[0].hp <
++        world.snapshot().monsters[0].max_hp);
++    return {};
++}
++
++arpg::test::Failure wave_with_four_monsters_resolves_all_active_slots() noexcept {
++    EncounterWave wave{};
++    wave.spawn_count = 4U;
++    for (std::size_t index = 0; index < wave.spawn_count; ++index) {
++        wave.spawns[index] = MonsterSpawnSpec{
++            MonsterId::chaos_chaser, Vec3{2.13F, 0.0F, 0.0F}};
++    }
++    CombatEncounterConfig config{};
++    config.wave = wave;
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    for (int tick = 0; tick < 20; ++tick) {
++        world.tick(MovementInput{});
++    }
++    const CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.monster_count == 4U);
++    for (std::size_t index = 0; index < 4U; ++index) {
++        ARPG_REQUIRE(snapshot.monsters[index].hp <
++            snapshot.monsters[index].max_hp);
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"first-free deterministic allocation", &pool_allocates_first_free_slot_deterministically},
+     {"stale handle rejection", &pool_rejects_stale_handle_after_destroy_and_reuse},
+     {"full capacity rejection", &pool_rejects_97th_spawn_without_mutating_full_slots},
+     {"clear reset and reuse", &pool_clear_deactivates_all_slots_and_reuses_slot_zero},
+     {"wave snapshot active count", &encounter_wave_load_populates_snapshot_active_count},
++    {"active-slot projection after destroy", &compatibility_projection_packs_active_slots_after_destroy},
++    {"wave load clears transient combat state", &load_wave_clears_attack_input_and_old_events},
++    {"four-monster hit resolution", &wave_with_four_monsters_resolves_all_active_slots},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite monster_pool_suite() noexcept {
+     return arpg::test::make_suite("monster_pool", kCases);
+ }
