@@ -1,0 +1,894 @@
+# Review package: ab9f888b96df2b5edc117dfbf6ddbd67b7c20f9e..ccc1ed01c00b3eb626722cb109ca13f2e50f49a9
+
+## Commits
+ccc1ed0 test: restore stage9 real population fixture
+
+## Files changed
+ ...7-31-stage9-real-population-fixture-recovery.md | 192 +++++++++++
+ tests/dungeon/dungeon_test_support.hpp             | 106 ++++++
+ tests/dungeon/stage9_validation_fixture.cpp        | 364 ++++++++++++++-------
+ 3 files changed, 541 insertions(+), 121 deletions(-)
+
+## Diff
+diff --git a/docs/superpowers/plans/2026-07-31-stage9-real-population-fixture-recovery.md b/docs/superpowers/plans/2026-07-31-stage9-real-population-fixture-recovery.md
+new file mode 100644
+index 0000000..58eab7a
+--- /dev/null
++++ b/docs/superpowers/plans/2026-07-31-stage9-real-population-fixture-recovery.md
+@@ -0,0 +1,192 @@
++# Stage 9 Real-Population Fixture Recovery Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task.
++
++**Goal:** Restore the Stage 9 standalone deep-40 reward/reload fixture against the current `RoomMonsterPlan` and streamed `RoomMonsterField` contract while preserving a real combat defeat, production drop roll, transactional pickup, and durable reload evidence chain.
++
++**Architecture:** Replace the obsolete `RoomEncounterPlan` read with the sealed production monster plan. Select one deterministic, affixed, drop-eligible ordinal below the ground-drop capacity, make only its home cell resident, and use a narrowly scoped test access helper to call the real private `CombatWorld::defeat_monster`. The helper must return the real relayed event; the fixture then validates the real ground item, commits a precise pickup, and verifies the rebuilt plan plus durable ownership/claim state after codec reload.
++
++**Tech Stack:** C++17, raylib 6.0 project, CMake 3.25+, Ninja, MSVC 19.44, CTest.
++
++## Global Constraints
++
++- Work only in `E:/game/.worktrees/task9-gate-recovery` on `codex/task9-gate-recovery`.
++- Keep `CMAKE_BUILD_PARALLEL_LEVEL=1` and every build/test serial with `-j1`.
++- Modify only `tests/dungeon/stage9_validation_fixture.cpp`, `tests/dungeon/dungeon_test_support.hpp`, and this plan.
++- Do not change production source, gameplay rules, drop chance, capacity, golden values, CTest timeouts, fixture assertions outside this evidence adaptation, or B-G scope.
++- Never call `relay_defeated`, append to the defeat ledger directly, push/synthesize a defeated `CombatEvent`, inject a ground item, or directly mutate ownership/claim state.
++- Do not copy a `RoomMonsterPlan`; hold a session-owned pointer and save only a compact target trace.
++- Do not delete files, reset Git, or touch any other worktree.
++- Use the existing failing selector as RED and record real exit codes and elapsed times.
++- Do not run the full CTest suite.
++
++---
++
++### Task 1: Reconnect the Stage 9 fixture to the real monster/drop chain
++
++**Files:**
++- Modify: `tests/dungeon/dungeon_test_support.hpp`
++- Modify: `tests/dungeon/stage9_validation_fixture.cpp`
++- Test: existing `stage9.validation_fixture.real_v4_reward_reload`
++
++**Interfaces:**
++- Consumes: `arpg::test::room_monster_plan(session)`, `RoomMonsterField` residency, private real `CombatWorld::defeat_monster`, production drop/pickup/save/codec paths, and `room_monster_plan_equal_fields()`.
++- Produces: one test-only by-ordinal real-defeat helper returning the actual relayed event and one deterministic deep-40 evidence trace.
++
++- [x] **Step 1: Preserve RED evidence**
++
++Use the already recorded post-stack-fix run at `ab9f888`:
++
++```text
++stage9.validation_fixture.real_v4_reward_reload: 0/1
++direct exit: 2 (0x00000002), about 47.6 seconds, no stdout
++```
++
++Source tracing proves every constructed session clears legacy
++`encounter_plan_`; the fixture's legacy `has_affix(evidence.plan)` check is
++therefore false for every root before any combat action. Do not repeat the
++47-second RED unless a reviewer requests it.
++
++- [x] **Step 2: Add one real by-ordinal defeat seam**
++
++In `DungeonSessionTestAccess`, next to `defeat_next_live_monster`, add:
++
++```cpp
++static std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
++    dungeon::DungeonSession& session,
++    combat::MonsterOrdinal ordinal) noexcept;
++```
++
++Add the same inline namespace wrapper. Include `<optional>` explicitly if the
++header does not already include it.
++
++The helper must:
++
++1. Reject unless the session is in combat with a nonfaulted world/field and
++   `ordinal < field->plan().monster_count`.
++2. Read the blueprint at that ordinal and require
++   `blueprint.spawn_ordinal == ordinal` plus a valid `home_cell`.
++3. Convert `home_cell` to its row/column using the production
++   `room_spatial::columns`, then call `synchronize_active_region()` for exactly
++   that one cell.
++4. Resolve the target only through `resident_handle(ordinal)` and
++   `active_runtime(ordinal)`; verify the runtime ordinal/id/spawn/affixes match
++   the blueprint and that it is active, alive, and not already defeated.
++5. Record field/session defeated counts, set only that real runtime's HP to
++   zero (the same private test seam already used by existing real-defeat
++   helpers), and call
++   `world.defeat_monster(handle->index, combat::AttackId::j1, true)`.
++6. Call `session.relay_combat_events()` so production defeat-ledger handling,
++   drop rolling, and event forwarding execute.
++7. Drain the session combat-event queue, ignore non-defeated warnings, require
++   exactly one defeated event for this ordinal, and return that actual event.
++8. Before returning, require no world/session fault, both defeated counts rose
++   exactly once, the room bit is set, and event ordinal/id/spawn/affix score and
++   reward eligibility match the real blueprint.
++
++The helper must not accept caller-supplied id, position, affix score, or reward
++payload, and must not construct/push an event or call `relay_defeated`.
++
++- [x] **Step 3: Select a real deterministic affix target**
++
++In `stage9_validation_fixture.cpp`:
++
++- Add the current deterministic RNG/drop-chance support and
++  `dungeon/room_monster_plan_builder.hpp`.
++- Remove the obsolete `RoomEncounterPlan` evidence value,
++  `has_affix(RoomEncounterPlan)`, legacy plan comparison, and legacy
++  `build_encounter_plan()` eligibility check.
++- Keep `deep40_state` responsible only for constructing the existing valid
++  deep-40 state.
++- After constructing `DungeonSession`, obtain a session-owned pointer with
++  `arpg::test::room_monster_plan(session)` and never copy it.
++- Scan only ordinals below
++  `min(plan->monster_count, dungeon::kGroundDropCapacity)` and choose the first
++  blueprint whose `spawn_ordinal` equals its ordinal, affix count and production
++  danger score are positive, and the production-equivalent deterministic
++  affix-drop roll is below `affix_drop_chance_bp(score)`.
++- Use the exact chance-domain/RNG derivation already shared by production
++  `DungeonSession::roll_ground_drop` and
++  `tests/dungeon/dungeon_affix_reward_tests.cpp`; it selects a candidate but
++  does not replace validation of the actual generated ground item.
++- Save only a compact trace: plan count/threat/generator/hash plus target
++  ordinal, id, initial position, home cell, roaming leash, full affix set, and
++  danger score.
++
++If a root has no qualifying real target, continue to the next root. Never fall
++back to an unaffixed or ordinal-at/above-capacity target.
++
++- [x] **Step 4: Drive the real defeat, drop, pickup, and reload path**
++
++For the selected target:
++
++1. Tick once to enter combat and drain startup events.
++2. Call only the new by-ordinal helper and compare its returned real event to
++   the compact trace.
++3. Read the actual ground item at `target.spawn_ordinal`; require active,
++   `monster_drop`, matching ordinal, and a valid item. Do not inject/recreate it.
++4. Move the player to the actual drop position with the existing test seam,
++   call public `session.request_pickup(target.spawn_ordinal)`, require accepted,
++   and commit the real pending save with the existing fixture commit helper.
++5. Require the target claim bit, exactly one new owned item, and matching item
++   id/level/rarity; save the committed durable state.
++6. Repeat the fixture and require identical target/event/drop traces.
++7. Encode/decode the committed state, construct original/reloaded sessions,
++   and compare their rebuilt non-null plans using
++   `room_monster_plan_equal_fields()` plus target trace fields.
++8. Verify reloaded ownership and all claim words; do not assert transient
++   resident, defeated-runtime, or ground-item state survives v4 reload.
++
++Remove the obsolete 4096-tick `defeat_next_live_monster()` loop. Do not trigger
++room unlock/clear; this fixture defeats exactly one target.
++
++- [x] **Step 5: Rebuild and run the focused GREEN**
++
++From a VS2022 x64 Developer PowerShell:
++
++```powershell
++$env:CMAKE_BUILD_PARALLEL_LEVEL = '1'
++cmake --preset windows-msvc-debug
++cmake --build --preset windows-msvc-debug `
++  --target arpg_stage9_validation_fixture -- -j1
++ctest --test-dir out/build/windows-msvc-debug `
++  -R '^stage9\.validation_fixture\.real_v4_reward_reload$' `
++  --output-on-failure -j1
++```
++
++Expected: build exits 0; selector runs exactly one test and passes 1/1. Record
++elapsed time and pristine output.
++
++- [x] **Step 6: Audit the evidence chain and scope**
++
++```powershell
++rg -n "relay_defeated\s*\(|events_\.try_push\s*\(" `
++  tests/dungeon/stage9_validation_fixture.cpp
++git diff --check
++git diff -- tests/dungeon/stage9_validation_fixture.cpp `
++  tests/dungeon/dungeon_test_support.hpp
++git status --short
++```
++
++Expected: no injection match in the fixture, no whitespace error, and only the
++two test files plus this plan changed. The separate
++`stage9.evidence.no_injected_defeat_trace` remains a known independent RED at
++`dungeon_affix_stress_tests.cpp`; do not weaken it or fold it into this card.
++
++- [x] **Step 7: Commit the independently testable repair**
++
++```powershell
++git add docs/superpowers/plans/2026-07-31-stage9-real-population-fixture-recovery.md `
++  tests/dungeon/stage9_validation_fixture.cpp `
++  tests/dungeon/dungeon_test_support.hpp
++git commit -m "test: restore stage9 real population fixture"
++```
++
++## Self-Review
++
++- The selected blueprint, real defeated event, actual ground item, claim bit,
++  owned item, and reload trace all refer to one ordinal below capacity.
++- No old encounter cache or active-slot ordering is treated as authoritative.
++- The only private test seam invokes the real defeat function and returns its
++  real relayed event; it cannot synthesize caller-chosen evidence.
++- The large fixed-capacity plan is never copied onto the stack.
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index a8266d4..107f66d 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -4,20 +4,21 @@
+ #include "combat/monster_affix_generation.hpp"
+ #include "combat/room_bounds.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "dungeon/dungeon_session.hpp"
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstddef>
+ #include <cstdint>
++#include <optional>
+ #include <utility>
+ 
+ namespace arpg::test {
+ 
+ struct DungeonSessionTestAccess final {
+     static bool commit_fixture_health_potion_if_eligible(
+         dungeon::DungeonSession& session) noexcept {
+         for (std::uint16_t spawn = 0U;
+              spawn < session.ground_health_potions_.size(); ++spawn) {
+             if (!session.ground_health_potions_[spawn].active) continue;
+@@ -257,20 +258,118 @@ struct DungeonSessionTestAccess final {
+             if (!monster.active || monster.hp <= 0
+                     || monster.reaction == combat::ReactionState::defeated) {
+                 continue;
+             }
+             monster.hp = 0;
+             world.defeat_monster(index, combat::AttackId::j1, true);
+             return true;
+         }
+         return false;
+     }
++    static std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
++        dungeon::DungeonSession& session,
++        combat::MonsterOrdinal ordinal) noexcept {
++        if (session.phase_ != dungeon::RoomPhase::combat
++                || !session.combat_.has_value()) {
++            return std::nullopt;
++        }
++        combat::CombatWorld& world = *session.combat_;
++        combat::RoomMonsterField* const field = world.room_monster_field();
++        if (world.fault() != combat::CombatFault::none || field == nullptr
++                || field->fault() != combat::RoomMonsterFieldFault::none
++                || ordinal >= field->plan().monster_count) {
++            return std::nullopt;
++        }
++
++        const combat::RoomMonsterBlueprint& blueprint =
++            field->plan().monsters[ordinal];
++        if (blueprint.spawn_ordinal != ordinal
++                || blueprint.home_cell >= combat::kRoomMonsterCellCount) {
++            return std::nullopt;
++        }
++        const std::size_t column =
++            blueprint.home_cell % combat::room_spatial::columns;
++        const std::size_t row =
++            blueprint.home_cell / combat::room_spatial::columns;
++        if (!field->synchronize_active_region({
++                static_cast<std::uint8_t>(column), 1U,
++                static_cast<std::uint8_t>(row), 1U})) {
++            return std::nullopt;
++        }
++
++        const std::optional<combat::MonsterHandle> handle =
++            field->resident_handle(ordinal);
++        combat::MonsterRuntime* const runtime = field->active_runtime(ordinal);
++        if (!handle.has_value() || runtime == nullptr || !runtime->active
++                || runtime->hp <= 0
++                || runtime->reaction == combat::ReactionState::defeated
++                || runtime->monster_ordinal != ordinal
++                || runtime->id != blueprint.id
++                || runtime->spawn_ordinal != blueprint.spawn_ordinal
++                || runtime->spawn.x != blueprint.initial_position.x
++                || runtime->spawn.y != blueprint.initial_position.y
++                || runtime->spawn.z != blueprint.initial_position.z
++                || !(runtime->affixes == blueprint.affixes)) {
++            return std::nullopt;
++        }
++
++        const std::uint32_t field_defeated_before = field->defeated_count();
++        const std::uint32_t session_defeated_before =
++            session.room_progress_.defeated_monster_count;
++        const std::size_t word = ordinal / 64U;
++        const std::uint64_t mask = std::uint64_t{1U} << (ordinal % 64U);
++        if (word >= session.room_progress_.defeated_monster_bits.size()
++                || (session.room_progress_.defeated_monster_bits[word] & mask)
++                    != 0U) {
++            return std::nullopt;
++        }
++
++        runtime->hp = 0;
++        world.defeat_monster(handle->index, combat::AttackId::j1, true);
++        session.relay_combat_events();
++
++        std::optional<combat::CombatEvent> defeated{};
++        bool invalid_event = false;
++        while (const auto event = session.combat_events_.try_pop()) {
++            if (event->kind == combat::CombatEventKind::defeated) {
++                if (defeated.has_value() || event->target_ordinal != ordinal) {
++                    invalid_event = true;
++                } else {
++                    defeated = *event;
++                }
++            } else if (event->kind
++                    != combat::CombatEventKind::affix_death_warning) {
++                invalid_event = true;
++            }
++        }
++
++        const std::uint16_t expected_affix_score =
++            combat::monster_affix_danger_score(blueprint.affixes);
++        if (invalid_event || !defeated.has_value()
++                || world.fault() != combat::CombatFault::none
++                || field->fault() != combat::RoomMonsterFieldFault::none
++                || session.phase_ == dungeon::RoomPhase::faulted
++                || field->defeated_count() != field_defeated_before + 1U
++                || session.room_progress_.defeated_monster_count
++                    != session_defeated_before + 1U
++                || (session.room_progress_.defeated_monster_bits[word] & mask)
++                    == 0U
++                || defeated->target_ordinal != ordinal
++                || defeated->monster_id != blueprint.id
++                || defeated->spawn_ordinal != blueprint.spawn_ordinal
++                || defeated->affix_score != expected_affix_score
++                || expected_affix_score == 0U
++                || !defeated->reward_eligible) {
++            return std::nullopt;
++        }
++        return defeated;
++    }
+     static bool append_defeat_record(
+         dungeon::DungeonSession& session,
+         combat::MonsterOrdinal ordinal) noexcept {
+         return session.combat_.has_value()
+             && session.combat_->defeat_ledger_.append({
+                 ordinal, combat::MonsterId::fire_bomber, 0U, true});
+     }
+     static bool inject_defeat_ledger_overflow(
+         dungeon::DungeonSession& session) noexcept {
+         if (!session.combat_.has_value()) return false;
+@@ -735,20 +834,27 @@ struct DungeonSessionTestAccess final {
+ };
+ 
+ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
+     DungeonSessionTestAccess::force_defeat_current_wave(session);
+ }
+ 
+ inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::defeat_next_live_monster(session);
+ }
+ 
++inline std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
++    dungeon::DungeonSession& session,
++    combat::MonsterOrdinal ordinal) noexcept {
++    return DungeonSessionTestAccess::defeat_room_monster_by_ordinal(
++        session, ordinal);
++}
++
+ inline bool append_defeat_record(
+     dungeon::DungeonSession& session,
+     combat::MonsterOrdinal ordinal) noexcept {
+     return DungeonSessionTestAccess::append_defeat_record(session, ordinal);
+ }
+ 
+ inline bool inject_defeat_ledger_overflow(
+     dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::inject_defeat_ledger_overflow(session);
+ }
+diff --git a/tests/dungeon/stage9_validation_fixture.cpp b/tests/dungeon/stage9_validation_fixture.cpp
+index cf2f018..e88708e 100644
+--- a/tests/dungeon/stage9_validation_fixture.cpp
++++ b/tests/dungeon/stage9_validation_fixture.cpp
+@@ -1,51 +1,75 @@
+ #include "dungeon_test_support.hpp"
+ 
+ #include "combat/monster_affix_catalog.hpp"
+ #include "combat/monster_affix_generation.hpp"
++#include "core/deterministic_rng.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/dungeon_session.hpp"
+-#include "dungeon/encounter_director.hpp"
+ #include "dungeon/room_generation.hpp"
++#include "dungeon/room_monster_plan_builder.hpp"
++#include "items/item_catalog.hpp"
+ #include "persistence/checkpoint_codec.hpp"
+ 
++#include <algorithm>
+ #include <array>
++#include <cstddef>
+ #include <cstdint>
+ #include <iostream>
+ #include <optional>
+ #include <string_view>
+ 
+ namespace {
+ 
+ using arpg::combat::MonsterAffixId;
+ using arpg::combat::MonsterAffixTier;
+ using arpg::dungeon::DungeonRules;
+ using arpg::dungeon::DungeonRunState;
+ using arpg::dungeon::DungeonSession;
+-using arpg::dungeon::RoomEncounterPlan;
++
++constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
++
++struct PlanTrace final {
++    std::uint16_t monster_count{};
++    std::uint32_t threat_total{};
++    std::uint32_t generator_version{};
++    std::uint64_t blueprint_hash{};
++};
++
++struct MonsterTrace final {
++    arpg::combat::MonsterOrdinal ordinal{};
++    std::uint16_t spawn_ordinal{};
++    arpg::combat::MonsterId id{arpg::combat::MonsterId::count};
++    arpg::combat::Vec3 initial_position{};
++    std::uint16_t home_cell{};
++    std::uint8_t roaming_leash_cells{};
++    arpg::combat::MonsterAffixSet affixes{};
++    std::uint16_t danger_score{};
++};
+ 
+ struct DropTrace final {
+     std::uint16_t ordinal{};
++    arpg::combat::Vec3 position{};
+     std::uint64_t item_id{};
+     std::uint8_t item_level{};
+     arpg::items::ItemRarity rarity{arpg::items::ItemRarity::normal};
+ };
+ 
+ struct FixtureEvidence final {
+     DungeonRunState initial_state{};
+     DungeonRunState claimed_state{};
+-    RoomEncounterPlan plan{};
++    PlanTrace plan{};
++    MonsterTrace target{};
+     DropTrace drop{};
+     arpg::combat::CombatEvent defeat{};
+     std::array<std::uint64_t, 3> claimed_bits{};
+     std::uint32_t item_count{};
+-    bool completed{};
+ };
+ 
+ std::string_view affix_name(MonsterAffixId id) noexcept {
+     const auto* const definition = arpg::combat::monster_affix_definition(id);
+     return definition == nullptr ? "unknown" : definition->short_name;
+ }
+ 
+ const char* tier_name(MonsterAffixTier tier) noexcept {
+     switch (tier) {
+     case MonsterAffixTier::m1: return "M1";
+@@ -56,184 +80,266 @@ const char* tier_name(MonsterAffixTier tier) noexcept {
+     return "invalid";
+ }
+ 
+ bool bit_is_set(const std::array<std::uint64_t, 3>& bits,
+     std::uint16_t ordinal) noexcept {
+     const std::size_t word = ordinal / 64U;
+     const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
+     return word < bits.size() && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
+ }
+ 
+-bool same_plan_and_affixes(const RoomEncounterPlan& left,
+-    const RoomEncounterPlan& right) noexcept {
+-    if (left.wave_count != right.wave_count
+-            || left.total_budget != right.total_budget) return false;
+-    for (std::uint8_t wave = 0U; wave < left.wave_count; ++wave) {
+-        const auto& a = left.waves[wave];
+-        const auto& b = right.waves[wave];
+-        if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) {
+-            return false;
+-        }
+-        for (std::uint8_t spawn = 0U; spawn < a.spawn_count; ++spawn) {
+-            const auto& source = a.spawns[spawn];
+-            const auto& restored = b.spawns[spawn];
+-            if (source.id != restored.id
+-                    || source.spawn_ordinal != restored.spawn_ordinal
+-                    || source.position.x != restored.position.x
+-                    || source.position.y != restored.position.y
+-                    || source.position.z != restored.position.z
+-                    || source.affixes.count != restored.affixes.count) {
+-                return false;
+-            }
+-            for (std::uint8_t affix = 0U;
+-                 affix < source.affixes.count; ++affix) {
+-                if (source.affixes.values[affix].id
+-                        != restored.affixes.values[affix].id
+-                    || source.affixes.values[affix].tier
+-                        != restored.affixes.values[affix].tier) {
+-                    return false;
+-                }
+-            }
+-        }
+-    }
+-    return true;
++bool same_position(arpg::combat::Vec3 left,
++    arpg::combat::Vec3 right) noexcept {
++    return left.x == right.x && left.y == right.y && left.z == right.z;
++}
++
++PlanTrace plan_trace(const arpg::combat::RoomMonsterPlan& plan) noexcept {
++    return {plan.monster_count, plan.threat_total,
++        plan.generator_version, plan.blueprint_hash};
++}
++
++bool same_plan_trace(const PlanTrace& left, const PlanTrace& right) noexcept {
++    return left.monster_count == right.monster_count
++        && left.threat_total == right.threat_total
++        && left.generator_version == right.generator_version
++        && left.blueprint_hash == right.blueprint_hash;
++}
++
++bool trace_matches_blueprint(const MonsterTrace& trace,
++    const arpg::combat::RoomMonsterBlueprint& blueprint) noexcept {
++    return trace.spawn_ordinal == blueprint.spawn_ordinal
++        && trace.id == blueprint.id
++        && same_position(trace.initial_position, blueprint.initial_position)
++        && trace.home_cell == blueprint.home_cell
++        && trace.roaming_leash_cells == blueprint.roaming_leash_cells
++        && trace.affixes == blueprint.affixes
++        && trace.danger_score
++            == arpg::combat::monster_affix_danger_score(blueprint.affixes);
++}
++
++bool same_monster_trace(const MonsterTrace& left,
++    const MonsterTrace& right) noexcept {
++    return left.ordinal == right.ordinal
++        && left.spawn_ordinal == right.spawn_ordinal
++        && left.id == right.id
++        && same_position(left.initial_position, right.initial_position)
++        && left.home_cell == right.home_cell
++        && left.roaming_leash_cells == right.roaming_leash_cells
++        && left.affixes == right.affixes
++        && left.danger_score == right.danger_score;
++}
++
++bool defeat_matches_target(const arpg::combat::CombatEvent& event,
++    const MonsterTrace& target) noexcept {
++    return event.kind == arpg::combat::CombatEventKind::defeated
++        && event.attack == arpg::combat::AttackId::j1
++        && event.target_ordinal == target.ordinal
++        && same_position(event.position, target.initial_position)
++        && event.monster_id == target.id
++        && event.spawn_ordinal == target.spawn_ordinal
++        && event.affix_score == target.danger_score
++        && event.reward_eligible;
++}
++
++bool same_defeat_trace(const arpg::combat::CombatEvent& left,
++    const arpg::combat::CombatEvent& right) noexcept {
++    return left.kind == right.kind && left.tick == right.tick
++        && left.attack == right.attack
++        && left.target_ordinal == right.target_ordinal
++        && same_position(left.position, right.position)
++        && left.monster_id == right.monster_id
++        && left.spawn_ordinal == right.spawn_ordinal
++        && left.affix_score == right.affix_score
++        && left.reward_eligible == right.reward_eligible;
++}
++
++bool same_drop_trace(const DropTrace& left, const DropTrace& right) noexcept {
++    return left.ordinal == right.ordinal
++        && same_position(left.position, right.position)
++        && left.item_id == right.item_id
++        && left.item_level == right.item_level
++        && left.rarity == right.rarity;
+ }
+ 
+ bool item_matches_drop(const arpg::items::ItemOwnershipState& items,
+     const DropTrace& drop) noexcept {
+     for (const auto& item : items.items) {
+         if (item.id == drop.item_id) {
+             return item.item_level == drop.item_level && item.rarity == drop.rarity;
+         }
+     }
+     return false;
+ }
+ 
+-bool has_affix(const RoomEncounterPlan& plan) noexcept {
+-    for (std::uint8_t wave = 0U; wave < plan.wave_count; ++wave) {
+-        for (std::uint8_t spawn = 0U;
+-             spawn < plan.waves[wave].spawn_count; ++spawn) {
+-            if (plan.waves[wave].spawns[spawn].affixes.count != 0U) return true;
++std::uint64_t drop_roll(const DungeonRunState& state,
++    std::uint16_t ordinal, std::uint64_t bound) noexcept {
++    auto ordinal_stream = arpg::core::DeterministicRng::derive_stream(
++        state.current_room.seed, ordinal);
++    auto chance = arpg::core::DeterministicRng::derive_stream(
++        ordinal_stream.next_u64(), kDropChanceDomain);
++    return chance.next_bounded(bound).value();
++}
++
++bool affix_drop_hits(const DungeonRunState& state,
++    std::uint16_t ordinal, std::uint16_t score) noexcept {
++    return drop_roll(state, ordinal, 10000U)
++        < arpg::dungeon::affix_drop_chance_bp(score);
++}
++
++std::optional<MonsterTrace> select_target(
++    const arpg::combat::RoomMonsterPlan& plan,
++    const DungeonRunState& state) noexcept {
++    const std::size_t candidate_count = (std::min)(
++        static_cast<std::size_t>(plan.monster_count),
++        arpg::dungeon::kGroundDropCapacity);
++    for (std::size_t index = 0U; index < candidate_count; ++index) {
++        const auto ordinal = static_cast<arpg::combat::MonsterOrdinal>(index);
++        const arpg::combat::RoomMonsterBlueprint& source =
++            plan.monsters[index];
++        const std::uint16_t score =
++            arpg::combat::monster_affix_danger_score(source.affixes);
++        if (source.spawn_ordinal != ordinal || source.affixes.count == 0U
++                || score == 0U
++                || !affix_drop_hits(state, source.spawn_ordinal, score)) {
++            continue;
+         }
++        return MonsterTrace{ordinal, source.spawn_ordinal, source.id,
++            source.initial_position, source.home_cell,
++            source.roaming_leash_cells, source.affixes, score};
+     }
+-    return false;
++    return std::nullopt;
+ }
+ 
+-std::optional<DungeonRunState> deep40_state_with_affix(
++std::optional<DungeonRunState> deep40_state(
+     const DungeonRules& rules, std::uint64_t root) noexcept {
+     const auto built = arpg::dungeon::make_initial_run_state(root, rules);
+     if (built.fault != arpg::dungeon::DungeonFault::none) return std::nullopt;
+     DungeonRunState state = built.state;
+     state.current_room.index = 39U;
+     state.current_room.depth = 40U;
+     state.current_room.floor_room_index = 40U;
+     state.current_room.seed = arpg::dungeon::derive_initial_room_seed(root, 39U);
+-    const auto plan = arpg::dungeon::build_encounter_plan(
+-        state.current_room.seed, state.current_room.depth,
+-        state.current_room.ecology, rules.encounter);
+-    return plan.fault == arpg::dungeon::DungeonFault::none && has_affix(plan.plan)
+-        ? std::optional<DungeonRunState>{state} : std::nullopt;
++    return state;
+ }
+ 
+ bool commit_pending(DungeonSession& session) noexcept {
+     const auto* const pending = session.pending_save_view();
+-    if (pending == nullptr) return true;
++    if (pending == nullptr
++            || pending->kind != arpg::dungeon::PendingSaveKind::loot_pickup
++            || session.snapshot().phase != arpg::dungeon::RoomPhase::committing) {
++        return false;
++    }
+     session.resolve_pending_save({arpg::dungeon::SaveDisposition::committed,
+         pending->expected_generation, pending->next_state});
+-    return session.snapshot().phase != arpg::dungeon::RoomPhase::faulted;
++    return session.snapshot().phase == arpg::dungeon::RoomPhase::combat;
+ }
+ 
+ std::optional<FixtureEvidence> run_real_deep40_fixture(const DungeonRules& rules) noexcept {
+     for (std::uint64_t root = 1U; root < 10000U; ++root) {
+-        const auto initial = deep40_state_with_affix(rules, root);
++        const auto initial = deep40_state(rules, root);
+         if (!initial.has_value()) continue;
+ 
++        DungeonSession session{rules, *initial};
++        const arpg::combat::RoomMonsterPlan* const plan =
++            arpg::test::room_monster_plan(session);
++        if (plan == nullptr || plan->monster_count == 0U) return std::nullopt;
++        const std::optional<MonsterTrace> target = select_target(*plan, *initial);
++        if (!target.has_value()) continue;
++
+         FixtureEvidence evidence{};
+         evidence.initial_state = *initial;
+-        DungeonSession session{rules, *initial};
+-        evidence.plan = arpg::test::encounter_plan(session);
+-        if (!has_affix(evidence.plan)) continue;
+-
+-        constexpr int kMaximumTicks = 4096;
+-        for (int tick = 0; tick < kMaximumTicks; ++tick) {
+-            const auto snapshot = session.snapshot();
+-            if (snapshot.phase == arpg::dungeon::RoomPhase::faulted) break;
+-            if (snapshot.phase == arpg::dungeon::RoomPhase::combat
+-                    && !arpg::test::defeat_next_live_monster(session)) {
+-                break;
+-            }
+-            session.tick({});
+-            while (const auto event = session.try_pop_combat_event()) {
+-                if (event->kind == arpg::combat::CombatEventKind::defeated
+-                        && event->affix_score > 0U) {
+-                    evidence.defeat = *event;
+-                }
+-            }
+-            while (session.try_pop_event().has_value()) {}
+-
+-            for (const auto& drop : arpg::test::ground_items(session)) {
+-                if (!drop.active || drop.drop_ordinal != evidence.defeat.spawn_ordinal) {
+-                    continue;
+-                }
+-                evidence.drop = {drop.drop_ordinal, drop.item.id,
+-                    drop.item.item_level, drop.item.rarity};
+-                arpg::test::set_player_position(session, drop.position);
+-                session.request_nearby_pickups(drop.position);
+-                if (!commit_pending(session)) break;
+-                evidence.claimed_bits = session.item_state().claimed_drop_bits;
+-                evidence.item_count = static_cast<std::uint32_t>(
+-                    session.item_state().items.size());
+-                evidence.claimed_state = arpg::test::stable_state(session);
+-                evidence.completed = bit_is_set(evidence.claimed_bits,
+-                    evidence.drop.ordinal) && item_matches_drop(session.item_state(),
+-                        evidence.drop);
+-                if (evidence.completed) return evidence;
+-            }
+-            if (!commit_pending(session)) break;
++        evidence.plan = plan_trace(*plan);
++        evidence.target = *target;
++        if (!trace_matches_blueprint(
++                evidence.target, plan->monsters[evidence.target.ordinal])) {
++            return std::nullopt;
+         }
++
++        const std::size_t initial_item_count = session.item_state().items.size();
++        session.tick({});
++        if (session.snapshot().phase != arpg::dungeon::RoomPhase::combat) {
++            return std::nullopt;
++        }
++        while (session.try_pop_combat_event().has_value()) {}
++        while (session.try_pop_event().has_value()) {}
++
++        const auto defeated = arpg::test::defeat_room_monster_by_ordinal(
++            session, evidence.target.ordinal);
++        if (!defeated.has_value()
++                || !defeat_matches_target(*defeated, evidence.target)) {
++            return std::nullopt;
++        }
++        evidence.defeat = *defeated;
++
++        const auto& ground_items = arpg::test::ground_items(session);
++        if (evidence.target.spawn_ordinal >= ground_items.size()) {
++            return std::nullopt;
++        }
++        const arpg::dungeon::GroundItem& ground =
++            ground_items[evidence.target.spawn_ordinal];
++        if (!ground.active
++                || ground.source != arpg::dungeon::GroundItemSource::monster_drop
++                || ground.drop_ordinal != evidence.target.spawn_ordinal
++                || !arpg::items::validate_item(ground.item)) {
++            return std::nullopt;
++        }
++        evidence.drop = {ground.drop_ordinal, ground.position, ground.item.id,
++            ground.item.item_level, ground.item.rarity};
++
++        arpg::test::set_player_position(session, ground.position);
++        if (session.request_pickup(evidence.target.spawn_ordinal)
++                != arpg::dungeon::RequestResult::accepted
++                || !commit_pending(session)) {
++            return std::nullopt;
++        }
++        evidence.claimed_bits = session.item_state().claimed_drop_bits;
++        evidence.item_count = static_cast<std::uint32_t>(
++            session.item_state().items.size());
++        if (!bit_is_set(evidence.claimed_bits, evidence.target.spawn_ordinal)
++                || session.item_state().items.size() != initial_item_count + 1U
++                || !item_matches_drop(session.item_state(), evidence.drop)) {
++            return std::nullopt;
++        }
++        evidence.claimed_state = arpg::test::stable_state(session);
++        return evidence;
+     }
+     return std::nullopt;
+ }
+ 
+-void print_plan(const RoomEncounterPlan& plan) noexcept {
+-    std::cout << "plan waves=" << static_cast<unsigned>(plan.wave_count)
+-              << " budget=" << static_cast<unsigned>(plan.total_budget) << '\n';
+-    for (std::uint8_t wave = 0U; wave < plan.wave_count; ++wave) {
+-        const auto& entries = plan.waves[wave];
+-        for (std::uint8_t spawn = 0U; spawn < entries.spawn_count; ++spawn) {
+-            const auto& source = entries.spawns[spawn];
+-            std::cout << "plan wave=" << static_cast<unsigned>(wave)
+-                      << " spawn=" << static_cast<unsigned>(spawn)
+-                      << " ordinal=" << source.spawn_ordinal
+-                      << " monster=" << static_cast<unsigned>(source.id)
+-                      << " pos=" << source.position.x << ',' << source.position.y
+-                      << " affixes=";
+-            for (std::uint8_t affix = 0U; affix < source.affixes.count; ++affix) {
+-                if (affix != 0U) std::cout << ',';
+-                std::cout << affix_name(source.affixes.values[affix].id)
+-                          << '-' << tier_name(source.affixes.values[affix].tier);
+-            }
+-            std::cout << " score="
+-                      << arpg::combat::monster_affix_danger_score(source.affixes)
+-                      << '\n';
+-        }
++void print_plan(const PlanTrace& plan, const MonsterTrace& target) noexcept {
++    std::cout << "plan monsters=" << plan.monster_count
++              << " threat=" << plan.threat_total
++              << " generator=" << plan.generator_version
++              << " hash=" << plan.blueprint_hash << '\n'
++              << "target ordinal=" << target.ordinal
++              << " monster=" << static_cast<unsigned>(target.id)
++              << " pos=" << target.initial_position.x << ','
++              << target.initial_position.y << ',' << target.initial_position.z
++              << " home_cell=" << target.home_cell
++              << " leash=" << static_cast<unsigned>(target.roaming_leash_cells)
++              << " affixes=";
++    for (std::uint8_t affix = 0U; affix < target.affixes.count; ++affix) {
++        if (affix != 0U) std::cout << ',';
++        std::cout << affix_name(target.affixes.values[affix].id)
++                  << '-' << tier_name(target.affixes.values[affix].tier);
+     }
++    std::cout << " score=" << target.danger_score << '\n';
+ }
+ 
+ }  // namespace
+ 
+ int main() {
+     const DungeonRules rules{};
+     const auto fixture = run_real_deep40_fixture(rules);
+     if (!fixture.has_value()) return 2;
+ 
+-    print_plan(fixture->plan);
++    print_plan(fixture->plan, fixture->target);
+     std::cout << "deep40 root=" << fixture->initial_state.root_seed
+               << " room_index=" << fixture->initial_state.current_room.index
+               << " room_seed=" << fixture->initial_state.current_room.seed
+               << " depth=" << fixture->initial_state.current_room.depth << '\n'
+               << "defeat kind=" << static_cast<unsigned>(fixture->defeat.kind)
+               << " tick=" << fixture->defeat.tick
+               << " target="
+               << static_cast<unsigned>(fixture->defeat.target_ordinal)
+               << " monster=" << static_cast<unsigned>(fixture->defeat.monster_id)
+               << " ordinal=" << fixture->defeat.spawn_ordinal
+@@ -253,26 +359,42 @@ int main() {
+     if (!replay.has_value()) return 3;
+     const auto encoded = arpg::persistence::encode_checkpoint(
+         arpg::test::stable_state(original));
+     if (!encoded.has_value()) return 4;
+     const auto decoded = arpg::persistence::decode_checkpoint(
+         encoded->data(), encoded->size());
+     if (decoded.error != arpg::persistence::CodecError::none) return 5;
+     DungeonSession reloaded{rules, decoded.state};
+     const bool state_equal = arpg::dungeon::same_run_state(
+         arpg::test::stable_state(original), decoded.state);
+-    const bool plan_equal = same_plan_and_affixes(arpg::test::encounter_plan(original),
+-        arpg::test::encounter_plan(reloaded));
+-    const bool drop_equal = fixture->drop.ordinal == replay->drop.ordinal
+-        && fixture->drop.item_id == replay->drop.item_id
+-        && fixture->drop.item_level == replay->drop.item_level
+-        && fixture->drop.rarity == replay->drop.rarity
++    const arpg::combat::RoomMonsterPlan* const original_plan =
++        arpg::test::room_monster_plan(original);
++    const arpg::combat::RoomMonsterPlan* const reloaded_plan =
++        arpg::test::room_monster_plan(reloaded);
++    const bool plan_equal = original_plan != nullptr && reloaded_plan != nullptr
++        && arpg::dungeon::room_monster_plan_equal_fields(
++            *original_plan, *reloaded_plan)
++        && same_plan_trace(fixture->plan, plan_trace(*original_plan))
++        && same_plan_trace(fixture->plan, plan_trace(*reloaded_plan))
++        && fixture->target.ordinal < original_plan->monster_count
++        && fixture->target.ordinal < reloaded_plan->monster_count
++        && trace_matches_blueprint(fixture->target,
++            original_plan->monsters[fixture->target.ordinal])
++        && trace_matches_blueprint(fixture->target,
++            reloaded_plan->monsters[fixture->target.ordinal]);
++    const bool replay_equal = fixture->initial_state.root_seed
++            == replay->initial_state.root_seed
++        && same_plan_trace(fixture->plan, replay->plan)
++        && same_monster_trace(fixture->target, replay->target)
++        && same_defeat_trace(fixture->defeat, replay->defeat)
++        && same_drop_trace(fixture->drop, replay->drop);
++    const bool drop_equal = replay_equal
+         && item_matches_drop(reloaded.item_state(), fixture->drop);
+     const bool claim_equal = fixture->claimed_bits
+         == reloaded.item_state().claimed_drop_bits
+         && bit_is_set(reloaded.item_state().claimed_drop_bits,
+             fixture->drop.ordinal);
+     const bool consistent = state_equal && plan_equal && drop_equal && claim_equal;
+     std::cout << "v4 state_equal=" << state_equal
+               << " plan_and_affixes_equal=" << plan_equal
+               << " drop_equal=" << drop_equal
+               << " claim_equal=" << claim_equal

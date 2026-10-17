@@ -1,0 +1,2 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-07-31-stage10-sweep-waypoint-recovery.md
+Task 1: BLOCKED — direct round 1 fixed the waypoint-0 zero-input deadband but native exit 8 still exhausted the immutable 12,000-tick budget at 144/600 defeated; CTest and commit were correctly withheld, and further changes require a new root-cause/design card because lease/action/budget behavior is outside this card's authorized scope. Evidence: task-1-report.md.
