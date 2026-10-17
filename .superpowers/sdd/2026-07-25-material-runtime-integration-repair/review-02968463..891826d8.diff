@@ -1,0 +1,77 @@
+# Review package: 02968463..891826d8
+
+## Commits
+891826d fix: select combat font by validity
+
+## Files changed
+ src/platform/raylib/actor_renderer.cpp        |  3 ++-
+ tests/platform/stage12_actor_render_tests.cpp | 11 +++++++++++
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index b6a97b3..ecbd559 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -112,23 +112,24 @@ void draw_scene_label(Font font, bool font_ready, const char* text,
+         return;
+     }
+     DrawText(text, static_cast<int>(std::round(x)),
+         static_cast<int>(std::round(y)), font_size, color);
+ }
+ 
+ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
+     float width, float height, bool foreground,
+     Font hud_font, bool hud_font_ready) noexcept {
+     constexpr int kCombatTextShadowPixels = 1;
++    static_cast<void>(hud_font_ready);
+     const CombatTextStyle text_style = combat_text_style(
+         static_cast<int>(width), static_cast<int>(height));
+-    const Font draw_font = hud_font_ready && IsFontValid(hud_font)
++    const Font draw_font = IsFontValid(hud_font)
+         ? hud_font : GetFontDefault();
+     const auto draw_combat_text = [&](const char* text, float center_x,
+                                       float y, float font_size,
+                                       Color color) noexcept {
+         const Vector2 measured = MeasureTextEx(
+             draw_font, text, font_size, text_style.spacing);
+         color.a = 255U;
+         draw_crisp_ui_text(draw_font, text,
+             {center_x - measured.x * 0.5F, y}, font_size,
+             text_style.spacing, color, kCombatTextShadowPixels);
+diff --git a/tests/platform/stage12_actor_render_tests.cpp b/tests/platform/stage12_actor_render_tests.cpp
+index 79abe3e..5f982c8 100644
+--- a/tests/platform/stage12_actor_render_tests.cpp
++++ b/tests/platform/stage12_actor_render_tests.cpp
+@@ -266,20 +266,31 @@ arpg::test::Failure combat_text_uses_crisp_shared_font_path() noexcept {
+     const std::size_t begin = actor.find("void draw_effects(");
+     const std::size_t end = actor.find("void draw_hazards(", begin);
+     ARPG_REQUIRE(begin != std::string::npos);
+     ARPG_REQUIRE(end != std::string::npos);
+     const std::string effects = actor.substr(begin, end - begin);
+     ARPG_REQUIRE(effects.find("Font hud_font") != std::string::npos);
+     ARPG_REQUIRE(effects.find("bool hud_font_ready") != std::string::npos);
+     ARPG_REQUIRE(effects.find("MeasureTextEx(") != std::string::npos);
+     ARPG_REQUIRE(effects.find("draw_crisp_ui_text(") != std::string::npos);
+     ARPG_REQUIRE(effects.find("GetFontDefault()") != std::string::npos);
++    const std::size_t font_choice_begin =
++        effects.find("const Font draw_font =");
++    const std::size_t font_choice_end =
++        effects.find(';', font_choice_begin);
++    ARPG_REQUIRE(font_choice_begin != std::string::npos);
++    ARPG_REQUIRE(font_choice_end != std::string::npos);
++    const std::string font_choice = effects.substr(
++        font_choice_begin, font_choice_end - font_choice_begin);
++    ARPG_REQUIRE(font_choice.find("IsFontValid(hud_font)")
++        != std::string::npos);
++    ARPG_REQUIRE(font_choice.find("hud_font_ready") == std::string::npos);
+     ARPG_REQUIRE(effects.find("kCombatTextShadowPixels = 1")
+         != std::string::npos);
+     ARPG_REQUIRE(effects.find("DrawText(") == std::string::npos);
+     ARPG_REQUIRE(effects.find("MeasureText(") == std::string::npos);
+     ARPG_REQUIRE(effects.find("DrawTextGradient") == std::string::npos);
+ 
+     const std::filesystem::path crisp_header = std::filesystem::path{
+         ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/ui_text_renderer.hpp";
+     std::ifstream crisp_input(crisp_header);
+     const std::string crisp((std::istreambuf_iterator<char>(crisp_input)), {});

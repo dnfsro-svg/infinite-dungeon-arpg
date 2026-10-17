@@ -1,0 +1,88 @@
+# Review package: ca49689..28c6f56
+
+## Commits
+28c6f56 fix: preserve material storm sword placements
+
+## Files changed
+ src/platform/raylib/active_skill_renderer.cpp | 3 ++-
+ tests/platform/active_skill_view_tests.cpp    | 3 +++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/platform/raylib/active_skill_renderer.cpp b/src/platform/raylib/active_skill_renderer.cpp
+index fad9f90..302192c 100644
+--- a/src/platform/raylib/active_skill_renderer.cpp
++++ b/src/platform/raylib/active_skill_renderer.cpp
+@@ -247,21 +247,21 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
+         const std::uint16_t age = static_cast<std::uint16_t>(
+             skill.elapsed_ticks - kDrawSlashImpactTick);
+         if (age <= kFlashTicks) {
+             result.draw_slash.opacity = 1.0F
+                 - static_cast<float>(age)
+                     / static_cast<float>(kFlashTicks + 1U);
+         }
+         }
+     }
+ 
+-    if (!material_ready && skill.id == skills::ActiveSkillId::storm_swords) {
++    if (skill.id == skills::ActiveSkillId::storm_swords) {
+         result.storm_swords.sword_count = std::min<std::size_t>(
+             skill.spawned_sword_count, result.storm_swords.swords.size());
+         result.storm_swords.visible = skill.transients_active
+             && result.storm_swords.sword_count != 0U;
+         for (std::size_t index = 0U;
+              index < result.storm_swords.sword_count; ++index) {
+             const bool aerial = index >= kStormGroundSwordCount;
+             result.storm_swords.swords[index].angle_radians =
+                 static_cast<float>(index % kStormGroundSwordCount)
+                     * (2.0F * kPi / static_cast<float>(kStormGroundSwordCount))
+@@ -301,20 +301,21 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
+     }
+     return result;
+ }
+ 
+ void ActiveSkillRenderer::draw_world(
+     const ActiveSkillEffectPlan& plan,
+     const MaterialPack& material_pack,
+     float width, float height) const noexcept {
+     if (plan.mode == ActiveSkillVisualMode::material) {
+         draw_material_active_skill(plan, material_pack, width, height);
++        draw_storm_swords(plan.storm_swords, width, height);
+     } else if (plan.mode == ActiveSkillVisualMode::procedural_fallback) {
+         draw_draw_slash(plan.draw_slash, width, height);
+         draw_storm_swords(plan.storm_swords, width, height);
+     }
+     if (plan.screen_flash_alpha > 0.0F) {
+         DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
+             Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
+     }
+ }
+ 
+diff --git a/tests/platform/active_skill_view_tests.cpp b/tests/platform/active_skill_view_tests.cpp
+index 72afe1f..890d63b 100644
+--- a/tests/platform/active_skill_view_tests.cpp
++++ b/tests/platform/active_skill_view_tests.cpp
+@@ -85,20 +85,23 @@ arpg::test::Failure material_and_fallback_skill_plans_are_exclusive_and_allocate
+     snapshot.active_skill.locked_center = {9.0F, -8.0F, 0.0F};
+     snapshot.active_skill.spawned_sword_count = 24U;
+     snapshot.active_skill.transients_active = true;
+ 
+     const platform::ActiveSkillEffectPlan healthy =
+         platform::make_active_skill_effect_plan(snapshot, nullptr, true);
+     ARPG_REQUIRE(healthy.mode == platform::ActiveSkillVisualMode::material);
+     ARPG_REQUIRE(healthy.suppress_base_player);
+     ARPG_REQUIRE(healthy.procedural_main_visual_count == 0U);
+     ARPG_REQUIRE(healthy.atlas == platform::MaterialAtlasId::skill_storm_swords);
++    ARPG_REQUIRE(healthy.storm_swords.visible);
++    ARPG_REQUIRE(healthy.storm_swords.sword_count == 24U);
++    ARPG_REQUIRE(!healthy.storm_swords.finisher_visible);
+ 
+     const platform::ActiveSkillEffectPlan fallback =
+         platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+     ARPG_REQUIRE(fallback.mode
+         == platform::ActiveSkillVisualMode::procedural_fallback);
+     ARPG_REQUIRE(!fallback.suppress_base_player);
+     ARPG_REQUIRE(fallback.procedural_main_visual_count > 0U);
+ 
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {

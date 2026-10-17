@@ -1,0 +1,535 @@
+# Review package: 891826d8..236b5ce
+
+## Commits
+236b5ce fix: bind active skills to numpad keys
+
+## Files changed
+ src/platform/raylib/host_input.cpp          |  4 +-
+ src/platform/raylib/raylib_input.cpp        | 35 ++++++++----
+ src/platform/raylib/raylib_input.hpp        |  1 +
+ tests/platform/CMakeLists.txt               |  1 +
+ tests/platform/active_skill_input_tests.cpp | 86 +++++++++++++++++++++++++----
+ tests/platform/host_input_tests.cpp         | 11 +++-
+ tests/platform/platform_test_main.cpp       |  4 +-
+ tests/platform/raylib_input_tests.cpp       | 29 ++++++++++
+ 8 files changed, 142 insertions(+), 29 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/host_input.cpp b/src/platform/raylib/host_input.cpp
+index 873cae8..7a6c4ff 100644
+--- a/src/platform/raylib/host_input.cpp
++++ b/src/platform/raylib/host_input.cpp
+@@ -5,20 +5,22 @@
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr std::size_t kStableKeyCount =
+     static_cast<std::size_t>(settings::StableKey::count);
++constexpr std::array<int, skills::kActiveSkillSlotCount>
++    kActiveSkillKeys{{KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5}};
+ 
+ [[nodiscard]] constexpr std::size_t stable_index(
+     settings::StableKey key) noexcept {
+     return static_cast<std::size_t>(key);
+ }
+ 
+ [[nodiscard]] bool default_pressed(void*, int key) noexcept {
+     return platform_key_pressed(key);
+ }
+ 
+@@ -104,21 +106,21 @@ PhysicalKeySnapshot sample_physical_keys(
+         snapshot.down[index] = source.down(source.context, code);
+     }
+     snapshot.escape = source.pressed(source.context, KEY_ESCAPE);
+     snapshot.enter = source.pressed(source.context, KEY_ENTER);
+     snapshot.f1 = source.pressed(source.context, KEY_F1);
+     snapshot.f12 = source.pressed(source.context, KEY_F12);
+     snapshot.v = snapshot.pressed[stable_index(settings::StableKey::v)];
+     for (std::size_t index = 0U;
+             index < snapshot.active_skill_slots.size(); ++index) {
+         snapshot.active_skill_slots[index] = source.pressed(
+-            source.context, KEY_ONE + static_cast<int>(index));
++            source.context, kActiveSkillKeys[index]);
+     }
+     snapshot.mouse_left = source.mouse_left_pressed != nullptr
+         && source.mouse_left_pressed(source.context);
+     snapshot.mouse_right = source.mouse_right_pressed != nullptr
+         && source.mouse_right_pressed(source.context);
+     if (source.mouse_position != nullptr) {
+         snapshot.mouse_position = source.mouse_position(source.context);
+     }
+     if (source.mouse_wheel != nullptr) {
+         snapshot.mouse_wheel = source.mouse_wheel(source.context);
+diff --git a/src/platform/raylib/raylib_input.cpp b/src/platform/raylib/raylib_input.cpp
+index 8779e77..47d8e36 100644
+--- a/src/platform/raylib/raylib_input.cpp
++++ b/src/platform/raylib/raylib_input.cpp
+@@ -2,87 +2,98 @@
+ 
+ #include <raylib.h>
+ 
+ #if defined(_WIN32)
+ extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int key);
+ #endif
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+-#if defined(_WIN32)
+ constexpr int kVkBack = 0x08;
+ constexpr int kVkTab = 0x09;
+ constexpr int kVkReturn = 0x0D;
+ constexpr int kVkEscape = 0x1B;
+ constexpr int kVkLeft = 0x25;
+ constexpr int kVkUp = 0x26;
+ constexpr int kVkRight = 0x27;
+ constexpr int kVkDown = 0x28;
+ constexpr int kVkInsert = 0x2D;
+ constexpr int kVkDelete = 0x2E;
++constexpr int kVkNumpad1 = 0x61;
++constexpr int kVkNumpad2 = 0x62;
++constexpr int kVkNumpad3 = 0x63;
++constexpr int kVkNumpad4 = 0x64;
++constexpr int kVkNumpad5 = 0x65;
+ constexpr int kVkF1 = 0x70;
+ constexpr int kVkLeftShift = 0xA0;
+ constexpr int kVkRightShift = 0xA1;
+ constexpr int kVkLeftControl = 0xA2;
+ constexpr int kVkRightControl = 0xA3;
+ constexpr int kVkLeftAlt = 0xA4;
+ constexpr int kVkRightAlt = 0xA5;
+ 
+-int virtual_key(int key) noexcept {
++#if defined(_WIN32)
++short asynchronous_key_state(int virtual_key) noexcept {
++    return virtual_key == 0 ? 0 : GetAsyncKeyState(virtual_key);
++}
++#endif
++
++}  // namespace
++
++int win32_virtual_key_for_raylib(int key) noexcept {
+     if ((key >= KEY_ZERO && key <= KEY_NINE)
+             || (key >= KEY_A && key <= KEY_Z)) {
+         return key;
+     }
+     if (key >= KEY_F1 && key <= KEY_F12)
+         return kVkF1 + (key - KEY_F1);
+     switch (key) {
+     case KEY_ESCAPE: return kVkEscape;
+     case KEY_ENTER: return kVkReturn;
+     case KEY_TAB: return kVkTab;
+     case KEY_BACKSPACE: return kVkBack;
+     case KEY_INSERT: return kVkInsert;
+     case KEY_DELETE: return kVkDelete;
++    case KEY_KP_1: return kVkNumpad1;
++    case KEY_KP_2: return kVkNumpad2;
++    case KEY_KP_3: return kVkNumpad3;
++    case KEY_KP_4: return kVkNumpad4;
++    case KEY_KP_5: return kVkNumpad5;
+     case KEY_LEFT_CONTROL: return kVkLeftControl;
+     case KEY_RIGHT_CONTROL: return kVkRightControl;
+     case KEY_LEFT_SHIFT: return kVkLeftShift;
+     case KEY_RIGHT_SHIFT: return kVkRightShift;
+     case KEY_LEFT_ALT: return kVkLeftAlt;
+     case KEY_RIGHT_ALT: return kVkRightAlt;
+     case KEY_UP: return kVkUp;
+     case KEY_DOWN: return kVkDown;
+     case KEY_LEFT: return kVkLeft;
+     case KEY_RIGHT: return kVkRight;
+     default: return 0;
+     }
+ }
+ 
+-short asynchronous_key_state(int key) noexcept {
+-    const int mapped = virtual_key(key);
+-    return mapped == 0 ? 0 : GetAsyncKeyState(mapped);
+-}
+-#endif
+-
+-}  // namespace
+-
+ bool platform_key_pressed(int key) noexcept {
+ #if defined(_WIN32)
+     return IsKeyPressed(key)
+-        || (asynchronous_key_state(key) & 0x0001) != 0;
++        || (asynchronous_key_state(win32_virtual_key_for_raylib(key))
++            & 0x0001) != 0;
+ #else
+     return IsKeyPressed(key);
+ #endif
+ }
+ 
+ bool platform_key_down(int key) noexcept {
+ #if defined(_WIN32)
+-    const short state = asynchronous_key_state(key);
++    const short state = asynchronous_key_state(
++        win32_virtual_key_for_raylib(key));
+     return IsKeyDown(key)
+         || (state & static_cast<short>(0x8000)) != 0
+         || (state & 0x0001) != 0;
+ #else
+     return IsKeyDown(key);
+ #endif
+ }
+ 
+ DeathInputGate death_input_gate(bool death_saving, bool death_pending,
+     const FrameKeyState& keys) noexcept {
+diff --git a/src/platform/raylib/raylib_input.hpp b/src/platform/raylib/raylib_input.hpp
+index 34f5073..a3dbe86 100644
+--- a/src/platform/raylib/raylib_input.hpp
++++ b/src/platform/raylib/raylib_input.hpp
+@@ -20,17 +20,18 @@ struct FrameKeyState final {
+     bool attack{};
+     bool reset{};
+     bool inventory{};
+     bool passives{};
+     bool mouse_gameplay{};
+     bool enter{};
+     bool recovery{};
+     bool focus_lost{};
+ };
+ 
++[[nodiscard]] int win32_virtual_key_for_raylib(int raylib_key) noexcept;
+ [[nodiscard]] bool platform_key_pressed(int raylib_key) noexcept;
+ [[nodiscard]] bool platform_key_down(int raylib_key) noexcept;
+ [[nodiscard]] DeathInputGate death_input_gate(
+     bool death_saving, bool death_pending,
+     const FrameKeyState& keys) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 0955615..01300d5 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,16 +1,17 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         host_input_tests.cpp
+         active_skill_input_tests.cpp
++        raylib_input_tests.cpp
+         active_skill_view_tests.cpp
+         active_skill_asset_tests.cpp
+         active_skill_loadout_view_tests.cpp
+         audio_pack_tests.cpp
+         audio_routing_tests.cpp
+         audio_scene_tests.cpp
+         stage15_audio_pack_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+diff --git a/tests/platform/active_skill_input_tests.cpp b/tests/platform/active_skill_input_tests.cpp
+index 8e65fde..a5e1fce 100644
+--- a/tests/platform/active_skill_input_tests.cpp
++++ b/tests/platform/active_skill_input_tests.cpp
+@@ -6,20 +6,28 @@
+ #include "platform/settings/settings_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <utility>
+ 
+ namespace {
+ 
+ using namespace arpg;
+ 
++constexpr std::array<int, skills::kActiveSkillSlotCount> kNumpadSkillKeys{{
++    KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5,
++}};
++
++constexpr std::array<int, skills::kActiveSkillSlotCount> kMainNumberKeys{{
++    KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE,
++}};
++
+ struct KeySourceState final {
+     std::array<bool, 512> pressed{};
+     std::array<bool, 512> down{};
+ };
+ 
+ bool source_pressed(void* context, int key) noexcept {
+     const auto& state = *static_cast<KeySourceState*>(context);
+     return key >= 0 && static_cast<std::size_t>(key) < state.pressed.size()
+         && state.pressed[static_cast<std::size_t>(key)];
+ }
+@@ -36,40 +44,75 @@ platform::PhysicalKeySource source_for(KeySourceState& state) noexcept {
+ }
+ 
+ void commit_pending_save(dungeon::DungeonSession& session) noexcept {
+     const auto pending = session.pending_save();
+     if (!pending.has_value()) return;
+     session.resolve_pending_save({dungeon::SaveDisposition::committed,
+         pending->expected_generation, std::move(pending->next_state),
+         pending->kind});
+ }
+ 
+-test::Failure sampler_maps_number_key_edges_to_active_skill_slots() noexcept {
+-    for (std::size_t slot = 0U; slot < skills::kActiveSkillSlotCount; ++slot) {
++test::Failure sampler_preserves_multiple_numpad_pressed_edges() noexcept {
++    KeySourceState state{};
++    state.pressed[KEY_KP_1] = true;
++    state.pressed[KEY_KP_5] = true;
++    const auto snapshot = platform::sample_physical_keys(source_for(state));
++    ARPG_REQUIRE(snapshot.active_skill_slots[0U]);
++    ARPG_REQUIRE(!snapshot.active_skill_slots[1U]);
++    ARPG_REQUIRE(!snapshot.active_skill_slots[2U]);
++    ARPG_REQUIRE(!snapshot.active_skill_slots[3U]);
++    ARPG_REQUIRE(snapshot.active_skill_slots[4U]);
++    return {};
++}
++
++test::Failure held_numpad_keys_do_not_repeat_as_active_skill_edges() noexcept {
++    KeySourceState state{};
++    state.down[KEY_KP_1] = true;
++    const auto snapshot = platform::sample_physical_keys(source_for(state));
++    for (bool pressed : snapshot.active_skill_slots) {
++        ARPG_REQUIRE(!pressed);
++    }
++    return {};
++}
++
++test::Failure numpad_pressed_edges_map_to_exact_active_skill_slots() noexcept {
++    for (std::size_t slot = 0U; slot < kNumpadSkillKeys.size(); ++slot) {
+         KeySourceState state{};
+-        state.pressed[static_cast<std::size_t>(KEY_ONE) + slot] = true;
++        state.pressed[static_cast<std::size_t>(kNumpadSkillKeys[slot])] = true;
+         const auto snapshot = platform::sample_physical_keys(source_for(state));
+         for (std::size_t candidate = 0U;
+                 candidate < skills::kActiveSkillSlotCount; ++candidate) {
+             ARPG_REQUIRE(snapshot.active_skill_slots[candidate]
+                 == (candidate == slot));
+         }
+     }
+     return {};
+ }
+ 
+-test::Failure held_number_keys_do_not_repeat_as_active_skill_edges() noexcept {
++test::Failure main_numbers_are_rejected_and_down_is_not_a_pressed_edge()
++    noexcept {
+     KeySourceState state{};
+-    state.down[KEY_ONE] = true;
+-    const auto snapshot = platform::sample_physical_keys(source_for(state));
+-    for (bool pressed : snapshot.active_skill_slots) {
+-        ARPG_REQUIRE(!pressed);
++    for (int key : kMainNumberKeys) {
++        state.pressed[static_cast<std::size_t>(key)] = true;
++    }
++    for (int key : kNumpadSkillKeys) {
++        state.down[static_cast<std::size_t>(key)] = true;
++    }
++    auto snapshot = platform::sample_physical_keys(source_for(state));
++    for (bool requested : snapshot.active_skill_slots) {
++        ARPG_REQUIRE(!requested);
++    }
++
++    state.pressed[KEY_KP_3] = true;
++    snapshot = platform::sample_physical_keys(source_for(state));
++    for (std::size_t slot = 0U; slot < skills::kActiveSkillSlotCount; ++slot) {
++        ARPG_REQUIRE(snapshot.active_skill_slots[slot] == (slot == 2U));
+     }
+     return {};
+ }
+ 
+ test::Failure mapper_forwards_slots_and_counts_them_as_attack_input() noexcept {
+     platform::PhysicalKeySnapshot snapshot{};
+     snapshot.active_skill_slots[0U] = true;
+     snapshot.active_skill_slots[3U] = true;
+     const auto input = platform::map_host_frame_input(
+         settings::default_settings(), snapshot);
+@@ -130,30 +173,49 @@ test::Failure submit_skips_a_cooling_earlier_slot_and_accepts_later_slot()
+     platform::HostFrameInput input{};
+     input.active_skill_slots[0U] = true;
+     input.active_skill_slots[1U] = true;
+     const auto submitted = platform::submit_frame_actions(session, input);
+     ARPG_REQUIRE(submitted.skills[0U]
+         == combat::SkillCastResult::cooling_down);
+     ARPG_REQUIRE(submitted.skills[1U] == combat::SkillCastResult::accepted);
+     return {};
+ }
+ 
++test::Failure submit_semantics_keep_only_the_first_accepted_slot() noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    platform::HostFrameInput input{};
++    input.active_skill_slots.fill(true);
++    const auto submitted = platform::submit_frame_actions(session, input);
++    ARPG_REQUIRE(submitted.skills[0U] == combat::SkillCastResult::accepted);
++    for (std::size_t slot = 1U; slot < skills::kActiveSkillSlotCount; ++slot) {
++        ARPG_REQUIRE(submitted.skills[slot] == combat::SkillCastResult::none);
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+-    {"number key edges map to active skill slots",
+-        &sampler_maps_number_key_edges_to_active_skill_slots},
+-    {"held number keys do not repeat",
+-        &held_number_keys_do_not_repeat_as_active_skill_edges},
++    {"multiple numpad edges remain distinct",
++        &sampler_preserves_multiple_numpad_pressed_edges},
++    {"held numpad keys do not repeat",
++        &held_numpad_keys_do_not_repeat_as_active_skill_edges},
+     {"mapper forwards skill slots through attack gate",
+         &mapper_forwards_slots_and_counts_them_as_attack_input},
+     {"submit routes same frame skill slots in order",
+         &submit_routes_same_frame_slots_in_order_until_one_is_accepted},
+     {"submit skips empty earlier skill slot",
+         &submit_skips_an_empty_earlier_slot_and_accepts_later_slot},
+     {"submit skips cooling earlier skill slot",
+         &submit_skips_a_cooling_earlier_slot_and_accepts_later_slot},
++    {"numpad edges map to exact active skill slots",
++        &numpad_pressed_edges_map_to_exact_active_skill_slots},
++    {"main numbers are rejected and held keys do not repeat",
++        &main_numbers_are_rejected_and_down_is_not_a_pressed_edge},
++    {"submit semantics keep only the first accepted slot",
++        &submit_semantics_keep_only_the_first_accepted_slot},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite active_skill_input_suite() noexcept {
+     return arpg::test::make_suite("active_skill_input", kCases);
+ }
+diff --git a/tests/platform/host_input_tests.cpp b/tests/platform/host_input_tests.cpp
+index 071be32..0e854f3 100644
+--- a/tests/platform/host_input_tests.cpp
++++ b/tests/platform/host_input_tests.cpp
+@@ -139,26 +139,31 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
+         &query_mouse_right_pressed,
+         &query_mouse_position,
+         &query_mouse_wheel,
+         &query_focus_lost,
+     };
+     const platform::PhysicalKeySnapshot snapshot =
+         platform::sample_physical_keys(source);
+ 
+     for (std::size_t index = 0U; index < kStableKeyCount; ++index) {
+         const int code = kExpectedRaylibKeys[index];
+-        const unsigned expected_pressed = code >= KEY_ONE && code <= KEY_FIVE
+-            ? 2U : 1U;
+         ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(code)]
+-            == expected_pressed);
++            == 1U);
+         ARPG_REQUIRE(log.down[static_cast<std::size_t>(code)] == 1U);
+     }
++    constexpr std::array<int, skills::kActiveSkillSlotCount> skill_keys{{
++        KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5,
++    }};
++    for (int key : skill_keys) {
++        ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(key)] == 1U);
++        ARPG_REQUIRE(log.down[static_cast<std::size_t>(key)] == 0U);
++    }
+     ARPG_REQUIRE(log.pressed[KEY_ESCAPE] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_ENTER] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_F1] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_F12] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_V] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_R] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_N] == 1U);
+     ARPG_REQUIRE(log.mouse_left_pressed == 1U);
+     ARPG_REQUIRE(log.mouse_right_pressed == 1U);
+     ARPG_REQUIRE(log.mouse_position == 1U);
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 3b4be1d..3fc33c7 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -7,20 +7,21 @@
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite audio_pack_suite() noexcept;
+ arpg::test::TestSuite audio_routing_suite() noexcept;
+ arpg::test::TestSuite audio_scene_suite() noexcept;
+ arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
+ arpg::test::TestSuite host_input_suite() noexcept;
+ arpg::test::TestSuite active_skill_input_suite() noexcept;
++arpg::test::TestSuite raylib_input_suite() noexcept;
+ arpg::test::TestSuite active_skill_view_suite() noexcept;
+ arpg::test::TestSuite active_skill_asset_suite() noexcept;
+ arpg::test::TestSuite active_skill_loadout_view_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+@@ -63,20 +64,21 @@ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
+         audio_pack_suite(),
+         audio_routing_suite(),
+         audio_scene_suite(),
+         stage15_audio_pack_suite(),
+         host_input_suite(),
+         active_skill_input_suite(),
++        raylib_input_suite(),
+         active_skill_view_suite(),
+         active_skill_asset_suite(),
+         active_skill_loadout_view_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         pause_host_gate_suite(),
+         inventory_view_math_suite(),
+         death_input_gate_suite(),
+@@ -100,13 +102,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 469,
++    return arpg::test::run_suites(suites, 473,
+         "HUD and UI material slice contract");
+ }
+diff --git a/tests/platform/raylib_input_tests.cpp b/tests/platform/raylib_input_tests.cpp
+new file mode 100644
+index 0000000..06349fc
+--- /dev/null
++++ b/tests/platform/raylib_input_tests.cpp
+@@ -0,0 +1,29 @@
++#include "test_framework.hpp"
++
++#include "raylib_input.hpp"
++
++#include <raylib.h>
++
++namespace {
++
++using namespace arpg;
++
++test::Failure win32_mapper_maps_explicit_numpad_virtual_keys() noexcept {
++    ARPG_REQUIRE(platform::win32_virtual_key_for_raylib(KEY_KP_1) == 0x61);
++    ARPG_REQUIRE(platform::win32_virtual_key_for_raylib(KEY_KP_2) == 0x62);
++    ARPG_REQUIRE(platform::win32_virtual_key_for_raylib(KEY_KP_3) == 0x63);
++    ARPG_REQUIRE(platform::win32_virtual_key_for_raylib(KEY_KP_4) == 0x64);
++    ARPG_REQUIRE(platform::win32_virtual_key_for_raylib(KEY_KP_5) == 0x65);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"Win32 mapper maps explicit numpad virtual keys",
++        &win32_mapper_maps_explicit_numpad_virtual_keys},
++};
++
++}  // namespace
++
++arpg::test::TestSuite raylib_input_suite() noexcept {
++    return arpg::test::make_suite("raylib_input", kCases);
++}

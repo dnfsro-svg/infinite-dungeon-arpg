@@ -1,0 +1,814 @@
+# Review package: 903b6b8..02968463
+
+## Commits
+0296846 fix: integrate death and combat text materials
+
+## Files changed
+ src/platform/raylib/actor_renderer.cpp         | 43 ++++++++++++++++++--------
+ src/platform/raylib/combat_renderer.cpp        |  2 +-
+ src/platform/raylib/death_overlay_renderer.cpp | 30 +++++++++++++++---
+ src/platform/raylib/death_overlay_renderer.hpp |  5 ++-
+ src/platform/raylib/death_overlay_view.cpp     |  6 ++++
+ src/platform/raylib/death_overlay_view.hpp     | 11 +++++++
+ src/platform/raylib/hud_font.cpp               |  8 +++++
+ src/platform/raylib/hud_font.hpp               |  8 +++++
+ src/platform/raylib/ui_text_renderer.cpp       |  9 ++++--
+ src/platform/raylib/ui_text_renderer.hpp       |  3 +-
+ tests/platform/death_overlay_view_tests.cpp    | 18 +++++++++++
+ tests/platform/hud_font_tests.cpp              | 21 +++++++++++++
+ tests/platform/platform_test_main.cpp          |  2 +-
+ tests/platform/stage12_actor_render_tests.cpp  | 37 ++++++++++++++++++++++
+ tests/platform/ui_material_slice_tests.cpp     | 41 ++++++++++++++++++++++++
+ 15 files changed, 220 insertions(+), 24 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index f714fbe..b6a97b3 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -1,14 +1,15 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
+ #include "combat_view_math.hpp"
++#include "hud_font.hpp"
+ #include "hud_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "material_animation.hpp"
+ #include "ui_text_renderer.hpp"
+ #include "ui_typography.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+@@ -108,21 +109,37 @@ void draw_scene_label(Font font, bool font_ready, const char* text,
+     if (font_ready && IsFontValid(font)) {
+         draw_crisp_ui_text(font, text, {x, y},
+             static_cast<float>(font_size), 1.0F, color);
+         return;
+     }
+     DrawText(text, static_cast<int>(std::round(x)),
+         static_cast<int>(std::round(y)), font_size, color);
+ }
+ 
+ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
+-    float width, float height, bool foreground) noexcept {
++    float width, float height, bool foreground,
++    Font hud_font, bool hud_font_ready) noexcept {
++    constexpr int kCombatTextShadowPixels = 1;
++    const CombatTextStyle text_style = combat_text_style(
++        static_cast<int>(width), static_cast<int>(height));
++    const Font draw_font = hud_font_ready && IsFontValid(hud_font)
++        ? hud_font : GetFontDefault();
++    const auto draw_combat_text = [&](const char* text, float center_x,
++                                      float y, float font_size,
++                                      Color color) noexcept {
++        const Vector2 measured = MeasureTextEx(
++            draw_font, text, font_size, text_style.spacing);
++        color.a = 255U;
++        draw_crisp_ui_text(draw_font, text,
++            {center_x - measured.x * 0.5F, y}, font_size,
++            text_style.spacing, color, kCombatTextShadowPixels);
++    };
+     for (const VisualEffect& effect : feedback.effects()) {
+         if (!effect.active) continue;
+         const bool is_foreground = effect.kind == VisualEffectKind::spark
+             || effect.kind == VisualEffectKind::damage_number
+             || effect.kind == VisualEffectKind::defeat_marker;
+         if (is_foreground != foreground) continue;
+         const float progress = effect.lifetime_seconds <= 0.0F ? 1.0F
+             : std::clamp(effect.age_seconds / effect.lifetime_seconds, 0.0F, 1.0F);
+         const float opacity = 1.0F - progress;
+         const ScreenProjection projected = project_combat_position(effect.position, width, height);
+@@ -142,32 +159,30 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
+                 (18.0F + progress * 24.0F) * projected.scale, 7.0F * projected.scale,
+                 Fade(Color{185, 193, 207, 255}, opacity)); break;
+         case VisualEffectKind::spark:
+             DrawCircleLines(static_cast<int>(projected.x),
+                 static_cast<int>(projected.y - 42.0F * projected.scale),
+                 (8.0F + progress * 18.0F) * projected.scale, Fade(Color{255, 218, 96, 255}, opacity));
+             DrawLineEx({projected.x - 22.0F, projected.y - 54.0F},
+                 {projected.x + 25.0F, projected.y - 30.0F}, 3.0F,
+                 Fade(Color{255, 248, 210, 255}, opacity)); break;
+         case VisualEffectKind::damage_number:
+-            DrawText(TextFormat("%d", effect.value), static_cast<int>(projected.x + 8.0F),
+-                static_cast<int>(projected.y - 90.0F - progress * 32.0F), 20,
+-                Fade(Color{255, 238, 156, 255}, opacity)); break;
++            draw_combat_text(TextFormat("%d", effect.value),
++                projected.x + 8.0F,
++                projected.y - 90.0F - progress * 32.0F,
++                text_style.damage_font_size, Color{255, 238, 156, 255});
++            break;
+         case VisualEffectKind::defeat_marker: {
+             constexpr const char* kLabel = "DEFEATED";
+-            const int font_size = 24;
+-            const int label_x = static_cast<int>(projected.x)
+-                - MeasureText(kLabel, font_size) / 2;
+-            const int label_y = static_cast<int>(projected.y
+-                - 112.0F - progress * 24.0F);
+-            draw_outlined_text(kLabel, label_x, label_y, font_size,
+-                Fade(Color{255, 196, 92, 255}, opacity), 2);
++            draw_combat_text(kLabel, projected.x,
++                projected.y - 112.0F - progress * 24.0F,
++                text_style.defeated_font_size, Color{255, 196, 92, 255});
+             DrawCircleLines(static_cast<int>(projected.x),
+                 static_cast<int>(projected.y - 46.0F * projected.scale),
+                 (30.0F + progress * 18.0F) * projected.scale,
+                 Fade(Color{255, 196, 92, 255}, opacity));
+             break;
+         }
+         }
+     }
+ }
+ 
+@@ -538,21 +553,22 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+         if (monster.id == previous_monster.id && monster.generation == previous_monster.generation
+             && previous_monster.active) position = interpolate(
+                 previous_monster.position, monster.position, alpha);
+         draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index),
+             false, material_plan};
+         draw_monster_warning(monster, position, current.ecology, width, height);
+         draw_blink_affix_warning(monster, position, width, height);
+     }
+     sort_render_actors(draw_items, draw_count);
+     draw_hazards(current_combat, width, height);
+-    draw_effects(feedback, material_pack_, width, height, false);
++    draw_effects(feedback, material_pack_, width, height, false,
++        hud_renderer_.hud_font(), hud_renderer_.font_ready());
+     draw_projectiles(current_combat, material_pack_, width, height, current.ecology);
+     for (std::size_t index = 0; index < draw_count; ++index) {
+         const RenderActor& item = draw_items[index];
+         const ScreenProjection ground = project_combat_position({item.position.x, item.position.y, 0.0F}, width, height);
+         const float shadow_width = (item.player ? 48.0F : 54.0F) * ground.scale;
+         DrawEllipse(static_cast<int>(ground.x), static_cast<int>(ground.ground_y + 3.0F), shadow_width, 10.0F * ground.scale, Color{3, 5, 8, 125});
+     }
+     for (std::size_t index = 0; index < draw_count; ++index) {
+         const RenderActor& item = draw_items[index];
+         const ScreenProjection projected = project_combat_position(item.position, width, height);
+@@ -598,15 +614,16 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+                     width, height, current_combat.tick, item.monster_index,
+                     hud_renderer_.hud_font(), hud_renderer_.font_ready());
+             } else {
+                 draw_monster_silhouette(monster, item.position, current.ecology,
+                     width, height, feedback, item.monster_index, current_combat.tick,
+                     item.monster_index, hud_renderer_.hud_font(),
+                     hud_renderer_.font_ready());
+             }
+         }
+     }
+-    draw_effects(feedback, material_pack_, width, height, true);
++    draw_effects(feedback, material_pack_, width, height, true,
++        hud_renderer_.hud_font(), hud_renderer_.font_ready());
+     if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index c24b283..b6a5cd5 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -314,15 +314,15 @@ GroundLootView CombatRenderer::draw(
+                 hud_notices_.dropped_count(), hud_binding_revision_, last_event_,
+                 has_last_event_, hud_renderer_.font_ready());
+         debug_overlay_.draw(current, runtime_status, feedback, audio_ready, diagnostics);
+     }
+ 
+     const float overlay_alpha = transition_overlay_alpha(transition_.seconds_left);
+     if (overlay_alpha > 0.0F) {
+         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+             Fade(BLACK, overlay_alpha));
+     }
+-    death_overlay_.draw(current);
++    death_overlay_.draw(current, material_pack_);
+     return render_plan.ground_loot;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/death_overlay_renderer.cpp b/src/platform/raylib/death_overlay_renderer.cpp
+index e6225c5..dbbc496 100644
+--- a/src/platform/raylib/death_overlay_renderer.cpp
++++ b/src/platform/raylib/death_overlay_renderer.cpp
+@@ -1,14 +1,15 @@
+ #include "death_overlay_renderer.hpp"
+ 
+ #include "death_overlay_font.hpp"
+ #include "death_overlay_view.hpp"
++#include "material_pack.hpp"
+ #include "ui_text_contrast.hpp"
+ #include "ui_text_renderer.hpp"
+ 
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ Rectangle rectangle(DeathOverlayRect value) noexcept {
+     return {value.x, value.y, value.width, value.height};
+@@ -25,29 +26,39 @@ void draw_text(Font font, const char* text, DeathOverlayRect bounds,
+     }
+     const UiTextContrastStyle style = ui_text_contrast_style();
+     color.a = 255U;
+     if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+         color = style.muted;
+     }
+     draw_crisp_ui_text(font, text, {x, bounds.y},
+         static_cast<float>(font_size), kSpacing, color);
+ }
+ 
+-void draw_panel(const DeathOverlayLayout& layout) noexcept {
++void draw_screen_dimmer() noexcept {
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Color{2, 4, 8, 205});
++}
++
++void draw_panel_fallback(const DeathOverlayLayout& layout) noexcept {
+     DrawRectangleRounded(rectangle(layout.panel), 0.04F, 8,
+         Color{10, 13, 21, 255});
+     DrawRectangleRoundedLines(rectangle(layout.panel), 0.04F, 8,
+         Color{176, 63, 77, 255});
+ }
+ 
++void draw_title_plate_fallback(const DeathOverlayLayout& layout) noexcept {
++    DrawRectangleRounded(rectangle(layout.title), 0.12F, 6,
++        Color{22, 19, 25, 255});
++    DrawRectangleRoundedLines(rectangle(layout.title), 0.12F, 6,
++        Color{132, 101, 68, 255});
++}
++
+ }  // namespace
+ 
+ DeathOverlayRenderer::~DeathOverlayRenderer() noexcept {
+     if (owns_font_ && IsWindowReady()) UnloadFont(font_);
+ }
+ 
+ bool DeathOverlayRenderer::initialize() noexcept {
+     shutdown();
+     const DeathOverlayFontPlan plan = death_overlay_font_plan();
+     for (std::size_t index = 0U; index < plan.candidate_count; ++index) {
+@@ -74,28 +85,39 @@ bool DeathOverlayRenderer::initialize() noexcept {
+     return false;
+ }
+ 
+ void DeathOverlayRenderer::shutdown() noexcept {
+     if (owns_font_ && IsWindowReady()) UnloadFont(font_);
+     font_ = {};
+     owns_font_ = false;
+ }
+ 
+ void DeathOverlayRenderer::draw(
+-    const dungeon::DungeonSnapshot& snapshot) const noexcept {
++    const dungeon::DungeonSnapshot& snapshot,
++    const MaterialPack& material_pack) const noexcept {
+     const DeathOverlayView view = owns_font_
+         ? build_death_overlay_view(snapshot)
+         : build_death_overlay_ascii_view(snapshot);
+-    if (!view.visible) return;
++    const DeathOverlayMaterialPlan plan =
++        death_overlay_material_plan(view.visible);
++    if (!plan.visible) return;
+     const DeathOverlayLayout layout = death_overlay_layout(
+         GetScreenWidth(), GetScreenHeight());
+-    draw_panel(layout);
++    draw_screen_dimmer();
++    if (!material_pack.draw_nine_slice(
++            plan.panel, rectangle(layout.panel), plan.panel_border_pixels)) {
++        draw_panel_fallback(layout);
++    }
++    if (!material_pack.draw_region_fit(plan.title_plate,
++            {4.0F, 52.0F, 120.0F, 24.0F}, rectangle(layout.title))) {
++        draw_title_plate_fallback(layout);
++    }
+     const Font draw_font = IsFontValid(font_) ? font_ : GetFontDefault();
+     draw_text(draw_font, view.title.data(), layout.title,
+         layout.title_font_size, ui_text_contrast_style().danger, true);
+     for (std::size_t index = 0U; index < view.line_count; ++index) {
+         const DeathOverlayRect bounds = layout.line_bounds[index];
+         draw_text(draw_font, view.lines[index].text.data(), bounds,
+             layout.body_font_size,
+             view.lines[index].heading ? ui_text_contrast_style().danger
+                                       : ui_text_contrast_style().primary);
+     }
+diff --git a/src/platform/raylib/death_overlay_renderer.hpp b/src/platform/raylib/death_overlay_renderer.hpp
+index 59f2d70..401a1e4 100644
+--- a/src/platform/raylib/death_overlay_renderer.hpp
++++ b/src/platform/raylib/death_overlay_renderer.hpp
+@@ -1,25 +1,28 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_types.hpp"
+ 
+ #include <raylib.h>
+ 
+ namespace arpg::platform {
+ 
++class MaterialPack;
++
+ class DeathOverlayRenderer final {
+ public:
+     DeathOverlayRenderer() noexcept = default;
+     ~DeathOverlayRenderer() noexcept;
+     DeathOverlayRenderer(const DeathOverlayRenderer&) = delete;
+     DeathOverlayRenderer& operator=(const DeathOverlayRenderer&) = delete;
+ 
+     [[nodiscard]] bool initialize() noexcept;
+     void shutdown() noexcept;
+-    void draw(const dungeon::DungeonSnapshot& snapshot) const noexcept;
++    void draw(const dungeon::DungeonSnapshot& snapshot,
++        const MaterialPack& material_pack) const noexcept;
+ 
+ private:
+     Font font_{};
+     bool owns_font_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/death_overlay_view.cpp b/src/platform/raylib/death_overlay_view.cpp
+index 0cc884a..08fdd8d 100644
+--- a/src/platform/raylib/death_overlay_view.cpp
++++ b/src/platform/raylib/death_overlay_view.cpp
+@@ -481,11 +481,17 @@ DeathOverlayLayout death_overlay_layout(
+                 column_width, static_cast<float>(layout.body_font_size + 4));
+         }
+     }
+     layout.prompt = make_rect(panel_x + 28.0F,
+         panel_y + panel_height - (compact ? 45.0F : 58.0F),
+         panel_width - 56.0F,
+         static_cast<float>(layout.prompt_font_size + 8));
+     return layout;
+ }
+ 
++DeathOverlayMaterialPlan death_overlay_material_plan(bool visible) noexcept {
++    DeathOverlayMaterialPlan plan{};
++    plan.visible = visible;
++    return plan;
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/death_overlay_view.hpp b/src/platform/raylib/death_overlay_view.hpp
+index 70a2363..4ae872b 100644
+--- a/src/platform/raylib/death_overlay_view.hpp
++++ b/src/platform/raylib/death_overlay_view.hpp
+@@ -1,13 +1,14 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_types.hpp"
++#include "material_asset_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ inline constexpr std::size_t kDeathOverlayLineCapacity = 26U;
+ inline constexpr std::size_t kDeathOverlayTextCapacity = 160U;
+ 
+ enum class DeathOverlayColumn : unsigned char {
+@@ -40,21 +41,31 @@ struct DeathOverlayRect final {
+ struct DeathOverlayLayout final {
+     DeathOverlayRect panel{};
+     DeathOverlayRect title{};
+     std::array<DeathOverlayRect, kDeathOverlayLineCapacity> line_bounds{};
+     DeathOverlayRect prompt{};
+     int title_font_size{};
+     int body_font_size{};
+     int prompt_font_size{};
+ };
+ 
++struct DeathOverlayMaterialPlan final {
++    bool visible{};
++    MaterialSpriteId panel{MaterialSpriteId::ui_warning_modal};
++    MaterialSpriteId title_plate{MaterialSpriteId::ui_label_plate};
++    float panel_border_pixels{32.0F};
++};
++
+ [[nodiscard]] DeathOverlayView build_death_overlay_view(
+     const dungeon::DungeonSnapshot& snapshot) noexcept;
+ 
+ [[nodiscard]] DeathOverlayView build_death_overlay_ascii_view(
+     const dungeon::DungeonSnapshot& snapshot) noexcept;
+ 
+ [[nodiscard]] DeathOverlayLayout death_overlay_layout(
+     int screen_width,
+     int screen_height) noexcept;
+ 
++[[nodiscard]] DeathOverlayMaterialPlan death_overlay_material_plan(
++    bool visible) noexcept;
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_font.cpp b/src/platform/raylib/hud_font.cpp
+index 26c8be5..342c993 100644
+--- a/src/platform/raylib/hud_font.cpp
++++ b/src/platform/raylib/hud_font.cpp
+@@ -1,12 +1,14 @@
+ #include "hud_font.hpp"
+ 
++#include "ui_typography.hpp"
++
+ namespace arpg::platform {
+ namespace {
+ 
+ void add_hud_codepoint(DeathOverlayFontPlan& plan, int codepoint) noexcept {
+     if (death_overlay_font_has_codepoint(plan, codepoint)
+             || plan.codepoint_count == plan.codepoints.size()) {
+         return;
+     }
+     plan.codepoints[plan.codepoint_count++] = codepoint;
+ }
+@@ -78,11 +80,17 @@ HudFontDrawMode hud_font_draw_mode(bool cjk_font_ready) noexcept {
+     return cjk_font_ready ? HudFontDrawMode::cjk_ready
+                           : HudFontDrawMode::fallback;
+ }
+ 
+ HudFontSelectionPlan make_hud_font_selection_plan(bool cjk_font_ready) noexcept {
+     const HudFontDrawMode mode = hud_font_draw_mode(cjk_font_ready);
+     return {mode, mode == HudFontDrawMode::fallback,
+         mode == HudFontDrawMode::cjk_ready};
+ }
+ 
++CombatTextStyle combat_text_style(
++    int screen_width, int screen_height) noexcept {
++    const float scale = ui_viewport_scale(screen_width, screen_height);
++    return {20.0F * scale, 24.0F * scale, 1.0F};
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_font.hpp b/src/platform/raylib/hud_font.hpp
+index 51c87ff..6d3d5ca 100644
+--- a/src/platform/raylib/hud_font.hpp
++++ b/src/platform/raylib/hud_font.hpp
+@@ -12,16 +12,24 @@ struct HudFontSelectionPlan final {
+     HudFontDrawMode draw_mode{HudFontDrawMode::fallback};
+     bool use_default_font{true};
+     bool owns_loaded_font{};
+ };
+ 
+ struct HudFontPlan final {
+     DeathOverlayFontPlan shared{};
+     bool covers_required_text{};
+ };
+ 
++struct CombatTextStyle final {
++    float damage_font_size{};
++    float defeated_font_size{};
++    float spacing{1.0F};
++};
++
+ [[nodiscard]] HudFontPlan hud_font_plan() noexcept;
+ [[nodiscard]] HudFontDrawMode hud_font_draw_mode(bool cjk_font_ready) noexcept;
+ [[nodiscard]] HudFontSelectionPlan make_hud_font_selection_plan(
+     bool cjk_font_ready) noexcept;
++[[nodiscard]] CombatTextStyle combat_text_style(
++    int screen_width, int screen_height) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/ui_text_renderer.cpp b/src/platform/raylib/ui_text_renderer.cpp
+index 235e453..f4c8ae2 100644
+--- a/src/platform/raylib/ui_text_renderer.cpp
++++ b/src/platform/raylib/ui_text_renderer.cpp
+@@ -4,30 +4,33 @@
+ 
+ #include <cmath>
+ 
+ namespace arpg::platform {
+ 
+ Vector2 snap_ui_text_position(Vector2 position) noexcept {
+     return {std::round(position.x), std::round(position.y)};
+ }
+ 
+ void draw_crisp_ui_text(Font font, const char* text, Vector2 position,
+-    float font_size, float spacing, Color color) noexcept {
++    float font_size, float spacing, Color color,
++    int shadow_pixels) noexcept {
+     if (!IsFontValid(font) || text == nullptr || text[0] == '\0'
+             || !(font_size > 0.0F)) {
+         return;
+     }
+     const UiTextContrastStyle style = ui_text_contrast_style();
+     color.a = 255U;
+     if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+         color = style.muted;
+     }
+     const Vector2 foreground = snap_ui_text_position(position);
++    const float shadow_offset = static_cast<float>(
++        shadow_pixels > 0 ? shadow_pixels : 0);
+     const Vector2 shadow{
+-        foreground.x + static_cast<float>(style.shadow_pixels),
+-        foreground.y + static_cast<float>(style.shadow_pixels),
++        foreground.x + shadow_offset,
++        foreground.y + shadow_offset,
+     };
+     DrawTextEx(font, text, shadow, font_size, spacing, style.shadow);
+     DrawTextEx(font, text, foreground, font_size, spacing, color);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/ui_text_renderer.hpp b/src/platform/raylib/ui_text_renderer.hpp
+index 21584e4..28b1605 100644
+--- a/src/platform/raylib/ui_text_renderer.hpp
++++ b/src/platform/raylib/ui_text_renderer.hpp
+@@ -1,12 +1,13 @@
+ #pragma once
+ 
+ #include <raylib.h>
+ 
+ namespace arpg::platform {
+ 
+ [[nodiscard]] Vector2 snap_ui_text_position(Vector2 position) noexcept;
+ 
+ void draw_crisp_ui_text(Font font, const char* text, Vector2 position,
+-    float font_size, float spacing, Color color) noexcept;
++    float font_size, float spacing, Color color,
++    int shadow_pixels = 2) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/death_overlay_view_tests.cpp b/tests/platform/death_overlay_view_tests.cpp
+index 213e86f..09afa37 100644
+--- a/tests/platform/death_overlay_view_tests.cpp
++++ b/tests/platform/death_overlay_view_tests.cpp
+@@ -384,26 +384,44 @@ arpg::test::Failure worst_case_values_fit_compact_columns() noexcept {
+     const auto ascii_view = platform::build_death_overlay_ascii_view(snapshot);
+     for (std::size_t index = 0U; index < ascii_view.line_count; ++index) {
+         if (ascii_view.lines[index].column != platform::DeathOverlayColumn::full) {
+             ARPG_REQUIRE(utf8_glyph_count(
+                 ascii_view.lines[index].text.data()) <= 36U);
+         }
+     }
+     return {};
+ }
+ 
++arpg::test::Failure death_overlay_material_plan_selects_authored_ui() noexcept {
++    const platform::DeathOverlayMaterialPlan hidden =
++        platform::death_overlay_material_plan(false);
++    ARPG_REQUIRE(!hidden.visible);
++
++    const platform::DeathOverlayMaterialPlan visible =
++        platform::death_overlay_material_plan(true);
++    ARPG_REQUIRE(visible.visible);
++    ARPG_REQUIRE(visible.panel
++        == platform::MaterialSpriteId::ui_warning_modal);
++    ARPG_REQUIRE(visible.title_plate
++        == platform::MaterialSpriteId::ui_label_plate);
++    ARPG_REQUIRE(arpg::test::near(visible.panel_border_pixels, 32.0F));
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"hidden and complete recap mapping", &hidden_without_death_and_maps_complete_recap},
+     {"abyss unknown and prompt states", &maps_abyss_unknown_and_all_prompt_states},
+     {"all source ids have Chinese names", &all_source_catalog_ids_have_stable_chinese_names},
+     {"wide source ids never alias", &wide_catalog_ids_never_alias_valid_entries},
+     {"ASCII fallback maps complete recap", &ascii_fallback_maps_complete_recap_and_prompts},
+     {"font plan covers overlay text", &font_plan_covers_all_overlay_text_and_ascii},
+     {"layouts fit supported windows", &layouts_stay_in_bounds_and_clear_of_prompt},
+     {"worst case values fit compact columns", &worst_case_values_fit_compact_columns},
++    {"death overlay selects authored UI materials",
++        &death_overlay_material_plan_selects_authored_ui},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite death_overlay_view_suite() noexcept {
+     return arpg::test::make_suite("death_overlay_view", kCases);
+ }
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index 94ac26b..a06582c 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -238,34 +238,55 @@ arpg::test::Failure hud_palette_key_colors_are_opaque_and_distinct() noexcept {
+ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
+     platform::HudRenderer renderer{};
+     ARPG_REQUIRE(!renderer.font_ready());
+     renderer.shutdown();
+     renderer.shutdown();
+     ARPG_REQUIRE(!renderer.font_ready());
+     renderer.draw({}, {});
+     return {};
+ }
+ 
++arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noexcept {
++    const platform::HudFontPlan font = platform::hud_font_plan();
++    constexpr const char* kCombatText = "0123456789-+%DEFEATED";
++    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
++        font.shared, kCombatText));
++
++    const platform::CombatTextStyle compact =
++        platform::combat_text_style(800, 450);
++    const platform::CombatTextStyle full_hd =
++        platform::combat_text_style(1920, 1080);
++    ARPG_REQUIRE(compact.damage_font_size > 0.0F);
++    ARPG_REQUIRE(compact.defeated_font_size > compact.damage_font_size);
++    ARPG_REQUIRE(arpg::test::near(compact.spacing, 1.0F));
++    ARPG_REQUIRE(full_hd.damage_font_size > compact.damage_font_size);
++    ARPG_REQUIRE(full_hd.defeated_font_size > compact.defeated_font_size);
++    ARPG_REQUIRE(arpg::test::near(full_hd.spacing, 1.0F));
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
+     {"ground loot Chinese coverage",
+         &ground_loot_labels_are_covered_by_the_hud_owned_font},
+     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
+     {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
+     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},
+     {"bundled Noto Sans SC runtime font",
+         &bundled_noto_sans_sc_is_the_required_runtime_font},
+     {"bounded high-resolution glyph atlas",
+         &bundled_font_uses_bounded_high_resolution_glyph_atlas},
+     {"single solid text foreground",
+         &ui_text_uses_one_solid_foreground_without_fake_bold},
+     {"full-HD physical typography scaling",
+         &ui_typography_scales_to_physical_full_hd_pixels},
+     {"opaque distinct HUD palette", &hud_palette_key_colors_are_opaque_and_distinct},
+     {"safe uninitialized renderer shutdown", &renderer_shutdown_is_safe_before_initialization},
++    {"combat text font coverage and scaling",
++        &combat_text_has_shared_font_coverage_and_scaled_sizes},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_font_suite() noexcept {
+     return arpg::test::make_suite("hud_font", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index b8f0498..3b4be1d 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -100,13 +100,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 465,
++    return arpg::test::run_suites(suites, 469,
+         "HUD and UI material slice contract");
+ }
+diff --git a/tests/platform/stage12_actor_render_tests.cpp b/tests/platform/stage12_actor_render_tests.cpp
+index b3a37d4..79abe3e 100644
+--- a/tests/platform/stage12_actor_render_tests.cpp
++++ b/tests/platform/stage12_actor_render_tests.cpp
+@@ -3,20 +3,24 @@
+ #include "material_animation.hpp"
+ #include "material_asset_validation.hpp"
+ #include "material_manifest.hpp"
+ #include "material_residency.hpp"
+ #include "monster_material_presenter.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <iterator>
++#include <string>
+ 
+ namespace {
+ 
+ using arpg::combat::MonsterAiPhase;
+ using arpg::combat::MonsterId;
+ using arpg::platform::MaterialSpriteId;
+ 
+ const arpg::platform::MaterialFrameDefinition* find_manifest_frame(
+     MaterialSpriteId id) noexcept {
+     const arpg::platform::MaterialManifestDefinition manifest =
+@@ -246,30 +250,63 @@ arpg::test::Failure active_monsters_produce_phase_aware_material_draw_plans() no
+     ARPG_REQUIRE(telegraph.frame_index == 0U);
+     monster.ai_phase = MonsterAiPhase::active;
+     const auto active = presenter.collect_draw_plan(0U, monster, 206U, false);
+     ARPG_REQUIRE(active.use_material_frame);
+     ARPG_REQUIRE(active.animation_state
+         == arpg::platform::MonsterAnimationState::active);
+     ARPG_REQUIRE(active.frame_index == 0U);
+     return {};
+ }
+ 
++arpg::test::Failure combat_text_uses_crisp_shared_font_path() noexcept {
++    const std::filesystem::path actor_source = std::filesystem::path{
++        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/actor_renderer.cpp";
++    std::ifstream actor_input(actor_source);
++    const std::string actor((std::istreambuf_iterator<char>(actor_input)), {});
++    ARPG_REQUIRE(actor_input.good() || actor_input.eof());
++    const std::size_t begin = actor.find("void draw_effects(");
++    const std::size_t end = actor.find("void draw_hazards(", begin);
++    ARPG_REQUIRE(begin != std::string::npos);
++    ARPG_REQUIRE(end != std::string::npos);
++    const std::string effects = actor.substr(begin, end - begin);
++    ARPG_REQUIRE(effects.find("Font hud_font") != std::string::npos);
++    ARPG_REQUIRE(effects.find("bool hud_font_ready") != std::string::npos);
++    ARPG_REQUIRE(effects.find("MeasureTextEx(") != std::string::npos);
++    ARPG_REQUIRE(effects.find("draw_crisp_ui_text(") != std::string::npos);
++    ARPG_REQUIRE(effects.find("GetFontDefault()") != std::string::npos);
++    ARPG_REQUIRE(effects.find("kCombatTextShadowPixels = 1")
++        != std::string::npos);
++    ARPG_REQUIRE(effects.find("DrawText(") == std::string::npos);
++    ARPG_REQUIRE(effects.find("MeasureText(") == std::string::npos);
++    ARPG_REQUIRE(effects.find("DrawTextGradient") == std::string::npos);
++
++    const std::filesystem::path crisp_header = std::filesystem::path{
++        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/ui_text_renderer.hpp";
++    std::ifstream crisp_input(crisp_header);
++    const std::string crisp((std::istreambuf_iterator<char>(crisp_input)), {});
++    ARPG_REQUIRE(crisp_input.good() || crisp_input.eof());
++    ARPG_REQUIRE(crisp.find("int shadow_pixels = 2") != std::string::npos);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"maps every monster phase to a distinct material frame",
+         &stage12_monster_phases_use_distinct_material_frames},
+     {"maps player attack actions to distinct material frames",
+         &stage12_player_attack_actions_have_distinct_material_frames},
+     {"scales material actors to the existing geometry envelope",
+         &stage12_actor_material_scale_matches_existing_geometry},
+     {"exports distinct pixels for every monster phase frame",
+         &stage12_monster_phase_frames_have_unique_exported_pixels},
+     {"exports content for every actor manifest frame",
+         &stage12_all_actor_manifest_frames_have_exported_content},
+     {"active monsters produce phase-aware material draw plans",
+         &active_monsters_produce_phase_aware_material_draw_plans},
++    {"combat text uses crisp shared HUD font",
++        &combat_text_uses_crisp_shared_font_path},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite stage12_actor_render_suite() noexcept {
+     return arpg::test::make_suite("stage12_actor_render", kCases);
+ }
+diff --git a/tests/platform/ui_material_slice_tests.cpp b/tests/platform/ui_material_slice_tests.cpp
+index a111050..413c50e 100644
+--- a/tests/platform/ui_material_slice_tests.cpp
++++ b/tests/platform/ui_material_slice_tests.cpp
+@@ -107,23 +107,64 @@ arpg::test::Failure label_plate_is_used_by_runtime_hud() noexcept {
+     std::ifstream inventory_input(inventory_source);
+     const std::string inventory_contents(
+         (std::istreambuf_iterator<char>(inventory_input)), {});
+     ARPG_REQUIRE(inventory_contents.find("UiMaterialElement::label_plate")
+         != std::string::npos);
+     ARPG_REQUIRE(inventory_contents.find("draw_region_fit")
+         != std::string::npos);
+     return {};
+ }
+ 
++arpg::test::Failure death_overlay_uses_independent_material_fallbacks() noexcept {
++    const std::filesystem::path renderer_source = std::filesystem::path{
++        ARPG_PROJECT_SOURCE_DIR}
++        / "src/platform/raylib/death_overlay_renderer.cpp";
++    std::ifstream renderer_input(renderer_source);
++    const std::string renderer(
++        (std::istreambuf_iterator<char>(renderer_input)), {});
++    ARPG_REQUIRE(renderer_input.good() || renderer_input.eof());
++
++    const std::size_t plan = renderer.find("death_overlay_material_plan(");
++    const std::size_t hidden_guard = renderer.find("if (!plan.visible) return;");
++    const std::size_t panel = renderer.find("material_pack.draw_nine_slice(");
++    const std::size_t title = renderer.find("material_pack.draw_region_fit(");
++    ARPG_REQUIRE(hidden_guard != std::string::npos);
++    ARPG_REQUIRE(plan != std::string::npos);
++    ARPG_REQUIRE(panel != std::string::npos);
++    ARPG_REQUIRE(title != std::string::npos);
++    ARPG_REQUIRE(plan < hidden_guard);
++    ARPG_REQUIRE(hidden_guard < panel);
++    ARPG_REQUIRE(renderer.find("plan.panel_border_pixels", panel)
++        != std::string::npos);
++    ARPG_REQUIRE(renderer.find("plan.title_plate", title)
++        != std::string::npos);
++    ARPG_REQUIRE(renderer.find("if (!material_pack.draw_nine_slice(")
++        != std::string::npos);
++    ARPG_REQUIRE(renderer.find("if (!material_pack.draw_region_fit(")
++        != std::string::npos);
++
++    const std::filesystem::path combat_source = std::filesystem::path{
++        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/combat_renderer.cpp";
++    std::ifstream combat_input(combat_source);
++    const std::string combat(
++        (std::istreambuf_iterator<char>(combat_input)), {});
++    ARPG_REQUIRE(combat_input.good() || combat_input.eof());
++    ARPG_REQUIRE(combat.find("death_overlay_.draw(current, material_pack_)")
++        != std::string::npos);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"every UI element has a unique material frame",
+         &every_ui_element_has_a_unique_material_frame},
+     {"semantic UI states use authored resources",
+         &semantic_states_use_distinct_authored_resources},
+     {"label plate is used by runtime HUD", &label_plate_is_used_by_runtime_hud},
++    {"death overlay material fallbacks are independent",
++        &death_overlay_uses_independent_material_fallbacks},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite ui_material_slice_suite() noexcept {
+     return arpg::test::make_suite("ui_material_slice", kCases);
+ }

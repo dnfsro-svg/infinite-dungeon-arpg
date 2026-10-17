@@ -1,0 +1,1075 @@
+# Review package: 28c6f5638b6ca964d5a8a83907e0b8231d9d0a10..756e800
+
+## Commits
+756e800 fix: lay out isolated room props safely
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt                 |   1 +
+ src/platform/raylib/chaos_room_material_slice.cpp  |  11 ++
+ src/platform/raylib/chaos_room_material_slice.hpp  |   2 +
+ src/platform/raylib/environment_prop_layout.cpp    | 142 +++++++++++++++++++++
+ src/platform/raylib/environment_prop_layout.hpp    |  43 +++++++
+ .../raylib/lightning_room_material_slice.cpp       |  11 ++
+ .../raylib/lightning_room_material_slice.hpp       |   2 +
+ src/platform/raylib/room_renderer.cpp              | 139 +++++---------------
+ src/platform/raylib/water_room_material_slice.cpp  |  11 ++
+ src/platform/raylib/water_room_material_slice.hpp  |   2 +
+ tests/platform/ecology_material_coverage_tests.cpp |  82 ++++++++++++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ .../platform/stage12_environment_render_tests.cpp  |  63 ++++++---
+ 13 files changed, 386 insertions(+), 125 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 81efcf9..e6ae346 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -13,20 +13,21 @@ add_library(arpg_raylib STATIC
+     control_hints.cpp
+     combat_view_math.cpp
+     death_overlay_font.cpp
+     death_overlay_renderer.cpp
+     death_overlay_view.cpp
+     debug_renderer.cpp
+     debug_overlay_renderer.cpp
+     fire_room_material_slice.cpp
+     dungeon_view_math.cpp
+     dungeon_runtime.cpp
++    environment_prop_layout.cpp
+     game_audio.cpp
+     ground_loot_view.cpp
+     host_input.cpp
+     host_launch_options.cpp
+     hud_font.cpp
+     hud_view_model.cpp
+     hud_notice_state.cpp
+     loot_pickup_feedback.cpp
+     material_bag_renderer.cpp
+     material_loot_view.cpp
+diff --git a/src/platform/raylib/chaos_room_material_slice.cpp b/src/platform/raylib/chaos_room_material_slice.cpp
+index 7f89d4d..8bfdd79 100644
+--- a/src/platform/raylib/chaos_room_material_slice.cpp
++++ b/src/platform/raylib/chaos_room_material_slice.cpp
+@@ -11,19 +11,30 @@ constexpr ChaosRoomMaterialSlice kChaosRoomSlice{{{
+     {ChaosRoomPropId::door, MaterialSpriteId::environment_door_chaos,
+         MaterialLayer::front_effect},
+     {ChaosRoomPropId::hole, MaterialSpriteId::chaos_hole,
+         MaterialLayer::body},
+     {ChaosRoomPropId::rift_lantern, MaterialSpriteId::chaos_rift_lantern,
+         MaterialLayer::front_effect},
+     {ChaosRoomPropId::anomaly_condenser,
+         MaterialSpriteId::chaos_anomaly_condenser, MaterialLayer::body},
+     {ChaosRoomPropId::warning_obelisk,
+         MaterialSpriteId::chaos_warning_obelisk, MaterialLayer::body},
++}}, {{
++    {MaterialSpriteId::chaos_wall, MaterialLayer::body,
++        {10.0F, 8.0F, 236.0F, 236.0F}, {128.0F, 244.0F}, 0.90F},
++    {MaterialSpriteId::chaos_hole, MaterialLayer::body,
++        {53.0F, 46.0F, 150.0F, 198.0F}, {128.0F, 244.0F}, 0.77F},
++    {MaterialSpriteId::chaos_rift_lantern, MaterialLayer::front_effect,
++        {109.0F, 170.0F, 38.0F, 66.0F}, {128.0F, 236.0F}, 0.55F},
++    {MaterialSpriteId::chaos_anomaly_condenser, MaterialLayer::body,
++        {80.0F, 67.0F, 87.0F, 169.0F}, {123.0F, 236.0F}, 0.55F},
++    {MaterialSpriteId::chaos_warning_obelisk, MaterialLayer::body,
++        {76.0F, 68.0F, 96.0F, 168.0F}, {124.0F, 236.0F}, 0.55F},
+ }}};
+ 
+ }  // namespace
+ 
+ const ChaosRoomMaterialSlice& chaos_room_material_slice() noexcept {
+     return kChaosRoomSlice;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/chaos_room_material_slice.hpp b/src/platform/raylib/chaos_room_material_slice.hpp
+index b26fb69..983c3b0 100644
+--- a/src/platform/raylib/chaos_room_material_slice.hpp
++++ b/src/platform/raylib/chaos_room_material_slice.hpp
+@@ -1,12 +1,13 @@
+ #pragma once
+ 
++#include "environment_prop_layout.hpp"
+ #include "material_asset_types.hpp"
+ 
+ #include "dungeon/dungeon_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ enum class ChaosRoomPropId : std::uint8_t {
+@@ -22,16 +23,17 @@ enum class ChaosRoomPropId : std::uint8_t {
+ 
+ struct ChaosRoomPropDefinition final {
+     ChaosRoomPropId id{ChaosRoomPropId::floor};
+     MaterialSpriteId sprite{MaterialSpriteId::missing};
+     MaterialLayer layer{MaterialLayer::body};
+ };
+ 
+ struct ChaosRoomMaterialSlice final {
+     std::array<ChaosRoomPropDefinition,
+         static_cast<std::size_t>(ChaosRoomPropId::count)> props{};
++    std::array<EnvironmentPropDefinition, 5> environment_props{};
+ };
+ 
+ [[nodiscard]] const ChaosRoomMaterialSlice&
+ chaos_room_material_slice() noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/environment_prop_layout.cpp b/src/platform/raylib/environment_prop_layout.cpp
+new file mode 100644
+index 0000000..3b6dbbd
+--- /dev/null
++++ b/src/platform/raylib/environment_prop_layout.cpp
+@@ -0,0 +1,142 @@
++#include "environment_prop_layout.hpp"
++
++#include "chaos_room_material_slice.hpp"
++#include "lightning_room_material_slice.hpp"
++#include "water_room_material_slice.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cstddef>
++
++namespace arpg::platform {
++namespace {
++
++constexpr float kFrameWidth = 256.0F;
++constexpr float kSafeInset = 8.25F;
++constexpr std::array<Vector2, 5> kNormalizedFootPositions{{
++    {0.12F, 0.34F}, {0.88F, 0.34F}, {0.18F, 0.78F},
++    {0.82F, 0.78F}, {0.50F, 0.82F},
++}};
++
++template <std::size_t Size>
++const EnvironmentPropDefinition* find_definition(
++    const std::array<EnvironmentPropDefinition, Size>& definitions,
++    MaterialSpriteId sprite) noexcept {
++    for (const auto& definition : definitions) {
++        if (definition.sprite == sprite) return &definition;
++    }
++    return nullptr;
++}
++
++EnvironmentPropPlacement clamped_placement(MaterialSpriteId sprite,
++    Vector2 normalized_position, bool flip_x, float width, float height) noexcept {
++    const EnvironmentPropDefinition* const definition =
++        environment_prop_definition(sprite);
++    if (definition == nullptr || width <= 0.0F || height <= 0.0F) return {};
++    EnvironmentPropPlacement placement{
++        sprite, normalized_position, flip_x, definition->recommended_scale};
++    float foot_x = normalized_position.x * width;
++    float foot_y = normalized_position.y * height;
++    const float hud_height = std::max(72.0F, 0.12F * height);
++    const float right = width - kSafeInset;
++    const float bottom = height - hud_height - kSafeInset;
++    const float alpha_x = flip_x
++        ? kFrameWidth - definition->alpha_bounds.x
++            - definition->alpha_bounds.width
++        : definition->alpha_bounds.x;
++    const float left_offset =
++        (alpha_x - definition->foot_anchor.x) * placement.scale;
++    const float right_offset = left_offset
++        + definition->alpha_bounds.width * placement.scale;
++    const float top_offset = (definition->alpha_bounds.y
++        - definition->foot_anchor.y) * placement.scale;
++    const float bottom_offset = top_offset
++        + definition->alpha_bounds.height * placement.scale;
++    foot_x = std::clamp(foot_x, kSafeInset - left_offset,
++        right - right_offset);
++    foot_y = std::clamp(foot_y, kSafeInset - top_offset,
++        bottom - bottom_offset);
++    placement.normalized_foot_position = {foot_x / width, foot_y / height};
++    return placement;
++}
++
++}  // namespace
++
++const EnvironmentPropDefinition* environment_prop_definition(
++    MaterialSpriteId sprite) noexcept {
++    if (const auto* const definition = find_definition(
++            water_room_material_slice().environment_props, sprite)) {
++        return definition;
++    }
++    if (const auto* const definition = find_definition(
++            lightning_room_material_slice().environment_props, sprite)) {
++        return definition;
++    }
++    return find_definition(chaos_room_material_slice().environment_props, sprite);
++}
++
++Rectangle project_environment_prop_bounds(
++    const EnvironmentPropDefinition& definition,
++    const EnvironmentPropPlacement& placement,
++    float width, float height) noexcept {
++    const float alpha_x = placement.flip_x
++        ? kFrameWidth - definition.alpha_bounds.x
++            - definition.alpha_bounds.width
++        : definition.alpha_bounds.x;
++    return {
++        placement.normalized_foot_position.x * width
++            + (alpha_x - definition.foot_anchor.x) * placement.scale,
++        placement.normalized_foot_position.y * height
++            + (definition.alpha_bounds.y - definition.foot_anchor.y)
++                * placement.scale,
++        definition.alpha_bounds.width * placement.scale,
++        definition.alpha_bounds.height * placement.scale,
++    };
++}
++
++EnvironmentPropLayout environment_prop_layout(
++    dungeon::DungeonElement ecology, float width, float height) noexcept {
++    std::array<MaterialSpriteId, 5> sprites{};
++    std::array<bool, 5> flips{};
++    if (ecology == dungeon::DungeonElement::water) {
++        const auto& props = water_room_material_slice().props;
++        sprites = {{
++            props[static_cast<std::size_t>(WaterRoomPropId::lantern)].sprite,
++            props[static_cast<std::size_t>(WaterRoomPropId::wall)].sprite,
++            props[static_cast<std::size_t>(WaterRoomPropId::coral)].sprite,
++            props[static_cast<std::size_t>(WaterRoomPropId::coral)].sprite,
++            props[static_cast<std::size_t>(WaterRoomPropId::grate)].sprite,
++        }};
++        flips[3] = true;
++    } else if (ecology == dungeon::DungeonElement::lightning) {
++        const auto& props = lightning_room_material_slice().props;
++        sprites = {{
++            props[static_cast<std::size_t>(LightningRoomPropId::arc_lamp)].sprite,
++            props[static_cast<std::size_t>(LightningRoomPropId::wall)].sprite,
++            props[static_cast<std::size_t>(LightningRoomPropId::capacitor_bank)].sprite,
++            props[static_cast<std::size_t>(LightningRoomPropId::grounding_rod)].sprite,
++            props[static_cast<std::size_t>(LightningRoomPropId::capacitor_bank)].sprite,
++        }};
++    } else if (ecology == dungeon::DungeonElement::chaos) {
++        const auto& props = chaos_room_material_slice().props;
++        sprites = {{
++            props[static_cast<std::size_t>(ChaosRoomPropId::rift_lantern)].sprite,
++            props[static_cast<std::size_t>(ChaosRoomPropId::wall)].sprite,
++            props[static_cast<std::size_t>(ChaosRoomPropId::anomaly_condenser)].sprite,
++            props[static_cast<std::size_t>(ChaosRoomPropId::warning_obelisk)].sprite,
++            props[static_cast<std::size_t>(ChaosRoomPropId::anomaly_condenser)].sprite,
++        }};
++    } else {
++        return {};
++    }
++
++    EnvironmentPropLayout layout{};
++    layout.count = sprites.size();
++    for (std::size_t index{}; index < layout.count; ++index) {
++        layout.props[index] = clamped_placement(sprites[index],
++            kNormalizedFootPositions[index], flips[index], width, height);
++    }
++    return layout;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/environment_prop_layout.hpp b/src/platform/raylib/environment_prop_layout.hpp
+new file mode 100644
+index 0000000..8c84642
+--- /dev/null
++++ b/src/platform/raylib/environment_prop_layout.hpp
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include "material_asset_types.hpp"
++
++#include "dungeon/dungeon_types.hpp"
++
++#include <raylib.h>
++
++#include <array>
++#include <cstddef>
++
++namespace arpg::platform {
++
++struct EnvironmentPropDefinition final {
++    MaterialSpriteId sprite{MaterialSpriteId::missing};
++    MaterialLayer layer{MaterialLayer::body};
++    Rectangle alpha_bounds{};
++    Vector2 foot_anchor{};
++    float recommended_scale{1.0F};
++};
++
++struct EnvironmentPropPlacement final {
++    MaterialSpriteId sprite{MaterialSpriteId::missing};
++    Vector2 normalized_foot_position{};
++    bool flip_x{};
++    float scale{1.0F};
++};
++
++struct EnvironmentPropLayout final {
++    std::array<EnvironmentPropPlacement, 9> props{};
++    std::size_t count{};
++};
++
++[[nodiscard]] EnvironmentPropLayout environment_prop_layout(
++    dungeon::DungeonElement ecology, float width, float height) noexcept;
++[[nodiscard]] const EnvironmentPropDefinition*
++environment_prop_definition(MaterialSpriteId sprite) noexcept;
++[[nodiscard]] Rectangle project_environment_prop_bounds(
++    const EnvironmentPropDefinition& definition,
++    const EnvironmentPropPlacement& placement,
++    float width, float height) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/lightning_room_material_slice.cpp b/src/platform/raylib/lightning_room_material_slice.cpp
+index 13987d4..1be4544 100644
+--- a/src/platform/raylib/lightning_room_material_slice.cpp
++++ b/src/platform/raylib/lightning_room_material_slice.cpp
+@@ -11,19 +11,30 @@ constexpr LightningRoomMaterialSlice kLightningRoomSlice{{{
+     {LightningRoomPropId::door, MaterialSpriteId::environment_door_lightning,
+         MaterialLayer::front_effect},
+     {LightningRoomPropId::hole, MaterialSpriteId::lightning_hole,
+         MaterialLayer::body},
+     {LightningRoomPropId::arc_lamp, MaterialSpriteId::lightning_arc_lamp,
+         MaterialLayer::front_effect},
+     {LightningRoomPropId::capacitor_bank,
+         MaterialSpriteId::lightning_capacitor_bank, MaterialLayer::body},
+     {LightningRoomPropId::grounding_rod,
+         MaterialSpriteId::lightning_grounding_rod, MaterialLayer::body},
++}}, {{
++    {MaterialSpriteId::lightning_wall, MaterialLayer::body,
++        {10.0F, 8.0F, 236.0F, 236.0F}, {128.0F, 244.0F}, 0.90F},
++    {MaterialSpriteId::lightning_hole, MaterialLayer::body,
++        {14.0F, 8.0F, 227.0F, 236.0F}, {127.0F, 244.0F}, 0.77F},
++    {MaterialSpriteId::lightning_arc_lamp, MaterialLayer::front_effect,
++        {63.0F, 12.0F, 129.0F, 226.0F}, {127.0F, 238.0F}, 0.55F},
++    {MaterialSpriteId::lightning_capacitor_bank, MaterialLayer::body,
++        {62.0F, 11.0F, 139.0F, 229.0F}, {131.0F, 240.0F}, 0.55F},
++    {MaterialSpriteId::lightning_grounding_rod, MaterialLayer::body,
++        {78.0F, 15.0F, 108.0F, 229.0F}, {132.0F, 244.0F}, 0.55F},
+ }}};
+ 
+ }  // namespace
+ 
+ const LightningRoomMaterialSlice& lightning_room_material_slice() noexcept {
+     return kLightningRoomSlice;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/lightning_room_material_slice.hpp b/src/platform/raylib/lightning_room_material_slice.hpp
+index 217fa24..fe65da8 100644
+--- a/src/platform/raylib/lightning_room_material_slice.hpp
++++ b/src/platform/raylib/lightning_room_material_slice.hpp
+@@ -1,12 +1,13 @@
+ #pragma once
+ 
++#include "environment_prop_layout.hpp"
+ #include "material_asset_types.hpp"
+ 
+ #include "dungeon/dungeon_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ enum class LightningRoomPropId : std::uint8_t {
+@@ -22,16 +23,17 @@ enum class LightningRoomPropId : std::uint8_t {
+ 
+ struct LightningRoomPropDefinition final {
+     LightningRoomPropId id{LightningRoomPropId::floor};
+     MaterialSpriteId sprite{MaterialSpriteId::missing};
+     MaterialLayer layer{MaterialLayer::body};
+ };
+ 
+ struct LightningRoomMaterialSlice final {
+     std::array<LightningRoomPropDefinition,
+         static_cast<std::size_t>(LightningRoomPropId::count)> props{};
++    std::array<EnvironmentPropDefinition, 5> environment_props{};
+ };
+ 
+ [[nodiscard]] const LightningRoomMaterialSlice&
+ lightning_room_material_slice() noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index d519b7d..67c2f42 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -1,15 +1,16 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/room_bounds.hpp"
+ #include "chaos_room_material_slice.hpp"
+ #include "dungeon_view_math.hpp"
++#include "environment_prop_layout.hpp"
+ #include "environment_render_plan.hpp"
+ #include "fire_room_material_slice.hpp"
+ #include "material_animation.hpp"
+ #include "material_loot_view.hpp"
+ #include "lightning_room_material_slice.hpp"
+ #include "render_layout.hpp"
+ #include "room_background_render_plan.hpp"
+ #include "ui_text_renderer.hpp"
+ #include "ui_typography.hpp"
+ #include "water_room_material_slice.hpp"
+@@ -70,82 +71,39 @@ bool draw_environment_room(const MaterialPack& material_pack,
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Color{9, 12, 20, 255});
+     const RoomBackgroundRenderPlan plan = room_background_render_plan(ecology);
+     return material_pack.draw_frame(plan.atlas, plan.source,
+         {1280.0F, 1440.0F}, {width * 0.5F, height}, false,
+         room_background_scale(width, height));
+ }
+ 
+-void draw_water_room_props(const MaterialPack& material_pack,
+-    float width, float height) noexcept {
+-    if (!material_pack.available(MaterialAtlasId::water_environment)) return;
+-    constexpr std::array<Vector2, 5> kPositions{{
+-        {0.13F, 0.35F}, {0.87F, 0.35F}, {0.18F, 0.82F},
+-        {0.82F, 0.82F}, {0.50F, 0.86F},
+-    }};
+-    constexpr std::array<WaterRoomPropId, 5> kProps{{
+-        WaterRoomPropId::lantern, WaterRoomPropId::wall,
+-        WaterRoomPropId::coral, WaterRoomPropId::coral,
+-        WaterRoomPropId::grate,
+-    }};
+-    const WaterRoomMaterialSlice& slice = water_room_material_slice();
+-    for (std::size_t index{}; index < kProps.size(); ++index) {
+-        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+-        static_cast<void>(material_pack.draw(prop.sprite,
+-            {kPositions[index].x * width, kPositions[index].y * height},
+-            index == 3U, index == 1U ? 0.92F : 0.58F));
+-    }
+-}
+-
+-void draw_lightning_room_props(const MaterialPack& material_pack,
+-    float width, float height) noexcept {
+-    if (!material_pack.available(MaterialAtlasId::lightning_environment)) return;
+-    constexpr std::array<Vector2, 5> kPositions{{
+-        {0.12F, 0.34F}, {0.88F, 0.35F}, {0.18F, 0.82F},
+-        {0.82F, 0.82F}, {0.50F, 0.86F},
+-    }};
+-    constexpr std::array<LightningRoomPropId, 5> kProps{{
+-        LightningRoomPropId::arc_lamp, LightningRoomPropId::wall,
+-        LightningRoomPropId::capacitor_bank,
+-        LightningRoomPropId::grounding_rod,
+-        LightningRoomPropId::capacitor_bank,
+-    }};
+-    const LightningRoomMaterialSlice& slice = lightning_room_material_slice();
+-    for (std::size_t index{}; index < kProps.size(); ++index) {
+-        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+-        static_cast<void>(material_pack.draw(prop.sprite,
+-            {kPositions[index].x * width, kPositions[index].y * height},
+-            false, index == 1U ? 0.90F : 0.55F));
+-    }
+-}
+-
+-void draw_chaos_room_props(const MaterialPack& material_pack,
+-    float width, float height) noexcept {
+-    if (!material_pack.available(MaterialAtlasId::chaos_environment)) return;
+-    constexpr std::array<Vector2, 5> kPositions{{
+-        {0.12F, 0.34F}, {0.88F, 0.35F}, {0.18F, 0.82F},
+-        {0.82F, 0.82F}, {0.50F, 0.86F},
+-    }};
+-    constexpr std::array<ChaosRoomPropId, 5> kProps{{
+-        ChaosRoomPropId::rift_lantern, ChaosRoomPropId::wall,
+-        ChaosRoomPropId::anomaly_condenser,
+-        ChaosRoomPropId::warning_obelisk,
+-        ChaosRoomPropId::anomaly_condenser,
+-    }};
+-    const ChaosRoomMaterialSlice& slice = chaos_room_material_slice();
+-    for (std::size_t index{}; index < kProps.size(); ++index) {
+-        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+-        static_cast<void>(material_pack.draw(prop.sprite,
+-            {kPositions[index].x * width, kPositions[index].y * height},
+-            false, index == 1U ? 0.90F : 0.55F));
++void draw_environment_room_props(const MaterialPack& material_pack,
++    dungeon::DungeonElement ecology, float width, float height) noexcept {
++    const EnvironmentPropLayout layout = environment_prop_layout(
++        ecology, width, height);
++    for (std::size_t index{}; index < layout.count; ++index) {
++        const EnvironmentPropPlacement& placement = layout.props[index];
++        const EnvironmentPropDefinition* const definition =
++            environment_prop_definition(placement.sprite);
++        if (definition == nullptr) continue;
++        const Vector2 foot_position{
++            placement.normalized_foot_position.x * width,
++            placement.normalized_foot_position.y * height,
++        };
++        if (!material_pack.draw(placement.sprite, foot_position,
++                placement.flip_x, placement.scale)) {
++            const Rectangle bounds = project_environment_prop_bounds(
++                *definition, placement, width, height);
++            DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72});
++        }
+     }
+ }
+ 
+ MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
+     if (ecology == dungeon::DungeonElement::water) {
+         return MaterialSpriteId::water_hole;
+     }
+     if (ecology == dungeon::DungeonElement::lightning) {
+         return MaterialSpriteId::lightning_hole;
+     }
+@@ -179,43 +137,20 @@ void draw_fire_room_props(const MaterialPack& material_pack,
+                 continue;
+             }
+         }
+         const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+         static_cast<void>(material_pack.draw(prop.sprite,
+             {kPositions[index].x * width, kPositions[index].y * height}, false,
+             index == 8U ? 1.10F : 0.72F));
+     }
+ }
+ 
+-bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
+-    const MaterialPack& material_pack) noexcept {
+-    const HoleVisualMode hole_mode = hole_visual_mode(snapshot);
+-    const RoomBackgroundRenderPlan background =
+-        room_background_render_plan(snapshot.ecology);
+-    MaterialAtlasId props_atlas = MaterialAtlasId::fire_environment;
+-    if (snapshot.ecology == dungeon::DungeonElement::water) {
+-        props_atlas = MaterialAtlasId::water_environment;
+-    } else if (snapshot.ecology == dungeon::DungeonElement::lightning) {
+-        props_atlas = MaterialAtlasId::lightning_environment;
+-    } else if (snapshot.ecology == dungeon::DungeonElement::chaos) {
+-        props_atlas = MaterialAtlasId::chaos_environment;
+-    }
+-    return should_draw_material_environment({
+-        material_pack.available(background.atlas),
+-        false,
+-        material_pack.can_draw(hole_sprite(snapshot.ecology)),
+-        material_pack.available(props_atlas),
+-        false,
+-        hole_mode != HoleVisualMode::hidden,
+-    });
+-}
+-
+ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+     float width, float height, const MaterialPack& material_pack, Font hud_font,
+     bool hud_font_ready) noexcept {
+     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
+         snapshot.has_active_room, snapshot.exits_open[0]);
+     if (mode == DoorVisualMode::hidden) {
+         return;
+     }
+     constexpr std::array<combat::Vec3, 4> kDoorCenters{{
+         {0.0F, combat::room_bounds::min_y, 0.0F},
+@@ -496,37 +431,36 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
+     if (values.visible) {
+         const char* label = TextFormat("%s  |  %s",
+             values.danger_label, values.rule_label);
+         const int font_size = 20;
+         DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
+             18, font_size, Color{255, 164, 221, 255});
+     }
+ }
+ 
+ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
+-    const MaterialPack& material_pack, bool draw_material_environment) noexcept {
++    const MaterialPack& material_pack) noexcept {
+     const HoleVisualMode hole = hole_visual_mode(snapshot);
+     if (hole == HoleVisualMode::hidden) {
+         return;
+     }
+     const RenderProjection projected = project_render_world(kHoleCenter.x,
+         kHoleCenter.y, kHoleCenter.z, static_cast<float>(GetScreenWidth()),
+         static_cast<float>(GetScreenHeight()));
+     const int x = static_cast<int>(projected.x);
+     const int y = static_cast<int>(projected.ground_y);
+     Color color{43, 25, 55, 255};
+     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
+     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
+-    if (draw_material_environment) {
+-        static_cast<void>(material_pack.draw(hole_sprite(snapshot.ecology),
+-            {projected.x, projected.ground_y}, false, 0.77F * projected.scale));
+-    } else {
++    if (!material_pack.draw(hole_sprite(snapshot.ecology),
++            {projected.x, projected.ground_y}, false,
++            0.77F * projected.scale)) {
+         DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+     }
+     DrawEllipseLines(x, y, 74.0F, 25.0F, color);
+     const char* label = hole == HoleVisualMode::sealed ? "SEALED"
+         : hole == HoleVisualMode::ready ? "READY"
+         : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
+     DrawText(label, x - MeasureText(label, 20) / 2, y - 12, 20, color);
+     if (snapshot.combat.has_value()
+         && can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+         constexpr const char* kPrompt = "E: DESCEND";
+@@ -571,37 +505,32 @@ RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
+ }
+ 
+ void CombatRenderer::draw_room(
+     const dungeon::DungeonSnapshot& current,
+     const GroundLootView& ground_loot,
+     const MaterialLootView& material_loot) noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     room_background_draw_status_ = room_background_status(
+         material_pack_, current.ecology);
+-    const bool draw_material_environment = can_draw_room_environment(current,
+-        material_pack_) && draw_environment_room(material_pack_, current.ecology);
+-    room_background_draw_status_.drawn = draw_material_environment;
+-    if (!draw_material_environment) {
++    const bool draw_material_background = room_background_draw_status_.resident
++        && draw_environment_room(material_pack_, current.ecology);
++    room_background_draw_status_.drawn = draw_material_background;
++    if (!draw_material_background) {
+         draw_graybox_room(current.ecology);
+     }
+     draw_abyss(current, static_cast<float>(GetTime()));
+     draw_environment_hazards(current, width, height);
+     draw_ground_materials(current, material_loot, material_pack_, width, height);
+     draw_ground_items(current, ground_loot, material_pack_, width, height);
+-    if (draw_material_environment) {
+-        if (current.ecology == dungeon::DungeonElement::fire) {
+-            draw_fire_room_props(material_pack_, current, width, height);
+-        } else if (current.ecology == dungeon::DungeonElement::water) {
+-            draw_water_room_props(material_pack_, width, height);
+-        } else if (current.ecology == dungeon::DungeonElement::lightning) {
+-            draw_lightning_room_props(material_pack_, width, height);
+-        } else if (current.ecology == dungeon::DungeonElement::chaos) {
+-            draw_chaos_room_props(material_pack_, width, height);
+-        }
++    if (current.ecology == dungeon::DungeonElement::fire) {
++        draw_fire_room_props(material_pack_, current, width, height);
++    } else {
++        draw_environment_room_props(material_pack_, current.ecology,
++            width, height);
+     }
+     draw_doors(current, width, height, material_pack_, hud_renderer_.hud_font(),
+         hud_renderer_.font_ready());
+-    draw_hole(current, material_pack_, draw_material_environment);
++    draw_hole(current, material_pack_);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/water_room_material_slice.cpp b/src/platform/raylib/water_room_material_slice.cpp
+index 14c9fad..aa7c4c0 100644
+--- a/src/platform/raylib/water_room_material_slice.cpp
++++ b/src/platform/raylib/water_room_material_slice.cpp
+@@ -11,19 +11,30 @@ constexpr WaterRoomMaterialSlice kWaterRoomSlice{{{
+     {WaterRoomPropId::door, MaterialSpriteId::environment_door_water,
+         MaterialLayer::front_effect},
+     {WaterRoomPropId::hole, MaterialSpriteId::water_hole,
+         MaterialLayer::body},
+     {WaterRoomPropId::lantern, MaterialSpriteId::water_lantern,
+         MaterialLayer::front_effect},
+     {WaterRoomPropId::coral, MaterialSpriteId::water_coral,
+         MaterialLayer::body},
+     {WaterRoomPropId::grate, MaterialSpriteId::water_grate,
+         MaterialLayer::body},
++}}, {{
++    {MaterialSpriteId::water_wall, MaterialLayer::body,
++        {10.0F, 8.0F, 236.0F, 236.0F}, {128.0F, 244.0F}, 0.92F},
++    {MaterialSpriteId::water_hole, MaterialLayer::body,
++        {13.0F, 119.0F, 233.0F, 125.0F}, {129.0F, 244.0F}, 0.77F},
++    {MaterialSpriteId::water_lantern, MaterialLayer::front_effect,
++        {91.0F, 135.0F, 74.0F, 101.0F}, {128.0F, 236.0F}, 0.58F},
++    {MaterialSpriteId::water_coral, MaterialLayer::body,
++        {53.0F, 83.0F, 149.0F, 153.0F}, {127.0F, 236.0F}, 0.58F},
++    {MaterialSpriteId::water_grate, MaterialLayer::body,
++        {17.0F, 112.0F, 222.0F, 129.0F}, {128.0F, 241.0F}, 0.58F},
+ }}};
+ 
+ }  // namespace
+ 
+ const WaterRoomMaterialSlice& water_room_material_slice() noexcept {
+     return kWaterRoomSlice;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/water_room_material_slice.hpp b/src/platform/raylib/water_room_material_slice.hpp
+index 5197db3..f04d84a 100644
+--- a/src/platform/raylib/water_room_material_slice.hpp
++++ b/src/platform/raylib/water_room_material_slice.hpp
+@@ -1,12 +1,13 @@
+ #pragma once
+ 
++#include "environment_prop_layout.hpp"
+ #include "material_asset_types.hpp"
+ 
+ #include "dungeon/dungeon_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ enum class WaterRoomPropId : std::uint8_t {
+@@ -22,16 +23,17 @@ enum class WaterRoomPropId : std::uint8_t {
+ 
+ struct WaterRoomPropDefinition final {
+     WaterRoomPropId id{WaterRoomPropId::floor};
+     MaterialSpriteId sprite{MaterialSpriteId::missing};
+     MaterialLayer layer{MaterialLayer::body};
+ };
+ 
+ struct WaterRoomMaterialSlice final {
+     std::array<WaterRoomPropDefinition,
+         static_cast<std::size_t>(WaterRoomPropId::count)> props{};
++    std::array<EnvironmentPropDefinition, 5> environment_props{};
+ };
+ 
+ [[nodiscard]] const WaterRoomMaterialSlice&
+ water_room_material_slice() noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/ecology_material_coverage_tests.cpp b/tests/platform/ecology_material_coverage_tests.cpp
+index 94959ad..10347c6 100644
+--- a/tests/platform/ecology_material_coverage_tests.cpp
++++ b/tests/platform/ecology_material_coverage_tests.cpp
+@@ -1,13 +1,14 @@
+ #include "test_framework.hpp"
+ 
+ #include "chaos_room_material_slice.hpp"
++#include "environment_prop_layout.hpp"
+ #include "material_animation.hpp"
+ #include "material_asset_validation.hpp"
+ #include "material_manifest.hpp"
+ #include "monster_material_presenter.hpp"
+ #include "lightning_room_material_slice.hpp"
+ #include "water_room_material_slice.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+@@ -1035,36 +1036,114 @@ arpg::test::Failure common_element_doors_have_unique_frames() noexcept {
+         ARPG_REQUIRE(frame != nullptr);
+         ARPG_REQUIRE(frame->atlas == MaterialAtlasId::element_doors);
+         ARPG_REQUIRE(frame->source.x == static_cast<float>(index * 256U));
+         ARPG_REQUIRE(frame->source.y == 0.0F);
+         ARPG_REQUIRE(frame->source.width == 256.0F && frame->source.height == 256.0F);
+         ARPG_REQUIRE(frame->foot_anchor.x == 128.0F && frame->foot_anchor.y == 244.0F);
+     }
+     return {};
+ }
+ 
++arpg::test::Failure ecology_prop_layout_is_resolution_safe(
++    arpg::dungeon::DungeonElement ecology,
++    arpg::platform::MaterialSpriteId hole_sprite) noexcept {
++    constexpr std::array<Vector2, 3> kResolutions{{
++        {800.0F, 450.0F}, {1280.0F, 720.0F}, {1920.0F, 1080.0F},
++    }};
++    for (const Vector2 resolution : kResolutions) {
++        const auto layout = arpg::platform::environment_prop_layout(
++            ecology, resolution.x, resolution.y);
++        ARPG_REQUIRE(layout.count == 5U);
++        std::array<Rectangle, 9> bounds{};
++        const float bottom = resolution.y
++            - std::max(72.0F, 0.12F * resolution.y) - 8.0F;
++        for (std::size_t index{}; index < layout.count; ++index) {
++            ARPG_REQUIRE(layout.props[index].sprite != hole_sprite);
++            const auto* const definition =
++                arpg::platform::environment_prop_definition(
++                    layout.props[index].sprite);
++            ARPG_REQUIRE(definition != nullptr);
++            bounds[index] = arpg::platform::project_environment_prop_bounds(
++                *definition, layout.props[index], resolution.x, resolution.y);
++            ARPG_REQUIRE(bounds[index].x >= 8.0F);
++            ARPG_REQUIRE(bounds[index].y >= 8.0F);
++            ARPG_REQUIRE(bounds[index].x + bounds[index].width
++                <= resolution.x - 8.0F);
++            ARPG_REQUIRE(bounds[index].y + bounds[index].height <= bottom);
++        }
++        for (std::size_t left{}; left < layout.count; ++left) {
++            for (std::size_t right = left + 1U; right < layout.count; ++right) {
++                const float overlap_width = std::max(0.0F,
++                    std::min(bounds[left].x + bounds[left].width,
++                        bounds[right].x + bounds[right].width)
++                        - std::max(bounds[left].x, bounds[right].x));
++                const float overlap_height = std::max(0.0F,
++                    std::min(bounds[left].y + bounds[left].height,
++                        bounds[right].y + bounds[right].height)
++                        - std::max(bounds[left].y, bounds[right].y));
++                const float smaller_area = std::min(
++                    bounds[left].width * bounds[left].height,
++                    bounds[right].width * bounds[right].height);
++                ARPG_REQUIRE(overlap_width * overlap_height
++                    <= smaller_area * 0.15F);
++            }
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure water_prop_layout_is_resolution_safe() noexcept {
++    return ecology_prop_layout_is_resolution_safe(
++        arpg::dungeon::DungeonElement::water,
++        arpg::platform::MaterialSpriteId::water_hole);
++}
++
++arpg::test::Failure lightning_prop_layout_is_resolution_safe() noexcept {
++    return ecology_prop_layout_is_resolution_safe(
++        arpg::dungeon::DungeonElement::lightning,
++        arpg::platform::MaterialSpriteId::lightning_hole);
++}
++
++arpg::test::Failure chaos_prop_layout_is_resolution_safe() noexcept {
++    return ecology_prop_layout_is_resolution_safe(
++        arpg::dungeon::DungeonElement::chaos,
++        arpg::platform::MaterialSpriteId::chaos_hole);
++}
++
+ arpg::test::Failure ecology_prop_records_match_emitted_layout() noexcept {
+     const auto records = parse_environment_prop_records();
+     ARPG_REQUIRE(records.size() == 15U);
+     const auto manifest = arpg::platform::default_material_manifest();
+     for (const auto& record : records) {
+         const auto* const frame = arpg::platform::find_material_frame(
+             manifest, record.sprite);
+         ARPG_REQUIRE(frame != nullptr);
+         const auto* const atlas = find_atlas(frame->atlas);
+         ARPG_REQUIRE(atlas != nullptr);
+         ARPG_REQUIRE(frame->source.x == record.source_rect[0]
+             && frame->source.y == record.source_rect[1]);
+         ARPG_REQUIRE(frame->source.width == record.source_rect[2]
+             && frame->source.height == record.source_rect[3]);
+         ARPG_REQUIRE(frame->foot_anchor.x == record.foot_anchor[0]
+             && frame->foot_anchor.y == record.foot_anchor[1]);
++        const auto* const definition =
++            arpg::platform::environment_prop_definition(record.sprite);
++        ARPG_REQUIRE(definition != nullptr);
++        ARPG_REQUIRE(definition->alpha_bounds.x == record.alpha_bbox[0]);
++        ARPG_REQUIRE(definition->alpha_bounds.y == record.alpha_bbox[1]);
++        ARPG_REQUIRE(definition->alpha_bounds.width
++            == record.alpha_bbox[2] - record.alpha_bbox[0]);
++        ARPG_REQUIRE(definition->alpha_bounds.height
++            == record.alpha_bbox[3] - record.alpha_bbox[1]);
++        ARPG_REQUIRE(definition->foot_anchor.x == record.foot_anchor[0]
++            && definition->foot_anchor.y == record.foot_anchor[1]);
++        ARPG_REQUIRE(definition->recommended_scale > 0.0F);
+         ARPG_REQUIRE(frame->source.x >= 0.0F && frame->source.y >= 0.0F);
+         ARPG_REQUIRE(frame->source.x + frame->source.width <= static_cast<float>(atlas->width));
+         ARPG_REQUIRE(frame->source.y + frame->source.height <= static_cast<float>(atlas->height));
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"loads independent water color and material atlases",
+         &water_ecology_has_independent_loadable_color_and_material_atlases},
+@@ -1099,17 +1178,20 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"chaos room keeps readable rift warning palette",
+         &chaos_environment_keeps_readable_rift_warning_palette},
+     {"chaos monsters expose required multiframe state groups",
+         &chaos_monsters_expose_complete_multiframe_state_groups},
+     {"chaos presentation runs special hurt and death frames",
+         &chaos_monster_presentation_runs_special_hurt_and_death},
+     {"chaos ecology remains inside loading budget",
+         &chaos_ecology_stays_inside_manifest_loading_budget},
+     {"common element doors use four unique frames", &common_element_doors_have_unique_frames},
+     {"ecology props match emitted layout records", &ecology_prop_records_match_emitted_layout},
++    {"water props remain resolution safe", &water_prop_layout_is_resolution_safe},
++    {"lightning props remain resolution safe", &lightning_prop_layout_is_resolution_safe},
++    {"chaos props remain resolution safe", &chaos_prop_layout_is_resolution_safe},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite ecology_material_coverage_suite() noexcept {
+     return arpg::test::make_suite("ecology_material_coverage", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 26f1fe3..b8f0498 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -100,13 +100,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 462,
++    return arpg::test::run_suites(suites, 465,
+         "HUD and UI material slice contract");
+ }
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index 5583e2b..ff3d548 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -38,21 +38,21 @@ std::size_t occurrence_count(const std::string& source,
+     const char* token) noexcept {
+     std::size_t count{};
+     std::size_t position{};
+     while ((position = source.find(token, position)) != std::string::npos) {
+         ++count;
+         position += std::char_traits<char>::length(token);
+     }
+     return count;
+ }
+ 
+-arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noexcept {
++arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcept {
+     const std::string renderer = read_project_source(
+         "src/platform/raylib/room_renderer.cpp");
+     ARPG_REQUIRE(!renderer.empty());
+     ARPG_REQUIRE(renderer.find("room_background_scale(width, height)")
+         != std::string::npos);
+     const std::size_t draw_environment = renderer.find(
+         "bool draw_environment_room");
+     ARPG_REQUIRE(draw_environment != std::string::npos);
+     const std::string draw_environment_block = braced_block_after(
+         renderer, draw_environment);
+@@ -77,92 +77,117 @@ arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noex
+              "lightning_room_render_plan(", "chaos_room_render_plan(",
+              "select_floor_sprite("}) {
+         ARPG_REQUIRE(renderer.find(legacy) == std::string::npos);
+     }
+ 
+     const std::size_t draw_room = renderer.find(
+         "void CombatRenderer::draw_room");
+     ARPG_REQUIRE(draw_room != std::string::npos);
+     const std::string draw_room_block = braced_block_after(renderer, draw_room);
+     ARPG_REQUIRE(draw_room_block.find("can_draw_room_environment(current,")
+-        != std::string::npos);
++        == std::string::npos);
+     ARPG_REQUIRE(draw_room_block.find(
+         "&& draw_environment_room(material_pack_, current.ecology)")
+         != std::string::npos);
+     const std::size_t graybox_gate = draw_room_block.find(
+-        "if (!draw_material_environment)");
++        "if (!draw_material_background)");
+     ARPG_REQUIRE(graybox_gate != std::string::npos);
+     ARPG_REQUIRE(braced_block_after(draw_room_block, graybox_gate).find(
+         "draw_graybox_room") != std::string::npos);
+     const std::size_t doors = draw_room_block.find("draw_doors(");
+     ARPG_REQUIRE(doors != std::string::npos);
+     const std::size_t door_call_end = draw_room_block.find(");", doors);
+     ARPG_REQUIRE(door_call_end != std::string::npos);
+     const std::string door_call = draw_room_block.substr(doors,
+         door_call_end - doors + 2U);
+     ARPG_REQUIRE(door_call.find(
+-        "draw_material_environment") == std::string::npos);
++        "draw_material_background") == std::string::npos);
+     ARPG_REQUIRE(draw_room_block.find(
+-        "draw_hole(current, material_pack_, draw_material_environment)")
++        "draw_hole(current, material_pack_)")
+         != std::string::npos);
+-    const std::size_t gate = renderer.find(
+-        "if (draw_material_environment) {", draw_room);
+-    ARPG_REQUIRE(gate != std::string::npos);
+-    const std::string guarded_props = braced_block_after(renderer, gate);
+-    for (const char* draw_props : {"draw_fire_room_props(",
+-             "draw_water_room_props(", "draw_lightning_room_props(",
+-             "draw_chaos_room_props("}) {
+-        ARPG_REQUIRE(occurrence_count(draw_room_block, draw_props) == 1U);
+-        ARPG_REQUIRE(occurrence_count(guarded_props, draw_props) == 1U);
++    ARPG_REQUIRE(occurrence_count(draw_room_block,
++        "draw_fire_room_props(") == 1U);
++    ARPG_REQUIRE(occurrence_count(draw_room_block,
++        "draw_environment_room_props(") == 1U);
++    for (const char* old_loop : {"draw_water_room_props(",
++             "draw_lightning_room_props(", "draw_chaos_room_props("}) {
++        ARPG_REQUIRE(renderer.find(old_loop) == std::string::npos);
+     }
++    const std::size_t shared_props = renderer.find(
++        "void draw_environment_room_props");
++    ARPG_REQUIRE(shared_props != std::string::npos);
++    const std::string shared_props_block = braced_block_after(
++        renderer, shared_props);
++    ARPG_REQUIRE(occurrence_count(shared_props_block, "for (") == 1U);
++    ARPG_REQUIRE(shared_props_block.find(
++        "environment_prop_layout(") != std::string::npos);
++    ARPG_REQUIRE(shared_props_block.find(
++        "DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72})")
++        != std::string::npos);
++    const std::size_t draw_hole = renderer.find("void draw_hole");
++    ARPG_REQUIRE(draw_hole != std::string::npos);
++    const std::string draw_hole_block = braced_block_after(renderer, draw_hole);
++    ARPG_REQUIRE(draw_hole_block.find(
++        "if (!material_pack.draw(hole_sprite(snapshot.ecology)")
++        != std::string::npos);
++    ARPG_REQUIRE(draw_hole_block.find("DrawEllipse(x, y")
++        != std::string::npos);
+ 
+     constexpr std::array<const char*, 8> legacy_plan_sources{{
+         "src/platform/raylib/material_animation.hpp",
+         "src/platform/raylib/material_animation.cpp",
+         "src/platform/raylib/water_room_material_slice.hpp",
+         "src/platform/raylib/water_room_material_slice.cpp",
+         "src/platform/raylib/lightning_room_material_slice.hpp",
+         "src/platform/raylib/lightning_room_material_slice.cpp",
+         "src/platform/raylib/chaos_room_material_slice.hpp",
+         "src/platform/raylib/chaos_room_material_slice.cpp",
+     }};
+     for (const char* relative_path : legacy_plan_sources) {
+         const std::string source = read_project_source(relative_path);
+         ARPG_REQUIRE(!source.empty());
+         ARPG_REQUIRE(source.find("select_floor_sprite") == std::string::npos);
+         ARPG_REQUIRE(source.find("RoomRenderPlan") == std::string::npos);
+         ARPG_REQUIRE(source.find("_room_render_plan") == std::string::npos);
+     }
++    for (const char* runtime_source : {
++             "src/platform/raylib/environment_prop_layout.cpp",
++             "src/platform/raylib/water_room_material_slice.cpp",
++             "src/platform/raylib/lightning_room_material_slice.cpp",
++             "src/platform/raylib/chaos_room_material_slice.cpp",
++             "src/platform/raylib/room_renderer.cpp"}) {
++        const std::string source = read_project_source(runtime_source);
++        ARPG_REQUIRE(!source.empty());
++        ARPG_REQUIRE(source.find(".json") == std::string::npos);
++    }
+     return {};
+ }
+ 
+ arpg::test::Failure directional_door_atlas_is_drawable_without_gating_background() noexcept {
+     arpg::platform::MaterialPackState doors_only{};
+     doors_only.set_available(arpg::platform::MaterialAtlasId::element_doors,
+         true);
+     for (const arpg::platform::MaterialSpriteId sprite : {
+              arpg::platform::MaterialSpriteId::environment_door_fire,
+              arpg::platform::MaterialSpriteId::environment_door_water,
+              arpg::platform::MaterialSpriteId::environment_door_lightning,
+              arpg::platform::MaterialSpriteId::environment_door_chaos}) {
+         ARPG_REQUIRE(doors_only.can_draw(sprite));
+     }
+ 
+     const std::string renderer = read_project_source(
+         "src/platform/raylib/room_renderer.cpp");
+     const std::size_t can_draw = renderer.find("bool can_draw_room_environment");
+     const std::size_t draw_doors = renderer.find("void draw_doors");
+-    ARPG_REQUIRE(can_draw != std::string::npos);
++    ARPG_REQUIRE(can_draw == std::string::npos);
+     ARPG_REQUIRE(draw_doors != std::string::npos);
+-    const std::string environment_gate = braced_block_after(renderer, can_draw);
+     const std::string doors = braced_block_after(renderer, draw_doors);
+-    ARPG_REQUIRE(environment_gate.find("select_door_sprite") == std::string::npos);
+     ARPG_REQUIRE(doors.find("material_pack.draw(visual.sprite") != std::string::npos);
+     ARPG_REQUIRE(doors.find("DrawRectangleRec") == std::string::npos);
+     ARPG_REQUIRE(doors.find("visual.arrow") == std::string::npos);
+     ARPG_REQUIRE(doors.find("MeasureText(visual.arrow") == std::string::npos);
+     for (const char* segment : {"DrawLineEx(arrow.tail, arrow.tip",
+              "DrawLineEx(arrow.tip, arrow.head_left",
+              "DrawLineEx(arrow.tip, arrow.head_right"}) {
+         ARPG_REQUIRE(doors.find(segment) != std::string::npos);
+     }
+     return {};
+@@ -331,22 +356,22 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
+         "if (config.stage12_material_background_only)");
+     const std::size_t recovery_draw = recovery_ui_block.find(
+         "draw_recovery_screen(");
+     ARPG_REQUIRE(recovery_background_guard != std::string::npos);
+     ARPG_REQUIRE(recovery_draw != std::string::npos);
+     ARPG_REQUIRE(recovery_background_guard < recovery_draw);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+-    {"uses only the atomic native background plan",
+-        &environment_renderer_uses_only_the_atomic_native_plan},
++    {"uses independent native background prop and hole paths",
++        &environment_renderer_uses_independent_native_paths},
+     {"falls back atomically when a required frame is missing",
+         &environment_falls_back_atomically_when_a_required_frame_is_missing},
+     {"directional door atlas leaves room background independent",
+         &directional_door_atlas_is_drawable_without_gating_background},
+     {"formal background-only path reuses the production draw",
+         &formal_background_only_path_reuses_the_production_draw},
+ };
+ 
+ }  // namespace
+ 

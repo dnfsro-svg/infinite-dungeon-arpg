@@ -1,0 +1,306 @@
+# Review package: a50d25e..cbd5a47
+
+## Commits
+cbd5a47 fix: preserve monster material scale and residency
+
+## Files changed
+ src/platform/raylib/actor_renderer.cpp        |  8 ++++---
+ src/platform/raylib/material_animation.cpp    | 30 +++++++++++++++++++++++++++
+ src/platform/raylib/material_animation.hpp    | 11 ++++++++++
+ src/platform/raylib/material_residency.cpp    |  5 +----
+ tests/platform/stage12_actor_render_tests.cpp | 30 +++++++++++++++++++++++++--
+ 5 files changed, 75 insertions(+), 9 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index a726075..2b7546d 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -315,22 +315,21 @@ bool draw_player_animation(const MaterialPack& material_pack,
+     return material_pack.draw_frame(frame->atlas, frame->source, frame->foot_anchor,
+         {projected.x, projected.y}, player.facing == Facing::left,
+         material_actor_draw_scale(true, projected.scale));
+ }
+ 
+ bool draw_monster_animation(const MaterialPack& material_pack,
+     const MonsterSnapshot& monster, const MonsterMaterialDrawPlan& plan,
+     const ScreenProjection& projected, float hit_flash_seconds) noexcept {
+     if (!plan.use_material_frame || !plan.frame.has_value()) return false;
+     const MonsterAnimationFrame& frame = *plan.frame;
+-    constexpr float kWaterMonsterScale = 0.92F;
+-    const float scale = kWaterMonsterScale * projected.scale;
++    const float scale = monster_material_draw_scale(frame.atlas, projected.scale);
+     const bool drawn = material_pack.draw_frame(frame.atlas, frame.source,
+         frame.foot_anchor, {projected.x, projected.y},
+         monster.facing == Facing::left, scale);
+     if (drawn && hit_flash_seconds > 0.0F) {
+         BeginBlendMode(BLEND_ADDITIVE);
+         static_cast<void>(material_pack.draw_frame(frame.atlas, frame.source,
+             frame.foot_anchor, {projected.x, projected.y},
+             monster.facing == Facing::left, scale,
+             Color{230, 248, 255, 175}));
+         EndBlendMode();
+@@ -579,21 +578,24 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+             const float hit_flash_seconds = feedback.target_flash_seconds(
+                 item.monster_index);
+             const bool material_frame_drawn = draw_monster_animation(
+                 material_pack_, monster, item.material_plan, projected,
+                 hit_flash_seconds);
+             monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)]
+                 .drawn |= material_frame_drawn;
+             const bool legacy_frame_drawn = !item.material_plan.use_material_frame
+                 && draw_material_actor(material_pack_, sprite, monster.facing,
+                     false, projected, hit_flash_seconds);
+-            if (material_frame_drawn || legacy_frame_drawn) {
++            const MonsterRenderPath render_path = select_monster_render_path(
++                item.material_plan.use_material_frame, material_frame_drawn,
++                legacy_frame_drawn);
++            if (render_path != MonsterRenderPath::silhouette) {
+                 draw_monster_presentation(monster, item.position, current.ecology,
+                     width, height, current_combat.tick, item.monster_index,
+                     hud_renderer_.hud_font(), hud_renderer_.font_ready());
+             } else {
+                 draw_monster_silhouette(monster, item.position, current.ecology,
+                     width, height, feedback, item.monster_index, current_combat.tick,
+                     item.monster_index, hud_renderer_.hud_font(),
+                     hud_renderer_.font_ready());
+             }
+         }
+diff --git a/src/platform/raylib/material_animation.cpp b/src/platform/raylib/material_animation.cpp
+index 31ee149..bcabfb1 100644
+--- a/src/platform/raylib/material_animation.cpp
++++ b/src/platform/raylib/material_animation.cpp
+@@ -404,20 +404,50 @@ MaterialSpriteId select_element_effect(dungeon::DungeonElement element) noexcept
+ 
+ float material_actor_draw_scale(bool player, float projection_scale) noexcept {
+     if (projection_scale <= 0.0F) return 0.0F;
+     const float trimmed_height = player ? kPlayerTrimmedHeight
+                                         : kMonsterTrimmedHeight;
+     const float target_height = player ? kPlayerTargetHeight
+                                        : kMonsterTargetHeight;
+     return projection_scale * target_height / trimmed_height;
+ }
+ 
++float monster_material_draw_scale(
++    MaterialAtlasId atlas, float projection_scale) noexcept {
++    if (projection_scale <= 0.0F) return 0.0F;
++    switch (atlas) {
++    case MaterialAtlasId::water_bulwark:
++    case MaterialAtlasId::water_support:
++    case MaterialAtlasId::lightning_shooter:
++    case MaterialAtlasId::lightning_dasher:
++    case MaterialAtlasId::chaos_chaser:
++    case MaterialAtlasId::chaos_hazard:
++        return 0.92F * projection_scale;
++    case MaterialAtlasId::fire_bomber:
++    case MaterialAtlasId::fire_charger:
++        return material_actor_draw_scale(false, projection_scale);
++    default:
++        return material_actor_draw_scale(false, projection_scale);
++    }
++}
++
++MonsterRenderPath select_monster_render_path(bool use_material_frame,
++    bool material_frame_drawn, bool legacy_frame_drawn) noexcept {
++    if (use_material_frame && material_frame_drawn) {
++        return MonsterRenderPath::material;
++    }
++    if (!use_material_frame && legacy_frame_drawn) {
++        return MonsterRenderPath::legacy;
++    }
++    return MonsterRenderPath::silhouette;
++}
++
+ const AnimationClipDefinition* material_animation_clip(AnimationClipId id) noexcept {
+     const MaterialManifestDefinition manifest = default_material_manifest();
+     for (std::size_t index = 0U; index < manifest.clip_count; ++index) {
+         if (manifest.clips[index].id == id) return &manifest.clips[index];
+     }
+     return nullptr;
+ }
+ 
+ MaterialSpriteId material_animation_frame_sprite(
+     const AnimationClipDefinition& clip, std::uint16_t frame) noexcept {
+diff --git a/src/platform/raylib/material_animation.hpp b/src/platform/raylib/material_animation.hpp
+index 076f188..7e708c1 100644
+--- a/src/platform/raylib/material_animation.hpp
++++ b/src/platform/raylib/material_animation.hpp
+@@ -71,20 +71,26 @@ struct MonsterAnimationClipDefinition final {
+     const ExplicitMonsterAnimationFrame* explicit_frames{};
+ };
+ 
+ struct MonsterAnimationFrame final {
+     MaterialAtlasId atlas{MaterialAtlasId::water_bulwark};
+     Rectangle source{};
+     Vector2 foot_anchor{};
+     std::uint8_t key_pose_index{};
+ };
+ 
++enum class MonsterRenderPath : std::uint8_t {
++    material,
++    legacy,
++    silhouette,
++};
++
+ [[nodiscard]] MaterialSpriteId select_player_sprite(
+     combat::PlayerState state,
+     combat::AttackId attack) noexcept;
+ 
+ [[nodiscard]] PlayerAnimationClipId select_player_animation_clip(
+     combat::PlayerState state, combat::AttackId attack) noexcept;
+ [[nodiscard]] const PlayerAnimationClipDefinition* player_animation_clip(
+     PlayerAnimationClipId id) noexcept;
+ [[nodiscard]] std::optional<PlayerAnimationFrame> player_animation_frame(
+     const PlayerAnimationClipDefinition& clip, std::uint16_t frame) noexcept;
+@@ -105,18 +111,23 @@ struct MonsterAnimationFrame final {
+     const MonsterAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
+     bool loop = true) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId select_door_sprite(
+     dungeon::DungeonElement element) noexcept;
+ [[nodiscard]] MaterialSpriteId select_element_effect(
+     dungeon::DungeonElement element) noexcept;
+ 
+ [[nodiscard]] float material_actor_draw_scale(
+     bool player, float projection_scale) noexcept;
++[[nodiscard]] float monster_material_draw_scale(
++    MaterialAtlasId atlas, float projection_scale) noexcept;
++[[nodiscard]] MonsterRenderPath select_monster_render_path(
++    bool use_material_frame, bool material_frame_drawn,
++    bool legacy_frame_drawn) noexcept;
+ 
+ [[nodiscard]] const AnimationClipDefinition* material_animation_clip(
+     AnimationClipId id) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId material_animation_frame_sprite(
+     const AnimationClipDefinition& clip, std::uint16_t frame) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_residency.cpp b/src/platform/raylib/material_residency.cpp
+index 2a2070a..95f205f 100644
+--- a/src/platform/raylib/material_residency.cpp
++++ b/src/platform/raylib/material_residency.cpp
+@@ -1,13 +1,12 @@
+ #include "material_residency.hpp"
+ 
+-#include <algorithm>
+ #include <limits>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ [[nodiscard]] constexpr bool is_known_atlas(MaterialAtlasId id) noexcept {
+     return id < MaterialAtlasId::count;
+ }
+ 
+ [[nodiscard]] constexpr std::size_t atlas_index(MaterialAtlasId id) noexcept {
+@@ -103,23 +102,21 @@ MaterialResidencyRequest base_material_residency_request() noexcept {
+ }
+ 
+ MaterialResidencyRequest make_material_residency_request(
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+     MaterialResidencyRequest request = base_material_residency_request();
+     if (snapshot.has_active_room) {
+         require_room_atlases(request, snapshot.ecology);
+     }
+     if (!snapshot.combat.has_value()) return request;
+     const combat::CombatSnapshot& combat = *snapshot.combat;
+-    const std::size_t count = std::min(combat.monster_count, combat.monsters.size());
+-    for (std::size_t index{}; index < count; ++index) {
+-        const combat::MonsterSnapshot& monster = combat.monsters[index];
++    for (const combat::MonsterSnapshot& monster : combat.monsters) {
+         if (monster.active) require_monster_atlas(request, monster.id);
+     }
+     return request;
+ }
+ 
+ std::size_t material_residency_bytes(
+     const MaterialManifestDefinition& manifest,
+     MaterialResidencyRequest request) noexcept {
+     constexpr std::size_t kMaximum = (std::numeric_limits<std::size_t>::max)();
+     if (manifest.atlas_count != 0U && manifest.atlases == nullptr) {
+diff --git a/tests/platform/stage12_actor_render_tests.cpp b/tests/platform/stage12_actor_render_tests.cpp
+index 5383064..b3a37d4 100644
+--- a/tests/platform/stage12_actor_render_tests.cpp
++++ b/tests/platform/stage12_actor_render_tests.cpp
+@@ -78,20 +78,36 @@ arpg::test::Failure stage12_actor_material_scale_matches_existing_geometry() noe
+     constexpr float kMonsterTrimmedHeight = 176.0F;
+     constexpr float kMonsterTargetHeight = 78.0F;
+     const float player_scale = arpg::platform::material_actor_draw_scale(true, 1.0F);
+     const float monster_scale = arpg::platform::material_actor_draw_scale(false, 1.0F);
+     ARPG_REQUIRE(player_scale * kPlayerTrimmedHeight >= kPlayerTargetHeight - 0.1F);
+     ARPG_REQUIRE(player_scale * kPlayerTrimmedHeight <= kPlayerTargetHeight + 0.1F);
+     ARPG_REQUIRE(monster_scale * kMonsterTrimmedHeight >= kMonsterTargetHeight - 0.1F);
+     ARPG_REQUIRE(monster_scale * kMonsterTrimmedHeight <= kMonsterTargetHeight + 0.1F);
+     ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 0.5F)
+         == player_scale * 0.5F);
++    const float bomber_scale = arpg::platform::monster_material_draw_scale(
++        arpg::platform::MaterialAtlasId::fire_bomber, 1.0F);
++    const float charger_scale = arpg::platform::monster_material_draw_scale(
++        arpg::platform::MaterialAtlasId::fire_charger, 1.0F);
++    ARPG_REQUIRE(arpg::test::near(
++        bomber_scale * kMonsterTrimmedHeight, kMonsterTargetHeight, 0.1F));
++    ARPG_REQUIRE(arpg::test::near(charger_scale, bomber_scale));
++    for (const auto atlas : {arpg::platform::MaterialAtlasId::water_bulwark,
++             arpg::platform::MaterialAtlasId::water_support,
++             arpg::platform::MaterialAtlasId::lightning_shooter,
++             arpg::platform::MaterialAtlasId::lightning_dasher,
++             arpg::platform::MaterialAtlasId::chaos_chaser,
++             arpg::platform::MaterialAtlasId::chaos_hazard}) {
++        ARPG_REQUIRE(arpg::test::near(
++            arpg::platform::monster_material_draw_scale(atlas, 1.0F), 0.92F));
++    }
+     return {};
+ }
+ 
+ std::uint64_t sprite_pixel_hash(const Color* pixels, int image_width,
+     const arpg::platform::MaterialFrameDefinition& frame) noexcept {
+     std::uint64_t hash = 1469598103934665603ULL;
+     const int left = static_cast<int>(frame.source.x);
+     const int top = static_cast<int>(frame.source.y);
+     const int right = left + static_cast<int>(frame.source.width);
+     const int bottom = top + static_cast<int>(frame.source.height);
+@@ -193,31 +209,41 @@ arpg::test::Failure active_monsters_produce_phase_aware_material_draw_plans() no
+     arpg::combat::MonsterSnapshot monster{};
+     monster.active = true;
+     monster.generation = 41U;
+     monster.id = MonsterId::chaos_chaser;
+     monster.ai_phase = MonsterAiPhase::active;
+     arpg::dungeon::DungeonSnapshot fire_snapshot{};
+     fire_snapshot.has_active_room = true;
+     fire_snapshot.ecology = arpg::dungeon::DungeonElement::fire;
+     fire_snapshot.combat.emplace();
+     fire_snapshot.combat->monster_count = 1U;
+-    fire_snapshot.combat->monsters[0] = monster;
++    fire_snapshot.combat->monsters[0].active = false;
++    fire_snapshot.combat->monsters[0].id = MonsterId::fire_bomber;
++    const std::size_t sparse_slot = fire_snapshot.combat->monsters.size() - 1U;
++    fire_snapshot.combat->monsters[sparse_slot] = monster;
+     const auto residency = arpg::platform::make_material_residency_request(
+         fire_snapshot);
+     ARPG_REQUIRE(residency.contains(arpg::platform::MaterialAtlasId::fire_environment));
+     ARPG_REQUIRE(residency.contains(arpg::platform::MaterialAtlasId::chaos_chaser));
+-    const auto chaos = presenter.collect_draw_plan(0U, monster, 100U, false);
++    const auto chaos = presenter.collect_draw_plan(
++        sparse_slot, monster, 100U, false);
+     ARPG_REQUIRE(chaos.visible);
+     ARPG_REQUIRE(chaos.use_material_frame);
+     ARPG_REQUIRE(chaos.animation_state
+         == arpg::platform::MonsterAnimationState::active);
+     ARPG_REQUIRE(chaos.frame.has_value());
++    ARPG_REQUIRE(arpg::platform::select_monster_render_path(
++        chaos.use_material_frame, true, false)
++        == arpg::platform::MonsterRenderPath::material);
++    ARPG_REQUIRE(arpg::platform::select_monster_render_path(
++        chaos.use_material_frame, false, false)
++        == arpg::platform::MonsterRenderPath::silhouette);
+ 
+     monster.generation = 42U;
+     monster.id = MonsterId::fire_bomber;
+     monster.ai_phase = MonsterAiPhase::telegraph;
+     const auto telegraph = presenter.collect_draw_plan(0U, monster, 200U, false);
+     ARPG_REQUIRE(telegraph.use_material_frame);
+     ARPG_REQUIRE(telegraph.frame_index == 0U);
+     monster.ai_phase = MonsterAiPhase::active;
+     const auto active = presenter.collect_draw_plan(0U, monster, 206U, false);
+     ARPG_REQUIRE(active.use_material_frame);

@@ -1,0 +1,1516 @@
+# Review package: 71d1e86fe0314ae6c0b021d3dcb7a49b1a48e987..0429d6b
+
+## Commits
+0429d6b feat: export isolated environment materials
+
+## Files changed
+ assets/stage12/README.md                           |   6 +
+ assets/stage12/chaos-source.md                     |   4 +
+ assets/stage12/chaos_environment.png               | Bin 1037800 -> 662809 bytes
+ assets/stage12/chaos_environment_material.png      | Bin 915675 -> 548879 bytes
+ assets/stage12/element_doors.png                   | Bin 0 -> 340872 bytes
+ assets/stage12/element_doors_material.png          | Bin 0 -> 271651 bytes
+ assets/stage12/environment-props-build.json        | 287 ++++++++++++++++++++
+ assets/stage12/environment-source.md               |   7 +
+ assets/stage12/lightning-source.md                 |   4 +
+ assets/stage12/lightning_environment.png           | Bin 1119521 -> 880562 bytes
+ assets/stage12/lightning_environment_material.png  | Bin 970637 -> 758843 bytes
+ assets/stage12/water-source.md                     |   4 +
+ assets/stage12/water_environment.png               | Bin 1019923 -> 790351 bytes
+ assets/stage12/water_environment_material.png      | Bin 849395 -> 676208 bytes
+ src/platform/raylib/material_asset_types.hpp       |   1 +
+ src/platform/raylib/material_manifest.hpp          |  47 ++--
+ src/platform/raylib/material_residency.cpp         |   1 +
+ tests/platform/CMakeLists.txt                      |   8 +
+ tests/platform/ecology_material_coverage_tests.cpp |  59 +++-
+ .../environment_prop_asset_pipeline_tests.py       | 147 ++++++++++
+ tests/platform/material_asset_validation_tests.cpp |   8 +-
+ tests/platform/platform_test_main.cpp              |   2 +-
+ .../platform/room_background_render_plan_tests.cpp |   2 +-
+ tools/build_chaos_material_slice.py                |  20 +-
+ tools/build_environment_props.py                   | 300 +++++++++++++++++++++
+ tools/build_lightning_material_slice.py            |  20 +-
+ tools/build_water_material_slice.py                |  20 +-
+ 27 files changed, 867 insertions(+), 80 deletions(-)
+
+## Diff
+diff --git a/assets/stage12/README.md b/assets/stage12/README.md
+index 2667a5d..c25f888 100644
+--- a/assets/stage12/README.md
++++ b/assets/stage12/README.md
+@@ -1,15 +1,21 @@
+ # Stage 12 材质包资源
+ 
+ 运行时材质包固定查找本目录下的基础图集与元素生态独立图集：
+ 
+ - `environment.png`：1024 × 1024，Stage 12-B 房间、元素门框与深渊洞口
+ - `actors.png`：2048 × 2048
+ - `effects_ui.png`：1024 × 1024
++- `element_doors.png`：1024 × 256，火、水、雷、混沌四个公共门帧（各 256 × 256）
+ - `water_environment.png`、`water_bulwark.png`、`water_support.png`
+ - `lightning_environment.png`、`lightning_shooter.png`、`lightning_dasher.png`
+ - `chaos_environment.png`、`chaos_chaser.png`、`chaos_hazard.png`
+ 
+ 每张颜色图集都有同名 `_material.png` 配对图。运行时只常驻当前房间生态的
+ 环境与两种怪物图集，火、水、雷、混沌图集不会同时全部常驻。
+ 
++环境道具由 `python tools/build_environment_props.py --root .` 可复现生成。
++它保留每个生态的 512 × 512 房间区，并把 wall、surface prop、hole、light、solid
++prop 隔离到固定的五个 256 × 256 单元；输出坐标、alpha 边界和足部锚点记录在
++`environment-props-build.json`。颜色与材质图的 alpha 通道必须逐字节一致。
++
+ 图集缺失、尺寸不匹配或任一帧不能绘制时，房间或角色会安全回退为既有几何绘制。发布后置步骤会将整个 `assets/stage12` 目录复制到可执行文件同级的 `bin/assets/stage12`，不需要运行时解析清单或在绘制热路径读取文件。
+diff --git a/assets/stage12/chaos-source.md b/assets/stage12/chaos-source.md
+index 2791a05..16be5a6 100644
+--- a/assets/stage12/chaos-source.md
++++ b/assets/stage12/chaos-source.md
+@@ -28,10 +28,14 @@ most 47 pixels may be removed; poses are never synthesized.
+ 
+ Run `python tools/build_chaos_material_slice.py` from the repository root to
+ rebuild and validate the three color atlases and paired RGBA material maps.
+ Material channels encode roughness, magenta/acid emissive response, metal
+ response and coverage.
+ 
+ Rejected source candidates are intentionally retained as untracked evidence:
+ `chaos-chaser-special-20-v1`, `chaos-hazard-idle-12-v1` and
+ `chaos-hazard-move-16-v1` (and their alpha derivatives). They are not referenced
+ by the builder and must not be staged.
++# Chaos ecology environment export
++
++Chaos room field、wall 和四个独立道具由 `tools/build_environment_props.py` 生成；其固定
++五格布局及每格 alpha 边界/足部锚点以 `environment-props-build.json` 为准。
+diff --git a/assets/stage12/chaos_environment.png b/assets/stage12/chaos_environment.png
+index a563e8a..bf67769 100644
+Binary files a/assets/stage12/chaos_environment.png and b/assets/stage12/chaos_environment.png differ
+diff --git a/assets/stage12/chaos_environment_material.png b/assets/stage12/chaos_environment_material.png
+index 373134f..a1d4458 100644
+Binary files a/assets/stage12/chaos_environment_material.png and b/assets/stage12/chaos_environment_material.png differ
+diff --git a/assets/stage12/element_doors.png b/assets/stage12/element_doors.png
+new file mode 100644
+index 0000000..78e708d
+Binary files /dev/null and b/assets/stage12/element_doors.png differ
+diff --git a/assets/stage12/element_doors_material.png b/assets/stage12/element_doors_material.png
+new file mode 100644
+index 0000000..dfc2367
+Binary files /dev/null and b/assets/stage12/element_doors_material.png differ
+diff --git a/assets/stage12/environment-props-build.json b/assets/stage12/environment-props-build.json
+new file mode 100644
+index 0000000..157da63
+--- /dev/null
++++ b/assets/stage12/environment-props-build.json
+@@ -0,0 +1,287 @@
++{
++  "ecologies": {
++    "chaos": {
++      "objects": {
++        "hole": {
++          "alpha_bbox": [
++            53,
++            46,
++            203,
++            244
++          ],
++          "foot_anchor": [
++            128,
++            244
++          ],
++          "source_rect": [
++            0,
++            512,
++            256,
++            256
++          ]
++        },
++        "light": {
++          "alpha_bbox": [
++            109,
++            170,
++            147,
++            236
++          ],
++          "foot_anchor": [
++            128,
++            236
++          ],
++          "source_rect": [
++            256,
++            512,
++            256,
++            256
++          ]
++        },
++        "solid_prop": {
++          "alpha_bbox": [
++            76,
++            68,
++            172,
++            236
++          ],
++          "foot_anchor": [
++            124,
++            236
++          ],
++          "source_rect": [
++            512,
++            512,
++            256,
++            256
++          ]
++        },
++        "surface_prop": {
++          "alpha_bbox": [
++            80,
++            67,
++            167,
++            236
++          ],
++          "foot_anchor": [
++            123,
++            236
++          ],
++          "source_rect": [
++            512,
++            256,
++            256,
++            256
++          ]
++        },
++        "wall": {
++          "alpha_bbox": [
++            111,
++            150,
++            145,
++            236
++          ],
++          "foot_anchor": [
++            128,
++            236
++          ],
++          "source_rect": [
++            512,
++            0,
++            256,
++            256
++          ]
++        }
++      }
++    },
++    "lightning": {
++      "objects": {
++        "hole": {
++          "alpha_bbox": [
++            14,
++            8,
++            241,
++            244
++          ],
++          "foot_anchor": [
++            127,
++            244
++          ],
++          "source_rect": [
++            0,
++            512,
++            256,
++            256
++          ]
++        },
++        "light": {
++          "alpha_bbox": [
++            63,
++            12,
++            192,
++            238
++          ],
++          "foot_anchor": [
++            127,
++            238
++          ],
++          "source_rect": [
++            256,
++            512,
++            256,
++            256
++          ]
++        },
++        "solid_prop": {
++          "alpha_bbox": [
++            78,
++            15,
++            186,
++            244
++          ],
++          "foot_anchor": [
++            132,
++            244
++          ],
++          "source_rect": [
++            512,
++            512,
++            256,
++            256
++          ]
++        },
++        "surface_prop": {
++          "alpha_bbox": [
++            62,
++            11,
++            201,
++            240
++          ],
++          "foot_anchor": [
++            131,
++            240
++          ],
++          "source_rect": [
++            512,
++            256,
++            256,
++            256
++          ]
++        },
++        "wall": {
++          "alpha_bbox": [
++            72,
++            55,
++            183,
++            236
++          ],
++          "foot_anchor": [
++            127,
++            236
++          ],
++          "source_rect": [
++            512,
++            0,
++            256,
++            256
++          ]
++        }
++      }
++    },
++    "water": {
++      "objects": {
++        "hole": {
++          "alpha_bbox": [
++            13,
++            119,
++            246,
++            244
++          ],
++          "foot_anchor": [
++            129,
++            244
++          ],
++          "source_rect": [
++            0,
++            512,
++            256,
++            256
++          ]
++        },
++        "light": {
++          "alpha_bbox": [
++            91,
++            135,
++            165,
++            236
++          ],
++          "foot_anchor": [
++            128,
++            236
++          ],
++          "source_rect": [
++            256,
++            512,
++            256,
++            256
++          ]
++        },
++        "solid_prop": {
++          "alpha_bbox": [
++            53,
++            83,
++            202,
++            236
++          ],
++          "foot_anchor": [
++            127,
++            236
++          ],
++          "source_rect": [
++            512,
++            512,
++            256,
++            256
++          ]
++        },
++        "surface_prop": {
++          "alpha_bbox": [
++            17,
++            112,
++            239,
++            241
++          ],
++          "foot_anchor": [
++            128,
++            241
++          ],
++          "source_rect": [
++            512,
++            256,
++            256,
++            256
++          ]
++        },
++        "wall": {
++          "alpha_bbox": [
++            10,
++            110,
++            246,
++            237
++          ],
++          "foot_anchor": [
++            128,
++            237
++          ],
++          "source_rect": [
++            512,
++            0,
++            256,
++            256
++          ]
++        }
++      }
++    }
++  },
++  "schema_version": 1
++}
+diff --git a/assets/stage12/environment-source.md b/assets/stage12/environment-source.md
+index f8b541e..c957b06 100644
+--- a/assets/stage12/environment-source.md
++++ b/assets/stage12/environment-source.md
+@@ -50,10 +50,17 @@ python "$env:CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py" `
+ | 帧族 | 像素矩形 | 锚点 | 用途 |
+ | --- | --- | --- | --- |
+ | `environment_floor_{fire,water,lightning,chaos}` | `0,0,1024,704` | `512,704` | 透视房间底图 |
+ | `environment_door_fire` | `0,704,112,112` | `56,112` | 火元素门框 |
+ | `environment_door_water` | `112,704,112,112` | `56,112` | 水元素门框 |
+ | `environment_door_lightning` | `224,704,112,112` | `56,112` | 雷元素门框 |
+ | `environment_door_chaos` | `336,704,112,112` | `56,112` | 混沌元素门框 |
+ | `environment_hole` | `448,704,192,160` | `96,80` | 深渊洞口主体 |
+ 
+ 下方未使用的透明区域留给后续道具帧；不被运行时读取。
++
++## 公共元素门与独立生态道具
++
++`tools/build_environment_props.py` 从火环境图集的既有火门帧，以及水、雷、混沌的
++原始概念门区域生成 `element_doors.png`。每帧取最大前景连通域、保留透明边距并落脚
++到 y=244。生态道具使用对应 `backgrounds/<ecology>/<ecology>-wall-tile-v1.png` 的 wall
++原图和既有概念裁剪区域，生成记录写入 `environment-props-build.json`。
+diff --git a/assets/stage12/lightning-source.md b/assets/stage12/lightning-source.md
+index e323059..78abd45 100644
+--- a/assets/stage12/lightning-source.md
++++ b/assets/stage12/lightning-source.md
+@@ -27,10 +27,14 @@ percent, exact three-frame linear interpolation, a main connected silhouette
+ below 94 percent, secondary components above 2 percent, or per-state final foot
+ baseline drift above one pixel. The tiny-island pass only removes detached
+ chroma-key antialias specks of 47 pixels or fewer; it does not redraw or
+ interpolate poses.
+ 
+ Run `python tools/build_lightning_material_slice.py` from the repository root
+ to rebuild and validate the three color atlases and their paired RGBA material
+ maps. Material channels encode roughness, electric emission, metal response and
+ coverage. The environment builder retains the dark storm palette while lifting
+ authored brass and warning-lamp accents for gameplay readability.
++# Lightning ecology environment export
++
++Lightning room field、wall 和四个独立道具由 `tools/build_environment_props.py` 生成；其固定
++五格布局及每格 alpha 边界/足部锚点以 `environment-props-build.json` 为准。
+diff --git a/assets/stage12/lightning_environment.png b/assets/stage12/lightning_environment.png
+index 2696960..fadc249 100644
+Binary files a/assets/stage12/lightning_environment.png and b/assets/stage12/lightning_environment.png differ
+diff --git a/assets/stage12/lightning_environment_material.png b/assets/stage12/lightning_environment_material.png
+index 8a18001..751ceed 100644
+Binary files a/assets/stage12/lightning_environment_material.png and b/assets/stage12/lightning_environment_material.png differ
+diff --git a/assets/stage12/water-source.md b/assets/stage12/water-source.md
+index 44208d7..309403d 100644
+--- a/assets/stage12/water-source.md
++++ b/assets/stage12/water-source.md
+@@ -18,10 +18,14 @@ rebuild the three color atlases and their deterministic material maps.
+ - Environment: original square orthographic flooded underground hall; dark
+   steel, charcoal wet stone and restrained antique gold; separate wet floor,
+   damp wall, sealed door, flooded opening, cyan lantern, mineral coral and
+   bronze grate motifs; uncluttered combat center; no characters or text.
+ - Water bulwark: one full-body ancient dark-steel shield guardian with a large
+   transparent layered water-blue tower shield, cyan rim and antique-gold trim,
+   facing right on a flat `#ff00ff` chroma-key background; no text or shadow.
+ - Water support: one full-body agile tide-channeler in charcoal cloth and dark
+   steel, crescent staff with water orb and compact cyan support rings, facing
+   right on a flat `#ff00ff` chroma-key background; no text or shadow.
++# Water ecology environment export
++
++Water room field、wall 和四个独立道具由 `tools/build_environment_props.py` 生成；其固定
++五格布局及每格 alpha 边界/足部锚点以 `environment-props-build.json` 为准。
+diff --git a/assets/stage12/water_environment.png b/assets/stage12/water_environment.png
+index c1e9a06..cb531e4 100644
+Binary files a/assets/stage12/water_environment.png and b/assets/stage12/water_environment.png differ
+diff --git a/assets/stage12/water_environment_material.png b/assets/stage12/water_environment_material.png
+index b7de1f6..6e1bdfc 100644
+Binary files a/assets/stage12/water_environment_material.png and b/assets/stage12/water_environment_material.png differ
+diff --git a/src/platform/raylib/material_asset_types.hpp b/src/platform/raylib/material_asset_types.hpp
+index ea93508..164f55f 100644
+--- a/src/platform/raylib/material_asset_types.hpp
++++ b/src/platform/raylib/material_asset_types.hpp
+@@ -27,20 +27,21 @@ enum class MaterialAtlasId : std::uint8_t {
+     lightning_dasher,
+     chaos_environment,
+     chaos_chaser,
+     chaos_hazard,
+     items_ui,
+     ui_material,
+     fire_room_background,
+     water_room_background,
+     lightning_room_background,
+     chaos_room_background,
++    element_doors,
+     count,
+ };
+ 
+ enum class MaterialLayer : std::uint8_t {
+     shadow,
+     back_effect,
+     body,
+     weapon,
+     front_effect,
+     count,
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index 0fae4ea..a2524d1 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -52,20 +52,21 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
+     {MaterialAtlasId::lightning_dasher, 864, 864, 4U * 864U * 864U, "assets/stage12/lightning_dasher.png", "assets/stage12/lightning_dasher_material.png", MaterialEcology::lightning},
+     {MaterialAtlasId::chaos_environment, 768, 768, 4U * 768U * 768U, "assets/stage12/chaos_environment.png", "assets/stage12/chaos_environment_material.png", MaterialEcology::chaos},
+     {MaterialAtlasId::chaos_chaser, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_chaser.png", "assets/stage12/chaos_chaser_material.png", MaterialEcology::chaos},
+     {MaterialAtlasId::chaos_hazard, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_hazard.png", "assets/stage12/chaos_hazard_material.png", MaterialEcology::chaos},
+     {MaterialAtlasId::items_ui, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/items_ui.png", "assets/stage12/items_ui_material.png", MaterialEcology::common},
+     {MaterialAtlasId::ui_material, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/ui_material.png", "assets/stage12/ui_material_material.png", MaterialEcology::common},
+     {MaterialAtlasId::fire_room_background, 2560, 1440, 14'745'600U, "assets/stage12/fire_room_background.png", "assets/stage12/fire_room_background_material.png", MaterialEcology::fire},
+     {MaterialAtlasId::water_room_background, 2560, 1440, 14'745'600U, "assets/stage12/water_room_background.png", "assets/stage12/water_room_background_material.png", MaterialEcology::water},
+     {MaterialAtlasId::lightning_room_background, 2560, 1440, 14'745'600U, "assets/stage12/lightning_room_background.png", "assets/stage12/lightning_room_background_material.png", MaterialEcology::lightning},
+     {MaterialAtlasId::chaos_room_background, 2560, 1440, 14'745'600U, "assets/stage12/chaos_room_background.png", "assets/stage12/chaos_room_background_material.png", MaterialEcology::chaos},
++    {MaterialAtlasId::element_doors, 1024, 256, 1'048'576U, "assets/stage12/element_doors.png", "assets/stage12/element_doors_material.png", MaterialEcology::common},
+ };
+ 
+ #define ARPG_ACTOR_FRAME(sprite, column, row) \
+     {MaterialSpriteId::sprite, MaterialAtlasId::actors, \
+         {static_cast<float>((column) * 224), static_cast<float>((row) * 224), \
+             224.0F, 224.0F}, \
+         {112.0F, 224.0F}, 42U, {152.0F, 118.0F}, MaterialLayer::body, MaterialClass::actor, static_cast<std::uint32_t>((column) * 131U + (row) * 17U + 1U)}
+ 
+ #define ARPG_EFFECT_FRAME(sprite, column, row) \
+     {MaterialSpriteId::sprite, MaterialAtlasId::effects_ui, \
+@@ -190,83 +191,83 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
+     ARPG_CHAOS_MONSTER_FRAME(chaos_hazard_cooldown, chaos_hazard, 47),
+     ARPG_CHAOS_MONSTER_FRAME(chaos_hazard_defeated, chaos_hazard, 56),
+     {MaterialSpriteId::environment_floor_fire, MaterialAtlasId::environment,
+         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
+     {MaterialSpriteId::environment_floor_water, MaterialAtlasId::water_environment,
+         {0.0F, 0.0F, 512.0F, 512.0F}, {256.0F, 512.0F}, 0U},
+     {MaterialSpriteId::environment_floor_lightning, MaterialAtlasId::lightning_environment,
+         {0.0F, 0.0F, 512.0F, 512.0F}, {256.0F, 512.0F}, 0U},
+     {MaterialSpriteId::environment_floor_chaos, MaterialAtlasId::chaos_environment,
+         {0.0F, 0.0F, 512.0F, 512.0F}, {256.0F, 512.0F}, 0U},
+-    {MaterialSpriteId::environment_door_fire, MaterialAtlasId::environment,
+-        {0.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+-    {MaterialSpriteId::environment_door_water, MaterialAtlasId::water_environment,
+-        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++    {MaterialSpriteId::environment_door_fire, MaterialAtlasId::element_doors,
++        {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 244.0F}, 0U},
++    {MaterialSpriteId::environment_door_water, MaterialAtlasId::element_doors,
++        {256.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 244.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::front_effect,
+         MaterialClass::environment, 5001U},
+-    {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::lightning_environment,
+-        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++    {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::element_doors,
++        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 244.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::front_effect,
+         MaterialClass::environment, 6001U},
+-    {MaterialSpriteId::environment_door_chaos, MaterialAtlasId::chaos_environment,
+-        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++    {MaterialSpriteId::environment_door_chaos, MaterialAtlasId::element_doors,
++        {768.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 244.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::front_effect,
+         MaterialClass::environment, 7001U},
+     {MaterialSpriteId::environment_hole, MaterialAtlasId::environment,
+         {448.0F, 704.0F, 192.0F, 160.0F}, {96.0F, 80.0F}, 0U},
+     {MaterialSpriteId::water_wall, MaterialAtlasId::water_environment,
+-        {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 237.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5002U},
+     {MaterialSpriteId::water_hole, MaterialAtlasId::water_environment,
+-        {0.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
++        {0.0F, 512.0F, 256.0F, 256.0F}, {129.0F, 244.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5003U},
+     {MaterialSpriteId::water_lantern, MaterialAtlasId::water_environment,
+-        {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 236.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::front_effect,
+         MaterialClass::environment, 5004U},
+     {MaterialSpriteId::water_coral, MaterialAtlasId::water_environment,
+-        {512.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 512.0F, 256.0F, 256.0F}, {127.0F, 236.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5005U},
+     {MaterialSpriteId::water_grate, MaterialAtlasId::water_environment,
+-        {512.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
++        {512.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 241.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5006U},
+     {MaterialSpriteId::lightning_wall, MaterialAtlasId::lightning_environment,
+-        {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 0.0F, 256.0F, 256.0F}, {127.0F, 236.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6002U},
+     {MaterialSpriteId::lightning_hole, MaterialAtlasId::lightning_environment,
+-        {0.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
++        {0.0F, 512.0F, 256.0F, 256.0F}, {127.0F, 244.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6003U},
+     {MaterialSpriteId::lightning_arc_lamp, MaterialAtlasId::lightning_environment,
+-        {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {256.0F, 512.0F, 256.0F, 256.0F}, {127.0F, 238.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::front_effect,
+         MaterialClass::environment, 6004U},
+     {MaterialSpriteId::lightning_capacitor_bank, MaterialAtlasId::lightning_environment,
+-        {512.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 256.0F, 256.0F, 256.0F}, {131.0F, 240.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6005U},
+     {MaterialSpriteId::lightning_grounding_rod, MaterialAtlasId::lightning_environment,
+-        {512.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 512.0F, 256.0F, 256.0F}, {132.0F, 244.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6006U},
+     {MaterialSpriteId::chaos_wall, MaterialAtlasId::chaos_environment,
+-        {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 236.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 7002U},
+     {MaterialSpriteId::chaos_hole, MaterialAtlasId::chaos_environment,
+-        {0.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
++        {0.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 244.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 7003U},
+     {MaterialSpriteId::chaos_rift_lantern, MaterialAtlasId::chaos_environment,
+-        {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 236.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::front_effect,
+         MaterialClass::environment, 7004U},
+     {MaterialSpriteId::chaos_anomaly_condenser, MaterialAtlasId::chaos_environment,
+-        {512.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 256.0F, 256.0F, 256.0F}, {123.0F, 236.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 7005U},
+     {MaterialSpriteId::chaos_warning_obelisk, MaterialAtlasId::chaos_environment,
+-        {512.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
++        {512.0F, 512.0F, 256.0F, 256.0F}, {124.0F, 236.0F}, 0U,
+         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 7006U},
+     ARPG_EFFECT_FRAME(effect_fire, 0, 0),
+     ARPG_EFFECT_FRAME(effect_water, 1, 0),
+     ARPG_EFFECT_FRAME(effect_lightning, 2, 0),
+     ARPG_EFFECT_FRAME(effect_chaos, 3, 0),
+     ARPG_EFFECT_FRAME(effect_hit_spark, 0, 1),
+     ARPG_EFFECT_FRAME(effect_launcher_trail, 1, 1),
+     ARPG_EFFECT_FRAME(effect_landing_dust, 2, 1),
+     ARPG_EFFECT_FRAME(effect_affix_aura, 3, 1),
+     ARPG_ITEM_FRAME(item_weapon, 0, MaterialLayer::body, MaterialClass::loot),
+diff --git a/src/platform/raylib/material_residency.cpp b/src/platform/raylib/material_residency.cpp
+index eba548d..2a2070a 100644
+--- a/src/platform/raylib/material_residency.cpp
++++ b/src/platform/raylib/material_residency.cpp
+@@ -82,20 +82,21 @@ void MaterialResidencyRequest::require(MaterialAtlasId id) noexcept {
+ }
+ 
+ bool MaterialResidencyRequest::contains(MaterialAtlasId id) const noexcept {
+     return is_known_atlas(id)
+         && (atlases & (MaterialAtlasMask{1U} << atlas_index(id))) != 0U;
+ }
+ 
+ MaterialResidencyRequest base_material_residency_request() noexcept {
+     MaterialResidencyRequest request{};
+     request.require(MaterialAtlasId::environment);
++    request.require(MaterialAtlasId::element_doors);
+     request.require(MaterialAtlasId::actors);
+     request.require(MaterialAtlasId::effects_ui);
+     request.require(MaterialAtlasId::player_locomotion);
+     request.require(MaterialAtlasId::player_combo_a);
+     request.require(MaterialAtlasId::player_combo_b);
+     request.require(MaterialAtlasId::player_reaction);
+     request.require(MaterialAtlasId::player_air);
+     request.require(MaterialAtlasId::items_ui);
+     request.require(MaterialAtlasId::ui_material);
+     return request;
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 949f493..b0e9a4c 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -62,20 +62,28 @@ if(TARGET arpg_raylib)
+         platform.units PROPERTIES LABELS "headless;platform")
+ 
+     add_test(NAME platform.ui_dpi_manifest
+         COMMAND "${CMAKE_COMMAND}"
+             "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+             -P "${CMAKE_CURRENT_SOURCE_DIR}/ui_dpi_manifest_test.cmake")
+     set_tests_properties(platform.ui_dpi_manifest PROPERTIES
+         LABELS "headless;platform;ui")
+ 
+     find_package(Python3 REQUIRED COMPONENTS Interpreter)
++    add_test(NAME stage12.environment_prop_asset_pipeline
++        COMMAND "${Python3_EXECUTABLE}" -m unittest
++            tests.platform.environment_prop_asset_pipeline_tests -v)
++    set_tests_properties(stage12.environment_prop_asset_pipeline PROPERTIES
++        LABELS "headless;platform;assets;stage12"
++        TIMEOUT 180
++        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
++
+     add_test(NAME stage12.lightning_asset_pipeline
+         COMMAND "${Python3_EXECUTABLE}"
+             "${CMAKE_CURRENT_SOURCE_DIR}/lightning_asset_pipeline_tests.py")
+     set_tests_properties(stage12.lightning_asset_pipeline PROPERTIES
+         LABELS "headless;platform;stage12" TIMEOUT 120)
+ 
+     add_test(NAME stage12.chaos_asset_pipeline
+         COMMAND "${Python3_EXECUTABLE}"
+             "${CMAKE_CURRENT_SOURCE_DIR}/chaos_asset_pipeline_tests.py")
+     set_tests_properties(stage12.chaos_asset_pipeline PROPERTIES
+diff --git a/tests/platform/ecology_material_coverage_tests.cpp b/tests/platform/ecology_material_coverage_tests.cpp
+index dc8ba2f..08e9203 100644
+--- a/tests/platform/ecology_material_coverage_tests.cpp
++++ b/tests/platform/ecology_material_coverage_tests.cpp
+@@ -292,21 +292,22 @@ arpg::test::Failure water_room_consumes_only_water_environment_materials() noexc
+         ARPG_REQUIRE(prop.sprite != arpg::platform::MaterialSpriteId::missing);
+         const arpg::platform::MaterialFrameDefinition* frame{};
+         for (std::size_t frame_index{}; frame_index < manifest.frame_count;
+              ++frame_index) {
+             if (manifest.frames[frame_index].id == prop.sprite) {
+                 frame = &manifest.frames[frame_index];
+                 break;
+             }
+         }
+         ARPG_REQUIRE(frame != nullptr);
+-        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::water_environment);
++        ARPG_REQUIRE(frame->atlas == (index == 2U
++            ? MaterialAtlasId::element_doors : MaterialAtlasId::water_environment));
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure monsters_expose_complete_multiframe_state_groups(
+     const std::array<MonsterId, 2>& monsters,
+     const std::array<MaterialAtlasId, 2>& atlases) noexcept {
+     constexpr std::array<MonsterAnimationState, 5> kStates{{
+         MonsterAnimationState::idle,
+         MonsterAnimationState::move,
+@@ -478,21 +479,22 @@ arpg::test::Failure lightning_room_consumes_only_lightning_environment_materials
+         ARPG_REQUIRE(prop.sprite != arpg::platform::MaterialSpriteId::missing);
+         const arpg::platform::MaterialFrameDefinition* frame{};
+         for (std::size_t frame_index{}; frame_index < manifest.frame_count;
+              ++frame_index) {
+             if (manifest.frames[frame_index].id == prop.sprite) {
+                 frame = &manifest.frames[frame_index];
+                 break;
+             }
+         }
+         ARPG_REQUIRE(frame != nullptr);
+-        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::lightning_environment);
++        ARPG_REQUIRE(frame->atlas == (index == 2U
++            ? MaterialAtlasId::element_doors : MaterialAtlasId::lightning_environment));
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure lightning_environment_keeps_high_contrast_warning_palette() noexcept {
+     const MaterialAtlasDefinition* const atlas = find_atlas(
+         MaterialAtlasId::lightning_environment);
+     ARPG_REQUIRE(atlas != nullptr);
+     const std::filesystem::path path = std::filesystem::path{
+         ARPG_PROJECT_SOURCE_DIR} / atlas->color_path;
+@@ -712,21 +714,22 @@ arpg::test::Failure chaos_room_consumes_only_chaos_environment_materials() noexc
+         ARPG_REQUIRE(prop.id == kRequired[index]);
+         const arpg::platform::MaterialFrameDefinition* frame{};
+         for (std::size_t frame_index{}; frame_index < manifest.frame_count;
+              ++frame_index) {
+             if (manifest.frames[frame_index].id == prop.sprite) {
+                 frame = &manifest.frames[frame_index];
+                 break;
+             }
+         }
+         ARPG_REQUIRE(frame != nullptr);
+-        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::chaos_environment);
++        ARPG_REQUIRE(frame->atlas == (index == 2U
++            ? MaterialAtlasId::element_doors : MaterialAtlasId::chaos_environment));
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure chaos_environment_keeps_readable_rift_warning_palette() noexcept {
+     const auto* atlas = find_atlas(MaterialAtlasId::chaos_environment);
+     ARPG_REQUIRE(atlas != nullptr);
+     const std::filesystem::path path = std::filesystem::path{
+         ARPG_PROJECT_SOURCE_DIR} / atlas->color_path;
+     const Image image = LoadImage(path.string().c_str());
+@@ -792,20 +795,68 @@ arpg::test::Failure chaos_ecology_stays_inside_manifest_loading_budget() noexcep
+     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+         const auto ecology = manifest.atlases[index].ecology;
+         if (ecology == MaterialEcology::common || ecology == MaterialEcology::chaos) {
+             loaded_bytes += manifest.atlases[index].rgba_bytes * 2U;
+         }
+     }
+     ARPG_REQUIRE(loaded_bytes <= manifest.memory_budget_bytes);
+     return {};
+ }
+ 
++arpg::test::Failure common_element_doors_have_unique_frames() noexcept {
++    const auto manifest = arpg::platform::default_material_manifest();
++    const auto* const atlas = find_atlas(MaterialAtlasId::element_doors);
++    ARPG_REQUIRE(atlas != nullptr);
++    ARPG_REQUIRE(atlas->ecology == MaterialEcology::common);
++    ARPG_REQUIRE(atlas->width == 1024 && atlas->height == 256);
++    ARPG_REQUIRE(atlas->rgba_bytes == 1'048'576U);
++    constexpr std::array<arpg::platform::MaterialSpriteId, 4> kDoors{{
++        arpg::platform::MaterialSpriteId::environment_door_fire,
++        arpg::platform::MaterialSpriteId::environment_door_water,
++        arpg::platform::MaterialSpriteId::environment_door_lightning,
++        arpg::platform::MaterialSpriteId::environment_door_chaos,
++    }};
++    for (std::size_t index{}; index < kDoors.size(); ++index) {
++        const auto* const frame = arpg::platform::find_material_frame(manifest, kDoors[index]);
++        ARPG_REQUIRE(frame != nullptr);
++        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::element_doors);
++        ARPG_REQUIRE(frame->source.x == static_cast<float>(index * 256U));
++        ARPG_REQUIRE(frame->source.y == 0.0F);
++        ARPG_REQUIRE(frame->source.width == 256.0F && frame->source.height == 256.0F);
++        ARPG_REQUIRE(frame->foot_anchor.x == 128.0F && frame->foot_anchor.y == 244.0F);
++    }
++    return {};
++}
++
++arpg::test::Failure ecology_prop_records_match_emitted_layout() noexcept {
++    struct Expected final { arpg::platform::MaterialSpriteId id; float x; float y; float ax; float ay; };
++    constexpr std::array<Expected, 15> kProps{{
++        {arpg::platform::MaterialSpriteId::water_wall, 512.0F, 0.0F, 128.0F, 237.0F}, {arpg::platform::MaterialSpriteId::water_grate, 512.0F, 256.0F, 128.0F, 241.0F}, {arpg::platform::MaterialSpriteId::water_hole, 0.0F, 512.0F, 129.0F, 244.0F}, {arpg::platform::MaterialSpriteId::water_lantern, 256.0F, 512.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::water_coral, 512.0F, 512.0F, 127.0F, 236.0F},
++        {arpg::platform::MaterialSpriteId::lightning_wall, 512.0F, 0.0F, 127.0F, 236.0F}, {arpg::platform::MaterialSpriteId::lightning_capacitor_bank, 512.0F, 256.0F, 131.0F, 240.0F}, {arpg::platform::MaterialSpriteId::lightning_hole, 0.0F, 512.0F, 127.0F, 244.0F}, {arpg::platform::MaterialSpriteId::lightning_arc_lamp, 256.0F, 512.0F, 127.0F, 238.0F}, {arpg::platform::MaterialSpriteId::lightning_grounding_rod, 512.0F, 512.0F, 132.0F, 244.0F},
++        {arpg::platform::MaterialSpriteId::chaos_wall, 512.0F, 0.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_anomaly_condenser, 512.0F, 256.0F, 123.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_hole, 0.0F, 512.0F, 128.0F, 244.0F}, {arpg::platform::MaterialSpriteId::chaos_rift_lantern, 256.0F, 512.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_warning_obelisk, 512.0F, 512.0F, 124.0F, 236.0F},
++    }};
++    const auto manifest = arpg::platform::default_material_manifest();
++    for (const Expected expected : kProps) {
++        const auto* const frame = arpg::platform::find_material_frame(manifest, expected.id);
++        ARPG_REQUIRE(frame != nullptr);
++        const auto* const atlas = find_atlas(frame->atlas);
++        ARPG_REQUIRE(atlas != nullptr);
++        ARPG_REQUIRE(frame->source.x == expected.x && frame->source.y == expected.y);
++        ARPG_REQUIRE(frame->source.width == 256.0F && frame->source.height == 256.0F);
++        ARPG_REQUIRE(frame->foot_anchor.x == expected.ax && frame->foot_anchor.y == expected.ay);
++        ARPG_REQUIRE(frame->source.x >= 0.0F && frame->source.y >= 0.0F);
++        ARPG_REQUIRE(frame->source.x + frame->source.width <= static_cast<float>(atlas->width));
++        ARPG_REQUIRE(frame->source.y + frame->source.height <= static_cast<float>(atlas->height));
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"loads independent water color and material atlases",
+         &water_ecology_has_independent_loadable_color_and_material_atlases},
+     {"water room consumes water-only environment materials",
+         &water_room_consumes_only_water_environment_materials},
+     {"water monsters expose required multiframe state groups",
+         &water_monsters_expose_complete_multiframe_state_groups},
+     {"water runtime states select animation frame groups",
+         &water_monster_runtime_states_select_frame_groups},
+     {"defeated water monster reaches and completes death frames",
+@@ -831,17 +882,19 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"chaos room consumes chaos-only environment materials",
+         &chaos_room_consumes_only_chaos_environment_materials},
+     {"chaos room keeps readable rift warning palette",
+         &chaos_environment_keeps_readable_rift_warning_palette},
+     {"chaos monsters expose required multiframe state groups",
+         &chaos_monsters_expose_complete_multiframe_state_groups},
+     {"chaos presentation runs special hurt and death frames",
+         &chaos_monster_presentation_runs_special_hurt_and_death},
+     {"chaos ecology remains inside loading budget",
+         &chaos_ecology_stays_inside_manifest_loading_budget},
++    {"common element doors use four unique frames", &common_element_doors_have_unique_frames},
++    {"ecology props match emitted layout records", &ecology_prop_records_match_emitted_layout},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite ecology_material_coverage_suite() noexcept {
+     return arpg::test::make_suite("ecology_material_coverage", kCases);
+ }
+diff --git a/tests/platform/environment_prop_asset_pipeline_tests.py b/tests/platform/environment_prop_asset_pipeline_tests.py
+new file mode 100644
+index 0000000..dcf31e3
+--- /dev/null
++++ b/tests/platform/environment_prop_asset_pipeline_tests.py
+@@ -0,0 +1,147 @@
++"""Contract tests for isolated Stage 12 ecology props and public doors."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import subprocess
++import sys
++import unittest
++from collections import deque
++from pathlib import Path
++
++from PIL import Image
++
++
++ROOT = Path(__file__).resolve().parents[2]
++BUILDER = ROOT / "tools/build_environment_props.py"
++REPORT = ROOT / "assets/stage12/environment-props-build.json"
++ECOLOGIES = ("water", "lightning", "chaos")
++LAYOUT = {
++    "wall": (512, 0),
++    "surface_prop": (512, 256),
++    "hole": (0, 512),
++    "light": (256, 512),
++    "solid_prop": (512, 512),
++}
++
++
++def sha256(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def alpha_components(image: Image.Image, threshold: int = 8) -> list[int]:
++    alpha = image.getchannel("A")
++    remaining = {
++        (x, y)
++        for y in range(image.height)
++        for x in range(image.width)
++        if alpha.getpixel((x, y)) > threshold
++    }
++    sizes: list[int] = []
++    while remaining:
++        start = remaining.pop()
++        queue = deque((start,))
++        size = 1
++        while queue:
++            x, y = queue.popleft()
++            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1),
++                           (-1, -1), (-1, 1), (1, -1), (1, 1)):
++                neighbor = (x + dx, y + dy)
++                if neighbor in remaining:
++                    remaining.remove(neighbor)
++                    queue.append(neighbor)
++                    size += 1
++        sizes.append(size)
++    return sorted(sizes, reverse=True)
++
++
++class EnvironmentPropAssetPipelineTests(unittest.TestCase):
++    def test_builder_repeat_generation_is_byte_for_byte_stable(self) -> None:
++        self.assertTrue(BUILDER.is_file(), "shared environment prop builder is missing")
++        outputs = [
++            ROOT / "assets/stage12/element_doors.png",
++            ROOT / "assets/stage12/element_doors_material.png",
++            REPORT,
++        ]
++        for ecology in ECOLOGIES:
++            outputs.extend((
++                ROOT / f"assets/stage12/{ecology}_environment.png",
++                ROOT / f"assets/stage12/{ecology}_environment_material.png",
++            ))
++        for path in outputs:
++            self.assertTrue(path.is_file(), path)
++        before = {path: sha256(path) for path in outputs}
++        for _ in range(2):
++            result = subprocess.run(
++                [sys.executable, str(BUILDER), "--root", str(ROOT)],
++                cwd=ROOT, text=True, capture_output=True)
++            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
++        self.assertEqual({path: sha256(path) for path in outputs}, before)
++
++    def test_public_element_doors_are_isolated_unique_material_cells(self) -> None:
++        color_path = ROOT / "assets/stage12/element_doors.png"
++        material_path = ROOT / "assets/stage12/element_doors_material.png"
++        self.assertTrue(color_path.is_file(), color_path)
++        self.assertTrue(material_path.is_file(), material_path)
++        with Image.open(color_path).convert("RGBA") as color, \
++                Image.open(material_path).convert("RGBA") as material:
++            self.assertEqual(color.size, material.size)
++            self.assertEqual(color.size, (1024, 256))
++            self.assertEqual(color.getchannel("A").tobytes(),
++                             material.getchannel("A").tobytes())
++            door_cells = [
++                color.crop((cell * 256, 0, (cell + 1) * 256, 256))
++                for cell in range(4)
++            ]
++            for tile in door_cells:
++                bbox = tile.getchannel("A").getbbox()
++                self.assertIsNotNone(bbox)
++                assert bbox is not None
++                self.assertGreaterEqual(
++                    min(bbox[0], bbox[1], 256 - bbox[2], 256 - bbox[3]), 12)
++            self.assertEqual(len({cell.tobytes() for cell in door_cells}), 4)
++
++    def test_ecology_prop_manifest_matches_isolated_outputs(self) -> None:
++        self.assertTrue(REPORT.is_file(), REPORT)
++        manifest = json.loads(REPORT.read_text(encoding="utf-8"))
++        self.assertEqual(manifest["schema_version"], 1)
++        self.assertEqual(set(manifest["ecologies"]), set(ECOLOGIES))
++        for ecology in ECOLOGIES:
++            color_path = ROOT / f"assets/stage12/{ecology}_environment.png"
++            material_path = ROOT / f"assets/stage12/{ecology}_environment_material.png"
++            with self.subTest(ecology=ecology), \
++                    Image.open(color_path).convert("RGBA") as color, \
++                    Image.open(material_path).convert("RGBA") as material:
++                self.assertEqual(color.size, material.size)
++                self.assertEqual(color.size, (768, 768))
++                self.assertEqual(color.getchannel("A").tobytes(),
++                                 material.getchannel("A").tobytes())
++                records = manifest["ecologies"][ecology]["objects"]
++                self.assertEqual(set(records), set(LAYOUT))
++                for name, (x, y) in LAYOUT.items():
++                    record = records[name]
++                    self.assertEqual(record["source_rect"], [x, y, 256, 256])
++                    cell = color.crop((x, y, x + 256, y + 256))
++                    material_cell = material.crop((x, y, x + 256, y + 256))
++                    bbox = cell.getchannel("A").getbbox()
++                    self.assertIsNotNone(bbox, f"{ecology}/{name} is empty")
++                    assert bbox is not None
++                    self.assertGreaterEqual(
++                        min(bbox[0], bbox[1], 256 - bbox[2], 256 - bbox[3]), 8)
++                    self.assertEqual(cell.getchannel("A").tobytes(),
++                                     material_cell.getchannel("A").tobytes())
++                    components = alpha_components(cell)
++                    self.assertTrue(components)
++                    if len(components) > 1:
++                        self.assertLessEqual(components[1] * 100,
++                                             components[0] * 2)
++                    self.assertGreaterEqual(components[0] * 100,
++                                            sum(components) * 95)
++                    self.assertEqual(record["alpha_bbox"], list(bbox))
++                    expected_anchor = [(bbox[0] + bbox[2]) // 2, bbox[3]]
++                    self.assertEqual(record["foot_anchor"], expected_anchor)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/platform/material_asset_validation_tests.cpp b/tests/platform/material_asset_validation_tests.cpp
+index c325ab1..c861bb6 100644
+--- a/tests/platform/material_asset_validation_tests.cpp
++++ b/tests/platform/material_asset_validation_tests.cpp
+@@ -876,24 +876,24 @@ arpg::test::Failure material_manifest_rejects_oversized_atlas_and_memory_budget(
+         {MaterialAtlasId::actors, 2048, 2048, 128U * kMiB},
+         {MaterialAtlasId::effects_ui, 1, 1, 1U},
+     }};
+     const MaterialManifestDefinition over_budget_manifest{
+         over_budget.data(), over_budget.size(), nullptr, 0U};
+     ARPG_REQUIRE(!arpg::platform::validate_material_manifest(over_budget_manifest).valid);
+     return {};
+ }
+ 
+ arpg::test::Failure material_manifest_reports_true_resident_peak() noexcept {
+-    constexpr std::size_t kExpectedFullPackBytes = 302'170'112U;
+-    constexpr std::size_t kExpectedResidentPeakBytes = 199'540'736U;
+-    constexpr std::size_t kExpectedFireEcologyPeakBytes = 163'708'928U;
+-    constexpr std::size_t kExpectedNonFirePeakBytes = 155'205'632U;
++    constexpr std::size_t kExpectedFullPackBytes = 304'267'264U;
++    constexpr std::size_t kExpectedResidentPeakBytes = 201'637'888U;
++    constexpr std::size_t kExpectedFireEcologyPeakBytes = 165'806'080U;
++    constexpr std::size_t kExpectedNonFirePeakBytes = 157'302'784U;
+     const MaterialManifestDefinition manifest =
+         arpg::platform::default_material_manifest();
+     ARPG_REQUIRE(arpg::platform::full_pack_bytes(manifest)
+         == kExpectedFullPackBytes);
+     ARPG_REQUIRE(arpg::platform::resident_peak_bytes(manifest)
+         == kExpectedResidentPeakBytes);
+     ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).valid);
+ 
+     for (const MaterialEcology ecology : {MaterialEcology::fire,
+              MaterialEcology::water, MaterialEcology::lightning,
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 76cd06b..ca27db5 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -100,13 +100,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 447,
++    return arpg::test::run_suites(suites, 449,
+         "HUD and UI material slice contract");
+ }
+diff --git a/tests/platform/room_background_render_plan_tests.cpp b/tests/platform/room_background_render_plan_tests.cpp
+index 41199bc..c46242e 100644
+--- a/tests/platform/room_background_render_plan_tests.cpp
++++ b/tests/platform/room_background_render_plan_tests.cpp
+@@ -26,21 +26,21 @@ const MaterialAtlasDefinition* find_atlas(MaterialAtlasId id) noexcept {
+ arpg::test::Failure background_manifest_preserves_old_ids_and_adds_four_pairs() noexcept {
+     static_assert(static_cast<std::size_t>(MaterialAtlasId::ui_material) == 21U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::fire_room_background) == 22U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::water_room_background) == 23U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::lightning_room_background) == 24U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::chaos_room_background) == 25U);
+-    static_assert(static_cast<std::size_t>(MaterialAtlasId::count) == 26U);
++    static_assert(static_cast<std::size_t>(MaterialAtlasId::count) == 27U);
+ 
+     const auto manifest = arpg::platform::default_material_manifest();
+     ARPG_REQUIRE(manifest.atlas_count
+         == static_cast<std::size_t>(MaterialAtlasId::count));
+     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+         ARPG_REQUIRE(static_cast<std::size_t>(manifest.atlases[index].id)
+             == index);
+     }
+ 
+     struct Expected final {
+diff --git a/tools/build_chaos_material_slice.py b/tools/build_chaos_material_slice.py
+index d163c73..de2c6cb 100644
+--- a/tools/build_chaos_material_slice.py
++++ b/tools/build_chaos_material_slice.py
+@@ -86,36 +86,24 @@ def boost_warning_accents(image: Image.Image) -> Image.Image:
+         for x in range(result.width):
+             red, green, blue, alpha = pixels[x, y]
+             if (alpha > 96 and green >= red + 15 and green >= blue + 20
+                     and green > 70):
+                 pixels[x, y] = (
+                     max(red, 88), max(green, 180), min(blue, 92), alpha)
+     return result
+ 
+ 
+ def build_environment() -> None:
+-    source = Image.open(SOURCE / "chaos-environment-concept-v1.png").convert("RGBA")
+-    atlas = Image.new("RGBA", (ENV_SIZE, ENV_SIZE))
+-    room = ImageEnhance.Contrast(cover(source, (512, 512))).enhance(1.10)
+-    atlas.alpha_composite(room, (0, 0))
+-    crops = {
+-        (512, 0): (350, 0, 910, 470),       # sealed rift door
+-        (512, 256): (860, 100, 1254, 610),  # warning obelisk
+-        (0, 512): (0, 300, 470, 790),       # abyss hole
+-        (256, 512): (0, 40, 320, 470),      # rift lantern
+-        (512, 512): (900, 540, 1254, 1080), # anomaly condenser
+-    }
+-    for position, box in crops.items():
+-        atlas.alpha_composite(contain(source.crop(box), (256, 256)), position)
+-    atlas = boost_warning_accents(atlas)
+-    atlas.save(OUTPUT / "chaos_environment.png")
+-    material_map(atlas).save(OUTPUT / "chaos_environment_material.png")
++    from build_environment_props import _atomic_image, build_ecology_environment
++    atlas, material, _ = build_ecology_environment("chaos", ROOT)
++    _atomic_image(OUTPUT / "chaos_environment.png", atlas)
++    _atomic_image(OUTPUT / "chaos_environment_material.png", material)
+ 
+ 
+ def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:
+     bbox = image.getchannel("A").getbbox()
+     if bbox is None:
+         raise RuntimeError("source character has no visible pixels")
+     return bbox
+ 
+ 
+ def visible_pixel_set(frame: Image.Image,
+diff --git a/tools/build_environment_props.py b/tools/build_environment_props.py
+new file mode 100644
+index 0000000..890f681
+--- /dev/null
++++ b/tools/build_environment_props.py
+@@ -0,0 +1,300 @@
++"""Deterministically export the shared element-door and ecology prop atlases."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import os
++from collections import deque
++from pathlib import Path
++from tempfile import NamedTemporaryFile
++
++from PIL import Image, ImageChops, ImageEnhance, ImageFilter
++
++
++ECOLOGIES = ("water", "lightning", "chaos")
++CELL = 256
++LAYOUT = {
++    "wall": (512, 0),
++    "surface_prop": (512, 256),
++    "hole": (0, 512),
++    "light": (256, 512),
++    "solid_prop": (512, 512),
++}
++CONCEPT_CROPS = {
++    "water": {
++        "surface_prop": (690, 900, 1240, 1254),
++        "hole": (20, 880, 690, 1254),
++        "light": (965, 420, 1254, 840),
++        "solid_prop": (1000, 295, 1254, 620),
++    },
++    "lightning": {
++        "surface_prop": (860, 100, 1254, 610),
++        "hole": (0, 300, 470, 790),
++        "light": (0, 40, 320, 470),
++        "solid_prop": (900, 540, 1254, 1080),
++    },
++    "chaos": {
++        "surface_prop": (860, 100, 1254, 610),
++        "hole": (0, 300, 470, 790),
++        "light": (0, 40, 320, 470),
++        "solid_prop": (900, 540, 1254, 1080),
++    },
++}
++
++
++def _components(alpha: Image.Image, threshold: int = 8) -> list[set[tuple[int, int]]]:
++    remaining = {(x, y) for y in range(alpha.height) for x in range(alpha.width)
++                 if alpha.getpixel((x, y)) > threshold}
++    result: list[set[tuple[int, int]]] = []
++    while remaining:
++        component = {remaining.pop()}
++        queue = deque(component)
++        while queue:
++            x, y = queue.popleft()
++            for dx, dy in ((-1, -1), (-1, 0), (-1, 1), (0, -1),
++                           (0, 1), (1, -1), (1, 0), (1, 1)):
++                point = (x + dx, y + dy)
++                if point in remaining:
++                    remaining.remove(point)
++                    component.add(point)
++                    queue.append(point)
++        result.append(component)
++    return sorted(result, key=len, reverse=True)
++
++
++def _bounds(points: set[tuple[int, int]]) -> tuple[int, int, int, int]:
++    return (min(x for x, _ in points), min(y for _, y in points),
++            max(x for x, _ in points) + 1, max(y for _, y in points) + 1)
++
++
++def _background_to_alpha(image: Image.Image) -> Image.Image:
++    """Remove border-connected near-background pixels using RGB distance 28."""
++    image = image.convert("RGBA")
++    rgb = image.convert("RGB")
++    border = []
++    for x in range(rgb.width):
++        border.extend((rgb.getpixel((x, 0)), rgb.getpixel((x, rgb.height - 1))))
++    for y in range(1, rgb.height - 1):
++        border.extend((rgb.getpixel((0, y)), rgb.getpixel((rgb.width - 1, y))))
++    reference = tuple(sorted(channel[index] for channel in border)[len(border) // 2]
++                      for index in range(3))
++    def close(pixel: tuple[int, int, int]) -> bool:
++        return sum((pixel[index] - reference[index]) ** 2 for index in range(3)) <= 28 ** 2
++    transparent: set[tuple[int, int]] = set()
++    queue = deque()
++    for x in range(rgb.width):
++        queue.extend(((x, 0), (x, rgb.height - 1)))
++    for y in range(1, rgb.height - 1):
++        queue.extend(((0, y), (rgb.width - 1, y)))
++    while queue:
++        point = queue.popleft()
++        if point in transparent:
++            continue
++        x, y = point
++        if not close(rgb.getpixel(point)):
++            continue
++        transparent.add(point)
++        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
++            next_point = (x + dx, y + dy)
++            if 0 <= next_point[0] < rgb.width and 0 <= next_point[1] < rgb.height:
++                queue.append(next_point)
++    alpha = image.getchannel("A").copy()
++    for point in transparent:
++        alpha.putpixel(point, 0)
++    image.putalpha(alpha)
++    return image
++
++
++def _retain_subject(image: Image.Image, pad: int, keep_small: bool) -> Image.Image:
++    # The exported cell is 256px square; scanning larger concept crops only
++    # changes work, not the retained silhouette at its final sampling rate.
++    if max(image.size) > CELL:
++        scale = CELL / max(image.size)
++        image = image.resize((round(image.width * scale), round(image.height * scale)),
++                             Image.Resampling.LANCZOS)
++    image = _background_to_alpha(image)
++    components = _components(image.getchannel("A"))
++    if not components:
++        raise RuntimeError("source has no foreground component")
++    largest = len(components[0])
++    keep = [component for component in components
++            if component is components[0] or (keep_small and len(component) * 100 >= largest * 2)]
++    alpha = Image.new("L", image.size)
++    for component in keep:
++        for point in component:
++            alpha.putpixel(point, image.getchannel("A").getpixel(point))
++    alpha = alpha.filter(ImageFilter.GaussianBlur(2))
++    image.putalpha(alpha)
++    bbox = alpha.getbbox()
++    if bbox is None:
++        raise RuntimeError("foreground disappeared during alpha cleanup")
++    left, top, right, bottom = bbox
++    if left < pad or top < pad or right > image.width - pad or bottom > image.height - pad:
++        # Cropping can legally touch its source boundary; padding is applied below.
++        pass
++    return image.crop((max(0, left - pad), max(0, top - pad),
++                       min(image.width, right + pad), min(image.height, bottom + pad)))
++
++
++def _fit_to_cell(subject: Image.Image, margin: int, foot: int) -> Image.Image:
++    subject = subject.convert("RGBA")
++    # Reserve two extra pixels for antialiased edge expansion after resampling.
++    usable = CELL - margin * 2 - 4
++    scale = min(usable / subject.width, usable / subject.height, 1.0)
++    size = (max(1, round(subject.width * scale)), max(1, round(subject.height * scale)))
++    subject = subject.resize(size, Image.Resampling.LANCZOS)
++    canvas = Image.new("RGBA", (CELL, CELL))
++    canvas.alpha_composite(subject, ((CELL - subject.width) // 2, foot - subject.height))
++    bbox = canvas.getchannel("A").getbbox()
++    if bbox is None or min(bbox[0], bbox[1], CELL - bbox[2], CELL - bbox[3]) < margin:
++        raise RuntimeError("subject violates output safe margin")
++    return canvas
++
++
++def _material_map(color: Image.Image) -> Image.Image:
++    red, green, blue, alpha = color.convert("RGBA").split()
++    luminance = Image.merge("RGB", (red, green, blue)).convert("L")
++    roughness = ImageChops.invert(luminance).point(lambda value: 70 + value * 150 // 255)
++    emissive = ImageChops.subtract(blue, red).point(lambda value: min(255, value * 3))
++    metalness = luminance.point(lambda value: 65 + value * 145 // 255)
++    return Image.merge("RGBA", (roughness, emissive, metalness, alpha))
++
++
++def _boost_warning_accents(image: Image.Image, ecology: str) -> Image.Image:
++    if ecology not in {"lightning", "chaos"}:
++        return image
++    result = image.copy()
++    pixels = result.load()
++    for y in range(result.height):
++        for x in range(result.width):
++            red, green, blue, alpha = pixels[x, y]
++            if alpha > 96 and red >= green + 12 and green >= blue + 12 and red > 80:
++                pixels[x, y] = (max(red, 194), max(green, 154), min(blue, 88), alpha)
++    return result
++
++
++def _atomic_image(path: Path, image: Image.Image) -> None:
++    with NamedTemporaryFile(suffix=".png", dir=path.parent, delete=False) as temporary:
++        temp = Path(temporary.name)
++    try:
++        image.save(temp)
++        os.replace(temp, path)
++    finally:
++        temp.unlink(missing_ok=True)
++
++
++def _atomic_json(path: Path, value: dict) -> None:
++    with NamedTemporaryFile(mode="w", suffix=".json", dir=path.parent,
++                            encoding="utf-8", delete=False) as temporary:
++        json.dump(value, temporary, indent=2, sort_keys=True)
++        temporary.write("\n")
++        temp = Path(temporary.name)
++    try:
++        os.replace(temp, path)
++    finally:
++        temp.unlink(missing_ok=True)
++
++
++def build_element_doors(root: Path) -> tuple[Image.Image, Image.Image]:
++    output = Image.new("RGBA", (CELL * 4, CELL))
++    sources = (("fire", root / "assets" / "stage12" / "fire_environment.png",
++                (768, 0, 1024, 256)),
++               # These are the exact door-source regions used by the old
++               # ecology builders.  Reading the authored source keeps repeat
++               # generation independent from the atlas we are replacing.
++               ("water", root / "art_source" / "stage12" / "water-environment-concept-v1.png",
++                (360, 0, 900, 350)),
++               ("lightning", root / "art_source" / "stage12" / "lightning-environment-concept-v1.png",
++                (350, 0, 910, 470)),
++               ("chaos", root / "art_source" / "stage12" / "chaos-environment-concept-v1.png",
++                (350, 0, 910, 470)))
++    assets = root / "assets" / "stage12"
++    for index, (name, path, box) in enumerate(sources):
++        source = Image.open(path).convert("RGBA").crop(box)
++        if max(source.size) > CELL:
++            scale = CELL / max(source.size)
++            source = source.resize((round(source.width * scale), round(source.height * scale)),
++                                   Image.Resampling.LANCZOS)
++        components = _components(source.getchannel("A"))
++        if not components:
++            raise RuntimeError(f"{name}: door source is empty")
++        alpha = Image.new("L", source.size)
++        for point in components[0]: alpha.putpixel(point, source.getchannel("A").getpixel(point))
++        source.putalpha(alpha)
++        bbox = alpha.getbbox()
++        assert bbox is not None
++        source = source.crop((max(0, bbox[0] - 12), max(0, bbox[1] - 12),
++                              min(CELL, bbox[2] + 12), min(CELL, bbox[3] + 12)))
++        output.alpha_composite(_fit_to_cell(source, 12, 244), (index * CELL, 0))
++    return output, _material_map(output)
++
++
++def build_ecology_environment(ecology: str, root: Path) -> tuple[Image.Image, Image.Image, dict]:
++    if ecology not in ECOLOGIES:
++        raise ValueError(f"unknown ecology: {ecology}")
++    assets = root / "assets" / "stage12"
++    source_root = root / "art_source" / "stage12"
++    concept = Image.open(source_root / f"{ecology}-environment-concept-v1.png").convert("RGBA")
++    atlas = Image.new("RGBA", (768, 768))
++    room = ImageEnhance.Contrast(concept.resize((512, 512), Image.Resampling.LANCZOS)).enhance(1.08)
++    atlas.alpha_composite(room, (0, 0))
++    objects: dict[str, dict] = {}
++    wall = Image.open(source_root / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png").convert("RGBA")
++    object_sources = {"wall": wall}
++    object_sources.update({name: concept.crop(box) for name, box in CONCEPT_CROPS[ecology].items()})
++    for name, position in LAYOUT.items():
++        # The concept crops contain decorative fragments.  Without semantic
++        # linkage evidence they are unrelated, so retain the single subject.
++        isolated = _retain_subject(object_sources[name], 8, keep_small=False)
++        cell = _fit_to_cell(isolated, 8, 244)
++        atlas.alpha_composite(cell, position)
++        bbox = cell.getchannel("A").getbbox()
++        if bbox is None:
++            raise RuntimeError(f"{ecology}/{name}: empty output")
++        components = _components(cell.getchannel("A"))
++        if len(components) > 1 and len(components[1]) * 100 > len(components[0]) * 2:
++            raise RuntimeError(f"{ecology}/{name}: unrelated second component")
++        objects[name] = {"source_rect": [position[0], position[1], CELL, CELL],
++                         "alpha_bbox": list(bbox),
++                         "foot_anchor": [(bbox[0] + bbox[2]) // 2, bbox[3]]}
++    atlas = _boost_warning_accents(atlas, ecology)
++    return atlas, _material_map(atlas), {"objects": objects}
++
++
++def validate_outputs(root: Path) -> None:
++    assets = root / "assets" / "stage12"
++    color = Image.open(assets / "element_doors.png").convert("RGBA")
++    material = Image.open(assets / "element_doors_material.png").convert("RGBA")
++    if color.size != (1024, 256) or color.getchannel("A").tobytes() != material.getchannel("A").tobytes():
++        raise RuntimeError("element doors color/material validation failed")
++    for ecology in ECOLOGIES:
++        color = Image.open(assets / f"{ecology}_environment.png").convert("RGBA")
++        material = Image.open(assets / f"{ecology}_environment_material.png").convert("RGBA")
++        if color.size != (768, 768) or color.getchannel("A").tobytes() != material.getchannel("A").tobytes():
++            raise RuntimeError(f"{ecology}: color/material validation failed")
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
++    args = parser.parse_args()
++    root = args.root.resolve()
++    assets = root / "assets" / "stage12"
++    assets.mkdir(parents=True, exist_ok=True)
++    door_color, door_material = build_element_doors(root)
++    staged: list[tuple[Path, Image.Image]] = [(assets / "element_doors.png", door_color),
++                                                (assets / "element_doors_material.png", door_material)]
++    report = {"schema_version": 1, "ecologies": {}}
++    for ecology in ECOLOGIES:
++        color, material, record = build_ecology_environment(ecology, root)
++        staged.extend(((assets / f"{ecology}_environment.png", color),
++                       (assets / f"{ecology}_environment_material.png", material)))
++        report["ecologies"][ecology] = record
++    for path, image in staged: _atomic_image(path, image)
++    _atomic_json(assets / "environment-props-build.json", report)
++    validate_outputs(root)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/build_lightning_material_slice.py b/tools/build_lightning_material_slice.py
+index dcec44b..17fe9ec 100644
+--- a/tools/build_lightning_material_slice.py
++++ b/tools/build_lightning_material_slice.py
+@@ -77,36 +77,24 @@ def boost_warning_accents(image: Image.Image) -> Image.Image:
+         for x in range(result.width):
+             red, green, blue, alpha = pixels[x, y]
+             if (alpha > 96 and red >= green + 12 and green >= blue + 12
+                     and red > 80):
+                 pixels[x, y] = (
+                     max(red, 194), max(green, 154), min(blue, 88), alpha)
+     return result
+ 
+ 
+ def build_environment() -> None:
+-    source = Image.open(SOURCE / "lightning-environment-concept-v1.png").convert("RGBA")
+-    atlas = Image.new("RGBA", (ENV_SIZE, ENV_SIZE))
+-    room = ImageEnhance.Contrast(cover(source, (512, 512))).enhance(1.10)
+-    atlas.alpha_composite(room, (0, 0))
+-    crops = {
+-        (512, 0): (350, 0, 910, 470),       # sealed storm door
+-        (512, 256): (860, 100, 1254, 610),  # capacitor bank
+-        (0, 512): (0, 300, 470, 790),       # energized abyss hole
+-        (256, 512): (0, 40, 320, 470),      # arc lamp
+-        (512, 512): (900, 540, 1254, 1080), # grounding rod
+-    }
+-    for position, box in crops.items():
+-        atlas.alpha_composite(contain(source.crop(box), (256, 256)), position)
+-    atlas = boost_warning_accents(atlas)
+-    atlas.save(OUTPUT / "lightning_environment.png")
+-    material_map(atlas).save(OUTPUT / "lightning_environment_material.png")
++    from build_environment_props import _atomic_image, build_ecology_environment
++    atlas, material, _ = build_ecology_environment("lightning", ROOT)
++    _atomic_image(OUTPUT / "lightning_environment.png", atlas)
++    _atomic_image(OUTPUT / "lightning_environment_material.png", material)
+ 
+ 
+ def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:
+     bbox = image.getchannel("A").getbbox()
+     if bbox is None:
+         raise RuntimeError("source character has no visible pixels")
+     return bbox
+ 
+ 
+ def alpha_components(frame: Image.Image,
+diff --git a/tools/build_water_material_slice.py b/tools/build_water_material_slice.py
+index bcad7c5..000b362 100644
+--- a/tools/build_water_material_slice.py
++++ b/tools/build_water_material_slice.py
+@@ -54,36 +54,24 @@ def material_map(color: Image.Image) -> Image.Image:
+     rgba = color.convert("RGBA")
+     r, g, b, a = rgba.split()
+     luminance = Image.merge("RGB", (r, g, b)).convert("L")
+     roughness = ImageChops.invert(luminance).point(lambda value: 70 + value * 150 // 255)
+     cyan = ImageChops.subtract(b, r).point(lambda value: min(255, value * 3))
+     metal = luminance.point(lambda value: 65 + value * 145 // 255)
+     return Image.merge("RGBA", (roughness, cyan, metal, a))
+ 
+ 
+ def build_environment() -> None:
+-    source = Image.open(SOURCE / "water-environment-concept-v1.png").convert("RGBA")
+-    atlas = Image.new("RGBA", (ENV_SIZE, ENV_SIZE))
+-    room = ImageEnhance.Contrast(cover(source, (512, 512))).enhance(1.08)
+-    atlas.alpha_composite(room, (0, 0))
+-    crops = {
+-        (512, 0): (360, 0, 900, 350),       # sealed door
+-        (512, 256): (690, 900, 1240, 1254), # bronze drainage grate
+-        (0, 512): (20, 880, 690, 1254),     # flooded abyss opening
+-        (256, 512): (965, 420, 1254, 840),  # cyan glass lantern
+-        (512, 512): (1000, 295, 1254, 620), # mineral coral
+-    }
+-    for position, box in crops.items():
+-        prop = contain(source.crop(box), (256, 256))
+-        atlas.alpha_composite(prop, position)
+-    atlas.save(OUTPUT / "water_environment.png")
+-    material_map(atlas).save(OUTPUT / "water_environment_material.png")
++    from build_environment_props import _atomic_image, build_ecology_environment
++    atlas, material, _ = build_ecology_environment("water", ROOT)
++    _atomic_image(OUTPUT / "water_environment.png", atlas)
++    _atomic_image(OUTPUT / "water_environment_material.png", material)
+ 
+ 
+ def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:
+     bbox = image.getchannel("A").getbbox()
+     if bbox is None:
+         raise RuntimeError("source character has no visible pixels")
+     return bbox
+ 
+ 
+ def sequence_frames(role: str) -> list[Image.Image]:

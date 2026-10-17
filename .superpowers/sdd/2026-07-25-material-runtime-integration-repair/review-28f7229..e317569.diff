@@ -1,0 +1,143 @@
+# Review package: 28f7229..e317569
+
+## Commits
+e317569 fix: fail closed on invalid published doors
+
+## Files changed
+ .../environment_prop_asset_pipeline_tests.py       | 38 ++++++++++++++++++++++
+ tools/build_environment_props.py                   | 17 +++++++---
+ 2 files changed, 51 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/tests/platform/environment_prop_asset_pipeline_tests.py b/tests/platform/environment_prop_asset_pipeline_tests.py
+index 8dfd67e..f6035fd 100644
+--- a/tests/platform/environment_prop_asset_pipeline_tests.py
++++ b/tests/platform/environment_prop_asset_pipeline_tests.py
+@@ -1,17 +1,18 @@
+ """Contract tests for isolated Stage 12 ecology props and public doors."""
+ 
+ from __future__ import annotations
+ 
+ import hashlib
+ import json
+ import os
++import shutil
+ import subprocess
+ import sys
+ import tempfile
+ import unittest
+ from collections import deque
+ from pathlib import Path
+ 
+ from PIL import Image
+ 
+ 
+@@ -117,20 +118,57 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
+             outputs.extend((ROOT / f"assets/stage12/{ecology}_environment.png",
+                             ROOT / f"assets/stage12/{ecology}_environment_material.png"))
+         before = {path: sha256(path) for path in outputs}
+         environment = os.environ | {"ARPG_ENVIRONMENT_PROPS_FAIL_VALIDATION": "1"}
+         result = subprocess.run([sys.executable, str(BUILDER), "--root", str(ROOT)],
+                                 cwd=ROOT, text=True, capture_output=True, env=environment)
+         self.assertNotEqual(result.returncode, 0)
+         self.assertIn("forced staged validation failure", result.stderr)
+         self.assertEqual({path: sha256(path) for path in outputs}, before)
+ 
++    def test_invalid_published_door_hash_fails_closed_without_reusing_wall_cells(self) -> None:
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            assets = root / "assets" / "stage12"
++            assets.mkdir(parents=True)
++            outputs = [assets / "element_doors.png", assets / "element_doors_material.png",
++                       assets / "environment-props-build.json"]
++            for ecology in ECOLOGIES:
++                outputs.extend((assets / f"{ecology}_environment.png",
++                                assets / f"{ecology}_environment_material.png"))
++            for output in outputs:
++                shutil.copy2(ROOT / "assets/stage12" / output.name, output)
++            shutil.copy2(ROOT / "assets/stage12/fire_environment.png",
++                         assets / "fire_environment.png")
++            source_root = ROOT / "art_source" / "stage12"
++            for ecology in ECOLOGIES:
++                target = root / "art_source" / "stage12"
++                (target / "backgrounds" / ecology).mkdir(parents=True, exist_ok=True)
++                shutil.copy2(source_root / f"{ecology}-environment-concept-v1.png",
++                             target / f"{ecology}-environment-concept-v1.png")
++                shutil.copy2(source_root / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png",
++                             target / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png")
++                with Image.open(assets / f"{ecology}_environment.png").convert("RGBA") as image:
++                    image.paste((17, 19, 23, 255), (512, 0, 768, 256))
++                    image.save(assets / f"{ecology}_environment.png")
++            report_path = assets / "environment-props-build.json"
++            report = json.loads(report_path.read_text(encoding="utf-8"))
++            report["element_doors"]["rgba_sha256"] = "0" * 64
++            report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
++                                   encoding="utf-8")
++            before = {path: sha256(path) for path in outputs}
++            result = subprocess.run([sys.executable, str(BUILDER), "--root", str(root)],
++                                    cwd=root, text=True, capture_output=True)
++            self.assertNotEqual(result.returncode, 0)
++            self.assertIn("published element doors validation failed", result.stderr)
++            self.assertEqual({path: sha256(path) for path in outputs}, before)
++
+     def test_builder_repeat_generation_is_byte_for_byte_stable(self) -> None:
+         self.assertTrue(BUILDER.is_file(), "shared environment prop builder is missing")
+         outputs = [
+             ROOT / "assets/stage12/element_doors.png",
+             ROOT / "assets/stage12/element_doors_material.png",
+             REPORT,
+         ]
+         for ecology in ECOLOGIES:
+             outputs.extend((
+                 ROOT / f"assets/stage12/{ecology}_environment.png",
+diff --git a/tools/build_environment_props.py b/tools/build_environment_props.py
+index 0276229..8cb7137 100644
+--- a/tools/build_environment_props.py
++++ b/tools/build_environment_props.py
+@@ -195,33 +195,42 @@ def _stage_json(path: Path, value: dict) -> Path:
+ 
+ def _rgba_hash(image: Image.Image) -> str:
+     return hashlib.sha256(image.convert("RGBA").tobytes()).hexdigest()
+ 
+ 
+ def _canonical_element_doors(root: Path) -> Image.Image | None:
+     assets = root / "assets" / "stage12"
+     report_path = assets / "environment-props-build.json"
+     color_path = assets / "element_doors.png"
+     material_path = assets / "element_doors_material.png"
+-    if not all(path.is_file() for path in (report_path, color_path, material_path)):
++    # Legacy atlas bootstrap is legal only for a root with no published report.
++    if not report_path.exists():
+         return None
+     try:
++        if not report_path.is_file() or not color_path.is_file() or not material_path.is_file():
++            raise RuntimeError("published report or public door files are missing")
+         report = json.loads(report_path.read_text(encoding="utf-8"))
++        if (report.get("schema_version") != 1
++                or set(report.get("ecologies", {})) != set(ECOLOGIES)):
++            raise RuntimeError("published report schema is invalid")
+         expected_hash = report["element_doors"]["rgba_sha256"]
++        if not isinstance(expected_hash, str) or len(expected_hash) != 64:
++            raise RuntimeError("published public door hash is invalid")
+         color = Image.open(color_path).convert("RGBA")
+         material = Image.open(material_path).convert("RGBA")
+-    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+-        return None
++    except (OSError, KeyError, TypeError, json.JSONDecodeError, RuntimeError) as error:
++        raise RuntimeError(f"published element doors validation failed: {error}") from error
+     if (color.size != (1024, 256) or material.size != color.size
+             or color.getchannel("A").tobytes() != material.getchannel("A").tobytes()
++            or material.tobytes() != _material_map(color).tobytes()
+             or _rgba_hash(color) != expected_hash):
+-        return None
++        raise RuntimeError("published element doors validation failed")
+     return color.copy()
+ 
+ 
+ def build_element_doors(root: Path) -> tuple[Image.Image, Image.Image]:
+     canonical = _canonical_element_doors(root)
+     if canonical is not None:
+         return canonical, _material_map(canonical)
+     output = Image.new("RGBA", (CELL * 4, CELL))
+     sources = (("fire", root / "assets" / "stage12" / "fire_environment.png",
+                 (768, 0, 1024, 256)),

@@ -2731,6 +2731,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             TraceLog(LOG_ERROR, "raylib window initialization failed");
             return HostExitCode::window_initialization_failed;
         }
+        // Cap presentation at 240 Hz while the deterministic simulation stays
+        // at 60 Hz. VSync remains user-controlled and may impose a lower cap.
+        SetTargetFPS(240);
         const bool directory_changed = config.validation_capture
             ? ChangeDirectory(save_directory->string().c_str())
             : ChangeDirectory(GetApplicationDirectory());

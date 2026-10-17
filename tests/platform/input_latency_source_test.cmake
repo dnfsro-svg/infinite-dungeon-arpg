@@ -7,8 +7,14 @@ file(READ "${RAYLIB_SOURCE_DIR}/combat_renderer.cpp" RENDERER_SOURCE)
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_SANITIZED_SOURCE)
 
-if(HOST_SOURCE MATCHES "SetTargetFPS[ \t\r\n]*\\(")
-    message(FATAL_ERROR "raylib host applies a software frame cap on top of VSync")
+string(REGEX MATCHALL "SetTargetFPS[ \t\r\n]*\\(" TARGET_FPS_CALLS
+    "${HOST_SOURCE}")
+list(LENGTH TARGET_FPS_CALLS TARGET_FPS_CALL_COUNT)
+if(NOT TARGET_FPS_CALL_COUNT EQUAL 1
+        OR NOT HOST_SOURCE MATCHES
+            "SetTargetFPS[ \t\r\n]*\\([ \t\r\n]*240[ \t\r\n]*\\)")
+    message(FATAL_ERROR
+        "raylib host must apply exactly one 240 FPS render cap")
 endif()
 if(NOT HOST_SOURCE MATCHES "FLAG_VSYNC_HINT")
     message(FATAL_ERROR "raylib host must retain VSync")
@@ -441,13 +447,17 @@ string(FIND "${HOST_ENTRY_SOURCE}" "make_host_settings_notice(loaded.status)"
 string(FIND "${HOST_ENTRY_SOURCE}" "SetConfigFlags(initial_window_flags(committed_settings))"
     INITIAL_FLAGS_INDEX)
 string(FIND "${HOST_ENTRY_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
+string(FIND "${HOST_ENTRY_SOURCE}" "SetTargetFPS(240)" TARGET_FPS_INDEX)
 if(SETTINGS_LOAD_INDEX EQUAL -1 OR SETTINGS_NOTICE_INDEX EQUAL -1
         OR INITIAL_FLAGS_INDEX EQUAL -1
         OR INIT_WINDOW_INDEX EQUAL -1
+        OR TARGET_FPS_INDEX EQUAL -1
         OR NOT SETTINGS_LOAD_INDEX LESS SETTINGS_NOTICE_INDEX
         OR NOT SETTINGS_LOAD_INDEX LESS INITIAL_FLAGS_INDEX
-        OR NOT INITIAL_FLAGS_INDEX LESS INIT_WINDOW_INDEX)
-    message(FATAL_ERROR "settings must load before initial flags and InitWindow")
+        OR NOT INITIAL_FLAGS_INDEX LESS INIT_WINDOW_INDEX
+        OR NOT INIT_WINDOW_INDEX LESS TARGET_FPS_INDEX)
+    message(FATAL_ERROR
+        "settings, InitWindow, and the 240 FPS cap must stay in safe order")
 endif()
 
 if(HOST_ENTRY_SOURCE MATCHES

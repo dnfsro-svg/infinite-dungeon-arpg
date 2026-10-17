@@ -1,0 +1,1132 @@
+# Review package: 765256866ace216f128e03ef26d24173268601d0..ca49689
+
+## Commits
+ca49689 fix: render complete active skill material timelines
+
+## Files changed
+ src/platform/raylib/active_skill_renderer.cpp | 164 +++++++++++++-------------
+ src/platform/raylib/active_skill_renderer.hpp |  26 +++-
+ src/platform/raylib/active_skill_view.cpp     |  15 +++
+ src/platform/raylib/active_skill_view.hpp     |   5 +
+ src/platform/raylib/actor_renderer.cpp        |   9 +-
+ src/platform/raylib/combat_renderer.cpp       |  19 ++-
+ src/platform/raylib/combat_renderer.hpp       |   1 +
+ src/platform/raylib/material_asset_types.hpp  |   2 +
+ src/platform/raylib/material_manifest.hpp     |  10 ++
+ tests/platform/active_skill_asset_tests.cpp   |  51 ++++++++
+ tests/platform/active_skill_view_tests.cpp    | 128 ++++++++++++++++----
+ tests/platform/platform_test_main.cpp         |   2 +-
+ 12 files changed, 316 insertions(+), 116 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/active_skill_renderer.cpp b/src/platform/raylib/active_skill_renderer.cpp
+index d6c90fc..fad9f90 100644
+--- a/src/platform/raylib/active_skill_renderer.cpp
++++ b/src/platform/raylib/active_skill_renderer.cpp
+@@ -17,45 +17,20 @@
+ #include <string>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kPi = 3.14159265358979323846F;
+ constexpr std::uint64_t kFlashTicks = 7U;
+ constexpr std::uint16_t kDrawSlashImpactTick = 46U;
+ constexpr std::uint16_t kStormFinisherTick = 324U;
+ constexpr std::size_t kStormGroundSwordCount = 12U;
+-constexpr std::size_t kStormAtlasPreFinisherFrames = 16U;
+-constexpr std::size_t kStormAtlasFinisherFirstFrame = 17U;
+-constexpr std::size_t kStormAtlasFinisherFrameCount = 3U;
+-constexpr std::uint16_t kStormFinisherFramesBegin = 129U;
+-
+-[[nodiscard]] std::size_t storm_atlas_frame(
+-    const combat::ActiveSkillSnapshot& skill) noexcept {
+-    const bool finisher_window = skill.phase == combat::ActiveSkillPhase::finisher
+-        || (skill.phase == combat::ActiveSkillPhase::recovery
+-            && skill.elapsed_ticks >= kStormFinisherTick
+-            && skill.elapsed_ticks <= kStormFinisherTick + kFlashTicks);
+-    if (finisher_window) {
+-        const std::size_t offset = skill.frame_index
+-            > kStormFinisherFramesBegin
+-            ? static_cast<std::size_t>(skill.frame_index
+-                - kStormFinisherFramesBegin)
+-            : 0U;
+-        return kStormAtlasFinisherFirstFrame + std::min<std::size_t>(
+-            offset, kStormAtlasFinisherFrameCount - 1U);
+-    }
+-    return std::min<std::size_t>(
+-        static_cast<std::size_t>(skill.frame_index)
+-            * kStormAtlasPreFinisherFrames / kStormFinisherFramesBegin,
+-        kStormAtlasPreFinisherFrames - 1U);
+-}
+ 
+ [[nodiscard]] bool recent_finisher_event(
+     const combat::CombatSnapshot& snapshot,
+     const combat::CombatEvent* event,
+     std::uint64_t& age) noexcept {
+     if (event == nullptr
+         || event->skill != skills::ActiveSkillId::storm_swords
+         || !event->finisher || snapshot.tick < event->tick) {
+         return false;
+     }
+@@ -68,21 +43,20 @@ void draw_skill_text(Font font, const char* text,
+     if (text == nullptr || text[0] == '\0') return;
+     const UiTextContrastStyle style = ui_text_contrast_style();
+     color.a = 255U;
+     if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+         color = style.muted;
+     }
+     draw_crisp_ui_text(font, text, {x, y}, size, 0.5F, color);
+ }
+ 
+ void draw_draw_slash(const DrawSlashVisualPlan& plan,
+-    const MaterialPack& material_pack,
+     float width, float height) noexcept {
+     if (!plan.visible) return;
+     const ScreenProjection projected = project_combat_position(
+         plan.center, width, height);
+     constexpr std::size_t kArcSegments = 14U;
+     std::array<Vector2, kArcSegments + 2U> fan{};
+     const float direction = plan.facing == combat::Facing::left ? -1.0F : 1.0F;
+     const Vector2 origin{projected.x,
+         projected.ground_y - 42.0F * projected.scale};
+     fan[0U] = origin;
+@@ -97,31 +71,20 @@ void draw_draw_slash(const DrawSlashVisualPlan& plan,
+             origin.y + std::sin(angle) * radius * 0.58F,
+         };
+     }
+     DrawTriangleFan(fan.data(), static_cast<int>(fan.size()),
+         Fade(Color{150, 224, 255, 255}, 0.24F * plan.opacity));
+     for (std::size_t index = 1U; index + 1U < fan.size(); ++index) {
+         DrawLineEx(fan[index], fan[index + 1U],
+             3.0F * projected.scale,
+             Fade(Color{236, 251, 255, 255}, plan.opacity));
+     }
+-    if (plan.use_atlas) {
+-        const auto frame = active_skill_atlas_frame(
+-            plan.atlas, plan.atlas_frame);
+-        if (frame.has_value()) {
+-            static_cast<void>(material_pack.draw_frame(frame->atlas,
+-                frame->source, frame->foot_anchor,
+-                {projected.x, projected.ground_y},
+-                plan.facing == combat::Facing::left,
+-                projected.scale * 0.72F, Fade(WHITE, plan.opacity)));
+-        }
+-    }
+ }
+ 
+ void fit_skill_label(Font font, const char* source, char* output,
+     std::size_t capacity, float width, float size) noexcept {
+     if (output == nullptr || capacity == 0U) return;
+     static_cast<void>(std::snprintf(output, capacity, "%s",
+         source == nullptr ? "" : source));
+     output[capacity - 1U] = '\0';
+     if (MeasureTextEx(font, output, size, 0.5F).x <= width) return;
+     std::size_t length = std::char_traits<char>::length(output);
+@@ -171,35 +134,24 @@ void draw_sword(Vector2 center, float angle, float scale,
+         {base.x - normal.x * half_width * 1.6F,
+             base.y - normal.y * half_width * 1.6F},
+         2.4F * scale, Fade(Color{202, 155, 67, 255}, opacity));
+     DrawLineEx(base,
+         {base.x - direction.x * 12.0F * scale,
+          base.y - direction.y * 12.0F * scale},
+         3.0F * scale, Fade(Color{38, 30, 29, 255}, opacity));
+ }
+ 
+ void draw_storm_swords(const StormSwordsVisualPlan& plan,
+-    const MaterialPack& material_pack,
+     float width, float height) noexcept {
+     if (!plan.visible && !plan.finisher_visible) return;
+     const ScreenProjection projected = project_combat_position(
+         plan.center, width, height);
+-    if (plan.use_atlas) {
+-        const auto frame = active_skill_atlas_frame(
+-            plan.atlas, plan.atlas_frame);
+-        if (frame.has_value()) {
+-            static_cast<void>(material_pack.draw_frame(frame->atlas,
+-                frame->source, frame->foot_anchor,
+-                {projected.x, projected.ground_y}, false,
+-                projected.scale * 0.70F, WHITE));
+-        }
+-    }
+     if (plan.visible) {
+         for (std::size_t index = 0U; index < plan.sword_count; ++index) {
+             const StormSwordVisual& sword = plan.swords[index];
+             if (!sword.visible) continue;
+             const bool aerial = sword.band == StormSwordBand::aerial;
+             const float radius = (aerial ? 112.0F : 155.0F) * projected.scale;
+             const Vector2 position{
+                 projected.x + std::cos(sword.angle_radians) * radius,
+                 projected.ground_y
+                     + std::sin(sword.angle_radians) * radius
+@@ -216,55 +168,104 @@ void draw_storm_swords(const StormSwordsVisualPlan& plan,
+     const Vector2 sword_center{projected.x,
+         projected.ground_y - 118.0F * projected.scale};
+     draw_sword(sword_center, kPi * 0.5F, projected.scale * 1.8F,
+         true, opacity);
+     const float wave = (95.0F + (1.0F - opacity) * 95.0F) * projected.scale;
+     DrawEllipseLines(static_cast<int>(projected.x),
+         static_cast<int>(projected.ground_y), wave, wave * 0.34F,
+         Fade(Color{225, 247, 255, 255}, opacity));
+ }
+ 
++void draw_material_active_skill(const ActiveSkillEffectPlan& plan,
++    const MaterialPack& material_pack, float width, float height) noexcept {
++    skills::ActiveSkillId id = skills::ActiveSkillId::none;
++    if (plan.atlas == MaterialAtlasId::skill_draw_slash) {
++        id = skills::ActiveSkillId::draw_slash;
++    } else if (plan.atlas == MaterialAtlasId::skill_storm_swords) {
++        id = skills::ActiveSkillId::storm_swords;
++    }
++    const auto frame = active_skill_atlas_frame(id, plan.atlas_frame);
++    if (!frame.has_value()) return;
++    const ScreenProjection player = project_combat_position(
++        plan.player_position, width, height);
++    const bool flip_x = id == skills::ActiveSkillId::draw_slash
++        && plan.draw_slash.facing == combat::Facing::left;
++    const float scale = player.scale
++        * (id == skills::ActiveSkillId::draw_slash ? 0.72F : 0.70F);
++    static_cast<void>(material_pack.draw_frame(frame->atlas, frame->source,
++        frame->foot_anchor, {player.x, player.ground_y}, flip_x, scale, WHITE));
++}
++
+ }  // namespace
+ 
++std::size_t active_skill_visual_frame_index(
++    skills::ActiveSkillId id, std::uint16_t elapsed_ticks) noexcept {
++    const std::size_t ticks = static_cast<std::size_t>(elapsed_ticks);
++    if (id == skills::ActiveSkillId::draw_slash) {
++        return (std::min<std::size_t>)(35U, ticks * 36U / 90U);
++    }
++    if (id != skills::ActiveSkillId::storm_swords) return 0U;
++    std::size_t frame{};
++    if (elapsed_ticks < 72U) {
++        frame = ticks * 5U / 72U;
++    } else if (elapsed_ticks < 324U) {
++        frame = 5U + (ticks - 72U) * 15U / 252U;
++    } else if (elapsed_ticks < 342U) {
++        frame = 20U + (ticks - 324U) * 2U / 18U;
++    } else {
++        frame = 22U + (ticks - 342U) * 2U / 18U;
++    }
++    return (std::min<std::size_t>)(23U, frame);
++}
++
+ ActiveSkillEffectPlan make_active_skill_effect_plan(
+     const combat::CombatSnapshot& snapshot,
+-    const combat::CombatEvent* last_event) noexcept {
++    const combat::CombatEvent* last_event,
++    bool material_ready) noexcept {
+     ActiveSkillEffectPlan result{};
+     const combat::ActiveSkillSnapshot& skill = snapshot.active_skill;
+-    if (skill.id == skills::ActiveSkillId::draw_slash
+-            && skill.elapsed_ticks >= kDrawSlashImpactTick) {
++    result.player_position = snapshot.player.position;
++    result.effect_center = skill.locked_center;
++    if (skill.id != skills::ActiveSkillId::draw_slash
++            && skill.id != skills::ActiveSkillId::storm_swords) {
++        return result;
++    }
++    result.atlas = active_skill_material_atlas(skill.id);
++    result.atlas_frame = active_skill_visual_frame_index(
++        skill.id, skill.elapsed_ticks);
++    result.mode = material_ready ? ActiveSkillVisualMode::material
++                                 : ActiveSkillVisualMode::procedural_fallback;
++    result.suppress_base_player = material_ready;
++    result.procedural_main_visual_count = material_ready ? 0U : 1U;
++
++    result.draw_slash.facing = snapshot.player.facing;
++    result.draw_slash.center = result.effect_center;
++    result.storm_swords.center = result.effect_center;
++    if (!material_ready && skill.id == skills::ActiveSkillId::draw_slash) {
++        result.draw_slash.visible = true;
++        result.draw_slash.opacity = 0.65F;
++        if (skill.elapsed_ticks >= kDrawSlashImpactTick) {
+         const std::uint16_t age = static_cast<std::uint16_t>(
+             skill.elapsed_ticks - kDrawSlashImpactTick);
+         if (age <= kFlashTicks) {
+-            result.draw_slash.visible = true;
+-            result.draw_slash.center = skill.locked_center;
+-            result.draw_slash.facing = snapshot.player.facing;
+             result.draw_slash.opacity = 1.0F
+                 - static_cast<float>(age)
+                     / static_cast<float>(kFlashTicks + 1U);
+-            result.draw_slash.use_atlas = true;
+-            result.draw_slash.atlas = ActiveSkillAtlasId::draw_slash;
+-            result.draw_slash.atlas_frame = std::min<std::size_t>(
+-                skill.frame_index, 35U);
++        }
+         }
+     }
+ 
+-    if (skill.id == skills::ActiveSkillId::storm_swords) {
+-        result.storm_swords.center = skill.locked_center;
++    if (!material_ready && skill.id == skills::ActiveSkillId::storm_swords) {
+         result.storm_swords.sword_count = std::min<std::size_t>(
+             skill.spawned_sword_count, result.storm_swords.swords.size());
+         result.storm_swords.visible = skill.transients_active
+             && result.storm_swords.sword_count != 0U;
+-        result.storm_swords.use_atlas = result.storm_swords.visible
+-            || skill.phase == combat::ActiveSkillPhase::finisher;
+-        result.storm_swords.atlas = ActiveSkillAtlasId::storm_swords;
+-        result.storm_swords.atlas_frame = storm_atlas_frame(skill);
+         for (std::size_t index = 0U;
+              index < result.storm_swords.sword_count; ++index) {
+             const bool aerial = index >= kStormGroundSwordCount;
+             result.storm_swords.swords[index].angle_radians =
+                 static_cast<float>(index % kStormGroundSwordCount)
+                     * (2.0F * kPi / static_cast<float>(kStormGroundSwordCount))
+                     + (aerial ? 0.26F : 0.0F)
+                     + static_cast<float>(skill.frame_index) * 0.035F;
+             result.storm_swords.swords[index].visible = true;
+             result.storm_swords.swords[index].band = aerial
+@@ -283,43 +284,41 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
+         skill.id == skills::ActiveSkillId::storm_swords
+         && (skill.phase == combat::ActiveSkillPhase::finisher
+             || skill.phase == combat::ActiveSkillPhase::recovery)
+         && skill.elapsed_ticks >= kStormFinisherTick
+         && skill.elapsed_ticks <= kStormFinisherTick + kFlashTicks;
+     const std::uint64_t snapshot_age = snapshot_finisher_window
+         ? static_cast<std::uint64_t>(
+             skill.elapsed_ticks - kStormFinisherTick)
+         : 0U;
+     if (snapshot_finisher_window || recent_event) {
+-        if (!result.storm_swords.visible) {
+-            result.storm_swords.center = skill.locked_center;
+-        }
+-        result.storm_swords.finisher_visible = true;
++        result.storm_swords.finisher_visible = !material_ready;
+         const float age = static_cast<float>(snapshot_finisher_window
+             ? snapshot_age : event_age);
+         result.storm_swords.finisher_opacity = std::clamp(
+             1.0F - age / static_cast<float>(kFlashTicks + 1U), 0.0F, 1.0F);
+         result.screen_flash_alpha = 0.16F
+             * result.storm_swords.finisher_opacity;
+     }
+     return result;
+ }
+ 
+ void ActiveSkillRenderer::draw_world(
+-    const combat::CombatSnapshot& snapshot,
+-    const combat::CombatEvent* last_event,
+-    float width, float height,
+-    const MaterialPack& material_pack) const noexcept {
+-    const ActiveSkillEffectPlan plan = make_active_skill_effect_plan(
+-        snapshot, last_event);
+-    draw_draw_slash(plan.draw_slash, material_pack, width, height);
+-    draw_storm_swords(plan.storm_swords, material_pack, width, height);
++    const ActiveSkillEffectPlan& plan,
++    const MaterialPack& material_pack,
++    float width, float height) const noexcept {
++    if (plan.mode == ActiveSkillVisualMode::material) {
++        draw_material_active_skill(plan, material_pack, width, height);
++    } else if (plan.mode == ActiveSkillVisualMode::procedural_fallback) {
++        draw_draw_slash(plan.draw_slash, width, height);
++        draw_storm_swords(plan.storm_swords, width, height);
++    }
+     if (plan.screen_flash_alpha > 0.0F) {
+         DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
+             Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
+     }
+ }
+ 
+ bool ActiveSkillRenderer::assets_ready() const noexcept {
+     return active_skill_assets_ready();
+ }
+ 
+@@ -357,27 +356,26 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
+         }
+         if (!material_drawn && slot.empty) {
+             const Vector2 center{bounds.x + bounds.width * 0.5F,
+                 bounds.y + bounds.height * 0.5F + 4.0F};
+             DrawCircleLines(static_cast<int>(center.x),
+                 static_cast<int>(center.y), 13.0F,
+                 Color{84, 103, 128, 220});
+             DrawLineEx({center.x - 9.0F, center.y},
+                 {center.x + 9.0F, center.y}, 1.0F,
+                 Color{84, 103, 128, 220});
+-        } else if (!material_drawn) {
+-            const Vector2 center{bounds.x + bounds.width * 0.5F,
+-                bounds.y + 26.0F};
+-            DrawPoly(center, 4, 13.0F, 45.0F,
+-                Color{50, 135, 185, 230});
+-            DrawPolyLinesEx(center, 4, 13.0F, 45.0F, 2.0F,
+-                Color{201, 242, 255, 255});
++        }
++        if (!slot.empty) {
++            const float inset = 8.0F * scale;
++            const Rectangle icon_bounds{bounds.x + inset, bounds.y + inset,
++                bounds.width - inset * 2.0F, bounds.height - inset * 2.0F};
++            static_cast<void>(material_pack.draw_to(slot.icon, icon_bounds));
+         }
+ 
+         const ActiveSkillCooldownOverlayPlan cooldown_overlay =
+             make_active_skill_cooldown_overlay(
+                 bounds, slot.cooldown_ratio, slot.empty);
+         if (cooldown_overlay.visible) {
+             DrawRectangleRec(cooldown_overlay.bounds, Color{3, 7, 14, 190});
+             DrawLineEx({cooldown_overlay.bounds.x,
+                     cooldown_overlay.bounds.y},
+                 {cooldown_overlay.bounds.x + cooldown_overlay.bounds.width,
+diff --git a/src/platform/raylib/active_skill_renderer.hpp b/src/platform/raylib/active_skill_renderer.hpp
+index 0e722e0..4c7a47d 100644
+--- a/src/platform/raylib/active_skill_renderer.hpp
++++ b/src/platform/raylib/active_skill_renderer.hpp
+@@ -40,37 +40,53 @@ struct StormSwordsVisualPlan final {
+     bool finisher_visible{};
+     combat::Vec3 center{};
+     std::array<StormSwordVisual, 24> swords{};
+     std::size_t sword_count{};
+     float finisher_opacity{};
+     bool use_atlas{};
+     ActiveSkillAtlasId atlas{ActiveSkillAtlasId::storm_swords};
+     std::size_t atlas_frame{};
+ };
+ 
++enum class ActiveSkillVisualMode : std::uint8_t {
++    none,
++    material,
++    procedural_fallback,
++};
++
+ struct ActiveSkillEffectPlan final {
++    ActiveSkillVisualMode mode{ActiveSkillVisualMode::none};
++    combat::Vec3 player_position{};
++    combat::Vec3 effect_center{};
++    MaterialAtlasId atlas{MaterialAtlasId::count};
++    std::size_t atlas_frame{};
++    bool suppress_base_player{};
++    std::size_t procedural_main_visual_count{};
+     DrawSlashVisualPlan draw_slash{};
+     StormSwordsVisualPlan storm_swords{};
+     float screen_flash_alpha{};
+ };
+ 
++[[nodiscard]] std::size_t active_skill_visual_frame_index(
++    skills::ActiveSkillId id, std::uint16_t elapsed_ticks) noexcept;
++
+ [[nodiscard]] ActiveSkillEffectPlan make_active_skill_effect_plan(
+     const combat::CombatSnapshot& snapshot,
+-    const combat::CombatEvent* last_event) noexcept;
++    const combat::CombatEvent* last_event,
++    bool material_ready) noexcept;
+ 
+ class ActiveSkillRenderer final {
+ public:
+     [[nodiscard]] bool assets_ready() const noexcept;
+-    void draw_world(const combat::CombatSnapshot& snapshot,
+-        const combat::CombatEvent* last_event,
+-        float width, float height,
+-        const MaterialPack& material_pack) const noexcept;
++    void draw_world(const ActiveSkillEffectPlan& plan,
++        const MaterialPack& material_pack,
++        float width, float height) const noexcept;
+     void draw_hud(const ActiveSkillHudModel& model,
+         const ActiveSkillHudLayout& layout,
+         Font hud_font, bool hud_font_ready,
+         const MaterialPack& material_pack) const noexcept;
+ 
+ };
+ 
+ struct ActiveSkillCooldownOverlayPlan final {
+     bool visible{};
+     Rectangle bounds{};
+diff --git a/src/platform/raylib/active_skill_view.cpp b/src/platform/raylib/active_skill_view.cpp
+index 09c6321..207f668 100644
+--- a/src/platform/raylib/active_skill_view.cpp
++++ b/src/platform/raylib/active_skill_view.cpp
+@@ -15,35 +15,50 @@ constexpr float kBottomMargin = 20.0F;
+ 
+ [[nodiscard]] const char* active_skill_hud_name(
+     skills::ActiveSkillId id,
+     const skills::ActiveSkillDefinition& definition) noexcept {
+     if (id == skills::ActiveSkillId::storm_swords) return u8"暴风式";
+     return definition.display_name;
+ }
+ 
+ }  // namespace
+ 
++MaterialSpriteId active_skill_icon_sprite(skills::ActiveSkillId id) noexcept {
++    switch (id) {
++    case skills::ActiveSkillId::draw_slash:
++        return MaterialSpriteId::skill_icon_draw_slash;
++    case skills::ActiveSkillId::storm_swords:
++        return MaterialSpriteId::skill_icon_storm_swords;
++    case skills::ActiveSkillId::none:
++    case skills::ActiveSkillId::count:
++        return MaterialSpriteId::missing;
++    }
++    return MaterialSpriteId::missing;
++}
++
+ ActiveSkillHudModel make_active_skill_hud_model(
+     const skills::SkillLoadoutState& loadout,
+     const std::array<std::uint16_t, skills::kActiveSkillCount>& cooldowns)
+     noexcept {
+     ActiveSkillHudModel result{};
+     for (std::size_t index = 0U; index < result.slots.size(); ++index) {
+         ActiveSkillHudSlot& slot = result.slots[index];
+         slot.key_number = static_cast<std::uint8_t>(index + 1U);
+         slot.id = loadout.slots[index].active;
++        slot.icon = active_skill_icon_sprite(slot.id);
+         slot.empty = slot.id == skills::ActiveSkillId::none;
+         if (slot.empty) continue;
+         const skills::ActiveSkillDefinition* const definition =
+             skills::active_skill_definition(slot.id);
+         if (definition == nullptr || definition->cooldown_ticks == 0U) {
+             slot.id = skills::ActiveSkillId::none;
++            slot.icon = MaterialSpriteId::missing;
+             slot.empty = true;
+             continue;
+         }
+         static_cast<void>(std::snprintf(slot.name.data(), slot.name.size(),
+             "%s", active_skill_hud_name(slot.id, *definition)));
+         slot.name.back() = '\0';
+         const std::size_t cooldown_index = static_cast<std::size_t>(slot.id);
+         if (cooldown_index < cooldowns.size()) {
+             slot.cooldown_ratio = std::clamp(
+                 static_cast<float>(cooldowns[cooldown_index])
+diff --git a/src/platform/raylib/active_skill_view.hpp b/src/platform/raylib/active_skill_view.hpp
+index 47d928b..e462360 100644
+--- a/src/platform/raylib/active_skill_view.hpp
++++ b/src/platform/raylib/active_skill_view.hpp
+@@ -1,29 +1,34 @@
+ #pragma once
+ 
++#include "material_asset_types.hpp"
+ #include "skills/active_skill_types.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ struct ActiveSkillHudSlot final {
+     std::uint8_t key_number{};
+     skills::ActiveSkillId id{skills::ActiveSkillId::none};
++    MaterialSpriteId icon{MaterialSpriteId::missing};
+     std::array<char, 48> name{};
+     float cooldown_ratio{};
+     bool empty{};
+ };
+ 
++[[nodiscard]] MaterialSpriteId active_skill_icon_sprite(
++    skills::ActiveSkillId id) noexcept;
++
+ struct ActiveSkillHudModel final {
+     std::array<ActiveSkillHudSlot,
+         skills::kActiveSkillSlotCount> slots{};
+ };
+ 
+ struct ActiveSkillHudLayout final {
+     Rectangle bounds{};
+     std::array<Rectangle, skills::kActiveSkillSlotCount> slots{};
+ };
+ 
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index 2b7546d..f714fbe 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -494,32 +494,37 @@ MonsterBarVisualPlan make_monster_bar_visual_plan(
+     plan.bars[1] = {monster.max_shield > 0,
+         monster_bar_ratio(monster.shield, monster.max_shield),
+         HudPaletteId::barrier};
+     plan.bars[2] = {monster.max_break > 0,
+         monster_bar_ratio(monster.break_value, monster.max_break),
+         HudPaletteId::experience};
+     return plan;
+ }
+ 
+ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+-    const dungeon::DungeonSnapshot& current, float alpha, bool draw_debug,
++    const dungeon::DungeonSnapshot& current,
++    const ActiveSkillEffectPlan& active_skill_plan,
++    float alpha, bool draw_debug,
+     const CombatFeedback& feedback) noexcept {
+     monster_material_draw_statuses_.fill({});
+     if (!current.combat.has_value()) return;
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const CombatSnapshot& current_combat = *current.combat;
+     const CombatSnapshot& previous_combat = can_interpolate_room(previous, current)
+         ? *previous.combat : current_combat;
+     std::array<RenderActor, kMonsterCapacity + 1> draw_items{};
+     std::size_t draw_count = 0;
+-    draw_items[draw_count++] = {current_combat.player.position, 0U, true, {}};
++    if (!active_skill_plan.suppress_base_player) {
++        draw_items[draw_count++] = {
++            current_combat.player.position, 0U, true, {}};
++    }
+     for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
+         const MonsterSnapshot& monster = current_combat.monsters[index];
+         const MonsterMaterialDrawPlan material_plan =
+             monster_presenter_.collect_draw_plan(index, monster,
+                 current_combat.tick,
+                 feedback.target_flash_seconds(index) > 0.0F);
+         if (!material_plan.visible) continue;
+         MonsterMaterialDrawRuntimeStatus& material_status =
+             monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)];
+         material_status.presenter_visible = true;
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 81baee4..c24b283 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -246,20 +246,30 @@ GroundLootView CombatRenderer::draw(
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     float interpolation_alpha,
+     bool draw_debug,
+     const CombatFeedback& feedback,
+     bool audio_ready) noexcept {
+     static_cast<void>(material_pack_.synchronize_residency(
+         make_material_residency_request(current)));
+     transition_ = transition_after_room_phase(transition_, current.phase);
+ 
++    ActiveSkillEffectPlan active_skill_plan{};
++    if (current.combat.has_value()) {
++        const combat::CombatSnapshot& combat = *current.combat;
++        const skills::ActiveSkillId active_id = combat.active_skill.id;
++        const bool material_ready = active_id != skills::ActiveSkillId::none
++            && material_pack_.available(active_skill_material_atlas(active_id));
++        active_skill_plan = make_active_skill_effect_plan(combat,
++            has_last_event_ ? &last_event_ : nullptr, material_ready);
++    }
++
+     const CombatRenderPlan render_plan = make_combat_render_plan(current,
+         loot_filter_mode_, static_cast<float>(GetScreenWidth()),
+         static_cast<float>(GetScreenHeight()));
+ 
+     const CameraOffset camera_offset = feedback.camera_offset();
+     Camera2D world_camera{};
+     world_camera.offset = {camera_offset.x, camera_offset.y};
+     world_camera.zoom = 1.0F;
+     BeginMode2D(world_camera);
+     bool world_mode = true;
+@@ -267,28 +277,27 @@ GroundLootView CombatRenderer::draw(
+         const CombatRenderStage stage = render_plan.stages[index];
+         if (stage == CombatRenderStage::ground_loot_labels && world_mode) {
+             EndMode2D();
+             world_mode = false;
+         }
+         switch (stage) {
+         case CombatRenderStage::room:
+             draw_room(current, render_plan.ground_loot, render_plan.material_loot);
+             break;
+         case CombatRenderStage::actors:
+-            draw_actors(previous, current,
++            draw_actors(previous, current, active_skill_plan,
+                 std::clamp(interpolation_alpha, 0.0F, 1.0F),
+                 draw_debug, feedback);
+             if (current.combat.has_value()) {
+-                active_skill_renderer_.draw_world(*current.combat,
+-                    has_last_event_ ? &last_event_ : nullptr,
+-                    static_cast<float>(GetScreenWidth()),
+-                    static_cast<float>(GetScreenHeight()), material_pack_);
++                active_skill_renderer_.draw_world(active_skill_plan,
++                    material_pack_, static_cast<float>(GetScreenWidth()),
++                    static_cast<float>(GetScreenHeight()));
+             }
+             break;
+         case CombatRenderStage::ground_loot_labels:
+             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
+             hud_renderer_.draw_material_loot(render_plan.material_loot);
+             break;
+         case CombatRenderStage::normal_hud:
+             draw_hud();
+             active_skill_renderer_.draw_hud(active_skill_hud_model_,
+                 active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 9f3e6ee..1719748 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -149,20 +149,21 @@ public:
+         bool audio_ready) noexcept;
+ 
+ private:
+     void draw_room(
+         const dungeon::DungeonSnapshot& current,
+         const GroundLootView& ground_loot,
+         const MaterialLootView& material_loot) noexcept;
+     void draw_actors(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
++        const ActiveSkillEffectPlan& active_skill_plan,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback) noexcept;
+     void draw_hud() const noexcept;
+     void draw_abyss_hud(
+         const dungeon::DungeonSnapshot& current,
+         float x,
+         int& y,
+         int line_step) const noexcept;
+     void draw_debug_world_volumes(
+diff --git a/src/platform/raylib/material_asset_types.hpp b/src/platform/raylib/material_asset_types.hpp
+index 314c83b..5c00e91 100644
+--- a/src/platform/raylib/material_asset_types.hpp
++++ b/src/platform/raylib/material_asset_types.hpp
+@@ -265,20 +265,22 @@ enum class MaterialSpriteId : std::uint16_t {
+     ui_skill_slot_selected,
+     ui_skill_slot_support,
+     ui_pause_panel,
+     ui_pause_row_idle,
+     ui_pause_row_selected,
+     ui_pause_footer,
+     ui_warning_modal,
+     ui_label_plate,
+     ui_reinforcement_confirm,
+     ui_reinforcement_cancel,
++    skill_icon_draw_slash,
++    skill_icon_storm_swords,
+     count,
+ };
+ 
+ struct MaterialFrameDefinition final {
+     MaterialSpriteId id{MaterialSpriteId::missing};
+     MaterialAtlasId atlas{MaterialAtlasId::actors};
+     Rectangle source{};
+     Vector2 foot_anchor{};
+     std::uint16_t duration_ms{};
+     Vector2 weapon_anchor{};
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index 9e37178..20922f2 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -335,20 +335,30 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
+     ARPG_UI_FRAME(ui_skill_slot_selected, 30),
+     ARPG_UI_FRAME(ui_skill_slot_support, 31),
+     ARPG_UI_FRAME(ui_pause_panel, 32),
+     ARPG_UI_FRAME(ui_pause_row_idle, 33),
+     ARPG_UI_FRAME(ui_pause_row_selected, 34),
+     ARPG_UI_FRAME(ui_pause_footer, 35),
+     ARPG_UI_FRAME(ui_warning_modal, 36),
+     ARPG_UI_FRAME(ui_label_plate, 37),
+     ARPG_UI_FRAME(ui_reinforcement_confirm, 38),
+     ARPG_UI_FRAME(ui_reinforcement_cancel, 39),
++    {MaterialSpriteId::skill_icon_draw_slash,
++        MaterialAtlasId::skill_draw_slash,
++        {0.0F, 627.0F, 209.0F, 209.0F}, {104.5F, 209.0F}, 0U,
++        {104.5F, 104.5F}, MaterialLayer::front_effect,
++        MaterialClass::ui, 18'001U},
++    {MaterialSpriteId::skill_icon_storm_swords,
++        MaterialAtlasId::skill_storm_swords,
++        {0.0F, 1280.0F, 256.0F, 256.0F}, {128.0F, 256.0F}, 0U,
++        {128.0F, 128.0F}, MaterialLayer::front_effect,
++        MaterialClass::ui, 20'001U},
+ };
+ 
+ inline constexpr AnimationEventDefinition kDefaultAnimationEvents[] = {
+     {1U, AnimationEventKind::footstep},
+     {2U, AnimationEventKind::hit},
+ };
+ 
+ inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
+     {AnimationClipId::player_idle, MaterialSpriteId::player_idle, 0U, 16U, 16U, 24U, 0U, 0U, MaterialEcology::common},
+     {AnimationClipId::player_move, MaterialSpriteId::player_move, 0U, 20U, 20U, 24U, 0U, 1U, MaterialEcology::common},
+diff --git a/tests/platform/active_skill_asset_tests.cpp b/tests/platform/active_skill_asset_tests.cpp
+index 96529c9..e7b2ee4 100644
+--- a/tests/platform/active_skill_asset_tests.cpp
++++ b/tests/platform/active_skill_asset_tests.cpp
+@@ -1,14 +1,16 @@
+ #include "test_framework.hpp"
+ 
+ #include "active_skill_assets.hpp"
++#include "active_skill_view.hpp"
+ #include "material_manifest.hpp"
++#include "skills/skill_loadout.hpp"
+ 
+ #include <cstddef>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ 
+ arpg::test::Failure active_skill_atlases_define_complete_original_frame_grids()
+     noexcept {
+     for (std::size_t frame = 0U; frame < 36U; ++frame) {
+@@ -56,22 +58,71 @@ arpg::test::Failure active_skill_atlases_are_registered_as_material_pairs()
+             found_storm = atlas.width == 1024 && atlas.height == 1536
+                 && atlas.rgba_bytes == 1024U * 1536U * 4U
+                 && atlas.ecology == platform::MaterialEcology::skill;
+         }
+     }
+     ARPG_REQUIRE(found_draw);
+     ARPG_REQUIRE(found_storm);
+     return {};
+ }
+ 
++arpg::test::Failure active_skill_hud_uses_distinct_registered_material_icons()
++    noexcept {
++    const auto manifest = platform::default_material_manifest();
++    const platform::MaterialSpriteId draw_icon =
++        platform::active_skill_icon_sprite(
++            arpg::skills::ActiveSkillId::draw_slash);
++    const platform::MaterialSpriteId storm_icon =
++        platform::active_skill_icon_sprite(
++            arpg::skills::ActiveSkillId::storm_swords);
++    ARPG_REQUIRE(draw_icon != platform::MaterialSpriteId::missing);
++    ARPG_REQUIRE(storm_icon != platform::MaterialSpriteId::missing);
++    ARPG_REQUIRE(draw_icon != storm_icon);
++    ARPG_REQUIRE(platform::active_skill_icon_sprite(
++        arpg::skills::ActiveSkillId::none)
++        == platform::MaterialSpriteId::missing);
++
++    const platform::MaterialFrameDefinition* const draw_frame =
++        platform::find_material_frame(manifest, draw_icon);
++    const platform::MaterialFrameDefinition* const storm_frame =
++        platform::find_material_frame(manifest, storm_icon);
++    ARPG_REQUIRE(draw_frame != nullptr);
++    ARPG_REQUIRE(storm_frame != nullptr);
++    ARPG_REQUIRE(draw_frame->atlas
++        == platform::MaterialAtlasId::skill_draw_slash);
++    ARPG_REQUIRE(draw_frame->source.x == 0.0F);
++    ARPG_REQUIRE(draw_frame->source.y == 627.0F);
++    ARPG_REQUIRE(draw_frame->source.width == 209.0F);
++    ARPG_REQUIRE(draw_frame->source.height == 209.0F);
++    ARPG_REQUIRE(storm_frame->atlas
++        == platform::MaterialAtlasId::skill_storm_swords);
++    ARPG_REQUIRE(storm_frame->source.x == 0.0F);
++    ARPG_REQUIRE(storm_frame->source.y == 1280.0F);
++    ARPG_REQUIRE(storm_frame->source.width == 256.0F);
++    ARPG_REQUIRE(storm_frame->source.height == 256.0F);
++
++    const platform::ActiveSkillHudModel hud =
++        platform::make_active_skill_hud_model(
++            arpg::skills::default_skill_loadout(), {});
++    ARPG_REQUIRE(hud.slots[0U].icon == draw_icon);
++    ARPG_REQUIRE(hud.slots[1U].icon == storm_icon);
++    for (std::size_t index = 2U; index < hud.slots.size(); ++index) {
++        ARPG_REQUIRE(hud.slots[index].icon
++            == platform::MaterialSpriteId::missing);
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"active skill atlases expose complete original frame grids",
+      &active_skill_atlases_define_complete_original_frame_grids},
+     {"active skill atlases are registered as material pairs",
+      &active_skill_atlases_are_registered_as_material_pairs},
++    {"active skill HUD uses distinct registered material icons",
++     &active_skill_hud_uses_distinct_registered_material_icons},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite active_skill_asset_suite() noexcept {
+     return arpg::test::make_suite("active_skill_assets", kCases);
+ }
+diff --git a/tests/platform/active_skill_view_tests.cpp b/tests/platform/active_skill_view_tests.cpp
+index ad415dd..72afe1f 100644
+--- a/tests/platform/active_skill_view_tests.cpp
++++ b/tests/platform/active_skill_view_tests.cpp
+@@ -1,11 +1,12 @@
+ #include "test_framework.hpp"
++#include "allocation_probe.hpp"
+ 
+ #include "active_skill_renderer.hpp"
+ #include "active_skill_view.hpp"
+ #include "combat/active_skill_runtime.hpp"
+ #include "skills/active_skill_catalog.hpp"
+ #include "skills/skill_loadout.hpp"
+ #include "ui_typography.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+@@ -17,20 +18,105 @@ namespace combat = arpg::combat;
+ namespace platform = arpg::platform;
+ namespace skills = arpg::skills;
+ 
+ bool overlaps(Rectangle left, Rectangle right) noexcept {
+     return left.x < right.x + right.width
+         && right.x < left.x + left.width
+         && left.y < right.y + right.height
+         && right.y < left.y + left.height;
+ }
+ 
++arpg::test::Failure active_skill_visual_frames_reach_complete_material_timelines()
++    noexcept {
++    std::array<bool, 36U> draw_slash_frames{};
++    for (std::uint16_t tick = 0U; tick < 90U; ++tick) {
++        const std::size_t frame = platform::active_skill_visual_frame_index(
++            skills::ActiveSkillId::draw_slash, tick);
++        ARPG_REQUIRE(frame < draw_slash_frames.size());
++        draw_slash_frames[frame] = true;
++    }
++    for (const bool reached : draw_slash_frames) ARPG_REQUIRE(reached);
++
++    std::array<bool, 24U> storm_frames{};
++    for (std::uint16_t tick = 0U; tick < 360U; ++tick) {
++        const std::size_t frame = platform::active_skill_visual_frame_index(
++            skills::ActiveSkillId::storm_swords, tick);
++        ARPG_REQUIRE(frame < storm_frames.size());
++        storm_frames[frame] = true;
++    }
++    for (const bool reached : storm_frames) ARPG_REQUIRE(reached);
++    ARPG_REQUIRE(storm_frames[16U]);
++    for (std::size_t frame = 20U; frame < 24U; ++frame) {
++        ARPG_REQUIRE(storm_frames[frame]);
++    }
++    return {};
++}
++
++arpg::test::Failure active_skill_plan_separates_player_and_effect_positions()
++    noexcept {
++    combat::CombatSnapshot snapshot{};
++    snapshot.player.position = {7.0F, -3.0F, 2.0F};
++    snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
++    snapshot.active_skill.locked_center = {-11.0F, 5.0F, 0.0F};
++    const platform::ActiveSkillEffectPlan first =
++        platform::make_active_skill_effect_plan(snapshot, nullptr, true);
++    ARPG_REQUIRE(arpg::test::near(first.player_position.x, 7.0F));
++    ARPG_REQUIRE(arpg::test::near(first.player_position.y, -3.0F));
++    ARPG_REQUIRE(arpg::test::near(first.player_position.z, 2.0F));
++    ARPG_REQUIRE(arpg::test::near(first.effect_center.x, -11.0F));
++    ARPG_REQUIRE(arpg::test::near(first.effect_center.y, 5.0F));
++
++    snapshot.active_skill.locked_center = {23.0F, 17.0F, 0.0F};
++    const platform::ActiveSkillEffectPlan moved_effect =
++        platform::make_active_skill_effect_plan(snapshot, nullptr, true);
++    ARPG_REQUIRE(arpg::test::near(moved_effect.player_position.x, 7.0F));
++    ARPG_REQUIRE(arpg::test::near(moved_effect.player_position.y, -3.0F));
++    ARPG_REQUIRE(arpg::test::near(moved_effect.effect_center.x, 23.0F));
++    ARPG_REQUIRE(arpg::test::near(moved_effect.effect_center.y, 17.0F));
++    return {};
++}
++
++arpg::test::Failure material_and_fallback_skill_plans_are_exclusive_and_allocate_nothing()
++    noexcept {
++    combat::CombatSnapshot snapshot{};
++    snapshot.player.position = {3.0F, 4.0F, 0.0F};
++    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
++    snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
++    snapshot.active_skill.elapsed_ticks = 200U;
++    snapshot.active_skill.locked_center = {9.0F, -8.0F, 0.0F};
++    snapshot.active_skill.spawned_sword_count = 24U;
++    snapshot.active_skill.transients_active = true;
++
++    const platform::ActiveSkillEffectPlan healthy =
++        platform::make_active_skill_effect_plan(snapshot, nullptr, true);
++    ARPG_REQUIRE(healthy.mode == platform::ActiveSkillVisualMode::material);
++    ARPG_REQUIRE(healthy.suppress_base_player);
++    ARPG_REQUIRE(healthy.procedural_main_visual_count == 0U);
++    ARPG_REQUIRE(healthy.atlas == platform::MaterialAtlasId::skill_storm_swords);
++
++    const platform::ActiveSkillEffectPlan fallback =
++        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
++    ARPG_REQUIRE(fallback.mode
++        == platform::ActiveSkillVisualMode::procedural_fallback);
++    ARPG_REQUIRE(!fallback.suppress_base_player);
++    ARPG_REQUIRE(fallback.procedural_main_visual_count > 0U);
++
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {
++        const auto plan = platform::make_active_skill_effect_plan(
++            snapshot, nullptr, (iteration & 1U) == 0U);
++        ARPG_REQUIRE(plan.atlas_frame < 24U);
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == before);
++    return {};
++}
++
+ arpg::test::Failure hud_projects_exactly_five_numbered_slots_and_catalog_names()
+     noexcept {
+     const skills::SkillLoadoutState loadout = skills::default_skill_loadout();
+     const platform::ActiveSkillHudModel view =
+         platform::make_active_skill_hud_model(loadout, {});
+ 
+     ARPG_REQUIRE(view.slots.size() == skills::kActiveSkillSlotCount);
+     for (std::size_t index = 0U; index < view.slots.size(); ++index) {
+         ARPG_REQUIRE(view.slots[index].key_number == index + 1U);
+     }
+@@ -102,98 +188,94 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
+ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
+     noexcept {
+     combat::CombatSnapshot snapshot{};
+     snapshot.player.facing = combat::Facing::left;
+     snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
+     snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
+     snapshot.active_skill.elapsed_ticks = 46U;
+     snapshot.active_skill.frame_index = 18U;
+     snapshot.active_skill.locked_center = {2.0F, 3.0F, 0.0F};
+     platform::ActiveSkillEffectPlan plan =
+-        platform::make_active_skill_effect_plan(snapshot, nullptr);
++        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+     ARPG_REQUIRE(plan.draw_slash.visible);
+-    ARPG_REQUIRE(plan.draw_slash.use_atlas);
+-    ARPG_REQUIRE(plan.draw_slash.atlas
+-        == platform::ActiveSkillAtlasId::draw_slash);
+-    ARPG_REQUIRE(plan.draw_slash.atlas_frame == 18U);
++    ARPG_REQUIRE(plan.atlas == platform::MaterialAtlasId::skill_draw_slash);
++    ARPG_REQUIRE(plan.atlas_frame == 18U);
+     ARPG_REQUIRE(plan.draw_slash.facing == combat::Facing::left);
+     ARPG_REQUIRE(arpg::test::near(plan.draw_slash.center.x, 2.0F));
+     snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
+         46U + 8U);
+-    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
+-    ARPG_REQUIRE(!plan.draw_slash.visible);
++    plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
++    ARPG_REQUIRE(plan.draw_slash.visible);
+ 
+     snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
+     snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
+     snapshot.active_skill.strike_index = 4U;
+     snapshot.active_skill.spawned_sword_count = 12U;
+     snapshot.active_skill.transients_active = true;
+-    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
++    plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+     ARPG_REQUIRE(plan.storm_swords.visible);
+-    ARPG_REQUIRE(plan.storm_swords.use_atlas);
+-    ARPG_REQUIRE(plan.storm_swords.atlas
+-        == platform::ActiveSkillAtlasId::storm_swords);
+-    ARPG_REQUIRE(plan.storm_swords.atlas_frame < 24U);
++    ARPG_REQUIRE(plan.atlas == platform::MaterialAtlasId::skill_storm_swords);
++    ARPG_REQUIRE(plan.atlas_frame < 24U);
+     ARPG_REQUIRE(plan.storm_swords.sword_count == 12U);
+     for (std::size_t index = 0U; index < plan.storm_swords.sword_count; ++index) {
+         ARPG_REQUIRE(plan.storm_swords.swords[index].highlighted
+             == (index == 3U));
+     }
+ 
+     combat::CombatEvent finisher{};
+     finisher.tick = 100U;
+     finisher.skill = skills::ActiveSkillId::storm_swords;
+     finisher.finisher = true;
+     snapshot.tick = 103U;
+     snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
+-    plan = platform::make_active_skill_effect_plan(snapshot, &finisher);
++    plan = platform::make_active_skill_effect_plan(snapshot, &finisher, false);
+     ARPG_REQUIRE(plan.storm_swords.finisher_visible);
+     ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
+     snapshot.tick = 108U;
+-    plan = platform::make_active_skill_effect_plan(snapshot, &finisher);
++    plan = platform::make_active_skill_effect_plan(snapshot, &finisher, false);
+     ARPG_REQUIRE(!plan.storm_swords.finisher_visible);
+     ARPG_REQUIRE(arpg::test::near(plan.screen_flash_alpha, 0.0F));
+     return {};
+ }
+ 
+ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
+     noexcept {
+     constexpr std::uint16_t kFinisherTick = 324U;
+     combat::CombatSnapshot snapshot{};
+     snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
+     snapshot.active_skill.locked_center = {4.0F, -2.0F, 0.0F};
+     snapshot.active_skill.phase = combat::ActiveSkillPhase::finisher;
+     snapshot.active_skill.elapsed_ticks = kFinisherTick;
+     snapshot.active_skill.frame_index = 129U;
+     platform::ActiveSkillEffectPlan plan =
+-        platform::make_active_skill_effect_plan(snapshot, nullptr);
++        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+     ARPG_REQUIRE(plan.storm_swords.finisher_visible);
+-    ARPG_REQUIRE(plan.storm_swords.atlas_frame == 17U);
++    ARPG_REQUIRE(plan.atlas_frame == 20U);
+     ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
+ 
+     snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
+     for (std::uint16_t age = 1U; age <= 7U; ++age) {
+         snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
+             kFinisherTick + age);
+-        plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
++        plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+         ARPG_REQUIRE(plan.storm_swords.finisher_visible);
+         ARPG_REQUIRE(plan.storm_swords.finisher_opacity > 0.0F);
+         ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
+         ARPG_REQUIRE(arpg::test::near(
+             plan.storm_swords.center.x, 4.0F));
+         ARPG_REQUIRE(arpg::test::near(
+             plan.storm_swords.center.y, -2.0F));
+     }
+ 
+     snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
+         kFinisherTick + 8U);
+-    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
++    plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+     ARPG_REQUIRE(!plan.storm_swords.finisher_visible);
+     ARPG_REQUIRE(arpg::test::near(plan.screen_flash_alpha, 0.0F));
+     return {};
+ }
+ 
+ arpg::test::Failure hud_cooldown_overlay_keeps_continuous_material_feedback()
+     noexcept {
+     const Rectangle bounds{100.0F, 200.0F, 58.0F, 58.0F};
+     const platform::ActiveSkillCooldownOverlayPlan hidden =
+         platform::make_active_skill_cooldown_overlay(bounds, 0.0F, false);
+@@ -216,48 +298,54 @@ arpg::test::Failure hud_cooldown_overlay_keeps_continuous_material_feedback()
+ 
+ arpg::test::Failure storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands()
+     noexcept {
+     combat::CombatSnapshot snapshot{};
+     snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
+     snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
+     snapshot.active_skill.elapsed_ticks = 108U;
+     snapshot.active_skill.spawned_sword_count = 15U;
+     snapshot.active_skill.transients_active = true;
+     const platform::ActiveSkillEffectPlan plan =
+-        platform::make_active_skill_effect_plan(snapshot, nullptr);
++        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+ 
+     ARPG_REQUIRE(plan.storm_swords.sword_count == 15U);
+     ARPG_REQUIRE(plan.storm_swords.swords.size() == 24U);
+     std::size_t ground_count = 0U;
+     std::size_t aerial_count = 0U;
+     for (std::size_t index = 0U; index < plan.storm_swords.sword_count; ++index) {
+         const platform::StormSwordVisual& sword = plan.storm_swords.swords[index];
+         ARPG_REQUIRE(sword.visible);
+         if (sword.band == platform::StormSwordBand::ground) {
+             ++ground_count;
+         } else {
+             ++aerial_count;
+         }
+     }
+     ARPG_REQUIRE(ground_count == 12U);
+     ARPG_REQUIRE(aerial_count == 3U);
+ 
+     snapshot.active_skill.transients_active = false;
+     snapshot.active_skill.id = skills::ActiveSkillId::none;
+     const platform::ActiveSkillEffectPlan cleared =
+-        platform::make_active_skill_effect_plan(snapshot, nullptr);
++        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+     ARPG_REQUIRE(cleared.storm_swords.sword_count == 0U);
+     ARPG_REQUIRE(!cleared.storm_swords.visible);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
++    {"active skill visual frames reach complete material timelines",
++        &active_skill_visual_frames_reach_complete_material_timelines},
++    {"active skill plan separates player and effect positions",
++        &active_skill_plan_separates_player_and_effect_positions},
++    {"active skill material and fallback plans are exclusive and allocation free",
++        &material_and_fallback_skill_plans_are_exclusive_and_allocate_nothing},
+     {"active skill HUD fixed slots", &hud_projects_exactly_five_numbered_slots_and_catalog_names},
+     {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
+     {"active skill HUD continuous cooldown overlay",
+         &hud_cooldown_overlay_keeps_continuous_material_feedback},
+     {"active skill HUD responsive layout",
+         &hud_layout_is_bottom_centered_with_scaled_slot_geometry},
+     {"active skill native effect plan", &native_effect_plan_uses_snapshot_timing_and_twelve_swords},
+     {"storm finisher snapshot lifetime", &storm_finisher_persists_from_snapshot_without_hit_event},
+     {"storm sword lifecycle uses ground and aerial bands",
+      &storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands},
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index a610ab0..26f1fe3 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -100,13 +100,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 458,
++    return arpg::test::run_suites(suites, 462,
+         "HUD and UI material slice contract");
+ }

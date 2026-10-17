@@ -1,0 +1,1143 @@
+# Review package: cbd5a4719d5f69eb6a9c1f39c88be6a5a5e40131..7652568
+
+## Commits
+7652568 feat: add material-backed active skill atlases
+
+## Files changed
+ assets/skills/draw_slash_atlas_material.png        | Bin 0 -> 781564 bytes
+ assets/skills/storm_swords_atlas_material.png      | Bin 0 -> 938426 bytes
+ src/platform/raylib/active_skill_assets.cpp        | 150 +++++++++------------
+ src/platform/raylib/active_skill_assets.hpp        |  43 ++----
+ src/platform/raylib/active_skill_renderer.cpp      |  46 ++++---
+ src/platform/raylib/active_skill_renderer.hpp      |   7 +-
+ src/platform/raylib/combat_renderer.cpp            |   8 +-
+ src/platform/raylib/material_asset_types.hpp       |   3 +
+ src/platform/raylib/material_asset_validation.cpp  |   2 +
+ src/platform/raylib/material_manifest.hpp          |   2 +
+ src/platform/raylib/material_residency.cpp         |   6 +
+ tests/platform/CMakeLists.txt                      |   8 ++
+ tests/platform/active_skill_asset_tests.cpp        |  66 +++++----
+ .../active_skill_material_asset_pipeline_tests.py  |  64 +++++++++
+ tests/platform/material_asset_validation_tests.cpp |  53 +++++++-
+ tests/platform/platform_test_main.cpp              |   2 +-
+ .../platform/room_background_render_plan_tests.cpp |   2 +-
+ tools/build_active_skill_material_maps.py          |  78 +++++++++++
+ 18 files changed, 361 insertions(+), 179 deletions(-)
+
+## Diff
+diff --git a/assets/skills/draw_slash_atlas_material.png b/assets/skills/draw_slash_atlas_material.png
+new file mode 100644
+index 0000000..c629a17
+Binary files /dev/null and b/assets/skills/draw_slash_atlas_material.png differ
+diff --git a/assets/skills/storm_swords_atlas_material.png b/assets/skills/storm_swords_atlas_material.png
+new file mode 100644
+index 0000000..3fdb14b
+Binary files /dev/null and b/assets/skills/storm_swords_atlas_material.png differ
+diff --git a/src/platform/raylib/active_skill_assets.cpp b/src/platform/raylib/active_skill_assets.cpp
+index b0eb89e..fb70ae8 100644
+--- a/src/platform/raylib/active_skill_assets.cpp
++++ b/src/platform/raylib/active_skill_assets.cpp
+@@ -1,113 +1,95 @@
+ #include "active_skill_assets.hpp"
+ 
+-#include <raylib.h>
+-
+-#include <array>
+-#include <cstdio>
++#include "material_manifest.hpp"
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+-constexpr std::array<ActiveSkillAtlasDefinition,
+-    static_cast<std::size_t>(ActiveSkillAtlasId::count)> kAtlases{{
+-    {ActiveSkillAtlasId::draw_slash, "assets/skills/draw_slash_atlas.png",
+-        1254, 1254, 6U, 6U, 36U},
+-    {ActiveSkillAtlasId::storm_swords, "assets/skills/storm_swords_atlas.png",
+-        1024, 1536, 4U, 6U, 24U},
+-}};
++struct ActiveSkillAtlasGrid final {
++    MaterialAtlasId atlas{MaterialAtlasId::count};
++    std::size_t columns{};
++    std::size_t rows{};
++    std::size_t frame_count{};
++    float cell_width{};
++    float cell_height{};
++};
+ 
+-[[nodiscard]] constexpr std::size_t atlas_index(ActiveSkillAtlasId id) noexcept {
+-    return static_cast<std::size_t>(id);
++[[nodiscard]] constexpr ActiveSkillAtlasGrid active_skill_grid(
++    skills::ActiveSkillId id) noexcept {
++    switch (id) {
++    case skills::ActiveSkillId::draw_slash:
++        return {MaterialAtlasId::skill_draw_slash, 6U, 6U, 36U,
++            209.0F, 209.0F};
++    case skills::ActiveSkillId::storm_swords:
++        return {MaterialAtlasId::skill_storm_swords, 4U, 6U, 24U,
++            256.0F, 256.0F};
++    case skills::ActiveSkillId::none:
++    case skills::ActiveSkillId::count:
++        return {};
++    }
++    return {};
+ }
+ 
+-[[nodiscard]] constexpr bool known_atlas(ActiveSkillAtlasId id) noexcept {
+-    return atlas_index(id) < kAtlases.size();
++[[nodiscard]] constexpr bool atlas_matches_manifest(
++    MaterialAtlasId id, int width, int height) noexcept {
++    const MaterialManifestDefinition manifest = default_material_manifest();
++    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
++        const MaterialAtlasDefinition& atlas = manifest.atlases[index];
++        if (atlas.id == id) {
++            return atlas.width == width && atlas.height == height
++                && atlas.rgba_bytes == static_cast<std::size_t>(width)
++                    * static_cast<std::size_t>(height) * 4U;
++        }
++    }
++    return false;
+ }
+ 
+ }  // namespace
+ 
+-const ActiveSkillAtlasDefinition* active_skill_atlas_definition(
+-    ActiveSkillAtlasId id) noexcept {
+-    return known_atlas(id) ? &kAtlases[atlas_index(id)] : nullptr;
++MaterialAtlasId active_skill_material_atlas(
++    skills::ActiveSkillId id) noexcept {
++    return active_skill_grid(id).atlas;
+ }
+ 
+ std::optional<ActiveSkillAtlasFrame> active_skill_atlas_frame(
+-    ActiveSkillAtlasId id, std::size_t frame_index) noexcept {
+-    const ActiveSkillAtlasDefinition* const definition =
+-        active_skill_atlas_definition(id);
+-    if (definition == nullptr || frame_index >= definition->frame_count) {
++    skills::ActiveSkillId id, std::size_t frame_index) noexcept {
++    const ActiveSkillAtlasGrid grid = active_skill_grid(id);
++    if (grid.atlas == MaterialAtlasId::count
++        || frame_index >= grid.frame_count) {
+         return std::nullopt;
+     }
+-    const float cell_width = static_cast<float>(definition->width)
+-        / static_cast<float>(definition->columns);
+-    const float cell_height = static_cast<float>(definition->height)
+-        / static_cast<float>(definition->rows);
+-    const std::size_t column = frame_index % definition->columns;
+-    const std::size_t row = frame_index / definition->columns;
++    const std::size_t column = frame_index % grid.columns;
++    const std::size_t row = frame_index / grid.columns;
+     return ActiveSkillAtlasFrame{
+-        {static_cast<float>(column) * cell_width,
+-         static_cast<float>(row) * cell_height, cell_width, cell_height},
+-        {cell_width * 0.50F, cell_height * 0.94F},
+-        {cell_width * 0.64F, cell_height * 0.48F},
++        grid.atlas,
++        {static_cast<float>(column) * grid.cell_width,
++         static_cast<float>(row) * grid.cell_height,
++         grid.cell_width, grid.cell_height},
++        {grid.cell_width * 0.50F, grid.cell_height * 0.94F},
++        {grid.cell_width * 0.64F, grid.cell_height * 0.48F},
+     };
+ }
+ 
+-bool ActiveSkillAssets::load() noexcept {
+-    unload();
+-    bool any_loaded = false;
+-    for (const ActiveSkillAtlasDefinition& definition : kAtlases) {
+-        std::array<char, 512> deployed_path{};
+-        const int written = std::snprintf(deployed_path.data(),
+-            deployed_path.size(), "%s%s", GetApplicationDirectory(),
+-            definition.path);
+-        const char* const path = written > 0
+-                && static_cast<std::size_t>(written) < deployed_path.size()
+-            ? deployed_path.data()
+-            : definition.path;
+-        Texture2D texture = LoadTexture(path);
+-        if (!IsTextureValid(texture) || texture.width != definition.width
+-            || texture.height != definition.height) {
+-            if (IsTextureValid(texture)) UnloadTexture(texture);
+-            TraceLog(LOG_WARNING,
+-                "Active skill atlas unavailable or has unexpected dimensions: %s",
+-                definition.path);
+-            continue;
+-        }
+-        textures_[atlas_index(definition.id)] = texture;
+-        any_loaded = true;
++bool active_skill_assets_ready() noexcept {
++    if (!atlas_matches_manifest(
++            MaterialAtlasId::skill_draw_slash, 1254, 1254)
++        || !atlas_matches_manifest(
++            MaterialAtlasId::skill_storm_swords, 1024, 1536)) {
++        return false;
+     }
+-    return any_loaded;
+-}
+-
+-void ActiveSkillAssets::unload() noexcept {
+-    for (Texture2D& texture : textures_) {
+-        if (IsTextureValid(texture)) UnloadTexture(texture);
+-        texture = Texture2D{};
++    for (std::size_t frame{}; frame < 36U; ++frame) {
++        if (!active_skill_atlas_frame(
++                skills::ActiveSkillId::draw_slash, frame).has_value()) {
++            return false;
++        }
+     }
+-}
+-
+-bool ActiveSkillAssets::ready(ActiveSkillAtlasId id) const noexcept {
+-    return known_atlas(id) && IsTextureValid(textures_[atlas_index(id)]);
+-}
+-
+-bool ActiveSkillAssets::draw(ActiveSkillAtlasId id, std::size_t frame_index,
+-    Vector2 foot_position, bool flip_x, float scale, Color tint) const noexcept {
+-    const auto frame = active_skill_atlas_frame(id, frame_index);
+-    if (!ready(id) || !frame.has_value() || scale <= 0.0F) return false;
+-
+-    Rectangle source = frame->source;
+-    if (flip_x) {
+-        source.x += source.width;
+-        source.width = -source.width;
++    for (std::size_t frame{}; frame < 24U; ++frame) {
++        if (!active_skill_atlas_frame(
++                skills::ActiveSkillId::storm_swords, frame).has_value()) {
++            return false;
++        }
+     }
+-    const Rectangle destination{
+-        foot_position.x - frame->foot_anchor.x * scale,
+-        foot_position.y - frame->foot_anchor.y * scale,
+-        frame->source.width * scale, frame->source.height * scale,
+-    };
+-    DrawTexturePro(textures_[atlas_index(id)], source, destination,
+-        {0.0F, 0.0F}, 0.0F, tint);
+     return true;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/active_skill_assets.hpp b/src/platform/raylib/active_skill_assets.hpp
+index 403def4..3ca269f 100644
+--- a/src/platform/raylib/active_skill_assets.hpp
++++ b/src/platform/raylib/active_skill_assets.hpp
+@@ -1,52 +1,29 @@
+ #pragma once
+ 
++#include "material_asset_types.hpp"
++
++#include "skills/active_skill_types.hpp"
++
+ #include <raylib.h>
+ 
+-#include <array>
+ #include <cstddef>
+-#include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::platform {
+ 
+-enum class ActiveSkillAtlasId : std::uint8_t {
+-    draw_slash,
+-    storm_swords,
+-    count,
+-};
+-
+-struct ActiveSkillAtlasDefinition final {
+-    ActiveSkillAtlasId id{ActiveSkillAtlasId::draw_slash};
+-    const char* path{};
+-    int width{};
+-    int height{};
+-    std::uint8_t columns{};
+-    std::uint8_t rows{};
+-    std::size_t frame_count{};
+-};
++using ActiveSkillAtlasId = skills::ActiveSkillId;
+ 
+ struct ActiveSkillAtlasFrame final {
++    MaterialAtlasId atlas{MaterialAtlasId::count};
+     Rectangle source{};
+     Vector2 foot_anchor{};
+     Vector2 weapon_anchor{};
+ };
+ 
+-[[nodiscard]] const ActiveSkillAtlasDefinition* active_skill_atlas_definition(
+-    ActiveSkillAtlasId id) noexcept;
++[[nodiscard]] MaterialAtlasId active_skill_material_atlas(
++    skills::ActiveSkillId id) noexcept;
+ [[nodiscard]] std::optional<ActiveSkillAtlasFrame> active_skill_atlas_frame(
+-    ActiveSkillAtlasId id, std::size_t frame_index) noexcept;
+-
+-class ActiveSkillAssets final {
+-public:
+-    [[nodiscard]] bool load() noexcept;
+-    void unload() noexcept;
+-    [[nodiscard]] bool ready(ActiveSkillAtlasId id) const noexcept;
+-    [[nodiscard]] bool draw(ActiveSkillAtlasId id, std::size_t frame_index,
+-        Vector2 foot_position, bool flip_x, float scale, Color tint) const noexcept;
+-
+-private:
+-    std::array<Texture2D, static_cast<std::size_t>(ActiveSkillAtlasId::count)>
+-        textures_{};
+-};
++    skills::ActiveSkillId id, std::size_t frame_index) noexcept;
++[[nodiscard]] bool active_skill_assets_ready() noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/active_skill_renderer.cpp b/src/platform/raylib/active_skill_renderer.cpp
+index ba42ab1..d6c90fc 100644
+--- a/src/platform/raylib/active_skill_renderer.cpp
++++ b/src/platform/raylib/active_skill_renderer.cpp
+@@ -68,21 +68,21 @@ void draw_skill_text(Font font, const char* text,
+     if (text == nullptr || text[0] == '\0') return;
+     const UiTextContrastStyle style = ui_text_contrast_style();
+     color.a = 255U;
+     if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+         color = style.muted;
+     }
+     draw_crisp_ui_text(font, text, {x, y}, size, 0.5F, color);
+ }
+ 
+ void draw_draw_slash(const DrawSlashVisualPlan& plan,
+-    const ActiveSkillAssets& assets,
++    const MaterialPack& material_pack,
+     float width, float height) noexcept {
+     if (!plan.visible) return;
+     const ScreenProjection projected = project_combat_position(
+         plan.center, width, height);
+     constexpr std::size_t kArcSegments = 14U;
+     std::array<Vector2, kArcSegments + 2U> fan{};
+     const float direction = plan.facing == combat::Facing::left ? -1.0F : 1.0F;
+     const Vector2 origin{projected.x,
+         projected.ground_y - 42.0F * projected.scale};
+     fan[0U] = origin;
+@@ -98,24 +98,29 @@ void draw_draw_slash(const DrawSlashVisualPlan& plan,
+         };
+     }
+     DrawTriangleFan(fan.data(), static_cast<int>(fan.size()),
+         Fade(Color{150, 224, 255, 255}, 0.24F * plan.opacity));
+     for (std::size_t index = 1U; index + 1U < fan.size(); ++index) {
+         DrawLineEx(fan[index], fan[index + 1U],
+             3.0F * projected.scale,
+             Fade(Color{236, 251, 255, 255}, plan.opacity));
+     }
+     if (plan.use_atlas) {
+-        static_cast<void>(assets.draw(plan.atlas, plan.atlas_frame,
+-            {projected.x, projected.ground_y},
+-            plan.facing == combat::Facing::left, projected.scale * 0.72F,
+-            Fade(WHITE, plan.opacity)));
++        const auto frame = active_skill_atlas_frame(
++            plan.atlas, plan.atlas_frame);
++        if (frame.has_value()) {
++            static_cast<void>(material_pack.draw_frame(frame->atlas,
++                frame->source, frame->foot_anchor,
++                {projected.x, projected.ground_y},
++                plan.facing == combat::Facing::left,
++                projected.scale * 0.72F, Fade(WHITE, plan.opacity)));
++        }
+     }
+ }
+ 
+ void fit_skill_label(Font font, const char* source, char* output,
+     std::size_t capacity, float width, float size) noexcept {
+     if (output == nullptr || capacity == 0U) return;
+     static_cast<void>(std::snprintf(output, capacity, "%s",
+         source == nullptr ? "" : source));
+     output[capacity - 1U] = '\0';
+     if (MeasureTextEx(font, output, size, 0.5F).x <= width) return;
+@@ -166,29 +171,34 @@ void draw_sword(Vector2 center, float angle, float scale,
+         {base.x - normal.x * half_width * 1.6F,
+             base.y - normal.y * half_width * 1.6F},
+         2.4F * scale, Fade(Color{202, 155, 67, 255}, opacity));
+     DrawLineEx(base,
+         {base.x - direction.x * 12.0F * scale,
+          base.y - direction.y * 12.0F * scale},
+         3.0F * scale, Fade(Color{38, 30, 29, 255}, opacity));
+ }
+ 
+ void draw_storm_swords(const StormSwordsVisualPlan& plan,
+-    const ActiveSkillAssets& assets,
++    const MaterialPack& material_pack,
+     float width, float height) noexcept {
+     if (!plan.visible && !plan.finisher_visible) return;
+     const ScreenProjection projected = project_combat_position(
+         plan.center, width, height);
+     if (plan.use_atlas) {
+-        static_cast<void>(assets.draw(plan.atlas, plan.atlas_frame,
+-            {projected.x, projected.ground_y}, false, projected.scale * 0.70F,
+-            WHITE));
++        const auto frame = active_skill_atlas_frame(
++            plan.atlas, plan.atlas_frame);
++        if (frame.has_value()) {
++            static_cast<void>(material_pack.draw_frame(frame->atlas,
++                frame->source, frame->foot_anchor,
++                {projected.x, projected.ground_y}, false,
++                projected.scale * 0.70F, WHITE));
++        }
+     }
+     if (plan.visible) {
+         for (std::size_t index = 0U; index < plan.sword_count; ++index) {
+             const StormSwordVisual& sword = plan.swords[index];
+             if (!sword.visible) continue;
+             const bool aerial = sword.band == StormSwordBand::aerial;
+             const float radius = (aerial ? 112.0F : 155.0F) * projected.scale;
+             const Vector2 position{
+                 projected.x + std::cos(sword.angle_radians) * radius,
+                 projected.ground_y
+@@ -290,42 +300,34 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
+             1.0F - age / static_cast<float>(kFlashTicks + 1U), 0.0F, 1.0F);
+         result.screen_flash_alpha = 0.16F
+             * result.storm_swords.finisher_opacity;
+     }
+     return result;
+ }
+ 
+ void ActiveSkillRenderer::draw_world(
+     const combat::CombatSnapshot& snapshot,
+     const combat::CombatEvent* last_event,
+-    float width, float height) const noexcept {
++    float width, float height,
++    const MaterialPack& material_pack) const noexcept {
+     const ActiveSkillEffectPlan plan = make_active_skill_effect_plan(
+         snapshot, last_event);
+-    draw_draw_slash(plan.draw_slash, assets_, width, height);
+-    draw_storm_swords(plan.storm_swords, assets_, width, height);
++    draw_draw_slash(plan.draw_slash, material_pack, width, height);
++    draw_storm_swords(plan.storm_swords, material_pack, width, height);
+     if (plan.screen_flash_alpha > 0.0F) {
+         DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
+             Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
+     }
+ }
+ 
+-bool ActiveSkillRenderer::initialize_resources() noexcept {
+-    return assets_.load();
+-}
+-
+-void ActiveSkillRenderer::shutdown_resources() noexcept {
+-    assets_.unload();
+-}
+-
+ bool ActiveSkillRenderer::assets_ready() const noexcept {
+-    return assets_.ready(ActiveSkillAtlasId::draw_slash)
+-        && assets_.ready(ActiveSkillAtlasId::storm_swords);
++    return active_skill_assets_ready();
+ }
+ 
+ ActiveSkillCooldownOverlayPlan make_active_skill_cooldown_overlay(
+     Rectangle bounds, float cooldown_ratio, bool empty) noexcept {
+     if (empty || cooldown_ratio <= 0.0F || bounds.width <= 0.0F
+             || bounds.height <= 0.0F) {
+         return {};
+     }
+     const float ratio = std::clamp(cooldown_ratio, 0.0F, 1.0F);
+     const float overlay_height = bounds.height * ratio;
+diff --git a/src/platform/raylib/active_skill_renderer.hpp b/src/platform/raylib/active_skill_renderer.hpp
+index dfcd4d7..0e722e0 100644
+--- a/src/platform/raylib/active_skill_renderer.hpp
++++ b/src/platform/raylib/active_skill_renderer.hpp
+@@ -52,33 +52,30 @@ struct ActiveSkillEffectPlan final {
+     StormSwordsVisualPlan storm_swords{};
+     float screen_flash_alpha{};
+ };
+ 
+ [[nodiscard]] ActiveSkillEffectPlan make_active_skill_effect_plan(
+     const combat::CombatSnapshot& snapshot,
+     const combat::CombatEvent* last_event) noexcept;
+ 
+ class ActiveSkillRenderer final {
+ public:
+-    [[nodiscard]] bool initialize_resources() noexcept;
+-    void shutdown_resources() noexcept;
+     [[nodiscard]] bool assets_ready() const noexcept;
+     void draw_world(const combat::CombatSnapshot& snapshot,
+         const combat::CombatEvent* last_event,
+-        float width, float height) const noexcept;
++        float width, float height,
++        const MaterialPack& material_pack) const noexcept;
+     void draw_hud(const ActiveSkillHudModel& model,
+         const ActiveSkillHudLayout& layout,
+         Font hud_font, bool hud_font_ready,
+         const MaterialPack& material_pack) const noexcept;
+ 
+-private:
+-    ActiveSkillAssets assets_{};
+ };
+ 
+ struct ActiveSkillCooldownOverlayPlan final {
+     bool visible{};
+     Rectangle bounds{};
+ };
+ 
+ [[nodiscard]] ActiveSkillCooldownOverlayPlan
+ make_active_skill_cooldown_overlay(
+     Rectangle bounds, float cooldown_ratio, bool empty) noexcept;
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 34b626b..81baee4 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -41,36 +41,30 @@ CombatRenderPlan make_combat_render_plan(
+ std::optional<std::size_t> hud_presented_frame_index(
+     HudPresentedFrame frame) noexcept {
+     const std::size_t index = static_cast<std::size_t>(frame);
+     return index < static_cast<std::size_t>(HudPresentedFrame::count)
+         ? std::optional<std::size_t>{index} : std::nullopt;
+ }
+ 
+ bool CombatRenderer::initialize_resources() noexcept {
+     const bool death_font_ready = death_overlay_.initialize();
+     const bool hud_font_ready = hud_renderer_.initialize();
+-    const bool skill_assets_ready = active_skill_renderer_.initialize_resources();
+     static_cast<void>(material_pack_.synchronize_residency(
+         base_material_residency_request()));
+     if (!death_font_ready || !hud_font_ready) {
+         TraceLog(LOG_WARNING,
+             "HUD overlays are using a fallback font; formal CJK validation will fail");
+     }
+-    if (!skill_assets_ready) {
+-        TraceLog(LOG_WARNING,
+-            "Active skill atlases are unavailable; using program effect fallback");
+-    }
+     return death_font_ready && hud_font_ready;
+ }
+ 
+ void CombatRenderer::shutdown_resources() noexcept {
+-    active_skill_renderer_.shutdown_resources();
+     material_pack_.unload();
+     hud_renderer_.shutdown();
+     death_overlay_.shutdown();
+ }
+ 
+ bool CombatRenderer::active_skill_assets_ready() const noexcept {
+     return active_skill_renderer_.assets_ready();
+ }
+ 
+ bool CombatRenderer::material_pipeline_ready() const noexcept {
+@@ -280,21 +274,21 @@ GroundLootView CombatRenderer::draw(
+             draw_room(current, render_plan.ground_loot, render_plan.material_loot);
+             break;
+         case CombatRenderStage::actors:
+             draw_actors(previous, current,
+                 std::clamp(interpolation_alpha, 0.0F, 1.0F),
+                 draw_debug, feedback);
+             if (current.combat.has_value()) {
+                 active_skill_renderer_.draw_world(*current.combat,
+                     has_last_event_ ? &last_event_ : nullptr,
+                     static_cast<float>(GetScreenWidth()),
+-                    static_cast<float>(GetScreenHeight()));
++                    static_cast<float>(GetScreenHeight()), material_pack_);
+             }
+             break;
+         case CombatRenderStage::ground_loot_labels:
+             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
+             hud_renderer_.draw_material_loot(render_plan.material_loot);
+             break;
+         case CombatRenderStage::normal_hud:
+             draw_hud();
+             active_skill_renderer_.draw_hud(active_skill_hud_model_,
+                 active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
+diff --git a/src/platform/raylib/material_asset_types.hpp b/src/platform/raylib/material_asset_types.hpp
+index 164f55f..314c83b 100644
+--- a/src/platform/raylib/material_asset_types.hpp
++++ b/src/platform/raylib/material_asset_types.hpp
+@@ -28,20 +28,22 @@ enum class MaterialAtlasId : std::uint8_t {
+     chaos_environment,
+     chaos_chaser,
+     chaos_hazard,
+     items_ui,
+     ui_material,
+     fire_room_background,
+     water_room_background,
+     lightning_room_background,
+     chaos_room_background,
+     element_doors,
++    skill_draw_slash,
++    skill_storm_swords,
+     count,
+ };
+ 
+ enum class MaterialLayer : std::uint8_t {
+     shadow,
+     back_effect,
+     body,
+     weapon,
+     front_effect,
+     count,
+@@ -55,20 +57,21 @@ enum class MaterialClass : std::uint8_t {
+     loot,
+     count,
+ };
+ 
+ enum class MaterialEcology : std::uint8_t {
+     common,
+     fire,
+     water,
+     lightning,
+     chaos,
++    skill,
+     count,
+ };
+ 
+ enum class AnimationEventKind : std::uint8_t {
+     none,
+     hit,
+     footstep,
+     spawn_effect,
+     recovery,
+ };
+diff --git a/src/platform/raylib/material_asset_validation.cpp b/src/platform/raylib/material_asset_validation.cpp
+index 2e72ccc..894499f 100644
+--- a/src/platform/raylib/material_asset_validation.cpp
++++ b/src/platform/raylib/material_asset_validation.cpp
+@@ -75,20 +75,22 @@ constexpr std::uint16_t kMaximumClipFrames = 256U;
+         MaterialAtlasId::fire_bomber,
+         MaterialAtlasId::fire_charger,
+         MaterialAtlasId::water_bulwark,
+         MaterialAtlasId::water_support,
+         MaterialAtlasId::lightning_shooter,
+         MaterialAtlasId::lightning_dasher,
+         MaterialAtlasId::chaos_chaser,
+         MaterialAtlasId::chaos_hazard,
+     }};
+     for (const MaterialAtlasId id : kMonsterAtlases) request.require(id);
++    request.require(MaterialAtlasId::skill_draw_slash);
++    request.require(MaterialAtlasId::skill_storm_swords);
+ 
+     constexpr std::array<std::array<MaterialAtlasId, 2>, 4> kRoomAtlases{{
+         {{MaterialAtlasId::fire_environment,
+             MaterialAtlasId::fire_room_background}},
+         {{MaterialAtlasId::water_environment,
+             MaterialAtlasId::water_room_background}},
+         {{MaterialAtlasId::lightning_environment,
+             MaterialAtlasId::lightning_room_background}},
+         {{MaterialAtlasId::chaos_environment,
+             MaterialAtlasId::chaos_room_background}},
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index 0328a35..9e37178 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -53,20 +53,22 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
+     {MaterialAtlasId::chaos_environment, 768, 768, 4U * 768U * 768U, "assets/stage12/chaos_environment.png", "assets/stage12/chaos_environment_material.png", MaterialEcology::chaos},
+     {MaterialAtlasId::chaos_chaser, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_chaser.png", "assets/stage12/chaos_chaser_material.png", MaterialEcology::chaos},
+     {MaterialAtlasId::chaos_hazard, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_hazard.png", "assets/stage12/chaos_hazard_material.png", MaterialEcology::chaos},
+     {MaterialAtlasId::items_ui, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/items_ui.png", "assets/stage12/items_ui_material.png", MaterialEcology::common},
+     {MaterialAtlasId::ui_material, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/ui_material.png", "assets/stage12/ui_material_material.png", MaterialEcology::common},
+     {MaterialAtlasId::fire_room_background, 2560, 1440, 14'745'600U, "assets/stage12/fire_room_background.png", "assets/stage12/fire_room_background_material.png", MaterialEcology::fire},
+     {MaterialAtlasId::water_room_background, 2560, 1440, 14'745'600U, "assets/stage12/water_room_background.png", "assets/stage12/water_room_background_material.png", MaterialEcology::water},
+     {MaterialAtlasId::lightning_room_background, 2560, 1440, 14'745'600U, "assets/stage12/lightning_room_background.png", "assets/stage12/lightning_room_background_material.png", MaterialEcology::lightning},
+     {MaterialAtlasId::chaos_room_background, 2560, 1440, 14'745'600U, "assets/stage12/chaos_room_background.png", "assets/stage12/chaos_room_background_material.png", MaterialEcology::chaos},
+     {MaterialAtlasId::element_doors, 1024, 256, 1'048'576U, "assets/stage12/element_doors.png", "assets/stage12/element_doors_material.png", MaterialEcology::common},
++    {MaterialAtlasId::skill_draw_slash, 1254, 1254, 1254U * 1254U * 4U, "assets/skills/draw_slash_atlas.png", "assets/skills/draw_slash_atlas_material.png", MaterialEcology::skill},
++    {MaterialAtlasId::skill_storm_swords, 1024, 1536, 1024U * 1536U * 4U, "assets/skills/storm_swords_atlas.png", "assets/skills/storm_swords_atlas_material.png", MaterialEcology::skill},
+ };
+ 
+ #define ARPG_ACTOR_FRAME(sprite, column, row) \
+     {MaterialSpriteId::sprite, MaterialAtlasId::actors, \
+         {static_cast<float>((column) * 224), static_cast<float>((row) * 224), \
+             224.0F, 224.0F}, \
+         {112.0F, 224.0F}, 42U, {152.0F, 118.0F}, MaterialLayer::body, MaterialClass::actor, static_cast<std::uint32_t>((column) * 131U + (row) * 17U + 1U)}
+ 
+ #define ARPG_EFFECT_FRAME(sprite, column, row) \
+     {MaterialSpriteId::sprite, MaterialAtlasId::effects_ui, \
+diff --git a/src/platform/raylib/material_residency.cpp b/src/platform/raylib/material_residency.cpp
+index 95f205f..40dfa84 100644
+--- a/src/platform/raylib/material_residency.cpp
++++ b/src/platform/raylib/material_residency.cpp
+@@ -1,11 +1,12 @@
+ #include "material_residency.hpp"
++#include "active_skill_assets.hpp"
+ 
+ #include <limits>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ [[nodiscard]] constexpr bool is_known_atlas(MaterialAtlasId id) noexcept {
+     return id < MaterialAtlasId::count;
+ }
+ 
+@@ -97,20 +98,25 @@ MaterialResidencyRequest base_material_residency_request() noexcept {
+     request.require(MaterialAtlasId::player_reaction);
+     request.require(MaterialAtlasId::player_air);
+     request.require(MaterialAtlasId::items_ui);
+     request.require(MaterialAtlasId::ui_material);
+     return request;
+ }
+ 
+ MaterialResidencyRequest make_material_residency_request(
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+     MaterialResidencyRequest request = base_material_residency_request();
++    for (const skills::ActiveSkillSlot& slot : snapshot.skill_loadout.slots) {
++        if (slot.active != skills::ActiveSkillId::none) {
++            request.require(active_skill_material_atlas(slot.active));
++        }
++    }
+     if (snapshot.has_active_room) {
+         require_room_atlases(request, snapshot.ecology);
+     }
+     if (!snapshot.combat.has_value()) return request;
+     const combat::CombatSnapshot& combat = *snapshot.combat;
+     for (const combat::MonsterSnapshot& monster : combat.monsters) {
+         if (monster.active) require_monster_atlas(request, monster.id);
+     }
+     return request;
+ }
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index b0e9a4c..0955615 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -62,20 +62,28 @@ if(TARGET arpg_raylib)
+         platform.units PROPERTIES LABELS "headless;platform")
+ 
+     add_test(NAME platform.ui_dpi_manifest
+         COMMAND "${CMAKE_COMMAND}"
+             "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+             -P "${CMAKE_CURRENT_SOURCE_DIR}/ui_dpi_manifest_test.cmake")
+     set_tests_properties(platform.ui_dpi_manifest PROPERTIES
+         LABELS "headless;platform;ui")
+ 
+     find_package(Python3 REQUIRED COMPONENTS Interpreter)
++    add_test(NAME stage17.active_skill_material_asset_pipeline
++        COMMAND "${Python3_EXECUTABLE}" -m unittest
++            tests.platform.active_skill_material_asset_pipeline_tests -v)
++    set_tests_properties(stage17.active_skill_material_asset_pipeline PROPERTIES
++        LABELS "headless;platform;assets;stage17"
++        TIMEOUT 120
++        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
++
+     add_test(NAME stage12.environment_prop_asset_pipeline
+         COMMAND "${Python3_EXECUTABLE}" -m unittest
+             tests.platform.environment_prop_asset_pipeline_tests -v)
+     set_tests_properties(stage12.environment_prop_asset_pipeline PROPERTIES
+         LABELS "headless;platform;assets;stage12"
+         TIMEOUT 180
+         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+ 
+     add_test(NAME stage12.lightning_asset_pipeline
+         COMMAND "${Python3_EXECUTABLE}"
+diff --git a/tests/platform/active_skill_asset_tests.cpp b/tests/platform/active_skill_asset_tests.cpp
+index 38a7ad9..96529c9 100644
+--- a/tests/platform/active_skill_asset_tests.cpp
++++ b/tests/platform/active_skill_asset_tests.cpp
+@@ -1,59 +1,77 @@
+ #include "test_framework.hpp"
+ 
+ #include "active_skill_assets.hpp"
++#include "material_manifest.hpp"
+ 
+ #include <cstddef>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ 
+ arpg::test::Failure active_skill_atlases_define_complete_original_frame_grids()
+     noexcept {
+-    const platform::ActiveSkillAtlasDefinition* const draw =
+-        platform::active_skill_atlas_definition(
+-            platform::ActiveSkillAtlasId::draw_slash);
+-    const platform::ActiveSkillAtlasDefinition* const storm =
+-        platform::active_skill_atlas_definition(
+-            platform::ActiveSkillAtlasId::storm_swords);
+-    ARPG_REQUIRE(draw != nullptr);
+-    ARPG_REQUIRE(storm != nullptr);
+-    ARPG_REQUIRE(draw->frame_count == 36U);
+-    ARPG_REQUIRE(draw->columns == 6U);
+-    ARPG_REQUIRE(draw->rows == 6U);
+-    ARPG_REQUIRE(draw->width == 1254);
+-    ARPG_REQUIRE(draw->height == 1254);
+-    ARPG_REQUIRE(storm->frame_count == 24U);
+-    ARPG_REQUIRE(storm->columns == 4U);
+-    ARPG_REQUIRE(storm->rows == 6U);
+-    ARPG_REQUIRE(storm->width == 1024);
+-    ARPG_REQUIRE(storm->height == 1536);
+-
+-    for (std::size_t frame = 0U; frame < draw->frame_count; ++frame) {
++    for (std::size_t frame = 0U; frame < 36U; ++frame) {
+         const auto source = platform::active_skill_atlas_frame(
+-            platform::ActiveSkillAtlasId::draw_slash, frame);
++            arpg::skills::ActiveSkillId::draw_slash, frame);
+         ARPG_REQUIRE(source.has_value());
++        ARPG_REQUIRE(source->atlas == platform::MaterialAtlasId::skill_draw_slash);
+         ARPG_REQUIRE(source->source.x >= 0.0F);
+         ARPG_REQUIRE(source->source.y >= 0.0F);
+-        ARPG_REQUIRE(source->source.x + source->source.width <= draw->width);
+-        ARPG_REQUIRE(source->source.y + source->source.height <= draw->height);
++        ARPG_REQUIRE(source->source.x + source->source.width <= 1254.0F);
++        ARPG_REQUIRE(source->source.y + source->source.height <= 1254.0F);
+         ARPG_REQUIRE(source->foot_anchor.x >= 0.0F);
+         ARPG_REQUIRE(source->foot_anchor.x <= source->source.width);
+         ARPG_REQUIRE(source->foot_anchor.y >= 0.0F);
+         ARPG_REQUIRE(source->foot_anchor.y <= source->source.height);
+     }
++    for (std::size_t frame = 0U; frame < 24U; ++frame) {
++        const auto source = platform::active_skill_atlas_frame(
++            arpg::skills::ActiveSkillId::storm_swords, frame);
++        ARPG_REQUIRE(source.has_value());
++        ARPG_REQUIRE(source->atlas == platform::MaterialAtlasId::skill_storm_swords);
++        ARPG_REQUIRE(source->source.x >= 0.0F);
++        ARPG_REQUIRE(source->source.y >= 0.0F);
++        ARPG_REQUIRE(source->source.x + source->source.width <= 1024.0F);
++        ARPG_REQUIRE(source->source.y + source->source.height <= 1536.0F);
++    }
+     ARPG_REQUIRE(!platform::active_skill_atlas_frame(
+-        platform::ActiveSkillAtlasId::storm_swords, storm->frame_count).has_value());
++        arpg::skills::ActiveSkillId::storm_swords, 24U).has_value());
++    return {};
++}
++
++arpg::test::Failure active_skill_atlases_are_registered_as_material_pairs()
++    noexcept {
++    const auto manifest = platform::default_material_manifest();
++    bool found_draw{};
++    bool found_storm{};
++    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
++        const auto& atlas = manifest.atlases[index];
++        if (atlas.id == platform::MaterialAtlasId::skill_draw_slash) {
++            found_draw = atlas.width == 1254 && atlas.height == 1254
++                && atlas.rgba_bytes == 1254U * 1254U * 4U
++                && atlas.ecology == platform::MaterialEcology::skill;
++        }
++        if (atlas.id == platform::MaterialAtlasId::skill_storm_swords) {
++            found_storm = atlas.width == 1024 && atlas.height == 1536
++                && atlas.rgba_bytes == 1024U * 1536U * 4U
++                && atlas.ecology == platform::MaterialEcology::skill;
++        }
++    }
++    ARPG_REQUIRE(found_draw);
++    ARPG_REQUIRE(found_storm);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"active skill atlases expose complete original frame grids",
+      &active_skill_atlases_define_complete_original_frame_grids},
++    {"active skill atlases are registered as material pairs",
++     &active_skill_atlases_are_registered_as_material_pairs},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite active_skill_asset_suite() noexcept {
+     return arpg::test::make_suite("active_skill_assets", kCases);
+ }
+diff --git a/tests/platform/active_skill_material_asset_pipeline_tests.py b/tests/platform/active_skill_material_asset_pipeline_tests.py
+new file mode 100644
+index 0000000..14816ea
+--- /dev/null
++++ b/tests/platform/active_skill_material_asset_pipeline_tests.py
+@@ -0,0 +1,64 @@
++from __future__ import annotations
++
++import hashlib
++import subprocess
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++
++from PIL import Image
++
++
++ROOT = Path(__file__).resolve().parents[2]
++CASES = {
++    "draw_slash": ((1254, 1254), 36),
++    "storm_swords": ((1024, 1536), 24),
++}
++
++
++def sha256(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++class ActiveSkillMaterialAssetPipelineTests(unittest.TestCase):
++    def test_checked_in_material_maps_match_dimensions_and_alpha(self) -> None:
++        for name, (expected_size, _frame_count) in CASES.items():
++            with self.subTest(name=name):
++                with Image.open(ROOT / "assets" / "skills" / f"{name}_atlas.png") as color:
++                    with Image.open(
++                        ROOT / "assets" / "skills" / f"{name}_atlas_material.png"
++                    ) as material:
++                        self.assertEqual(color.size, expected_size)
++                        self.assertEqual(material.size, expected_size)
++                        self.assertEqual(
++                            color.getchannel("A").tobytes(),
++                            material.getchannel("A").tobytes(),
++                        )
++
++    def test_generator_is_deterministic(self) -> None:
++        hashes: list[dict[str, str]] = []
++        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
++            for output in (Path(first), Path(second)):
++                subprocess.run(
++                    [
++                        sys.executable,
++                        str(ROOT / "tools" / "build_active_skill_material_maps.py"),
++                        "--root",
++                        str(ROOT),
++                        "--output-dir",
++                        str(output),
++                    ],
++                    check=True,
++                )
++                hashes.append(
++                    {
++                        name: sha256(output / f"{name}_atlas_material.png")
++                        for name in CASES
++                    }
++                )
++        self.assertEqual(hashes[0], hashes[1])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/platform/material_asset_validation_tests.cpp b/tests/platform/material_asset_validation_tests.cpp
+index c861bb6..08dc61e 100644
+--- a/tests/platform/material_asset_validation_tests.cpp
++++ b/tests/platform/material_asset_validation_tests.cpp
+@@ -523,20 +523,65 @@ arpg::test::Failure material_residency_request_selects_drawable_room_and_monster
+     ARPG_REQUIRE(request.contains(MaterialAtlasId::chaos_chaser));
+     ARPG_REQUIRE(request.contains(MaterialAtlasId::fire_bomber));
+     ARPG_REQUIRE(!request.contains(MaterialAtlasId::water_support));
+     ARPG_REQUIRE(!request.contains(MaterialAtlasId::chaos_environment));
+     ARPG_REQUIRE(arpg::platform::material_residency_bytes(
+         arpg::platform::default_material_manifest(), request)
+         <= 256U * 1024U * 1024U);
+     return {};
+ }
+ 
++arpg::test::Failure material_residency_requests_only_equipped_draw_slash()
++    noexcept {
++    arpg::dungeon::DungeonSnapshot snapshot{};
++    snapshot.skill_loadout.slots[0].active =
++        arpg::skills::ActiveSkillId::draw_slash;
++    const auto request = arpg::platform::make_material_residency_request(snapshot);
++    ARPG_REQUIRE(request.contains(MaterialAtlasId::skill_draw_slash));
++    ARPG_REQUIRE(!request.contains(MaterialAtlasId::skill_storm_swords));
++    return {};
++}
++
++arpg::test::Failure material_residency_requests_both_equipped_skill_atlases_under_budget()
++    noexcept {
++    arpg::dungeon::DungeonSnapshot snapshot{};
++    snapshot.has_active_room = true;
++    snapshot.ecology = arpg::dungeon::DungeonElement::fire;
++    snapshot.skill_loadout.slots[0].active =
++        arpg::skills::ActiveSkillId::draw_slash;
++    snapshot.skill_loadout.slots[1].active =
++        arpg::skills::ActiveSkillId::storm_swords;
++    snapshot.combat.emplace();
++    constexpr std::array<arpg::combat::MonsterId, 8> kWorstMonsters{{
++        arpg::combat::MonsterId::fire_bomber,
++        arpg::combat::MonsterId::fire_charger,
++        arpg::combat::MonsterId::water_bulwark,
++        arpg::combat::MonsterId::water_support,
++        arpg::combat::MonsterId::lightning_shooter,
++        arpg::combat::MonsterId::lightning_dasher,
++        arpg::combat::MonsterId::chaos_chaser,
++        arpg::combat::MonsterId::chaos_hazard,
++    }};
++    snapshot.combat->monster_count = kWorstMonsters.size();
++    for (std::size_t index{}; index < kWorstMonsters.size(); ++index) {
++        snapshot.combat->monsters[index].active = true;
++        snapshot.combat->monsters[index].id = kWorstMonsters[index];
++    }
++    const auto request = arpg::platform::make_material_residency_request(snapshot);
++    ARPG_REQUIRE(request.contains(MaterialAtlasId::skill_draw_slash));
++    ARPG_REQUIRE(request.contains(MaterialAtlasId::skill_storm_swords));
++    ARPG_REQUIRE(arpg::platform::material_residency_bytes(
++        arpg::platform::default_material_manifest(), request)
++        <= 256U * 1024U * 1024U);
++    return {};
++}
++
+ arpg::test::Failure material_residency_noop_sync_is_allocation_free() noexcept {
+     FakeMaterialTextures fake{};
+     const MaterialManifestDefinition manifest =
+         arpg::platform::default_material_manifest();
+     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+         const auto& atlas = manifest.atlases[index];
+         fake.loaded[index * 2U] = {
+             static_cast<unsigned int>(8000U + index * 2U),
+             atlas.width, atlas.height, 1, 7};
+         fake.loaded[index * 2U + 1U] = {
+@@ -876,22 +921,22 @@ arpg::test::Failure material_manifest_rejects_oversized_atlas_and_memory_budget(
+         {MaterialAtlasId::actors, 2048, 2048, 128U * kMiB},
+         {MaterialAtlasId::effects_ui, 1, 1, 1U},
+     }};
+     const MaterialManifestDefinition over_budget_manifest{
+         over_budget.data(), over_budget.size(), nullptr, 0U};
+     ARPG_REQUIRE(!arpg::platform::validate_material_manifest(over_budget_manifest).valid);
+     return {};
+ }
+ 
+ arpg::test::Failure material_manifest_reports_true_resident_peak() noexcept {
+-    constexpr std::size_t kExpectedFullPackBytes = 304'267'264U;
+-    constexpr std::size_t kExpectedResidentPeakBytes = 201'637'888U;
++    constexpr std::size_t kExpectedFullPackBytes = 329'430'304U;
++    constexpr std::size_t kExpectedResidentPeakBytes = 226'800'928U;
+     constexpr std::size_t kExpectedFireEcologyPeakBytes = 165'806'080U;
+     constexpr std::size_t kExpectedNonFirePeakBytes = 157'302'784U;
+     const MaterialManifestDefinition manifest =
+         arpg::platform::default_material_manifest();
+     ARPG_REQUIRE(arpg::platform::full_pack_bytes(manifest)
+         == kExpectedFullPackBytes);
+     ARPG_REQUIRE(arpg::platform::resident_peak_bytes(manifest)
+         == kExpectedResidentPeakBytes);
+     ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).valid);
+ 
+@@ -1195,20 +1240,24 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"records successful item sprite draws",
+         &material_pack_records_successful_item_sprite_draws},
+     {"nine slice preserves authored panel corners",
+         &material_pack_nine_slice_preserves_panel_corners},
+     {"horizontal slice preserves decorated caps",
+         &material_pack_horizontal_slice_preserves_decorated_caps},
+     {"switches ecology without reloading common atlases",
+         &material_pack_switches_ecology_without_reloading_common},
+     {"residency request selects drawable room and monster atlases",
+         &material_residency_request_selects_drawable_room_and_monster_atlases},
++    {"residency requests only equipped draw slash",
++        &material_residency_requests_only_equipped_draw_slash},
++    {"residency requests both equipped skill atlases under budget",
++        &material_residency_requests_both_equipped_skill_atlases_under_budget},
+     {"residency noop sync is allocation free",
+         &material_residency_noop_sync_is_allocation_free},
+     {"residency failure is isolated and not retried",
+         &material_residency_failure_isolated_and_not_retried},
+     {"residency loads before unloading and rejects budget",
+         &material_residency_loads_before_unloading_and_rejects_budget},
+     {"all manifest texture pairs exist and match declared dimensions",
+         &material_manifest_all_texture_pairs_exist_and_match},
+     {"player action atlas files have transparent borders",
+         &player_action_atlas_files_are_opaque_only_on_drawn_pixels},
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index e3c66df..a610ab0 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -100,13 +100,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 455,
++    return arpg::test::run_suites(suites, 458,
+         "HUD and UI material slice contract");
+ }
+diff --git a/tests/platform/room_background_render_plan_tests.cpp b/tests/platform/room_background_render_plan_tests.cpp
+index c46242e..ac22918 100644
+--- a/tests/platform/room_background_render_plan_tests.cpp
++++ b/tests/platform/room_background_render_plan_tests.cpp
+@@ -26,21 +26,21 @@ const MaterialAtlasDefinition* find_atlas(MaterialAtlasId id) noexcept {
+ arpg::test::Failure background_manifest_preserves_old_ids_and_adds_four_pairs() noexcept {
+     static_assert(static_cast<std::size_t>(MaterialAtlasId::ui_material) == 21U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::fire_room_background) == 22U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::water_room_background) == 23U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::lightning_room_background) == 24U);
+     static_assert(static_cast<std::size_t>(
+         MaterialAtlasId::chaos_room_background) == 25U);
+-    static_assert(static_cast<std::size_t>(MaterialAtlasId::count) == 27U);
++    static_assert(static_cast<std::size_t>(MaterialAtlasId::count) == 29U);
+ 
+     const auto manifest = arpg::platform::default_material_manifest();
+     ARPG_REQUIRE(manifest.atlas_count
+         == static_cast<std::size_t>(MaterialAtlasId::count));
+     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+         ARPG_REQUIRE(static_cast<std::size_t>(manifest.atlases[index].id)
+             == index);
+     }
+ 
+     struct Expected final {
+diff --git a/tools/build_active_skill_material_maps.py b/tools/build_active_skill_material_maps.py
+new file mode 100644
+index 0000000..b14d4db
+--- /dev/null
++++ b/tools/build_active_skill_material_maps.py
+@@ -0,0 +1,78 @@
++from __future__ import annotations
++
++import argparse
++import tempfile
++from pathlib import Path
++
++from PIL import Image
++
++
++SKILLS = ("draw_slash", "storm_swords")
++
++
++def clamp(value: int, minimum: int, maximum: int) -> int:
++    return max(minimum, min(maximum, value))
++
++
++def material_pixel(pixel: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
++    red, green, blue, alpha = pixel
++    if alpha == 0:
++        return 0, 0, 0, 0
++    luminance = (54 * red + 183 * green + 19 * blue) // 256
++    energy = max(blue - red, green - red, 0)
++    ancient_gold = red > green > blue and red - blue >= 24
++    dark_metal = luminance < 118 and max(red, green, blue) - min(red, green, blue) < 42
++    roughness = clamp(220 - luminance // 2 - 70 * dark_metal, 40, 235)
++    emissive = clamp(energy * 3 + (48 if luminance > 210 else 0), 0, 255)
++    metalness = clamp(32 + 180 * dark_metal + 145 * ancient_gold, 0, 255)
++    return roughness, emissive, metalness, alpha
++
++
++def build_map(source: Path, destination: Path) -> None:
++    with Image.open(source) as opened:
++        color = opened.convert("RGBA")
++    material = Image.new("RGBA", color.size)
++    material.putdata(
++        [material_pixel(pixel) for pixel in color.get_flattened_data()]
++    )
++
++    destination.parent.mkdir(parents=True, exist_ok=True)
++    temporary_path: Path | None = None
++    try:
++        with tempfile.NamedTemporaryFile(
++            dir=destination.parent,
++            prefix=f".{destination.stem}-",
++            suffix=".png",
++            delete=False,
++        ) as temporary:
++            temporary_path = Path(temporary.name)
++        material.save(temporary_path, format="PNG", optimize=False, compress_level=9)
++        with Image.open(temporary_path) as verified:
++            verified.load()
++            if verified.size != color.size:
++                raise RuntimeError(f"dimension mismatch for {destination.name}")
++            if verified.convert("RGBA").getchannel("A").tobytes() != color.getchannel("A").tobytes():
++                raise RuntimeError(f"alpha mismatch for {destination.name}")
++        temporary_path.replace(destination)
++        temporary_path = None
++    finally:
++        if temporary_path is not None:
++            temporary_path.unlink(missing_ok=True)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", type=Path, default=Path.cwd())
++    parser.add_argument("--output-dir", type=Path)
++    arguments = parser.parse_args()
++    root = arguments.root.resolve()
++    output_dir = (arguments.output_dir or root / "assets" / "skills").resolve()
++    for skill in SKILLS:
++        build_map(
++            root / "assets" / "skills" / f"{skill}_atlas.png",
++            output_dir / f"{skill}_atlas_material.png",
++        )
++
++
++if __name__ == "__main__":
++    main()

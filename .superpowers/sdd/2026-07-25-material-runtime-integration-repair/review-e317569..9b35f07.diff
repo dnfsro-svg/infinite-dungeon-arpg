@@ -1,0 +1,742 @@
+# Review package: e31756970d28f7492e2f3e99be565aa3d1cf16ed..9b35f07
+
+## Commits
+9b35f07 fix: render directional element doors
+
+## Files changed
+ src/platform/raylib/combat_renderer.cpp            |  7 +-
+ src/platform/raylib/combat_renderer.hpp            |  7 +-
+ src/platform/raylib/dungeon_view_math.cpp          | 40 ++++++++++
+ src/platform/raylib/dungeon_view_math.hpp          | 13 ++++
+ src/platform/raylib/material_pack.cpp              |  9 ++-
+ src/platform/raylib/room_renderer.cpp              | 62 ++++++++-------
+ tests/platform/dungeon_view_math_tests.cpp         | 88 +++++++++++++++++++---
+ tests/platform/platform_test_main.cpp              |  2 +-
+ .../platform/stage12_environment_render_tests.cpp  | 44 ++++++++++-
+ 9 files changed, 223 insertions(+), 49 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index a11874f..34b626b 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -111,25 +111,26 @@ MonsterMaterialDrawRuntimeStatus CombatRenderer::monster_material_draw_status(
+ RoomBackgroundDrawRuntimeStatus CombatRenderer::room_background_draw_status()
+     const noexcept {
+     return room_background_draw_status_;
+ }
+ 
+ DoorRenderDecision door_render_decision(
+     DoorVisualMode mode,
+     dungeon::ExitDirection direction) noexcept {
+     const DoorTheme theme = door_theme(direction);
+     return {
++        select_door_sprite(theme.element),
+         theme.label,
+-        theme.arrow,
++        mode == DoorVisualMode::closed
++            ? Rgba8{150U, 150U, 150U, 255U}
++            : Rgba8{255U, 255U, 255U, 255U},
+         theme.frame,
+-        theme.frame,
+-        {177U, 31U, 46U, 235U},
+         mode == DoorVisualMode::closed,
+     };
+ }
+ 
+ void CombatRenderer::consume_event(const combat::CombatEvent& event) noexcept {
+     last_event_ = event;
+     has_last_event_ = true;
+ }
+ 
+ void CombatRenderer::consume_dungeon_event(
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 98d05ae..9f3e6ee 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -68,26 +68,25 @@ struct RoomBackgroundDrawRuntimeStatus final {
+ [[nodiscard]] CombatRenderPlan make_combat_render_plan(
+     const dungeon::DungeonSnapshot& snapshot,
+     settings::LootFilterMode mode,
+     float width,
+     float height) noexcept;
+ 
+ [[nodiscard]] std::optional<std::size_t> hud_presented_frame_index(
+     HudPresentedFrame) noexcept;
+ 
+ struct DoorRenderDecision final {
++    MaterialSpriteId sprite{MaterialSpriteId::missing};
+     const char* label{};
+-    const char* arrow{};
+-    Rgba8 frame{};
++    Rgba8 body_tint{};
+     Rgba8 text{};
+-    Rgba8 locked_interior{};
+-    bool draw_locked_interior{};
++    bool draw_lock_marker{};
+ };
+ 
+ [[nodiscard]] DoorRenderDecision door_render_decision(
+     DoorVisualMode mode,
+     dungeon::ExitDirection direction) noexcept;
+ 
+ class CombatRenderer final {
+ public:
+     [[nodiscard]] bool initialize_resources() noexcept;
+     void shutdown_resources() noexcept;
+diff --git a/src/platform/raylib/dungeon_view_math.cpp b/src/platform/raylib/dungeon_view_math.cpp
+index c123216..d322092 100644
+--- a/src/platform/raylib/dungeon_view_math.cpp
++++ b/src/platform/raylib/dungeon_view_math.cpp
+@@ -38,20 +38,60 @@ DoorTheme door_theme(dungeon::ExitDirection direction) noexcept {
+     case dungeon::ExitDirection::left:
+         return {dungeon::DungeonElement::lightning, "LIGHTNING", "\xE2\x86\x90", kLightningFrame};
+     case dungeon::ExitDirection::right:
+         return {dungeon::DungeonElement::chaos, "CHAOS", "\xE2\x86\x92", kChaosFrame};
+     case dungeon::ExitDirection::none:
+         return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
+     }
+     return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
+ }
+ 
++DoorArrowGeometry door_arrow_geometry(dungeon::ExitDirection direction,
++    float center_x, float center_y, float scale) noexcept {
++    const float safe_scale = std::max(0.0F, scale);
++    Vector2 outward{};
++    switch (direction) {
++    case dungeon::ExitDirection::up:
++        outward = {0.0F, -1.0F};
++        break;
++    case dungeon::ExitDirection::down:
++        outward = {0.0F, 1.0F};
++        break;
++    case dungeon::ExitDirection::left:
++        outward = {-1.0F, 0.0F};
++        break;
++    case dungeon::ExitDirection::right:
++        outward = {1.0F, 0.0F};
++        break;
++    case dungeon::ExitDirection::none:
++        outward = {0.0F, -1.0F};
++        break;
++    }
++    const Vector2 perpendicular{-outward.y, outward.x};
++    const float shaft = 14.0F * safe_scale;
++    const float tip = 20.0F * safe_scale;
++    const float head_length = 9.0F * safe_scale;
++    const float head_width = 7.0F * safe_scale;
++    const Vector2 center{center_x, center_y};
++    const Vector2 arrow_tip{center.x + outward.x * tip,
++        center.y + outward.y * tip};
++    return {
++        {center.x - outward.x * shaft, center.y - outward.y * shaft},
++        arrow_tip,
++        {arrow_tip.x - outward.x * head_length + perpendicular.x * head_width,
++            arrow_tip.y - outward.y * head_length + perpendicular.y * head_width},
++        {arrow_tip.x - outward.x * head_length - perpendicular.x * head_width,
++            arrow_tip.y - outward.y * head_length - perpendicular.y * head_width},
++        2.5F * safe_scale,
++    };
++}
++
+ bool abyss_door_marker(
+     const dungeon::DungeonSnapshot& snapshot,
+     dungeon::ExitDirection direction) noexcept {
+     const auto index = static_cast<std::size_t>(direction);
+     return index < snapshot.abyss_doors.size()
+         && snapshot.abyss_doors[index];
+ }
+ 
+ EnvironmentHazardVisual environment_hazard_visual(
+     const combat::HazardSnapshot& hazard) noexcept {
+diff --git a/src/platform/raylib/dungeon_view_math.hpp b/src/platform/raylib/dungeon_view_math.hpp
+index aec03b7..9cb3e8e 100644
+--- a/src/platform/raylib/dungeon_view_math.hpp
++++ b/src/platform/raylib/dungeon_view_math.hpp
+@@ -1,33 +1,43 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_types.hpp"
+ #include "progression/progression_rules.hpp"
+ 
++#include <raylib.h>
++
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ struct Rgba8 final {
+     std::uint8_t r{};
+     std::uint8_t g{};
+     std::uint8_t b{};
+     std::uint8_t a{255};
+ };
+ 
+ struct DoorTheme final {
+     dungeon::DungeonElement element{};
+     const char* label{};
+     const char* arrow{};
+     Rgba8 frame{};
+ };
+ 
++struct DoorArrowGeometry final {
++    Vector2 tail{};
++    Vector2 tip{};
++    Vector2 head_left{};
++    Vector2 head_right{};
++    float thickness{};
++};
++
+ enum class HoleVisualMode : std::uint8_t {
+     hidden,
+     sealed,
+     ready,
+     busy,
+     faulted,
+ };
+ 
+ enum class SaveIndicator : std::uint8_t {
+     none,
+@@ -88,20 +98,23 @@ struct AbyssHudValues final {
+ 
+ inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
+ inline constexpr float kHoleInteractionRadius = 3.25F;
+ 
+ [[nodiscard]] DoorVisualMode door_visual_mode(
+     dungeon::RoomPhase phase,
+     bool has_active_room,
+     bool exits_open) noexcept;
+ [[nodiscard]] DoorTheme door_theme(
+     dungeon::ExitDirection direction) noexcept;
++[[nodiscard]] DoorArrowGeometry door_arrow_geometry(
++    dungeon::ExitDirection direction, float center_x, float center_y,
++    float scale) noexcept;
+ [[nodiscard]] bool abyss_door_marker(
+     const dungeon::DungeonSnapshot& snapshot,
+     dungeon::ExitDirection direction) noexcept;
+ [[nodiscard]] EnvironmentHazardVisual environment_hazard_visual(
+     const combat::HazardSnapshot& hazard) noexcept;
+ [[nodiscard]] AbyssHudValues abyss_hud_values(
+     const dungeon::DungeonSnapshot& snapshot) noexcept;
+ [[nodiscard]] HoleVisualMode hole_visual_mode(
+     const dungeon::DungeonSnapshot& snapshot) noexcept;
+ [[nodiscard]] bool player_in_hole_range(
+diff --git a/src/platform/raylib/material_pack.cpp b/src/platform/raylib/material_pack.cpp
+index 69d8ca1..d9b7e3b 100644
+--- a/src/platform/raylib/material_pack.cpp
++++ b/src/platform/raylib/material_pack.cpp
+@@ -27,42 +27,43 @@ namespace {
+     MaterialSpriteId id) noexcept {
+     if (id >= MaterialSpriteId::item_weapon
+             && id <= MaterialSpriteId::bag_frame_se) {
+         return MaterialAtlasId::items_ui;
+     }
+     if (id >= MaterialSpriteId::ui_hud_panel
+             && id <= MaterialSpriteId::ui_reinforcement_cancel) {
+         return MaterialAtlasId::ui_material;
+     }
+     switch (id) {
+-    case MaterialSpriteId::environment_floor_fire:
+     case MaterialSpriteId::environment_door_fire:
++    case MaterialSpriteId::environment_door_water:
++    case MaterialSpriteId::environment_door_lightning:
++    case MaterialSpriteId::environment_door_chaos:
++        return MaterialAtlasId::element_doors;
++    case MaterialSpriteId::environment_floor_fire:
+     case MaterialSpriteId::environment_hole:
+         return MaterialAtlasId::environment;
+     case MaterialSpriteId::environment_floor_water:
+-    case MaterialSpriteId::environment_door_water:
+     case MaterialSpriteId::water_wall:
+     case MaterialSpriteId::water_hole:
+     case MaterialSpriteId::water_lantern:
+     case MaterialSpriteId::water_coral:
+     case MaterialSpriteId::water_grate:
+         return MaterialAtlasId::water_environment;
+     case MaterialSpriteId::environment_floor_lightning:
+-    case MaterialSpriteId::environment_door_lightning:
+     case MaterialSpriteId::lightning_wall:
+     case MaterialSpriteId::lightning_hole:
+     case MaterialSpriteId::lightning_arc_lamp:
+     case MaterialSpriteId::lightning_capacitor_bank:
+     case MaterialSpriteId::lightning_grounding_rod:
+         return MaterialAtlasId::lightning_environment;
+     case MaterialSpriteId::environment_floor_chaos:
+-    case MaterialSpriteId::environment_door_chaos:
+     case MaterialSpriteId::chaos_wall:
+     case MaterialSpriteId::chaos_hole:
+     case MaterialSpriteId::chaos_rift_lantern:
+     case MaterialSpriteId::chaos_anomaly_condenser:
+     case MaterialSpriteId::chaos_warning_obelisk:
+         return MaterialAtlasId::chaos_environment;
+     case MaterialSpriteId::fire_wall:
+     case MaterialSpriteId::fire_torch:
+     case MaterialSpriteId::fire_chain:
+     case MaterialSpriteId::fire_banner:
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index 9bccf02..d519b7d 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -181,91 +181,102 @@ void draw_fire_room_props(const MaterialPack& material_pack,
+         }
+         const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+         static_cast<void>(material_pack.draw(prop.sprite,
+             {kPositions[index].x * width, kPositions[index].y * height}, false,
+             index == 8U ? 1.10F : 0.72F));
+     }
+ }
+ 
+ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
+     const MaterialPack& material_pack) noexcept {
+-    const DoorVisualMode door_mode = door_visual_mode(snapshot.phase,
+-        snapshot.has_active_room, snapshot.exits_open[0]);
+     const HoleVisualMode hole_mode = hole_visual_mode(snapshot);
+     const RoomBackgroundRenderPlan background =
+         room_background_render_plan(snapshot.ecology);
+     MaterialAtlasId props_atlas = MaterialAtlasId::fire_environment;
+     if (snapshot.ecology == dungeon::DungeonElement::water) {
+         props_atlas = MaterialAtlasId::water_environment;
+     } else if (snapshot.ecology == dungeon::DungeonElement::lightning) {
+         props_atlas = MaterialAtlasId::lightning_environment;
+     } else if (snapshot.ecology == dungeon::DungeonElement::chaos) {
+         props_atlas = MaterialAtlasId::chaos_environment;
+     }
+     return should_draw_material_environment({
+         material_pack.available(background.atlas),
+-        material_pack.can_draw(select_door_sprite(snapshot.ecology)),
++        false,
+         material_pack.can_draw(hole_sprite(snapshot.ecology)),
+         material_pack.available(props_atlas),
+-        door_mode != DoorVisualMode::hidden,
++        false,
+         hole_mode != HoleVisualMode::hidden,
+     });
+ }
+ 
+ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+-    float width, float height, const MaterialPack& material_pack,
+-    bool draw_material_environment, Font hud_font,
++    float width, float height, const MaterialPack& material_pack, Font hud_font,
+     bool hud_font_ready) noexcept {
+     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
+         snapshot.has_active_room, snapshot.exits_open[0]);
+     if (mode == DoorVisualMode::hidden) {
+         return;
+     }
+     constexpr std::array<combat::Vec3, 4> kDoorCenters{{
+         {0.0F, combat::room_bounds::min_y, 0.0F},
+         {0.0F, combat::room_bounds::max_y, 0.0F},
+         {combat::room_bounds::min_x, 0.0F, 0.0F},
+         {combat::room_bounds::max_x, 0.0F, 0.0F},
+     }};
+     constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
+         dungeon::ExitDirection::up, dungeon::ExitDirection::down,
+         dungeon::ExitDirection::left, dungeon::ExitDirection::right}};
+     for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
+         const RenderProjection projected = project_render_world(
+             kDoorCenters[index].x, kDoorCenters[index].y, kDoorCenters[index].z,
+             width, height);
+         const DoorRenderDecision visual = door_render_decision(mode, kDirections[index]);
+-        const Color frame_color{visual.frame.r, visual.frame.g, visual.frame.b, visual.frame.a};
++        const Color body_tint{visual.body_tint.r, visual.body_tint.g,
++            visual.body_tint.b, visual.body_tint.a};
+         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
+         const float door_width = 82.0F * projected.scale;
+         const float door_height = 70.0F * projected.scale;
+         const Rectangle frame{projected.x - door_width * 0.5F,
+             projected.ground_y - door_height, door_width, door_height};
+-        if (draw_material_environment) {
+-            static_cast<void>(material_pack.draw(select_door_sprite(snapshot.ecology),
+-                {projected.x, projected.ground_y}, false,
+-                0.72F * projected.scale));
+-        } else {
+-            DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
++        if (!material_pack.draw(visual.sprite, {projected.x, projected.ground_y},
++                false, 0.72F * projected.scale, body_tint)) {
++            DrawRectangleLinesEx(frame, 5.0F * projected.scale, text_color);
++        }
++        if (visual.draw_lock_marker) {
++            const Rectangle lock{frame.x + frame.width - 16.0F * projected.scale,
++                frame.y + 10.0F * projected.scale,
++                12.0F * projected.scale, 14.0F * projected.scale};
++            const Color steel{35, 48, 62, 245};
++            DrawRectangle(static_cast<int>(std::round(lock.x)),
++                static_cast<int>(std::round(lock.y)),
++                static_cast<int>(std::round(lock.width)),
++                static_cast<int>(std::round(lock.height)), steel);
++            DrawCircleSectorLines({lock.x + lock.width * 0.5F,
++                lock.y + 8.0F * projected.scale}, 8.0F * projected.scale,
++                180.0F, 360.0F, 8, steel);
+         }
+-        if (visual.draw_locked_interior) {
+-            DrawRectangleRec({frame.x + 7.0F * projected.scale,
+-                frame.y + 7.0F * projected.scale,
+-                frame.width - 14.0F * projected.scale,
+-                frame.height - 7.0F * projected.scale},
+-                Color{visual.locked_interior.r, visual.locked_interior.g,
+-                    visual.locked_interior.b, visual.locked_interior.a});
++        const DoorArrowGeometry arrow = door_arrow_geometry(kDirections[index],
++            projected.x, frame.y + 35.0F * projected.scale, projected.scale);
++        DrawLineEx(arrow.tail, arrow.tip, arrow.thickness, text_color);
++        DrawLineEx(arrow.tip, arrow.head_left, arrow.thickness, text_color);
++        DrawLineEx(arrow.tip, arrow.head_right, arrow.thickness, text_color);
++        if (mode == DoorVisualMode::open) {
++            const Color edge = Fade(text_color, 0.32F);
++            DrawLineEx({frame.x + 5.0F * projected.scale, frame.y},
++                {frame.x + 5.0F * projected.scale, frame.y + frame.height},
++                2.0F * projected.scale, edge);
++            DrawLineEx({frame.x + frame.width - 5.0F * projected.scale, frame.y},
++                {frame.x + frame.width - 5.0F * projected.scale,
++                    frame.y + frame.height},
++                2.0F * projected.scale, edge);
+         }
+-        const int font_size = static_cast<int>(22.0F * projected.scale);
+-        const int arrow_width = MeasureText(visual.arrow, font_size);
+-        DrawText(visual.arrow, static_cast<int>(projected.x) - arrow_width / 2,
+-            static_cast<int>(frame.y + 17.0F * projected.scale), font_size, text_color);
+         if (abyss_door_marker(snapshot, kDirections[index])) {
+             const Vector2 marker{
+                 frame.x + frame.width - 12.0F * projected.scale,
+                 frame.y + 13.0F * projected.scale,
+             };
+             DrawPoly(marker, 4, 9.0F * projected.scale, 45.0F,
+                 Color{231, 46, 157, 245});
+             DrawPolyLinesEx(marker, 4, 9.0F * projected.scale, 45.0F,
+                 2.0F * projected.scale, Color{255, 155, 221, 255});
+         }
+@@ -581,17 +592,16 @@ void CombatRenderer::draw_room(
+         if (current.ecology == dungeon::DungeonElement::fire) {
+             draw_fire_room_props(material_pack_, current, width, height);
+         } else if (current.ecology == dungeon::DungeonElement::water) {
+             draw_water_room_props(material_pack_, width, height);
+         } else if (current.ecology == dungeon::DungeonElement::lightning) {
+             draw_lightning_room_props(material_pack_, width, height);
+         } else if (current.ecology == dungeon::DungeonElement::chaos) {
+             draw_chaos_room_props(material_pack_, width, height);
+         }
+     }
+-    draw_doors(current, width, height, material_pack_,
+-        draw_material_environment, hud_renderer_.hud_font(),
++    draw_doors(current, width, height, material_pack_, hud_renderer_.hud_font(),
+         hud_renderer_.font_ready());
+     draw_hole(current, material_pack_, draw_material_environment);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/dungeon_view_math_tests.cpp b/tests/platform/dungeon_view_math_tests.cpp
+index 11d4c58..5baff40 100644
+--- a/tests/platform/dungeon_view_math_tests.cpp
++++ b/tests/platform/dungeon_view_math_tests.cpp
+@@ -1,16 +1,17 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "progression/progression_rules.hpp"
+ 
++#include <array>
+ #include <cstring>
+ 
+ namespace {
+ 
+ using arpg::dungeon::DungeonEventKind;
+ using arpg::dungeon::DungeonSnapshot;
+ using arpg::dungeon::ExitDirection;
+ using arpg::dungeon::RoomPhase;
+ using arpg::platform::DoorTheme;
+ using arpg::platform::DoorVisualMode;
+@@ -68,29 +69,94 @@ arpg::test::Failure door_themes_match_directional_elements() noexcept {
+     ARPG_REQUIRE(right.element == arpg::dungeon::DungeonElement::chaos);
+     ARPG_REQUIRE(std::strcmp(up.arrow, "\xE2\x86\x91") == 0);
+     ARPG_REQUIRE(std::strcmp(down.arrow, "\xE2\x86\x93") == 0);
+     ARPG_REQUIRE(std::strcmp(left.arrow, "\xE2\x86\x90") == 0);
+     ARPG_REQUIRE(std::strcmp(right.arrow, "\xE2\x86\x92") == 0);
+     ARPG_REQUIRE(rgba_equals(up.frame, {236U, 92U, 54U, 255U}));
+     ARPG_REQUIRE(rgba_equals(down.frame, {64U, 156U, 236U, 255U}));
+     ARPG_REQUIRE(rgba_equals(left.frame, {236U, 218U, 72U, 255U}));
+     ARPG_REQUIRE(rgba_equals(right.frame, {154U, 76U, 210U, 255U}));
+ 
++    return {};
++}
++
++arpg::test::Failure directional_door_decisions_use_element_sprites_and_modes() noexcept {
++    struct Expected final {
++        ExitDirection direction;
++        arpg::dungeon::DungeonElement element;
++        arpg::platform::MaterialSpriteId sprite;
++    };
++    constexpr std::array<Expected, 4> kExpected{{
++        {ExitDirection::up, arpg::dungeon::DungeonElement::fire,
++            arpg::platform::MaterialSpriteId::environment_door_fire},
++        {ExitDirection::down, arpg::dungeon::DungeonElement::water,
++            arpg::platform::MaterialSpriteId::environment_door_water},
++        {ExitDirection::left, arpg::dungeon::DungeonElement::lightning,
++            arpg::platform::MaterialSpriteId::environment_door_lightning},
++        {ExitDirection::right, arpg::dungeon::DungeonElement::chaos,
++            arpg::platform::MaterialSpriteId::environment_door_chaos},
++    }};
++    for (const Expected& expected : kExpected) {
++        const DoorTheme theme = arpg::platform::door_theme(expected.direction);
++        const auto closed = arpg::platform::door_render_decision(
++            DoorVisualMode::closed, expected.direction);
++        const auto open = arpg::platform::door_render_decision(
++            DoorVisualMode::open, expected.direction);
++        ARPG_REQUIRE(theme.element == expected.element);
++        ARPG_REQUIRE(closed.sprite == expected.sprite);
++        ARPG_REQUIRE(open.sprite == expected.sprite);
++        ARPG_REQUIRE(std::strcmp(closed.label, theme.label) == 0);
++        ARPG_REQUIRE(rgba_equals(closed.text, theme.frame));
++        ARPG_REQUIRE(rgba_equals(closed.body_tint, {150U, 150U, 150U, 255U}));
++        ARPG_REQUIRE(rgba_equals(open.body_tint, {255U, 255U, 255U, 255U}));
++        ARPG_REQUIRE(closed.draw_lock_marker);
++        ARPG_REQUIRE(!open.draw_lock_marker);
++    }
++    return {};
++}
++
++arpg::test::Failure door_arrow_geometry_points_outward_inside_scaled_box() noexcept {
++    constexpr float kCenterX = 240.0F;
++    constexpr float kCenterY = 160.0F;
++    constexpr float kScale = 2.0F;
++    const auto inside = [](Vector2 point) noexcept {
++        return point.x >= kCenterX - 24.0F * kScale
++            && point.x <= kCenterX + 24.0F * kScale
++            && point.y >= kCenterY - 24.0F * kScale
++            && point.y <= kCenterY + 24.0F * kScale;
++    };
+     for (const ExitDirection direction : {ExitDirection::up,
+              ExitDirection::down, ExitDirection::left, ExitDirection::right}) {
+-        const DoorTheme theme = arpg::platform::door_theme(direction);
+-        const auto locked = arpg::platform::door_render_decision(
+-            DoorVisualMode::closed, direction);
+-        ARPG_REQUIRE(locked.draw_locked_interior);
+-        ARPG_REQUIRE(std::strcmp(locked.label, theme.label) == 0);
+-        ARPG_REQUIRE(std::strcmp(locked.arrow, theme.arrow) == 0);
+-        ARPG_REQUIRE(rgba_equals(locked.frame, theme.frame));
++        const auto arrow = arpg::platform::door_arrow_geometry(
++            direction, kCenterX, kCenterY, kScale);
++        ARPG_REQUIRE(arrow.thickness > 0.0F);
++        ARPG_REQUIRE(inside(arrow.tail));
++        ARPG_REQUIRE(inside(arrow.tip));
++        ARPG_REQUIRE(inside(arrow.head_left));
++        ARPG_REQUIRE(inside(arrow.head_right));
++        switch (direction) {
++        case ExitDirection::up:
++            ARPG_REQUIRE(arrow.tip.y < arrow.tail.y);
++            break;
++        case ExitDirection::down:
++            ARPG_REQUIRE(arrow.tip.y > arrow.tail.y);
++            break;
++        case ExitDirection::left:
++            ARPG_REQUIRE(arrow.tip.x < arrow.tail.x);
++            break;
++        case ExitDirection::right:
++            ARPG_REQUIRE(arrow.tip.x > arrow.tail.x);
++            break;
++        case ExitDirection::none:
++            ARPG_REQUIRE(false);
++            break;
++        }
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_door_markers_follow_only_directional_preview() noexcept {
+     DungeonSnapshot snapshot = active_snapshot(3U, 4U);
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::life_sacrifice;
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+     for (const ExitDirection direction : {ExitDirection::up,
+              ExitDirection::down, ExitDirection::left,
+@@ -106,22 +172,22 @@ arpg::test::Failure abyss_door_markers_follow_only_directional_preview() noexcep
+         for (const ExitDirection direction : {ExitDirection::up,
+                  ExitDirection::down, ExitDirection::left,
+                  ExitDirection::right}) {
+             ARPG_REQUIRE(arpg::platform::abyss_door_marker(snapshot, direction)
+                 == (direction == selected));
+         }
+         const auto closed = arpg::platform::door_render_decision(
+             DoorVisualMode::closed, selected);
+         const auto open = arpg::platform::door_render_decision(
+             DoorVisualMode::open, selected);
+-        ARPG_REQUIRE(closed.draw_locked_interior);
+-        ARPG_REQUIRE(!open.draw_locked_interior);
++        ARPG_REQUIRE(closed.draw_lock_marker);
++        ARPG_REQUIRE(!open.draw_lock_marker);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure environment_hazards_use_snapshot_geometry_and_phase() noexcept {
+     struct Expected final {
+         arpg::combat::HazardKind kind;
+         Rgba8 active_outline;
+     };
+     constexpr Expected cases[] = {
+@@ -445,20 +511,24 @@ arpg::test::Failure progression_hud_values_follow_snapshot() noexcept {
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"door lifecycle modes", &door_modes_follow_room_lifecycle},
+     {"same room interpolation", &same_room_snapshots_can_interpolate},
+     {"cross and missing room rejection", &cross_room_and_missing_room_reject_interpolation},
+     {"cleanup routing and labels", &cleanup_routing_and_labels_are_stable},
+     {"transition fade alpha", &fade_alpha_clamps_to_transition_window},
+     {"directional door themes", &door_themes_match_directional_elements},
++    {"directional door sprites and modes",
++        &directional_door_decisions_use_element_sprites_and_modes},
++    {"directional door arrow geometry",
++        &door_arrow_geometry_points_outward_inside_scaled_box},
+     {"abyss door marker preview", &abyss_door_markers_follow_only_directional_preview},
+     {"environment hazard snapshot visuals", &environment_hazards_use_snapshot_geometry_and_phase},
+     {"abyss HUD snapshot values", &abyss_hud_uses_committed_snapshot_labels_and_counts},
+     {"abyss confirmation prompt values", &abyss_confirmation_prompt_preserves_transition_and_direction},
+     {"ecosystem tints", &ecosystem_tints_are_stable},
+     {"abyss pulse bounds", &abyss_pulse_is_bounded_and_periodic},
+     {"hole visual modes", &hole_modes_follow_room_phase},
+     {"XY hole range", &player_hole_range_uses_xy_radius},
+     {"save indicators and labels", &indicators_and_phase_labels_are_stable},
+     {"recovery request gate", &recovery_requires_fault_and_n_press},
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index ca27db5..010d99e 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -100,13 +100,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 449,
++    return arpg::test::run_suites(suites, 452,
+         "HUD and UI material slice contract");
+ }
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index 4b77a7c..5583e2b 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -1,13 +1,14 @@
+ #include "test_framework.hpp"
+ 
+ #include "environment_render_plan.hpp"
++#include "material_pack.hpp"
+ 
+ #include <array>
+ #include <filesystem>
+ #include <fstream>
+ #include <iterator>
+ #include <string>
+ 
+ namespace {
+ 
+ std::string read_project_source(const char* relative_path) {
+@@ -87,22 +88,26 @@ arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noex
+     ARPG_REQUIRE(draw_room_block.find(
+         "&& draw_environment_room(material_pack_, current.ecology)")
+         != std::string::npos);
+     const std::size_t graybox_gate = draw_room_block.find(
+         "if (!draw_material_environment)");
+     ARPG_REQUIRE(graybox_gate != std::string::npos);
+     ARPG_REQUIRE(braced_block_after(draw_room_block, graybox_gate).find(
+         "draw_graybox_room") != std::string::npos);
+     const std::size_t doors = draw_room_block.find("draw_doors(");
+     ARPG_REQUIRE(doors != std::string::npos);
+-    ARPG_REQUIRE(draw_room_block.substr(doors, 180U).find(
+-        "draw_material_environment") != std::string::npos);
++    const std::size_t door_call_end = draw_room_block.find(");", doors);
++    ARPG_REQUIRE(door_call_end != std::string::npos);
++    const std::string door_call = draw_room_block.substr(doors,
++        door_call_end - doors + 2U);
++    ARPG_REQUIRE(door_call.find(
++        "draw_material_environment") == std::string::npos);
+     ARPG_REQUIRE(draw_room_block.find(
+         "draw_hole(current, material_pack_, draw_material_environment)")
+         != std::string::npos);
+     const std::size_t gate = renderer.find(
+         "if (draw_material_environment) {", draw_room);
+     ARPG_REQUIRE(gate != std::string::npos);
+     const std::string guarded_props = braced_block_after(renderer, gate);
+     for (const char* draw_props : {"draw_fire_room_props(",
+              "draw_water_room_props(", "draw_lightning_room_props(",
+              "draw_chaos_room_props("}) {
+@@ -123,20 +128,53 @@ arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noex
+     for (const char* relative_path : legacy_plan_sources) {
+         const std::string source = read_project_source(relative_path);
+         ARPG_REQUIRE(!source.empty());
+         ARPG_REQUIRE(source.find("select_floor_sprite") == std::string::npos);
+         ARPG_REQUIRE(source.find("RoomRenderPlan") == std::string::npos);
+         ARPG_REQUIRE(source.find("_room_render_plan") == std::string::npos);
+     }
+     return {};
+ }
+ 
++arpg::test::Failure directional_door_atlas_is_drawable_without_gating_background() noexcept {
++    arpg::platform::MaterialPackState doors_only{};
++    doors_only.set_available(arpg::platform::MaterialAtlasId::element_doors,
++        true);
++    for (const arpg::platform::MaterialSpriteId sprite : {
++             arpg::platform::MaterialSpriteId::environment_door_fire,
++             arpg::platform::MaterialSpriteId::environment_door_water,
++             arpg::platform::MaterialSpriteId::environment_door_lightning,
++             arpg::platform::MaterialSpriteId::environment_door_chaos}) {
++        ARPG_REQUIRE(doors_only.can_draw(sprite));
++    }
++
++    const std::string renderer = read_project_source(
++        "src/platform/raylib/room_renderer.cpp");
++    const std::size_t can_draw = renderer.find("bool can_draw_room_environment");
++    const std::size_t draw_doors = renderer.find("void draw_doors");
++    ARPG_REQUIRE(can_draw != std::string::npos);
++    ARPG_REQUIRE(draw_doors != std::string::npos);
++    const std::string environment_gate = braced_block_after(renderer, can_draw);
++    const std::string doors = braced_block_after(renderer, draw_doors);
++    ARPG_REQUIRE(environment_gate.find("select_door_sprite") == std::string::npos);
++    ARPG_REQUIRE(doors.find("material_pack.draw(visual.sprite") != std::string::npos);
++    ARPG_REQUIRE(doors.find("DrawRectangleRec") == std::string::npos);
++    ARPG_REQUIRE(doors.find("visual.arrow") == std::string::npos);
++    ARPG_REQUIRE(doors.find("MeasureText(visual.arrow") == std::string::npos);
++    for (const char* segment : {"DrawLineEx(arrow.tail, arrow.tip",
++             "DrawLineEx(arrow.tip, arrow.head_left",
++             "DrawLineEx(arrow.tip, arrow.head_right"}) {
++        ARPG_REQUIRE(doors.find(segment) != std::string::npos);
++    }
++    return {};
++}
++
+ arpg::test::Failure environment_falls_back_atomically_when_a_required_frame_is_missing() noexcept {
+     using arpg::platform::EnvironmentFrameAvailability;
+ 
+     EnvironmentFrameAvailability available{};
+     available.background = true;
+     available.door = true;
+     available.hole = true;
+     available.props = true;
+     available.door_required = true;
+     available.hole_required = true;
+@@ -297,19 +335,21 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
+     ARPG_REQUIRE(recovery_draw != std::string::npos);
+     ARPG_REQUIRE(recovery_background_guard < recovery_draw);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"uses only the atomic native background plan",
+         &environment_renderer_uses_only_the_atomic_native_plan},
+     {"falls back atomically when a required frame is missing",
+         &environment_falls_back_atomically_when_a_required_frame_is_missing},
++    {"directional door atlas leaves room background independent",
++        &directional_door_atlas_is_drawable_without_gating_background},
+     {"formal background-only path reuses the production draw",
+         &formal_background_only_path_reuses_the_production_draw},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite stage12_environment_render_suite() noexcept {
+     return arpg::test::make_suite("stage12_environment_render", kCases);
+ }
