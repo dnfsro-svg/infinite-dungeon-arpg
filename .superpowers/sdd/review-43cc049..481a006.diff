@@ -1,0 +1,468 @@
+# Review package: 43cc049..HEAD
+
+## Commits
+481a006 feat: add active skill stone loadout domain
+
+## Files changed
+ CMakeLists.txt                       |   2 +
+ src/skills/CMakeLists.txt            |   7 +++
+ src/skills/active_skill_catalog.cpp  |  24 ++++++++
+ src/skills/active_skill_catalog.hpp  |  21 +++++++
+ src/skills/active_skill_types.hpp    |  39 ++++++++++++
+ src/skills/skill_loadout.cpp         | 100 +++++++++++++++++++++++++++++++
+ src/skills/skill_loadout.hpp         |  25 ++++++++
+ tests/skills/CMakeLists.txt          |  13 ++++
+ tests/skills/skill_loadout_tests.cpp | 113 +++++++++++++++++++++++++++++++++++
+ tests/skills/skills_test_main.cpp    |   8 +++
+ 10 files changed, 352 insertions(+)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e41ca02..05a629b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -35,38 +35,40 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ 
+ function(arpg_enable_project_warnings target_name)
+     if(MSVC)
+         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
+     endif()
+ endfunction()
+ 
+ include(CTest)
+ add_subdirectory(src/core)
+ add_subdirectory(src/abyss)
++add_subdirectory(src/skills)
+ add_subdirectory(src/combat)
+ add_subdirectory(src/progression)
+ add_subdirectory(src/modifiers)
+ add_subdirectory(src/items)
+ add_subdirectory(src/passives)
+ add_subdirectory(src/dungeon)
+ add_subdirectory(src/persistence)
+ add_subdirectory(src/platform/settings)
+ 
+ if(ARPG_BUILD_GRAPHICS)
+     include(cmake/Dependencies.cmake)
+     add_subdirectory(src/platform/raylib)
+     add_subdirectory(src/app)
+ endif()
+ 
+ if(BUILD_TESTING)
+     add_subdirectory(tests/core)
+     add_subdirectory(tests/abyss)
++    add_subdirectory(tests/skills)
+     add_subdirectory(tests/combat)
+     add_subdirectory(tests/dungeon)
+     add_subdirectory(tests/persistence)
+     add_subdirectory(tests/platform)
+     add_subdirectory(tests/progression)
+     add_subdirectory(tests/modifiers)
+     add_subdirectory(tests/passives)
+     add_subdirectory(tests/items)
+     add_subdirectory(tests/settings)
+ endif()
+diff --git a/src/skills/CMakeLists.txt b/src/skills/CMakeLists.txt
+new file mode 100644
+index 0000000..2aad4b1
+--- /dev/null
++++ b/src/skills/CMakeLists.txt
+@@ -0,0 +1,7 @@
++add_library(arpg_skills STATIC
++    active_skill_catalog.cpp
++    skill_loadout.cpp)
++
++target_include_directories(arpg_skills PUBLIC "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_skills PUBLIC cxx_std_17)
++arpg_enable_project_warnings(arpg_skills)
+diff --git a/src/skills/active_skill_catalog.cpp b/src/skills/active_skill_catalog.cpp
+new file mode 100644
+index 0000000..c5f846b
+--- /dev/null
++++ b/src/skills/active_skill_catalog.cpp
+@@ -0,0 +1,24 @@
++#include "skills/active_skill_catalog.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace arpg::skills {
++namespace {
++
++constexpr std::array<ActiveSkillDefinition, kActiveSkillCount> kDefinitions{{
++    {ActiveSkillId::draw_slash, "Draw Slash", kDrawSlashCooldownTicks},
++    {ActiveSkillId::storm_swords, "Storm Swords", kStormSwordsCooldownTicks},
++}};
++
++}  // namespace
++
++const ActiveSkillDefinition* active_skill_definition(
++    const ActiveSkillId id) noexcept {
++    const std::size_t index = static_cast<std::size_t>(id);
++    if (index >= kDefinitions.size())
++        return nullptr;
++    return &kDefinitions[index];
++}
++
++}  // namespace arpg::skills
+diff --git a/src/skills/active_skill_catalog.hpp b/src/skills/active_skill_catalog.hpp
+new file mode 100644
+index 0000000..7ea581c
+--- /dev/null
++++ b/src/skills/active_skill_catalog.hpp
+@@ -0,0 +1,21 @@
++#pragma once
++
++#include "skills/active_skill_types.hpp"
++
++#include <cstdint>
++
++namespace arpg::skills {
++
++struct ActiveSkillDefinition final {
++    ActiveSkillId id{ActiveSkillId::none};
++    const char* display_name{};
++    std::uint16_t cooldown_ticks{};
++};
++
++inline constexpr std::uint16_t kDrawSlashCooldownTicks = 240U;
++inline constexpr std::uint16_t kStormSwordsCooldownTicks = 1800U;
++
++[[nodiscard]] const ActiveSkillDefinition* active_skill_definition(
++    ActiveSkillId id) noexcept;
++
++}  // namespace arpg::skills
+diff --git a/src/skills/active_skill_types.hpp b/src/skills/active_skill_types.hpp
+new file mode 100644
+index 0000000..4325207
+--- /dev/null
++++ b/src/skills/active_skill_types.hpp
+@@ -0,0 +1,39 @@
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::skills {
++
++enum class ActiveSkillId : std::uint8_t {
++    draw_slash = 0,
++    storm_swords = 1,
++    count = 2,
++    none = 0xFF,
++};
++
++enum class SupportSkillId : std::uint8_t {
++    count = 0,
++    none = 0xFF,
++};
++
++inline constexpr std::size_t kActiveSkillCount = 2U;
++inline constexpr std::size_t kActiveSkillSlotCount = 5U;
++inline constexpr std::size_t kSupportSlotsPerActive = 5U;
++
++struct ActiveSkillSlot final {
++    ActiveSkillId active{ActiveSkillId::none};
++    std::array<SupportSkillId, kSupportSlotsPerActive> supports{{
++        SupportSkillId::none, SupportSkillId::none,
++        SupportSkillId::none, SupportSkillId::none,
++        SupportSkillId::none,
++    }};
++};
++
++struct SkillLoadoutState final {
++    std::array<ActiveSkillSlot, kActiveSkillSlotCount> slots{};
++    std::uint64_t owned_active_bits{};
++};
++
++}  // namespace arpg::skills
+diff --git a/src/skills/skill_loadout.cpp b/src/skills/skill_loadout.cpp
+new file mode 100644
+index 0000000..df0c889
+--- /dev/null
++++ b/src/skills/skill_loadout.cpp
+@@ -0,0 +1,100 @@
++#include "skills/skill_loadout.hpp"
++
++namespace arpg::skills {
++namespace {
++
++constexpr ActiveSkillSlot empty_active_skill_slot() noexcept {
++    return {ActiveSkillId::none, {{
++        SupportSkillId::none, SupportSkillId::none,
++        SupportSkillId::none, SupportSkillId::none,
++        SupportSkillId::none,
++    }}};
++}
++
++constexpr bool valid_active_skill_id(const ActiveSkillId id) noexcept {
++    return static_cast<std::uint8_t>(id) < kActiveSkillCount;
++}
++
++constexpr bool owns_active_skill(
++    const SkillLoadoutState& state, const ActiveSkillId id) noexcept {
++    return (state.owned_active_bits &
++        (std::uint64_t{1U} << static_cast<std::uint8_t>(id))) != 0U;
++}
++
++}  // namespace
++
++SkillLoadoutState default_skill_loadout() noexcept {
++    SkillLoadoutState state{};
++    for (ActiveSkillSlot& slot : state.slots)
++        slot = empty_active_skill_slot();
++    state.owned_active_bits = (std::uint64_t{1U} <<
++            static_cast<std::uint8_t>(ActiveSkillId::draw_slash)) |
++        (std::uint64_t{1U} <<
++            static_cast<std::uint8_t>(ActiveSkillId::storm_swords));
++    return state;
++}
++
++SkillLoadoutError validate_skill_loadout(const SkillLoadoutState& state) noexcept {
++    if ((state.owned_active_bits >> kActiveSkillCount) != 0U)
++        return SkillLoadoutError::invalid_active_id;
++
++    for (std::size_t index = 0U; index < state.slots.size(); ++index) {
++        const ActiveSkillSlot& slot = state.slots[index];
++        for (const SupportSkillId support : slot.supports) {
++            if (support != SupportSkillId::none)
++                return SkillLoadoutError::invalid_support_id;
++        }
++        if (slot.active == ActiveSkillId::none)
++            continue;
++        if (!valid_active_skill_id(slot.active))
++            return SkillLoadoutError::invalid_active_id;
++        if (!owns_active_skill(state, slot.active))
++            return SkillLoadoutError::active_not_owned;
++        for (std::size_t other = 0U; other < index; ++other) {
++            if (state.slots[other].active == slot.active)
++                return SkillLoadoutError::duplicate_active;
++        }
++    }
++    return SkillLoadoutError::none;
++}
++
++SkillLoadoutError remove_active_skill(
++    SkillLoadoutState& state, const std::size_t slot) noexcept {
++    if (slot >= state.slots.size())
++        return SkillLoadoutError::invalid_slot;
++    state.slots[slot] = empty_active_skill_slot();
++    return SkillLoadoutError::none;
++}
++
++SkillLoadoutError equip_active_skill(
++    SkillLoadoutState& state, const ActiveSkillId active,
++    const std::size_t slot) noexcept {
++    if (slot >= state.slots.size())
++        return SkillLoadoutError::invalid_slot;
++    if (!valid_active_skill_id(active))
++        return SkillLoadoutError::invalid_active_id;
++    if (!owns_active_skill(state, active))
++        return SkillLoadoutError::active_not_owned;
++    if (state.slots[slot].active != ActiveSkillId::none)
++        return SkillLoadoutError::destination_occupied;
++    for (const ActiveSkillSlot& candidate : state.slots) {
++        if (candidate.active == active)
++            return SkillLoadoutError::duplicate_active;
++    }
++    state.slots[slot] = empty_active_skill_slot();
++    state.slots[slot].active = active;
++    return SkillLoadoutError::none;
++}
++
++SkillLoadoutError swap_active_skill_slots(
++    SkillLoadoutState& state, const std::size_t left,
++    const std::size_t right) noexcept {
++    if (left >= state.slots.size() || right >= state.slots.size())
++        return SkillLoadoutError::invalid_slot;
++    const ActiveSkillSlot temporary = state.slots[left];
++    state.slots[left] = state.slots[right];
++    state.slots[right] = temporary;
++    return SkillLoadoutError::none;
++}
++
++}  // namespace arpg::skills
+diff --git a/src/skills/skill_loadout.hpp b/src/skills/skill_loadout.hpp
+new file mode 100644
+index 0000000..4454bfd
+--- /dev/null
++++ b/src/skills/skill_loadout.hpp
+@@ -0,0 +1,25 @@
++#pragma once
++
++#include "skills/active_skill_types.hpp"
++
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::skills {
++
++enum class SkillLoadoutError : std::uint8_t {
++    none, invalid_slot, invalid_active_id, invalid_support_id,
++    active_not_owned, duplicate_active, destination_occupied
++};
++
++[[nodiscard]] SkillLoadoutState default_skill_loadout() noexcept;
++[[nodiscard]] SkillLoadoutError validate_skill_loadout(
++    const SkillLoadoutState&) noexcept;
++[[nodiscard]] SkillLoadoutError remove_active_skill(
++    SkillLoadoutState&, std::size_t slot) noexcept;
++[[nodiscard]] SkillLoadoutError equip_active_skill(
++    SkillLoadoutState&, ActiveSkillId, std::size_t slot) noexcept;
++[[nodiscard]] SkillLoadoutError swap_active_skill_slots(
++    SkillLoadoutState&, std::size_t left, std::size_t right) noexcept;
++
++}  // namespace arpg::skills
+diff --git a/tests/skills/CMakeLists.txt b/tests/skills/CMakeLists.txt
+new file mode 100644
+index 0000000..fbdf52d
+--- /dev/null
++++ b/tests/skills/CMakeLists.txt
+@@ -0,0 +1,13 @@
++add_executable(arpg_skills_tests
++    skills_test_main.cpp
++    skill_loadout_tests.cpp)
++
++target_include_directories(arpg_skills_tests PRIVATE
++    "${PROJECT_SOURCE_DIR}/tests/core"
++    "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_skills_tests PRIVATE cxx_std_17)
++target_link_libraries(arpg_skills_tests PRIVATE arpg_skills)
++arpg_enable_project_warnings(arpg_skills_tests)
++
++add_test(NAME skills.units COMMAND arpg_skills_tests)
++set_tests_properties(skills.units PROPERTIES LABELS "headless;skills")
+diff --git a/tests/skills/skill_loadout_tests.cpp b/tests/skills/skill_loadout_tests.cpp
+new file mode 100644
+index 0000000..a52b345
+--- /dev/null
++++ b/tests/skills/skill_loadout_tests.cpp
+@@ -0,0 +1,113 @@
++#include "test_framework.hpp"
++
++#include "skills/active_skill_catalog.hpp"
++#include "skills/skill_loadout.hpp"
++
++#include <cstddef>
++#include <cstdint>
++
++namespace {
++
++using namespace arpg::skills;
++
++arpg::test::Failure default_loadout_has_owned_active_stones_and_empty_supports() noexcept {
++    const SkillLoadoutState state = default_skill_loadout();
++    ARPG_REQUIRE(state.owned_active_bits == ((std::uint64_t{1U} << 0U) | (std::uint64_t{1U} << 1U)));
++    for (const ActiveSkillSlot& slot : state.slots) {
++        ARPG_REQUIRE(slot.active == ActiveSkillId::none);
++        for (const SupportSkillId support : slot.supports)
++            ARPG_REQUIRE(support == SupportSkillId::none);
++    }
++    ARPG_REQUIRE(validate_skill_loadout(state) == SkillLoadoutError::none);
++    return {};
++}
++
++arpg::test::Failure catalog_defines_the_two_active_skills() noexcept {
++    const ActiveSkillDefinition* draw = active_skill_definition(ActiveSkillId::draw_slash);
++    const ActiveSkillDefinition* storm = active_skill_definition(ActiveSkillId::storm_swords);
++    ARPG_REQUIRE(draw != nullptr);
++    ARPG_REQUIRE(storm != nullptr);
++    ARPG_REQUIRE(draw->cooldown_ticks == kDrawSlashCooldownTicks);
++    ARPG_REQUIRE(storm->cooldown_ticks == kStormSwordsCooldownTicks);
++    ARPG_REQUIRE(active_skill_definition(ActiveSkillId::none) == nullptr);
++    return {};
++}
++
++arpg::test::Failure duplicate_active_stone_is_rejected() noexcept {
++    SkillLoadoutState state = default_skill_loadout();
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 1U) == SkillLoadoutError::duplicate_active);
++    return {};
++}
++
++arpg::test::Failure unowned_active_stone_is_rejected() noexcept {
++    SkillLoadoutState state{};
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::active_not_owned);
++    return {};
++}
++
++arpg::test::Failure invalid_active_id_is_rejected() noexcept {
++    SkillLoadoutState state = default_skill_loadout();
++    const auto invalid = static_cast<ActiveSkillId>(42U);
++    ARPG_REQUIRE(equip_active_skill(state, invalid, 0U) == SkillLoadoutError::invalid_active_id);
++    return {};
++}
++
++arpg::test::Failure invalid_support_id_is_rejected_by_validation() noexcept {
++    SkillLoadoutState state = default_skill_loadout();
++    state.slots[0].supports[0] = SupportSkillId::count;
++    ARPG_REQUIRE(validate_skill_loadout(state) == SkillLoadoutError::invalid_support_id);
++    return {};
++}
++
++arpg::test::Failure removing_an_active_stone_empties_its_slot() noexcept {
++    SkillLoadoutState state = default_skill_loadout();
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(remove_active_skill(state, 0U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(state.slots[0].active == ActiveSkillId::none);
++    return {};
++}
++
++arpg::test::Failure equipping_an_owned_active_stone_uses_an_empty_slot() noexcept {
++    SkillLoadoutState state = default_skill_loadout();
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::storm_swords, 4U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(state.slots[4].active == ActiveSkillId::storm_swords);
++    return {};
++}
++
++arpg::test::Failure occupied_destination_is_rejected_without_overwriting() noexcept {
++    SkillLoadoutState state = default_skill_loadout();
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::storm_swords, 0U) == SkillLoadoutError::destination_occupied);
++    ARPG_REQUIRE(state.slots[0].active == ActiveSkillId::draw_slash);
++    return {};
++}
++
++arpg::test::Failure active_slots_can_be_swapped() noexcept {
++    SkillLoadoutState state = default_skill_loadout();
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::storm_swords, 1U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(swap_active_skill_slots(state, 0U, 1U) == SkillLoadoutError::none);
++    ARPG_REQUIRE(state.slots[0].active == ActiveSkillId::storm_swords);
++    ARPG_REQUIRE(state.slots[1].active == ActiveSkillId::draw_slash);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"default loadout owned active stones and empty supports", &default_loadout_has_owned_active_stones_and_empty_supports},
++    {"catalog defines two active skills", &catalog_defines_the_two_active_skills},
++    {"duplicate active stone rejected", &duplicate_active_stone_is_rejected},
++    {"unowned active stone rejected", &unowned_active_stone_is_rejected},
++    {"invalid active id rejected", &invalid_active_id_is_rejected},
++    {"invalid support id rejected", &invalid_support_id_is_rejected_by_validation},
++    {"removing active stone empties slot", &removing_an_active_stone_empties_its_slot},
++    {"owned active stone equips empty slot", &equipping_an_owned_active_stone_uses_an_empty_slot},
++    {"occupied destination rejected", &occupied_destination_is_rejected_without_overwriting},
++    {"active slots swap", &active_slots_can_be_swapped},
++};
++
++}  // namespace
++
++arpg::test::TestSuite skill_loadout_suite() noexcept {
++    return arpg::test::make_suite("skill_loadout", kCases);
++}
+diff --git a/tests/skills/skills_test_main.cpp b/tests/skills/skills_test_main.cpp
+new file mode 100644
+index 0000000..86fb97d
+--- /dev/null
++++ b/tests/skills/skills_test_main.cpp
+@@ -0,0 +1,8 @@
++#include "test_framework.hpp"
++
++arpg::test::TestSuite skill_loadout_suite() noexcept;
++
++int main() {
++    const arpg::test::TestSuite suites[] = {skill_loadout_suite()};
++    return arpg::test::run_suites(suites, 10, "stage 17 task 1");
++}

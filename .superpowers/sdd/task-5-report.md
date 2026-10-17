@@ -1,98 +1,73 @@
-# Stage 11-D Task 5 报告
+# Stage 17 Task 5 实现报告
 
 ## 状态
 
-完成 Fixed-Capacity Ground Loot View，并按真实 RED -> GREEN 执行 TDD。范围严格停在纯 ViewModel 构建；未加入实际 Draw 调用、host preview、room renderer 接线或 pickup feedback。
+- 结果：PASS
+- 实现提交：`5da5355 feat: implement storm swords awakening skill`
+- 范围：仅实现极·鬼剑术（暴风式）的锁定中心、12 段剑阵、终结、取消、冷却、事件元数据和 combat 单元测试；未修改 dungeon、persistence、输入映射或 Raylib。
 
-## 实现
+## RED
 
-- 新增 `LootLabelRect`、`GroundLootLabel`、`GroundLootViewDiagnostics` 与 `GroundLootView`。
-- `GroundLootView::labels` 为 `std::array<GroundLootLabel, dungeon::kGroundDropCapacity>`，容量精确等于 192；文本为 64 字节固定数组并强制末字节 NUL。
-- `ground_loot_visible` 支持 `show_all`、`magic_or_better`、`rare_only`；深渊宝箱奖励绕过所有过滤，非法过滤枚举回退为 show-all。
-- View builder 只读 `DungeonSnapshot`，按 ordinal 稳定插入；标签正文使用中文稀有度、catalog 基底名和 `iLvl`，非法 base 固定显示 `未知装备`。
-- 普通/魔法/稀有分别使用白/蓝/金文本色；深渊条目额外设置 `abyss=true` 和紫色边框色。
-- 重叠处理只向上移动后续 ordinal，循环上限为 `kGroundDropCapacity`；随后将每个矩形夹紧到 12 像素屏幕安全区。
-- 诊断计数覆盖非法 base、文本截断、重叠调整和容量饱和。
-- 实现使用 `std::snprintf`、固定数组和值类型，不使用 `std::string`、`std::vector` 或堆分配。
+先仅新增 `storm_swords_skill_tests.cpp` 及测试接线，没有修改生产行为。
 
-## TDD 证据
-
-### RED
-
-先只新增并注册 `ground_loot_view_tests.cpp`，未创建生产头/实现。
-
-首次尝试共享 preset build 目录时，由于该目录在当前沙箱身份下不可写且未加载 SDK，出现 `.ninja_lock permission denied` 与 SDK 检测失败；该环境失败不计作 RED。
-
-随后加载 VS 2022 BuildTools 环境并使用独立构建目录：
+首次直接运行简报构建命令时，普通 PowerShell 未加载 VS 开发者环境，CMake 因 `WindowsSDKVersion` 为空而被项目 SDK 门禁拦截；该次不计作功能 RED。随后运行仓库 `scripts/Configure.ps1 -Preset windows-msvc-core-debug`，加载 MSVC x64 / Windows SDK 10.0.26100.0，再执行：
 
 ```powershell
-cmake -S . -B out/build/task5-debug -G Ninja `
-  -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug `
-  -DFETCHCONTENT_SOURCE_DIR_RAYLIB=out/build/windows-msvc-debug/_deps/raylib-src
-cmake --build out/build/task5-debug --target arpg_platform_tests
+cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests
+$env:ARPG_STAGE17_STORM_SWORDS_ONLY='1'
+& out/build/windows-msvc-core-debug/bin/arpg_combat_tests.exe
+Remove-Item Env:ARPG_STAGE17_STORM_SWORDS_ONLY
 ```
 
-有效 RED：
+观察结果：测试目标构建成功；`9 cases, 9 failures`。九项均在 `request_active_skill(ActiveSkillId::storm_swords) == SkillCastResult::accepted` 断言失败，证明 RED 来自暴风式运行时尚未实现，不是测试编译、拼写或环境错误。
+
+## GREEN
+
+最小实现包括：
+
+- 冻结简报给定的 24 tick 前摇、12 段、6 tick 间隔、24 tick 后摇、中心前方 3.5、普通/终结半径与物理伤害、终结击退/浮空常量。
+- 施放时按锁定朝向计算一次中心，之后玩家移动不再改变中心。
+- 普通段发生于 elapsed 24、30、...、90；终结由 `24 + 12 * 6` 推导为 elapsed 96；恢复结束由同一终结边界加 24 推导，没有第二套硬编码总帧数。
+- 每次普通段及终结前清空固定容量 `hit_latch`；遍历固定怪物池，无随机选目标、无动态容器。
+- 普通段使用 `ImpactKind::light_hitstun`；终结使用 `ImpactKind::launch`、0.26 水平击退和 0.24 浮空速度。
+- 普通段和终结都只调用 `CombatWorld::resolve_player_attack_hit()`，由其继续调用 `build_player_hit_packet()`；`active_skill_runtime.cpp` 没有直接写怪物 HP。
+- `CombatEvent` 保持 `attack = AttackId::none`，新增独立 `skill`、`strike_index`、`finisher` 元数据；共享命中解析向 hit/break 事件填充这些字段。
+- 死亡、`reset()`、`load_wave()` 沿用既有 `ActiveSkillRuntime{}` 清理路径，取消剩余段和冷却。
+- 暴风式使用技能目录既有的 1800 world-tick 冷却。
+
+定向 GREEN：`9 cases, 0 failures`。
+
+## 测试证据
 
 ```text
-tests/platform/ground_loot_view_tests.cpp(4): fatal error C1083:
-无法打开包括文件: “ground_loot_view.hpp”: No such file or directory
+定向暴风式：9 cases, 0 failures
+完整 combat 可执行：228 cases, 0 failures
+ctest -R '^combat\.units$' --repeat until-fail:3：3/3 通过，0 failures
+git diff --check：通过
 ```
 
-失败原因准确来自 Task 5 生产接口尚不存在。
-
-### GREEN
-
-实现生产头/源并注册 `ground_loot_view.cpp` 后：
+完整复跑命令：
 
 ```powershell
-cmake --build out/build/task5-debug --target arpg_platform_tests
+cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests
+$env:ARPG_STAGE17_STORM_SWORDS_ONLY='1'
+& out/build/windows-msvc-core-debug/bin/arpg_combat_tests.exe
+Remove-Item Env:ARPG_STAGE17_STORM_SWORDS_ONLY
+ctest --test-dir out/build/windows-msvc-core-debug -R '^combat\.units$' --repeat until-fail:3 --output-on-failure
 ```
 
-结果：4/4 增量步骤成功，`arpg_raylib.lib` 与 `arpg_platform_tests.exe` 链接成功。
-
-提交前 fresh focused test：
-
-```powershell
-ctest --test-dir out/build/task5-debug -R '^platform\.units$' -V
-```
-
-结果：1/1 CTest 通过，253 cases、0 failures，3.50 秒。100k 探针明确输出：
-
-```text
-[stage11d-ground-loot] builds=100000 unchanged=50000 alternating=50000 allocations=0
-```
-
-Task 5 新增 9 个用例覆盖：三档可见性与 builder 过滤、深渊绕过、非法 filter 回退、非法 base、中文 catalog 文本、NUL、白/蓝/金 palette、深渊紫边、ordinal 稳定、合理重叠消解、1024x576/1280x720/1920x1080 安全区、192 容量极端、快照逐字节不变、100k unchanged/alternating 零分配。
-
-## 文件
-
-- `src/platform/raylib/ground_loot_view.hpp`
-- `src/platform/raylib/ground_loot_view.cpp`
-- `src/platform/raylib/CMakeLists.txt`
-- `tests/platform/ground_loot_view_tests.cpp`
-- `tests/platform/CMakeLists.txt`
-- `tests/platform/platform_test_main.cpp`
-- `.superpowers/sdd/task-5-report.md`
-
-## 提交
-
-主题：`feat: build fixed ground loot labels`
+覆盖项：朝向前方固定中心、移动后中心不漂移、12 段/6 tick 节奏、每段每目标至多一次且下一段可再次命中、42 物理轻牵制、2.8 半径、360 物理终结、3.8 半径、击退与浮空、技能/段号/终结事件元数据、死亡/reset/load_wave 取消、1800 tick 冷却、阶段/段号快照、热路径零分配。
 
 ## 自审
 
-- 头/源未 include `raylib.h`，未调用 raylib、Draw/TextFormat、Session、Store、随机、输入或 fixed tick。
-- 唯一允许的跨模块读取为 `project_combat_position`、无 raylib 的 `Rgba8`、settings 枚举与只读 item catalog。
-- 生产文件中不存在 `std::string`、`std::vector`、`<string>` 或 `<vector>`；100k 实测 allocation delta 为 0。
-- ordinal 插入在相同输入下完全确定；同 ordinal 时保留快照原顺序。
-- source count 先夹紧到 192；输出数组写入前再次检查容量。192 个同锚点时，重叠循环和前向扫描均受固定容量约束。
-- 每个标签最终都经过安全区 clamp；极端堆叠在顶部可能重合，但任务明确不要求 192 个矩形数学上全部互斥。
-- `std::snprintf` 使用 catalog `string_view` 的显式长度，非法 base 不越界；无论首选或短格式，末字节均强制 NUL。
-- `git diff --check` 通过；源码禁用依赖扫描无命中。
+- `AttackId` 枚举未改，暴风式没有放入普攻 ID。
+- 普攻、J/K/L、WASD 和所有输入文件未改。
+- 未修改 dungeon、persistence、Raylib 或平台层。
+- 运行时没有直接 HP 扣减，没有复制 Task 4 已收束的伤害解析路径。
+- 半径查询遍历固定 `MonsterPool` 槽位，闩锁为既有固定 `std::array<bool, kMonsterCapacity>`。
+- `combat_snapshot.cpp` 已直接复制 `active_skill_.snapshot`，无需额外分支；测试实际验证了 startup/strikes/finisher/recovery、elapsed ticks、locked center 和 strike index，故未做无意义触碰。
+- 为接入既有请求入口、共享命中元数据和私有方法声明，必要地修改了 `combat_world.cpp/.hpp` 与 `hit_resolution.cpp`；这些改动仅是 Task 5 的紧邻 plumbing。
 
 ## 顾虑
 
-- 无已知功能顾虑。
-- 本任务只产生 ViewModel；后续 renderer 必须消费 `text_color`/`border_color`/`abyss`，当前没有实际 Draw 或字体覆盖验证，符合 Task 5 边界。
-- 192 个极端同锚点标签在安全区顶部可重叠，这是任务允许的有界退化；不会越界或分配。
-- 共享 `out/build/windows-msvc-debug` 在当前执行身份下不可写，因此验证使用独立 `out/build/task5-debug`；编译器为 MSVC 19.44.35228.0、Windows SDK 10.0.26100.0。
+无已知功能顾虑。构建输出中的 CMake poison compile-check “Failed” 是项目预期的负向门禁探测，不是编译失败；最终构建、定向测试和三次 combat 回归均为退出码 0。

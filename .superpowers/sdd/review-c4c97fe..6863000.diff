@@ -1,0 +1,1023 @@
+# Review package: c4c97fe..HEAD
+
+## Commits
+6863000 fix: preserve skill input fallback and reports
+d1ce4b0 feat: route number keys to active skill slots
+
+## Files changed
+ .superpowers/sdd/stage17-task-6-report.md      |  83 +++++++++++++
+ src/dungeon/dungeon_session.cpp                |  14 +++
+ src/dungeon/dungeon_session.hpp                |   2 +
+ src/platform/raylib/host_input.cpp             |  24 +++-
+ src/platform/raylib/host_input.hpp             |  10 +-
+ src/platform/raylib/raylib_host.cpp            |   6 +-
+ tests/dungeon/CMakeLists.txt                   |   1 +
+ tests/dungeon/dungeon_skill_cast_tests.cpp     |  82 +++++++++++++
+ tests/dungeon/dungeon_test_main.cpp            |   4 +-
+ tests/platform/CMakeLists.txt                  |   1 +
+ tests/platform/active_skill_input_tests.cpp    | 159 +++++++++++++++++++++++++
+ tests/platform/host_input_source_test.cmake    |   6 +-
+ tests/platform/host_input_tests.cpp            |  11 +-
+ tests/platform/input_latency_source_test.cmake |   6 +-
+ tests/platform/platform_test_main.cpp          |   4 +-
+ 15 files changed, 393 insertions(+), 20 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/stage17-task-6-report.md b/.superpowers/sdd/stage17-task-6-report.md
+new file mode 100644
+index 0000000..8a40270
+--- /dev/null
++++ b/.superpowers/sdd/stage17-task-6-report.md
+@@ -0,0 +1,83 @@
++# Stage 17 Task 6：数字键活动技能槽路由
++
++## 状态
++
++完成。范围仅为数字键 1～5 的单帧采样、HostFrameInput 路由、
++DungeonSession 槽位施放与输入测试；未改 HUD、暂停装配 UI、持久化版本或技能数值。
++
++## 审查修复
++
++- `.superpowers/sdd/task-6-report.md` 已恢复为父提交 `c4c97fe` 的完整
++  Stage11D 历史内容。验证命令
++  `git diff --exit-code c4c97fe -- .superpowers/sdd/task-6-report.md`
++  的退出码为 `0`。
++- 新增两个同帧优先级测试：
++  - 槽 0 为空、槽 1 有效时，槽 0 结果为 `none`，槽 1 为 `accepted`。
++  - 槽 0 正在冷却、槽 1 有效时，槽 0 为 `cooling_down`，槽 1 为 `accepted`。
++- 原有“首个成功请求后停止”测试保留。`submit_frame_actions` 只在结果等于
++  `SkillCastResult::accepted` 时停止，因此失败槽会继续尝试更高槽。
++
++## TDD 证据
++
++新增测试后，先以受控 mutation 将停止条件改为“任意按下槽位即停止”：
++
++```cpp
++if (input.active_skill_slots[slot]) break;
++```
++
++运行以下命令后，实际 RED：364 cases 中两个新用例失败，失败断言均为
++`submitted.skills[1U] == combat::SkillCastResult::accepted`。
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_platform_tests
++out/build/windows-msvc-debug/bin/arpg_platform_tests.exe
++```
++
++恢复最小 GREEN：
++
++```cpp
++if (submitted.skills[slot] == combat::SkillCastResult::accepted) break;
++```
++
++同一平台命令退出码 `0`，最终为 `364 cases, 0 failures`。
++
++## 最终验证
++
++所有构建命令均在以下环境运行：
++
++```powershell
++call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
++set "WindowsSDKVersion=10.0.26100.0\"
++```
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_platform_tests arpg_dungeon_tests
++out/build/windows-msvc-debug/bin/arpg_platform_tests.exe
++```
++
++退出码 `0`；平台初始 Task6 验证为 `362 cases, 0 failures`，本次审查新增两例后为
++`364 cases, 0 failures`。
++
++```powershell
++out/build/windows-msvc-debug/bin/arpg_dungeon_tests.exe
++```
++
++退出码 `0`；`285 cases, 0 failures`。
++
++```powershell
++ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.input_latency_source|platform\.host_input_source)$' --output-on-failure
++```
++
++退出码 `0`；2/2 通过：`platform.input_latency_source` 与
++`platform.host_input_source`（总耗时 110.36 秒）。
++
++```powershell
++git diff --check
++```
++
++退出码 `0`。
++
++## 提交
++
++- 初始实现：`d1ce4b0 feat: route number keys to active skill slots`
++- 本次审查修复：见后续提交。
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 733d359..9b1f36f 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -257,20 +257,34 @@ DungeonSession::DungeonSession(
+     }
+     construct_current_room();
+ }
+ 
+ bool DungeonSession::queue_action(combat::Action action) noexcept {
+     return phase_ == RoomPhase::combat && combat_.has_value()
+         ? combat_->queue_action(action)
+         : false;
+ }
+ 
++combat::SkillCastResult DungeonSession::request_active_skill_slot(
++    std::uint8_t slot) noexcept {
++    const std::size_t index = static_cast<std::size_t>(slot);
++    if (phase_ != RoomPhase::combat || !combat_.has_value()
++            || index >= skills::kActiveSkillSlotCount) {
++        return combat::SkillCastResult::none;
++    }
++    const skills::ActiveSkillId skill =
++        stable_state_.skill_loadout.slots[index].active;
++    return skill == skills::ActiveSkillId::none
++        ? combat::SkillCastResult::none
++        : combat_->request_active_skill(skill);
++}
++
+ void DungeonSession::tick(
+     combat::MovementInput movement,
+     AutoPickupPolicy pickup_policy) noexcept {
+     if (phase_ == RoomPhase::committing
+             || phase_ == RoomPhase::death_pending
+             || phase_ == RoomPhase::faulted) {
+         ++session_tick_;
+         return;
+     }
+     if (phase_ == RoomPhase::locked) {
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index 1dde929..8ab4e4f 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -84,20 +84,22 @@ private:
+ class DungeonSession final {
+ public:
+     static constexpr std::size_t kDungeonEventCapacity = 32;
+     static constexpr std::size_t kCombatRelayCapacity = 64;
+ 
+     explicit DungeonSession(DungeonSessionConfig config = {}) noexcept;
+     explicit DungeonSession(
+         DungeonRules rules,
+         DungeonRunState stable_state) noexcept;
+     [[nodiscard]] bool queue_action(combat::Action action) noexcept;
++    [[nodiscard]] combat::SkillCastResult request_active_skill_slot(
++        std::uint8_t slot) noexcept;
+     void tick(
+         combat::MovementInput movement,
+         AutoPickupPolicy pickup_policy = {}) noexcept;
+     [[nodiscard]] bool request_descent(bool player_in_range) noexcept;
+     [[nodiscard]] bool request_passive_allocation(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] bool request_passive_refund(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] RequestResult request_equip(
+         std::uint64_t item_id) noexcept;
+diff --git a/src/platform/raylib/host_input.cpp b/src/platform/raylib/host_input.cpp
+index f602cfe..873cae8 100644
+--- a/src/platform/raylib/host_input.cpp
++++ b/src/platform/raylib/host_input.cpp
+@@ -101,20 +101,25 @@ PhysicalKeySnapshot sample_physical_keys(
+         const auto key = static_cast<settings::StableKey>(index);
+         const int code = raylib_key(key);
+         snapshot.pressed[index] = source.pressed(source.context, code);
+         snapshot.down[index] = source.down(source.context, code);
+     }
+     snapshot.escape = source.pressed(source.context, KEY_ESCAPE);
+     snapshot.enter = source.pressed(source.context, KEY_ENTER);
+     snapshot.f1 = source.pressed(source.context, KEY_F1);
+     snapshot.f12 = source.pressed(source.context, KEY_F12);
+     snapshot.v = snapshot.pressed[stable_index(settings::StableKey::v)];
++    for (std::size_t index = 0U;
++            index < snapshot.active_skill_slots.size(); ++index) {
++        snapshot.active_skill_slots[index] = source.pressed(
++            source.context, KEY_ONE + static_cast<int>(index));
++    }
+     snapshot.mouse_left = source.mouse_left_pressed != nullptr
+         && source.mouse_left_pressed(source.context);
+     snapshot.mouse_right = source.mouse_right_pressed != nullptr
+         && source.mouse_right_pressed(source.context);
+     if (source.mouse_position != nullptr) {
+         snapshot.mouse_position = source.mouse_position(source.context);
+     }
+     if (source.mouse_wheel != nullptr) {
+         snapshot.mouse_wheel = source.mouse_wheel(source.context);
+     }
+@@ -144,20 +149,24 @@ HostFrameInput map_host_frame_input(
+     constexpr std::array<settings::SettingAction, 3> combat_actions{{
+         settings::SettingAction::light_attack,
+         settings::SettingAction::jump,
+         settings::SettingAction::launcher,
+     }};
+     for (std::size_t index = 0U; index < combat_actions.size(); ++index) {
+         input.combat_actions[index] = action_pressed(
+             settings_data, snapshot, combat_actions[index]);
+         input.keys.attack = input.keys.attack || input.combat_actions[index];
+     }
++    input.active_skill_slots = snapshot.active_skill_slots;
++    for (bool requested : input.active_skill_slots) {
++        input.keys.attack = input.keys.attack || requested;
++    }
+ 
+     input.keys.e = action_pressed(
+         settings_data, snapshot, settings::SettingAction::interact);
+     input.keys.inventory = action_pressed(
+         settings_data, snapshot, settings::SettingAction::inventory);
+     input.keys.passives = action_pressed(
+         settings_data, snapshot, settings::SettingAction::passive_tree);
+     input.keys.reset = pressed(snapshot, settings::StableKey::r)
+         && !binding_owns(settings_data, settings::StableKey::r);
+     input.keys.recovery = pressed(snapshot, settings::StableKey::n);
+@@ -170,28 +179,35 @@ HostFrameInput map_host_frame_input(
+     input.keys.focus_lost = snapshot.focus_lost;
+     input.mouse_left_pressed = snapshot.mouse_left;
+     input.mouse_right_pressed = snapshot.mouse_right;
+     input.control_down = down(snapshot, settings::StableKey::left_control)
+         || down(snapshot, settings::StableKey::right_control);
+     input.mouse_wheel = snapshot.mouse_wheel;
+     input.mouse_position = snapshot.mouse_position;
+     return input;
+ }
+ 
+-std::array<bool, 3> submit_frame_actions(
++SubmittedFrameActions submit_frame_actions(
+     dungeon::DungeonSession& session,
+     const HostFrameInput& input) noexcept {
+     constexpr std::array<combat::Action, 3> actions{{
+         combat::Action::light,
+         combat::Action::jump,
+         combat::Action::launcher,
+     }};
+-    std::array<bool, actions.size()> accepted{};
++    SubmittedFrameActions submitted{};
++    submitted.skills.fill(combat::SkillCastResult::none);
+     for (std::size_t index = 0U; index < actions.size(); ++index) {
+         if (input.combat_actions[index]) {
+-            accepted[index] = session.queue_action(actions[index]);
++            submitted.combat[index] = session.queue_action(actions[index]);
+         }
+     }
+-    return accepted;
++    for (std::size_t slot = 0U; slot < input.active_skill_slots.size(); ++slot) {
++        if (!input.active_skill_slots[slot]) continue;
++        submitted.skills[slot] = session.request_active_skill_slot(
++            static_cast<std::uint8_t>(slot));
++        if (submitted.skills[slot] == combat::SkillCastResult::accepted) break;
++    }
++    return submitted;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_input.hpp b/src/platform/raylib/host_input.hpp
+index 0e65e00..7f48de7 100644
+--- a/src/platform/raylib/host_input.hpp
++++ b/src/platform/raylib/host_input.hpp
+@@ -18,31 +18,33 @@ namespace arpg::platform {
+ struct PhysicalKeySnapshot final {
+     std::array<bool,
+         static_cast<std::size_t>(settings::StableKey::count)> down{};
+     std::array<bool,
+         static_cast<std::size_t>(settings::StableKey::count)> pressed{};
+     bool escape{};
+     bool enter{};
+     bool f1{};
+     bool f12{};
+     bool v{};
++    std::array<bool, skills::kActiveSkillSlotCount> active_skill_slots{};
+     bool mouse_left{};
+     bool mouse_right{};
+     bool focus_lost{};
+     float mouse_wheel{};
+     Vector2 mouse_position{};
+ };
+ 
+ struct HostFrameInput final {
+     FrameKeyState keys{};
+     combat::MovementInput movement{};
+     std::array<bool, 3> combat_actions{};
++    std::array<bool, skills::kActiveSkillSlotCount> active_skill_slots{};
+     bool mouse_left_pressed{};
+     bool mouse_right_pressed{};
+     bool control_down{};
+     float mouse_wheel{};
+     Vector2 mouse_position{};
+ };
+ 
+ struct PhysicalKeySource final {
+     void* context{};
+     bool (*pressed)(void*, int) noexcept{};
+@@ -53,15 +55,21 @@ struct PhysicalKeySource final {
+     float (*mouse_wheel)(void*) noexcept{};
+     bool (*focus_lost)(void*) noexcept{};
+ };
+ 
+ [[nodiscard]] PhysicalKeySnapshot sample_physical_keys() noexcept;
+ [[nodiscard]] PhysicalKeySnapshot sample_physical_keys(
+     const PhysicalKeySource& source) noexcept;
+ [[nodiscard]] HostFrameInput map_host_frame_input(
+     const settings::SettingsData& settings,
+     const PhysicalKeySnapshot& snapshot) noexcept;
+-[[nodiscard]] std::array<bool, 3> submit_frame_actions(
++struct SubmittedFrameActions final {
++    std::array<bool, 3> combat{};
++    std::array<combat::SkillCastResult,
++        skills::kActiveSkillSlotCount> skills{};
++};
++
++[[nodiscard]] SubmittedFrameActions submit_frame_actions(
+     dungeon::DungeonSession& session,
+     const HostFrameInput& input) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 03faece..74cab3d 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -2125,31 +2125,31 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 if (selected.has_value()) {
+                     const bool allocated = (current.passive_tree.allocated_bits
+                         & (1ULL << *selected)) != 0U;
+                     static_cast<void>(allocated
+                         ? session->request_passive_refund(*selected)
+                         : session->request_passive_allocation(*selected));
+                     current = session->snapshot();
+                 }
+             }
+             if (forward_actions) {
+-                const std::array<bool, 3> accepted_actions =
++                const SubmittedFrameActions submitted_actions =
+                     submit_frame_actions(*session, frame_input);
+                 if (config.stage11b_validation
+                         == Stage11BValidationScenario::rebound_attack) {
+                     if (stage11b_validation_state.injected_frame == 28U) {
+                         stage11b_validation_state.old_attack_checked = true;
+                         stage11b_validation_state.old_attack_count +=
+-                            accepted_actions[0] ? 1U : 0U;
++                            submitted_actions.combat[0] ? 1U : 0U;
+                     } else if (stage11b_validation_state.injected_frame == 29U) {
+                         stage11b_validation_state.new_attack_count +=
+-                            accepted_actions[0] ? 1U : 0U;
++                            submitted_actions.combat[0] ? 1U : 0U;
+                     }
+                 }
+             }
+             if (forward_descent && frame_input.keys.e) {
+                 const auto snapshot = session->snapshot();
+                 const bool in_range = snapshot.combat.has_value()
+                     && can_prompt_descent(
+                         snapshot, snapshot.combat->player.position);
+                 static_cast<void>(session->request_descent(in_range));
+             }
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index c4b6c6e..90288ae 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -7,20 +7,21 @@ add_executable(arpg_dungeon_tests
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_crafting_transaction_tests.cpp
+     dungeon_skill_loadout_transaction_tests.cpp
++    dungeon_skill_cast_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+     dungeon_material_loot_tests.cpp
+     dungeon_transaction_tests.cpp
+     dungeon_abyss_reward_tests.cpp
+     dungeon_abyss_stress_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_progression_reward_tests.cpp
+diff --git a/tests/dungeon/dungeon_skill_cast_tests.cpp b/tests/dungeon/dungeon_skill_cast_tests.cpp
+new file mode 100644
+index 0000000..3604c89
+--- /dev/null
++++ b/tests/dungeon/dungeon_skill_cast_tests.cpp
+@@ -0,0 +1,82 @@
++#include "test_framework.hpp"
++
++#include "dungeon/dungeon_session.hpp"
++
++#include <cstdint>
++#include <utility>
++
++namespace {
++
++using namespace arpg;
++
++void commit_pending_save(dungeon::DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) return;
++    session.resolve_pending_save({dungeon::SaveDisposition::committed,
++        pending->expected_generation, std::move(pending->next_state),
++        pending->kind});
++}
++
++test::Failure stable_combat_slots_resolve_to_their_equipped_skills() noexcept {
++    dungeon::DungeonSession draw_slash{};
++    draw_slash.tick({});
++    ARPG_REQUIRE(draw_slash.request_active_skill_slot(0U)
++        == combat::SkillCastResult::accepted);
++
++    dungeon::DungeonSession storm_swords{};
++    storm_swords.tick({});
++    ARPG_REQUIRE(storm_swords.request_active_skill_slot(1U)
++        == combat::SkillCastResult::accepted);
++    return {};
++}
++
++test::Failure empty_or_invalid_slot_has_no_combat_side_effect() noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    ARPG_REQUIRE(session.request_active_skill_slot(2U)
++        == combat::SkillCastResult::none);
++    ARPG_REQUIRE(session.request_active_skill_slot(5U)
++        == combat::SkillCastResult::none);
++    ARPG_REQUIRE(session.snapshot().combat.has_value());
++    ARPG_REQUIRE(session.snapshot().combat->active_skill.id
++        == skills::ActiveSkillId::none);
++    return {};
++}
++
++test::Failure non_combat_room_phase_rejects_slot_casts() noexcept {
++    dungeon::DungeonSession session{};
++    ARPG_REQUIRE(session.request_active_skill_slot(0U)
++        == combat::SkillCastResult::none);
++    return {};
++}
++
++test::Failure slot_cast_follows_the_current_loadout_after_a_swap() noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    ARPG_REQUIRE(session.request_swap_active_skill_slots(0U, 1U)
++        == dungeon::RequestResult::accepted);
++    commit_pending_save(session);
++    ARPG_REQUIRE(session.request_active_skill_slot(0U)
++        == combat::SkillCastResult::accepted);
++    ARPG_REQUIRE(session.snapshot().combat.has_value());
++    ARPG_REQUIRE(session.snapshot().combat->active_skill.id
++        == skills::ActiveSkillId::storm_swords);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"stable combat slots resolve equipped skills",
++        &stable_combat_slots_resolve_to_their_equipped_skills},
++    {"empty and invalid slot has no side effect",
++        &empty_or_invalid_slot_has_no_combat_side_effect},
++    {"non combat phase rejects slot casts",
++        &non_combat_room_phase_rejects_slot_casts},
++    {"slot cast follows swapped loadout",
++        &slot_cast_follows_the_current_loadout_after_a_swap},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_skill_cast_suite() noexcept {
++    return arpg::test::make_suite("dungeon_skill_cast", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 345645a..99b19e8 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -13,20 +13,21 @@ arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_skill_loadout_transaction_suite() noexcept;
++arpg::test::TestSuite dungeon_skill_cast_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+@@ -142,20 +143,21 @@ int main() {
+         dungeon_death_lifecycle_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_crafting_transaction_suite(),
+         dungeon_skill_loadout_transaction_suite(),
++        dungeon_skill_cast_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_material_loot_suite(),
+         dungeon_transaction_suite(),
+         dungeon_abyss_reward_suite(),
+         dungeon_abyss_stress_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+@@ -228,13 +230,13 @@ int main() {
+     }
+ 
+     if (stage17_skill_loadout_only()) {
+         const arpg::test::TestSuite loadout_only[] = {
+             dungeon_skill_loadout_transaction_suite(),
+         };
+         return arpg::test::run_suites(loadout_only, 9,
+             "stage 17 task 3 skill loadout transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 281,
++    return arpg::test::run_suites(suites, 285,
+         "stage 11a task 8 death continue validation");
+ }
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 29c5f18..c14d5da 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,15 +1,16 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         host_input_tests.cpp
++        active_skill_input_tests.cpp
+         audio_pack_tests.cpp
+         audio_routing_tests.cpp
+         audio_scene_tests.cpp
+         stage15_audio_pack_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
+         passive_tree_view_tests.cpp
+         host_launch_options_tests.cpp
+diff --git a/tests/platform/active_skill_input_tests.cpp b/tests/platform/active_skill_input_tests.cpp
+new file mode 100644
+index 0000000..8e65fde
+--- /dev/null
++++ b/tests/platform/active_skill_input_tests.cpp
+@@ -0,0 +1,159 @@
++#include "test_framework.hpp"
++
++#include "host_input.hpp"
++
++#include "dungeon/dungeon_session.hpp"
++#include "platform/settings/settings_types.hpp"
++
++#include <array>
++#include <cstddef>
++#include <utility>
++
++namespace {
++
++using namespace arpg;
++
++struct KeySourceState final {
++    std::array<bool, 512> pressed{};
++    std::array<bool, 512> down{};
++};
++
++bool source_pressed(void* context, int key) noexcept {
++    const auto& state = *static_cast<KeySourceState*>(context);
++    return key >= 0 && static_cast<std::size_t>(key) < state.pressed.size()
++        && state.pressed[static_cast<std::size_t>(key)];
++}
++
++bool source_down(void* context, int key) noexcept {
++    const auto& state = *static_cast<KeySourceState*>(context);
++    return key >= 0 && static_cast<std::size_t>(key) < state.down.size()
++        && state.down[static_cast<std::size_t>(key)];
++}
++
++platform::PhysicalKeySource source_for(KeySourceState& state) noexcept {
++    return {&state, &source_pressed, &source_down,
++        nullptr, nullptr, nullptr, nullptr, nullptr};
++}
++
++void commit_pending_save(dungeon::DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) return;
++    session.resolve_pending_save({dungeon::SaveDisposition::committed,
++        pending->expected_generation, std::move(pending->next_state),
++        pending->kind});
++}
++
++test::Failure sampler_maps_number_key_edges_to_active_skill_slots() noexcept {
++    for (std::size_t slot = 0U; slot < skills::kActiveSkillSlotCount; ++slot) {
++        KeySourceState state{};
++        state.pressed[static_cast<std::size_t>(KEY_ONE) + slot] = true;
++        const auto snapshot = platform::sample_physical_keys(source_for(state));
++        for (std::size_t candidate = 0U;
++                candidate < skills::kActiveSkillSlotCount; ++candidate) {
++            ARPG_REQUIRE(snapshot.active_skill_slots[candidate]
++                == (candidate == slot));
++        }
++    }
++    return {};
++}
++
++test::Failure held_number_keys_do_not_repeat_as_active_skill_edges() noexcept {
++    KeySourceState state{};
++    state.down[KEY_ONE] = true;
++    const auto snapshot = platform::sample_physical_keys(source_for(state));
++    for (bool pressed : snapshot.active_skill_slots) {
++        ARPG_REQUIRE(!pressed);
++    }
++    return {};
++}
++
++test::Failure mapper_forwards_slots_and_counts_them_as_attack_input() noexcept {
++    platform::PhysicalKeySnapshot snapshot{};
++    snapshot.active_skill_slots[0U] = true;
++    snapshot.active_skill_slots[3U] = true;
++    const auto input = platform::map_host_frame_input(
++        settings::default_settings(), snapshot);
++    ARPG_REQUIRE(input.active_skill_slots == snapshot.active_skill_slots);
++    ARPG_REQUIRE(input.keys.attack);
++    return {};
++}
++
++test::Failure submit_routes_same_frame_slots_in_order_until_one_is_accepted()
++    noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    platform::HostFrameInput input{};
++    input.active_skill_slots[0U] = true;
++    input.active_skill_slots[1U] = true;
++    const auto submitted = platform::submit_frame_actions(session, input);
++    ARPG_REQUIRE(submitted.skills[0U] == combat::SkillCastResult::accepted);
++    for (std::size_t slot = 1U; slot < skills::kActiveSkillSlotCount; ++slot) {
++        ARPG_REQUIRE(submitted.skills[slot] == combat::SkillCastResult::none);
++    }
++    return {};
++}
++
++test::Failure submit_skips_an_empty_earlier_slot_and_accepts_later_slot()
++    noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    ARPG_REQUIRE(session.request_remove_active_skill(0U)
++        == dungeon::RequestResult::accepted);
++    commit_pending_save(session);
++
++    platform::HostFrameInput input{};
++    input.active_skill_slots[0U] = true;
++    input.active_skill_slots[1U] = true;
++    const auto submitted = platform::submit_frame_actions(session, input);
++    ARPG_REQUIRE(submitted.skills[0U] == combat::SkillCastResult::none);
++    ARPG_REQUIRE(submitted.skills[1U] == combat::SkillCastResult::accepted);
++    return {};
++}
++
++test::Failure submit_skips_a_cooling_earlier_slot_and_accepts_later_slot()
++    noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    ARPG_REQUIRE(session.request_active_skill_slot(0U)
++        == combat::SkillCastResult::accepted);
++    bool cooling_down = false;
++    for (std::size_t tick = 0U; tick < 512U; ++tick) {
++        session.tick({});
++        const auto snapshot = session.snapshot();
++        cooling_down = snapshot.combat.has_value()
++            && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
++            && snapshot.combat->skill_cooldowns[0U] != 0U;
++        if (cooling_down) break;
++    }
++    ARPG_REQUIRE(cooling_down);
++
++    platform::HostFrameInput input{};
++    input.active_skill_slots[0U] = true;
++    input.active_skill_slots[1U] = true;
++    const auto submitted = platform::submit_frame_actions(session, input);
++    ARPG_REQUIRE(submitted.skills[0U]
++        == combat::SkillCastResult::cooling_down);
++    ARPG_REQUIRE(submitted.skills[1U] == combat::SkillCastResult::accepted);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"number key edges map to active skill slots",
++        &sampler_maps_number_key_edges_to_active_skill_slots},
++    {"held number keys do not repeat",
++        &held_number_keys_do_not_repeat_as_active_skill_edges},
++    {"mapper forwards skill slots through attack gate",
++        &mapper_forwards_slots_and_counts_them_as_attack_input},
++    {"submit routes same frame skill slots in order",
++        &submit_routes_same_frame_slots_in_order_until_one_is_accepted},
++    {"submit skips empty earlier skill slot",
++        &submit_skips_an_empty_earlier_slot_and_accepts_later_slot},
++    {"submit skips cooling earlier skill slot",
++        &submit_skips_a_cooling_earlier_slot_and_accepts_later_slot},
++};
++
++}  // namespace
++
++arpg::test::TestSuite active_skill_input_suite() noexcept {
++    return arpg::test::make_suite("active_skill_input", kCases);
++}
+diff --git a/tests/platform/host_input_source_test.cmake b/tests/platform/host_input_source_test.cmake
+index 4e97913..9f31b87 100644
+--- a/tests/platform/host_input_source_test.cmake
++++ b/tests/platform/host_input_source_test.cmake
+@@ -97,21 +97,21 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
+     inventory.is_open() || inventory_toggled_this_frame);
+ const bool forward_actions = passive_input_gate.forward_actions
+     && inventory_gate.forward_actions
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ const bool forward_descent = passive_input_gate.forward_descent
+     && inventory_gate.forward_descent
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ if (forward_actions) {
+-    const std::array<bool, 3> accepted_actions =
++    const SubmittedFrameActions submitted_actions =
+         submit_frame_actions(*session, frame_input);
+ }
+ if (forward_descent && frame_input.keys.e) {
+     const auto snapshot = session->snapshot();
+     const bool in_range = snapshot.combat.has_value()
+         && can_prompt_descent(snapshot, snapshot.combat->player.position);
+     static_cast<void>(session->request_descent(in_range));
+ }
+ const combat::MovementInput movement = forward_movement
+     ? frame_input.movement : combat::MovementInput{};
+@@ -278,21 +278,21 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
+             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
+             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
+             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
+             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
+             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
+             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+             OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+-            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}std::array<bool,${WS}3>${WS1}accepted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
++            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
+             OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
+             OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
+         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+         return()
+     endif()
+     set("${OUT_VARIABLE}" TRUE PARENT_SCOPE)
+ endfunction()
+ 
+@@ -354,21 +354,21 @@ const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+     stage11c_physical_keys, config, input_settings, current,
+     stage11d_validation_state);
+ ]=])
+ physical_input_chain_valid("${MAP_BEFORE_STAGE11C_STRUCTURE}"
+     MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
+ if(MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
+     message(FATAL_ERROR "host input chain accepted map-before-Stage11C mutation")
+ endif()
+ 
+ set(SUBMIT_DECLARATION [=[
+-                const std::array<bool, 3> accepted_actions =
++                const SubmittedFrameActions submitted_actions =
+                     submit_frame_actions(*session, frame_input);
+ ]=])
+ set(HOST_GATE_DECLARATION
+     "            HostFrameGateResult host_gate{};")
+ string(REPLACE "${SUBMIT_DECLARATION}" ""
+     SUBMIT_BEFORE_GATE_STRUCTURE "${HOST_SOURCE}")
+ string(REPLACE "${HOST_GATE_DECLARATION}"
+     "${SUBMIT_DECLARATION}\n${HOST_GATE_DECLARATION}"
+     SUBMIT_BEFORE_GATE_STRUCTURE "${SUBMIT_BEFORE_GATE_STRUCTURE}")
+ string(REPLACE "            if (forward_actions) {"
+diff --git a/tests/platform/host_input_tests.cpp b/tests/platform/host_input_tests.cpp
+index 341cc01..071be32 100644
+--- a/tests/platform/host_input_tests.cpp
++++ b/tests/platform/host_input_tests.cpp
+@@ -139,21 +139,24 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
+         &query_mouse_right_pressed,
+         &query_mouse_position,
+         &query_mouse_wheel,
+         &query_focus_lost,
+     };
+     const platform::PhysicalKeySnapshot snapshot =
+         platform::sample_physical_keys(source);
+ 
+     for (std::size_t index = 0U; index < kStableKeyCount; ++index) {
+         const int code = kExpectedRaylibKeys[index];
+-        ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(code)] == 1U);
++        const unsigned expected_pressed = code >= KEY_ONE && code <= KEY_FIVE
++            ? 2U : 1U;
++        ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(code)]
++            == expected_pressed);
+         ARPG_REQUIRE(log.down[static_cast<std::size_t>(code)] == 1U);
+     }
+     ARPG_REQUIRE(log.pressed[KEY_ESCAPE] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_ENTER] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_F1] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_F12] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_V] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_R] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_N] == 1U);
+     ARPG_REQUIRE(log.mouse_left_pressed == 1U);
+@@ -405,43 +408,43 @@ test::Failure mapper_performs_no_heap_allocations() noexcept {
+     ARPG_REQUIRE(test::allocation_count() == before);
+     return {};
+ }
+ 
+ test::Failure submit_forwards_each_combat_action_to_the_session() noexcept {
+     {
+         dungeon::DungeonSession session{};
+         session.tick({});
+         platform::HostFrameInput input{};
+         input.combat_actions[0] = true;
+-        platform::submit_frame_actions(session, input);
++        static_cast<void>(platform::submit_frame_actions(session, input));
+         session.tick({});
+         ARPG_REQUIRE(session.snapshot().combat.has_value());
+         ARPG_REQUIRE(session.snapshot().combat->player.active_attack
+             == combat::AttackId::j1);
+     }
+     {
+         dungeon::DungeonSession session{};
+         session.tick({});
+         platform::HostFrameInput input{};
+         input.combat_actions[1] = true;
+-        platform::submit_frame_actions(session, input);
++        static_cast<void>(platform::submit_frame_actions(session, input));
+         session.tick({});
+         ARPG_REQUIRE(session.snapshot().combat.has_value());
+         ARPG_REQUIRE(session.snapshot().combat->player.state
+             == combat::PlayerState::jump_rise);
+     }
+     {
+         dungeon::DungeonSession session{};
+         session.tick({});
+         platform::HostFrameInput input{};
+         input.combat_actions[2] = true;
+-        platform::submit_frame_actions(session, input);
++        static_cast<void>(platform::submit_frame_actions(session, input));
+         session.tick({});
+         ARPG_REQUIRE(session.snapshot().combat.has_value());
+         ARPG_REQUIRE(session.snapshot().combat->player.active_attack
+             == combat::AttackId::launcher);
+     }
+     return {};
+ }
+ 
+ constexpr test::TestCase kCases[] = {
+     {"45 stable keys round-trip with labels", &adapter_round_trips_all_45_keys_with_unique_codes_and_labels},
+diff --git a/tests/platform/input_latency_source_test.cmake b/tests/platform/input_latency_source_test.cmake
+index 81d7f0b..59a0e90 100644
+--- a/tests/platform/input_latency_source_test.cmake
++++ b/tests/platform/input_latency_source_test.cmake
+@@ -170,21 +170,21 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
+             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
+             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
+             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
+             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
+             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
+             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+             OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+-            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}std::array<bool,${WS}3>${WS1}accepted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
++            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
+             OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
+             OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
+         set(${OUT_VALID} FALSE PARENT_SCOPE)
+         return()
+     endif()
+     set(${OUT_VALID} TRUE PARENT_SCOPE)
+ endfunction()
+ 
+@@ -224,21 +224,21 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
+     inventory.is_open() || inventory_toggled_this_frame);
+ const bool forward_actions = passive_input_gate.forward_actions
+     && inventory_gate.forward_actions
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ const bool forward_descent = passive_input_gate.forward_descent
+     && inventory_gate.forward_descent
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ if (forward_actions) {
+-    const std::array<bool, 3> accepted_actions =
++    const SubmittedFrameActions submitted_actions =
+         submit_frame_actions(*session, frame_input);
+ }
+ if (forward_descent && frame_input.keys.e) {
+     const auto snapshot = session->snapshot();
+     const bool in_range = snapshot.combat.has_value()
+         && can_prompt_descent(snapshot, snapshot.combat->player.position);
+     static_cast<void>(session->request_descent(in_range));
+ }
+ const combat::MovementInput movement = forward_movement
+     ? frame_input.movement : combat::MovementInput{};
+@@ -321,21 +321,21 @@ string(REPLACE
+     "stage11c_physical_keys, config, input_settings, current,"
+     "stage11b_physical_keys, config, input_settings, current,"
+     STAGE11D_BYPASS_CHAIN "${STAGE11B_INPUT_CHAIN_REFERENCE}")
+ arpg_physical_input_chain_is_valid("${STAGE11D_BYPASS_CHAIN}"
+     STAGE11D_BYPASS_CHAIN_VALID)
+ if(STAGE11D_BYPASS_CHAIN_VALID)
+     message(FATAL_ERROR "input chain self-check accepted Stage11D bypass mutation")
+ endif()
+ 
+ set(SUBMIT_DECLARATION [=[
+-                const std::array<bool, 3> accepted_actions =
++                const SubmittedFrameActions submitted_actions =
+                     submit_frame_actions(*session, frame_input);
+ ]=])
+ set(HOST_GATE_DECLARATION
+     "            HostFrameGateResult host_gate{};")
+ string(REPLACE "${SUBMIT_DECLARATION}" ""
+     SUBMIT_BEFORE_GATE_CHAIN "${HOST_ENTRY_SOURCE}")
+ string(REPLACE "${HOST_GATE_DECLARATION}"
+     "${SUBMIT_DECLARATION}\n${HOST_GATE_DECLARATION}"
+     SUBMIT_BEFORE_GATE_CHAIN "${SUBMIT_BEFORE_GATE_CHAIN}")
+ string(REPLACE "            if (forward_actions) {"
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 8db78b8..240a625 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -6,20 +6,21 @@
+ #endif
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite audio_pack_suite() noexcept;
+ arpg::test::TestSuite audio_routing_suite() noexcept;
+ arpg::test::TestSuite audio_scene_suite() noexcept;
+ arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
+ arpg::test::TestSuite host_input_suite() noexcept;
++arpg::test::TestSuite active_skill_input_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+ arpg::test::TestSuite window_settings_suite() noexcept;
+@@ -54,20 +55,21 @@ int main() {
+ #endif
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
+         audio_pack_suite(),
+         audio_routing_suite(),
+         audio_scene_suite(),
+         stage15_audio_pack_suite(),
+         host_input_suite(),
++        active_skill_input_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         pause_host_gate_suite(),
+         inventory_view_math_suite(),
+         death_input_gate_suite(),
+         death_overlay_view_suite(),
+         pause_menu_state_suite(),
+         pause_menu_view_suite(),
+@@ -84,12 +86,12 @@ int main() {
+         material_loot_view_suite(),
+         material_bag_renderer_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 358, "stage 16 reinforcement UI");
++    return arpg::test::run_suites(suites, 364, "stage 16 reinforcement UI");
+ }

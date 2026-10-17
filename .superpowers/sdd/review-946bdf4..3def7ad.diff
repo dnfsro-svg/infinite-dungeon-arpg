@@ -1,0 +1,3485 @@
+# Review package: 946bdf4..3def7ad
+
+## Commits
+3def7ad fix: address crafting review findings
+f33e9b5 feat: add crafting materials and reinforcement rules
+
+## Files changed
+ src/combat/combat_world.cpp                        |   3 +-
+ src/dungeon/abyss_reward.cpp                       |   8 +-
+ src/dungeon/dungeon_progression.cpp                |   8 +-
+ src/dungeon/dungeon_session.cpp                    |   2 +
+ src/dungeon/dungeon_transition.cpp                 |   7 +-
+ src/items/CMakeLists.txt                           |   4 +-
+ src/items/item_catalog.cpp                         |  29 +-
+ src/items/item_catalog.hpp                         |   7 +
+ src/items/item_crafting.cpp                        | 648 +++++++++++++++++++++
+ src/items/item_crafting.hpp                        |  71 +++
+ src/items/item_modifiers.cpp                       |   5 +-
+ src/items/item_types.hpp                           |  14 +-
+ src/items/material_catalog.cpp                     |  65 +++
+ src/items/material_catalog.hpp                     |  48 ++
+ src/persistence/save_slot.cpp                      |   9 +-
+ tests/combat/player_build_tests.cpp                |   5 +-
+ tests/combat/player_defense_tests.cpp              |   2 +-
+ tests/dungeon/dungeon_abyss_reward_tests.cpp       | 133 +++--
+ tests/dungeon/dungeon_abyss_stress_tests.cpp       |   8 +-
+ tests/dungeon/dungeon_death_lifecycle_tests.cpp    |   9 +-
+ tests/dungeon/dungeon_death_stress_tests.cpp       |  10 +-
+ tests/dungeon/dungeon_equipment_stress_tests.cpp   |  87 ++-
+ tests/dungeon/dungeon_item_transaction_tests.cpp   |  81 ++-
+ tests/dungeon/dungeon_lifecycle_tests.cpp          |   6 +-
+ tests/dungeon/dungeon_loot_drop_tests.cpp          |   8 +-
+ tests/dungeon/dungeon_test_main.cpp                |  18 +
+ tests/dungeon/dungeon_test_support.hpp             |  26 +
+ tests/items/CMakeLists.txt                         |   3 +-
+ tests/items/item_catalog_tests.cpp                 |  30 +-
+ tests/items/item_crafting_tests.cpp                | 448 ++++++++++++++
+ tests/items/item_test_main.cpp                     |   5 +-
+ .../persistence/dungeon_save_integration_tests.cpp |  12 +-
+ tests/persistence/save_store_fault_tests.cpp       |   1 +
+ tests/platform/dungeon_runtime_tests.cpp           |   1 +
+ 34 files changed, 1692 insertions(+), 129 deletions(-)
+
+## Diff
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 0315219..5e77155 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -105,21 +105,22 @@ std::uint64_t multiply_divide_floor_u64(
+ std::optional<std::int64_t> fixed_scale_floor(
+     std::int64_t value, std::int64_t factor) noexcept {
+     std::int64_t product{};
+     if (!checked_multiply(value, factor, product)) return std::nullopt;
+     return fixed_floor(product);
+ }
+ 
+ bool validate_player_build_fields(const PlayerCombatBuild& build) noexcept {
+     const auto& values = build.values;
+     if (!values.valid || build.weapon_physical < 0
+-        || build.local_attack_speed_bp < 0 || values.armor < 0
++        || build.local_attack_speed_bp < -modifiers::kFixedOne
++        || values.armor < 0
+         || values.evasion < 0 || values.melee_damage < 0
+         || values.max_health < 0 || values.max_health_more < 0
+         || values.max_barrier < 0 || values.damage_taken < 0
+         || values.movement_speed < 0 || values.attack_speed < 0
+         || values.impulse_scale < 0 || values.jump_speed < 0
+         || values.air_control < 0) {
+         return false;
+     }
+     for (const auto factor : values.damage_increased) {
+         if (factor < 0) return false;
+diff --git a/src/dungeon/abyss_reward.cpp b/src/dungeon/abyss_reward.cpp
+index 8083f5e..1d179ce 100644
+--- a/src/dungeon/abyss_reward.cpp
++++ b/src/dungeon/abyss_reward.cpp
+@@ -52,28 +52,32 @@ items::ItemRarity roll_rarity(
+ }
+ 
+ bool same_item_instance(
+     const items::ItemInstance& left,
+     const items::ItemInstance& right) noexcept {
+     if (left.id != right.id || left.base_id != right.base_id
+             || left.rarity != right.rarity
+             || left.item_level != right.item_level
+             || left.required_level != right.required_level
+             || left.affix_count != right.affix_count
+-            || left.reserved != right.reserved) {
++            || left.reserved != right.reserved
++            || left.reinforcement != right.reinforcement
++            || left.extension_reserved != right.extension_reserved) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+         if (left.affixes[index].affix_id != right.affixes[index].affix_id
+                 || left.affixes[index].tier != right.affixes[index].tier
+                 || left.affixes[index].variant
+-                    != right.affixes[index].variant) {
++                    != right.affixes[index].variant
++                || left.affixes[index].value_roll_bp
++                    != right.affixes[index].value_roll_bp) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ }  // namespace
+ 
+ std::optional<AbyssRewardSlot> derive_abyss_reward_slot(
+     std::uint64_t room_seed,
+diff --git a/src/dungeon/dungeon_progression.cpp b/src/dungeon/dungeon_progression.cpp
+index 67e5ffe..5d8601d 100644
+--- a/src/dungeon/dungeon_progression.cpp
++++ b/src/dungeon/dungeon_progression.cpp
+@@ -30,39 +30,43 @@ namespace {
+ }
+ 
+ [[nodiscard]] bool same_item(
+     const items::ItemInstance& lhs,
+     const items::ItemInstance& rhs) noexcept {
+     if (lhs.id != rhs.id || lhs.base_id != rhs.base_id
+             || lhs.rarity != rhs.rarity
+             || lhs.item_level != rhs.item_level
+             || lhs.required_level != rhs.required_level
+             || lhs.affix_count != rhs.affix_count
+-            || lhs.reserved != rhs.reserved) {
++            || lhs.reserved != rhs.reserved
++            || lhs.reinforcement != rhs.reinforcement
++            || lhs.extension_reserved != rhs.extension_reserved) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < lhs.affixes.size(); ++index) {
+         const items::AffixRoll& a = lhs.affixes[index];
+         const items::AffixRoll& b = rhs.affixes[index];
+         if (a.affix_id != b.affix_id || a.tier != b.tier
+-                || a.variant != b.variant) {
++                || a.variant != b.variant
++                || a.value_roll_bp != b.value_roll_bp) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ [[nodiscard]] bool same_item_ownership(
+     const items::ItemOwnershipState& lhs,
+     const items::ItemOwnershipState& rhs) noexcept {
+     if (lhs.items.size() != rhs.items.size()
+             || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
++            || lhs.materials != rhs.materials
+             || lhs.claimed_drop_bits != rhs.claimed_drop_bits
+             || lhs.next_item_sequence != rhs.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+         if (!same_item(lhs.items[index], rhs.items[index])) return false;
+     }
+     return true;
+ }
+ 
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 5fc81ee..90ed4a4 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -1171,20 +1171,21 @@ bool DungeonSession::copy_run_state_reusing_items(
+     destination.current_room = source.current_room;
+     destination.abyss = source.abyss;
+     destination.last_abyss_resolution = source.last_abyss_resolution;
+     destination.last_transition = source.last_transition;
+     destination.last_direction = source.last_direction;
+     destination.progression = source.progression;
+     destination.passive_tree = source.passive_tree;
+     if (source_items.empty()) destination_items.clear();
+     else destination_items.assign(source_items.begin(), source_items.end());
+     destination.item_ownership.equipment = source.item_ownership.equipment;
++    destination.item_ownership.materials = source.item_ownership.materials;
+     destination.item_ownership.claimed_drop_bits =
+         source.item_ownership.claimed_drop_bits;
+     destination.item_ownership.next_item_sequence =
+         source.item_ownership.next_item_sequence;
+     destination.death_sequence = source.death_sequence;
+     destination.death = source.death;
+     return true;
+ }
+ 
+ void DungeonSession::publish_run_state_reusing_items(
+@@ -1195,20 +1196,21 @@ void DungeonSession::publish_run_state_reusing_items(
+     destination.commit_generation = source.commit_generation;
+     destination.biases = source.biases;
+     destination.current_room = source.current_room;
+     destination.abyss = source.abyss;
+     destination.last_abyss_resolution = source.last_abyss_resolution;
+     destination.last_transition = source.last_transition;
+     destination.last_direction = source.last_direction;
+     destination.progression = source.progression;
+     destination.passive_tree = source.passive_tree;
+     destination.item_ownership.equipment = source.item_ownership.equipment;
++    destination.item_ownership.materials = source.item_ownership.materials;
+     destination.item_ownership.claimed_drop_bits =
+         source.item_ownership.claimed_drop_bits;
+     destination.item_ownership.next_item_sequence =
+         source.item_ownership.next_item_sequence;
+     destination.death_sequence = source.death_sequence;
+     destination.death = source.death;
+ }
+ 
+ RequestResult DungeonSession::request_death_continue() noexcept {
+     if (phase_ == RoomPhase::faulted) return RequestResult::faulted;
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index ad861c0..de5360f 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -80,28 +80,31 @@ bool pickup_distance_ok(
+ }
+ 
+ bool same_item(
+     const items::ItemInstance& left,
+     const items::ItemInstance& right) noexcept {
+     if (left.id != right.id || left.base_id != right.base_id
+             || left.rarity != right.rarity
+             || left.item_level != right.item_level
+             || left.required_level != right.required_level
+             || left.affix_count != right.affix_count
+-            || left.reserved != right.reserved) {
++            || left.reserved != right.reserved
++            || left.reinforcement != right.reinforcement
++            || left.extension_reserved != right.extension_reserved) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+         const items::AffixRoll& a = left.affixes[index];
+         const items::AffixRoll& b = right.affixes[index];
+         if (a.affix_id != b.affix_id || a.tier != b.tier
+-                || a.variant != b.variant) {
++                || a.variant != b.variant
++                || a.value_roll_bp != b.value_roll_bp) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ std::uint8_t popcount8(std::uint8_t value) noexcept {
+     std::uint8_t count = 0U;
+     while (value != 0U) {
+         count = static_cast<std::uint8_t>(count + (value & 1U));
+diff --git a/src/items/CMakeLists.txt b/src/items/CMakeLists.txt
+index 2e9383e..716205c 100644
+--- a/src/items/CMakeLists.txt
++++ b/src/items/CMakeLists.txt
+@@ -1,9 +1,11 @@
+ add_library(arpg_items STATIC
+     item_catalog.cpp
++    item_crafting.cpp
+     item_generation.cpp
+-    item_modifiers.cpp)
++    item_modifiers.cpp
++    material_catalog.cpp)
+ 
+ target_include_directories(arpg_items PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_items PUBLIC cxx_std_17)
+ target_link_libraries(arpg_items PUBLIC arpg_core arpg_modifiers)
+ arpg_enable_project_warnings(arpg_items)
+diff --git a/src/items/item_catalog.cpp b/src/items/item_catalog.cpp
+index 78b458d..cb85a80 100644
+--- a/src/items/item_catalog.cpp
++++ b/src/items/item_catalog.cpp
+@@ -242,21 +242,22 @@ constexpr std::array<AffixDefinition, 24> kAffixes{{
+ 
+ constexpr bool effect_sentinel_is_valid(ItemEffectKind effect, StatId stat,
+     ModifierOperation operation) noexcept {
+     if (effect == ItemEffectKind::count) return false;
+     if (effect == ItemEffectKind::global_modifier)
+         return stat < StatId::count;
+     return stat == StatId::count && operation == ModifierOperation::flat;
+ }
+ 
+ constexpr bool roll_is_zero(const AffixRoll& roll) noexcept {
+-    return roll.affix_id == 0U && roll.tier == 0U && roll.variant == 0U;
++    return roll.affix_id == 0U && roll.tier == 0U && roll.variant == 0U
++        && roll.value_roll_bp == 0U;
+ }
+ 
+ }  // namespace
+ 
+ const BaseDefinition* base_definition(std::uint8_t id) noexcept {
+     if (id == 0U || id > kBases.size())
+         return nullptr;
+     return &kBases[static_cast<std::size_t>(id - 1U)];
+ }
+ 
+@@ -284,20 +285,41 @@ const AffixDefinition* affix_definition(std::uint16_t id) noexcept {
+ std::uint8_t tier_minimum_level(std::uint8_t tier) noexcept {
+     return tier >= 1U && tier <= 8U
+         ? kTierMinimumLevels[static_cast<std::size_t>(8U - tier)] : 0U;
+ }
+ 
+ std::uint32_t tier_base_weight(std::uint8_t tier) noexcept {
+     return tier >= 1U && tier <= 8U
+         ? kTierBaseWeights[static_cast<std::size_t>(8U - tier)] : 0U;
+ }
+ 
++std::optional<std::int32_t> affix_roll_value(
++    const AffixRoll& roll) noexcept {
++    const AffixDefinition* const affix = affix_definition(roll.affix_id);
++    if (affix == nullptr || roll.tier < 1U || roll.tier > 8U)
++        return std::nullopt;
++    if (roll.value_roll_bp != 0U
++        && (roll.value_roll_bp < kAffixValueRollMinimumBp
++            || roll.value_roll_bp > kAffixValueRollMaximumBp)) {
++        return std::nullopt;
++    }
++    const std::int64_t basis_points = roll.value_roll_bp == 0U
++        ? kAffixValueRollCanonicalBp : roll.value_roll_bp;
++    const std::int64_t raw = affix->values[
++        static_cast<std::size_t>(8U - roll.tier)];
++    const std::int64_t product = raw * basis_points;
++    const std::int64_t rounded = product >= 0
++        ? (product + 5000) / 10000
++        : (product - 5000) / 10000;
++    return static_cast<std::int32_t>(rounded);
++}
++
+ bool validate_catalog() noexcept {
+     std::array<std::uint8_t,
+         static_cast<std::size_t>(ItemSlot::count)> base_counts{};
+     for (std::size_t index = 0U; index < kBases.size(); ++index) {
+         const BaseDefinition& base = kBases[index];
+         if (base.id != index + 1U || base.name.empty()
+             || slot_bit(base.slot) == 0U
+             || base.effect_count == 0U
+             || base.effect_count > base.effects.size())
+             return false;
+@@ -355,20 +377,22 @@ bool validate_catalog() noexcept {
+     }
+     return true;
+ }
+ 
+ bool validate_item(const ItemInstance& item) noexcept {
+     const BaseDefinition* base = base_definition(item.base_id);
+     if (base == nullptr || item.affix_count > item.affixes.size())
+         return false;
+     for (const std::uint8_t byte : item.reserved)
+         if (byte != 0U) return false;
++    for (const std::uint8_t byte : item.extension_reserved)
++        if (byte != 0U) return false;
+ 
+     std::uint8_t minimum_affixes = 0U;
+     std::uint8_t maximum_affixes = 0U;
+     switch (item.rarity) {
+     case ItemRarity::normal:
+         maximum_affixes = 0U;
+         break;
+     case ItemRarity::magic:
+         minimum_affixes = 1U;
+         maximum_affixes = 2U;
+@@ -392,21 +416,22 @@ bool validate_item(const ItemInstance& item) noexcept {
+         if (index >= item.affix_count) {
+             if (!roll_is_zero(roll))
+                 return false;
+             continue;
+         }
+ 
+         const AffixDefinition* affix = affix_definition(roll.affix_id);
+         const std::uint8_t tier_level = tier_minimum_level(roll.tier);
+         if (affix == nullptr || tier_level == 0U
+             || (affix->slot_mask & slot_bit(base->slot)) == 0U
+-            || item.item_level < tier_level)
++            || item.item_level < tier_level
++            || !affix_roll_value(roll).has_value())
+             return false;
+         if (affix->id == 112U) {
+             if (roll.variant > 3U)
+                 return false;
+         } else if (roll.variant != 0xFFU) {
+             return false;
+         }
+         for (std::size_t prior = 0U; prior < index; ++prior) {
+             if (groups[prior] == affix->group_id)
+                 return false;
+diff --git a/src/items/item_catalog.hpp b/src/items/item_catalog.hpp
+index c28e2a8..fae2d55 100644
+--- a/src/items/item_catalog.hpp
++++ b/src/items/item_catalog.hpp
+@@ -1,18 +1,19 @@
+ #pragma once
+ 
+ #include "items/item_types.hpp"
+ 
+ #include "modifiers/modifier_types.hpp"
+ 
+ #include <array>
+ #include <cstdint>
++#include <optional>
+ #include <string_view>
+ 
+ namespace arpg::items {
+ 
+ enum class ItemEffectKind : std::uint8_t {
+     global_modifier,
+     local_weapon_physical_flat,
+     local_weapon_physical_increased,
+     slot_dependent_attack_speed,
+     all_element_damage_reduction,
+@@ -46,23 +47,29 @@ struct AffixDefinition final {
+     modifiers::ModifierOperation operation{modifiers::ModifierOperation::flat};
+     std::array<std::int32_t, 8> values{};
+ };
+ 
+ enum class OwnershipValidationResult : std::uint8_t {
+     valid,
+     invalid_state,
+     allocation_failure,
+ };
+ 
++inline constexpr std::uint16_t kAffixValueRollMinimumBp = 9000U;
++inline constexpr std::uint16_t kAffixValueRollCanonicalBp = 10000U;
++inline constexpr std::uint16_t kAffixValueRollMaximumBp = 11000U;
++
+ [[nodiscard]] const BaseDefinition* base_definition(std::uint8_t id) noexcept;
+ [[nodiscard]] std::array<std::uint8_t, 3> base_ids_for_slot(
+     ItemSlot slot) noexcept;
+ [[nodiscard]] const AffixDefinition* affix_definition(std::uint16_t id) noexcept;
+ [[nodiscard]] std::uint8_t tier_minimum_level(std::uint8_t tier) noexcept;
+ [[nodiscard]] std::uint32_t tier_base_weight(std::uint8_t tier) noexcept;
++[[nodiscard]] std::optional<std::int32_t> affix_roll_value(
++    const AffixRoll& roll) noexcept;
+ [[nodiscard]] bool validate_catalog() noexcept;
+ [[nodiscard]] bool validate_item(const ItemInstance& item) noexcept;
+ [[nodiscard]] OwnershipValidationResult validate_ownership_detailed(
+     const ItemOwnershipState& state) noexcept;
+ [[nodiscard]] bool validate_ownership(const ItemOwnershipState& state) noexcept;
+ 
+ }  // namespace arpg::items
+diff --git a/src/items/item_crafting.cpp b/src/items/item_crafting.cpp
+new file mode 100644
+index 0000000..af40092
+--- /dev/null
++++ b/src/items/item_crafting.cpp
+@@ -0,0 +1,648 @@
++#include "items/item_crafting.hpp"
++
++#include "core/deterministic_rng.hpp"
++#include "items/item_catalog.hpp"
++#include "items/item_generation.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++#include <optional>
++
++namespace arpg::items {
++namespace {
++
++inline constexpr std::uint64_t kCraftDomain = 0x4352414654494E47ULL;
++
++struct WideUnsigned final {
++    std::array<std::uint64_t, 4> limbs{};
++};
++
++inline constexpr std::uint32_t kWideBits = 256U;
++
++bool multiply_three(WideUnsigned& value) noexcept {
++    std::uint64_t carry = 0U;
++    for (std::uint64_t& limb : value.limbs) {
++        const std::uint64_t doubled = limb + limb;
++        const std::uint64_t high_doubled = doubled < limb ? 1U : 0U;
++        const std::uint64_t tripled = doubled + limb;
++        std::uint64_t high = high_doubled + (tripled < doubled ? 1U : 0U);
++        const std::uint64_t with_carry = tripled + carry;
++        high += with_carry < tripled ? 1U : 0U;
++        limb = with_carry;
++        carry = high;
++    }
++    return carry == 0U;
++}
++
++bool wide_bit(const WideUnsigned& value, std::uint32_t bit) noexcept {
++    if (bit >= kWideBits) return false;
++    return ((value.limbs[bit / 64U] >> (bit % 64U)) & 1U) != 0U;
++}
++
++bool add_wide(WideUnsigned& left, const WideUnsigned& right) noexcept {
++    std::uint64_t carry = 0U;
++    for (std::size_t index = 0U; index < left.limbs.size(); ++index) {
++        const std::uint64_t first = left.limbs[index] + right.limbs[index];
++        const bool first_overflow = first < left.limbs[index];
++        const std::uint64_t second = first + carry;
++        const bool second_overflow = second < first;
++        left.limbs[index] = second;
++        carry = first_overflow || second_overflow ? 1U : 0U;
++    }
++    return carry == 0U;
++}
++
++bool shift_left_one(WideUnsigned& value) noexcept {
++    std::uint64_t carry = 0U;
++    for (std::uint64_t& limb : value.limbs) {
++        const std::uint64_t next_carry = limb >> 63U;
++        limb = (limb << 1U) | carry;
++        carry = next_carry;
++    }
++    return carry == 0U;
++}
++
++WideUnsigned rounded_divide_power_two_wide(
++    const WideUnsigned& value,
++    std::uint32_t shift) noexcept {
++    WideUnsigned result{};
++    if (shift >= kWideBits) return result;
++    for (std::uint32_t source_bit = shift;
++         source_bit < kWideBits; ++source_bit) {
++        if (!wide_bit(value, source_bit)) continue;
++        const std::uint32_t target_bit = source_bit - shift;
++        result.limbs[target_bit / 64U] |=
++            std::uint64_t{1} << (target_bit % 64U);
++    }
++    if (shift != 0U && wide_bit(value, shift - 1U)) {
++        WideUnsigned one{{1U, 0U, 0U, 0U}};
++        static_cast<void>(add_wide(result, one));
++    }
++    return result;
++}
++
++std::uint64_t rounded_divide_power_two(
++    const WideUnsigned& value,
++    std::uint32_t shift) noexcept {
++    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
++    if (shift >= kWideBits) return 0U;
++    for (std::uint32_t bit = shift + 64U; bit < kWideBits; ++bit) {
++        if (wide_bit(value, bit)) return maximum;
++    }
++    std::uint64_t result = 0U;
++    for (std::uint32_t bit = 0U; bit < 64U; ++bit) {
++        if (wide_bit(value, shift + bit)) result |= std::uint64_t{1} << bit;
++    }
++    if (shift != 0U && wide_bit(value, shift - 1U)) {
++        if (result == maximum) return maximum;
++        ++result;
++    }
++    return result;
++}
++
++std::uint64_t reinforcement_bonus(
++    std::uint64_t base_increment,
++    std::uint32_t level,
++    std::uint64_t limit,
++    bool& saturated) noexcept {
++    saturated = false;
++    const std::uint32_t fixed_levels = level < 12U ? level : 12U;
++    std::uint64_t sum = base_increment * fixed_levels;
++    if (sum >= limit) {
++        saturated = true;
++        return limit;
++    }
++    if (level <= 12U) return sum;
++
++    WideUnsigned numerator{{base_increment, 0U, 0U, 0U}};
++    const std::uint32_t requested = level - 12U;
++    for (std::uint32_t exponent = 1U; exponent <= requested; ++exponent) {
++        if (!multiply_three(numerator)) {
++            saturated = true;
++            return limit;
++        }
++        const std::uint64_t increment =
++            rounded_divide_power_two(numerator, exponent);
++        if (increment >= limit - sum) {
++            saturated = true;
++            return limit;
++        }
++        sum += increment;
++    }
++    return sum;
++}
++
++WideUnsigned reinforcement_factor_wide(
++    std::uint32_t level,
++    bool& overflow) noexcept {
++    overflow = false;
++    const std::uint32_t fixed_levels = level < 12U ? level : 12U;
++    WideUnsigned sum{{1000U * fixed_levels, 0U, 0U, 0U}};
++    if (level > 12U) {
++        WideUnsigned numerator{{1000U, 0U, 0U, 0U}};
++        const std::uint32_t requested = level - 12U;
++        for (std::uint32_t exponent = 1U;
++             exponent <= requested; ++exponent) {
++            if (!multiply_three(numerator)) {
++                overflow = true;
++                return {};
++            }
++            const WideUnsigned increment =
++                rounded_divide_power_two_wide(numerator, exponent);
++            if (!add_wide(sum, increment)) {
++                overflow = true;
++                return {};
++            }
++        }
++    }
++    const WideUnsigned base_factor{{10000U, 0U, 0U, 0U}};
++    if (!add_wide(sum, base_factor)) {
++        overflow = true;
++        return {};
++    }
++    return sum;
++}
++
++bool multiply_wide_u64(
++    const WideUnsigned& value,
++    std::uint64_t multiplier,
++    WideUnsigned& output) noexcept {
++    output = {};
++    WideUnsigned addend = value;
++    for (std::uint32_t bit = 0U; bit < 64U; ++bit) {
++        if (((multiplier >> bit) & 1U) != 0U
++            && !add_wide(output, addend)) {
++            return false;
++        }
++        if (bit == 63U) break;
++        if (!shift_left_one(addend)
++            && (multiplier >> (bit + 1U)) != 0U) {
++            return false;
++        }
++    }
++    return true;
++}
++
++std::uint64_t divide_wide_round_saturated(
++    const WideUnsigned& value,
++    std::uint64_t divisor,
++    std::uint64_t limit) noexcept {
++    std::uint64_t quotient = 0U;
++    std::uint64_t remainder = 0U;
++    for (std::uint32_t bit = kWideBits; bit-- > 0U;) {
++        remainder = remainder * 2U + (wide_bit(value, bit) ? 1U : 0U);
++        if (remainder < divisor) continue;
++        remainder -= divisor;
++        if (bit >= 64U) return limit;
++        quotient |= std::uint64_t{1} << bit;
++    }
++    if (quotient > limit) return limit;
++    if (remainder * 2U >= divisor) {
++        if (quotient == limit) return limit;
++        ++quotient;
++    }
++    return quotient > limit ? limit : quotient;
++}
++
++std::uint64_t magnitude(std::int64_t value) noexcept {
++    if (value >= 0) return static_cast<std::uint64_t>(value);
++    return static_cast<std::uint64_t>(-(value + 1)) + 1U;
++}
++
++bool valid_category(DirectedCategory category) noexcept {
++    return category == DirectedCategory::damage
++        || category == DirectedCategory::defense
++        || category == DirectedCategory::speed
++        || category == DirectedCategory::element;
++}
++
++std::size_t collect_affixes(
++    std::array<const AffixDefinition*, 24>& definitions) noexcept {
++    std::size_t count = 0U;
++    for (std::uint16_t id = 1U; id <= 12U; ++id)
++        definitions[count++] = affix_definition(id);
++    for (std::uint16_t id = 101U; id <= 112U; ++id)
++        definitions[count++] = affix_definition(id);
++    return count;
++}
++
++bool group_used(const ItemInstance& item,
++    std::uint16_t group,
++    std::optional<std::size_t> ignored = std::nullopt) noexcept {
++    for (std::size_t index = 0U; index < item.affix_count; ++index) {
++        if (ignored.has_value() && index == *ignored) continue;
++        const AffixDefinition* definition =
++            affix_definition(item.affixes[index].affix_id);
++        if (definition != nullptr && definition->group_id == group) return true;
++    }
++    return false;
++}
++
++void kind_counts(const ItemInstance& item,
++    std::optional<std::size_t> ignored,
++    std::uint8_t& prefixes,
++    std::uint8_t& suffixes) noexcept {
++    prefixes = 0U;
++    suffixes = 0U;
++    for (std::size_t index = 0U; index < item.affix_count; ++index) {
++        if (ignored.has_value() && index == *ignored) continue;
++        const AffixDefinition* definition =
++            affix_definition(item.affixes[index].affix_id);
++        if (definition == nullptr) continue;
++        prefixes += definition->kind == AffixKind::prefix ? 1U : 0U;
++        suffixes += definition->kind == AffixKind::suffix ? 1U : 0U;
++    }
++}
++
++bool candidate_compatible(const ItemInstance& item,
++    const AffixDefinition& candidate,
++    ItemSlot slot,
++    std::optional<std::size_t> ignored = std::nullopt) noexcept {
++    if ((candidate.slot_mask & slot_bit(slot)) == 0U
++        || group_used(item, candidate.group_id, ignored)) {
++        return false;
++    }
++    std::uint8_t prefixes = 0U;
++    std::uint8_t suffixes = 0U;
++    kind_counts(item, ignored, prefixes, suffixes);
++    return candidate.kind == AffixKind::prefix ? prefixes < 3U : suffixes < 3U;
++}
++
++std::uint8_t roll_tier(core::DeterministicRng& rng,
++    std::uint8_t item_level) noexcept {
++    const auto weights = tier_weights(item_level);
++    if (!weights.has_value()) return 0U;
++    std::uint64_t total = 0U;
++    for (const std::uint32_t weight : *weights) total += weight;
++    const std::uint64_t roll = rng.next_bounded(total).value_or(0U);
++    std::uint64_t cumulative = 0U;
++    for (std::size_t index = 0U; index < weights->size(); ++index) {
++        cumulative += (*weights)[index];
++        if (roll < cumulative) return static_cast<std::uint8_t>(8U - index);
++    }
++    return 0U;
++}
++
++AffixRoll roll_affix(const AffixDefinition& definition,
++    std::uint8_t item_level,
++    core::DeterministicRng& rng) noexcept {
++    const std::uint8_t tier = roll_tier(rng, item_level);
++    const std::uint8_t variant = definition.id == 112U
++        ? static_cast<std::uint8_t>(rng.next_bounded(4U).value_or(0U))
++        : 0xFFU;
++    const std::uint16_t value_roll = static_cast<std::uint16_t>(
++        kAffixValueRollMinimumBp
++        + rng.next_bounded(kAffixValueRollMaximumBp
++            - kAffixValueRollMinimumBp + 1U).value_or(0U));
++    return {definition.id, tier, variant, value_roll};
++}
++
++bool reroll_affix_value(AffixRoll& roll,
++    core::DeterministicRng& rng) noexcept {
++    const auto before = affix_roll_value(roll);
++    if (!before.has_value()) return false;
++
++    std::uint64_t changed_value_count = 0U;
++    for (std::uint32_t candidate = kAffixValueRollMinimumBp;
++         candidate <= kAffixValueRollMaximumBp; ++candidate) {
++        AffixRoll probe = roll;
++        probe.value_roll_bp = static_cast<std::uint16_t>(candidate);
++        const auto value = affix_roll_value(probe);
++        if (value.has_value() && *value != *before) ++changed_value_count;
++    }
++    if (changed_value_count != 0U) {
++        std::uint64_t selected =
++            rng.next_bounded(changed_value_count).value_or(0U);
++        for (std::uint32_t candidate = kAffixValueRollMinimumBp;
++             candidate <= kAffixValueRollMaximumBp; ++candidate) {
++            AffixRoll probe = roll;
++            probe.value_roll_bp = static_cast<std::uint16_t>(candidate);
++            const auto value = affix_roll_value(probe);
++            if (!value.has_value() || *value == *before) continue;
++            if (selected-- == 0U) {
++                roll.value_roll_bp = probe.value_roll_bp;
++                return true;
++            }
++        }
++    }
++
++    const std::uint16_t current = roll.value_roll_bp == 0U
++        ? kAffixValueRollCanonicalBp : roll.value_roll_bp;
++    const std::uint32_t alternatives =
++        kAffixValueRollMaximumBp - kAffixValueRollMinimumBp;
++    std::uint16_t selected = static_cast<std::uint16_t>(
++        kAffixValueRollMinimumBp
++        + rng.next_bounded(alternatives).value_or(0U));
++    if (selected >= current) ++selected;
++    roll.value_roll_bp = selected;
++    return false;
++}
++
++bool append_random_affix(ItemInstance& item,
++    ItemSlot slot,
++    core::DeterministicRng& rng) noexcept {
++    if (item.affix_count >= item.affixes.size()) return false;
++    std::array<const AffixDefinition*, 24> all{};
++    const std::size_t all_count = collect_affixes(all);
++    std::array<const AffixDefinition*, 24> eligible{};
++    std::size_t eligible_count = 0U;
++    for (std::size_t index = 0U; index < all_count; ++index) {
++        if (all[index] != nullptr
++            && candidate_compatible(item, *all[index], slot)) {
++            eligible[eligible_count++] = all[index];
++        }
++    }
++    if (eligible_count == 0U) return false;
++    const std::size_t selected = static_cast<std::size_t>(
++        rng.next_bounded(eligible_count).value_or(0U));
++    item.affixes[item.affix_count++] =
++        roll_affix(*eligible[selected], item.item_level, rng);
++    return item.affixes[item.affix_count - 1U].tier != 0U;
++}
++
++void refresh_required_level(ItemInstance& item) noexcept {
++    item.required_level = 1U;
++    for (std::size_t index = 0U; index < item.affix_count; ++index) {
++        const std::uint8_t required = tier_minimum_level(item.affixes[index].tier);
++        if (required > item.required_level) item.required_level = required;
++    }
++}
++
++void clear_affixes(ItemInstance& item) noexcept {
++    item.affixes = {};
++    item.affix_count = 0U;
++    item.required_level = 1U;
++}
++
++bool replace_directed(ItemInstance& item,
++    ItemSlot slot,
++    DirectedCategory category,
++    core::DeterministicRng& rng) noexcept {
++    std::array<const AffixDefinition*, 24> all{};
++    const std::size_t all_count = collect_affixes(all);
++    std::array<std::size_t, 6> replaceable{};
++    std::size_t replaceable_count = 0U;
++    for (std::size_t old_index = 0U; old_index < item.affix_count; ++old_index) {
++        const AffixDefinition* old_definition =
++            affix_definition(item.affixes[old_index].affix_id);
++        if (old_definition == nullptr) continue;
++        bool has_candidate = false;
++        for (std::size_t index = 0U; index < all_count; ++index) {
++            const AffixDefinition* candidate = all[index];
++            if (candidate != nullptr
++                && affix_in_directed_category(category, candidate->id)
++                && candidate->group_id != old_definition->group_id
++                && candidate_compatible(item, *candidate, slot, old_index)) {
++                has_candidate = true;
++                break;
++            }
++        }
++        if (has_candidate) replaceable[replaceable_count++] = old_index;
++    }
++    if (replaceable_count == 0U) return false;
++    const std::size_t old_index = replaceable[static_cast<std::size_t>(
++        rng.next_bounded(replaceable_count).value_or(0U))];
++    std::array<const AffixDefinition*, 24> eligible{};
++    std::size_t eligible_count = 0U;
++    const AffixDefinition* old_definition =
++        affix_definition(item.affixes[old_index].affix_id);
++    if (old_definition == nullptr) return false;
++    for (std::size_t index = 0U; index < all_count; ++index) {
++        const AffixDefinition* candidate = all[index];
++        if (candidate != nullptr
++            && affix_in_directed_category(category, candidate->id)
++            && candidate->group_id != old_definition->group_id
++            && candidate_compatible(item, *candidate, slot, old_index)) {
++            eligible[eligible_count++] = candidate;
++        }
++    }
++    if (eligible_count == 0U) return false;
++    const AffixDefinition& selected = *eligible[static_cast<std::size_t>(
++        rng.next_bounded(eligible_count).value_or(0U))];
++    item.affixes[old_index] = roll_affix(selected, item.item_level, rng);
++    return item.affixes[old_index].tier != 0U;
++}
++
++CraftResult rejected(const ItemInstance& item) noexcept {
++    return {false, false, item};
++}
++
++}  // namespace
++
++bool affix_in_directed_category(
++    DirectedCategory category,
++    std::uint16_t affix_id) noexcept {
++    switch (category) {
++    case DirectedCategory::damage:
++        return affix_id == 1U || affix_id == 2U
++            || affix_id == 105U || affix_id == 106U;
++    case DirectedCategory::defense:
++        return affix_id == 11U || affix_id == 12U
++            || affix_id == 103U || affix_id == 104U || affix_id == 111U;
++    case DirectedCategory::speed:
++        return affix_id == 101U || affix_id == 102U;
++    case DirectedCategory::element:
++        return (affix_id >= 3U && affix_id <= 10U)
++            || (affix_id >= 107U && affix_id <= 110U)
++            || affix_id == 112U;
++    case DirectedCategory::count:
++        return false;
++    }
++    return false;
++}
++
++CraftResult craft_item(CraftRequest request) noexcept {
++    if (request.item.id == 0U || !validate_item(request.item)
++        || !material_is_crafting_currency(request.material)
++        || (request.directed_category.has_value()
++            && !valid_category(*request.directed_category))) {
++        return rejected(request.item);
++    }
++    const BaseDefinition* base = base_definition(request.item.base_id);
++    if (base == nullptr) return rejected(request.item);
++    if (request.material == MaterialId::directed
++        && !request.directed_category.has_value()) {
++        return rejected(request.item);
++    }
++
++    const std::uint64_t stream_id = kCraftDomain
++        ^ request.operation_nonce
++        ^ (static_cast<std::uint64_t>(request.material) << 56U);
++    core::DeterministicRng rng = core::DeterministicRng::derive_stream(
++        request.root_seed ^ request.item.id, stream_id);
++    ItemInstance output = request.item;
++    bool success = false;
++
++    switch (request.material) {
++    case MaterialId::transmute:
++        if (output.rarity == ItemRarity::normal && output.affix_count == 0U) {
++            output.rarity = ItemRarity::magic;
++            const std::uint8_t count = static_cast<std::uint8_t>(
++                1U + rng.next_bounded(2U).value_or(0U));
++            success = true;
++            while (output.affix_count < count && success)
++                success = append_random_affix(output, base->slot, rng);
++        }
++        break;
++    case MaterialId::augment:
++        if (output.rarity == ItemRarity::magic && output.affix_count == 1U)
++            success = append_random_affix(output, base->slot, rng);
++        break;
++    case MaterialId::regal:
++        if (output.rarity == ItemRarity::magic) {
++            output.rarity = ItemRarity::rare;
++            success = true;
++            while (output.affix_count < 3U && success)
++                success = append_random_affix(output, base->slot, rng);
++        }
++        break;
++    case MaterialId::chaos:
++        if (output.rarity == ItemRarity::rare) {
++            clear_affixes(output);
++            output.rarity = ItemRarity::rare;
++            const std::uint64_t roll = rng.next_bounded(10U).value_or(0U);
++            const std::uint8_t count = roll < 4U ? 3U
++                : roll < 7U ? 4U : roll < 9U ? 5U : 6U;
++            success = true;
++            while (output.affix_count < count && success)
++                success = append_random_affix(output, base->slot, rng);
++        }
++        break;
++    case MaterialId::exalt:
++        if (output.rarity == ItemRarity::rare && output.affix_count < 6U)
++            success = append_random_affix(output, base->slot, rng);
++        break;
++    case MaterialId::annul:
++        if (output.affix_count != 0U) {
++            const std::size_t removed = static_cast<std::size_t>(
++                rng.next_bounded(output.affix_count).value_or(0U));
++            for (std::size_t index = removed + 1U;
++                 index < output.affix_count; ++index) {
++                output.affixes[index - 1U] = output.affixes[index];
++            }
++            output.affixes[--output.affix_count] = {};
++            if (output.affix_count == 0U) output.rarity = ItemRarity::normal;
++            else if (output.affix_count <= 2U) output.rarity = ItemRarity::magic;
++            success = true;
++        }
++        break;
++    case MaterialId::divine:
++        for (std::size_t index = 0U; index < output.affix_count; ++index)
++            success = reroll_affix_value(output.affixes[index], rng) || success;
++        break;
++    case MaterialId::scour:
++        if (output.rarity == ItemRarity::magic
++            || output.rarity == ItemRarity::rare) {
++            clear_affixes(output);
++            output.rarity = ItemRarity::normal;
++            success = true;
++        }
++        break;
++    case MaterialId::directed:
++        if ((output.rarity == ItemRarity::magic
++                || output.rarity == ItemRarity::rare)
++            && output.affix_count != 0U) {
++            success = replace_directed(output, base->slot,
++                *request.directed_category, rng);
++        }
++        break;
++    default:
++        break;
++    }
++
++    if (!success) return rejected(request.item);
++    refresh_required_level(output);
++    if (!validate_item(output)) return rejected(request.item);
++    return {true, true, output};
++}
++
++std::uint16_t reinforcement_success_chance_bp(
++    std::uint32_t target) noexcept {
++    if (target == 0U) return 0U;
++    if (target <= 3U) return 10000U;
++    if (target == 4U) return 9000U;
++    if (target == 5U) return 8000U;
++    if (target <= 12U) return 7000U;
++    if (target == 13U) return 6000U;
++
++    constexpr std::uint64_t kScale = 1000000000000ULL;
++    std::uint64_t scaled = 6000U * kScale;
++    const std::uint32_t requested = target - 13U;
++    for (std::uint32_t exponent = 0U; exponent < requested; ++exponent) {
++        scaled = (scaled * 95U + 50U) / 100U;
++        const std::uint64_t rounded = (scaled + kScale / 2U) / kScale;
++        if (rounded <= 10U) return 10U;
++    }
++    const std::uint64_t chance = (scaled + kScale / 2U) / kScale;
++    return static_cast<std::uint16_t>(chance < 10U ? 10U : chance);
++}
++
++ReinforcementFailure reinforcement_failure(std::uint32_t current) noexcept {
++    if (current <= 6U) return ReinforcementFailure::unchanged;
++    if (current <= 9U) return ReinforcementFailure::reset_six;
++    if (current <= 11U) return ReinforcementFailure::reset_zero;
++    return ReinforcementFailure::destroy;
++}
++
++std::int64_t reinforced_base_value(
++    std::int64_t base,
++    std::uint32_t level) noexcept {
++    if (base == 0) return 0;
++    bool factor_overflow = false;
++    const WideUnsigned factor =
++        reinforcement_factor_wide(level, factor_overflow);
++    WideUnsigned product{};
++    if (factor_overflow
++        || !multiply_wide_u64(factor, magnitude(base), product)) {
++        return base < 0 ? (std::numeric_limits<std::int64_t>::min)()
++                        : (std::numeric_limits<std::int64_t>::max)();
++    }
++    const std::uint64_t limit = base < 0
++        ? std::uint64_t{1} << 63U
++        : static_cast<std::uint64_t>(
++            (std::numeric_limits<std::int64_t>::max)());
++    const std::uint64_t result =
++        divide_wide_round_saturated(product, 10000U, limit);
++    if (base >= 0) return static_cast<std::int64_t>(result);
++    if (result == (std::uint64_t{1} << 63U))
++        return (std::numeric_limits<std::int64_t>::min)();
++    return -static_cast<std::int64_t>(result);
++}
++
++std::int32_t reinforced_accessory_bonus_bp(std::uint32_t level) noexcept {
++    const auto maximum = static_cast<std::uint64_t>(
++        (std::numeric_limits<std::int32_t>::max)());
++    bool saturated = false;
++    return static_cast<std::int32_t>(
++        reinforcement_bonus(50U, level, maximum, saturated));
++}
++
++ReinforcementPreview reinforcement_preview(std::uint32_t current) noexcept {
++    const std::uint32_t maximum =
++        (std::numeric_limits<std::uint32_t>::max)();
++    const bool can_attempt = current != maximum;
++    const std::uint32_t target = can_attempt ? current + 1U : current;
++    return {current, target,
++        can_attempt ? reinforcement_success_chance_bp(target) : 0U,
++        reinforcement_failure(current), can_attempt};
++}
++
++ReinforcementPreview reinforcement_preview(const ItemInstance& item) noexcept {
++    return reinforcement_preview(item.reinforcement);
++}
++
++std::optional<ItemInstance> apply_coupon(
++    ItemInstance item,
++    MaterialId coupon) noexcept {
++    const std::uint32_t face = coupon_reinforcement_level(coupon);
++    if (face == 0U || item.id == 0U || !validate_item(item)
++        || item.reinforcement >= face) {
++        return std::nullopt;
++    }
++    item.reinforcement = face;
++    return item;
++}
++
++}  // namespace arpg::items
+diff --git a/src/items/item_crafting.hpp b/src/items/item_crafting.hpp
+new file mode 100644
+index 0000000..34c9c4e
+--- /dev/null
++++ b/src/items/item_crafting.hpp
+@@ -0,0 +1,71 @@
++#pragma once
++
++#include "items/item_types.hpp"
++#include "items/material_catalog.hpp"
++
++#include <cstdint>
++#include <optional>
++
++namespace arpg::items {
++
++enum class DirectedCategory : std::uint8_t {
++    damage,
++    defense,
++    speed,
++    element,
++    count,
++};
++
++enum class ReinforcementFailure : std::uint8_t {
++    unchanged,
++    reset_six,
++    reset_zero,
++    destroy,
++};
++
++struct ReinforcementPreview final {
++    std::uint32_t current{};
++    std::uint32_t target{};
++    std::uint16_t success_chance_bp{};
++    ReinforcementFailure failure{ReinforcementFailure::unchanged};
++    bool can_attempt{};
++};
++
++struct CraftRequest final {
++    std::uint64_t root_seed{};
++    std::uint64_t operation_nonce{};
++    ItemInstance item{};
++    MaterialId material{MaterialId::count};
++    std::optional<DirectedCategory> directed_category{};
++};
++
++struct CraftResult final {
++    bool applied{};
++    bool consumed{};
++    ItemInstance item{};
++
++    [[nodiscard]] explicit operator bool() const noexcept { return applied; }
++};
++
++[[nodiscard]] CraftResult craft_item(CraftRequest request) noexcept;
++[[nodiscard]] bool affix_in_directed_category(
++    DirectedCategory category,
++    std::uint16_t affix_id) noexcept;
++[[nodiscard]] std::uint16_t reinforcement_success_chance_bp(
++    std::uint32_t target) noexcept;
++[[nodiscard]] ReinforcementFailure reinforcement_failure(
++    std::uint32_t current) noexcept;
++[[nodiscard]] std::int64_t reinforced_base_value(
++    std::int64_t base,
++    std::uint32_t level) noexcept;
++[[nodiscard]] std::int32_t reinforced_accessory_bonus_bp(
++    std::uint32_t level) noexcept;
++[[nodiscard]] ReinforcementPreview reinforcement_preview(
++    std::uint32_t current) noexcept;
++[[nodiscard]] ReinforcementPreview reinforcement_preview(
++    const ItemInstance& item) noexcept;
++[[nodiscard]] std::optional<ItemInstance> apply_coupon(
++    ItemInstance item,
++    MaterialId coupon) noexcept;
++
++}  // namespace arpg::items
+diff --git a/src/items/item_modifiers.cpp b/src/items/item_modifiers.cpp
+index b5144a3..7d95529 100644
+--- a/src/items/item_modifiers.cpp
++++ b/src/items/item_modifiers.cpp
+@@ -248,25 +248,26 @@ EquipmentProjectionResult project_equipment_with_state(
+                     effect.operation, effect.values[base_value_index], 0xFFU,
+                     source, local_flat, local_increased))
+                 return {};
+         }
+ 
+         for (std::size_t affix_index = 0U;
+              affix_index < item->affix_count; ++affix_index) {
+             const AffixRoll& roll = item->affixes[affix_index];
+             const AffixDefinition* affix = affix_definition(roll.affix_id);
+             if (affix == nullptr) return {};
+-            const std::size_t index = static_cast<std::size_t>(8U - roll.tier);
++            const auto value = affix_roll_value(roll);
++            if (!value.has_value()) return {};
+             const std::uint16_t source = static_cast<std::uint16_t>(
+                 kAffixSourceStart + affix_index * kSourceStride);
+             if (!apply_effect(projection, slot, affix->effect, affix->stat,
+-                    affix->operation, affix->values[index], roll.variant,
++                    affix->operation, *value, roll.variant,
+                     source, local_flat, local_increased))
+                 return {};
+         }
+     }
+ 
+     if (!checked_weapon_formula(
+             local_flat, local_increased, projection.weapon_physical))
+         return {};
+     projection.valid = true;
+     result.status = EquipmentProjectionStatus::valid;
+diff --git a/src/items/item_types.hpp b/src/items/item_types.hpp
+index 5c8b75b..041f469 100644
+--- a/src/items/item_types.hpp
++++ b/src/items/item_types.hpp
+@@ -1,12 +1,14 @@
+ #pragma once
+ 
++#include "items/material_catalog.hpp"
++
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <type_traits>
+ #include <vector>
+ 
+ namespace arpg::items {
+ 
+ enum class ItemSlot : std::uint8_t {
+     weapon,
+@@ -33,42 +35,48 @@ enum class AffixKind : std::uint8_t {
+     const auto value = static_cast<std::uint8_t>(slot);
+     return value < static_cast<std::uint8_t>(ItemSlot::count)
+         ? static_cast<std::uint8_t>(1U << value)
+         : 0U;
+ }
+ 
+ struct AffixRoll final {
+     std::uint16_t affix_id{};
+     std::uint8_t tier{};
+     std::uint8_t variant{};
++    std::uint16_t value_roll_bp{};
+ };
+ 
+ struct ItemInstance final {
+     std::uint64_t id{};
+     std::uint8_t base_id{};
+     ItemRarity rarity{};
+     std::uint8_t item_level{};
+     std::uint8_t required_level{};
+     std::array<AffixRoll, 6> affixes{};
+     std::uint8_t affix_count{};
+     std::array<std::uint8_t, 3> reserved{};
++    std::uint32_t reinforcement{};
++    std::array<std::uint8_t, 8> extension_reserved{};
+ };
+ 
+ static_assert(std::is_standard_layout_v<ItemInstance>);
+ static_assert(std::is_trivially_copyable_v<ItemInstance>);
+-static_assert(sizeof(ItemInstance) == 40U);
++static_assert(sizeof(ItemInstance) == 64U);
+ static_assert(offsetof(ItemInstance, affixes) == 12U);
+-static_assert(offsetof(ItemInstance, affix_count) == 36U);
+-static_assert(offsetof(ItemInstance, reserved) == 37U);
++static_assert(offsetof(ItemInstance, affix_count) == 48U);
++static_assert(offsetof(ItemInstance, reserved) == 49U);
++static_assert(offsetof(ItemInstance, reinforcement) == 52U);
++static_assert(offsetof(ItemInstance, extension_reserved) == 56U);
+ 
+ struct EquipmentState final {
+     std::array<std::uint64_t, 6> equipped_ids{};
+ };
+ 
+ struct ItemOwnershipState final {
+     std::vector<ItemInstance> items{};
+     EquipmentState equipment{};
++    std::array<std::uint64_t, kMaterialCount> materials{};
+     std::array<std::uint64_t, 3> claimed_drop_bits{};
+     std::uint64_t next_item_sequence{1};
+ };
+ 
+ }  // namespace arpg::items
+diff --git a/src/items/material_catalog.cpp b/src/items/material_catalog.cpp
+new file mode 100644
+index 0000000..7ca4a8f
+--- /dev/null
++++ b/src/items/material_catalog.cpp
+@@ -0,0 +1,65 @@
++#include "items/material_catalog.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace arpg::items {
++namespace {
++
++constexpr std::array<MaterialDefinition, kMaterialCount> kMaterials{{
++    {MaterialId::transmute, 1U, "Transmute"},
++    {MaterialId::augment, 2U, "Augment"},
++    {MaterialId::regal, 3U, "Regal"},
++    {MaterialId::chaos, 4U, "Chaos"},
++    {MaterialId::exalt, 5U, "Exalt"},
++    {MaterialId::annul, 6U, "Annul"},
++    {MaterialId::divine, 7U, "Divine"},
++    {MaterialId::scour, 8U, "Scour"},
++    {MaterialId::directed, 9U, "Directed Core"},
++    {MaterialId::reinforcement_stone, 10U, "Reinforcement Stone"},
++    {MaterialId::coupon_6, 11U, "+6 Coupon"},
++    {MaterialId::coupon_9, 12U, "+9 Coupon"},
++    {MaterialId::coupon_12, 13U, "+12 Coupon"},
++    {MaterialId::coupon_15, 14U, "+15 Coupon"},
++}};
++
++}  // namespace
++
++const MaterialDefinition* material_definition(MaterialId id) noexcept {
++    const std::size_t index = material_index(id);
++    return index < kMaterials.size() ? &kMaterials[index] : nullptr;
++}
++
++bool material_is_crafting_currency(MaterialId id) noexcept {
++    return material_index(id) <= material_index(MaterialId::directed);
++}
++
++bool material_is_coupon(MaterialId id) noexcept {
++    const std::size_t index = material_index(id);
++    return index >= material_index(MaterialId::coupon_6)
++        && index <= material_index(MaterialId::coupon_15);
++}
++
++std::uint32_t coupon_reinforcement_level(MaterialId id) noexcept {
++    switch (id) {
++    case MaterialId::coupon_6: return 6U;
++    case MaterialId::coupon_9: return 9U;
++    case MaterialId::coupon_12: return 12U;
++    case MaterialId::coupon_15: return 15U;
++    default: return 0U;
++    }
++}
++
++bool validate_material_catalog() noexcept {
++    for (std::size_t index = 0U; index < kMaterials.size(); ++index) {
++        const MaterialDefinition& definition = kMaterials[index];
++        if (material_index(definition.id) != index
++            || definition.stable_id != index + 1U
++            || definition.name.empty()) {
++            return false;
++        }
++    }
++    return true;
++}
++
++}  // namespace arpg::items
+diff --git a/src/items/material_catalog.hpp b/src/items/material_catalog.hpp
+new file mode 100644
+index 0000000..2b094ce
+--- /dev/null
++++ b/src/items/material_catalog.hpp
+@@ -0,0 +1,48 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <string_view>
++
++namespace arpg::items {
++
++enum class MaterialId : std::uint8_t {
++    transmute,
++    augment,
++    regal,
++    chaos,
++    exalt,
++    annul,
++    divine,
++    scour,
++    directed,
++    reinforcement_stone,
++    coupon_6,
++    coupon_9,
++    coupon_12,
++    coupon_15,
++    count,
++};
++
++inline constexpr std::size_t kMaterialCount =
++    static_cast<std::size_t>(MaterialId::count);
++
++struct MaterialDefinition final {
++    MaterialId id{MaterialId::count};
++    std::uint8_t stable_id{};
++    std::string_view name{};
++};
++
++[[nodiscard]] constexpr std::size_t material_index(MaterialId id) noexcept {
++    const std::size_t index = static_cast<std::size_t>(id);
++    return index < kMaterialCount ? index : kMaterialCount;
++}
++
++[[nodiscard]] const MaterialDefinition* material_definition(
++    MaterialId id) noexcept;
++[[nodiscard]] bool material_is_crafting_currency(MaterialId id) noexcept;
++[[nodiscard]] bool material_is_coupon(MaterialId id) noexcept;
++[[nodiscard]] std::uint32_t coupon_reinforcement_level(MaterialId id) noexcept;
++[[nodiscard]] bool validate_material_catalog() noexcept;
++
++}  // namespace arpg::items
+diff --git a/src/persistence/save_slot.cpp b/src/persistence/save_slot.cpp
+index 38ec3cc..0e8f408 100644
+--- a/src/persistence/save_slot.cpp
++++ b/src/persistence/save_slot.cpp
+@@ -10,37 +10,42 @@
+ namespace arpg::persistence::detail {
+ 
+ namespace {
+ 
+ bool same_item(const items::ItemInstance& lhs,
+     const items::ItemInstance& rhs) noexcept {
+     if (lhs.id != rhs.id || lhs.base_id != rhs.base_id
+         || lhs.rarity != rhs.rarity || lhs.item_level != rhs.item_level
+         || lhs.required_level != rhs.required_level
+         || lhs.affix_count != rhs.affix_count
+-        || lhs.reserved != rhs.reserved) {
++        || lhs.reserved != rhs.reserved
++        || lhs.reinforcement != rhs.reinforcement
++        || lhs.extension_reserved != rhs.extension_reserved) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < lhs.affixes.size(); ++index) {
+         if (lhs.affixes[index].affix_id != rhs.affixes[index].affix_id
+             || lhs.affixes[index].tier != rhs.affixes[index].tier
+-            || lhs.affixes[index].variant != rhs.affixes[index].variant) {
++            || lhs.affixes[index].variant != rhs.affixes[index].variant
++            || lhs.affixes[index].value_roll_bp
++                != rhs.affixes[index].value_roll_bp) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ bool same_ownership(const items::ItemOwnershipState& lhs,
+     const items::ItemOwnershipState& rhs) noexcept {
+     if (lhs.items.size() != rhs.items.size()
+         || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
++        || lhs.materials != rhs.materials
+         || lhs.claimed_drop_bits != rhs.claimed_drop_bits
+         || lhs.next_item_sequence != rhs.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+         if (!same_item(lhs.items[index], rhs.items[index]))
+             return false;
+     }
+     return true;
+ }
+diff --git a/tests/combat/player_build_tests.cpp b/tests/combat/player_build_tests.cpp
+index 119e242..0730c61 100644
+--- a/tests/combat/player_build_tests.cpp
++++ b/tests/combat/player_build_tests.cpp
+@@ -290,22 +290,25 @@ arpg::test::Failure hit_packet_reports_zero_and_invalid_without_partial_packet()
+     ARPG_REQUIRE(*zero == DamagePacket{});
+     ARPG_REQUIRE(!build_player_hit_packet(-1, PlayerCombatBuild{}).has_value());
+ 
+     PlayerCombatBuild invalid{};
+     invalid.values.valid = false;
+     ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
+     invalid = PlayerCombatBuild{};
+     invalid.weapon_physical = -1;
+     ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
+     invalid = PlayerCombatBuild{};
+-    invalid.local_attack_speed_bp = -1;
++    invalid.local_attack_speed_bp = -10001;
+     ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
++    PlayerCombatBuild slowed{};
++    slowed.local_attack_speed_bp = -1500;
++    ARPG_REQUIRE(build_player_hit_packet(1, slowed).has_value());
+ 
+     PlayerCombatBuild overflowing{};
+     overflowing.weapon_physical =
+         (std::numeric_limits<std::int64_t>::max)();
+     ARPG_REQUIRE(!build_player_hit_packet(1, overflowing).has_value());
+     overflowing = PlayerCombatBuild{};
+     overflowing.values.flat_damage[damage_index(DamageType::physical)] =
+         (std::numeric_limits<std::int64_t>::max)();
+     overflowing.values.damage_increased[damage_index(DamageType::physical)] =
+         (std::numeric_limits<std::int32_t>::max)();
+diff --git a/tests/combat/player_defense_tests.cpp b/tests/combat/player_defense_tests.cpp
+index a148363..f7a95a8 100644
+--- a/tests/combat/player_defense_tests.cpp
++++ b/tests/combat/player_defense_tests.cpp
+@@ -118,21 +118,21 @@ arpg::test::Failure invalid_resolution_is_distinct_from_legal_zero() noexcept {
+     ARPG_REQUIRE(zero.has_value());
+     ARPG_REQUIRE(*zero == 0);
+ 
+     PlayerCombatBuild invalid{};
+     invalid.values.valid = false;
+     ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
+     invalid = PlayerCombatBuild{};
+     invalid.weapon_physical = -1;
+     ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
+     invalid = PlayerCombatBuild{};
+-    invalid.local_attack_speed_bp = -1;
++    invalid.local_attack_speed_bp = -10001;
+     ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
+ 
+     PlayerCombatBuild overflowing{};
+     overflowing.values.damage_taken = 20000;
+     constexpr int maximum = (std::numeric_limits<int>::max)();
+     ARPG_REQUIRE(!resolve_player_damage(
+         DamagePacket{{maximum, maximum, maximum, maximum, maximum}},
+         overflowing).has_value());
+     return {};
+ }
+diff --git a/tests/dungeon/dungeon_abyss_reward_tests.cpp b/tests/dungeon/dungeon_abyss_reward_tests.cpp
+index 0bac68f..25b91a5 100644
+--- a/tests/dungeon/dungeon_abyss_reward_tests.cpp
++++ b/tests/dungeon/dungeon_abyss_reward_tests.cpp
+@@ -7,20 +7,21 @@
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/dungeon_session.hpp"
+ #include "abyss/abyss_rewards.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "items/item_generation.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
++#include <memory>
+ 
+ namespace {
+ 
+ using arpg::abyss::AbyssDanger;
+ using arpg::dungeon::DungeonFault;
+ using arpg::dungeon::DungeonRules;
+ using arpg::dungeon::DungeonRunState;
+ using arpg::dungeon::DungeonSession;
+ using arpg::dungeon::GroundItem;
+ using arpg::dungeon::GroundItemSource;
+@@ -88,26 +89,30 @@ arpg::items::ItemInstance normal_item(std::uint64_t id) noexcept {
+ }
+ 
+ bool same_item(
+     const arpg::items::ItemInstance& left,
+     const arpg::items::ItemInstance& right) noexcept {
+     if (left.id != right.id || left.base_id != right.base_id
+             || left.rarity != right.rarity
+             || left.item_level != right.item_level
+             || left.required_level != right.required_level
+             || left.affix_count != right.affix_count
+-            || left.reserved != right.reserved) return false;
++            || left.reserved != right.reserved
++            || left.reinforcement != right.reinforcement
++            || left.extension_reserved != right.extension_reserved) return false;
+     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+         if (left.affixes[index].affix_id != right.affixes[index].affix_id
+                 || left.affixes[index].tier != right.affixes[index].tier
+                 || left.affixes[index].variant
+-                    != right.affixes[index].variant) return false;
++                    != right.affixes[index].variant
++                || left.affixes[index].value_roll_bp
++                    != right.affixes[index].value_roll_bp) return false;
+     }
+     return true;
+ }
+ 
+ bool same_ground(const GroundItem& left, const GroundItem& right) noexcept {
+     return left.active == right.active
+         && left.drop_ordinal == right.drop_ordinal
+         && left.source == right.source
+         && left.abyss_reward_ordinal == right.abyss_reward_ordinal
+         && left.position.x == right.position.x
+@@ -979,106 +984,106 @@ arpg::test::Failure abyss_door_abandon_counts_only_ungenerated_rewards() noexcep
+     ARPG_REQUIRE(resolution.abandoned == 2U);
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_confirmation_invalidates_on_key_range_revision_and_capacity() noexcept {
+     using arpg::dungeon::ExitDirection;
+     DungeonRunState state = cleared_abyss_state(AbyssDanger::high);
+     state.abyss.generated_mask = 7U;
+     state.abyss.reward_revision = 3U;
+ 
+-    DungeonSession direction{DungeonRules{}, state};
+-    arpg::test::set_phase(direction, RoomPhase::awaiting_exit);
+-    attempt_exit(direction, ExitDirection::left);
+-    ARPG_REQUIRE(direction.snapshot().abyss_exit_confirmation_armed);
+-    attempt_exit(direction, ExitDirection::right);
+-    ARPG_REQUIRE(!direction.snapshot().abyss_exit_confirmation_armed);
+-    ARPG_REQUIRE(!direction.pending_save().has_value());
+-
+-    DungeonSession range{DungeonRules{}, state};
+-    arpg::test::set_phase(range, RoomPhase::awaiting_exit);
+-    set_player_position(range, {-12.0F, 0.0F, 0.0F});
+-    attempt_exit(range, ExitDirection::left);
+-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_armed);
+-    set_player_position(range, {8.0F, 3.0F, 0.0F});
+-    range.tick({});
+-    ARPG_REQUIRE(!range.snapshot().abyss_exit_confirmation_armed);
+-
+-    DungeonSession revision{DungeonRules{}, state};
+-    arpg::test::set_phase(revision, RoomPhase::awaiting_exit);
+-    set_player_position(revision, {-12.0F, 0.0F, 0.0F});
+-    attempt_exit(revision, ExitDirection::left);
+-    const std::uint16_t claim = abyss_ground(revision, 0U)->drop_ordinal;
+-    set_player_position(revision,
+-        arpg::test::ground_items(revision)[claim].position);
+-    ARPG_REQUIRE(revision.request_pickup(claim)
++    auto direction = std::make_unique<DungeonSession>(DungeonRules{}, state);
++    arpg::test::set_phase(*direction, RoomPhase::awaiting_exit);
++    attempt_exit(*direction, ExitDirection::left);
++    ARPG_REQUIRE(direction->snapshot().abyss_exit_confirmation_armed);
++    attempt_exit(*direction, ExitDirection::right);
++    ARPG_REQUIRE(!direction->snapshot().abyss_exit_confirmation_armed);
++    ARPG_REQUIRE(!direction->pending_save().has_value());
++
++    auto range = std::make_unique<DungeonSession>(DungeonRules{}, state);
++    arpg::test::set_phase(*range, RoomPhase::awaiting_exit);
++    set_player_position(*range, {-12.0F, 0.0F, 0.0F});
++    attempt_exit(*range, ExitDirection::left);
++    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_armed);
++    set_player_position(*range, {8.0F, 3.0F, 0.0F});
++    range->tick({});
++    ARPG_REQUIRE(!range->snapshot().abyss_exit_confirmation_armed);
++
++    auto revision = std::make_unique<DungeonSession>(DungeonRules{}, state);
++    arpg::test::set_phase(*revision, RoomPhase::awaiting_exit);
++    set_player_position(*revision, {-12.0F, 0.0F, 0.0F});
++    attempt_exit(*revision, ExitDirection::left);
++    const std::uint16_t claim = abyss_ground(*revision, 0U)->drop_ordinal;
++    set_player_position(*revision,
++        arpg::test::ground_items(*revision)[claim].position);
++    ARPG_REQUIRE(revision->request_pickup(claim)
+         == arpg::dungeon::RequestResult::accepted);
+-    ARPG_REQUIRE(!revision.snapshot().abyss_exit_confirmation_armed);
++    ARPG_REQUIRE(!revision->snapshot().abyss_exit_confirmation_armed);
+ 
+-    DungeonSession full_events{DungeonRules{}, state};
+-    arpg::test::set_phase(full_events, RoomPhase::awaiting_exit);
++    auto full_events = std::make_unique<DungeonSession>(DungeonRules{}, state);
++    arpg::test::set_phase(*full_events, RoomPhase::awaiting_exit);
+     ARPG_REQUIRE(arpg::test::DungeonSessionTestAccess::fill_dungeon_events(
+-        full_events, DungeonSession::kDungeonEventCapacity)
++        *full_events, DungeonSession::kDungeonEventCapacity)
+         == DungeonSession::kDungeonEventCapacity);
+-    attempt_exit(full_events, ExitDirection::left);
+-    ARPG_REQUIRE(full_events.snapshot().phase == RoomPhase::faulted);
+-    ARPG_REQUIRE(full_events.snapshot().diagnostics.fault
++    attempt_exit(*full_events, ExitDirection::left);
++    ARPG_REQUIRE(full_events->snapshot().phase == RoomPhase::faulted);
++    ARPG_REQUIRE(full_events->snapshot().diagnostics.fault
+         == DungeonFault::event_overflow);
+-    ARPG_REQUIRE(!full_events.snapshot().abyss_exit_confirmation_armed);
+-    ARPG_REQUIRE(!full_events.pending_save().has_value());
++    ARPG_REQUIRE(!full_events->snapshot().abyss_exit_confirmation_armed);
++    ARPG_REQUIRE(!full_events->pending_save().has_value());
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_hole_confirmation_leaves_range_and_descends_on_second_e() noexcept {
+     using arpg::dungeon::ExitDirection;
+     using arpg::dungeon::TransitionKind;
+     DungeonRunState state = cleared_abyss_state(AbyssDanger::high);
+     state.abyss.generated_mask = 7U;
+     state.abyss.reward_revision = 3U;
+ 
+-    DungeonSession range{DungeonRules{}, state};
+-    arpg::test::set_phase(range, RoomPhase::awaiting_exit);
+-    set_player_position(range, {0.0F, 3.5F, 0.0F});
+-    ARPG_REQUIRE(!range.request_descent(true));
+-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_armed);
+-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_transition
++    auto range = std::make_unique<DungeonSession>(DungeonRules{}, state);
++    arpg::test::set_phase(*range, RoomPhase::awaiting_exit);
++    set_player_position(*range, {0.0F, 3.5F, 0.0F});
++    ARPG_REQUIRE(!range->request_descent(true));
++    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_armed);
++    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_transition
+         == TransitionKind::descent);
+-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_direction
++    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_direction
+         == ExitDirection::none);
+-    set_player_position(range, {8.0F, 3.5F, 0.0F});
+-    range.tick({});
+-    ARPG_REQUIRE(!range.snapshot().abyss_exit_confirmation_armed);
+-
+-    DungeonSession descent{DungeonRules{}, state};
+-    arpg::test::set_phase(descent, RoomPhase::awaiting_exit);
+-    set_player_position(descent, {0.0F, 3.5F, 0.0F});
+-    ARPG_REQUIRE(!descent.request_descent(true));
+-    ARPG_REQUIRE(descent.request_descent(true));
+-    ARPG_REQUIRE(descent.pending_save()->kind == PendingSaveKind::abyss_abandon);
+-    ARPG_REQUIRE(descent.pending_save()->transition == TransitionKind::descent);
+-    ARPG_REQUIRE(descent.pending_save()->direction == ExitDirection::none);
+-    ARPG_REQUIRE(descent.pending_save()->next_state
++    set_player_position(*range, {8.0F, 3.5F, 0.0F});
++    range->tick({});
++    ARPG_REQUIRE(!range->snapshot().abyss_exit_confirmation_armed);
++
++    auto descent = std::make_unique<DungeonSession>(DungeonRules{}, state);
++    arpg::test::set_phase(*descent, RoomPhase::awaiting_exit);
++    set_player_position(*descent, {0.0F, 3.5F, 0.0F});
++    ARPG_REQUIRE(!descent->request_descent(true));
++    ARPG_REQUIRE(descent->request_descent(true));
++    ARPG_REQUIRE(descent->pending_save()->kind == PendingSaveKind::abyss_abandon);
++    ARPG_REQUIRE(descent->pending_save()->transition == TransitionKind::descent);
++    ARPG_REQUIRE(descent->pending_save()->direction == ExitDirection::none);
++    ARPG_REQUIRE(descent->pending_save()->next_state
+         .last_abyss_resolution.generated == 3U);
+-    ARPG_REQUIRE(descent.pending_save()->next_state
++    ARPG_REQUIRE(descent->pending_save()->next_state
+         .last_abyss_resolution.abandoned == 0U);
+ 
+     DungeonRunState claimed = state;
+     claimed.abyss.claimed_mask = 7U;
+-    DungeonSession one_press{DungeonRules{}, claimed};
+-    arpg::test::set_phase(one_press, RoomPhase::awaiting_exit);
+-    ARPG_REQUIRE(one_press.request_descent(true));
+-    ARPG_REQUIRE(one_press.pending_save()->kind == PendingSaveKind::transition);
+-    ARPG_REQUIRE(one_press.pending_save()->next_state
++    auto one_press = std::make_unique<DungeonSession>(DungeonRules{}, claimed);
++    arpg::test::set_phase(*one_press, RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(one_press->request_descent(true));
++    ARPG_REQUIRE(one_press->pending_save()->kind == PendingSaveKind::transition);
++    ARPG_REQUIRE(one_press->pending_save()->next_state
+         .last_abyss_resolution.generated == 3U);
+-    ARPG_REQUIRE(one_press.pending_save()->next_state
++    ARPG_REQUIRE(one_press->pending_save()->next_state
+         .last_abyss_resolution.claimed == 3U);
+-    ARPG_REQUIRE(one_press.pending_save()->next_state
++    ARPG_REQUIRE(one_press->pending_save()->next_state
+         .last_abyss_resolution.abandoned == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_abandon_failure_stays_and_next_resolution_overwrites() noexcept {
+     using arpg::dungeon::ExitDirection;
+     DungeonRunState state = cleared_abyss_state(AbyssDanger::medium);
+     state.abyss.generated_mask = 3U;
+     state.abyss.reward_revision = 2U;
+     state.last_abyss_resolution.valid = true;
+diff --git a/tests/dungeon/dungeon_abyss_stress_tests.cpp b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+index 20b44a1..db53c0d 100644
+--- a/tests/dungeon/dungeon_abyss_stress_tests.cpp
++++ b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+@@ -233,26 +233,30 @@ arpg::items::ItemInstance ground_prototype() noexcept {
+     }).value();
+ }
+ 
+ bool same_item(const arpg::items::ItemInstance& left,
+     const arpg::items::ItemInstance& right) noexcept {
+     if (left.id != right.id || left.base_id != right.base_id
+             || left.rarity != right.rarity
+             || left.item_level != right.item_level
+             || left.required_level != right.required_level
+             || left.affix_count != right.affix_count
+-            || left.reserved != right.reserved) return false;
++            || left.reserved != right.reserved
++            || left.reinforcement != right.reinforcement
++            || left.extension_reserved != right.extension_reserved) return false;
+     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+         if (left.affixes[index].affix_id != right.affixes[index].affix_id
+                 || left.affixes[index].tier != right.affixes[index].tier
+                 || left.affixes[index].variant
+-                    != right.affixes[index].variant) return false;
++                    != right.affixes[index].variant
++                || left.affixes[index].value_roll_bp
++                    != right.affixes[index].value_roll_bp) return false;
+     }
+     return true;
+ }
+ 
+ bool exactly_same_ground_item(const arpg::dungeon::GroundItem& left,
+     const arpg::dungeon::GroundItem& right) noexcept {
+     return left.active == right.active
+         && left.drop_ordinal == right.drop_ordinal
+         && left.source == right.source
+         && left.abyss_reward_ordinal == right.abyss_reward_ordinal
+diff --git a/tests/dungeon/dungeon_death_lifecycle_tests.cpp b/tests/dungeon/dungeon_death_lifecycle_tests.cpp
+index 743fe64..50d7586 100644
+--- a/tests/dungeon/dungeon_death_lifecycle_tests.cpp
++++ b/tests/dungeon/dungeon_death_lifecycle_tests.cpp
+@@ -579,32 +579,37 @@ arpg::test::Failure abyss_death_receipt_mutations_fail_closed() noexcept {
+             pending.expected_generation, std::move(verified),
+             PendingSaveKind::death_retreat});
+         ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+         ARPG_REQUIRE(session.snapshot().diagnostics.fault
+             == dungeon::DungeonFault::save_receipt_mismatch);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure ordinary_death_prepares_atomic_retreat() noexcept {
+-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
+-        0xD34D6U, DungeonRules{}).state};
++    auto initial = dungeon::make_initial_run_state(
++        0xD34D6U, DungeonRules{}).state;
++    initial.item_ownership.materials[0] =
++        (std::numeric_limits<std::uint64_t>::max)();
++    DungeonSession session{DungeonRules{}, std::move(initial)};
+     const auto stable_before = arpg::test::stable_state(session);
+     ARPG_REQUIRE(drive_ordinary_death(session));
+     const auto* pending = session.pending_save_view();
+     ARPG_REQUIRE(pending != nullptr);
+     ARPG_REQUIRE(pending->kind == PendingSaveKind::death_retreat);
+     ARPG_REQUIRE(pending->death_snapshot.has_value());
+     ARPG_REQUIRE(pending->expected_generation
+         == stable_before.commit_generation + 1U);
+     ARPG_REQUIRE(pending->next_state.death_sequence
+         == stable_before.death_sequence + 1U);
++    ARPG_REQUIRE(pending->next_state.item_ownership.materials
++        == stable_before.item_ownership.materials);
+     ARPG_REQUIRE(arpg::test::stable_state(session).death_sequence
+         == stable_before.death_sequence);
+     ARPG_REQUIRE(pending->next_state.death.lifecycle
+         == DeathLifecycle::pending_continue);
+     ARPG_REQUIRE(pending->next_state.current_room.index
+         == stable_before.current_room.index);
+     ARPG_REQUIRE(!pending->next_state.current_room.is_abyss);
+     ARPG_REQUIRE((pending->next_state.biases
+         == std::array<std::uint32_t, 4>{}));
+     ARPG_REQUIRE(pending->next_state.last_transition
+diff --git a/tests/dungeon/dungeon_death_stress_tests.cpp b/tests/dungeon/dungeon_death_stress_tests.cpp
+index e6600bf..784dca5 100644
+--- a/tests/dungeon/dungeon_death_stress_tests.cpp
++++ b/tests/dungeon/dungeon_death_stress_tests.cpp
+@@ -138,42 +138,48 @@ bool same_permanent_player_state(
+             || left.progression.earned_passive_points
+                 != right.progression.earned_passive_points
+             || left.progression.unspent_passive_points
+                 != right.progression.unspent_passive_points
+             || left.passive_tree.allocated_bits
+                 != right.passive_tree.allocated_bits
+             || left.item_ownership.items.size()
+                 != right.item_ownership.items.size()
+             || left.item_ownership.equipment.equipped_ids
+                 != right.item_ownership.equipment.equipped_ids
++            || left.item_ownership.materials
++                != right.item_ownership.materials
+             || left.item_ownership.claimed_drop_bits
+                 != right.item_ownership.claimed_drop_bits
+             || left.item_ownership.next_item_sequence
+                 != right.item_ownership.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U;
+          index < left.item_ownership.items.size(); ++index) {
+         const auto& a = left.item_ownership.items[index];
+         const auto& b = right.item_ownership.items[index];
+         if (a.id != b.id || a.base_id != b.base_id || a.rarity != b.rarity
+                 || a.item_level != b.item_level
+                 || a.required_level != b.required_level
+                 || a.affix_count != b.affix_count
+-                || a.reserved != b.reserved) {
++                || a.reserved != b.reserved
++                || a.reinforcement != b.reinforcement
++                || a.extension_reserved != b.extension_reserved) {
+             return false;
+         }
+         for (std::size_t affix = 0U; affix < a.affixes.size(); ++affix) {
+             if (a.affixes[affix].affix_id != b.affixes[affix].affix_id
+                     || a.affixes[affix].tier != b.affixes[affix].tier
+                     || a.affixes[affix].variant
+-                        != b.affixes[affix].variant) {
++                        != b.affixes[affix].variant
++                    || a.affixes[affix].value_roll_bp
++                        != b.affixes[affix].value_roll_bp) {
+                 return false;
+             }
+         }
+     }
+     return true;
+ }
+ 
+ bool codec_round_trip(checkpoint::DungeonRunState& state) noexcept {
+     const auto encoded = persistence::encode_checkpoint(state);
+     if (!encoded.has_value()) return false;
+diff --git a/tests/dungeon/dungeon_equipment_stress_tests.cpp b/tests/dungeon/dungeon_equipment_stress_tests.cpp
+index 86aae4c..7dc80ce 100644
+--- a/tests/dungeon/dungeon_equipment_stress_tests.cpp
++++ b/tests/dungeon/dungeon_equipment_stress_tests.cpp
+@@ -34,39 +34,41 @@ constexpr std::uint64_t kRootSeed = 0x8E10A57E5D00D123ULL;
+ constexpr std::size_t kStressRoomCount = 1000U;
+ constexpr std::size_t kRestartInterval = 37U;
+ 
+ enum class MismatchField : std::uint8_t {
+     none,
+     room_seed,
+     generation,
+     item_count,
+     item_bytes,
+     equipment_ids,
++    materials,
+     claimed_bits,
+     next_sequence,
+     player_build,
+     ground_active,
+     ground_ordinal,
+     ground_source,
+     ground_abyss_reward_ordinal,
+     ground_position,
+     ground_content,
+ };
+ 
+ struct Comparison final {
+     MismatchField field{MismatchField::none};
+     std::size_t index{};
+ };
+ 
+ struct TraceResult final {
+     bool completed{};
+     bool perturbation_applied{};
++    const char* abort_point{"none"};
+     Comparison mismatch{};
+     std::size_t mismatch_room{};
+     std::size_t mismatch_step{};
+     std::size_t drops{};
+     std::size_t equips{};
+     std::size_t recipes{};
+     std::size_t restarts{};
+     std::size_t filtered_items_retained{};
+     std::size_t relaxed_policy_pickups{};
+     std::size_t hot_path_iterations{};
+@@ -93,21 +95,21 @@ bool same_build(const arpg::combat::PlayerCombatBuild& left,
+         && a.damage_taken == b.damage_taken
+         && a.movement_speed == b.movement_speed
+         && a.attack_speed == b.attack_speed
+         && a.impulse_scale == b.impulse_scale
+         && a.jump_speed == b.jump_speed
+         && a.air_control == b.air_control && a.valid == b.valid;
+ }
+ 
+ bool same_item_bytes(
+     const ItemInstance& left, const ItemInstance& right) noexcept {
+-    static_assert(sizeof(ItemInstance) == 40U);
++    static_assert(sizeof(ItemInstance) == 64U);
+     return std::memcmp(&left, &right, sizeof(ItemInstance)) == 0;
+ }
+ 
+ Comparison compare_sessions(
+     const DungeonSession& left, const DungeonSession& right) noexcept {
+     const auto& left_state = arpg::test::stable_state(left);
+     const auto& right_state = arpg::test::stable_state(right);
+     if (left_state.current_room.seed != right_state.current_room.seed)
+         return {MismatchField::room_seed, 0U};
+     if (left_state.commit_generation != right_state.commit_generation)
+@@ -117,20 +119,22 @@ Comparison compare_sessions(
+     const auto& right_items = right_state.item_ownership;
+     if (left_items.items.size() != right_items.items.size())
+         return {MismatchField::item_count, 0U};
+     for (std::size_t index = 0U; index < left_items.items.size(); ++index) {
+         if (!same_item_bytes(left_items.items[index], right_items.items[index]))
+             return {MismatchField::item_bytes, index};
+     }
+     if (left_items.equipment.equipped_ids
+             != right_items.equipment.equipped_ids)
+         return {MismatchField::equipment_ids, 0U};
++    if (left_items.materials != right_items.materials)
++        return {MismatchField::materials, 0U};
+     if (left_items.claimed_drop_bits != right_items.claimed_drop_bits)
+         return {MismatchField::claimed_bits, 0U};
+     if (left_items.next_item_sequence != right_items.next_item_sequence)
+         return {MismatchField::next_sequence, 0U};
+     if (!same_build(
+             arpg::test::player_build(left), arpg::test::player_build(right)))
+         return {MismatchField::player_build, 0U};
+ 
+     const auto& left_ground = arpg::test::ground_items(left);
+     const auto& right_ground = arpg::test::ground_items(right);
+@@ -312,36 +316,64 @@ std::array<std::uint64_t, 3> first_recipe(
+ bool apply_fixed_transactions(DungeonSession& left,
+     DungeonSession& right,
+     std::size_t room,
+     std::size_t& equips,
+     std::size_t& recipes) noexcept {
+     const auto& items = left.item_state().items;
+     if (!items.empty()) {
+         const ItemInstance& chosen = items[room % items.size()];
+         const RequestResult left_result = left.request_equip(chosen.id);
+         const RequestResult right_result = right.request_equip(chosen.id);
+-        if (left_result != right_result || left_result == RequestResult::faulted)
++        if (left_result != right_result || left_result == RequestResult::faulted) {
++            std::fprintf(stderr,
++                "stage8 fixed transaction equip failed room=%zu left=%u right=%u id=%llu base=%u level=%u rarity=%u left_fault=%u right_fault=%u\n",
++                room, static_cast<unsigned>(left_result),
++                static_cast<unsigned>(right_result),
++                static_cast<unsigned long long>(chosen.id),
++                static_cast<unsigned>(chosen.base_id),
++                static_cast<unsigned>(chosen.item_level),
++                static_cast<unsigned>(chosen.rarity),
++                static_cast<unsigned>(left.snapshot().diagnostics.fault),
++                static_cast<unsigned>(right.snapshot().diagnostics.fault));
+             return false;
++        }
+         if (left_result == RequestResult::accepted) {
+-            if (!commit_pending(left) || !commit_pending(right)) return false;
++            if (!commit_pending(left) || !commit_pending(right)) {
++                std::fprintf(stderr,
++                    "stage8 fixed transaction equip commit failed room=%zu\n",
++                    room);
++                return false;
++            }
+             ++equips;
+         }
+     }
+ 
+     const auto recipe = first_recipe(left.item_state());
+     if (recipe[0] == 0U) return true;
+     const RequestResult left_result = left.request_recipe(recipe);
+     const RequestResult right_result = right.request_recipe(recipe);
+     if (left_result != RequestResult::accepted
+-            || right_result != RequestResult::accepted)
++            || right_result != RequestResult::accepted) {
++        std::fprintf(stderr,
++            "stage8 fixed transaction recipe failed room=%zu left=%u right=%u ids=%llu,%llu,%llu\n",
++            room, static_cast<unsigned>(left_result),
++            static_cast<unsigned>(right_result),
++            static_cast<unsigned long long>(recipe[0]),
++            static_cast<unsigned long long>(recipe[1]),
++            static_cast<unsigned long long>(recipe[2]));
+         return false;
+-    if (!commit_pending(left) || !commit_pending(right)) return false;
++    }
++    if (!commit_pending(left) || !commit_pending(right)) {
++        std::fprintf(stderr,
++            "stage8 fixed transaction recipe commit failed room=%zu\n", room);
++        return false;
++    }
+     ++recipes;
+     return true;
+ }
+ 
+ bool transition_room(
+     DungeonSession& left, DungeonSession& right, std::size_t room) noexcept {
+     arpg::test::set_phase(left, RoomPhase::awaiting_exit);
+     arpg::test::set_phase(right, RoomPhase::awaiting_exit);
+     constexpr std::array<ExitDirection, 4> kDirections{{
+         ExitDirection::up,
+@@ -375,41 +407,50 @@ bool restart_right_session(
+         encoded->data(), encoded->size());
+     if (decoded.error != arpg::persistence::CodecError::none) return false;
+     right = std::make_unique<DungeonSession>(rules, decoded.state);
+     return right->snapshot().phase == RoomPhase::locked;
+ }
+ 
+ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
+     TraceResult result{};
+     const DungeonRules rules{};
+     auto initial = arpg::dungeon::make_initial_run_state(kRootSeed, rules);
+-    if (initial.fault != arpg::dungeon::DungeonFault::none) return result;
++    if (initial.fault != arpg::dungeon::DungeonFault::none) {
++        result.abort_point = "initial_state";
++        return result;
++    }
+     auto left = std::make_unique<DungeonSession>(rules, initial.state);
+     auto right = std::make_unique<DungeonSession>(rules, initial.state);
+     std::size_t step = 0U;
+-    if (!run_filter_hot_path_probe(result)) return result;
++    if (!run_filter_hot_path_probe(result)) {
++        result.abort_point = "filter_hot_path";
++        return result;
++    }
+     if (!record_comparison(result, *left, *right, 0U, step++)) return result;
+ 
+     for (std::size_t room = 0U; room < room_count; ++room) {
+         for (std::uint8_t wave = 0U; wave < 2U; ++wave) {
+             for (std::uint8_t target = 0U; target < 96U; ++target) {
+                 const std::uint16_t ordinal = static_cast<std::uint16_t>(
+                     static_cast<std::uint16_t>(wave) * 96U + target);
+                 const arpg::combat::Vec3 position{
+                     static_cast<float>(ordinal) * 4.0F,
+                     static_cast<float>(wave) * 4.0F,
+                     0.0F};
+                 if (!arpg::test::relay_defeated(
+                         *left, wave, target, position)
+                         || !arpg::test::relay_defeated(
+                             *right, wave, target, position))
+-                    return result;
++                    {
++                        result.abort_point = "relay_defeated";
++                        return result;
++                    }
+                 drain_observable_events(*left);
+                 drain_observable_events(*right);
+                 if (!record_comparison(
+                         result, *left, *right, room, step++))
+                     return result;
+             }
+         }
+ 
+         auto left_order = active_ordinals(*left);
+         auto right_order = left_order;
+@@ -429,42 +470,48 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
+             const std::size_t policy_index = static_cast<std::size_t>(
+                 policy.minimum_rarity);
+             if (!perturb_pickup_order) {
+                 if (policy_index >= result.policy_attempts.size()) return result;
+                 ++result.policy_attempts[policy_index];
+             }
+             const bool left_eligible = arpg::dungeon::auto_pickup_eligible(
+                 arpg::test::ground_items(*left)[left_order[index]], policy);
+             const bool right_eligible = arpg::dungeon::auto_pickup_eligible(
+                 arpg::test::ground_items(*right)[right_order[index]], policy);
+-            if (left_eligible != right_eligible) return result;
++            if (left_eligible != right_eligible) {
++                result.abort_point = "pickup_eligibility";
++                return result;
++            }
+             const PickupAttempt left_attempt =
+                 pickup_one(*left, left_order[index], policy);
+             const PickupAttempt right_attempt =
+                 pickup_one(*right, right_order[index], policy);
+             const PickupAttempt expected = left_eligible
+                 ? PickupAttempt::picked : PickupAttempt::retained;
+-            if (left_attempt != expected || right_attempt != expected)
++            if (left_attempt != expected || right_attempt != expected) {
++                result.abort_point = "pickup_attempt";
+                 return result;
++            }
+             if (!left_eligible) {
+                 retained_ordinals[retained_count++] = left_order[index];
+                 ++result.filtered_items_retained;
+                 if (!perturb_pickup_order) {
+                     ++result.policy_retained[policy_index];
+                 }
+             } else if (!perturb_pickup_order) {
+                 ++result.exact_pickup_verifications;
+             }
+             if (!record_comparison(
+                     result, *left, *right, room, step++)) {
+                 result.completed = perturb_pickup_order
+                     && result.perturbation_applied;
++                result.abort_point = "retained_pickup";
+                 return result;
+             }
+         }
+         for (std::size_t index = 0U; index < retained_count; ++index) {
+             const std::uint16_t ordinal = retained_ordinals[index];
+             if (pickup_one(*left, ordinal, {}) != PickupAttempt::picked
+                     || pickup_one(*right, ordinal, {})
+                         != PickupAttempt::picked) {
+                 return result;
+             }
+@@ -472,47 +519,56 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
+             ++result.exact_pickup_verifications;
+             if (!record_comparison(
+                     result, *left, *right, room, step++)) {
+                 result.completed = perturb_pickup_order
+                     && result.perturbation_applied;
+                 return result;
+             }
+         }
+ 
+         if (!apply_fixed_transactions(
+-                *left, *right, room, result.equips, result.recipes))
++                *left, *right, room, result.equips, result.recipes)) {
++            result.abort_point = "fixed_transactions";
+             return result;
++        }
+         if (!record_comparison(result, *left, *right, room, step++))
+             return result;
+-        if (!transition_room(*left, *right, room)) return result;
++        if (!transition_room(*left, *right, room)) {
++            result.abort_point = "transition_room";
++            return result;
++        }
+         if (!record_comparison(result, *left, *right, room, step++))
+             return result;
+ 
+         if ((room + 1U) % kRestartInterval == 0U) {
+-            if (!restart_right_session(right, rules)) return result;
++            if (!restart_right_session(right, rules)) {
++                result.abort_point = "restart_right_session";
++                return result;
++            }
+             ++result.restarts;
+             if (!record_comparison(result, *left, *right, room, step++))
+                 return result;
+         }
+     }
+     result.completed = true;
+     return result;
+ }
+ 
+ const char* mismatch_name(MismatchField field) noexcept {
+     switch (field) {
+     case MismatchField::none: return "none";
+     case MismatchField::room_seed: return "room_seed";
+     case MismatchField::generation: return "generation";
+     case MismatchField::item_count: return "item_count";
+     case MismatchField::item_bytes: return "item_bytes";
+     case MismatchField::equipment_ids: return "equipment_ids";
++    case MismatchField::materials: return "materials";
+     case MismatchField::claimed_bits: return "claimed_bits";
+     case MismatchField::next_sequence: return "next_sequence";
+     case MismatchField::player_build: return "player_build";
+     case MismatchField::ground_active: return "ground_active";
+     case MismatchField::ground_ordinal: return "ground_ordinal";
+     case MismatchField::ground_source: return "ground_source";
+     case MismatchField::ground_abyss_reward_ordinal:
+         return "ground_abyss_reward_ordinal";
+     case MismatchField::ground_position: return "ground_position";
+     case MismatchField::ground_content: return "ground_content";
+@@ -526,23 +582,24 @@ arpg::test::Failure pickup_order_perturbation_is_detected() noexcept {
+     ARPG_REQUIRE(result.perturbation_applied);
+     ARPG_REQUIRE(result.mismatch.field != MismatchField::none);
+     ARPG_REQUIRE(result.mismatch_room < 128U);
+     return {};
+ }
+ 
+ arpg::test::Failure one_thousand_room_equipment_trace_is_deterministic() noexcept {
+     const TraceResult result = run_trace(kStressRoomCount, false);
+     if (!result.completed || result.mismatch.field != MismatchField::none) {
+         std::fprintf(stderr,
+-            "stage8 stress mismatch room=%zu step=%zu field=%s index=%zu\n",
++            "stage8 stress mismatch room=%zu step=%zu field=%s index=%zu abort=%s\n",
+             result.mismatch_room, result.mismatch_step,
+-            mismatch_name(result.mismatch.field), result.mismatch.index);
++            mismatch_name(result.mismatch.field), result.mismatch.index,
++            result.abort_point);
+     }
+     ARPG_REQUIRE(result.completed);
+     ARPG_REQUIRE(result.mismatch.field == MismatchField::none);
+     ARPG_REQUIRE(result.drops > 0U);
+     ARPG_REQUIRE(result.equips > 0U);
+     ARPG_REQUIRE(result.recipes > 0U);
+     ARPG_REQUIRE(result.restarts == kStressRoomCount / kRestartInterval);
+     ARPG_REQUIRE(result.filtered_items_retained > 0U);
+     ARPG_REQUIRE(result.relaxed_policy_pickups
+         == result.filtered_items_retained);
+diff --git a/tests/dungeon/dungeon_item_transaction_tests.cpp b/tests/dungeon/dungeon_item_transaction_tests.cpp
+index 93f3017..d0ab534 100644
+--- a/tests/dungeon/dungeon_item_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_item_transaction_tests.cpp
+@@ -191,20 +191,21 @@ arpg::test::Failure equip_rejects_missing_level_and_no_change_requests() noexcep
+     ARPG_REQUIRE(!session.pending_save().has_value());
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == helmet.id);
+     return {};
+ }
+ 
+ arpg::test::Failure equip_publishes_only_after_commit_and_preserves_health() noexcept {
+     DungeonSession session{DungeonRules{},
+         state_with_items({normal_item(31U, 2U), normal_item(32U, 3U)})};
+     session.tick({});
+     const int base_max_hp = session.snapshot().combat->player.max_hp;
++    const auto base_build = arpg::test::player_build(session);
+     arpg::test::damage_current_player(session, 30);
+     const auto damaged = session.snapshot();
+     ARPG_REQUIRE(damaged.phase == RoomPhase::combat);
+     ARPG_REQUIRE(damaged.combat->player.max_hp == base_max_hp);
+     ARPG_REQUIRE(damaged.combat->player.hp < damaged.combat->player.max_hp);
+     const int damaged_hp = damaged.combat->player.hp;
+ 
+     ARPG_REQUIRE(session.request_equip(31U) == RequestResult::accepted);
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
+@@ -214,36 +215,51 @@ arpg::test::Failure equip_publishes_only_after_commit_and_preserves_health() noe
+         first.expected_generation, first.next_state});
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
+     ARPG_REQUIRE(session.snapshot().combat->player.max_hp == base_max_hp);
+ 
+     ARPG_REQUIRE(session.request_equip(31U) == RequestResult::accepted);
+     ARPG_REQUIRE(commit_pending(session));
+     const auto equipped = session.snapshot();
+     ARPG_REQUIRE(equipped.phase == RoomPhase::combat);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 31U);
+-    ARPG_REQUIRE(equipped.combat->player.max_hp == base_max_hp + 38);
++    ARPG_REQUIRE(equipped.combat->player.max_hp == base_max_hp);
+     ARPG_REQUIRE(equipped.combat->player.hp == damaged_hp);
++    const auto helmet_build = arpg::test::player_build(session);
++    ARPG_REQUIRE(helmet_build.values.armor
++        == base_build.values.armor + 7500);
++    ARPG_REQUIRE(helmet_build.values.evasion
++        == base_build.values.evasion + 2625);
+ 
+     ARPG_REQUIRE(session.request_equip(32U) == RequestResult::accepted);
+     ARPG_REQUIRE(commit_pending(session));
+-    const auto barrier_equipped = session.snapshot();
+-    ARPG_REQUIRE(barrier_equipped.combat->player.max_barrier == 46);
+-    ARPG_REQUIRE(barrier_equipped.combat->player.barrier == 0);
+-    ARPG_REQUIRE(barrier_equipped.combat->player.hp == damaged_hp);
++    const auto chest_equipped = session.snapshot();
++    ARPG_REQUIRE(chest_equipped.combat->player.max_barrier == 0);
++    ARPG_REQUIRE(chest_equipped.combat->player.barrier == 0);
++    ARPG_REQUIRE(chest_equipped.combat->player.hp == damaged_hp);
++    const auto combined_build = arpg::test::player_build(session);
++    ARPG_REQUIRE(combined_build.values.armor
++        == base_build.values.armor + 7500 + 15000);
++    ARPG_REQUIRE(combined_build.values.evasion
++        == base_build.values.evasion + 2625 + 5250);
+ 
+     ARPG_REQUIRE(session.request_unequip(ItemSlot::helmet)
+         == RequestResult::accepted);
+     ARPG_REQUIRE(commit_pending(session));
+     const auto unequipped = session.snapshot();
+     ARPG_REQUIRE(unequipped.combat->player.max_hp == base_max_hp);
+     ARPG_REQUIRE(unequipped.combat->player.hp == damaged_hp);
++    const auto chest_build = arpg::test::player_build(session);
++    ARPG_REQUIRE(chest_build.values.armor
++        == base_build.values.armor + 15000);
++    ARPG_REQUIRE(chest_build.values.evasion
++        == base_build.values.evasion + 5250);
+     return {};
+ }
+ 
+ arpg::test::Failure ownership_scratch_oom_rejects_atomically() noexcept {
+     DungeonSession session{DungeonRules{}, state_with_items({
+         normal_item(131U, 2U), normal_item(132U, 3U)})};
+     const AtomicStateProbe before = capture_atomic_state(session);
+     RequestResult result{};
+     {
+         arpg::test::ScopedAllocationFailure fail{0U};
+@@ -310,20 +326,21 @@ arpg::test::Failure committed_receipt_publishes_without_allocation() noexcept {
+         state_with_items({normal_item(165U, 2U)})};
+     session.tick({});
+     arpg::test::damage_current_player(session, 30);
+     const auto before = session.snapshot();
+     ARPG_REQUIRE(before.phase == RoomPhase::combat);
+     ARPG_REQUIRE(before.combat.has_value());
+     const int hp_before = before.combat->player.hp;
+     const int barrier_before = before.combat->player.barrier;
+     const int max_hp_before = before.combat->player.max_hp;
+     const int max_barrier_before = before.combat->player.max_barrier;
++    const auto build_before = arpg::test::player_build(session);
+ 
+     ARPG_REQUIRE(session.request_equip(165U) == RequestResult::accepted);
+     const auto pending = *session.pending_save();
+     const arpg::dungeon::PendingSaveResult receipt{
+         SaveDisposition::committed,
+         pending.expected_generation,
+         pending.next_state,
+     };
+     const std::uint64_t allocations_before =
+         arpg::test::allocation_count();
+@@ -331,26 +348,29 @@ arpg::test::Failure committed_receipt_publishes_without_allocation() noexcept {
+         arpg::test::ScopedAllocationFailure fail{0U};
+         session.resolve_pending_save(receipt);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+     const auto after = session.snapshot();
+     ARPG_REQUIRE(after.phase == RoomPhase::combat);
+     ARPG_REQUIRE(!after.pending_save_kind.has_value());
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 165U);
+     ARPG_REQUIRE(after.commit_generation == pending.expected_generation);
+     ARPG_REQUIRE(after.combat.has_value());
+-    ARPG_REQUIRE(after.combat->player.max_hp == max_hp_before + 38);
++    ARPG_REQUIRE(after.combat->player.max_hp == max_hp_before);
+     ARPG_REQUIRE(after.combat->player.hp == hp_before);
+     ARPG_REQUIRE(after.combat->player.max_barrier == max_barrier_before);
+     ARPG_REQUIRE(after.combat->player.barrier == barrier_before);
+-    ARPG_REQUIRE(arpg::test::player_build(session).values.max_health
+-        == 38 * arpg::modifiers::kFixedOne);
++    const auto build_after = arpg::test::player_build(session);
++    ARPG_REQUIRE(build_after.values.armor == build_before.values.armor + 7500);
++    ARPG_REQUIRE(build_after.values.evasion
++        == build_before.values.evasion + 2625);
++    ARPG_REQUIRE(build_after.values.max_health == build_before.values.max_health);
+     return {};
+ }
+ 
+ arpg::test::Failure commit_generation_overflow_faults_without_publish() noexcept {
+     DungeonRunState state = state_with_items({normal_item(171U, 2U)});
+     state.commit_generation = (std::numeric_limits<std::uint64_t>::max)();
+     DungeonSession session{DungeonRules{}, state};
+     const AtomicStateProbe before = capture_atomic_state(session);
+     ARPG_REQUIRE(session.request_equip(171U) == RequestResult::faulted);
+     ARPG_REQUIRE(session.snapshot().diagnostics.fault
+@@ -411,45 +431,53 @@ arpg::test::Failure equipment_indeterminate_save_faults() noexcept {
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+     ARPG_REQUIRE(session.snapshot().diagnostics.fault
+         == DungeonFault::save_commit_indeterminate);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure recipe_is_atomic_ordered_and_retry_deterministic() noexcept {
+     DungeonRunState state = state_with_items({normal_item(51U, 2U),
+         normal_item(52U, 2U), normal_item(53U, 2U), normal_item(54U, 3U)});
++    state.item_ownership.materials[0] =
++        (std::numeric_limits<std::uint64_t>::max)();
+     DungeonSession session{DungeonRules{}, state};
+     const std::array<std::uint64_t, 3> ids{{51U, 52U, 53U}};
+     ARPG_REQUIRE(session.request_recipe(ids) == RequestResult::accepted);
+     const auto first = *session.pending_save();
+     ARPG_REQUIRE(first.kind == PendingSaveKind::recipe);
+     ARPG_REQUIRE(session.item_state().items.size() == 4U);
+     ARPG_REQUIRE(first.next_state.item_ownership.items.size() == 2U);
+     ARPG_REQUIRE(first.next_state.item_ownership.items[0].id == 54U);
++    ARPG_REQUIRE(first.next_state.item_ownership.materials[0]
++        == (std::numeric_limits<std::uint64_t>::max)());
+     const std::uint64_t product_id =
+         first.next_state.item_ownership.items[1].id;
+     ARPG_REQUIRE(product_id != 0U);
+     ARPG_REQUIRE(first.next_state.item_ownership.next_item_sequence == 10U);
+ 
+     session.resolve_pending_save({SaveDisposition::not_committed,
+         first.expected_generation, first.next_state});
+     ARPG_REQUIRE(session.item_state().items.size() == 4U);
++    ARPG_REQUIRE(session.item_state().materials[0]
++        == (std::numeric_limits<std::uint64_t>::max)());
+     ARPG_REQUIRE(session.item_state().next_item_sequence == 9U);
+     ARPG_REQUIRE(session.request_recipe(ids) == RequestResult::accepted);
+     const auto second = *session.pending_save();
+     ARPG_REQUIRE(arpg::dungeon::same_run_state(
+         first.next_state, second.next_state));
+     ARPG_REQUIRE(commit_pending(session));
+     ARPG_REQUIRE(session.item_state().items.size() == 2U);
+     ARPG_REQUIRE(session.item_state().items[0].id == 54U);
+     ARPG_REQUIRE(session.item_state().items[1].id == product_id);
++    ARPG_REQUIRE(session.item_state().materials[0]
++        == (std::numeric_limits<std::uint64_t>::max)());
+     ARPG_REQUIRE(session.item_state().next_item_sequence == 10U);
+     return {};
+ }
+ 
+ arpg::test::Failure recipe_rejects_invalid_or_equipped_materials() noexcept {
+     DungeonRunState state = state_with_items({normal_item(61U, 2U),
+         normal_item(62U, 2U), normal_item(63U, 2U), normal_item(64U, 3U)});
+     state.item_ownership.equipment.equipped_ids[1] = 61U;
+     DungeonSession session{DungeonRules{}, state};
+     ARPG_REQUIRE(session.request_recipe({{61U, 62U, 63U}})
+@@ -536,21 +564,27 @@ arpg::test::Failure room_build_combines_passives_and_equipment() noexcept {
+ 
+     DungeonRunState combined_state = passive_state;
+     combined_state.item_ownership.items.push_back(normal_item(111U, 2U));
+     combined_state.item_ownership.equipment.equipped_ids[1] = 111U;
+     DungeonSession combined{DungeonRules{}, combined_state};
+     const auto combined_snapshot = combined.snapshot();
+     ARPG_REQUIRE(combined_snapshot.combat.has_value());
+     ARPG_REQUIRE(combined_snapshot.combat->player.max_barrier
+         == passive_snapshot.combat->player.max_barrier);
+     ARPG_REQUIRE(combined_snapshot.combat->player.max_hp
+-        == passive_snapshot.combat->player.max_hp + 38);
++        == passive_snapshot.combat->player.max_hp);
++    const auto passive_build = arpg::test::player_build(passive_only);
++    const auto combined_build = arpg::test::player_build(combined);
++    ARPG_REQUIRE(combined_build.values.armor
++        == passive_build.values.armor + 7500);
++    ARPG_REQUIRE(combined_build.values.evasion
++        == passive_build.values.evasion + 2625);
+     return {};
+ }
+ 
+ arpg::test::Failure same_run_state_compares_all_item_ownership_fields() noexcept {
+     DungeonRunState original = state_with_items({
+         normal_item(121U, 2U), normal_item(122U, 3U)});
+     original.item_ownership.equipment.equipped_ids[1] = 121U;
+     DungeonRunState changed = original;
+     ARPG_REQUIRE(arpg::dungeon::same_run_state(original, changed));
+ 
+@@ -560,41 +594,66 @@ arpg::test::Failure same_run_state_compares_all_item_ownership_fields() noexcept
+     std::swap(changed.item_ownership.items[0],
+         changed.item_ownership.items[1]);
+     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+     changed = original;
+     changed.item_ownership.equipment.equipped_ids[1] = 0U;
+     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+     changed = original;
+     changed.item_ownership.claimed_drop_bits[2] = 1U;
+     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+     changed = original;
++    changed.item_ownership.materials[0] = 1U;
++    ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
++    changed = original;
++    changed.item_ownership.items[0].reinforcement = 1U;
++    ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
++    changed = original;
++    changed.item_ownership.items[0].affixes[0].value_roll_bp =
++        arpg::items::kAffixValueRollMinimumBp;
++    ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
++    changed = original;
+     ++changed.item_ownership.next_item_sequence;
+     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
++
++    DungeonRunState copied = state_with_items({});
++    copied.item_ownership.items.reserve(original.item_ownership.items.size());
++    original.item_ownership.materials[0] =
++        (std::numeric_limits<std::uint64_t>::max)();
++    ARPG_REQUIRE(arpg::test::copy_run_state_reusing_items(copied, original));
++    ARPG_REQUIRE(arpg::dungeon::same_run_state(copied, original));
++
++    DungeonRunState published = state_with_items({normal_item(123U, 4U)});
++    DungeonRunState next = original;
++    next.item_ownership.materials[1] = 0x123456789ABCDEF0ULL;
++    const DungeonRunState expected = next;
++    arpg::test::publish_run_state_reusing_items(published, next);
++    ARPG_REQUIRE(arpg::dungeon::same_run_state(published, expected));
+     return {};
+ }
+ 
+ arpg::test::Failure equipment_preview_uses_passives_without_mutating_state() noexcept {
+     DungeonRunState state = state_with_items({normal_item(131U, 2U)});
+     state.progression = {2U, 0U, 1U, 0U};
+     state.passive_tree.allocated_bits =
+         (std::uint64_t{1U} << 0U) | (std::uint64_t{1U} << 2U);
+     DungeonSession session{DungeonRules{}, state};
+     const auto current = session.preview_equipment_build(
+         state.item_ownership.equipment);
+     ARPG_REQUIRE(current.has_value());
+     arpg::items::EquipmentState equipped{};
+     equipped.equipped_ids[1] = 131U;
+     const auto candidate = session.preview_equipment_build(equipped);
+     ARPG_REQUIRE(candidate.has_value());
+     ARPG_REQUIRE(candidate->values.max_barrier == current->values.max_barrier);
+-    ARPG_REQUIRE(candidate->values.max_health
+-        == current->values.max_health + 38 * arpg::modifiers::kFixedOne);
++    ARPG_REQUIRE(candidate->values.max_health == current->values.max_health);
++    ARPG_REQUIRE(candidate->values.armor == current->values.armor + 7500);
++    ARPG_REQUIRE(candidate->values.evasion == current->values.evasion + 2625);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"item snapshot lightweight pending fields",
+         &item_snapshot_is_lightweight_and_reports_pending_kind},
+     {"equip rejects invalid requests",
+         &equip_rejects_missing_level_and_no_change_requests},
+     {"equip publishes on commit and preserves health",
+diff --git a/tests/dungeon/dungeon_lifecycle_tests.cpp b/tests/dungeon/dungeon_lifecycle_tests.cpp
+index 4b207c0..53030af 100644
+--- a/tests/dungeon/dungeon_lifecycle_tests.cpp
++++ b/tests/dungeon/dungeon_lifecycle_tests.cpp
+@@ -128,23 +128,25 @@ std::size_t environment_hazard_count(
+     return count;
+ }
+ 
+ arpg::test::Failure abyss_clear_is_atomic_and_restores_life_resources() noexcept {
+     using namespace arpg;
+     dungeon::DungeonRunState state = lifecycle_state_for_rule(
+         abyss::AbyssRuleId::life_sacrifice);
+     items::ItemInstance barrier_item{};
+     barrier_item.id = 0xBABB1EULL;
+     barrier_item.base_id = 3U;
+-    barrier_item.rarity = items::ItemRarity::normal;
++    barrier_item.rarity = items::ItemRarity::magic;
+     barrier_item.item_level = 40U;
+-    barrier_item.required_level = 1U;
++    barrier_item.required_level = 30U;
++    barrier_item.affixes[0] = {12U, 6U, 0xFFU};
++    barrier_item.affix_count = 1U;
+     state.item_ownership.items.push_back(barrier_item);
+     state.item_ownership.equipment.equipped_ids[2] = barrier_item.id;
+     const auto stable_before = state;
+ 
+     dungeon::DungeonSession session{{}, state};
+     ARPG_REQUIRE(commit_abyss_start(session));
+     session.tick({});
+     while (session.try_pop_event().has_value()) {
+     }
+     const auto entered = session.snapshot();
+diff --git a/tests/dungeon/dungeon_loot_drop_tests.cpp b/tests/dungeon/dungeon_loot_drop_tests.cpp
+index 9497e2f..b119eea 100644
+--- a/tests/dungeon/dungeon_loot_drop_tests.cpp
++++ b/tests/dungeon/dungeon_loot_drop_tests.cpp
+@@ -85,28 +85,32 @@ DungeonRunState trace_state() noexcept {
+ }
+ 
+ bool same_item(
+     const arpg::items::ItemInstance& left,
+     const arpg::items::ItemInstance& right) noexcept {
+     if (left.id != right.id || left.base_id != right.base_id
+             || left.rarity != right.rarity
+             || left.item_level != right.item_level
+             || left.required_level != right.required_level
+             || left.affix_count != right.affix_count
+-            || left.reserved != right.reserved) {
++            || left.reserved != right.reserved
++            || left.reinforcement != right.reinforcement
++            || left.extension_reserved != right.extension_reserved) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+         if (left.affixes[index].affix_id != right.affixes[index].affix_id
+                 || left.affixes[index].tier != right.affixes[index].tier
+                 || left.affixes[index].variant
+-                    != right.affixes[index].variant) {
++                    != right.affixes[index].variant
++                || left.affixes[index].value_roll_bp
++                    != right.affixes[index].value_roll_bp) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ std::uint16_t first_drop_ordinal(const DungeonRunState& state) noexcept {
+     for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
+         if (expected_drop(state, ordinal).has_value()) return ordinal;
+     }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index ccadb33..776836d 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -34,20 +34,30 @@ namespace {
+ bool stage9_affix_stress_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE9_AFFIX_STRESS_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool stage8_equipment_stress_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_STAGE8_EQUIPMENT_STRESS_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ bool stage10_abyss_reward_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE10_ABYSS_REWARD_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
+@@ -109,20 +119,28 @@ int main() {
+         dungeon_transaction_suite(),
+         dungeon_abyss_reward_suite(),
+         dungeon_abyss_stress_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+         dungeon_affix_stress_suite(),
+     };
+ 
++    if (stage8_equipment_stress_only()) {
++        const arpg::test::TestSuite stress_only[] = {
++            dungeon_equipment_stress_suite(),
++        };
++        return arpg::test::run_suites(stress_only, 2,
++            "stage 8 equipment stress");
++    }
++
+     if (stage9_affix_stress_only()) {
+         const arpg::test::TestSuite stress_only[] = {
+             dungeon_affix_stress_suite(),
+         };
+         return arpg::test::run_suites(stress_only, 2,
+             "stage 9 task 10 affix stress");
+     }
+ 
+     if (stage10_abyss_reward_only()) {
+         const arpg::test::TestSuite reward_only[] = {
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index 3824c57..eb258dc 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -249,20 +249,32 @@ struct DungeonSessionTestAccess final {
+         }
+     }
+     static const std::array<std::uint64_t, 3>& rolled_drop_bits(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.rolled_drop_bits_;
+     }
+     static const dungeon::DungeonRunState& stable_state(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.stable_state_;
+     }
++    static bool copy_run_state_reusing_items(
++        dungeon::DungeonRunState& destination,
++        const dungeon::DungeonRunState& source) noexcept {
++        return dungeon::DungeonSession::copy_run_state_reusing_items(
++            destination, source);
++    }
++    static void publish_run_state_reusing_items(
++        dungeon::DungeonRunState& destination,
++        dungeon::DungeonRunState& source) noexcept {
++        dungeon::DungeonSession::publish_run_state_reusing_items(
++            destination, source);
++    }
+     static const std::array<dungeon::GroundItem,
+         dungeon::kGroundDropCapacity>& ground_items(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.ground_items_;
+     }
+ };
+ 
+ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
+     DungeonSessionTestAccess::force_defeat_current_wave(session);
+ }
+@@ -409,20 +421,34 @@ inline void offset_pending_abyss_reward_position(
+ inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::rolled_drop_bits(session);
+ }
+ 
+ inline const dungeon::DungeonRunState& stable_state(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::stable_state(session);
+ }
+ 
++inline bool copy_run_state_reusing_items(
++    dungeon::DungeonRunState& destination,
++    const dungeon::DungeonRunState& source) noexcept {
++    return DungeonSessionTestAccess::copy_run_state_reusing_items(
++        destination, source);
++}
++
++inline void publish_run_state_reusing_items(
++    dungeon::DungeonRunState& destination,
++    dungeon::DungeonRunState& source) noexcept {
++    DungeonSessionTestAccess::publish_run_state_reusing_items(
++        destination, source);
++}
++
+ inline const std::array<dungeon::GroundItem,
+     dungeon::kGroundDropCapacity>& ground_items(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::ground_items(session);
+ }
+ 
+ inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
+     const dungeon::RoomEncounterPlan& right) noexcept {
+     if (left.wave_count != right.wave_count
+             || left.total_budget != right.total_budget) return false;
+diff --git a/tests/items/CMakeLists.txt b/tests/items/CMakeLists.txt
+index 9d19c09..a4b265c 100644
+--- a/tests/items/CMakeLists.txt
++++ b/tests/items/CMakeLists.txt
+@@ -1,16 +1,17 @@
+ add_executable(arpg_item_tests
+     item_test_main.cpp
+     item_catalog_tests.cpp
+     item_generation_tests.cpp
+     item_modifier_tests.cpp
+-    item_recipe_tests.cpp)
++    item_recipe_tests.cpp
++    item_crafting_tests.cpp)
+ 
+ target_include_directories(arpg_item_tests PRIVATE
+     "${PROJECT_SOURCE_DIR}/tests/core"
+     "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_item_tests PRIVATE cxx_std_17)
+ target_link_libraries(arpg_item_tests PRIVATE arpg_items)
+ arpg_enable_project_warnings(arpg_item_tests)
+ 
+ add_test(NAME items.units COMMAND arpg_item_tests)
+ set_tests_properties(items.units PROPERTIES LABELS "headless;items")
+diff --git a/tests/items/item_catalog_tests.cpp b/tests/items/item_catalog_tests.cpp
+index bb35140..7bf3c4c 100644
+--- a/tests/items/item_catalog_tests.cpp
++++ b/tests/items/item_catalog_tests.cpp
+@@ -1,13 +1,14 @@
+ #include "test_framework.hpp"
+ 
+ #include "items/item_catalog.hpp"
++#include "items/material_catalog.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <initializer_list>
+ #include <string_view>
+ #include <type_traits>
+ #include <utility>
+ 
+ namespace {
+@@ -16,37 +17,49 @@ using namespace arpg::items;
+ using arpg::modifiers::ModifierOperation;
+ using arpg::modifiers::StatId;
+ 
+ static_assert(std::is_same_v<
+     std::underlying_type_t<ItemSlot>, std::uint8_t>);
+ static_assert(std::is_same_v<
+     std::underlying_type_t<ItemRarity>, std::uint8_t>);
+ static_assert(std::is_same_v<
+     std::underlying_type_t<AffixKind>, std::uint8_t>);
+ static_assert(std::is_same_v<decltype(AffixRoll::affix_id), std::uint16_t>);
++static_assert(std::is_same_v<
++    decltype(AffixRoll::value_roll_bp), std::uint16_t>);
++static_assert(sizeof(AffixRoll) == 6U);
+ static_assert(std::is_same_v<decltype(ItemInstance::id), std::uint64_t>);
++static_assert(std::is_same_v<
++    decltype(ItemInstance::reinforcement), std::uint32_t>);
+ static_assert(std::is_same_v<
+     decltype(ItemInstance::affixes), std::array<AffixRoll, 6>>);
+ static_assert(std::is_same_v<
+     decltype(ItemInstance::reserved), std::array<std::uint8_t, 3>>);
++static_assert(std::is_same_v<
++    decltype(ItemInstance::extension_reserved), std::array<std::uint8_t, 8>>);
+ static_assert(std::is_standard_layout_v<ItemInstance>);
+ static_assert(std::is_trivially_copyable_v<ItemInstance>);
+-static_assert(sizeof(ItemInstance) == 40U);
++static_assert(sizeof(ItemInstance) == 64U);
+ static_assert(offsetof(ItemInstance, id) == 0U);
+ static_assert(offsetof(ItemInstance, affixes) == 12U);
+-static_assert(offsetof(ItemInstance, affix_count) == 36U);
+-static_assert(offsetof(ItemInstance, reserved) == 37U);
++static_assert(offsetof(ItemInstance, affix_count) == 48U);
++static_assert(offsetof(ItemInstance, reserved) == 49U);
++static_assert(offsetof(ItemInstance, reinforcement) == 52U);
++static_assert(offsetof(ItemInstance, extension_reserved) == 56U);
+ static_assert(std::is_same_v<
+     decltype(EquipmentState::equipped_ids), std::array<std::uint64_t, 6>>);
+ static_assert(std::is_same_v<
+     decltype(ItemOwnershipState::claimed_drop_bits),
+     std::array<std::uint64_t, 3>>);
++static_assert(std::is_same_v<
++    decltype(ItemOwnershipState::materials),
++    std::array<std::uint64_t, kMaterialCount>>);
+ static_assert(static_cast<std::uint8_t>(ItemSlot::weapon) == 0U);
+ static_assert(static_cast<std::uint8_t>(ItemSlot::accessory) == 5U);
+ static_assert(static_cast<std::uint8_t>(ItemSlot::count) == 6U);
+ 
+ constexpr std::uint8_t slots(std::initializer_list<ItemSlot> values) noexcept {
+     std::uint8_t result = 0U;
+     for (const ItemSlot slot : values)
+         result = static_cast<std::uint8_t>(result | slot_bit(slot));
+     return result;
+ }
+@@ -330,23 +343,25 @@ ItemInstance valid_rare_accessory() noexcept {
+     set_roll(item, 2U, 11U, 6U);
+     set_roll(item, 3U, 101U, 5U);
+     set_roll(item, 4U, 102U, 4U);
+     set_roll(item, 5U, 112U, 1U, 3U);
+     return item;
+ }
+ 
+ arpg::test::Failure stable_item_types_have_required_defaults() noexcept {
+     const ItemOwnershipState ownership{};
+     const std::array<std::uint64_t, 6> empty_equipment{};
++    const std::array<std::uint64_t, kMaterialCount> empty_materials{};
+     const std::array<std::uint64_t, 3> empty_claims{};
+     ARPG_REQUIRE(ownership.items.empty());
+     ARPG_REQUIRE(ownership.equipment.equipped_ids == empty_equipment);
++    ARPG_REQUIRE(ownership.materials == empty_materials);
+     ARPG_REQUIRE(ownership.claimed_drop_bits == empty_claims);
+     ARPG_REQUIRE(ownership.next_item_sequence == 1U);
+     return {};
+ }
+ 
+ arpg::test::Failure tier_constants_use_persistent_tier_encoding() noexcept {
+     constexpr std::array<std::uint8_t, 8> minimum_t8_to_t1{{
+         1U, 16U, 30U, 45U, 60U, 75U, 88U, 95U}};
+     constexpr std::array<std::uint32_t, 8> weight_t8_to_t1{{
+         64U, 48U, 36U, 27U, 20U, 15U, 11U, 8U}};
+@@ -510,31 +525,40 @@ arpg::test::Failure item_enforces_tier_variant_and_required_level() noexcept {
+ arpg::test::Failure item_requires_unused_rolls_to_be_zero() noexcept {
+     ItemInstance item = valid_magic_weapon();
+     item.affixes[1].affix_id = 1U;
+     ARPG_REQUIRE(!validate_item(item));
+     item.affixes[1] = {};
+     item.affixes[1].tier = 1U;
+     ARPG_REQUIRE(!validate_item(item));
+     item.affixes[1] = {};
+     item.affixes[1].variant = 0xFFU;
+     ARPG_REQUIRE(!validate_item(item));
++    item.affixes[1] = {};
++    item.affixes[1].value_roll_bp = kAffixValueRollMinimumBp;
++    ARPG_REQUIRE(!validate_item(item));
+     return {};
+ }
+ 
+ arpg::test::Failure item_requires_reserved_bytes_to_be_zero() noexcept {
+     ItemInstance item = valid_magic_weapon();
+     ARPG_REQUIRE(validate_item(item));
+     for (std::size_t index = 0U; index < item.reserved.size(); ++index) {
+         item.reserved[index] = static_cast<std::uint8_t>(index + 1U);
+         ARPG_REQUIRE(!validate_item(item));
+         item.reserved[index] = 0U;
+     }
++    for (std::size_t index = 0U;
++         index < item.extension_reserved.size(); ++index) {
++        item.extension_reserved[index] = static_cast<std::uint8_t>(index + 1U);
++        ARPG_REQUIRE(!validate_item(item));
++        item.extension_reserved[index] = 0U;
++    }
+     ARPG_REQUIRE(validate_item(item));
+     return {};
+ }
+ 
+ arpg::test::Failure valid_normal_magic_and_rare_items_are_accepted() noexcept {
+     ARPG_REQUIRE(validate_item(normal_item(0U, 1U)));
+     ARPG_REQUIRE(validate_item(valid_magic_weapon()));
+     ARPG_REQUIRE(validate_item(valid_rare_accessory()));
+     return {};
+ }
+diff --git a/tests/items/item_crafting_tests.cpp b/tests/items/item_crafting_tests.cpp
+new file mode 100644
+index 0000000..566b902
+--- /dev/null
++++ b/tests/items/item_crafting_tests.cpp
+@@ -0,0 +1,448 @@
++#include "test_framework.hpp"
++
++#include "items/item_catalog.hpp"
++#include "items/item_crafting.hpp"
++#include "items/item_generation.hpp"
++#include "items/material_catalog.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <limits>
++#include <optional>
++
++namespace {
++
++using namespace arpg::items;
++
++static_assert(kMaterialCount == 14U);
++
++ItemInstance generated_with_count(ItemSlot slot,
++    ItemRarity rarity,
++    std::uint8_t count) noexcept {
++    for (std::uint64_t seed = 1U; seed <= 4096U; ++seed) {
++        const auto item = generate_item(
++            {seed, slot, 100U, seed + 10000U, rarity});
++        if (item.has_value() && item->affix_count == count) return *item;
++    }
++    return {};
++}
++
++CraftResult craft(MaterialId material,
++    const ItemInstance& item,
++    std::uint64_t seed = 0x123456789ABCDEF0ULL,
++    std::uint64_t nonce = 17U,
++    std::optional<DirectedCategory> category = std::nullopt) noexcept {
++    CraftRequest request{};
++    request.root_seed = seed;
++    request.operation_nonce = nonce;
++    request.item = item;
++    request.material = material;
++    request.directed_category = category;
++    return craft_item(request);
++}
++
++bool same_item(const ItemInstance& left, const ItemInstance& right) noexcept {
++    return std::memcmp(&left, &right, sizeof(ItemInstance)) == 0;
++}
++
++arpg::test::Failure material_catalog_has_fourteen_stable_entries() noexcept {
++    constexpr std::array<MaterialId, kMaterialCount> expected{{
++        MaterialId::transmute, MaterialId::augment, MaterialId::regal,
++        MaterialId::chaos, MaterialId::exalt, MaterialId::annul,
++        MaterialId::divine, MaterialId::scour, MaterialId::directed,
++        MaterialId::reinforcement_stone, MaterialId::coupon_6,
++        MaterialId::coupon_9, MaterialId::coupon_12, MaterialId::coupon_15}};
++    ARPG_REQUIRE(validate_material_catalog());
++    for (std::size_t index = 0U; index < expected.size(); ++index) {
++        ARPG_REQUIRE(material_index(expected[index]) == index);
++        const MaterialDefinition* definition = material_definition(expected[index]);
++        ARPG_REQUIRE(definition != nullptr);
++        ARPG_REQUIRE(definition->stable_id == index + 1U);
++        ARPG_REQUIRE(!definition->name.empty());
++    }
++    ARPG_REQUIRE(material_definition(MaterialId::count) == nullptr);
++    ARPG_REQUIRE(material_is_crafting_currency(MaterialId::transmute));
++    ARPG_REQUIRE(material_is_crafting_currency(MaterialId::directed));
++    ARPG_REQUIRE(!material_is_crafting_currency(MaterialId::reinforcement_stone));
++    ARPG_REQUIRE(material_is_coupon(MaterialId::coupon_6));
++    ARPG_REQUIRE(material_is_coupon(MaterialId::coupon_15));
++    ARPG_REQUIRE(!material_is_coupon(MaterialId::divine));
++    return {};
++}
++
++arpg::test::Failure reinforcement_success_uses_exact_basis_points() noexcept {
++    ARPG_REQUIRE(reinforcement_success_chance_bp(0U) == 0U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(1U) == 10000U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(3U) == 10000U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(4U) == 9000U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(5U) == 8000U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(6U) == 7000U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(12U) == 7000U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(13U) == 6000U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(14U) == 5700U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(15U) == 5415U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(16U) == 5144U);
++    ARPG_REQUIRE(reinforcement_success_chance_bp(
++        (std::numeric_limits<std::uint32_t>::max)()) == 10U);
++    return {};
++}
++
++arpg::test::Failure reinforcement_failure_and_preview_use_current_level() noexcept {
++    ARPG_REQUIRE(reinforcement_failure(0U) == ReinforcementFailure::unchanged);
++    ARPG_REQUIRE(reinforcement_failure(6U) == ReinforcementFailure::unchanged);
++    ARPG_REQUIRE(reinforcement_failure(7U) == ReinforcementFailure::reset_six);
++    ARPG_REQUIRE(reinforcement_failure(9U) == ReinforcementFailure::reset_six);
++    ARPG_REQUIRE(reinforcement_failure(10U) == ReinforcementFailure::reset_zero);
++    ARPG_REQUIRE(reinforcement_failure(11U) == ReinforcementFailure::reset_zero);
++    ARPG_REQUIRE(reinforcement_failure(12U) == ReinforcementFailure::destroy);
++    const ReinforcementPreview preview = reinforcement_preview(12U);
++    ARPG_REQUIRE(preview.current == 12U);
++    ARPG_REQUIRE(preview.target == 13U);
++    ARPG_REQUIRE(preview.success_chance_bp == 6000U);
++    ARPG_REQUIRE(preview.failure == ReinforcementFailure::destroy);
++    ARPG_REQUIRE(preview.can_attempt);
++    const ReinforcementPreview maximum = reinforcement_preview(
++        (std::numeric_limits<std::uint32_t>::max)());
++    ARPG_REQUIRE(!maximum.can_attempt);
++    return {};
++}
++
++arpg::test::Failure reinforcement_values_round_each_increment_half_up() noexcept {
++    ARPG_REQUIRE(reinforced_base_value(10, 0U) == 10);
++    ARPG_REQUIRE(reinforced_base_value(10, 12U) == 22);
++    ARPG_REQUIRE(reinforced_base_value(10, 13U) == 24);
++    ARPG_REQUIRE(reinforced_base_value(10, 14U) == 26);
++    ARPG_REQUIRE(reinforced_base_value(10, 15U) == 29);
++    ARPG_REQUIRE(reinforced_base_value(-10, 13U) == -24);
++    ARPG_REQUIRE(reinforced_accessory_bonus_bp(0U) == 0);
++    ARPG_REQUIRE(reinforced_accessory_bonus_bp(12U) == 600);
++    ARPG_REQUIRE(reinforced_accessory_bonus_bp(13U) == 675);
++    ARPG_REQUIRE(reinforced_accessory_bonus_bp(14U) == 788);
++    ARPG_REQUIRE(reinforced_accessory_bonus_bp(15U) == 957);
++    return {};
++}
++
++arpg::test::Failure reinforcement_values_saturate_without_wrapping() noexcept {
++    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
++    ARPG_REQUIRE(reinforced_base_value(maximum, 1U) == maximum);
++    ARPG_REQUIRE(reinforced_base_value(minimum, 1U) == minimum);
++    ARPG_REQUIRE(reinforced_base_value(1, 104U) == 4759015155419074LL);
++    ARPG_REQUIRE(reinforced_base_value(1, 120U) == 3125915491181891220LL);
++    ARPG_REQUIRE(reinforced_base_value(1, 125U) == maximum);
++    ARPG_REQUIRE(reinforced_base_value(1, 1000U) == maximum);
++    ARPG_REQUIRE(reinforced_base_value(-1, 1000U) == minimum);
++    ARPG_REQUIRE(reinforced_base_value(0, 1000U) == 0);
++    ARPG_REQUIRE(reinforced_accessory_bonus_bp(1000U)
++        == (std::numeric_limits<std::int32_t>::max)());
++    return {};
++}
++
++arpg::test::Failure coupons_only_raise_valid_items_to_the_face_value() noexcept {
++    ItemInstance item = generated_with_count(
++        ItemSlot::weapon, ItemRarity::normal, 0U);
++    ARPG_REQUIRE(item.id != 0U);
++    item.reinforcement = 8U;
++    const auto plus_twelve = apply_coupon(item, MaterialId::coupon_12);
++    ARPG_REQUIRE(plus_twelve.has_value());
++    ARPG_REQUIRE(plus_twelve->reinforcement == 12U);
++    ARPG_REQUIRE(plus_twelve->id == item.id);
++    ARPG_REQUIRE(!apply_coupon(*plus_twelve, MaterialId::coupon_12).has_value());
++    ARPG_REQUIRE(!apply_coupon(item, MaterialId::chaos).has_value());
++    item.id = 0U;
++    ARPG_REQUIRE(!apply_coupon(item, MaterialId::coupon_15).has_value());
++    return {};
++}
++
++arpg::test::Failure transmute_augment_and_regal_follow_rarity_contracts() noexcept {
++    const ItemInstance normal = generated_with_count(
++        ItemSlot::weapon, ItemRarity::normal, 0U);
++    const CraftResult transmuted = craft(MaterialId::transmute, normal);
++    ARPG_REQUIRE(transmuted.applied && transmuted.consumed);
++    ARPG_REQUIRE(transmuted.item.rarity == ItemRarity::magic);
++    ARPG_REQUIRE(transmuted.item.affix_count >= 1U
++        && transmuted.item.affix_count <= 2U);
++    ARPG_REQUIRE(validate_item(transmuted.item));
++    ARPG_REQUIRE(transmuted.item.id == normal.id);
++
++    const ItemInstance one_affix = generated_with_count(
++        ItemSlot::gloves, ItemRarity::magic, 1U);
++    const CraftResult augmented = craft(MaterialId::augment, one_affix);
++    ARPG_REQUIRE(augmented.applied && augmented.item.affix_count == 2U);
++    ARPG_REQUIRE(validate_item(augmented.item));
++    const CraftResult regal = craft(MaterialId::regal, augmented.item);
++    ARPG_REQUIRE(regal.applied && regal.item.rarity == ItemRarity::rare);
++    ARPG_REQUIRE(regal.item.affix_count == 3U);
++    ARPG_REQUIRE(validate_item(regal.item));
++    return {};
++}
++
++arpg::test::Failure chaos_and_exalt_follow_rare_contracts() noexcept {
++    const ItemInstance rare_three = generated_with_count(
++        ItemSlot::chest, ItemRarity::rare, 3U);
++    const CraftResult chaos = craft(MaterialId::chaos, rare_three);
++    ARPG_REQUIRE(chaos.applied);
++    ARPG_REQUIRE(chaos.item.rarity == ItemRarity::rare);
++    ARPG_REQUIRE(chaos.item.affix_count >= 3U && chaos.item.affix_count <= 6U);
++    ARPG_REQUIRE(validate_item(chaos.item));
++    ARPG_REQUIRE(!same_item(chaos.item, rare_three));
++
++    const CraftResult exalt = craft(MaterialId::exalt, rare_three);
++    ARPG_REQUIRE(exalt.applied && exalt.item.affix_count == 4U);
++    ARPG_REQUIRE(validate_item(exalt.item));
++    const ItemInstance rare_six = generated_with_count(
++        ItemSlot::chest, ItemRarity::rare, 6U);
++    const CraftResult rejected = craft(MaterialId::exalt, rare_six);
++    ARPG_REQUIRE(!rejected.applied && !rejected.consumed);
++    ARPG_REQUIRE(same_item(rejected.item, rare_six));
++    return {};
++}
++
++arpg::test::Failure annul_downgrades_rarity_and_scour_clears_affixes() noexcept {
++    const ItemInstance one_affix = generated_with_count(
++        ItemSlot::boots, ItemRarity::magic, 1U);
++    const CraftResult annulled_magic = craft(MaterialId::annul, one_affix);
++    ARPG_REQUIRE(annulled_magic.applied);
++    ARPG_REQUIRE(annulled_magic.item.rarity == ItemRarity::normal);
++    ARPG_REQUIRE(annulled_magic.item.affix_count == 0U);
++    ARPG_REQUIRE(annulled_magic.item.required_level == 1U);
++
++    const ItemInstance rare_three = generated_with_count(
++        ItemSlot::accessory, ItemRarity::rare, 3U);
++    const CraftResult annulled_rare = craft(MaterialId::annul, rare_three);
++    ARPG_REQUIRE(annulled_rare.applied);
++    ARPG_REQUIRE(annulled_rare.item.rarity == ItemRarity::magic);
++    ARPG_REQUIRE(annulled_rare.item.affix_count == 2U);
++    ARPG_REQUIRE(validate_item(annulled_rare.item));
++
++    ItemInstance reinforced = rare_three;
++    reinforced.reinforcement = 19U;
++    const CraftResult scoured = craft(MaterialId::scour, reinforced);
++    ARPG_REQUIRE(scoured.applied && scoured.item.rarity == ItemRarity::normal);
++    ARPG_REQUIRE(scoured.item.affix_count == 0U);
++    ARPG_REQUIRE(scoured.item.reinforcement == 19U);
++    ARPG_REQUIRE(validate_item(scoured.item));
++    return {};
++}
++
++arpg::test::Failure divine_preserves_affix_identity_tier_and_variant() noexcept {
++    const ItemInstance rare = generated_with_count(
++        ItemSlot::accessory, ItemRarity::rare, 5U);
++    const CraftResult divine = craft(MaterialId::divine, rare);
++    ARPG_REQUIRE(divine.applied && divine.consumed);
++    ARPG_REQUIRE(divine.item.id == rare.id);
++    ARPG_REQUIRE(divine.item.rarity == rare.rarity);
++    ARPG_REQUIRE(divine.item.affix_count == rare.affix_count);
++    bool changed_effect = false;
++    for (std::size_t index = 0U; index < rare.affix_count; ++index) {
++        const AffixRoll& before = rare.affixes[index];
++        const AffixRoll& after = divine.item.affixes[index];
++        ARPG_REQUIRE(after.affix_id == before.affix_id);
++        ARPG_REQUIRE(after.tier == before.tier);
++        ARPG_REQUIRE(after.variant == before.variant);
++        ARPG_REQUIRE(after.value_roll_bp >= kAffixValueRollMinimumBp);
++        ARPG_REQUIRE(after.value_roll_bp <= kAffixValueRollMaximumBp);
++        ARPG_REQUIRE(after.value_roll_bp != before.value_roll_bp);
++        const auto before_value = affix_roll_value(before);
++        const auto after_value = affix_roll_value(after);
++        ARPG_REQUIRE(before_value.has_value() && after_value.has_value());
++        changed_effect = changed_effect || *before_value != *after_value;
++    }
++    ARPG_REQUIRE(changed_effect);
++    return {};
++}
++
++arpg::test::Failure divine_rejects_when_integer_effect_cannot_change() noexcept {
++    ItemInstance item{};
++    item.id = 0xD171EULL;
++    item.base_id = 1U;
++    item.rarity = ItemRarity::magic;
++    item.item_level = 1U;
++    item.required_level = 1U;
++    item.affixes[0] = {1U, 8U, 0xFFU};
++    item.affix_count = 1U;
++    ARPG_REQUIRE(validate_item(item));
++    ARPG_REQUIRE(affix_roll_value(item.affixes[0]) == 1);
++
++    const CraftResult result = craft(MaterialId::divine, item);
++    ARPG_REQUIRE(!result.applied);
++    ARPG_REQUIRE(!result.consumed);
++    ARPG_REQUIRE(same_item(result.item, item));
++    return {};
++}
++
++arpg::test::Failure directed_replacement_preserves_count_and_is_compatible() noexcept {
++    const ItemInstance rare = generated_with_count(
++        ItemSlot::weapon, ItemRarity::rare, 4U);
++    const CraftResult directed = craft(MaterialId::directed, rare,
++        0xA55AA55AA55AA55AULL, 91U, DirectedCategory::damage);
++    ARPG_REQUIRE(directed.applied);
++    ARPG_REQUIRE(directed.item.rarity == rare.rarity);
++    ARPG_REQUIRE(directed.item.affix_count == rare.affix_count);
++    ARPG_REQUIRE(validate_item(directed.item));
++    ARPG_REQUIRE(!same_item(directed.item, rare));
++    std::size_t changed_count = 0U;
++    for (std::size_t index = 0U; index < rare.affix_count; ++index) {
++        if (std::memcmp(&directed.item.affixes[index], &rare.affixes[index],
++                sizeof(AffixRoll)) != 0) {
++            ++changed_count;
++            const AffixDefinition* before =
++                affix_definition(rare.affixes[index].affix_id);
++            const AffixDefinition* after =
++                affix_definition(directed.item.affixes[index].affix_id);
++            ARPG_REQUIRE(before != nullptr && after != nullptr);
++            ARPG_REQUIRE(before->group_id != after->group_id);
++        }
++    }
++    ARPG_REQUIRE(changed_count == 1U);
++    bool contains_damage_affix = false;
++    for (std::size_t index = 0U; index < directed.item.affix_count; ++index) {
++        const std::uint16_t id = directed.item.affixes[index].affix_id;
++        contains_damage_affix = contains_damage_affix || id == 1U || id == 2U
++            || id == 105U || id == 106U;
++    }
++    ARPG_REQUIRE(contains_damage_affix);
++    ARPG_REQUIRE(!craft(MaterialId::directed, rare).applied);
++
++    std::size_t successful_replays = 0U;
++    for (std::uint64_t seed = 1U; seed <= 512U; ++seed) {
++        const CraftResult replay = craft(MaterialId::directed, rare,
++            seed, 91U, DirectedCategory::damage);
++        if (!replay.applied) continue;
++        ++successful_replays;
++        std::size_t changed = 0U;
++        for (std::size_t index = 0U; index < rare.affix_count; ++index) {
++            if (std::memcmp(&replay.item.affixes[index], &rare.affixes[index],
++                    sizeof(AffixRoll)) == 0) {
++                continue;
++            }
++            ++changed;
++            const AffixDefinition* before =
++                affix_definition(rare.affixes[index].affix_id);
++            const AffixDefinition* after =
++                affix_definition(replay.item.affixes[index].affix_id);
++            ARPG_REQUIRE(before != nullptr && after != nullptr);
++            ARPG_REQUIRE(before->group_id != after->group_id);
++        }
++        ARPG_REQUIRE(changed == 1U);
++    }
++    ARPG_REQUIRE(successful_replays == 512U);
++
++    constexpr std::array<std::uint16_t, 24> all_ids{{
++        1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U, 12U,
++        101U, 102U, 103U, 104U, 105U, 106U, 107U, 108U, 109U,
++        110U, 111U, 112U}};
++    for (const std::uint16_t id : all_ids) {
++        const bool damage = id == 1U || id == 2U || id == 105U || id == 106U;
++        const bool defense = id == 11U || id == 12U || id == 103U
++            || id == 104U || id == 111U;
++        const bool speed = id == 101U || id == 102U;
++        const bool element = (id >= 3U && id <= 10U)
++            || (id >= 107U && id <= 110U) || id == 112U;
++        ARPG_REQUIRE(affix_in_directed_category(
++            DirectedCategory::damage, id) == damage);
++        ARPG_REQUIRE(affix_in_directed_category(
++            DirectedCategory::defense, id) == defense);
++        ARPG_REQUIRE(affix_in_directed_category(
++            DirectedCategory::speed, id) == speed);
++        ARPG_REQUIRE(affix_in_directed_category(
++            DirectedCategory::element, id) == element);
++    }
++    return {};
++}
++
++arpg::test::Failure crafting_rejects_illegal_targets_and_replays_bytes() noexcept {
++    ItemInstance rare = generated_with_count(
++        ItemSlot::helmet, ItemRarity::rare, 4U);
++    rare.reinforcement = 27U;
++    const CraftResult first = craft(MaterialId::chaos, rare, 123U, 456U);
++    const CraftResult second = craft(MaterialId::chaos, rare, 123U, 456U);
++    ARPG_REQUIRE(first.applied && second.applied);
++    ARPG_REQUIRE(same_item(first.item, second.item));
++    ARPG_REQUIRE(first.item.id == rare.id);
++    ARPG_REQUIRE(first.item.base_id == rare.base_id);
++    ARPG_REQUIRE(first.item.item_level == rare.item_level);
++    ARPG_REQUIRE(first.item.reinforcement == rare.reinforcement);
++
++    const ItemInstance normal = generated_with_count(
++        ItemSlot::helmet, ItemRarity::normal, 0U);
++    const ItemInstance magic_one = generated_with_count(
++        ItemSlot::helmet, ItemRarity::magic, 1U);
++    const ItemInstance magic_two = generated_with_count(
++        ItemSlot::helmet, ItemRarity::magic, 2U);
++    struct ReplayCase final {
++        MaterialId material;
++        ItemInstance item;
++        std::optional<DirectedCategory> category;
++    };
++    const std::array<ReplayCase, 9> replay_cases{{
++        {MaterialId::transmute, normal, std::nullopt},
++        {MaterialId::augment, magic_one, std::nullopt},
++        {MaterialId::regal, magic_two, std::nullopt},
++        {MaterialId::chaos, rare, std::nullopt},
++        {MaterialId::exalt, rare, std::nullopt},
++        {MaterialId::annul, rare, std::nullopt},
++        {MaterialId::divine, rare, std::nullopt},
++        {MaterialId::scour, rare, std::nullopt},
++        {MaterialId::directed, rare, DirectedCategory::defense},
++    }};
++    for (const ReplayCase& replay_case : replay_cases) {
++        const CraftResult replay_first = craft(replay_case.material,
++            replay_case.item, 909U, 707U, replay_case.category);
++        const CraftResult replay_second = craft(replay_case.material,
++            replay_case.item, 909U, 707U, replay_case.category);
++        ARPG_REQUIRE(replay_first.applied && replay_second.applied);
++        ARPG_REQUIRE(same_item(replay_first.item, replay_second.item));
++    }
++
++    const CraftResult wrong_currency = craft(MaterialId::augment, rare);
++    ARPG_REQUIRE(!wrong_currency.applied && !wrong_currency.consumed);
++    ARPG_REQUIRE(same_item(wrong_currency.item, rare));
++    const CraftResult stone = craft(MaterialId::reinforcement_stone, rare);
++    ARPG_REQUIRE(!stone.applied && !stone.consumed);
++    ARPG_REQUIRE(same_item(stone.item, rare));
++    ARPG_REQUIRE(!craft(MaterialId::transmute, magic_one).applied);
++    ARPG_REQUIRE(!craft(MaterialId::augment, magic_two).applied);
++    ARPG_REQUIRE(!craft(MaterialId::regal, rare).applied);
++    ARPG_REQUIRE(!craft(MaterialId::chaos, magic_two).applied);
++    ARPG_REQUIRE(!craft(MaterialId::annul, normal).applied);
++    ARPG_REQUIRE(!craft(MaterialId::divine, normal).applied);
++    ARPG_REQUIRE(!craft(MaterialId::scour, normal).applied);
++    ARPG_REQUIRE(!craft(MaterialId::directed, normal,
++        1U, 1U, DirectedCategory::defense).applied);
++    rare.id = 0U;
++    ARPG_REQUIRE(!craft(MaterialId::chaos, rare).applied);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"stable material catalog", &material_catalog_has_fourteen_stable_entries},
++    {"reinforcement success basis points",
++        &reinforcement_success_uses_exact_basis_points},
++    {"reinforcement failure preview",
++        &reinforcement_failure_and_preview_use_current_level},
++    {"reinforcement value rounding",
++        &reinforcement_values_round_each_increment_half_up},
++    {"reinforcement saturation",
++        &reinforcement_values_saturate_without_wrapping},
++    {"coupon face values", &coupons_only_raise_valid_items_to_the_face_value},
++    {"transmute augment regal",
++        &transmute_augment_and_regal_follow_rarity_contracts},
++    {"chaos and exalt", &chaos_and_exalt_follow_rare_contracts},
++    {"annul and scour", &annul_downgrades_rarity_and_scour_clears_affixes},
++    {"divine identity", &divine_preserves_affix_identity_tier_and_variant},
++    {"divine rejects rounded no effect",
++        &divine_rejects_when_integer_effect_cannot_change},
++    {"directed replacement",
++        &directed_replacement_preserves_count_and_is_compatible},
++    {"craft legality and replay",
++        &crafting_rejects_illegal_targets_and_replays_bytes},
++};
++
++}  // namespace
++
++arpg::test::TestSuite item_crafting_suite() noexcept {
++    return arpg::test::make_suite("item_crafting", kCases);
++}
+diff --git a/tests/items/item_test_main.cpp b/tests/items/item_test_main.cpp
+index dea27cb..7837741 100644
+--- a/tests/items/item_test_main.cpp
++++ b/tests/items/item_test_main.cpp
+@@ -1,13 +1,14 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite item_catalog_suite() noexcept;
+ arpg::test::TestSuite item_generation_suite() noexcept;
+ arpg::test::TestSuite item_modifier_suite() noexcept;
+ arpg::test::TestSuite item_recipe_suite() noexcept;
++arpg::test::TestSuite item_crafting_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         item_catalog_suite(), item_generation_suite(), item_modifier_suite(),
+-        item_recipe_suite()};
+-    return arpg::test::run_suites(suites, 32, "stage 8 task 9 items");
++        item_recipe_suite(), item_crafting_suite()};
++    return arpg::test::run_suites(suites, 45, "stage 16 task 2 items");
+ }
+diff --git a/tests/persistence/dungeon_save_integration_tests.cpp b/tests/persistence/dungeon_save_integration_tests.cpp
+index f41ff28..3272c3b 100644
+--- a/tests/persistence/dungeon_save_integration_tests.cpp
++++ b/tests/persistence/dungeon_save_integration_tests.cpp
+@@ -6,20 +6,21 @@
+ #include "dungeon/dungeon_session.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "persistence/save_store.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ #include <cstring>
+ #include <filesystem>
+ #include <fstream>
+ #include <functional>
++#include <memory>
+ #include <optional>
+ #include <string>
+ 
+ namespace {
+ 
+ namespace dungeon = arpg::dungeon;
+ namespace persistence = arpg::persistence;
+ namespace items = arpg::items;
+ namespace combat = arpg::combat;
+ 
+@@ -30,20 +31,21 @@ items::ItemInstance normal_weapon(std::uint64_t id) noexcept {
+     item.rarity = items::ItemRarity::normal;
+     item.item_level = 1U;
+     item.required_level = 1U;
+     return item;
+ }
+ 
+ bool same_ownership(const items::ItemOwnershipState& left,
+     const items::ItemOwnershipState& right) noexcept {
+     if (left.items.size() != right.items.size()
+             || left.equipment.equipped_ids != right.equipment.equipped_ids
++            || left.materials != right.materials
+             || left.claimed_drop_bits != right.claimed_drop_bits
+             || left.next_item_sequence != right.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < left.items.size(); ++index) {
+         if (std::memcmp(&left.items[index], &right.items[index],
+                 sizeof(items::ItemInstance)) != 0) return false;
+     }
+     return true;
+ }
+@@ -590,25 +592,27 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields()
+ 
+     auto reopened_store = make_store(directory.path);
+     const auto first_load = reopened_store.load();
+     const auto second_load = reopened_store.load();
+     ARPG_REQUIRE(first_load.state == persistence::SaveLoadState::ready);
+     ARPG_REQUIRE(second_load.state == persistence::SaveLoadState::ready);
+     ARPG_REQUIRE(dungeon::same_run_state(first_load.checkpoint,
+         saved.verified_state));
+     ARPG_REQUIRE(dungeon::same_run_state(second_load.checkpoint,
+         saved.verified_state));
+-    dungeon::DungeonSession reopened{dungeon::DungeonRules{}, first_load.checkpoint};
+-    dungeon::DungeonSession repeated{dungeon::DungeonRules{}, second_load.checkpoint};
++    auto reopened = std::make_unique<dungeon::DungeonSession>(
++        dungeon::DungeonRules{}, first_load.checkpoint);
++    auto repeated = std::make_unique<dungeon::DungeonSession>(
++        dungeon::DungeonRules{}, second_load.checkpoint);
+     ARPG_REQUIRE(same_descriptor(after_reset, saved.verified_state));
+-    ARPG_REQUIRE(same_descriptor(reopened.snapshot(), saved.verified_state));
+-    ARPG_REQUIRE(same_descriptor(repeated.snapshot(), saved.verified_state));
++    ARPG_REQUIRE(same_descriptor(reopened->snapshot(), saved.verified_state));
++    ARPG_REQUIRE(same_descriptor(repeated->snapshot(), saved.verified_state));
+     return {};
+ }
+ 
+ arpg::test::Failure passive_fault_recovery_never_persists_partial_points_or_bits() noexcept {
+     constexpr std::uint64_t kTwoNodes = (1ULL << 0U) | (1ULL << 8U)
+         | (1ULL << 9U);
+     constexpr std::uint64_t kThreeNodes = kTwoNodes | (1ULL << 10U);
+ 
+     {
+         TempDirectory directory;
+diff --git a/tests/persistence/save_store_fault_tests.cpp b/tests/persistence/save_store_fault_tests.cpp
+index 29277c8..aea0bbb 100644
+--- a/tests/persistence/save_store_fault_tests.cpp
++++ b/tests/persistence/save_store_fault_tests.cpp
+@@ -81,20 +81,21 @@ checkpoint::DungeonRunState with_items(checkpoint::DungeonRunState state,
+             static_cast<std::uint64_t>(count << 2U),
+         }};
+     }
+     return state;
+ }
+ 
+ bool same_ownership(const items::ItemOwnershipState& lhs,
+     const items::ItemOwnershipState& rhs) noexcept {
+     if (lhs.items.size() != rhs.items.size()
+             || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
++            || lhs.materials != rhs.materials
+             || lhs.claimed_drop_bits != rhs.claimed_drop_bits
+             || lhs.next_item_sequence != rhs.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+         if (std::memcmp(&lhs.items[index], &rhs.items[index],
+                 sizeof(items::ItemInstance)) != 0) return false;
+     }
+     return true;
+ }
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+index 654cb11..b63b132 100644
+--- a/tests/platform/dungeon_runtime_tests.cpp
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -681,20 +681,21 @@ arpg::test::Failure invalid_rules_fault_without_creating_save_or_session() noexc
+ 
+ bool same_item(const items::ItemInstance& left,
+     const items::ItemInstance& right) noexcept {
+     return std::memcmp(&left, &right, sizeof(items::ItemInstance)) == 0;
+ }
+ 
+ bool same_ownership(const items::ItemOwnershipState& left,
+     const items::ItemOwnershipState& right) noexcept {
+     if (left.items.size() != right.items.size()
+             || left.equipment.equipped_ids != right.equipment.equipped_ids
++            || left.materials != right.materials
+             || left.claimed_drop_bits != right.claimed_drop_bits
+             || left.next_item_sequence != right.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < left.items.size(); ++index) {
+         if (!same_item(left.items[index], right.items[index])) return false;
+     }
+     return true;
+ }
+ 

@@ -1,0 +1,1078 @@
+# Review package: cc281d6..HEAD
+
+## Commits
+3f86639 feat: add atomic active skill loadout transactions
+
+## Files changed
+ .superpowers/sdd/task-3-report.md                  | 129 ++++++++
+ src/dungeon/dungeon_progression.cpp                |  13 +-
+ src/dungeon/dungeon_session.cpp                    |   2 +
+ src/dungeon/dungeon_session.hpp                    |   6 +
+ src/dungeon/dungeon_snapshot.cpp                   |   1 +
+ src/dungeon/dungeon_transition.cpp                 | 144 ++++++++-
+ src/dungeon/dungeon_types.hpp                      |   2 +
+ tests/dungeon/CMakeLists.txt                       |   1 +
+ .../dungeon_skill_loadout_transaction_tests.cpp    | 349 +++++++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp                |  22 +-
+ 10 files changed, 658 insertions(+), 11 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-3-report.md b/.superpowers/sdd/task-3-report.md
+new file mode 100644
+index 0000000..8ca478f
+--- /dev/null
++++ b/.superpowers/sdd/task-3-report.md
+@@ -0,0 +1,129 @@
++# Stage 17 Task 3 实现报告
++
++## 结论
++
++已把五个主动技能槽接入 `DungeonSession` 的候选状态 → 保存 → 发布事务链：
++
++- 新增固定的 0-based remove/equip/swap 请求 API。
++- 所有请求先在 `ReusablePendingSave::next_state` 中用已有容量复制 `stable_state_`，只在候选上调用 `skills` 纯函数并整体校验。
++- 候选通过 `PendingSaveKind::skill_loadout` 进入现有保存事务；保存成功才由 `commit_pending_save` 一次发布，失败只清 pending 并恢复原 phase。
++- loadout 提交不创建、不应用 `PlayerCombatBuild`，没有接数字键、Raylib UI，也没有改变战斗技能行为。
++- `DungeonSnapshot` 按值携带 stable loadout；pending 候选不会提前泄露到快照。
++- 占用槽不能 overwrite；必须先 remove 后 equip，或使用 swap。
++
++## TDD：RED
++
++先创建 `dungeon_skill_loadout_transaction_tests.cpp`，覆盖：
++
++1. 默认值快照且快照按值隔离。
++2. 使用真实 `SaveStore` 依次执行 remove 槽 0、equip 到槽 4、swap 槽 1/4；每次先验证仅产生 pending 且 stable 快照未变，再提交并验证一次发布。
++3. 使用真实 `SaveStore` 在 `before_publish` 注入失败，验证 stable 全状态、generation、owned bits 和五槽字节不变，并重试确认 reusable candidate 会从 stable 重建。
++4. 越界、空槽、非法技能、未拥有技能、重复技能、占用槽、无变化 swap 拒绝。
++5. 已有 pending save、committing、death_pending、transitioning 状态拒绝。
++6. committed 回执中的 loadout 与候选不一致时进入 `save_receipt_mismatch`，stable loadout 不发布。
++
++第一次直接从普通 PowerShell 构建时，CMake 因当前 shell 未加载 Windows SDK 而在项目门禁停止；该次不计作功能 RED。加载 VS 2022 x64 / Windows SDK 10.0.26100.0 后执行：
++
++```powershell
++$env:WindowsSDKVersion='10.0.26100.0\'
++cmd.exe /d /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cmake --build --preset windows-msvc-core-debug --target arpg_dungeon_tests'
++```
++
++真实 RED 在编译期出现，原因与预期一致：
++
++- `DungeonSnapshot` 缺少 `skill_loadout`。
++- `DungeonSession` 缺少 `request_remove_active_skill`、`request_equip_active_skill`、`request_swap_active_skill_slots`。
++- `PendingSaveKind` 缺少 `skill_loadout`。
++
++没有生产实现时测试无法编译，证明测试确实约束了新增能力。
++
++## GREEN 实现
++
++### 请求与候选事务
++
++三个请求先检查：
++
++- 当前没有 pending save。
++- phase 仅限既有稳定请求阶段，拒绝 committing、death_pending、transitioning、faulted。
++- 槽索引为 0-based 且在 `[0, 5)`。
++- remove 不接受空槽；swap 不接受同槽或双空槽。
++
++通过前置检查后：
++
++1. `pending_save_.prepare()` 取得可复用候选。
++2. `copy_run_state_reusing_items(candidate, stable_state_)` 重建完整候选。
++3. 仅在 `candidate.skill_loadout` 上调用领域纯函数。
++4. 调用 `validate_skill_loadout` 整体校验。
++5. 将候选 move 进现有 `prepare_item_save`，不复制/修改 stable。
++
++### 保存与发布
++
++`prepare_item_save` 现在会对所有候选同时校验 ownership、passive/progression 和 skill loadout。只有 equipment/craft/recipe/reinforcement 才构建 `PlayerCombatBuild`；`skill_loadout` 不创建 build cache。
++
++`commit_pending_save` 对 `skill_loadout` 成功回执发布完整候选并恢复请求前 phase；失败分支沿用原子事务路径，只恢复 phase、递增失败诊断并清 pending。
++
++### 完整状态覆盖
++
++为防止回执或复用路径遗漏 loadout，补齐：
++
++- `copy_run_state_reusing_items` 复制 loadout。
++- `publish_run_state_reusing_items` 发布 loadout。
++- `same_run_state` 比较 owned bits、五个 active 槽及全部 support 槽。
++- `DungeonSnapshot` 从 stable state 按值复制 loadout。
++
++## GREEN 与回归命令
++
++聚焦构建与测试：
++
++```powershell
++$env:WindowsSDKVersion='10.0.26100.0\'
++cmd.exe /d /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cmake --build --preset windows-msvc-core-debug --target arpg_dungeon_tests && set ARPG_STAGE17_SKILL_LOADOUT_ONLY=1 && out\build\windows-msvc-core-debug\bin\arpg_dungeon_tests.exe'
++```
++
++结果：`6 cases, 0 failures`。
++
++指定回归：
++
++```powershell
++ctest --test-dir out/build/windows-msvc-core-debug -R '^(dungeon\.units|stage16\.crafting_transaction\.units)$' --output-on-failure
++```
++
++结果：
++
++- `dungeon.units`：Passed，168.45 秒。
++- `stage16.crafting_transaction.units`：Passed，0.01 秒。
++- 总计 2/2，通过率 100%，0 failures。
++
++## 修改文件
++
++生产代码：
++
++- `src/dungeon/dungeon_types.hpp`
++- `src/dungeon/dungeon_session.hpp`
++- `src/dungeon/dungeon_session.cpp`
++- `src/dungeon/dungeon_transition.cpp`
++- `src/dungeon/dungeon_snapshot.cpp`
++- `src/dungeon/dungeon_progression.cpp`
++
++测试：
++
++- `tests/dungeon/dungeon_skill_loadout_transaction_tests.cpp`
++- `tests/dungeon/CMakeLists.txt`
++- `tests/dungeon/dungeon_test_main.cpp`
++
++报告：
++
++- `.superpowers/sdd/task-3-report.md`
++
++`src/dungeon/CMakeLists.txt` 无需修改：`arpg_dungeon` 已公开链接 `arpg_skills`，新增会话代码不需要新的源文件或依赖边。
++
++## 自审
++
++- stable state 从未作为 mutation 目标；不存在“先改 stable 再回滚”。
++- 保存失败路径不调用 publish；测试对完整 `same_run_state`、generation、owned bits 和五槽字节做了断言。
++- loadout pending 不占用 `pending_item_build_`，成功提交也不调用 `CombatWorld::apply_player_build`。
++- 快照只读取 stable loadout，pending candidate 不可见。
++- occupied equip 由领域函数返回 `destination_occupied`，不会覆盖已有技能。
++- duplicate、invalid id、not owned、invalid/empty slot 都会 reset candidate engagement 并返回 rejected。
++- 提交回执通过扩展后的 `same_run_state` 比较完整 loadout，不能用相同 generation 的错误槽位状态发布。
++- 保留了工作树中既有的 `.superpowers/sdd/task-5-report.md` 改动，未编辑、未暂存。
+diff --git a/src/dungeon/dungeon_progression.cpp b/src/dungeon/dungeon_progression.cpp
+index 5d38879..5ebdfa0 100644
+--- a/src/dungeon/dungeon_progression.cpp
++++ b/src/dungeon/dungeon_progression.cpp
+@@ -263,21 +263,32 @@ RunStateBuildResult make_descent_transition(
+     next.current_room.is_abyss = false;
+     next.abyss = {};
+     next.last_transition = checkpoint::TransitionKind::descent;
+     next.last_direction = checkpoint::ExitDirection::none;
+     return {DungeonFault::none, std::move(next), generated.samples};
+ }
+ 
+ bool same_run_state(
+     const checkpoint::DungeonRunState& lhs,
+     const checkpoint::DungeonRunState& rhs) noexcept {
+-    return lhs.root_seed == rhs.root_seed
++    bool same_skill_loadout = lhs.skill_loadout.owned_active_bits
++        == rhs.skill_loadout.owned_active_bits;
++    for (std::size_t slot = 0U;
++            same_skill_loadout && slot < lhs.skill_loadout.slots.size();
++            ++slot) {
++        same_skill_loadout = lhs.skill_loadout.slots[slot].active
++                == rhs.skill_loadout.slots[slot].active
++            && lhs.skill_loadout.slots[slot].supports
++                == rhs.skill_loadout.slots[slot].supports;
++    }
++    return same_skill_loadout
++        && lhs.root_seed == rhs.root_seed
+         && lhs.commit_generation == rhs.commit_generation
+         && lhs.biases == rhs.biases
+         && lhs.current_room.index == rhs.current_room.index
+         && lhs.current_room.seed == rhs.current_room.seed
+         && lhs.current_room.depth == rhs.current_room.depth
+         && lhs.current_room.floor_room_index == rhs.current_room.floor_room_index
+         && lhs.current_room.entry == rhs.current_room.entry
+         && lhs.current_room.ecology == rhs.current_room.ecology
+         && lhs.current_room.has_hole == rhs.current_room.has_hole
+         && lhs.current_room.is_abyss == rhs.current_room.is_abyss
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 7bf60ed..733d359 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -1179,20 +1179,21 @@ bool DungeonSession::copy_run_state_reusing_items(
+     destination.root_seed = source.root_seed;
+     destination.commit_generation = source.commit_generation;
+     destination.biases = source.biases;
+     destination.current_room = source.current_room;
+     destination.abyss = source.abyss;
+     destination.last_abyss_resolution = source.last_abyss_resolution;
+     destination.last_transition = source.last_transition;
+     destination.last_direction = source.last_direction;
+     destination.progression = source.progression;
+     destination.passive_tree = source.passive_tree;
++    destination.skill_loadout = source.skill_loadout;
+     if (source_items.empty()) destination_items.clear();
+     else destination_items.assign(source_items.begin(), source_items.end());
+     destination.item_ownership.equipment = source.item_ownership.equipment;
+     destination.item_ownership.materials = source.item_ownership.materials;
+     destination.item_ownership.material_discovery_bits =
+         source.item_ownership.material_discovery_bits;
+     destination.item_ownership.material_claimed_drop_bits =
+         source.item_ownership.material_claimed_drop_bits;
+     destination.item_ownership.claimed_drop_bits =
+         source.item_ownership.claimed_drop_bits;
+@@ -1210,20 +1211,21 @@ void DungeonSession::publish_run_state_reusing_items(
+     destination.root_seed = source.root_seed;
+     destination.commit_generation = source.commit_generation;
+     destination.biases = source.biases;
+     destination.current_room = source.current_room;
+     destination.abyss = source.abyss;
+     destination.last_abyss_resolution = source.last_abyss_resolution;
+     destination.last_transition = source.last_transition;
+     destination.last_direction = source.last_direction;
+     destination.progression = source.progression;
+     destination.passive_tree = source.passive_tree;
++    destination.skill_loadout = source.skill_loadout;
+     destination.item_ownership.equipment = source.item_ownership.equipment;
+     destination.item_ownership.materials = source.item_ownership.materials;
+     destination.item_ownership.material_discovery_bits =
+         source.item_ownership.material_discovery_bits;
+     destination.item_ownership.material_claimed_drop_bits =
+         source.item_ownership.material_claimed_drop_bits;
+     destination.item_ownership.claimed_drop_bits =
+         source.item_ownership.claimed_drop_bits;
+     destination.item_ownership.next_item_sequence =
+         source.item_ownership.next_item_sequence;
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index c2fe290..2856689 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -111,20 +111,26 @@ public:
+     [[nodiscard]] RequestResult request_recipe(
+         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+     [[nodiscard]] RequestResult request_reinforcement(
+         std::uint64_t item_id) noexcept;
+     [[nodiscard]] RequestResult request_coupon(
+         items::MaterialId coupon, std::uint64_t item_id) noexcept;
+     [[nodiscard]] RequestResult request_pickup(
+         std::uint16_t drop_ordinal) noexcept;
+     [[nodiscard]] RequestResult request_material_pickup(
+         std::uint16_t ordinal) noexcept;
++    [[nodiscard]] RequestResult request_remove_active_skill(
++        std::uint8_t slot) noexcept;
++    [[nodiscard]] RequestResult request_equip_active_skill(
++        skills::ActiveSkillId skill, std::uint8_t slot) noexcept;
++    [[nodiscard]] RequestResult request_swap_active_skill_slots(
++        std::uint8_t left, std::uint8_t right) noexcept;
+     [[nodiscard]] RequestResult request_death_continue() noexcept;
+     void request_nearby_pickups(
+         combat::Vec3 player_position,
+         AutoPickupPolicy pickup_policy = {}) noexcept;
+     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
+     [[nodiscard]] std::optional<combat::PlayerCombatBuild>
+     preview_equipment_build(
+         const items::EquipmentState& equipment) const noexcept;
+     [[nodiscard]] const PendingSave* pending_save_view() const noexcept;
+     [[nodiscard]] std::optional<PendingSave> pending_save() const noexcept;
+diff --git a/src/dungeon/dungeon_snapshot.cpp b/src/dungeon/dungeon_snapshot.cpp
+index 7121fce..d5398ca 100644
+--- a/src/dungeon/dungeon_snapshot.cpp
++++ b/src/dungeon/dungeon_snapshot.cpp
+@@ -102,20 +102,21 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
+     result.abyss_unpicked_rewards = abyss_unpicked_reward_count();
+     result.abyss_exit_confirmation_armed = abyss_exit_confirmation_.armed;
+     result.abyss_exit_confirmation_transition =
+         abyss_exit_confirmation_.transition;
+     result.abyss_exit_confirmation_direction =
+         abyss_exit_confirmation_.direction;
+     result.has_pending_transition = pending_save_.has_value()
+         && (pending_save_->kind == PendingSaveKind::transition
+             || pending_save_->kind == PendingSaveKind::abyss_abandon);
+     result.passive_tree = stable_state_.passive_tree;
++    result.skill_loadout = stable_state_.skill_loadout;
+     result.passive_save_pending = pending_save_.has_value()
+         && pending_save_->kind == PendingSaveKind::passive_tree;
+     result.passive_tree_error = last_passive_tree_error_;
+     result.equipped_ids = stable_state_.item_ownership.equipment.equipped_ids;
+     for (const items::ItemInstance& item : stable_state_.item_ownership.items) {
+         if (!equipped(stable_state_.item_ownership.equipment, item.id)) {
+             ++result.inventory_count;
+         }
+     }
+     for (const GroundItem& ground : ground_items_) {
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index 967ed89..af51d57 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -453,31 +453,40 @@ RequestResult DungeonSession::prepare_item_save(
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return RequestResult::faulted;
+     }
+     const items::OwnershipValidationResult validation =
+         items::validate_ownership_detailed(next.item_ownership);
+     if (validation == items::OwnershipValidationResult::allocation_failure) {
+         return RequestResult::rejected;
+     }
+     if (validation != items::OwnershipValidationResult::valid
+             || !passives::valid_passive_tree_state(
+-                next.passive_tree, next.progression)) {
++                next.passive_tree, next.progression)
++            || skills::validate_skill_loadout(next.skill_loadout)
++                != skills::SkillLoadoutError::none) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return RequestResult::faulted;
+     }
+-    const PlayerBuildResult candidate_build = build_for(next);
+-    if (candidate_build.status == PlayerBuildStatus::allocation_failure) {
+-        return RequestResult::rejected;
+-    }
+-    if (candidate_build.status != PlayerBuildStatus::valid) {
+-        enter_fault(DungeonFault::invalid_item_state);
+-        return RequestResult::faulted;
++    const bool needs_player_build = kind == PendingSaveKind::equipment
++        || kind == PendingSaveKind::craft
++        || kind == PendingSaveKind::recipe
++        || kind == PendingSaveKind::reinforcement;
++    PlayerBuildResult candidate_build{};
++    if (needs_player_build) {
++        candidate_build = build_for(next);
++        if (candidate_build.status == PlayerBuildStatus::allocation_failure) {
++            return RequestResult::rejected;
++        }
++        if (candidate_build.status != PlayerBuildStatus::valid) {
++            enter_fault(DungeonFault::invalid_item_state);
++            return RequestResult::faulted;
++        }
+     }
+     if (next.commit_generation
+             == (std::numeric_limits<std::uint64_t>::max)()) {
+         enter_fault(DungeonFault::commit_generation_overflow);
+         return RequestResult::faulted;
+     }
+     try {
+         const std::size_t item_count = next.item_ownership.items.size();
+         stable_state_.item_ownership.items.reserve(item_count);
+         death_validation_scratch_.item_ownership.items.reserve(item_count);
+@@ -493,21 +502,23 @@ RequestResult DungeonSession::prepare_item_save(
+         kind,
+         expected_generation,
+         std::move(next),
+         TransitionKind::none,
+         ExitDirection::none,
+         resume_phase,
+         0xFFFFU,
+         std::nullopt,
+         reinforcement_receipt,
+     });
+-    pending_item_build_.emplace(candidate_build.build);
++    if (needs_player_build) {
++        pending_item_build_.emplace(candidate_build.build);
++    }
+     phase_ = RoomPhase::committing;
+     return RequestResult::accepted;
+ }
+ 
+ bool DungeonSession::pending_item_cache_consistent() const noexcept {
+     const bool item_pending = pending_save_.has_value()
+         && (pending_save_->kind == PendingSaveKind::equipment
+             || pending_save_->kind == PendingSaveKind::craft
+             || pending_save_->kind == PendingSaveKind::recipe
+             || pending_save_->kind == PendingSaveKind::reinforcement);
+@@ -1256,20 +1267,130 @@ RequestResult DungeonSession::request_material_pickup(
+         });
+         phase_ = RoomPhase::committing;
+         return RequestResult::accepted;
+     } catch (const std::bad_alloc&) {
+         return RequestResult::rejected;
+     } catch (...) {
+         return RequestResult::rejected;
+     }
+ }
+ 
++RequestResult DungeonSession::request_remove_active_skill(
++    std::uint8_t slot) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
++    const std::size_t index = static_cast<std::size_t>(slot);
++    if (!item_request_phase(phase_) || pending_save_.has_value()
++            || index >= skills::kActiveSkillSlotCount
++            || stable_state_.skill_loadout.slots[index].active
++                == skills::ActiveSkillId::none) {
++        return RequestResult::rejected;
++    }
++    const RoomPhase resume_phase = phase_;
++    PendingSave& reusable = pending_save_.prepare();
++    if (!copy_run_state_reusing_items(
++            reusable.next_state, stable_state_)) {
++        pending_save_.reset();
++        return RequestResult::rejected;
++    }
++    reusable.next_state.progression = room_progression_;
++    if (skills::remove_active_skill(
++            reusable.next_state.skill_loadout, index)
++            != skills::SkillLoadoutError::none
++            || skills::validate_skill_loadout(
++                reusable.next_state.skill_loadout)
++                != skills::SkillLoadoutError::none) {
++        pending_save_.reset();
++        return RequestResult::rejected;
++    }
++    DungeonRunState next = std::move(reusable.next_state);
++    pending_save_.reset();
++    return prepare_item_save(std::move(next),
++        PendingSaveKind::skill_loadout, resume_phase);
++}
++
++RequestResult DungeonSession::request_equip_active_skill(
++    skills::ActiveSkillId skill, std::uint8_t slot) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
++    const std::size_t index = static_cast<std::size_t>(slot);
++    if (!item_request_phase(phase_) || pending_save_.has_value()
++            || index >= skills::kActiveSkillSlotCount) {
++        return RequestResult::rejected;
++    }
++    const RoomPhase resume_phase = phase_;
++    PendingSave& reusable = pending_save_.prepare();
++    if (!copy_run_state_reusing_items(
++            reusable.next_state, stable_state_)) {
++        pending_save_.reset();
++        return RequestResult::rejected;
++    }
++    reusable.next_state.progression = room_progression_;
++    if (skills::equip_active_skill(
++            reusable.next_state.skill_loadout, skill, index)
++            != skills::SkillLoadoutError::none
++            || skills::validate_skill_loadout(
++                reusable.next_state.skill_loadout)
++                != skills::SkillLoadoutError::none) {
++        pending_save_.reset();
++        return RequestResult::rejected;
++    }
++    DungeonRunState next = std::move(reusable.next_state);
++    pending_save_.reset();
++    return prepare_item_save(std::move(next),
++        PendingSaveKind::skill_loadout, resume_phase);
++}
++
++RequestResult DungeonSession::request_swap_active_skill_slots(
++    std::uint8_t left, std::uint8_t right) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
++    const std::size_t left_index = static_cast<std::size_t>(left);
++    const std::size_t right_index = static_cast<std::size_t>(right);
++    if (!item_request_phase(phase_) || pending_save_.has_value()
++            || left_index >= skills::kActiveSkillSlotCount
++            || right_index >= skills::kActiveSkillSlotCount
++            || left_index == right_index
++            || (stable_state_.skill_loadout.slots[left_index].active
++                    == skills::ActiveSkillId::none
++                && stable_state_.skill_loadout.slots[right_index].active
++                    == skills::ActiveSkillId::none)) {
++        return RequestResult::rejected;
++    }
++    const RoomPhase resume_phase = phase_;
++    PendingSave& reusable = pending_save_.prepare();
++    if (!copy_run_state_reusing_items(
++            reusable.next_state, stable_state_)) {
++        pending_save_.reset();
++        return RequestResult::rejected;
++    }
++    reusable.next_state.progression = room_progression_;
++    if (skills::swap_active_skill_slots(reusable.next_state.skill_loadout,
++            left_index, right_index) != skills::SkillLoadoutError::none
++            || skills::validate_skill_loadout(
++                reusable.next_state.skill_loadout)
++                != skills::SkillLoadoutError::none) {
++        pending_save_.reset();
++        return RequestResult::rejected;
++    }
++    DungeonRunState next = std::move(reusable.next_state);
++    pending_save_.reset();
++    return prepare_item_save(std::move(next),
++        PendingSaveKind::skill_loadout, resume_phase);
++}
++
+ bool auto_pickup_eligible(
+     const GroundItem& ground,
+     AutoPickupPolicy policy) noexcept {
+     if (!ground.active) return false;
+     if (ground.source == GroundItemSource::abyss_chest) return true;
+     return ground.source == GroundItemSource::monster_drop
+         && static_cast<std::uint8_t>(ground.item.rarity)
+             >= static_cast<std::uint8_t>(policy.minimum_rarity);
+ }
+ 
+@@ -1387,20 +1508,21 @@ void DungeonSession::commit_pending_save(
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+ 
+     const PendingSaveKind kind = pending_save_->kind;
+     const bool item_commit = kind == PendingSaveKind::equipment
+         || kind == PendingSaveKind::craft
+         || kind == PendingSaveKind::recipe
+         || kind == PendingSaveKind::reinforcement;
+     const bool reinforcement_commit = kind == PendingSaveKind::reinforcement;
++    const bool skill_loadout_commit = kind == PendingSaveKind::skill_loadout;
+     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+     const bool material_pickup_commit =
+         kind == PendingSaveKind::material_pickup;
+     const bool claim_commit = kind == PendingSaveKind::abyss_reward_claim;
+     const bool start_commit = kind == PendingSaveKind::abyss_start;
+     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
+     const bool abyss_clear_commit = kind == PendingSaveKind::abyss_clear;
+     const bool room_clear_commit = kind == PendingSaveKind::room_clear;
+     const bool clear_commit = abyss_clear_commit || room_clear_commit;
+     const bool reward_commit = kind
+@@ -1579,14 +1701,18 @@ void DungeonSession::commit_pending_save(
+         ground_items_[pickup_ordinal] = GroundItem{};
+         phase_ = resume_phase;
+         return;
+     }
+     if (material_pickup_commit) {
+         ground_materials_[pickup_ordinal] = GroundMaterial{};
+         material_pickup_receipt_ = published_material_receipt;
+         phase_ = resume_phase;
+         return;
+     }
++    if (skill_loadout_commit) {
++        phase_ = resume_phase;
++        return;
++    }
+     phase_ = RoomPhase::awaiting_exit;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index d25b236..a45b505 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -204,20 +204,21 @@ struct DungeonSnapshot final {
+     bool is_abyss{};
+     abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
+     abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
+     std::uint8_t abyss_pending_rewards{};
+     std::uint8_t abyss_unpicked_rewards{};
+     bool abyss_exit_confirmation_armed{};
+     TransitionKind abyss_exit_confirmation_transition{TransitionKind::none};
+     ExitDirection abyss_exit_confirmation_direction{ExitDirection::none};
+     bool has_pending_transition{};
+     passives::PassiveTreeState passive_tree{};
++    skills::SkillLoadoutState skill_loadout{};
+     bool passive_save_pending{};
+     passives::PassiveTreeError passive_tree_error{
+         passives::PassiveTreeError::none};
+     std::uint32_t inventory_count{};
+     std::array<std::uint64_t, 6> equipped_ids{};
+     std::uint16_t ground_item_count{};
+     std::array<GroundItemSnapshot, kGroundDropCapacity> ground_items{};
+     std::uint16_t ground_material_count{};
+     std::array<GroundMaterialSnapshot, kGroundMaterialCapacity>
+         ground_materials{};
+@@ -246,20 +247,21 @@ struct PendingTransition final {
+ enum class PendingSaveKind : std::uint8_t {
+     transition,
+     passive_tree,
+     loot_pickup,
+     material_pickup,
+     room_clear,
+     equipment,
+     craft,
+     recipe,
+     reinforcement,
++    skill_loadout,
+     abyss_start,
+     abyss_fail,
+     abyss_clear,
+     abyss_reward_materialized,
+     abyss_reward_claim,
+     abyss_abandon,
+     death_retreat,
+     death_continue,
+ };
+ 
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 8e3e60b..c4b6c6e 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -6,20 +6,21 @@ add_executable(arpg_dungeon_tests
+     dungeon_death_stress_tests.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_crafting_transaction_tests.cpp
++    dungeon_skill_loadout_transaction_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+     dungeon_material_loot_tests.cpp
+     dungeon_transaction_tests.cpp
+     dungeon_abyss_reward_tests.cpp
+     dungeon_abyss_stress_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_progression_reward_tests.cpp
+diff --git a/tests/dungeon/dungeon_skill_loadout_transaction_tests.cpp b/tests/dungeon/dungeon_skill_loadout_transaction_tests.cpp
+new file mode 100644
+index 0000000..58d1de7
+--- /dev/null
++++ b/tests/dungeon/dungeon_skill_loadout_transaction_tests.cpp
+@@ -0,0 +1,349 @@
++#include "test_framework.hpp"
++
++#include "dungeon_test_support.hpp"
++
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/dungeon_session.hpp"
++#include "persistence/save_store.hpp"
++#include "skills/skill_loadout.hpp"
++
++#include <cstdint>
++#include <cstring>
++#include <filesystem>
++#include <functional>
++#include <optional>
++#include <string>
++#include <utility>
++
++namespace {
++
++namespace dungeon = arpg::dungeon;
++namespace persistence = arpg::persistence;
++namespace skills = arpg::skills;
++
++struct TempDirectory final {
++    std::filesystem::path path{};
++
++    TempDirectory() noexcept {
++        std::error_code error;
++        path = std::filesystem::temp_directory_path(error)
++            / "arpg_skill_loadout_transaction"
++            / std::to_string(static_cast<unsigned long long>(
++                std::hash<std::string>{}(std::to_string(
++                    reinterpret_cast<std::uintptr_t>(this)))));
++        std::filesystem::remove_all(path, error);
++        std::filesystem::create_directories(path, error);
++        if (error) path.clear();
++    }
++
++    ~TempDirectory() noexcept {
++        std::error_code error;
++        std::filesystem::remove_all(path, error);
++    }
++};
++
++struct FaultContext final {
++    persistence::SaveFaultPoint point{};
++    bool triggered{};
++};
++
++bool fail_once(persistence::SaveFaultPoint point, void* opaque) noexcept {
++    auto* const context = static_cast<FaultContext*>(opaque);
++    if (context == nullptr || point != context->point || context->triggered)
++        return false;
++    context->triggered = true;
++    return true;
++}
++
++persistence::SaveStore make_store(
++    const std::filesystem::path& directory,
++    FaultContext* fault = nullptr) {
++    persistence::SaveStoreConfig config{};
++    config.directory = directory;
++    if (fault != nullptr) {
++        config.fault_hook = &fail_once;
++        config.fault_context = fault;
++    }
++    return persistence::SaveStore(std::move(config));
++}
++
++dungeon::PendingSaveResult to_session_result(
++    persistence::SaveCommitResult saved,
++    dungeon::PendingSaveKind kind) noexcept {
++    dungeon::SaveDisposition disposition =
++        dungeon::SaveDisposition::indeterminate;
++    if (saved.state == persistence::SaveCommitState::committed) {
++        disposition = dungeon::SaveDisposition::committed;
++    } else if (saved.state == persistence::SaveCommitState::not_committed) {
++        disposition = dungeon::SaveDisposition::not_committed;
++    }
++    const std::uint64_t generation = saved.verified_state.commit_generation;
++    return {disposition, generation, std::move(saved.verified_state), kind};
++}
++
++bool same_loadout(const skills::SkillLoadoutState& left,
++    const skills::SkillLoadoutState& right) noexcept {
++    if (left.owned_active_bits != right.owned_active_bits) return false;
++    for (std::size_t slot = 0U; slot < left.slots.size(); ++slot) {
++        if (left.slots[slot].active != right.slots[slot].active
++                || left.slots[slot].supports != right.slots[slot].supports) {
++            return false;
++        }
++    }
++    return true;
++}
++
++bool commit_pending_with_store(
++    dungeon::DungeonSession& session,
++    persistence::SaveStore& store) noexcept {
++    const dungeon::PendingSave* const pending = session.pending_save_view();
++    if (pending == nullptr) return false;
++    const dungeon::PendingSaveKind kind = pending->kind;
++    auto saved = store.commit(pending->next_state);
++    const bool committed = saved.state
++        == persistence::SaveCommitState::committed;
++    session.resolve_pending_save(to_session_result(std::move(saved), kind));
++    return committed
++        && session.snapshot().phase != dungeon::RoomPhase::faulted;
++}
++
++dungeon::DungeonRunState initial_state(std::uint64_t seed) noexcept {
++    return dungeon::make_initial_run_state(seed, dungeon::DungeonRules{}).state;
++}
++
++arpg::test::Failure snapshot_starts_with_value_owned_default_loadout() noexcept {
++    dungeon::DungeonSession session{};
++    auto snapshot = session.snapshot();
++    const auto expected = skills::default_skill_loadout();
++    ARPG_REQUIRE(same_loadout(snapshot.skill_loadout, expected));
++    ARPG_REQUIRE(snapshot.skill_loadout.slots[0U].active
++        == skills::ActiveSkillId::draw_slash);
++    ARPG_REQUIRE(snapshot.skill_loadout.slots[1U].active
++        == skills::ActiveSkillId::storm_swords);
++    for (std::size_t slot = 2U; slot < skills::kActiveSkillSlotCount; ++slot) {
++        ARPG_REQUIRE(snapshot.skill_loadout.slots[slot].active
++            == skills::ActiveSkillId::none);
++    }
++    snapshot.skill_loadout.slots[0U].active = skills::ActiveSkillId::none;
++    ARPG_REQUIRE(session.snapshot().skill_loadout.slots[0U].active
++        == skills::ActiveSkillId::draw_slash);
++    return {};
++}
++
++arpg::test::Failure real_store_remove_equip_and_swap_publish_atomically()
++    noexcept {
++    TempDirectory directory;
++    ARPG_REQUIRE(!directory.path.empty());
++    auto store = make_store(directory.path);
++    auto seeded = store.commit(initial_state(0x51717A01ULL));
++    ARPG_REQUIRE(seeded.state == persistence::SaveCommitState::committed);
++    dungeon::DungeonSession session{{}, std::move(seeded.verified_state)};
++
++    auto stable = session.snapshot();
++    ARPG_REQUIRE(session.request_remove_active_skill(0U)
++        == dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(session.pending_save_view() != nullptr);
++    ARPG_REQUIRE(session.pending_save_view()->kind
++        == dungeon::PendingSaveKind::skill_loadout);
++    ARPG_REQUIRE(same_loadout(session.snapshot().skill_loadout,
++        stable.skill_loadout));
++    ARPG_REQUIRE(session.snapshot().commit_generation
++        == stable.commit_generation);
++    ARPG_REQUIRE(session.pending_save_view()->next_state.skill_loadout
++        .slots[0U].active == skills::ActiveSkillId::none);
++    ARPG_REQUIRE(commit_pending_with_store(session, store));
++    auto published = session.snapshot();
++    ARPG_REQUIRE(published.commit_generation == stable.commit_generation + 1U);
++    ARPG_REQUIRE(published.skill_loadout.slots[0U].active
++        == skills::ActiveSkillId::none);
++
++    stable = published;
++    ARPG_REQUIRE(session.request_equip_active_skill(
++        skills::ActiveSkillId::draw_slash, 4U)
++        == dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(same_loadout(session.snapshot().skill_loadout,
++        stable.skill_loadout));
++    ARPG_REQUIRE(session.pending_save_view()->next_state.skill_loadout
++        .slots[4U].active == skills::ActiveSkillId::draw_slash);
++    ARPG_REQUIRE(commit_pending_with_store(session, store));
++    published = session.snapshot();
++    ARPG_REQUIRE(published.commit_generation == stable.commit_generation + 1U);
++    ARPG_REQUIRE(published.skill_loadout.slots[4U].active
++        == skills::ActiveSkillId::draw_slash);
++
++    stable = published;
++    ARPG_REQUIRE(session.request_swap_active_skill_slots(1U, 4U)
++        == dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(same_loadout(session.snapshot().skill_loadout,
++        stable.skill_loadout));
++    const auto& candidate = session.pending_save_view()->next_state.skill_loadout;
++    ARPG_REQUIRE(candidate.slots[1U].active
++        == skills::ActiveSkillId::draw_slash);
++    ARPG_REQUIRE(candidate.slots[4U].active
++        == skills::ActiveSkillId::storm_swords);
++    ARPG_REQUIRE(commit_pending_with_store(session, store));
++    published = session.snapshot();
++    ARPG_REQUIRE(published.commit_generation == stable.commit_generation + 1U);
++    ARPG_REQUIRE(published.skill_loadout.slots[1U].active
++        == skills::ActiveSkillId::draw_slash);
++    ARPG_REQUIRE(published.skill_loadout.slots[4U].active
++        == skills::ActiveSkillId::storm_swords);
++    return {};
++}
++
++arpg::test::Failure failed_store_preserves_stable_bytes_and_reuses_candidate()
++    noexcept {
++    TempDirectory directory;
++    ARPG_REQUIRE(!directory.path.empty());
++    auto state = initial_state(0x51717A02ULL);
++    std::swap(state.skill_loadout.slots[0U], state.skill_loadout.slots[4U]);
++    auto healthy = make_store(directory.path);
++    auto seeded = healthy.commit(state);
++    ARPG_REQUIRE(seeded.state == persistence::SaveCommitState::committed);
++    dungeon::DungeonSession session{{}, std::move(seeded.verified_state)};
++    const dungeon::DungeonRunState stable_before =
++        arpg::test::stable_state(session);
++    const auto visible_before = session.snapshot();
++
++    ARPG_REQUIRE(session.request_remove_active_skill(4U)
++        == dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(same_loadout(session.snapshot().skill_loadout,
++        visible_before.skill_loadout));
++    const auto pending = *session.pending_save();
++    FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
++    auto faulty = make_store(directory.path, &fault);
++    auto saved = faulty.commit(pending.next_state);
++    ARPG_REQUIRE(saved.state == persistence::SaveCommitState::not_committed);
++    ARPG_REQUIRE(fault.triggered);
++    session.resolve_pending_save(to_session_result(
++        std::move(saved), pending.kind));
++
++    const auto visible_after = session.snapshot();
++    ARPG_REQUIRE(dungeon::same_run_state(
++        arpg::test::stable_state(session), stable_before));
++    ARPG_REQUIRE(visible_after.commit_generation
++        == visible_before.commit_generation);
++    ARPG_REQUIRE(visible_after.skill_loadout.owned_active_bits
++        == visible_before.skill_loadout.owned_active_bits);
++    ARPG_REQUIRE(std::memcmp(visible_after.skill_loadout.slots.data(),
++        visible_before.skill_loadout.slots.data(),
++        sizeof(visible_after.skill_loadout.slots)) == 0);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++
++    ARPG_REQUIRE(session.request_remove_active_skill(4U)
++        == dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(session.pending_save_view()->next_state.skill_loadout
++        .slots[4U].active == skills::ActiveSkillId::none);
++    ARPG_REQUIRE(commit_pending_with_store(session, healthy));
++    return {};
++}
++
++arpg::test::Failure invalid_empty_occupied_and_duplicate_requests_reject()
++    noexcept {
++    dungeon::DungeonSession session{};
++    const auto before = session.snapshot();
++    ARPG_REQUIRE(session.request_remove_active_skill(5U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_remove_active_skill(2U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_equip_active_skill(
++        skills::ActiveSkillId::none, 2U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_equip_active_skill(
++        static_cast<skills::ActiveSkillId>(2U), 2U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_equip_active_skill(
++        skills::ActiveSkillId::draw_slash, 2U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_equip_active_skill(
++        skills::ActiveSkillId::draw_slash, 1U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_swap_active_skill_slots(0U, 0U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_swap_active_skill_slots(2U, 3U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(session.request_swap_active_skill_slots(0U, 5U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(same_loadout(session.snapshot().skill_loadout,
++        before.skill_loadout));
++
++    auto unowned = initial_state(0x51717A03ULL);
++    unowned.skill_loadout = {};
++    unowned.skill_loadout.owned_active_bits = 0x1U;
++    unowned.skill_loadout.slots[0U].active =
++        skills::ActiveSkillId::draw_slash;
++    dungeon::DungeonSession unowned_session{{}, std::move(unowned)};
++    ARPG_REQUIRE(unowned_session.request_equip_active_skill(
++        skills::ActiveSkillId::storm_swords, 4U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(!unowned_session.pending_save().has_value());
++    return {};
++}
++
++arpg::test::Failure pending_commit_death_and_rebuild_states_reject() noexcept {
++    dungeon::DungeonSession pending{};
++    ARPG_REQUIRE(pending.request_remove_active_skill(0U)
++        == dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(pending.request_swap_active_skill_slots(0U, 1U)
++        == dungeon::RequestResult::rejected);
++
++    dungeon::DungeonSession committing{};
++    arpg::test::set_phase(committing, dungeon::RoomPhase::committing);
++    ARPG_REQUIRE(committing.request_remove_active_skill(0U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(!committing.pending_save().has_value());
++
++    dungeon::DungeonSession death{};
++    arpg::test::set_phase(death, dungeon::RoomPhase::death_pending);
++    ARPG_REQUIRE(death.request_remove_active_skill(0U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(!death.pending_save().has_value());
++
++    dungeon::DungeonSession rebuilding{};
++    arpg::test::set_phase(rebuilding, dungeon::RoomPhase::transitioning);
++    ARPG_REQUIRE(rebuilding.request_remove_active_skill(0U)
++        == dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(!rebuilding.pending_save().has_value());
++    return {};
++}
++
++arpg::test::Failure committed_receipt_must_match_full_candidate_loadout()
++    noexcept {
++    dungeon::DungeonSession session{};
++    const auto stable = session.snapshot().skill_loadout;
++    ARPG_REQUIRE(session.request_remove_active_skill(0U)
++        == dungeon::RequestResult::accepted);
++    const auto pending = *session.pending_save();
++    dungeon::DungeonRunState wrong = pending.next_state;
++    wrong.skill_loadout = stable;
++    session.resolve_pending_save({dungeon::SaveDisposition::committed,
++        pending.expected_generation, std::move(wrong), pending.kind});
++    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == dungeon::DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(same_loadout(session.snapshot().skill_loadout, stable));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"snapshot starts with value default loadout",
++        &snapshot_starts_with_value_owned_default_loadout},
++    {"real store remove equip swap publish atomically",
++        &real_store_remove_equip_and_swap_publish_atomically},
++    {"failed store preserves bytes and reuses candidate",
++        &failed_store_preserves_stable_bytes_and_reuses_candidate},
++    {"invalid empty occupied duplicate requests reject",
++        &invalid_empty_occupied_and_duplicate_requests_reject},
++    {"pending transient states reject",
++        &pending_commit_death_and_rebuild_states_reject},
++    {"committed receipt matches full loadout",
++        &committed_receipt_must_match_full_candidate_loadout},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_skill_loadout_transaction_suite() noexcept {
++    return arpg::test::make_suite(
++        "dungeon_skill_loadout_transaction", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 8c6352a..34c9f26 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -12,20 +12,21 @@ arpg::test::TestSuite death_checkpoint_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
++arpg::test::TestSuite dungeon_skill_loadout_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+@@ -106,20 +107,30 @@ bool stage16_material_loot_only() noexcept {
+ bool stage16_crafting_transaction_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE16_CRAFTING_TRANSACTION_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool stage17_skill_loadout_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_STAGE17_SKILL_LOADOUT_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ }  // namespace
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+@@ -130,20 +141,21 @@ int main() {
+         death_checkpoint_suite(),
+         dungeon_death_lifecycle_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_crafting_transaction_suite(),
++        dungeon_skill_loadout_transaction_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_material_loot_suite(),
+         dungeon_transaction_suite(),
+         dungeon_abyss_reward_suite(),
+         dungeon_abyss_stress_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+@@ -208,13 +220,21 @@ int main() {
+     }
+ 
+     if (stage16_crafting_transaction_only()) {
+         const arpg::test::TestSuite crafting_only[] = {
+             dungeon_crafting_transaction_suite(),
+         };
+         return arpg::test::run_suites(crafting_only, 6,
+             "stage 16 task 7 crafting and reinforcement transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 272,
++    if (stage17_skill_loadout_only()) {
++        const arpg::test::TestSuite loadout_only[] = {
++            dungeon_skill_loadout_transaction_suite(),
++        };
++        return arpg::test::run_suites(loadout_only, 6,
++            "stage 17 task 3 skill loadout transactions");
++    }
++
++    return arpg::test::run_suites(suites, 278,
+         "stage 11a task 8 death continue validation");
+ }

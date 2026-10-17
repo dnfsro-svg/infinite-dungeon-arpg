@@ -1,0 +1,1167 @@
+# Review package: 672e723..a79621f
+
+## Commits
+a79621f feat: render material drops and material bag
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt             |   2 +
+ src/platform/raylib/combat_renderer.cpp        |  11 +-
+ src/platform/raylib/combat_renderer.hpp        |   6 +-
+ src/platform/raylib/hud_renderer.cpp           |  29 ++++
+ src/platform/raylib/hud_renderer.hpp           |   2 +
+ src/platform/raylib/inventory_renderer.cpp     |   5 +
+ src/platform/raylib/inventory_renderer.hpp     |   2 +
+ src/platform/raylib/material_bag_renderer.cpp  | 115 ++++++++++++++++
+ src/platform/raylib/material_bag_renderer.hpp  |  34 +++++
+ src/platform/raylib/material_loot_view.cpp     | 183 +++++++++++++++++++++++++
+ src/platform/raylib/material_loot_view.hpp     |  56 ++++++++
+ src/platform/raylib/room_renderer.cpp          |  47 ++++++-
+ tests/platform/CMakeLists.txt                  |   2 +
+ tests/platform/material_bag_renderer_tests.cpp |  43 ++++++
+ tests/platform/material_loot_view_tests.cpp    |  89 ++++++++++++
+ tests/platform/platform_test_main.cpp          |   6 +-
+ 16 files changed, 628 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 9a472cd..12d8279 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -17,20 +17,22 @@ add_library(arpg_raylib STATIC
+     dungeon_view_math.cpp
+     dungeon_runtime.cpp
+     game_audio.cpp
+     ground_loot_view.cpp
+     host_input.cpp
+     host_launch_options.cpp
+     hud_font.cpp
+     hud_view_model.cpp
+     hud_notice_state.cpp
+     loot_pickup_feedback.cpp
++    material_bag_renderer.cpp
++    material_loot_view.cpp
+     hud_layout.cpp
+     hud_renderer.cpp
+     inventory_renderer.cpp
+     inventory_view_math.cpp
+     material_animation.cpp
+     material_asset_validation.cpp
+     material_pack.cpp
+     passive_tree_renderer.cpp
+     passive_tree_view_math.cpp
+     pause_menu_state.cpp
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 2e8bf1f..b7c5f01 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -9,20 +9,21 @@
+ 
+ namespace arpg::platform {
+ 
+ CombatRenderPlan make_combat_render_plan(
+     const dungeon::DungeonSnapshot& snapshot,
+     settings::LootFilterMode mode,
+     float width,
+     float height) noexcept {
+     CombatRenderPlan plan{};
+     plan.ground_loot = build_ground_loot_view(snapshot, mode, width, height);
++    plan.material_loot = build_material_loot_view(snapshot, width, height);
+     plan.stages = {{
+         CombatRenderStage::room,
+         CombatRenderStage::actors,
+         CombatRenderStage::ground_loot_labels,
+         CombatRenderStage::normal_hud,
+     }};
+     plan.stage_count = plan.stages.size();
+     return plan;
+ }
+ 
+@@ -94,20 +95,27 @@ void CombatRenderer::observe_hud(
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& control_hints,
+     float frame_seconds,
+     bool paused) noexcept {
+     const LootPickupFeedback pickup_feedback =
+         loot_pickup_feedback_.observe(runtime_status);
+     if (pickup_feedback.ready) {
+         hud_notices_.publish_loot_pickup(
+             pickup_feedback.text, pickup_feedback.abyss);
+     }
++    material_pickup_feedback_.update(frame_seconds, paused);
++    const MaterialPickupFeedback material_feedback =
++        material_pickup_feedback_.observe(current);
++    if (material_feedback.ready) {
++        hud_notices_.publish_loot_pickup(
++            material_feedback.text, material_feedback.emphasized);
++    }
+     hud_notices_.observe(previous, current, runtime_status, control_hints,
+         runtime_status.recovery_required);
+     hud_notices_.update(frame_seconds, paused);
+     HudViewModel model{};
+     hud_projector_.build(model, current, runtime_status, control_hints);
+     attach_notice_view(model, hud_notices_.view());
+     hud_model_ = model;
+     hud_layout_ = IsWindowReady()
+         ? make_hud_layout(GetScreenWidth(), GetScreenHeight(), false)
+         : HudLayout{};
+@@ -177,29 +185,30 @@ GroundLootView CombatRenderer::draw(
+     BeginMode2D(world_camera);
+     bool world_mode = true;
+     for (std::size_t index = 0U; index < render_plan.stage_count; ++index) {
+         const CombatRenderStage stage = render_plan.stages[index];
+         if (stage == CombatRenderStage::ground_loot_labels && world_mode) {
+             EndMode2D();
+             world_mode = false;
+         }
+         switch (stage) {
+         case CombatRenderStage::room:
+-            draw_room(current, render_plan.ground_loot);
++            draw_room(current, render_plan.ground_loot, render_plan.material_loot);
+             break;
+         case CombatRenderStage::actors:
+             draw_actors(previous, current,
+                 std::clamp(interpolation_alpha, 0.0F, 1.0F),
+                 draw_debug, feedback);
+             break;
+         case CombatRenderStage::ground_loot_labels:
+             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
++            hud_renderer_.draw_material_loot(render_plan.material_loot);
+             break;
+         case CombatRenderStage::normal_hud:
+             draw_hud();
+             break;
+         }
+     }
+     if (world_mode) EndMode2D();
+ 
+     if (draw_debug) {
+         const DebugOverlayDiagnosticsPlan diagnostics =
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index ba94cba..ab15f1d 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -1,20 +1,21 @@
+ #pragma once
+ 
+ #include "combat_feedback.hpp"
+ #include "death_overlay_renderer.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "ground_loot_view.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_renderer.hpp"
+ #include "loot_pickup_feedback.hpp"
++#include "material_loot_view.hpp"
+ #include "material_pack.hpp"
+ 
+ #include <cstdint>
+ #include <array>
+ #include <optional>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ struct DungeonRenderStatus;
+@@ -28,20 +29,21 @@ enum class HudPresentedFrame : std::uint8_t {
+ 
+ enum class CombatRenderStage : std::uint8_t {
+     room,
+     actors,
+     ground_loot_labels,
+     normal_hud,
+ };
+ 
+ struct CombatRenderPlan final {
+     GroundLootView ground_loot{};
++    MaterialLootView material_loot{};
+     std::array<CombatRenderStage, 4> stages{};
+     std::size_t stage_count{};
+ };
+ 
+ [[nodiscard]] CombatRenderPlan make_combat_render_plan(
+     const dungeon::DungeonSnapshot& snapshot,
+     settings::LootFilterMode mode,
+     float width,
+     float height) noexcept;
+ 
+@@ -98,21 +100,22 @@ public:
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback,
+         bool audio_ready) noexcept;
+ 
+ private:
+     void draw_room(
+         const dungeon::DungeonSnapshot& current,
+-        const GroundLootView& ground_loot) const noexcept;
++        const GroundLootView& ground_loot,
++        const MaterialLootView& material_loot) const noexcept;
+     void draw_actors(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback) const noexcept;
+     void draw_hud() const noexcept;
+     void draw_abyss_hud(
+         const dungeon::DungeonSnapshot& current,
+         float x,
+@@ -123,20 +126,21 @@ private:
+         float width,
+         float height) const noexcept;
+     combat::CombatEvent last_event_{};
+     bool has_last_event_{};
+     TransitionVisualState transition_{};
+     DeathOverlayRenderer death_overlay_{};
+     HudRenderer hud_renderer_{};
+     DebugOverlayRenderer debug_overlay_{};
+     HudNoticeState hud_notices_{};
+     LootPickupFeedbackState loot_pickup_feedback_{};
++    MaterialPickupFeedbackState material_pickup_feedback_{};
+     MaterialPack material_pack_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
+     HudLayout hud_layout_{};
+     std::uint64_t hud_binding_revision_{};
+     std::uint64_t hud_observation_count_{};
+     std::array<std::uint64_t,
+         static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
+     settings::LootFilterMode loot_filter_mode_{
+         settings::LootFilterMode::show_all};
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index d130dfb..3ab2631 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -417,20 +417,49 @@ void HudRenderer::draw_ground_loot(
+             static_cast<int>(bounds.y),
+             (std::max)(0, static_cast<int>(bounds.width)),
+             (std::max)(0, static_cast<int>(bounds.height)));
+         draw_hud_text(draw_font, label.text.data(),
+             {bounds.x + 8.0F, bounds.y + 3.0F}, 16.0F, text,
+             style.outline_pixels);
+         EndScissorMode();
+     }
+ }
+ 
++void HudRenderer::draw_material_loot(
++    const MaterialLootView& view) const noexcept {
++    if (!IsWindowReady()) return;
++    const HudFontSelectionPlan selection =
++        make_hud_font_selection_plan(font_ready_);
++    const Font draw_font = selection.use_default_font
++        ? GetFontDefault() : font_;
++    const HudReadabilityStyle style = hud_readability_style();
++    for (std::size_t index = 0U; index < view.count; ++index) {
++        const MaterialLootLabel& label = view.labels[index];
++        const Rectangle bounds{label.rect.x, label.rect.y,
++            label.rect.width, label.rect.height};
++        const Color color{label.text_color.r, label.text_color.g,
++            label.text_color.b, label.text_color.a};
++        DrawRectangleRounded(bounds, 0.18F, 6,
++            Fade(color, label.emphasized ? 0.31F : 0.15F));
++        DrawRectangleRoundedLinesEx(bounds, 0.18F, 6,
++            label.emphasized ? 2.5F : 1.0F, color);
++        BeginScissorMode(static_cast<int>(bounds.x),
++            static_cast<int>(bounds.y),
++            (std::max)(0, static_cast<int>(bounds.width)),
++            (std::max)(0, static_cast<int>(bounds.height)));
++        draw_hud_text(draw_font, label.text.data(),
++            {bounds.x + 8.0F, bounds.y + 3.0F}, 16.0F, color,
++            style.outline_pixels);
++        EndScissorMode();
++    }
++}
++
+ void HudRenderer::draw(const HudViewModel& view,
+     const HudLayout& layout) const noexcept {
+     if (!IsWindowReady()) return;
+     const HudFontSelectionPlan selection =
+         make_hud_font_selection_plan(font_ready_);
+     const Font draw_font = selection.use_default_font ? GetFontDefault() : font_;
+     const PlayerPanelPlan plan = make_player_panel_plan(view.player, layout,
+         static_cast<float>(GetTime()));
+     const ObjectivePanelPlan objective = make_objective_panel_plan(view.room, layout);
+     const NavigationPanelPlan navigation = make_navigation_panel_plan(
+diff --git a/src/platform/raylib/hud_renderer.hpp b/src/platform/raylib/hud_renderer.hpp
+index 69071c2..96d4a02 100644
+--- a/src/platform/raylib/hud_renderer.hpp
++++ b/src/platform/raylib/hud_renderer.hpp
+@@ -1,16 +1,17 @@
+ #pragma once
+ 
+ #include "hud_layout.hpp"
+ #include "hud_palette.hpp"
+ #include "hud_view_model.hpp"
+ #include "ground_loot_view.hpp"
++#include "material_loot_view.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstdint>
+ 
+ namespace arpg::combat {
+ struct MonsterSnapshot;
+ }
+ 
+@@ -116,18 +117,19 @@ class HudRenderer final {
+ public:
+     HudRenderer() noexcept = default;
+     ~HudRenderer() noexcept;
+     HudRenderer(const HudRenderer&) = delete;
+     HudRenderer& operator=(const HudRenderer&) = delete;
+ 
+     [[nodiscard]] bool initialize() noexcept;
+     void shutdown() noexcept;
+     [[nodiscard]] bool font_ready() const noexcept;
+     void draw_ground_loot(const GroundLootView&) const noexcept;
++    void draw_material_loot(const MaterialLootView&) const noexcept;
+     void draw(const HudViewModel&, const HudLayout&) const noexcept;
+ 
+ private:
+     Font font_{};
+     bool font_ready_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/inventory_renderer.cpp b/src/platform/raylib/inventory_renderer.cpp
+index a5ab98d..b950c37 100644
+--- a/src/platform/raylib/inventory_renderer.cpp
++++ b/src/platform/raylib/inventory_renderer.cpp
+@@ -213,20 +213,24 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+     const int columns = grid_columns(layout.grid);
+     const float wheel = input.mouse_wheel;
+     if (wheel != 0.0F) {
+         scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
+             scroll_rows_ - wheel, viewport.height, kCellHeight);
+     }
+     const bool left_pressed = input.mouse_left_pressed;
+     const bool right_pressed = input.mouse_right_pressed;
+     if (!left_pressed && !right_pressed) return false;
+     const Vector2 mouse = input.mouse_position;
++    if (left_pressed && material_bag_.process_click(mouse, state,
++            GetScreenWidth(), GetScreenHeight())) {
++        return false;
++    }
+     if (left_pressed && contains(slot_filter_button(layout.grid), mouse)) {
+         if (!filter_.slot.has_value()) filter_.slot = items::ItemSlot::weapon;
+         else if (*filter_.slot == items::ItemSlot::accessory) filter_.slot.reset();
+         else filter_.slot = static_cast<items::ItemSlot>(
+             static_cast<std::uint8_t>(*filter_.slot) + 1U);
+         sync(session, snapshot);
+         scroll_rows_ = 0.0F;
+         return false;
+     }
+     if (left_pressed && contains(rarity_filter_button(layout.grid), mouse)) {
+@@ -298,20 +302,21 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
+     if (!open_) return;
+     sync(session, snapshot);
+     const items::ItemOwnershipState& state = session.item_state();
+     const InventoryLayout layout = inventory_layout(GetScreenWidth(), GetScreenHeight());
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{3, 5, 9, 225});
+     DrawText("EQUIPMENT INVENTORY - I / ESC CLOSE", 14, 16, 24,
+         Color{141, 221, 255, 255});
+     draw_panel(layout.equipment, "EQUIPMENT");
+     draw_panel(layout.grid, "INVENTORY");
+     draw_panel(layout.detail, "ITEM DETAIL");
++    material_bag_.draw(state, GetScreenWidth(), GetScreenHeight());
+ 
+     for (std::size_t index = 0U; index < state.equipment.equipped_ids.size(); ++index) {
+         const auto slot = static_cast<items::ItemSlot>(index);
+         const Rectangle rectangle = equipment_slot_rectangle(layout, slot);
+         DrawRectangleRounded(rectangle, 0.08F, 4, Color{21, 28, 40, 255});
+         DrawRectangleRoundedLinesEx(rectangle, 0.08F, 4, 1.0F,
+             Color{75, 100, 133, 255});
+         const std::uint64_t id = state.equipment.equipped_ids[index];
+         if (id == 0U) {
+             DrawText(TextFormat("%s  [empty]", slot_name(slot)),
+diff --git a/src/platform/raylib/inventory_renderer.hpp b/src/platform/raylib/inventory_renderer.hpp
+index 2f39aad..2e0eaf4 100644
+--- a/src/platform/raylib/inventory_renderer.hpp
++++ b/src/platform/raylib/inventory_renderer.hpp
+@@ -1,13 +1,14 @@
+ #pragma once
+ 
+ #include "inventory_view_math.hpp"
++#include "material_bag_renderer.hpp"
+ 
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::dungeon {
+ class DungeonSession;
+ struct DungeonSnapshot;
+ }
+ 
+ namespace arpg::platform {
+@@ -38,18 +39,19 @@ private:
+         const items::ItemOwnershipState& state) const noexcept;
+     [[nodiscard]] bool recipe_ready() const noexcept;
+ 
+     bool open_{};
+     InventoryFilter filter_{};
+     float scroll_rows_{};
+     std::uint64_t selected_item_id_{};
+     RecipeSelection recipe_{};
+     InventoryClickTracker click_tracker_{};
+     InventoryViewCache view_cache_{};
++    MaterialBagRenderer material_bag_{};
+     std::uint64_t comparison_generation_{~std::uint64_t{0U}};
+     std::uint64_t comparison_item_id_{};
+     items::EquipmentState comparison_equipment_{};
+     std::optional<combat::PlayerCombatBuild> current_build_{};
+     std::optional<BuildDifference> difference_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_bag_renderer.cpp b/src/platform/raylib/material_bag_renderer.cpp
+new file mode 100644
+index 0000000..8748134
+--- /dev/null
++++ b/src/platform/raylib/material_bag_renderer.cpp
+@@ -0,0 +1,115 @@
++#include "material_bag_renderer.hpp"
++
++#include "material_loot_view.hpp"
++
++#include <raylib.h>
++
++#include <algorithm>
++
++namespace arpg::platform {
++namespace {
++
++constexpr float kInset = 10.0F;
++constexpr float kGap = 4.0F;
++constexpr std::size_t kColumns = 2U;
++
++bool contains(Rectangle rectangle, Vector2 point) noexcept {
++    return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width
++        && point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
++}
++
++bool inside(Rectangle child, Rectangle parent) noexcept {
++    return child.width > 0.0F && child.height > 0.0F
++        && child.x >= parent.x && child.y >= parent.y
++        && child.x + child.width <= parent.x + parent.width
++        && child.y + child.height <= parent.y + parent.height;
++}
++
++}  // namespace
++
++bool MaterialBagLayout::contains_all_slots() const noexcept {
++    if (panel.width <= 0.0F || panel.height <= 0.0F) return false;
++    for (const Rectangle slot : slots) {
++        if (!inside(slot, panel)) return false;
++    }
++    return true;
++}
++
++MaterialBagLayout material_bag_layout(int width, int height) noexcept {
++    MaterialBagLayout result{};
++    const InventoryLayout inventory = inventory_layout(width, height);
++    constexpr float kPanelHeight = 224.0F;
++    result.panel = {inventory.detail.x, inventory.detail.y + inventory.detail.height
++            - (std::min)(inventory.detail.height, kPanelHeight),
++        inventory.detail.width, (std::min)(inventory.detail.height, kPanelHeight)};
++    if (result.panel.width <= kInset * 2.0F || result.panel.height <= 42.0F) {
++        return result;
++    }
++    const std::size_t rows = (items::kMaterialCount + kColumns - 1U) / kColumns;
++    const float cell_width = (result.panel.width - kInset * 2.0F - kGap)
++        / static_cast<float>(kColumns);
++    const float cell_height = (result.panel.height - 42.0F - kInset - kGap
++        * static_cast<float>(rows - 1U)) / static_cast<float>(rows);
++    if (cell_width <= 0.0F || cell_height <= 0.0F) return result;
++    for (std::size_t index = 0U; index < result.slots.size(); ++index) {
++        const std::size_t row = index / kColumns;
++        const std::size_t column = index % kColumns;
++        result.slots[index] = {result.panel.x + kInset
++                + static_cast<float>(column) * (cell_width + kGap),
++            result.panel.y + 33.0F + static_cast<float>(row) * (cell_height + kGap),
++            cell_width, cell_height};
++    }
++    return result;
++}
++
++bool MaterialBagRenderer::select_slot(std::size_t slot,
++    const items::ItemOwnershipState& state) noexcept {
++    if (slot >= state.materials.size() || state.materials[slot] == 0U) return false;
++    selected_ = static_cast<items::MaterialId>(slot);
++    return true;
++}
++
++bool MaterialBagRenderer::process_click(Vector2 point,
++    const items::ItemOwnershipState& state, int width, int height) noexcept {
++    const MaterialBagLayout layout = material_bag_layout(width, height);
++    for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
++        if (contains(layout.slots[index], point)) return select_slot(index, state);
++    }
++    return false;
++}
++
++std::optional<items::MaterialId> MaterialBagRenderer::selected_material() const noexcept {
++    return selected_;
++}
++
++void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
++    int width, int height) const noexcept {
++    const MaterialBagLayout layout = material_bag_layout(width, height);
++    if (!layout.contains_all_slots()) return;
++    DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
++    DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
++        Color{72, 91, 120, 255});
++    DrawText("MATERIAL BAG", static_cast<int>(layout.panel.x + kInset),
++        static_cast<int>(layout.panel.y + 9.0F), 16, Color{131, 211, 255, 255});
++    for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
++        const items::MaterialId id = static_cast<items::MaterialId>(index);
++        const bool selected = selected_.has_value() && *selected_ == id;
++        const Color color = [&] {
++            const Rgba8 rgba = material_color(id);
++            return Color{rgba.r, rgba.g, rgba.b, rgba.a};
++        }();
++        const Rectangle slot = layout.slots[index];
++        DrawRectangleRounded(slot, 0.08F, 4,
++            selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
++        DrawRectangleRoundedLinesEx(slot, 0.08F, 4,
++            selected ? 2.0F : 1.0F, color);
++        const items::MaterialDefinition* const definition = items::material_definition(id);
++        DrawText(definition == nullptr ? "Invalid" : definition->name.data(),
++            static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + 3.0F), 10, color);
++        DrawText(TextFormat("x%llu", static_cast<unsigned long long>(state.materials[index])),
++            static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + slot.height - 13.0F),
++            11, RAYWHITE);
++    }
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_bag_renderer.hpp b/src/platform/raylib/material_bag_renderer.hpp
+new file mode 100644
+index 0000000..ba6f2df
+--- /dev/null
++++ b/src/platform/raylib/material_bag_renderer.hpp
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include "inventory_view_math.hpp"
++#include "items/material_catalog.hpp"
++
++#include <array>
++#include <cstddef>
++#include <optional>
++
++namespace arpg::platform {
++
++struct MaterialBagLayout final {
++    Rectangle panel{};
++    std::array<Rectangle, items::kMaterialCount> slots{};
++
++    [[nodiscard]] bool contains_all_slots() const noexcept;
++};
++
++[[nodiscard]] MaterialBagLayout material_bag_layout(int width, int height) noexcept;
++
++class MaterialBagRenderer final {
++public:
++    [[nodiscard]] bool process_click(Vector2,
++        const items::ItemOwnershipState&, int width, int height) noexcept;
++    [[nodiscard]] bool select_slot(std::size_t,
++        const items::ItemOwnershipState&) noexcept;
++    [[nodiscard]] std::optional<items::MaterialId> selected_material() const noexcept;
++    void draw(const items::ItemOwnershipState&, int width, int height) const noexcept;
++
++private:
++    std::optional<items::MaterialId> selected_{};
++};
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_loot_view.cpp b/src/platform/raylib/material_loot_view.cpp
+new file mode 100644
+index 0000000..31cb7c0
+--- /dev/null
++++ b/src/platform/raylib/material_loot_view.cpp
+@@ -0,0 +1,183 @@
++#include "material_loot_view.hpp"
++
++#include "combat_view_math.hpp"
++
++#include <algorithm>
++#include <cstdio>
++
++namespace arpg::platform {
++namespace {
++
++constexpr float kLabelWidth = 190.0F;
++constexpr float kLabelHeight = 23.0F;
++constexpr float kLabelGap = 13.0F;
++
++void clamp_rect(LootLabelRect& rect, float width, float height) noexcept {
++    const float usable_width = (std::max)(kGroundLootSafetyInset * 2.0F, width);
++    const float usable_height = (std::max)(kGroundLootSafetyInset * 2.0F, height);
++    rect.width = (std::min)(rect.width, usable_width - kGroundLootSafetyInset * 2.0F);
++    rect.height = (std::min)(rect.height, usable_height - kGroundLootSafetyInset * 2.0F);
++    rect.x = std::clamp(rect.x, kGroundLootSafetyInset,
++        usable_width - kGroundLootSafetyInset - rect.width);
++    rect.y = std::clamp(rect.y, kGroundLootSafetyInset,
++        usable_height - kGroundLootSafetyInset - rect.height);
++}
++
++void insert_label(MaterialLootView& view, MaterialLootLabel label) noexcept {
++    std::size_t insertion = view.count;
++    while (insertion > 0U && label.ordinal < view.labels[insertion - 1U].ordinal) {
++        view.labels[insertion] = view.labels[insertion - 1U];
++        --insertion;
++    }
++    view.labels[insertion] = label;
++    ++view.count;
++}
++
++}  // namespace
++
++Rgba8 material_color(items::MaterialId id) noexcept {
++    switch (id) {
++    case items::MaterialId::transmute: return {100U, 180U, 255U, 255U};
++    case items::MaterialId::augment: return {160U, 115U, 255U, 255U};
++    case items::MaterialId::regal: return {255U, 196U, 77U, 255U};
++    case items::MaterialId::chaos: return {224U, 84U, 160U, 255U};
++    case items::MaterialId::exalt: return {255U, 190U, 56U, 255U};
++    case items::MaterialId::annul: return {132U, 222U, 218U, 255U};
++    case items::MaterialId::divine: return {255U, 122U, 103U, 255U};
++    case items::MaterialId::scour: return {173U, 182U, 197U, 255U};
++    case items::MaterialId::directed: return {68U, 236U, 186U, 255U};
++    case items::MaterialId::reinforcement_stone: return {212U, 222U, 235U, 255U};
++    case items::MaterialId::coupon_6: return {122U, 207U, 255U, 255U};
++    case items::MaterialId::coupon_9: return {188U, 125U, 255U, 255U};
++    case items::MaterialId::coupon_12: return {255U, 202U, 66U, 255U};
++    case items::MaterialId::coupon_15: return {255U, 89U, 89U, 255U};
++    case items::MaterialId::count: break;
++    }
++    return {220U, 220U, 220U, 255U};
++}
++
++std::string_view material_label(items::MaterialId id) noexcept {
++    switch (id) {
++    case items::MaterialId::transmute: return "蜕变石";
++    case items::MaterialId::augment: return "增幅石";
++    case items::MaterialId::regal: return "富豪石";
++    case items::MaterialId::chaos: return "混沌石";
++    case items::MaterialId::exalt: return "崇高石";
++    case items::MaterialId::annul: return "剥离石";
++    case items::MaterialId::divine: return "神圣石";
++    case items::MaterialId::scour: return "重铸石";
++    case items::MaterialId::directed: return "定向核心";
++    case items::MaterialId::reinforcement_stone: return "强化石";
++    case items::MaterialId::coupon_6: return "+6强化券";
++    case items::MaterialId::coupon_9: return "+9强化券";
++    case items::MaterialId::coupon_12: return "+12强化券";
++    case items::MaterialId::coupon_15: return "+15强化券";
++    case items::MaterialId::count: break;
++    }
++    return "未知材料";
++}
++
++bool material_is_emphasized(items::MaterialId id) noexcept {
++    return id == items::MaterialId::exalt || id == items::MaterialId::directed
++        || id == items::MaterialId::coupon_12 || id == items::MaterialId::coupon_15;
++}
++
++MaterialLootView build_material_loot_view(
++    const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
++    MaterialLootView view{};
++    const std::size_t source_count = (std::min)(
++        static_cast<std::size_t>(snapshot.ground_material_count),
++        snapshot.ground_materials.size());
++    view.capacity_saturation_count = static_cast<std::uint32_t>(
++        static_cast<std::size_t>(snapshot.ground_material_count) - source_count);
++    for (std::size_t index = 0U; index < source_count; ++index) {
++        const dungeon::GroundMaterialSnapshot& material = snapshot.ground_materials[index];
++        if (items::material_definition(material.material) == nullptr) {
++            ++view.invalid_material_count;
++            continue;
++        }
++        if (view.count == view.labels.size()) {
++            ++view.capacity_saturation_count;
++            continue;
++        }
++        const ScreenProjection projection = project_combat_position(
++            material.position, width, height);
++        MaterialLootLabel label{};
++        label.ordinal = material.ordinal;
++        label.anchor_x = projection.x;
++        label.anchor_y = projection.y;
++        label.rect = {projection.x - kLabelWidth * 0.5F,
++            projection.y - kLabelGap - kLabelHeight, kLabelWidth, kLabelHeight};
++        clamp_rect(label.rect, width, height);
++        label.text_color = material_color(material.material);
++        label.emphasized = material_is_emphasized(material.material);
++        const std::string_view text = material_label(material.material);
++        static_cast<void>(std::snprintf(label.text.data(), label.text.size(), "%.*s",
++            static_cast<int>(text.size()), text.data()));
++        label.text.back() = '\0';
++        insert_label(view, label);
++    }
++    return view;
++}
++
++void MaterialPickupFeedbackState::update(float frame_seconds,
++    bool paused) noexcept {
++    if (paused || !(frame_seconds > 0.0F) || seconds_left_ <= 0.0F) return;
++    if (frame_seconds < seconds_left_) {
++        seconds_left_ -= frame_seconds;
++        return;
++    }
++    accumulated_.fill(0U);
++    seconds_left_ = 0.0F;
++}
++
++MaterialPickupFeedback MaterialPickupFeedbackState::observe(
++    const dungeon::DungeonSnapshot& snapshot) noexcept {
++    MaterialPickupFeedback feedback{};
++    const dungeon::MaterialPickupReceipt& receipt =
++        snapshot.material_pickup_receipt;
++    if (!baseline_set_) {
++        baseline_set_ = true;
++        if (!receipt.valid) return feedback;
++    }
++    if (!receipt.valid || receipt.commit_generation == 0U
++            || receipt.commit_generation <= generation_) {
++        return feedback;
++    }
++    generation_ = receipt.commit_generation;
++    bool received{};
++    for (std::size_t index = 0U; index < receipt.counts.size(); ++index) {
++        if (receipt.counts[index] == 0U) continue;
++        accumulated_[index] += receipt.counts[index];
++        received = true;
++    }
++    if (!received) return feedback;
++    seconds_left_ = 2.0F;
++
++    int written = std::snprintf(feedback.text.bytes.data(),
++        feedback.text.bytes.size(), "已拾取：");
++    if (written < 0) return feedback;
++    std::size_t used = static_cast<std::size_t>(written);
++    for (std::size_t index = 0U; index < accumulated_.size(); ++index) {
++        if (accumulated_[index] == 0U) continue;
++        const items::MaterialId id = static_cast<items::MaterialId>(index);
++        const std::string_view label = material_label(id);
++        const int appended = std::snprintf(feedback.text.bytes.data() + used,
++            feedback.text.bytes.size() - used, "%s%.*s x%llu",
++            used == sizeof("已拾取：") - 1U ? "" : "、",
++            static_cast<int>(label.size()), label.data(),
++            static_cast<unsigned long long>(accumulated_[index]));
++        if (appended < 0) return {};
++        if (static_cast<std::size_t>(appended) >= feedback.text.bytes.size() - used) {
++            feedback.text.truncated = true;
++            break;
++        }
++        used += static_cast<std::size_t>(appended);
++        feedback.emphasized = feedback.emphasized || material_is_emphasized(id);
++    }
++    feedback.text.bytes.back() = '\0';
++    feedback.ready = true;
++    return feedback;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_loot_view.hpp b/src/platform/raylib/material_loot_view.hpp
+new file mode 100644
+index 0000000..6c04bf3
+--- /dev/null
++++ b/src/platform/raylib/material_loot_view.hpp
+@@ -0,0 +1,56 @@
++#pragma once
++
++#include "ground_loot_view.hpp"
++#include "hud_view_model.hpp"
++#include "items/material_catalog.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <string_view>
++
++namespace arpg::platform {
++
++struct MaterialLootLabel final {
++    std::uint16_t ordinal{};
++    float anchor_x{};
++    float anchor_y{};
++    LootLabelRect rect{};
++    Rgba8 text_color{};
++    bool emphasized{};
++    std::array<char, kGroundLootTextCapacity> text{};
++};
++
++struct MaterialLootView final {
++    std::array<MaterialLootLabel, dungeon::kGroundMaterialCapacity> labels{};
++    std::size_t count{};
++    std::uint32_t invalid_material_count{};
++    std::uint32_t capacity_saturation_count{};
++};
++
++struct MaterialPickupFeedback final {
++    bool ready{};
++    bool emphasized{};
++    HudText96 text{};
++};
++
++class MaterialPickupFeedbackState final {
++public:
++    void update(float frame_seconds, bool paused) noexcept;
++    [[nodiscard]] MaterialPickupFeedback observe(
++        const dungeon::DungeonSnapshot&) noexcept;
++
++private:
++    std::array<std::uint64_t, items::kMaterialCount> accumulated_{};
++    std::uint64_t generation_{};
++    float seconds_left_{};
++    bool baseline_set_{};
++};
++
++[[nodiscard]] Rgba8 material_color(items::MaterialId) noexcept;
++[[nodiscard]] std::string_view material_label(items::MaterialId) noexcept;
++[[nodiscard]] bool material_is_emphasized(items::MaterialId) noexcept;
++[[nodiscard]] MaterialLootView build_material_loot_view(
++    const dungeon::DungeonSnapshot&, float width, float height) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index ffe10ee..611d0ac 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -1,16 +1,17 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/room_bounds.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "environment_render_plan.hpp"
+ #include "material_animation.hpp"
++#include "material_loot_view.hpp"
+ #include "render_layout.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+@@ -270,20 +271,62 @@ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
+             17.0F * projected.scale, 6.0F * projected.scale,
+             Fade(color, 0.24F));
+         const bool abyss = item->source == dungeon::GroundItemSource::abyss_chest;
+         if (!material_pack.draw(select_loot_sprite(item->rarity, abyss), center,
+                 false, 0.30F * projected.scale)) {
+             draw_ground_item_shape(item->slot, center, projected.scale, color);
+         }
+     }
+ }
+ 
++const dungeon::GroundMaterialSnapshot* ground_material_with_ordinal(
++    const dungeon::DungeonSnapshot& snapshot, std::uint16_t ordinal) noexcept {
++    const std::size_t count = (std::min)(
++        static_cast<std::size_t>(snapshot.ground_material_count),
++        snapshot.ground_materials.size());
++    for (std::size_t index = 0U; index < count; ++index) {
++        if (snapshot.ground_materials[index].ordinal == ordinal) {
++            return &snapshot.ground_materials[index];
++        }
++    }
++    return nullptr;
++}
++
++void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
++    const MaterialLootView& view, float width, float height) noexcept {
++    for (std::size_t index = 0U; index < view.count; ++index) {
++        const MaterialLootLabel& label = view.labels[index];
++        const auto* material = ground_material_with_ordinal(snapshot, label.ordinal);
++        if (material == nullptr) continue;
++        const RenderProjection projected = project_render_world(
++            material->position.x, material->position.y, material->position.z,
++            width, height);
++        const Color color{label.text_color.r, label.text_color.g,
++            label.text_color.b, label.text_color.a};
++        const float radius = (label.emphasized ? 9.0F : 6.0F) * projected.scale;
++        const Vector2 center{projected.x, projected.ground_y - radius};
++        DrawEllipse(static_cast<int>(projected.x),
++            static_cast<int>(projected.ground_y + 1.0F), radius * 1.6F,
++            radius * 0.45F, Fade(color, 0.28F));
++        if (label.emphasized) {
++            DrawLineEx({center.x, center.y + radius},
++                {center.x, center.y - 36.0F * projected.scale},
++                2.0F * projected.scale, Fade(color, 0.65F));
++            DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
++                radius * 1.55F, Fade(color, 0.78F));
++        }
++        DrawCircleV(center, radius, color);
++        DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
++            radius, RAYWHITE);
++    }
++}
++
+ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
+     if (!snapshot.is_abyss) {
+         return;
+     }
+     const float pulse = abyss_pulse_alpha(elapsed_seconds);
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));
+     DrawRectangleLinesEx({8.0F, 8.0F, static_cast<float>(GetScreenWidth() - 16),
+         static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
+         Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
+@@ -326,26 +369,28 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
+         && can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+         constexpr const char* kPrompt = "E: DESCEND";
+         DrawText(kPrompt, x - MeasureText(kPrompt, 26) / 2, y + 36, 26, RAYWHITE);
+     }
+ }
+ 
+ }  // namespace
+ 
+ void CombatRenderer::draw_room(
+     const dungeon::DungeonSnapshot& current,
+-    const GroundLootView& ground_loot) const noexcept {
++    const GroundLootView& ground_loot,
++    const MaterialLootView& material_loot) const noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const bool draw_material_environment = can_draw_room_environment(current,
+         material_pack_) && draw_environment_room(material_pack_, current.ecology);
+     if (!draw_material_environment) {
+         draw_graybox_room(current.ecology);
+     }
+     draw_abyss(current, static_cast<float>(GetTime()));
+     draw_environment_hazards(current, width, height);
++    draw_ground_materials(current, material_loot, width, height);
+     draw_ground_items(current, ground_loot, material_pack_, width, height);
+     draw_doors(current, width, height, material_pack_, draw_material_environment);
+     draw_hole(current, material_pack_, draw_material_environment);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 5f100cf..92823e2 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -22,20 +22,22 @@ if(TARGET arpg_raylib)
+         hud_view_model_tests.cpp
+         hud_notice_state_tests.cpp
+         loot_pickup_feedback_tests.cpp
+         hud_layout_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+         hud_host_integration_tests.cpp
+         death_input_gate_tests.cpp
+         death_overlay_view_tests.cpp
+         ground_loot_view_tests.cpp
++        material_loot_view_tests.cpp
++        material_bag_renderer_tests.cpp
+         audio_asset_validation_tests.cpp
+         material_asset_validation_tests.cpp
+         material_animation_tests.cpp
+         stage12_environment_render_tests.cpp
+         stage12_actor_render_tests.cpp
+         stage12_material_render_tests.cpp)
+     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+diff --git a/tests/platform/material_bag_renderer_tests.cpp b/tests/platform/material_bag_renderer_tests.cpp
+new file mode 100644
+index 0000000..81321d4
+--- /dev/null
++++ b/tests/platform/material_bag_renderer_tests.cpp
+@@ -0,0 +1,43 @@
++#include "test_framework.hpp"
++
++#include "material_bag_renderer.hpp"
++
++namespace {
++
++namespace items = arpg::items;
++namespace platform = arpg::platform;
++
++arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
++    const platform::MaterialBagLayout layout =
++        platform::material_bag_layout(1280, 720);
++    ARPG_REQUIRE(layout.contains_all_slots());
++    ARPG_REQUIRE(layout.slots.size() == items::kMaterialCount);
++    return {};
++}
++
++arpg::test::Failure selected_material_requires_an_owned_material_slot() noexcept {
++    items::ItemOwnershipState state{};
++    state.materials[items::material_index(items::MaterialId::chaos)] = 4U;
++    platform::MaterialBagRenderer renderer{};
++    ARPG_REQUIRE(!renderer.selected_material().has_value());
++    ARPG_REQUIRE(renderer.select_slot(
++        items::material_index(items::MaterialId::chaos), state));
++    ARPG_REQUIRE(renderer.selected_material()
++        == items::MaterialId::chaos);
++    ARPG_REQUIRE(!renderer.select_slot(
++        items::material_index(items::MaterialId::exalt), state));
++    ARPG_REQUIRE(renderer.selected_material()
++        == items::MaterialId::chaos);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
++    {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
++};
++
++}  // namespace
++
++arpg::test::TestSuite material_bag_renderer_suite() noexcept {
++    return arpg::test::make_suite("material_bag_renderer", kCases);
++}
+diff --git a/tests/platform/material_loot_view_tests.cpp b/tests/platform/material_loot_view_tests.cpp
+new file mode 100644
+index 0000000..72ed1af
+--- /dev/null
++++ b/tests/platform/material_loot_view_tests.cpp
+@@ -0,0 +1,89 @@
++#include "test_framework.hpp"
++
++#include "material_loot_view.hpp"
++
++#include <cstring>
++
++namespace {
++
++namespace dungeon = arpg::dungeon;
++namespace items = arpg::items;
++namespace platform = arpg::platform;
++
++arpg::test::Failure labels_and_emphasis_are_player_facing() noexcept {
++    ARPG_REQUIRE(platform::material_label(items::MaterialId::coupon_12)
++        == "+12强化券");
++    ARPG_REQUIRE(platform::material_label(items::MaterialId::reinforcement_stone)
++        == "强化石");
++    ARPG_REQUIRE(platform::material_is_emphasized(items::MaterialId::exalt));
++    ARPG_REQUIRE(platform::material_is_emphasized(items::MaterialId::directed));
++    ARPG_REQUIRE(platform::material_is_emphasized(items::MaterialId::coupon_12));
++    ARPG_REQUIRE(platform::material_is_emphasized(items::MaterialId::coupon_15));
++    ARPG_REQUIRE(!platform::material_is_emphasized(items::MaterialId::chaos));
++    return {};
++}
++
++arpg::test::Failure material_view_ignores_equipment_filter_and_orders_ordinals() noexcept {
++    dungeon::DungeonSnapshot snapshot{};
++    snapshot.ground_material_count = 2U;
++    snapshot.ground_materials[0] = {18U,
++        dungeon::GroundMaterialSource::monster_common, {2.0F, 1.0F, 0.0F},
++        items::MaterialId::transmute};
++    snapshot.ground_materials[1] = {4U,
++        dungeon::GroundMaterialSource::monster_coupon, {-2.0F, 1.0F, 0.0F},
++        items::MaterialId::coupon_12};
++
++    const platform::MaterialLootView view =
++        platform::build_material_loot_view(snapshot, 1280.0F, 720.0F);
++    ARPG_REQUIRE(view.count == 2U);
++    ARPG_REQUIRE(view.labels[0].ordinal == 4U);
++    ARPG_REQUIRE(view.labels[1].ordinal == 18U);
++    ARPG_REQUIRE(std::strcmp(view.labels[0].text.data(), "+12强化券") == 0);
++    ARPG_REQUIRE(view.labels[0].emphasized);
++    ARPG_REQUIRE(!view.labels[1].emphasized);
++    return {};
++}
++
++arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
++    platform::MaterialPickupFeedbackState feedback{};
++    dungeon::DungeonSnapshot snapshot{};
++    static_cast<void>(feedback.observe(snapshot));
++
++    snapshot.material_pickup_receipt.valid = true;
++    snapshot.material_pickup_receipt.commit_generation = 10U;
++    snapshot.material_pickup_receipt.counts[
++        items::material_index(items::MaterialId::chaos)] = 2U;
++    auto first = feedback.observe(snapshot);
++    ARPG_REQUIRE(first.ready);
++    ARPG_REQUIRE(std::strcmp(first.text.bytes.data(), "已拾取：混沌石 x2") == 0);
++
++    snapshot.material_pickup_receipt.commit_generation = 11U;
++    snapshot.material_pickup_receipt.counts.fill(0U);
++    snapshot.material_pickup_receipt.counts[
++        items::material_index(items::MaterialId::chaos)] = 1U;
++    auto repeated = feedback.observe(snapshot);
++    ARPG_REQUIRE(repeated.ready);
++    ARPG_REQUIRE(std::strcmp(repeated.text.bytes.data(), "已拾取：混沌石 x3") == 0);
++
++    snapshot.material_pickup_receipt.commit_generation = 12U;
++    snapshot.material_pickup_receipt.counts.fill(0U);
++    snapshot.material_pickup_receipt.counts[
++        items::material_index(items::MaterialId::directed)] = 1U;
++    const auto mixed = feedback.observe(snapshot);
++    ARPG_REQUIRE(mixed.ready);
++    ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), "混沌石 x3") != nullptr);
++    ARPG_REQUIRE(std::strstr(mixed.text.bytes.data(), "定向核心 x1") != nullptr);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"Chinese labels and emphasis", &labels_and_emphasis_are_player_facing},
++    {"material view ignores equipment filter", &material_view_ignores_equipment_filter_and_orders_ordinals},
++    {"pickup feedback aggregates material counts", &pickup_feedback_aggregates_counts_by_material},
++};
++
++}  // namespace
++
++arpg::test::TestSuite material_loot_view_suite() noexcept {
++    return arpg::test::make_suite("material_loot_view", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index a2050af..66310b6 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -26,20 +26,22 @@ arpg::test::TestSuite window_settings_suite() noexcept;
+ arpg::test::TestSuite pause_host_gate_suite() noexcept;
+ arpg::test::TestSuite control_hints_suite() noexcept;
+ arpg::test::TestSuite hud_view_model_suite() noexcept;
+ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
+ arpg::test::TestSuite ground_loot_view_suite() noexcept;
++arpg::test::TestSuite material_loot_view_suite() noexcept;
++arpg::test::TestSuite material_bag_renderer_suite() noexcept;
+ arpg::test::TestSuite audio_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_animation_suite() noexcept;
+ arpg::test::TestSuite stage12_environment_render_suite() noexcept;
+ arpg::test::TestSuite stage12_actor_render_suite() noexcept;
+ arpg::test::TestSuite stage12_material_render_suite() noexcept;
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+@@ -72,20 +74,22 @@ int main() {
+         window_settings_suite(),
+         control_hints_suite(),
+         hud_view_model_suite(),
+         hud_notice_state_suite(),
+         loot_pickup_feedback_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
++        material_loot_view_suite(),
++        material_bag_renderer_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 349, "stage 15 audio integration");
++    return arpg::test::run_suites(suites, 354, "stage 16 material UI");
+ }

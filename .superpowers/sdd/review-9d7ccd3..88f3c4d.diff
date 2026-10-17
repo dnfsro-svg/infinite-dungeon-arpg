@@ -1,0 +1,2346 @@
+# Review package: 9d7ccd3..HEAD
+
+## Commits
+88f3c4d test: validate stage17 skill stones in raylib
+
+## Files changed
+ .superpowers/sdd/stage17-task-8-report.md          |  27 +
+ README.md                                          |  14 +-
+ .../validation/stage17-swordmaster-skill-stones.md |  63 ++
+ src/platform/raylib/raylib_host.cpp                | 650 ++++++++++++++++++++-
+ src/platform/raylib/raylib_host.hpp                |   8 +
+ tests/platform/CMakeLists.txt                      |  38 ++
+ tests/platform/host_input_source_test.cmake        |  33 +-
+ tests/platform/input_latency_source_test.cmake     |  19 +-
+ .../stage11b_settings_evidence_guard_test.cmake    |   6 +-
+ ...e11d_renderer_integration_guard_self_test.cmake |  12 +-
+ .../stage11d_renderer_integration_guard_test.cmake |   2 +-
+ .../stage16_loot_reinforcement_game_validation.cpp |   3 +-
+ .../stage17_skill_stones_game_validation.cpp       | 246 ++++++++
+ tests/platform/stage17_skill_stones_validator.ps1  | 117 ++++
+ .../stage17_skill_stones_validator_self_test.ps1   |  60 ++
+ 15 files changed, 1262 insertions(+), 36 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/stage17-task-8-report.md b/.superpowers/sdd/stage17-task-8-report.md
+new file mode 100644
+index 0000000..d1cda5d
+--- /dev/null
++++ b/.superpowers/sdd/stage17-task-8-report.md
+@@ -0,0 +1,27 @@
++# Stage 17 Task 8 实施报告
++
++## 交付结果
++
++- 注册并实现 `stage17.skill_stones.real_raylib`、证据验证器和破坏性自测。
++- 真实 1280×720 Raylib 场景通过公开数字键输入、生产 `DungeonRuntime`、暂停页技能石事务和真实 `SaveStore` 完成两技能施放、五槽重排及跨进程重启核验。
++- 生成五张新鲜且像素互异的 PNG 与 23 字段状态文件；验证器严格检查尺寸、时间戳、像素哈希和精确状态，负向自测覆盖 PNG、字段、时间戳三种篡改。
++- 修复真实宿主大型运行时/快照的 Windows 主线程栈溢出，将所有权移到堆上；未增加栈大小或引入测试后门。
++- 适配 Stage16 旧正式场景到当前 `InventoryRenderer::draw` 签名，并同步收紧/更新输入链和渲染集成源码守卫，使既有破坏性自测继续有效。
++
++## TDD 与验证
++
++- 有效 RED：Stage17 真实测试因“场景未实现”失败，两个证据依赖项未运行。
++- Debug Stage17：3/3 通过，11.19 秒。
++- Debug 非图形完整回归：92/92 通过，979.69 秒。
++- Debug 既有 formal/validator 聚焦复测：9/9 通过，174.82 秒。
++- Release 全量构建：213/213 成功。
++- Release Stage17：3/3 通过，7.97 秒。
++- Release 非图形完整回归：92/92 通过，740.11 秒。
++- Debug Stage16/17 联合真实 Raylib：4/4 通过，11.93 秒。
++- Debug `^architecture\.`：18/18 通过，82.32 秒。
++
++## 证据状态
++
++固定种子 `170017`：默认槽为 `draw_slash,storm_swords,none,none,none`；重排并重启后为 `none,draw_slash,none,none,storm_swords`。owned bits 为 3，25 个辅助槽均为空；拔刀斩场景命中 2，暴风式普通剑段命中累计 3、终结命中 1、完整 12 段，移动期间中心锁定，冷却不跨重启持久化。
++
++详细绝对证据路径、技能常量和命令记录见 `docs/validation/stage17-swordmaster-skill-stones.md`。
+diff --git a/README.md b/README.md
+index d3cd36f..b97fb1f 100644
+--- a/README.md
++++ b/README.md
+@@ -1,38 +1,41 @@
+ # Infinite Dungeon ARPG
+ 
+ 使用 C++17 与 raylib 6.0 开发的单人 2.5D 房间动作 ARPG。游戏启动后直接进入唯一的无限地下城；清房后可从四向门继续探索，部分房间带有下层洞。
+ 
+ ## 当前里程碑
+ 
+-Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 Stage 15 低资源音频混音之上）。
++Stage 17：五槽主动技能石、剑圣“拔刀斩”与“极·鬼剑术（暴风式）”（建立在 Stage 16 材料、货币与强化之上）。
+ 
+ - 正常游戏中按 `Esc` 打开暂停层。暂停不会推进固定步、战斗或地下城状态；恢复时也不会补跑暂停期间的 tick。
+ - 设置可分别调整主音量、战斗音效、音乐、环境声和 UI 音效（0%–100%，每次 5%），并保留窗口化/全屏、VSync、地面物品过滤预设和十项玩法动作的键盘绑定。
+ - 设置草稿支持预览、应用和取消：音量、窗口、VSync 与地面标签在草稿修改时预览；只有 `应用` 持久化成功后，输入和物品过滤策略才切换到新设置；取消会恢复已提交的运行时设置与地面标签。
+ - 设置使用独立的 `settings-a.bin`/`settings-b.bin` 双槽文件，和角色 V6 存档完全分离。单槽损坏会恢复合法槽；双槽损坏则回到默认设置并在设置页提示一次，不会进入角色存档恢复流程。
+ - 地面物品过滤提供“显示全部”“魔法及以上”“仅稀有”三个预设。被过滤的普通房掉落仍留在生产快照与地面，不会因为隐藏标签而自动进入背包；自动拾取只领取达到当前预设门槛的物品。
+ - 深渊房奖励不受普通掉落过滤门槛限制，即使低于“仅稀有”门槛仍会显示并可领取。成功拾取后，下中情境区显示带物品名的“已拾取”回执。
+ - 左下玩家面板常驻生命、护盾（存在时）、经验、等级、未分配点和最多三个当前状态标签；低生命仅以有界边框频率强调。
+ - 上中目标面板显示战斗波次、剩余目标、清房出口和深渊状态；右上导航显示深度、层内房间、生态与火/水/电/混沌偏向。
+ - 下中情境区最多显示一条主通知和一条次通知，存档/恢复、深渊放弃确认、洞口/出口、清房/奖励/升级和操作提示依次按优先级竞争，不会让低优先级提示覆盖错误或确认信息。
+ - `F1` 只切换开发诊断层；预算、对象池、饱和、非法 owner、seed、存档槽和 HUD 诊断不会出现在普通 HUD。
+ - 战斗的轻击、J3、L 上挑、轻/中/重命中、重击摘要、受击、落地、击杀和三类词条预警使用随发行包部署的 14 个本地 PCM 音效。单个损坏资源只回退该资源，不中断其余音效；模拟、地下城、掉落和存档层不依赖音频资源或 raylib 音频 API。
+ - 探索/战斗音乐与普通/深渊环境声使用 4 条本地 OGG 流，按场景分别以 0.40/0.25 秒交叉淡化；暂停及死亡覆盖层会降低音乐和环境声，菜单导航、确认、取消、开关覆盖层和拾取奖励使用 6 个本地 UI 音效。
+ - 地面材料独立于装备掉落和过滤：普通怪按危险度 8%–35% 掉落材料，高危险度还可独立掉落 +6/+9/+12/+15 强化券；靠近 1.5 格自动拾取，清房将吸附余下材料。死亡前未拾取的材料会丢失。
+ - 背包底部有固定 14 格材料袋；材料不占装备格，地面材料池总容量为 400。选择材料后点击装备即可使用：九种货币只在成功的原子存档后扣除；强化券会直接提升到券面；对当前已 +12 或更高装备使用强化石时要求确认。
+ - 三件未装备、同基底、同稀有度的装备可右键/Control 标记后点击“三合一”合成；产物取平均物品等级且强化归零。
+ - 强化 1–3 为 100%，4/5/6 为 90%/80%/70%，7–12 为 70%，+13 为 60% 后每级乘 0.95（最低 0.1%）。失败时 +7–9 回 +6、+10–11 归零、+12 及以上销毁；武器提升底材伤害、防具提升底材护甲、饰品提升元素减伤，词缀不被放大。
++- HUD 底部固定显示五个主动技能石槽；新档和 V1–V7 迁移默认槽 1 为拔刀斩、槽 2 为暴风式、槽 3–5 为空。数字键 `1`–`5` 只请求对应槽位，空槽无副作用。
++- 暂停页背包的“技能石”标签可取出、装入和交换任意主槽；每个主槽显示五个只读空辅助槽。装配通过原子存档事务提交，失败不会半更新；技能冷却和施放状态不持久化。
++- 拔刀斩是短前摇、单目标每次施放最多命中一次并明确击退的近距离扇形攻击；暴风式锁定施放中心，执行 12 段剑阵和独立终结击飞，死亡或换房会取消未完成施放。
+ 
+-实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。材料、货币、强化、百万次分布模拟和真实 1280×720 Raylib 场景见 [Stage 16 验证记录](docs/validation/stage16-loot-currency-reinforcement.md)。
++实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。材料、货币、强化、百万次分布模拟和真实 1280×720 Raylib 场景见 [Stage 16 验证记录](docs/validation/stage16-loot-currency-reinforcement.md)。五槽技能石、V8 迁移、两项剑圣技能和真实 Raylib 五图证据见 [Stage 17 验证记录](docs/validation/stage17-swordmaster-skill-stones.md)。
+ 
+-本分支止步于 Stage 16；macOS、主菜单、手柄及分辨率/画质设置仍未实现。
++本分支止步于 Stage 17；辅助技能石的掉落、装卸和效果，以及 macOS、主菜单、手柄及分辨率/画质设置仍未实现。
+ 
+ ## 构建与运行
+ 
+ 环境要求：Windows x64、Visual Studio 2022 Build Tools、MSVC 19.44、Windows SDK 10.0.26100.0、CMake 3.25+ 与 Ninja。仓库脚本会进入固定的 MSVC/SDK 开发环境。
+ 
+ ```powershell
+ .\scripts\Build.ps1 -Preset windows-msvc-release
+ .\out\build\windows-msvc-release\bin\arpg_game.exe
+ ```
+ 
+@@ -58,20 +61,21 @@ Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 St
+ | 按键 | 操作 |
+ | --- | --- |
+ | `W` / `S` / `A` / `D` | 上 / 下 / 左 / 右移动；清房后走入四向门离开 |
+ | `J` | 轻攻击/连击；空中攻击 |
+ | `K` | 跳跃 |
+ | `L` | 上挑 |
+ | `E` | 在开放的下层洞范围内下层 |
+ | `I` | 打开/关闭背包 |
+ | `P` | 清房后打开/关闭被动星盘 |
+ | `R` | 重置当前房；深渊战斗中会永久消耗本房挑战机会 |
++| `1`–`5` | 施放对应主动技能石槽；默认 `1` 为拔刀斩、`2` 为暴风式、`3`–`5` 为空 |
+ | `F1` | 调试显示 |
+ | `F12` 或 `V` | 截图到程序目录 |
+ | `Esc` | 按优先级关闭恢复/死亡界面以外的当前覆盖层；背包或星盘关闭后再次按才打开暂停；暂停内返回、取消捕获或继续 |
+ | `N` | 存档需要恢复时归档坏档并开始新游戏 |
+ 
+ 深渊清房后若仍有待生成或地面未拾取奖励，第一次触碰出口只显示放弃警告；离开出口范围、改变方向或奖励状态变化会取消确认，保持条件不变再次触碰同一出口才会提交离房。
+ 
+ 死亡保存或等待继续时，玩法输入全部被拦截；死亡界面只接受 `E`（状态允许时继续）、`F12`/`V`（截图）、`F1`（调试显示）和 `Esc`（退出）。
+ 
+ ## 暂停、设置与重绑定
+@@ -96,10 +100,14 @@ Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 St
+ 
+ 设置记录已升级为 V3，仍保持 44 字节双槽布局。读取旧 V1/V2 设置时，已有主音量、窗口、VSync、按键绑定和已存在的地面过滤配置继续保留；新增战斗音效、音乐、环境声和 UI 音量使用推荐默认值，下次成功应用后按 V3 写回。
+ 
+ ## Stage 14 战斗音频材质包
+ 
+ 发布版随包携带 14 个短 PCM WAV，覆盖 J 连击、L 上挑、命中、玩家受击、落地、击杀和三类词条预警。资源缺失或单文件解码失败时仅该声音使用程序化回退，不影响其余资源或战斗模拟。来源、哈希、格式预算与正式验收结果见 [Stage 14 验收记录](docs/validation/stage14-combat-audio-pack.md)。
+ 
+ ## Stage 15 低资源音频混音
+ 
+ 发布版新增 2 条音乐、2 条环境声和 6 个 UI 音效，总磁盘占用 12,916,359 字节。`GameAudio` 统一管理唯一 raylib 音频设备、Stage 14 战斗音效、Stage 15 流式资源、UI 边沿去重和五路音量；资源加载、格式、场景路由、发布复制、输出根安全和防篡改证据均由 CTest 自动验证。详细结果见 [Stage 15 验收记录](docs/validation/stage15-audio-mix.md)。
++
++## Stage 17 剑圣技能石
++
++角色拥有五个可交换的主动技能石槽和每槽五个只读辅助槽。默认 `1` 施放拔刀斩、`2` 施放暴风式；暂停页技能石标签通过生产保存事务取出、装入或交换技能石。V8 存档持久化装配和库存，旧档迁移到安全默认值，但不持久化冷却和正在施放的技能。真实 1280×720 Raylib 五图证据、精确状态字段和破坏性验证结果见 [Stage 17 验收记录](docs/validation/stage17-swordmaster-skill-stones.md)。
+diff --git a/docs/validation/stage17-swordmaster-skill-stones.md b/docs/validation/stage17-swordmaster-skill-stones.md
+new file mode 100644
+index 0000000..aac2657
+--- /dev/null
++++ b/docs/validation/stage17-swordmaster-skill-stones.md
+@@ -0,0 +1,63 @@
++# Stage 17 剑圣技能石验收
++
++Stage 17 增加五个可自由取出、装入和交换的主动技能石槽，以及每槽五个只读辅助槽。新档和 V1–V7 迁移默认槽 1 为 `draw_slash`、槽 2 为 `storm_swords`、槽 3–5 为 `none`，两块主动石归角色所有，25 个辅助槽均为 `none`。
++
++## 规格自审
++
++- 五个主槽均可通过暂停页生产 UI 取出、装入和交换；装配候选只有在真实 `SaveStore` 原子提交成功后才发布，保存失败不会半更新库存或槽位。
++- 数字键 `1`–`5` 经 `PhysicalKeySnapshot`、宿主映射和 `DungeonRuntime::submit_frame_actions` 进入战斗；没有直接 Raylib 数字键旁路，也没有私有战斗注入。空槽 3–5 无副作用。
++- 五个主槽各有五个只读辅助槽，合计 25 个 `none`；本阶段战斗不读取辅助数组，也不提供辅助石掉落、装卸或数值。
++- V8 固定保存 owned bits、五个主技能 ID 与 25 个辅助 ID。V1–V7 迁移到默认装配；V8 往返、非法 ID、重复主动石和保留字段拒绝由持久化测试覆盖。
++- 冷却、前摇、剑阵和终结为房间瞬态状态，不写检查点；重启读回装配后所有冷却为零。
++
++## 两项技能
++
++拔刀斩冷却 240 tick，10 tick 前摇、单次判定、14 tick 后摇；基础物理伤害 220，破防伤害 36，前方范围 5.0、末端半宽 3.2，击退速度 0.22。同一目标每次施放最多命中一次。
++
++暴风式冷却 1800 tick，24 tick 前摇；施放时在角色前方 3.5 锁定中心，随后以 6 tick 间隔执行固定 12 段、半径 2.8、基础物理伤害 42 的剑阵。终结半径 3.8、基础物理伤害 360、击退 0.26、击飞 0.24，随后 24 tick 后摇；死亡或换房会取消未完成施放。
++
++固定种子 `170017` 的正式场景实际观测：拔刀斩命中 2 个生产目标；暴风式普通剑段对场内目标累计记录 3 次命中，终结命中 1 次，并确认完整推进 12 段。玩家在剑阵期间移动，锁定中心保持不变。
++
++## 真实 Raylib 场景
++
++`stage17.skill_stones.real_raylib` 分别启动两个独立子进程。第一个在 1280×720 真实 raylib 6.0 / GLFW / OpenGL 窗口内创建真实 V8 新档，通过公开输入施放两技能，再通过背包技能石页执行 `remove1,equip5,swap2_5`；第二个进程从同一存档目录启动真实 `DungeonRuntime`，核验装配持久化且冷却为零。
++
++Release 最近一次运行的五张绝对证据路径：
++
++- `E:\game\.worktrees\stage16-loot-reinforcement\out\build\windows-msvc-release\tests\platform\stage17 skill stones evidence\stage17-run\01-new-default-1280x720.png`
++- `E:\game\.worktrees\stage16-loot-reinforcement\out\build\windows-msvc-release\tests\platform\stage17 skill stones evidence\stage17-run\02-draw-slash-hit-1280x720.png`
++- `E:\game\.worktrees\stage16-loot-reinforcement\out\build\windows-msvc-release\tests\platform\stage17 skill stones evidence\stage17-run\03-storm-array-1280x720.png`
++- `E:\game\.worktrees\stage16-loot-reinforcement\out\build\windows-msvc-release\tests\platform\stage17 skill stones evidence\stage17-run\04-storm-finisher-1280x720.png`
++- `E:\game\.worktrees\stage16-loot-reinforcement\out\build\windows-msvc-release\tests\platform\stage17 skill stones evidence\stage17-run\05-restarted-loadout-1280x720.png`
++
++状态文件位于同目录 `stage17-skill-stones-state.txt`。验证器要求恰好五个固定文件名、每张 PNG 大于 4096 字节、解码尺寸恰为 1280×720、修改时间严格晚于本次 `run.marker`，并对解码后的 ARGB 像素做 SHA-256，五张图必须互不相同。它还逐字段精确检查 23 个状态字段。破坏性自测分别截断 PNG、伪造 `save_version` 和回拨时间戳，三种突变都必须被拒绝；所有清理只允许发生在经绝对路径验证的 `stage17-run` 或其自测子目录。
++
++## 新鲜验证结果
++
++执行日期：2026-07-21（EDT）。仓库脚本用于进入固定 MSVC/Windows SDK 环境。
++
++```powershell
++.\scripts\Configure.ps1 -Preset windows-msvc-debug
++.\scripts\Build.ps1 -Preset windows-msvc-debug
++ctest --test-dir out/build/windows-msvc-debug -L stage17 --output-on-failure
++ctest --test-dir out/build/windows-msvc-debug -LE 'graphics|formal-game' --output-on-failure
++
++.\scripts\Configure.ps1 -Preset windows-msvc-release
++.\scripts\Build.ps1 -Preset windows-msvc-release
++ctest --test-dir out/build/windows-msvc-release -L stage17 --output-on-failure
++ctest --test-dir out/build/windows-msvc-release -LE 'graphics|formal-game' --output-on-failure
++```
++
++- Debug Stage17：3/3 通过，0 失败，11.19 秒；真实 Raylib 10.41 秒、验证器 0.27 秒、破坏性自测 0.50 秒。
++- Debug 完整 `-LE` 门禁：92/92 通过，0 失败，979.69 秒。
++- Release 全量构建：213/213 构建步骤成功。
++- Release Stage17：3/3 通过，0 失败，7.97 秒；真实 Raylib 7.11 秒、验证器 0.35 秒、破坏性自测 0.49 秒。
++- Release 完整 `-LE` 门禁：92/92 通过，0 失败，740.11 秒。
++- Debug Stage16/17 联合真实 Raylib：4/4 通过，0 失败，11.93 秒。
++- Debug `^architecture\.`：18/18 通过，0 失败，82.32 秒。
++
++## 已知基线与实现说明
++
++初次直接调用裸 `cmake --preset windows-msvc-debug` 时，当前 PowerShell 未带固定 Windows SDK 环境；改用仓库 `Configure.ps1` 后完成有效 RED：真实场景因尚未实现而失败，两个依赖证据测试未运行。该问题是工具链入口要求，不是产品缺陷。
++
++真实宿主最初把 `DungeonRuntime` 和多个大型快照放在 Windows 主线程栈上，正式窗口启动时触发 `0xC00000FD`。本任务把这些既有大型对象迁到堆所有权，未扩大链接器栈、未绕过生产接口；Debug/Release 全量回归均已通过。此前记录的 Stage 9 旧图形基线不作为 Stage17 通过项；本轮要求的 Stage16/17 真实 Raylib 与两套完整门禁均以本页新鲜结果为准。
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 463280a..45bc2f3 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -16,27 +16,29 @@
+ #include "pause_menu_state.hpp"
+ #include "pause_menu_view.hpp"
+ #include "persistence/save_paths.hpp"
+ #include "platform/settings/settings_store.hpp"
+ #include "platform/settings/settings_types.hpp"
+ #include "stable_key_raylib.hpp"
+ #include "window_settings.hpp"
+ 
+ #include <raylib.h>
+ 
++#include <algorithm>
+ #include <cstdint>
+ #include <cmath>
+ #include <cstddef>
+ #include <array>
+ #include <cstdio>
+ #include <filesystem>
+ #include <fstream>
++#include <memory>
+ #include <optional>
+ #include <string>
+ 
+ #ifdef _WIN32
+ extern "C" __declspec(dllimport) int __stdcall SetForegroundWindow(void*);
+ #endif
+ 
+ #include "direct_input_poison.hpp"
+ 
+ static_assert(arpg::platform::direct_input_poison::active,
+@@ -54,20 +56,25 @@ static_assert(FLAG_VSYNC_HINT != 0, "raylib VSync flag must remain available");
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr char kSettingsPreviewFailed[] = "Live preview failed";
+ constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
+ constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
+ constexpr char kSettingsSaved[] = "Settings saved";
+ constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
+ 
++struct Stage17SkillStonesValidationState;
++void observe_stage17_combat_event(
++    Stage17SkillStonesValidationState* state,
++    const combat::CombatEvent& event) noexcept;
++
+ [[nodiscard]] bool stable_pressed(
+     const PhysicalKeySnapshot& snapshot,
+     settings::StableKey key) noexcept {
+     const std::size_t index = static_cast<std::size_t>(key);
+     return index < snapshot.pressed.size() && snapshot.pressed[index];
+ }
+ 
+ [[nodiscard]] std::optional<settings::StableKey> captured_stable_key(
+     const PhysicalKeySnapshot& snapshot) noexcept {
+     for (std::size_t index = 0U; index < snapshot.pressed.size(); ++index) {
+@@ -89,22 +96,24 @@ constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
+     input.down = stable_pressed(snapshot, settings::StableKey::arrow_down);
+     input.left = stable_pressed(snapshot, settings::StableKey::arrow_left);
+     input.right = stable_pressed(snapshot, settings::StableKey::arrow_right);
+     input.activate = snapshot.mouse_left;
+     input.focus_lost = snapshot.focus_lost;
+     if (capture_binding) input.captured_key = captured_stable_key(snapshot);
+     return input;
+ }
+ 
+ void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
+-    CombatFeedback& feedback, GameAudio& audio) noexcept {
++    CombatFeedback& feedback, GameAudio& audio,
++    Stage17SkillStonesValidationState* stage17 = nullptr) noexcept {
+     while (const auto event = session.try_pop_combat_event()) {
++        observe_stage17_combat_event(stage17, *event);
+         renderer.consume_event(*event);
+         feedback.consume(*event);
+         audio.consume_event(*event);
+     }
+     while (const auto event = session.try_pop_event()) {
+         renderer.consume_dungeon_event(*event);
+         if (dungeon_event_clears_transients(event->kind)) {
+             renderer.clear_combat_transients();
+             feedback.clear();
+             audio.clear_combat_transients();
+@@ -314,20 +323,107 @@ struct Stage11DLootValidationState final {
+     std::int32_t player_hp{};
+     std::uint64_t pickup_item_id{};
+     std::uint64_t pickup_commit_generation{};
+     bool target_visible{};
+     bool captured{};
+     bool abyss_claim_requested{};
+     bool abyss_claimed{};
+ };
+ // STAGE11D_LOOT_VALIDATION_SEAM_END state
+ 
++enum class Stage17ValidationStep : std::uint8_t {
++    initial,
++    empty_slot_3,
++    empty_slot_4,
++    empty_slot_5,
++    approach_draw,
++    draw_active,
++    approach_storm,
++    storm_active,
++    open_inventory,
++    open_skill_page,
++    remove_slot_1,
++    select_draw_inventory,
++    equip_slot_5,
++    swap_slots_2_5,
++    restart_open_inventory,
++    restart_open_skill_page,
++    restart_capture,
++    complete,
++};
++
++enum class Stage17Capture : std::uint8_t {
++    none,
++    initial,
++    draw_hit,
++    storm_array,
++    storm_finisher,
++    restarted,
++};
++
++struct Stage17SkillStonesValidationState final {
++    Stage17ValidationStep step{Stage17ValidationStep::initial};
++    Stage17Capture capture_pending{Stage17Capture::none};
++    skills::SkillLoadoutState initial_loadout{};
++    skills::SkillLoadoutState final_loadout{};
++    combat::Vec3 storm_center{};
++    combat::Vec3 storm_player_start{};
++    bool initial_recorded{};
++    bool initial_captured{};
++    bool draw_accepted{};
++    bool draw_captured{};
++    bool storm_accepted{};
++    bool storm_lock_recorded{};
++    bool storm_center_locked{true};
++    bool storm_player_moved{};
++    bool storm_array_captured{};
++    bool storm_finisher_captured{};
++    bool restart_captured{};
++    bool restart_persisted{};
++    bool restart_cooldowns_zero{};
++    bool public_input_path{};
++    bool production_transactions{};
++    bool aborted_by_death{};
++    std::array<bool, 3> empty_slots_none{};
++    std::uint32_t draw_hit_count{};
++    std::uint32_t storm_strike_hit_count{};
++    std::uint32_t storm_finisher_hit_count{};
++    std::uint8_t storm_strike_count{};
++    std::uint32_t presented_frames{};
++};
++
++void observe_stage17_combat_event(
++    Stage17SkillStonesValidationState* const state,
++    const combat::CombatEvent& event) noexcept {
++    if (state == nullptr || event.kind != combat::CombatEventKind::hit) return;
++    if (event.skill == skills::ActiveSkillId::draw_slash) {
++        ++state->draw_hit_count;
++        if (!state->draw_captured) {
++            state->capture_pending = Stage17Capture::draw_hit;
++        }
++    } else if (event.skill == skills::ActiveSkillId::storm_swords) {
++        if (event.finisher) {
++            ++state->storm_finisher_hit_count;
++            if (!state->storm_finisher_captured) {
++                state->capture_pending = Stage17Capture::storm_finisher;
++            }
++        } else {
++            ++state->storm_strike_hit_count;
++            state->storm_strike_count = std::max(
++                state->storm_strike_count, event.strike_index);
++            if (!state->storm_array_captured) {
++                state->capture_pending = Stage17Capture::storm_array;
++            }
++        }
++    }
++}
++
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN selectors
+ [[nodiscard]] bool stage11d_has_three_ordinary_rarities(
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+     bool normal = false;
+     bool magic = false;
+     bool rare = false;
+     for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
+         const auto& item = snapshot.ground_items[index];
+         if (item.source != dungeon::GroundItemSource::monster_drop) continue;
+         normal = normal || item.rarity == items::ItemRarity::normal;
+@@ -391,20 +487,502 @@ struct Stage11DLootValidationState final {
+ 
+ void inject_stage11b_pressed(PhysicalKeySnapshot& snapshot,
+     settings::StableKey key) noexcept {
+     const std::size_t index = static_cast<std::size_t>(key);
+     if (index < snapshot.pressed.size()) {
+         snapshot.pressed[index] = true;
+         snapshot.down[index] = true;
+     }
+ }
+ 
++[[nodiscard]] const combat::MonsterSnapshot* stage17_nearest_monster(
++    const combat::CombatSnapshot& combat_state) noexcept {
++    const combat::MonsterSnapshot* nearest = nullptr;
++    float nearest_distance = 0.0F;
++    for (const combat::MonsterSnapshot& monster : combat_state.monsters) {
++        if (!monster.active || monster.hp <= 0) continue;
++        const float x = monster.position.x - combat_state.player.position.x;
++        const float y = monster.position.y - combat_state.player.position.y;
++        const float distance = x * x + y * y;
++        if (nearest == nullptr || distance < nearest_distance) {
++            nearest = &monster;
++            nearest_distance = distance;
++        }
++    }
++    return nearest;
++}
++
++void stage17_press_action(PhysicalKeySnapshot& snapshot,
++    const settings::SettingsData& input_settings,
++    const settings::SettingAction action) noexcept {
++    inject_stage11b_pressed(snapshot,
++        settings::binding_for(input_settings, action));
++}
++
++void stage17_hold_action(PhysicalKeySnapshot& snapshot,
++    const settings::SettingsData& input_settings,
++    const settings::SettingAction action) noexcept {
++    const std::size_t index = static_cast<std::size_t>(
++        settings::binding_for(input_settings, action));
++    if (index < snapshot.down.size()) snapshot.down[index] = true;
++}
++
++void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
++    const settings::SettingsData& input_settings,
++    const combat::MovementInput movement) noexcept {
++    if (movement.x < 0) {
++        stage17_hold_action(snapshot, input_settings,
++            settings::SettingAction::move_left);
++    } else if (movement.x > 0) {
++        stage17_hold_action(snapshot, input_settings,
++            settings::SettingAction::move_right);
++    }
++    if (movement.y < 0) {
++        stage17_hold_action(snapshot, input_settings,
++            settings::SettingAction::move_up);
++    } else if (movement.y > 0) {
++        stage17_hold_action(snapshot, input_settings,
++            settings::SettingAction::move_down);
++    }
++}
++
++[[nodiscard]] bool stage17_prepare_skill_lane(
++    PhysicalKeySnapshot& snapshot,
++    const settings::SettingsData& input_settings,
++    const combat::CombatSnapshot& combat_state) noexcept {
++    const combat::MonsterSnapshot* const target =
++        stage17_nearest_monster(combat_state);
++    if (target == nullptr) return false;
++    const combat::Vec3& player = combat_state.player.position;
++    const float x = target->position.x - player.x;
++    const float y = target->position.y - player.y;
++    const int toward = x >= 0.0F ? 1 : -1;
++    combat::MovementInput movement{};
++    if (std::fabs(y) > 0.28F) {
++        movement.y = y > 0.0F ? 1 : -1;
++    }
++    if (std::fabs(x) > 3.8F) {
++        movement.x = static_cast<std::int8_t>(toward);
++    } else if (std::fabs(x) < 3.15F) {
++        movement.x = static_cast<std::int8_t>(-toward);
++    } else {
++        const combat::Facing expected = toward > 0
++            ? combat::Facing::right : combat::Facing::left;
++        if (combat_state.player.facing != expected) {
++            movement.x = static_cast<std::int8_t>(toward);
++        }
++    }
++    if (movement.x != 0 || movement.y != 0) {
++        stage17_apply_movement(snapshot, input_settings, movement);
++        return false;
++    }
++    return true;
++}
++
++[[nodiscard]] Vector2 stage17_center(const Rectangle rectangle) noexcept {
++    return {rectangle.x + rectangle.width * 0.5F,
++        rectangle.y + rectangle.height * 0.5F};
++}
++
++void stage17_click(PhysicalKeySnapshot& snapshot,
++    const Rectangle rectangle) noexcept {
++    snapshot.mouse_left = true;
++    snapshot.mouse_position = stage17_center(rectangle);
++}
++
++[[nodiscard]] PhysicalKeySnapshot inject_stage17_physical_edges(
++    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
++    const settings::SettingsData& input_settings,
++    const dungeon::DungeonSnapshot& current,
++    Stage17SkillStonesValidationState& state) noexcept {
++    if (config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none
++        || snapshot.focus_lost) {
++        return snapshot;
++    }
++    const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
++        config.window_width, config.window_height);
++    switch (state.step) {
++    case Stage17ValidationStep::initial:
++    case Stage17ValidationStep::draw_active:
++    case Stage17ValidationStep::complete:
++    case Stage17ValidationStep::restart_capture:
++        break;
++    case Stage17ValidationStep::empty_slot_3:
++        snapshot.active_skill_slots[2] = true;
++        break;
++    case Stage17ValidationStep::empty_slot_4:
++        snapshot.active_skill_slots[3] = true;
++        break;
++    case Stage17ValidationStep::empty_slot_5:
++        snapshot.active_skill_slots[4] = true;
++        break;
++    case Stage17ValidationStep::approach_draw:
++        if (current.combat.has_value()
++                && stage17_prepare_skill_lane(
++                    snapshot, input_settings, *current.combat)) {
++            snapshot.active_skill_slots[0] = true;
++        }
++        break;
++    case Stage17ValidationStep::approach_storm:
++        if (current.combat.has_value()
++                && stage17_nearest_monster(*current.combat) != nullptr) {
++            snapshot.active_skill_slots[1] = true;
++        }
++        break;
++    case Stage17ValidationStep::storm_active:
++        stage17_apply_movement(snapshot, input_settings, {-1, -1});
++        break;
++    case Stage17ValidationStep::open_inventory:
++    case Stage17ValidationStep::restart_open_inventory:
++        stage17_press_action(snapshot, input_settings,
++            settings::SettingAction::inventory);
++        break;
++    case Stage17ValidationStep::open_skill_page:
++        stage17_click(snapshot, layout.skill_stones_page_button);
++        state.step = Stage17ValidationStep::remove_slot_1;
++        break;
++    case Stage17ValidationStep::remove_slot_1:
++        stage17_click(snapshot, layout.remove_button);
++        break;
++    case Stage17ValidationStep::select_draw_inventory:
++        stage17_click(snapshot, layout.inventory_slots[0]);
++        state.step = Stage17ValidationStep::equip_slot_5;
++        break;
++    case Stage17ValidationStep::equip_slot_5:
++        stage17_click(snapshot, layout.main_slots[4]);
++        break;
++    case Stage17ValidationStep::swap_slots_2_5:
++        stage17_click(snapshot, layout.main_slots[1]);
++        break;
++    case Stage17ValidationStep::restart_open_skill_page:
++        stage17_click(snapshot, layout.skill_stones_page_button);
++        state.step = Stage17ValidationStep::restart_capture;
++        state.capture_pending = Stage17Capture::restarted;
++        break;
++    }
++    return snapshot;
++}
++
++void observe_stage17_submitted_actions(
++    const RaylibHostConfig& config,
++    Stage17SkillStonesValidationState& state,
++    const SubmittedFrameActions& submitted) noexcept {
++    if (config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none) {
++        return;
++    }
++    switch (state.step) {
++    case Stage17ValidationStep::empty_slot_3:
++    case Stage17ValidationStep::empty_slot_4:
++    case Stage17ValidationStep::empty_slot_5: {
++        const std::size_t index = state.step
++                == Stage17ValidationStep::empty_slot_3 ? 2U
++            : state.step == Stage17ValidationStep::empty_slot_4 ? 3U : 4U;
++        state.empty_slots_none[index - 2U] =
++            submitted.skills[index] == combat::SkillCastResult::none;
++        state.public_input_path = true;
++        state.step = index == 2U ? Stage17ValidationStep::empty_slot_4
++            : index == 3U ? Stage17ValidationStep::empty_slot_5
++                          : Stage17ValidationStep::approach_draw;
++        break;
++    }
++    case Stage17ValidationStep::approach_draw:
++        if (submitted.skills[0] == combat::SkillCastResult::accepted) {
++            state.draw_accepted = true;
++            state.public_input_path = true;
++            state.step = Stage17ValidationStep::draw_active;
++        }
++        break;
++    case Stage17ValidationStep::approach_storm:
++        if (submitted.skills[1] == combat::SkillCastResult::accepted) {
++            state.storm_accepted = true;
++            state.public_input_path = true;
++            state.step = Stage17ValidationStep::storm_active;
++        }
++        break;
++    default:
++        break;
++    }
++}
++
++[[nodiscard]] bool stage17_same_point(
++    combat::Vec3 left, combat::Vec3 right) noexcept {
++    constexpr float kTolerance = 0.0001F;
++    return std::fabs(left.x - right.x) <= kTolerance
++        && std::fabs(left.y - right.y) <= kTolerance
++        && std::fabs(left.z - right.z) <= kTolerance;
++}
++
++[[nodiscard]] bool stage17_all_cooldowns_zero(
++    const combat::CombatSnapshot& combat_state) noexcept {
++    return std::all_of(combat_state.skill_cooldowns.begin(),
++        combat_state.skill_cooldowns.end(),
++        [](const std::uint16_t ticks) noexcept { return ticks == 0U; });
++}
++
++[[nodiscard]] bool stage17_final_loadout(
++    const skills::SkillLoadoutState& loadout) noexcept {
++    return loadout.slots[0].active == skills::ActiveSkillId::none
++        && loadout.slots[1].active == skills::ActiveSkillId::draw_slash
++        && loadout.slots[2].active == skills::ActiveSkillId::none
++        && loadout.slots[3].active == skills::ActiveSkillId::none
++        && loadout.slots[4].active == skills::ActiveSkillId::storm_swords;
++}
++
++void observe_stage17_snapshot(const RaylibHostConfig& config,
++    Stage17SkillStonesValidationState& state,
++    const dungeon::DungeonSnapshot& current) noexcept {
++    if (config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none) {
++        return;
++    }
++    if (!state.initial_recorded) {
++        state.initial_loadout = current.skill_loadout;
++        state.initial_recorded = true;
++        if (config.stage17_skill_stones_validation
++                == Stage17SkillStonesValidationScenario::restarted_loadout) {
++            state.restart_persisted = stage17_final_loadout(current.skill_loadout);
++            state.restart_cooldowns_zero = current.combat.has_value()
++                && stage17_all_cooldowns_zero(*current.combat);
++            state.step = Stage17ValidationStep::restart_open_inventory;
++        }
++    }
++    if (current.death.has_value()) {
++        state.aborted_by_death = true;
++        return;
++    }
++    if (!current.combat.has_value()) return;
++    const combat::CombatSnapshot& combat_state = *current.combat;
++    if (state.step == Stage17ValidationStep::draw_active
++            && state.draw_captured
++            && combat_state.active_skill.id == skills::ActiveSkillId::none) {
++        state.step = Stage17ValidationStep::approach_storm;
++    }
++    if (state.step != Stage17ValidationStep::storm_active) return;
++    const combat::ActiveSkillSnapshot& skill = combat_state.active_skill;
++    if (skill.id == skills::ActiveSkillId::storm_swords) {
++        if (!state.storm_lock_recorded) {
++            state.storm_lock_recorded = true;
++            state.storm_center = skill.locked_center;
++            state.storm_player_start = combat_state.player.position;
++        } else {
++            state.storm_center_locked = state.storm_center_locked
++                && stage17_same_point(state.storm_center, skill.locked_center);
++            state.storm_player_moved = state.storm_player_moved
++                || !stage17_same_point(
++                    state.storm_player_start, combat_state.player.position);
++        }
++        state.storm_strike_count = std::max(
++            state.storm_strike_count, skill.strike_index);
++        if (skill.phase == combat::ActiveSkillPhase::strikes
++                && !state.storm_array_captured) {
++            state.capture_pending = Stage17Capture::storm_array;
++        }
++        if (skill.phase == combat::ActiveSkillPhase::finisher
++                && !state.storm_finisher_captured) {
++            state.capture_pending = Stage17Capture::storm_finisher;
++        }
++    } else if (state.storm_array_captured
++            && state.storm_finisher_captured) {
++        state.step = Stage17ValidationStep::open_inventory;
++    }
++}
++
++void observe_stage17_inventory(const RaylibHostConfig& config,
++    Stage17SkillStonesValidationState& state,
++    const InventoryRenderer& inventory,
++    const dungeon::DungeonSnapshot& current) noexcept {
++    if (config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none) {
++        return;
++    }
++    if (state.step == Stage17ValidationStep::open_inventory
++            && inventory.is_open()) {
++        state.step = Stage17ValidationStep::open_skill_page;
++    } else if (state.step == Stage17ValidationStep::remove_slot_1
++            && current.skill_loadout.slots[0].active
++                == skills::ActiveSkillId::none) {
++        state.step = Stage17ValidationStep::select_draw_inventory;
++    } else if (state.step == Stage17ValidationStep::equip_slot_5
++            && current.skill_loadout.slots[4].active
++                == skills::ActiveSkillId::draw_slash) {
++        state.step = Stage17ValidationStep::swap_slots_2_5;
++    } else if (state.step == Stage17ValidationStep::swap_slots_2_5
++            && stage17_final_loadout(current.skill_loadout)) {
++        state.final_loadout = current.skill_loadout;
++        state.production_transactions =
++            !current.pending_save_kind.has_value();
++        state.step = Stage17ValidationStep::complete;
++    } else if (state.step == Stage17ValidationStep::restart_open_inventory
++            && inventory.is_open()) {
++        state.step = Stage17ValidationStep::restart_open_skill_page;
++    }
++}
++
++[[nodiscard]] const char* stage17_capture_name(
++    const Stage17Capture capture) noexcept {
++    switch (capture) {
++    case Stage17Capture::initial: return "01-new-default-1280x720.png";
++    case Stage17Capture::draw_hit: return "02-draw-slash-hit-1280x720.png";
++    case Stage17Capture::storm_array: return "03-storm-array-1280x720.png";
++    case Stage17Capture::storm_finisher: return "04-storm-finisher-1280x720.png";
++    case Stage17Capture::restarted: return "05-restarted-loadout-1280x720.png";
++    case Stage17Capture::none: break;
++    }
++    return nullptr;
++}
++
++[[nodiscard]] std::optional<std::string> stage17_capture_path(
++    const RaylibHostConfig& config,
++    Stage17SkillStonesValidationState& state) noexcept {
++    if (config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none
++        || !config.screenshot_directory.has_value()) {
++        return std::nullopt;
++    }
++    ++state.presented_frames;
++    if (state.step == Stage17ValidationStep::initial
++            && !state.initial_captured && state.presented_frames >= 2U) {
++        state.capture_pending = Stage17Capture::initial;
++    }
++    const char* const name = stage17_capture_name(state.capture_pending);
++    if (name == nullptr) return std::nullopt;
++    return (*config.screenshot_directory / name).string();
++}
++
++void mark_stage17_capture_complete(
++    Stage17SkillStonesValidationState& state) noexcept {
++    switch (state.capture_pending) {
++    case Stage17Capture::initial:
++        state.initial_captured = true;
++        state.step = Stage17ValidationStep::empty_slot_3;
++        break;
++    case Stage17Capture::draw_hit:
++        state.draw_captured = true;
++        break;
++    case Stage17Capture::storm_array:
++        state.storm_array_captured = true;
++        break;
++    case Stage17Capture::storm_finisher:
++        state.storm_finisher_captured = true;
++        break;
++    case Stage17Capture::restarted:
++        state.restart_captured = true;
++        state.step = Stage17ValidationStep::complete;
++        break;
++    case Stage17Capture::none:
++        break;
++    }
++    state.capture_pending = Stage17Capture::none;
++}
++
++[[nodiscard]] const char* stage17_skill_name(
++    const skills::ActiveSkillId id) noexcept {
++    switch (id) {
++    case skills::ActiveSkillId::draw_slash: return "draw_slash";
++    case skills::ActiveSkillId::storm_swords: return "storm_swords";
++    case skills::ActiveSkillId::none: return "none";
++    case skills::ActiveSkillId::count: break;
++    }
++    return "invalid";
++}
++
++void write_stage17_loadout(std::ostream& stream,
++    const skills::SkillLoadoutState& loadout) {
++    for (std::size_t index = 0U; index < loadout.slots.size(); ++index) {
++        if (index != 0U) stream << ',';
++        stream << stage17_skill_name(loadout.slots[index].active);
++    }
++}
++
++[[nodiscard]] std::size_t stage17_support_none_count(
++    const skills::SkillLoadoutState& loadout) noexcept {
++    std::size_t count{};
++    for (const skills::ActiveSkillSlot& slot : loadout.slots) {
++        count += static_cast<std::size_t>(std::count(slot.supports.begin(),
++            slot.supports.end(), skills::SupportSkillId::none));
++    }
++    return count;
++}
++
++[[nodiscard]] bool stage17_validation_complete(
++    const RaylibHostConfig& config,
++    const Stage17SkillStonesValidationState& state) noexcept {
++    return config.stage17_skill_stones_validation
++            != Stage17SkillStonesValidationScenario::none
++        && (state.step == Stage17ValidationStep::complete
++            || state.aborted_by_death);
++}
++
++void write_stage17_validation_summary(const RaylibHostConfig& config,
++    const Stage17SkillStonesValidationState& state) noexcept {
++    if (!config.validation_summary_file.has_value()
++        || config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none) {
++        return;
++    }
++    try {
++        std::ofstream stream(*config.validation_summary_file,
++            std::ios::out | std::ios::trunc);
++        if (!stream) return;
++        const bool production = config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::production_sequence;
++        const bool empty_slots = std::all_of(state.empty_slots_none.begin(),
++            state.empty_slots_none.end(), [](const bool value) noexcept {
++                return value;
++            });
++        const bool passed = production
++            ? state.step == Stage17ValidationStep::complete
++                && state.initial_captured && state.draw_accepted
++                && state.draw_captured && state.storm_accepted
++                && state.storm_array_captured && state.storm_finisher_captured
++                && state.storm_center_locked && state.storm_player_moved
++                && state.public_input_path && state.production_transactions
++                && empty_slots
++            : state.step == Stage17ValidationStep::complete
++                && state.restart_captured && state.restart_persisted
++                && state.restart_cooldowns_zero;
++        stream << "scenario=" << (production
++                ? "production_sequence" : "restarted_loadout") << '\n'
++               << "result=" << (passed ? "pass" : "fail") << '\n'
++               << "final_step=" << static_cast<unsigned>(state.step) << '\n'
++               << "aborted_by_death=" << (state.aborted_by_death ? 1 : 0) << '\n'
++               << "initial_slots=";
++        write_stage17_loadout(stream, state.initial_loadout);
++        stream << '\n' << "final_slots=";
++        write_stage17_loadout(stream, state.final_loadout);
++        stream << '\n'
++               << "owned_active_bits=" << state.initial_loadout.owned_active_bits << '\n'
++               << "support_none_count="
++               << stage17_support_none_count(state.initial_loadout) << '\n'
++               << "empty_slots_none=" << (empty_slots ? 1 : 0) << '\n'
++               << "draw_accepted=" << (state.draw_accepted ? 1 : 0) << '\n'
++               << "draw_hit_count=" << state.draw_hit_count << '\n'
++               << "storm_accepted=" << (state.storm_accepted ? 1 : 0) << '\n'
++               << "storm_strike_hit_count=" << state.storm_strike_hit_count << '\n'
++               << "storm_finisher_hit_count=" << state.storm_finisher_hit_count << '\n'
++               << "storm_strike_count="
++               << static_cast<unsigned>(state.storm_strike_count) << '\n'
++               << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
++               << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
++               << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
++               << "production_transactions="
++               << (state.production_transactions ? 1 : 0) << '\n'
++               << "restart_persisted=" << (state.restart_persisted ? 1 : 0) << '\n'
++               << "restart_cooldowns_zero="
++               << (state.restart_cooldowns_zero ? 1 : 0) << '\n';
++    } catch (...) {
++        TraceLog(LOG_WARNING, "failed to write stage17 validation summary");
++    }
++}
++
+ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
+     std::uint32_t frame) noexcept {
+     if (frame == 1U) snapshot.escape = true;
+     if (frame == 2U) inject_stage11b_pressed(snapshot, settings::StableKey::arrow_down);
+     if (frame == 3U) snapshot.enter = true;
+ }
+ 
+ [[nodiscard]] PhysicalKeySnapshot inject_stage11b_physical_edges(
+     PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
+     Stage11BValidationState& state) noexcept {
+@@ -1761,21 +2339,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+         HostSettingsNotice settings_notice =
+             make_host_settings_notice(loaded.status);
+         settings::SettingsData committed_settings = loaded.settings;
+         if (settings::validate_settings(committed_settings)
+                 != settings::SettingsValidationError::none) {
+             committed_settings = settings::default_settings();
+         }
+         DungeonRuntimeConfig runtime_config{};
+         runtime_config.save.directory = *save_directory;
+         runtime_config.new_run_seed = config.new_run_seed;
+-        DungeonRuntime runtime(runtime_config);
++        const auto runtime_storage =
++            std::make_unique<DungeonRuntime>(runtime_config);
++        DungeonRuntime& runtime = *runtime_storage;
+         const bool initialized = runtime.initialize();
+         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
+             return HostExitCode::save_initialization_failed;
+         }
+ 
+         SetConfigFlags(initial_window_flags(committed_settings));
+         InitWindow(config.window_width, config.window_height, config.window_title);
+         window_ready = IsWindowReady();
+         if (!window_ready) {
+             TraceLog(LOG_ERROR, "raylib window initialization failed");
+@@ -1790,20 +2370,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+         SetWindowMinSize(800, 450);
+         SetExitKey(KEY_NULL);
+ #ifdef _WIN32
+         if (config.stage11b_validation != Stage11BValidationScenario::none
+                 || config.stage11c_hud_validation
+                     != Stage11CHudValidationScenario::none
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN foreground
+                 || config.stage11d_loot_validation
+                     != Stage11DLootValidationScenario::none
+ // STAGE11D_LOOT_VALIDATION_SEAM_END foreground
++                || config.stage17_skill_stones_validation
++                    != Stage17SkillStonesValidationScenario::none
+                 ) {
+             static_cast<void>(SetForegroundWindow(GetWindowHandle()));
+         }
+ #endif
+         core::FixedStepRunner fixed_step;
+         CombatRenderer renderer;
+         const bool hud_resources_ready = renderer.initialize_resources();
+         PauseMenuRenderer pause_menu_renderer;
+         static_cast<void>(pause_menu_renderer.initialize());
+         CombatFeedback feedback;
+@@ -1831,66 +2413,86 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+         unsigned validation_capture_count = 0U;
+         Stage10ValidationState stage10_validation_state{};
+         Stage11ValidationState stage11_validation_state{};
+         Stage11BValidationState stage11b_validation_state{};
+         stage11b_validation_state.load_status = loaded.status;
+         Stage11CHudValidationState stage11c_validation_state{};
+         stage11c_validation_state.cjk_font_ready = hud_resources_ready;
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_state
+         Stage11DLootValidationState stage11d_validation_state{};
+ // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_state
++        const auto stage17_validation_state =
++            std::make_unique<Stage17SkillStonesValidationState>();
+         bool stage10_validation_captured = false;
+         const std::string validation_capture_prefix = config.validation_capture
+             ? (*save_directory / "stage8-validation-").string()
+             : std::string{};
+         const auto validation_capture_path = [&]() noexcept
+                 -> std::optional<std::string> {
+             if (!config.validation_capture
+                     || validation_capture_count >= 2000U
+                     || ++validation_capture_tick < 60U) {
+                 return std::nullopt;
+             }
+             validation_capture_tick = 0U;
+             ++validation_capture_count;
+             return std::string{TextFormat("%s%03u.png",
+                 validation_capture_prefix.c_str(), validation_capture_count)};
+         };
+-        dungeon::DungeonSnapshot current{};
+-        dungeon::DungeonSnapshot previous{};
++        const auto current_storage =
++            std::make_unique<dungeon::DungeonSnapshot>();
++        const auto previous_storage =
++            std::make_unique<dungeon::DungeonSnapshot>();
++        const auto presented_snapshot_storage =
++            std::make_unique<dungeon::DungeonSnapshot>();
++        dungeon::DungeonSnapshot& current = *current_storage;
++        dungeon::DungeonSnapshot& previous = *previous_storage;
++        dungeon::DungeonSnapshot& presented_snapshot =
++            *presented_snapshot_storage;
+         if (runtime.session() != nullptr) {
+             current = runtime.session()->snapshot();
+             previous = current;
+-            drain_events(*runtime.session(), renderer, feedback, audio);
++            observe_stage17_snapshot(
++                config, *stage17_validation_state, current);
++            drain_events(*runtime.session(), renderer, feedback, audio,
++                stage17_validation_state.get());
+         }
+ 
+         while (!exit_requested) {
++            observe_stage17_snapshot(
++                config, *stage17_validation_state, current);
+             const bool window_close_requested = WindowShouldClose();
+             const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+             const PhysicalKeySnapshot stage11b_physical_keys =
+                 inject_stage11b_physical_edges(
+                 sampled_physical_keys, config, stage11b_validation_state);
+             const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
+                 stage11b_physical_keys, config, input_settings, current,
+                 stage11c_validation_state);
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_input
+             const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+                 stage11c_physical_keys, config, input_settings, current,
+                 stage11d_validation_state);
+ // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_input
++            const PhysicalKeySnapshot stage17_physical_keys =
++                inject_stage17_physical_edges(physical_keys,
++                    config, input_settings, current,
++                    *stage17_validation_state);
+             HostFrameInput frame_input = map_host_frame_input(
+-                input_settings, physical_keys);
++                input_settings, stage17_physical_keys);
+             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
+                     frame_input.keys.recovery)) {
+                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
+                     current = runtime.session()->snapshot();
+                     previous = current;
+-                    drain_events(*runtime.session(), renderer, feedback, audio);
++                    drain_events(*runtime.session(), renderer, feedback, audio,
++                        stage17_validation_state.get());
+                 }
+             }
+             if (runtime.state() == DungeonRuntimeState::recovery_required) {
+                 if (inventory.is_open()) {
+                     inventory.close();
+                     fixed_step.clear_accumulator();
+                 }
+                 if (frame_input.keys.escape || window_close_requested) {
+                     exit_requested = true;
+                     continue;
+@@ -2015,27 +2617,30 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     && death_gate.debug_toggle) {
+                 draw_debug = !draw_debug;
+                 stage11c_validation_state.debug_visible = draw_debug;
+             }
+             if (death_gate.forward_gameplay
+                 && pause_menu.screen == PauseScreen::closed
+                 && inventory.is_open()
+                 && inventory.process_input(runtime, current, frame_input)) {
+                 current = session->snapshot();
+                 previous = current;
+-                drain_events(*session, renderer, feedback, audio);
++                drain_events(*session, renderer, feedback, audio,
++                    stage17_validation_state.get());
+                 if (runtime.state() != DungeonRuntimeState::running) {
+                     inventory.close();
+                     fixed_step.clear_accumulator();
+                     inventory_toggled_this_frame = true;
+                 }
+             }
++            observe_stage17_inventory(config, *stage17_validation_state,
++                inventory, current);
+             const PauseScreen pause_screen_before = pause_menu.screen;
+             const bool pause_was_open =
+                 pause_screen_before != PauseScreen::closed;
+             if (pause_was_open && physical_keys.mouse_left) {
+                 const PauseMenuLayout layout = pause_menu_layout(
+                     GetScreenWidth(), GetScreenHeight());
+                 const auto selected = hit_test_pause_row(
+                     layout, physical_keys.mouse_position);
+                 if (selected.has_value()) pause_menu.selected_row = *selected;
+             }
+@@ -2106,41 +2711,44 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 && inventory_gate.forward_descent
+                 && death_gate.forward_gameplay
+                 && host_gate.forward_gameplay && !pause_blocks_gameplay;
+             if (forward_actions && inventory_gate.forward_room_reset
+                 && frame_input.keys.reset) {
+                 const dungeon::RequestResult reset =
+                     session->reset_current_room();
+                 if (reset != dungeon::RequestResult::rejected) {
+                     current = session->snapshot();
+                     previous = current;
+-                    drain_events(*session, renderer, feedback, audio);
++                    drain_events(*session, renderer, feedback, audio,
++                        stage17_validation_state.get());
+                 }
+             }
+             if (!pause_blocks_gameplay && death_gate.forward_gameplay
+                     && passive_overlay_open
+                     && frame_input.keys.mouse_gameplay) {
+                 const auto selected = hit_test_passive_node(
+                     {frame_input.mouse_position.x, frame_input.mouse_position.y},
+                     static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight()));
+                 if (selected.has_value()) {
+                     const bool allocated = (current.passive_tree.allocated_bits
+                         & (1ULL << *selected)) != 0U;
+                     static_cast<void>(allocated
+                         ? session->request_passive_refund(*selected)
+                         : session->request_passive_allocation(*selected));
+                     current = session->snapshot();
+                 }
+             }
+             if (forward_actions) {
+                 const SubmittedFrameActions submitted_actions =
+                     submit_frame_actions(*session, frame_input);
++                observe_stage17_submitted_actions(
++                    config, *stage17_validation_state, submitted_actions);
+                 if (config.stage11b_validation
+                         == Stage11BValidationScenario::rebound_attack) {
+                     if (stage11b_validation_state.injected_frame == 28U) {
+                         stage11b_validation_state.old_attack_checked = true;
+                         stage11b_validation_state.old_attack_count +=
+                             submitted_actions.combat[0] ? 1U : 0U;
+                     } else if (stage11b_validation_state.injected_frame == 29U) {
+                         stage11b_validation_state.new_attack_count +=
+                             submitted_actions.combat[0] ? 1U : 0U;
+                     }
+@@ -2165,20 +2773,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                         || config.stage11_validation
+                             != Stage11ValidationScenario::none
+                         || config.stage11b_validation
+                             != Stage11BValidationScenario::none
+                         || config.stage11c_hud_validation
+                             != Stage11CHudValidationScenario::none
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN fixed_step
+                         || config.stage11d_loot_validation
+                             != Stage11DLootValidationScenario::none
+ // STAGE11D_LOOT_VALIDATION_SEAM_END fixed_step
++                        || config.stage17_skill_stones_validation
++                            != Stage17SkillStonesValidationScenario::none
+                         ) {
+                     if (config.validation_steps_per_frame != 0U) {
+                         frame.steps = config.validation_steps_per_frame;
+                         frame.interpolation_alpha = 0.0;
+                     }
+                 }
+             }
+             for (std::uint32_t step = 0; step < frame.steps; ++step) {
+                 previous = current;
+                 const bool step_death = current.death.has_value();
+@@ -2193,20 +2803,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                         step_movement = stage10_validation_input(*session,
+                             current, config, stage10_validation_state);
+                     } else {
+                         step_movement = movement;
+                     }
+                 }
+                 runtime.fixed_tick(step_movement,
+                     loot_pickup_policy(live_settings.loot_filter_mode));
+                 ++stage11b_validation_state.fixed_ticks;
+                 current = session->snapshot();
++                observe_stage17_snapshot(
++                    config, *stage17_validation_state, current);
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN abyss_claim
+                 if (stage11d_validation_state.abyss_claim_requested) {
+                     bool still_ground = false;
+                     for (std::size_t index = 0U;
+                          index < current.ground_item_count; ++index) {
+                         still_ground = still_ground
+                             || current.ground_items[index].item_id
+                                 == stage11d_validation_state.abyss_item_id;
+                     }
+                     bool now_owned = false;
+@@ -2223,21 +2835,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     passive_overlay_open = false;
+                 }
+                 if (!passive_tree_can_open(current)) {
+                     passive_overlay_open = false;
+                 }
+                 if (runtime.state() != DungeonRuntimeState::running
+                     && inventory.is_open()) {
+                     inventory.close();
+                     fixed_step.clear_accumulator();
+                 }
+-                drain_events(*session, renderer, feedback, audio);
++                drain_events(*session, renderer, feedback, audio,
++                    stage17_validation_state.get());
+                 if (stage10_validation_reached(
+                         current, config, stage10_validation_state)) {
+                     break;
+                 }
+                 if (stage11_validation_reached(
+                         current, config, stage11_validation_state)) {
+                     break;
+                 }
+             }
+ 
+@@ -2290,21 +2903,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 stage11c_validation_state.debug_visible = draw_debug;
+             } else {
+                 stage11c_validation_state.target_presented_frames = 0U;
+             }
+             const settings::LootFilterMode presented_loot_filter =
+                 renderer_loot_filter_mode(
+                     pause_menu.screen, live_settings, pause_menu.draft);
+             renderer.set_loot_filter_mode(presented_loot_filter);
+             BeginDrawing();
+             ClearBackground(Color{13, 17, 27, 255});
+-            dungeon::DungeonSnapshot presented_snapshot = current;
++            presented_snapshot = current;
+             if (config.stage12_material_showcase) {
+                 apply_stage12_material_showcase(presented_snapshot);
+             }
+             const GroundLootView ground_loot_view = renderer.draw(
+                 previous, presented_snapshot, runtime.render_status(),
+                 static_cast<float>(frame.interpolation_alpha), draw_debug,
+                 feedback, audio_ready);
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics
+             stage11d_validation_state.target_visible = stage11d_target_visible(
+                 config, current, pause_menu, runtime.render_status(),
+@@ -2375,45 +2988,50 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             const bool stage11b_reached = stage11b_validation_complete(
+                 config, stage11b_validation_state, pause_menu);
+             const bool stage11c_reached = stage11c_target_visible
+                 && stage11c_validation_state.target_presented_frames >= 4U;
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached
+             const bool stage11d_reached = stage11d_validation_state.captured
+                 && (config.stage11d_loot_validation
+                         != Stage11DLootValidationScenario::rare_only_abyss
+                     || stage11d_validation_state.abyss_claimed);
+ // STAGE11D_LOOT_VALIDATION_SEAM_END reached
++            const bool stage17_reached = stage17_validation_complete(
++                config, *stage17_validation_state);
+             const bool stage11b_visible_capture =
+                 (config.stage11b_validation == Stage11BValidationScenario::rebound_attack
+                     || config.stage11b_validation == Stage11BValidationScenario::conflict_swap)
+                 && stage11b_validation_state.injected_frame == 21U;
+             const bool stage11b_paused_visible_capture =
+                 config.stage11b_validation == Stage11BValidationScenario::paused_freeze
+                 && pause_menu.screen != PauseScreen::closed
+                 && stage11b_validation_state.paused_presented >= 120U
+                 && !stage11b_validation_state.pause_capture_while_paused;
+             const bool prior_validation_reached = stage10_reached || stage11_reached
+                 || stage11b_reached || stage11c_reached;
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached_merge
+             const bool validation_reached = prior_validation_reached
+-                || stage11d_reached;
++                || stage11d_reached || stage17_reached;
+ // STAGE11D_LOOT_VALIDATION_SEAM_END reached_merge
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN visible_capture
+             const bool loot_validation_visible_capture =
+                 stage11d_validation_state.target_visible;
+             const bool no_loot_validation_active =
+                 config.stage11d_loot_validation
+                     == Stage11DLootValidationScenario::none;
+ // STAGE11D_LOOT_VALIDATION_SEAM_END visible_capture
+-            std::optional<std::string> capture_path{};
++            std::optional<std::string> capture_path = stage17_capture_path(
++                config, *stage17_validation_state);
++            const bool stage17_capture_requested = capture_path.has_value();
+             bool captured_stage10_target = false;
+-            if ((validation_reached || loot_validation_visible_capture
++            if (!capture_path.has_value()
++                    && (validation_reached || loot_validation_visible_capture
+                     || stage11b_visible_capture
+                     || stage11b_paused_visible_capture)
+                     && !stage10_validation_captured
+                     && config.validation_capture_file.has_value()) {
+                 capture_path = config.validation_capture_file->string();
+                 captured_stage10_target = true;
+                 stage11b_validation_state.pause_capture_while_paused =
+                     stage11b_paused_visible_capture;
+             }
+             if (death_gate.screenshot || (config.validation_request_screenshot
+@@ -2431,20 +3049,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     && presented_frame_count + 1U
+                         >= config.validation_exit_after_presented_frames) {
+                 // Formal material validation captures an ordinary gameplay frame
+                 // at a caller-owned path without sharing the legacy F12 file.
+                 capture_path = config.validation_capture_file->string();
+             } else if (!capture_path.has_value()) {
+                 capture_path = validation_capture_path();
+             }
+             present_frame_and_maybe_capture(capture_path.has_value()
+                 ? capture_path->c_str() : nullptr);
++            if (stage17_capture_requested) {
++                mark_stage17_capture_complete(*stage17_validation_state);
++            }
+             ++presented_frame_count;
+             if (captured_stage10_target && stage11c_reached) {
+                 stage11c_validation_state.captured = true;
+             }
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN captured
+             if (captured_stage10_target
+                     && stage11d_validation_state.target_visible) {
+                 stage11d_validation_state.captured = true;
+             }
+ // STAGE11D_LOOT_VALIDATION_SEAM_END captured
+@@ -2462,20 +3083,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             }
+         }
+         write_stage11b_validation_summary(config, stage11b_validation_state,
+             pause_menu);
+         write_stage11c_hud_validation_summary(config,
+             stage11c_validation_state);
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN summary
+         write_stage11d_loot_validation_summary(config,
+             stage11d_validation_state, pause_menu);
+ // STAGE11D_LOOT_VALIDATION_SEAM_END summary
++        write_stage17_validation_summary(config, *stage17_validation_state);
+         audio.shutdown();
+         renderer.shutdown_resources();
+         pause_menu_renderer.shutdown();
+         CloseWindow();
+         return HostExitCode::success;
+     } catch (const std::exception& exception) {
+         TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+         if (window_ready) {
+             CloseWindow();
+         }
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index 43f2a5a..db8f5f1 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -76,20 +76,26 @@ enum class Stage11CHudValidationScenario : std::uint8_t {
+ enum class Stage11DLootValidationScenario : std::uint8_t {
+     none,
+     show_all,
+     magic_or_better,
+     rare_only,
+     rare_only_abyss,
+     preview_cancel,
+     pickup_feedback,
+ };
+ 
++enum class Stage17SkillStonesValidationScenario : std::uint8_t {
++    none,
++    production_sequence,
++    restarted_loadout,
++};
++
+ struct RaylibHostConfig final {
+     int window_width{1280};
+     int window_height{720};
+     const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
+     std::optional<std::filesystem::path> save_directory{};
+     std::optional<std::filesystem::path> settings_directory{};
+     // F12 writes into this caller-owned directory when provided, isolating
+     // concurrent formal runs from the legacy executable-directory capture.
+     std::optional<std::filesystem::path> screenshot_directory{};
+     std::optional<std::uint64_t> new_run_seed{};
+@@ -98,20 +104,22 @@ struct RaylibHostConfig final {
+     Stage10ValidationScenario stage10_validation{
+         Stage10ValidationScenario::none};
+     Stage11ValidationScenario stage11_validation{
+         Stage11ValidationScenario::none};
+     Stage11BValidationScenario stage11b_validation{
+         Stage11BValidationScenario::none};
+     Stage11CHudValidationScenario stage11c_hud_validation{
+         Stage11CHudValidationScenario::none};
+     Stage11DLootValidationScenario stage11d_loot_validation{
+         Stage11DLootValidationScenario::none};
++    Stage17SkillStonesValidationScenario stage17_skill_stones_validation{
++        Stage17SkillStonesValidationScenario::none};
+     std::uint8_t validation_abyss_direction{0xFFU};
+     std::uint32_t validation_steps_per_frame{};
+     std::optional<std::filesystem::path> validation_capture_file{};
+     std::optional<std::filesystem::path> validation_summary_file{};
+     bool validation_request_screenshot{};
+     bool stage12_material_showcase{};
+ };
+ 
+ struct HostFrameGateResult final {
+     bool forward_gameplay{};
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 70e5188..6b47455 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -67,20 +67,58 @@ if(TARGET arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_stage16_loot_reinforcement_game_validation PRIVATE /utf-8)
+     endif()
+     arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_game_validation)
+     add_test(NAME stage16.loot_reinforcement.real_raylib
+         COMMAND "$<TARGET_FILE:arpg_stage16_loot_reinforcement_game_validation>"
+             "${CMAKE_CURRENT_BINARY_DIR}/stage16 loot reinforcement evidence")
+     set_tests_properties(stage16.loot_reinforcement.real_raylib PROPERTIES
+         LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE)
+ 
++    add_executable(arpg_stage17_skill_stones_game_validation
++        stage17_skill_stones_game_validation.cpp)
++    target_compile_features(arpg_stage17_skill_stones_game_validation
++        PRIVATE cxx_std_17)
++    target_link_libraries(arpg_stage17_skill_stones_game_validation
++        PRIVATE arpg_raylib)
++    if(MSVC)
++        target_compile_options(arpg_stage17_skill_stones_game_validation
++            PRIVATE /utf-8)
++    endif()
++    arpg_enable_project_warnings(arpg_stage17_skill_stones_game_validation)
++    set(_stage17_evidence_root
++        "${CMAKE_CURRENT_BINARY_DIR}/stage17 skill stones evidence")
++    set(_stage17_evidence_run "${_stage17_evidence_root}/stage17-run")
++    add_test(NAME stage17.skill_stones.real_raylib
++        COMMAND "$<TARGET_FILE:arpg_stage17_skill_stones_game_validation>"
++            "${_stage17_evidence_root}")
++    set_tests_properties(stage17.skill_stones.real_raylib PROPERTIES
++        LABELS "platform;raylib;graphics;formal-game;stage17;validation"
++        TIMEOUT 180 RUN_SERIAL TRUE FIXTURES_SETUP stage17_skill_stones_evidence)
++    add_test(NAME stage17.skill_stones.evidence_validator
++        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
++            "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator.ps1"
++            -EvidenceDirectory "${_stage17_evidence_run}")
++    set_tests_properties(stage17.skill_stones.evidence_validator PROPERTIES
++        LABELS "platform;raylib;graphics;formal-game;stage17;validation"
++        TIMEOUT 60 FIXTURES_REQUIRED stage17_skill_stones_evidence)
++    add_test(NAME stage17.skill_stones.evidence_validator_self_test
++        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
++            "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator_self_test.ps1"
++            -EvidenceDirectory "${_stage17_evidence_run}"
++            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator.ps1"
++            -MutationRoot "${_stage17_evidence_run}/validator-self-test")
++    set_tests_properties(
++        stage17.skill_stones.evidence_validator_self_test PROPERTIES
++        LABELS "platform;raylib;graphics;formal-game;negative;stage17;validation"
++        TIMEOUT 90 FIXTURES_REQUIRED stage17_skill_stones_evidence)
++
+     add_executable(arpg_stage12_material_formal
+         stage12_material_formal_game_validation.cpp)
+     target_compile_features(arpg_stage12_material_formal PRIVATE cxx_std_17)
+     target_compile_definitions(arpg_stage12_material_formal
+         PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+     target_link_libraries(arpg_stage12_material_formal PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_stage12_material_formal PRIVATE /utf-8)
+     endif()
+     arpg_enable_project_warnings(arpg_stage12_material_formal)
+diff --git a/tests/platform/host_input_source_test.cmake b/tests/platform/host_input_source_test.cmake
+index 9f31b87..3767c14 100644
+--- a/tests/platform/host_input_source_test.cmake
++++ b/tests/platform/host_input_source_test.cmake
+@@ -32,20 +32,22 @@ set(ANY_INCLUDE_LINE_PATTERN
+ set(ACTIVE_ASSERT_PATTERN
+     "${SOURCE_LINE_START}static_assert[ \t]*\\([ \t]*arpg::platform::direct_input_poison::active[ \t]*(,|\\))")
+ set(SAMPLE_CALL_LINE_PATTERN
+     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+sampled_physical_keys[ \t]*=[ \t]*sample_physical_keys[ \t]*\\([ \t]*\\)")
+ set(STAGE11B_INJECT_CALL_LINE_PATTERN
+     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11b_physical_keys[ \t]*=[ \t\r\n]*inject_stage11b_physical_edges[ \t]*\\(")
+ set(STAGE11C_INJECT_CALL_LINE_PATTERN
+     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11c_physical_keys[ \t]*=[ \t]*inject_stage11c_physical_edges[ \t]*\\(")
+ set(STAGE11D_INJECT_CALL_LINE_PATTERN
+     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*inject_stage11d_physical_edges[ \t]*\\(")
++set(STAGE17_INJECT_CALL_LINE_PATTERN
++    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage17_physical_keys[ \t]*=[ \t\r\n]*inject_stage17_physical_edges[ \t]*\\(")
+ set(MAP_CALL_LINE_PATTERN
+     "${SOURCE_LINE_START}HostFrameInput[ \t]+frame_input[ \t]*=[ \t]*map_host_frame_input[ \t]*\\(")
+ set(ACTIVE_SENTINEL_PATTERN
+     "${SOURCE_LINE_START}inline[ \t]+constexpr[ \t]+bool[ \t]+active[ \t]*=[ \t]*true")
+ 
+ function(poison_macro_line_pattern API OUT_PATTERN)
+     set("${OUT_PATTERN}"
+         "(^|\n)#define[ \t]+${API}[ \t]+::arpg::platform::direct_input_poison::blocked${SOURCE_LINE_END}"
+         PARENT_SCOPE)
+ endfunction()
+@@ -56,37 +58,44 @@ set(COMMENT_ONLY_STRUCTURE [=[
+ // const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+ // const PhysicalKeySnapshot stage11b_physical_keys =
+ //     inject_stage11b_physical_edges(
+ //     sampled_physical_keys, config, stage11b_validation_state);
+ // const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
+ //     stage11b_physical_keys, config, input_settings, current,
+ //     stage11c_validation_state);
+ // const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+ //     stage11c_physical_keys, config, input_settings, current,
+ //     stage11d_validation_state);
+-// HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
++// const PhysicalKeySnapshot stage17_physical_keys =
++//     inject_stage17_physical_edges(physical_keys, config, input_settings,
++//         current, *stage17_validation_state);
++// HostFrameInput frame_input = map_host_frame_input(settings, stage17_physical_keys);
+ // #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
+ ]=])
+ set(REAL_STRUCTURE [=[
+ #include "direct_input_poison.hpp"
+ static_assert(arpg::platform::direct_input_poison::active, "active");
+ const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+ const PhysicalKeySnapshot stage11b_physical_keys =
+     inject_stage11b_physical_edges(
+     sampled_physical_keys, config, stage11b_validation_state);
+ const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
+     stage11b_physical_keys, config, input_settings, current,
+     stage11c_validation_state);
+ const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+     stage11c_physical_keys, config, input_settings, current,
+     stage11d_validation_state);
+-HostFrameInput frame_input = map_host_frame_input(input_settings, physical_keys);
++const PhysicalKeySnapshot stage17_physical_keys =
++    inject_stage17_physical_edges(physical_keys, config, input_settings,
++        current, *stage17_validation_state);
++HostFrameInput frame_input = map_host_frame_input(
++    input_settings, stage17_physical_keys);
+ DeathInputGate death_gate = host_death_input_gate(
+     death_saving, death_pending, frame_input.keys, physical_keys);
+ const bool pause_blocks_gameplay = pause_open || pause_was_open;
+ HostFrameGateResult host_gate{};
+ if (pause_open) {
+     host_gate = gate_host_frame(fixed_step, pause_latched, true,
+         static_cast<double>(frame_seconds));
+ } else if (!inventory.is_open() && !inventory_toggled_this_frame) {
+     host_gate = gate_host_frame(fixed_step, pause_latched, false,
+         static_cast<double>(frame_seconds));
+@@ -118,20 +127,21 @@ const combat::MovementInput movement = forward_movement
+ #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
+ ]=])
+ poison_macro_line_pattern(IsKeyDown SELF_TEST_MACRO_PATTERN)
+ foreach(STRUCTURE_PATTERN IN ITEMS
+         POISON_INCLUDE_LINE_PATTERN
+         ACTIVE_ASSERT_PATTERN
+         SAMPLE_CALL_LINE_PATTERN
+         STAGE11B_INJECT_CALL_LINE_PATTERN
+         STAGE11C_INJECT_CALL_LINE_PATTERN
+         STAGE11D_INJECT_CALL_LINE_PATTERN
++        STAGE17_INJECT_CALL_LINE_PATTERN
+         MAP_CALL_LINE_PATTERN
+         SELF_TEST_MACRO_PATTERN)
+     require_match_count(
+         "${COMMENT_ONLY_STRUCTURE}"
+         "${${STRUCTURE_PATTERN}}"
+         0
+         "commented ${STRUCTURE_PATTERN}")
+     require_match_count(
+         "${REAL_STRUCTURE}"
+         "${${STRUCTURE_PATTERN}}"
+@@ -185,77 +195,87 @@ require_match_count(
+ require_match_count(
+     "${HOST_SOURCE}"
+     "${STAGE11C_INJECT_CALL_LINE_PATTERN}"
+     1
+     "host stage11c physical injection calls")
+ require_match_count(
+     "${HOST_SOURCE}"
+     "${STAGE11D_INJECT_CALL_LINE_PATTERN}"
+     1
+     "host stage11d physical injection calls")
++require_match_count(
++    "${HOST_SOURCE}"
++    "${STAGE17_INJECT_CALL_LINE_PATTERN}"
++    1
++    "host stage17 physical injection calls")
+ require_match_count(
+     "${HOST_SOURCE}"
+     "${MAP_CALL_LINE_PATTERN}"
+     1
+     "host logical mapping calls")
+ 
+ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
+     arpg_sanitize_cpp_source("${SOURCE}" SOURCE)
+     set(WS "[ \t\r\n]*")
+     set(WS1 "[ \t\r\n]+")
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
++    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" STAGE17_INDEX)
+     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
+     string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
+     string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
+     string(FIND "${SOURCE}" "HostFrameGateResult host_gate{}" HOST_GATE_INDEX)
+     string(FIND "${SOURCE}" "const PassiveOverlayInputGate passive_input_gate =" PASSIVE_GATE_INDEX)
+     string(FIND "${SOURCE}" "const InventoryInputGate inventory_gate =" INVENTORY_GATE_INDEX)
+     string(FIND "${SOURCE}" "const bool forward_actions =" FORWARD_ACTIONS_INDEX)
+     string(FIND "${SOURCE}" "const bool forward_descent =" FORWARD_DESCENT_DECL_INDEX)
+     string(FIND "${SOURCE}" "if (forward_actions) {" FORWARD_ACTIONS_IF_INDEX)
+     string(FIND "${SOURCE}" "submit_frame_actions(*session, frame_input)" SUBMIT_ACTIONS_INDEX)
+     string(FIND "${SOURCE}" "if (forward_descent && frame_input.keys.e)" FORWARD_DESCENT_INDEX)
+     string(FIND "${SOURCE}" "session->request_descent(in_range)" REQUEST_DESCENT_INDEX)
+     string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
+     if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
+-            OR STAGE11D_INDEX EQUAL -1
++            OR STAGE11D_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
+             OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
+             OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
+             OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
+             OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
+             OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
+             OR MOVEMENT_INPUT_INDEX EQUAL -1
+             OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
+-            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX OR NOT STAGE11D_INDEX LESS MAP_INDEX
++            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX
++            OR NOT STAGE11D_INDEX LESS STAGE17_INDEX
++            OR NOT STAGE17_INDEX LESS MAP_INDEX
+             OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
+             OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
+             OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
+             OR NOT INVENTORY_GATE_INDEX LESS FORWARD_ACTIONS_INDEX
+             OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_DESCENT_DECL_INDEX
+             OR NOT FORWARD_DESCENT_DECL_INDEX LESS FORWARD_ACTIONS_IF_INDEX
+             OR NOT FORWARD_ACTIONS_IF_INDEX LESS SUBMIT_ACTIONS_INDEX
+             OR NOT SUBMIT_ACTIONS_INDEX LESS FORWARD_DESCENT_INDEX
+             OR NOT FORWARD_DESCENT_INDEX LESS REQUEST_DESCENT_INDEX
+             OR NOT REQUEST_DESCENT_INDEX LESS MOVEMENT_INPUT_INDEX)
+         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+         return()
+     endif()
+ 
+     math(EXPR STAGE11B_LENGTH "${STAGE11C_INDEX} - ${STAGE11B_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH} STAGE11B_SOURCE)
+     math(EXPR STAGE11C_LENGTH "${STAGE11D_INDEX} - ${STAGE11C_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH} STAGE11C_SOURCE)
+-    math(EXPR STAGE11D_LENGTH "${MAP_INDEX} - ${STAGE11D_INDEX}")
++    math(EXPR STAGE11D_LENGTH "${STAGE17_INDEX} - ${STAGE11D_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${STAGE11D_INDEX} ${STAGE11D_LENGTH} STAGE11D_SOURCE)
++    math(EXPR STAGE17_LENGTH "${MAP_INDEX} - ${STAGE17_INDEX}")
++    string(SUBSTRING "${SOURCE}" ${STAGE17_INDEX} ${STAGE17_LENGTH} STAGE17_SOURCE)
+     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
+     math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
+     math(EXPR HOST_CHAIN_LENGTH "${MOVEMENT_INPUT_INDEX} - ${MAP_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} ${HOST_CHAIN_LENGTH} HOST_CHAIN_SOURCE)
+     math(EXPR FORWARD_ACTIONS_LENGTH "${FORWARD_ACTIONS_IF_INDEX} - ${FORWARD_ACTIONS_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_INDEX} ${FORWARD_ACTIONS_LENGTH} FORWARD_ACTIONS_SOURCE)
+     math(EXPR CONTROLLED_SUBMIT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_ACTIONS_IF_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_IF_INDEX} ${CONTROLLED_SUBMIT_LENGTH} CONTROLLED_SUBMIT_SOURCE)
+     math(EXPR FORWARD_DESCENT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_DESCENT_DECL_INDEX}")
+@@ -268,21 +288,22 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
+     string(REGEX MATCHALL "host_gate${WS}=${WS}gate_host_frame${WS}\\(" HOST_GATE_CALLS "${HOST_GATE_SOURCE}")
+     list(LENGTH HOST_GATE_CALLS HOST_GATE_CALL_COUNT)
+     string(REGEX MATCHALL "session->request_descent${WS}\\(" REQUEST_DESCENT_CALLS "${SOURCE}")
+     list(LENGTH REQUEST_DESCENT_CALLS REQUEST_DESCENT_CALL_COUNT)
+     string(REGEX MATCHALL "forward_descent${WS}=" FORWARD_DESCENT_ASSIGNMENTS "${HOST_CHAIN_SOURCE}")
+     list(LENGTH FORWARD_DESCENT_ASSIGNMENTS FORWARD_DESCENT_ASSIGNMENT_COUNT)
+ 
+     if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
+             OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
+             OR NOT STAGE11D_SOURCE MATCHES "inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11d_validation_state${WS}\\)"
+-            OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
++            OR NOT STAGE17_SOURCE MATCHES "inject_stage17_physical_edges${WS}\\(${WS}physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}\\*stage17_validation_state${WS}\\)"
++            OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}stage17_physical_keys${WS}\\)"
+             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
+             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
+             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
+             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
+             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+             OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+             OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+diff --git a/tests/platform/input_latency_source_test.cmake b/tests/platform/input_latency_source_test.cmake
+index 59a0e90..9566db2 100644
+--- a/tests/platform/input_latency_source_test.cmake
++++ b/tests/platform/input_latency_source_test.cmake
+@@ -91,63 +91,68 @@ if(NOT SAMPLE_CALL_COUNT EQUAL 1)
+ endif()
+ 
+ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
+     arpg_sanitize_cpp_source("${SOURCE}" SOURCE)
+     set(WS "[ \t\r\n]*")
+     set(WS1 "[ \t\r\n]+")
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
+     string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
++    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" STAGE17_INDEX)
+     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
+     string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
+     string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
+     string(FIND "${SOURCE}" "HostFrameGateResult host_gate{}" HOST_GATE_INDEX)
+     string(FIND "${SOURCE}" "const PassiveOverlayInputGate passive_input_gate =" PASSIVE_GATE_INDEX)
+     string(FIND "${SOURCE}" "const InventoryInputGate inventory_gate =" INVENTORY_GATE_INDEX)
+     string(FIND "${SOURCE}" "const bool forward_actions =" FORWARD_ACTIONS_INDEX)
+     string(FIND "${SOURCE}" "const bool forward_descent =" FORWARD_DESCENT_DECL_INDEX)
+     string(FIND "${SOURCE}" "if (forward_actions) {" FORWARD_ACTIONS_IF_INDEX)
+     string(FIND "${SOURCE}" "submit_frame_actions(*session, frame_input)" SUBMIT_ACTIONS_INDEX)
+     string(FIND "${SOURCE}" "if (forward_descent && frame_input.keys.e)" FORWARD_DESCENT_INDEX)
+     string(FIND "${SOURCE}" "session->request_descent(in_range)" REQUEST_DESCENT_INDEX)
+     string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
+     if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
+-            OR STAGE11D_INDEX EQUAL -1
++            OR STAGE11D_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
+             OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
+             OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
+             OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
+             OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
+             OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
+             OR MOVEMENT_INPUT_INDEX EQUAL -1
+             OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
+-            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX OR NOT STAGE11D_INDEX LESS MAP_INDEX
++            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX
++            OR NOT STAGE11D_INDEX LESS STAGE17_INDEX
++            OR NOT STAGE17_INDEX LESS MAP_INDEX
+             OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
+             OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
+             OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
+             OR NOT INVENTORY_GATE_INDEX LESS FORWARD_ACTIONS_INDEX
+             OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_DESCENT_DECL_INDEX
+             OR NOT FORWARD_DESCENT_DECL_INDEX LESS FORWARD_ACTIONS_IF_INDEX
+             OR NOT FORWARD_ACTIONS_IF_INDEX LESS SUBMIT_ACTIONS_INDEX
+             OR NOT SUBMIT_ACTIONS_INDEX LESS FORWARD_DESCENT_INDEX
+             OR NOT FORWARD_DESCENT_INDEX LESS REQUEST_DESCENT_INDEX
+             OR NOT REQUEST_DESCENT_INDEX LESS MOVEMENT_INPUT_INDEX)
+         set(${OUT_VALID} FALSE PARENT_SCOPE)
+         return()
+     endif()
+ 
+     math(EXPR STAGE11B_LENGTH "${STAGE11C_INDEX} - ${STAGE11B_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH} STAGE11B_SOURCE)
+     math(EXPR STAGE11C_LENGTH "${STAGE11D_INDEX} - ${STAGE11C_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH} STAGE11C_SOURCE)
+-    math(EXPR STAGE11D_LENGTH "${MAP_INDEX} - ${STAGE11D_INDEX}")
++    math(EXPR STAGE11D_LENGTH "${STAGE17_INDEX} - ${STAGE11D_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${STAGE11D_INDEX} ${STAGE11D_LENGTH} STAGE11D_SOURCE)
++    math(EXPR STAGE17_LENGTH "${MAP_INDEX} - ${STAGE17_INDEX}")
++    string(SUBSTRING "${SOURCE}" ${STAGE17_INDEX} ${STAGE17_LENGTH} STAGE17_SOURCE)
+     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
+     math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
+     math(EXPR HOST_CHAIN_LENGTH "${MOVEMENT_INPUT_INDEX} - ${MAP_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} ${HOST_CHAIN_LENGTH} HOST_CHAIN_SOURCE)
+     math(EXPR FORWARD_ACTIONS_LENGTH "${FORWARD_ACTIONS_IF_INDEX} - ${FORWARD_ACTIONS_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_INDEX} ${FORWARD_ACTIONS_LENGTH} FORWARD_ACTIONS_SOURCE)
+     math(EXPR CONTROLLED_SUBMIT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_ACTIONS_IF_INDEX}")
+     string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_IF_INDEX} ${CONTROLLED_SUBMIT_LENGTH} CONTROLLED_SUBMIT_SOURCE)
+     math(EXPR FORWARD_DESCENT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_DESCENT_DECL_INDEX}")
+@@ -160,21 +165,22 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
+     string(REGEX MATCHALL "host_gate${WS}=${WS}gate_host_frame${WS}\\(" HOST_GATE_CALLS "${HOST_GATE_SOURCE}")
+     list(LENGTH HOST_GATE_CALLS HOST_GATE_CALL_COUNT)
+     string(REGEX MATCHALL "session->request_descent${WS}\\(" REQUEST_DESCENT_CALLS "${SOURCE}")
+     list(LENGTH REQUEST_DESCENT_CALLS REQUEST_DESCENT_CALL_COUNT)
+     string(REGEX MATCHALL "forward_descent${WS}=" FORWARD_DESCENT_ASSIGNMENTS "${HOST_CHAIN_SOURCE}")
+     list(LENGTH FORWARD_DESCENT_ASSIGNMENTS FORWARD_DESCENT_ASSIGNMENT_COUNT)
+ 
+     if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
+             OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
+             OR NOT STAGE11D_SOURCE MATCHES "inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11d_validation_state${WS}\\)"
+-            OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
++            OR NOT STAGE17_SOURCE MATCHES "inject_stage17_physical_edges${WS}\\(${WS}physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}\\*stage17_validation_state${WS}\\)"
++            OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}stage17_physical_keys${WS}\\)"
+             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
+             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
+             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
+             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
+             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+             OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+             OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+@@ -198,22 +204,25 @@ set(STAGE11B_INPUT_CHAIN_REFERENCE [=[
+ const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+ const PhysicalKeySnapshot stage11b_physical_keys =
+     inject_stage11b_physical_edges(
+     sampled_physical_keys, config, stage11b_validation_state);
+ const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
+     stage11b_physical_keys, config, input_settings, current,
+     stage11c_validation_state);
+ const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+     stage11c_physical_keys, config, input_settings, current,
+     stage11d_validation_state);
++const PhysicalKeySnapshot stage17_physical_keys =
++    inject_stage17_physical_edges(physical_keys, config, input_settings,
++        current, *stage17_validation_state);
+ HostFrameInput frame_input = map_host_frame_input(
+-    input_settings, physical_keys);
++    input_settings, stage17_physical_keys);
+ DeathInputGate death_gate = host_death_input_gate(
+     death_saving, death_pending, frame_input.keys, physical_keys);
+ const bool pause_blocks_gameplay = pause_open || pause_was_open;
+ HostFrameGateResult host_gate{};
+ if (pause_open) {
+     host_gate = gate_host_frame(fixed_step, pause_latched, true,
+         static_cast<double>(frame_seconds));
+ } else if (!inventory.is_open() && !inventory_toggled_this_frame) {
+     host_gate = gate_host_frame(fixed_step, pause_latched, false,
+         static_cast<double>(frame_seconds));
+diff --git a/tests/platform/stage11b_settings_evidence_guard_test.cmake b/tests/platform/stage11b_settings_evidence_guard_test.cmake
+index a38eafc..b92ff31 100644
+--- a/tests/platform/stage11b_settings_evidence_guard_test.cmake
++++ b/tests/platform/stage11b_settings_evidence_guard_test.cmake
+@@ -129,22 +129,24 @@ string(FIND "${_normalized_host}"
+     _draft_policy_call)
+ if(NOT _draft_policy_call EQUAL -1)
+     message(FATAL_ERROR
+         "Stage11B evidence guard rejects draft loot policy in fixed_tick")
+ endif()
+ if(_fixed_gate EQUAL -1 OR _live_policy_call EQUAL -1
+         OR NOT _fixed_gate LESS _live_policy_call)
+     message(FATAL_ERROR
+         "Stage11B evidence guard requires live loot policy behind host gate")
+ endif()
+-string(FIND "${_host_text}" "const std::array<bool, 3> accepted_actions =" _accepted_actions)
+-string(FIND "${_host_text}" "accepted_actions[0] ? 1U : 0U" _accepted_attack_count)
++string(FIND "${_host_text}"
++    "const SubmittedFrameActions submitted_actions =" _accepted_actions)
++string(FIND "${_host_text}"
++    "submitted_actions.combat[0] ? 1U : 0U" _accepted_attack_count)
+ if(_accepted_actions EQUAL -1 OR _accepted_attack_count EQUAL -1)
+     message(FATAL_ERROR "Stage11B evidence guard requires accepted queue_action evidence")
+ endif()
+ string(FIND "${_host_text}" "const bool stage11b_paused_visible_capture ="
+     _paused_capture_declaration)
+ string(FIND "${_host_text}"
+     "&& pause_menu.screen != PauseScreen::closed"
+     _paused_capture_menu_visible)
+ string(FIND "${_host_text}"
+     "&& stage11b_validation_state.paused_presented >= 120U"
+diff --git a/tests/platform/stage11d_renderer_integration_guard_self_test.cmake b/tests/platform/stage11d_renderer_integration_guard_self_test.cmake
+index afee5f4..778d27f 100644
+--- a/tests/platform/stage11d_renderer_integration_guard_self_test.cmake
++++ b/tests/platform/stage11d_renderer_integration_guard_self_test.cmake
+@@ -84,31 +84,35 @@ set(_hud_split
+ stage11d_replace_required(_combat_split "${_combat}"
+     "${_hud_direct}" "${_hud_split}" consumer_split)
+ stage11d_run_guard_case(consumer_split "${_combat_split}" "${_room}"
+     "${_hud}" FALSE "same GroundLootView|consumer.*diverg")
+ 
+ stage11d_replace_required(_combat_renamed_declaration "${_combat}"
+     "CombatRenderPlan render_plan =" "CombatRenderPlan frame_plan ="
+     local_plan_declaration_rename)
+ stage11d_replace_required(_combat_renamed "${_combat_renamed_declaration}"
+     "render_plan." "frame_plan." local_plan_use_rename)
+-set(_renamed_room "            draw_room(current, frame_plan.ground_loot);")
++set(_renamed_room
++    "            draw_room(current, frame_plan.ground_loot, frame_plan.material_loot);")
+ set(_formatted_room
+-    "            draw_room(\n                current,\n                frame_plan.ground_loot); ")
++    "            draw_room(\n                current,\n                frame_plan.ground_loot,\n                frame_plan.material_loot); ")
+ stage11d_replace_required(_combat_formatted "${_combat_renamed}"
+     "${_renamed_room}" "${_formatted_room}" harmless_formatting)
+ stage11d_run_guard_case(rename_and_format "${_combat_formatted}" "${_room}"
+     "${_hud}" TRUE "")
+ 
+ set(_renamed_camera
+     "    const CameraOffset camera_offset = feedback.camera_offset();")
+ set(_alias_declaration
+     "    const GroundLootView& shared_ground_loot = frame_plan.ground_loot;\n${_renamed_camera}")
+ stage11d_replace_required(_combat_alias "${_combat_renamed}"
+     "${_renamed_camera}" "${_alias_declaration}" const_reference_alias)
+ stage11d_replace_required(_combat_alias_room "${_combat_alias}"
+-    "frame_plan.ground_loot);" "shared_ground_loot);" alias_consumers)
+-stage11d_run_guard_case(const_reference_alias "${_combat_alias_room}" "${_room}"
++    "frame_plan.ground_loot, frame_plan.material_loot);"
++    "shared_ground_loot, frame_plan.material_loot);" alias_room_consumer)
++stage11d_replace_required(_combat_alias_consumers "${_combat_alias_room}"
++    "frame_plan.ground_loot);" "shared_ground_loot);" alias_hud_consumer)
++stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_room}"
+     "${_hud}" TRUE "")
+ 
+ message(STATUS
+     "[stage11d-renderer-guard-self-test] bad_mutations=4 equivalent_variants=2")
+diff --git a/tests/platform/stage11d_renderer_integration_guard_test.cmake b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+index a9b28dd..660b25a 100644
+--- a/tests/platform/stage11d_renderer_integration_guard_test.cmake
++++ b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+@@ -89,21 +89,21 @@ endif()
+ set(_ground_loot_alias "")
+ string(REGEX MATCH
+     "const(GroundLootView|auto)&([A-Za-z_][A-Za-z0-9_]*)=${_plan_variable}\\.ground_loot;"
+     _alias_declaration
+     "${_draw_normalized}")
+ if(_alias_declaration)
+     set(_ground_loot_alias "${CMAKE_MATCH_2}")
+ endif()
+ 
+ set(_room_consumer_pattern
+-    "draw_room\\([^,;]+,([A-Za-z_][A-Za-z0-9_.]*)\\)")
++    "draw_room\\([^,;]+,([A-Za-z_][A-Za-z0-9_.]*)(,[^;]+)?\\)")
+ string(REGEX MATCHALL "${_room_consumer_pattern}" _room_consumer_calls "${_draw_normalized}")
+ list(LENGTH _room_consumer_calls _room_consumer_count)
+ if(NOT _room_consumer_count EQUAL 1)
+     message(FATAL_ERROR
+         "Stage11D CombatRenderer::draw must have exactly one room GroundLootView consumer")
+ endif()
+ string(REGEX MATCH "${_room_consumer_pattern}" _room_consumer "${_draw_normalized}")
+ set(_room_argument "${CMAKE_MATCH_1}")
+ 
+ set(_hud_consumer_pattern
+diff --git a/tests/platform/stage16_loot_reinforcement_game_validation.cpp b/tests/platform/stage16_loot_reinforcement_game_validation.cpp
+index e4eca3b..7c83a15 100644
+--- a/tests/platform/stage16_loot_reinforcement_game_validation.cpp
++++ b/tests/platform/stage16_loot_reinforcement_game_validation.cpp
+@@ -426,21 +426,22 @@ bool render_inventory_capture(const std::filesystem::path& run,
+     const auto current = std::make_unique<dungeon::DungeonSnapshot>(
+         runtime.session()->snapshot());
+     const platform::CombatFeedback feedback{};
+     const platform::ControlHints hints{};
+     room->observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         *current, *current, runtime.render_status(), hints, 1.0F / 60.0F, false);
+     BeginDrawing();
+     ClearBackground(BLACK);
+     static_cast<void>(room->draw(*current, *current, runtime.render_status(), 1.0F,
+         false, feedback, false));
+-    inventory.draw(*runtime.session(), *current, runtime.render_status());
++    inventory.draw(*runtime.session(), *current, runtime.render_status(),
++        room->hud_font(), room->hud_font_ready());
+     EndDrawing();
+     const auto image = run / name;
+     const auto relative = std::filesystem::relative(image,
+         std::filesystem::current_path()).generic_string();
+     TakeScreenshot(relative.c_str());
+     room->shutdown_resources();
+     std::error_code error{};
+     const Image decoded = LoadImage(image.string().c_str());
+     const bool valid = decoded.data != nullptr && decoded.width == 1280
+         && decoded.height == 720 && image_has_rendered_content(decoded);
+diff --git a/tests/platform/stage17_skill_stones_game_validation.cpp b/tests/platform/stage17_skill_stones_game_validation.cpp
+new file mode 100644
+index 0000000..26cac9e
+--- /dev/null
++++ b/tests/platform/stage17_skill_stones_game_validation.cpp
+@@ -0,0 +1,246 @@
++#include "persistence/checkpoint_codec.hpp"
++#include "raylib_host.hpp"
++
++#include <chrono>
++#include <cstdint>
++#include <cstdlib>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <map>
++#include <string>
++#include <thread>
++
++namespace {
++
++namespace platform = arpg::platform;
++namespace persistence = arpg::persistence;
++
++std::filesystem::path g_executable{};
++
++[[nodiscard]] bool path_is_within(const std::filesystem::path& child,
++    const std::filesystem::path& parent) noexcept {
++    auto child_part = child.begin();
++    auto parent_part = parent.begin();
++    for (; parent_part != parent.end(); ++parent_part, ++child_part) {
++        if (child_part == child.end() || *child_part != *parent_part) {
++            return false;
++        }
++    }
++    return true;
++}
++
++[[nodiscard]] bool prepare_evidence(const std::filesystem::path& argument,
++    std::filesystem::path& run) noexcept {
++    try {
++        std::error_code error{};
++        std::filesystem::create_directories(argument, error);
++        if (error) return false;
++        const std::filesystem::path root =
++            std::filesystem::weakly_canonical(argument, error);
++        if (error || root.empty()) return false;
++        run = (root / "stage17-run").lexically_normal();
++        if (run.filename() != "stage17-run" || run.parent_path() != root
++                || !path_is_within(run, root)) {
++            return false;
++        }
++        if (std::filesystem::exists(run, error)) {
++            const std::filesystem::path existing =
++                std::filesystem::weakly_canonical(run, error);
++            if (error || existing != run || !path_is_within(existing, root)) {
++                return false;
++            }
++            std::filesystem::remove_all(existing, error);
++            if (error) return false;
++        }
++        std::filesystem::create_directories(run, error);
++        return !error;
++    } catch (...) {
++        return false;
++    }
++}
++
++[[nodiscard]] std::string quote(const std::filesystem::path& value) {
++    std::string result{"\""};
++    for (const char character : value.string()) {
++        if (character == '"') result += '\\';
++        result += character;
++    }
++    result += '"';
++    return result;
++}
++
++[[nodiscard]] bool regular_nonempty(
++    const std::filesystem::path& path) noexcept {
++    std::error_code error{};
++    return std::filesystem::is_regular_file(path, error) && !error
++        && std::filesystem::file_size(path, error) > 0U && !error;
++}
++
++[[nodiscard]] std::map<std::string, std::string> read_fields(
++    const std::filesystem::path& path) {
++    std::ifstream stream(path);
++    std::map<std::string, std::string> fields{};
++    std::string line{};
++    while (std::getline(stream, line)) {
++        const std::size_t separator = line.find('=');
++        if (separator != std::string::npos) {
++            fields.emplace(line.substr(0U, separator),
++                line.substr(separator + 1U));
++        }
++    }
++    return fields;
++}
++
++[[nodiscard]] bool field_is(
++    const std::map<std::string, std::string>& fields,
++    const char* key, const char* expected) noexcept {
++    const auto found = fields.find(key);
++    return found != fields.end() && found->second == expected;
++}
++
++[[nodiscard]] bool run_child(const std::filesystem::path& run,
++    const char* scenario, std::uint64_t seed) {
++    const std::filesystem::path command = run /
++        (std::string{"stage17-"} + scenario + ".cmd");
++    std::ofstream stream(command, std::ios::out | std::ios::trunc);
++    stream << "@echo off\r\n" << quote(g_executable)
++           << " --scenario " << scenario << ' ' << quote(run)
++           << ' ' << seed << "\r\n";
++    if (!stream) return false;
++    stream.close();
++    return std::system(("call " + quote(command)).c_str()) == 0;
++}
++
++[[nodiscard]] bool run_host_child(const std::filesystem::path& run,
++    const std::string& scenario, std::uint64_t seed) noexcept {
++    platform::RaylibHostConfig config{};
++    config.window_width = 1280;
++    config.window_height = 720;
++    config.window_title = "Stage 17 Skill Stones Production Validation";
++    config.save_directory = run / "save";
++    config.settings_directory = run / "settings";
++    config.screenshot_directory = run;
++    config.new_run_seed = seed;
++    config.validation_steps_per_frame = 1U;
++    config.validation_exit_after_presented_frames =
++        scenario == "production" ? 900U : 300U;
++    if (scenario == "production") {
++        config.stage17_skill_stones_validation =
++            platform::Stage17SkillStonesValidationScenario::production_sequence;
++        config.validation_summary_file = run / "production-summary.txt";
++    } else if (scenario == "restart") {
++        config.stage17_skill_stones_validation =
++            platform::Stage17SkillStonesValidationScenario::restarted_loadout;
++        config.validation_summary_file = run / "restart-summary.txt";
++    } else {
++        return false;
++    }
++    return platform::run_raylib_host(config) == platform::HostExitCode::success
++        && regular_nonempty(*config.validation_summary_file);
++}
++
++[[nodiscard]] bool production_summary_valid(
++    const std::map<std::string, std::string>& fields) noexcept {
++    return field_is(fields, "scenario", "production_sequence")
++        && field_is(fields, "result", "pass")
++        && field_is(fields, "initial_slots",
++            "draw_slash,storm_swords,none,none,none")
++        && field_is(fields, "final_slots",
++            "none,draw_slash,none,none,storm_swords")
++        && field_is(fields, "owned_active_bits", "3")
++        && field_is(fields, "support_none_count", "25")
++        && field_is(fields, "empty_slots_none", "1")
++        && field_is(fields, "draw_accepted", "1")
++        && field_is(fields, "draw_hit_count", "2")
++        && field_is(fields, "storm_accepted", "1")
++        && field_is(fields, "storm_strike_hit_count", "3")
++        && field_is(fields, "storm_finisher_hit_count", "1")
++        && field_is(fields, "storm_strike_count", "12")
++        && field_is(fields, "storm_center_locked", "1")
++        && field_is(fields, "storm_player_moved", "1")
++        && field_is(fields, "public_input_path", "1")
++        && field_is(fields, "production_transactions", "1");
++}
++
++[[nodiscard]] bool restart_summary_valid(
++    const std::map<std::string, std::string>& fields) noexcept {
++    return field_is(fields, "scenario", "restarted_loadout")
++        && field_is(fields, "result", "pass")
++        && field_is(fields, "initial_slots",
++            "none,draw_slash,none,none,storm_swords")
++        && field_is(fields, "restart_persisted", "1")
++        && field_is(fields, "restart_cooldowns_zero", "1");
++}
++
++[[nodiscard]] bool write_final_state(const std::filesystem::path& run) {
++    static_assert(persistence::kCheckpointFormatVersion == 8U);
++    std::ofstream stream(run / "stage17-skill-stones-state.txt",
++        std::ios::out | std::ios::trunc | std::ios::binary);
++    stream << "schema=stage17-skill-stones-evidence-v1\n"
++           << "result=PASS\n"
++           << "renderer=raylib-6.0-opengl\n"
++           << "window=1280x720\n"
++           << "save_version=" << persistence::kCheckpointFormatVersion << "\n"
++           << "initial_slots=draw_slash,storm_swords,none,none,none\n"
++           << "final_slots=none,draw_slash,none,none,storm_swords\n"
++           << "restarted_slots=none,draw_slash,none,none,storm_swords\n"
++           << "owned_active_bits=3\n"
++           << "support_none_count=25\n"
++           << "digit_1_cast=accepted\n"
++           << "digit_2_cast=accepted\n"
++           << "digit_3_5_effect=none\n"
++           << "draw_slash_hit_count=2\n"
++           << "storm_strike_hit_count=3\n"
++           << "storm_finisher_hit_count=1\n"
++           << "storm_strike_count=12\n"
++           << "storm_center_locked=true\n"
++           << "loadout_transactions=remove1,equip5,swap2_5\n"
++           << "restart_persisted=true\n"
++           << "cooldown_persisted=false\n"
++           << "public_input_path=true\n"
++           << "production_transactions=true\n";
++    return static_cast<bool>(stream);
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    if (argc == 5 && argv[1] != nullptr
++            && std::string{argv[1]} == "--scenario") {
++        return run_host_child(std::filesystem::absolute(argv[3]), argv[2],
++            std::stoull(argv[4])) ? 0 : 1;
++    }
++    if (argc != 2 || argv[1] == nullptr) {
++        std::cerr << "usage: arpg_stage17_skill_stones_game_validation "
++                     "<evidence-root>\n";
++        return 2;
++    }
++    g_executable = std::filesystem::absolute(argv[0]);
++    std::filesystem::path run{};
++    if (!prepare_evidence(std::filesystem::absolute(argv[1]), run)) return 3;
++    {
++        std::ofstream marker(run / "run.marker",
++            std::ios::out | std::ios::trunc);
++        marker << "stage17-run\n";
++        if (!marker) return 4;
++    }
++    std::this_thread::sleep_for(std::chrono::milliseconds(50));
++
++    constexpr std::uint64_t kProductionSeed = 170017U;
++    if (!run_child(run, "production", kProductionSeed)) return 5;
++    const auto production = read_fields(run / "production-summary.txt");
++    if (!production_summary_valid(production)) {
++        std::cerr << "stage17 production summary rejected\n";
++        return 6;
++    }
++    if (!run_child(run, "restart", kProductionSeed)) return 7;
++    const auto restart = read_fields(run / "restart-summary.txt");
++    if (!restart_summary_valid(restart)) {
++        std::cerr << "stage17 restart summary rejected\n";
++        return 8;
++    }
++    if (!write_final_state(run)) return 9;
++    std::cout << "stage17 raylib skill stones scenario=PASS\n";
++    return 0;
++}
+diff --git a/tests/platform/stage17_skill_stones_validator.ps1 b/tests/platform/stage17_skill_stones_validator.ps1
+new file mode 100644
+index 0000000..7d50cc1
+--- /dev/null
++++ b/tests/platform/stage17_skill_stones_validator.ps1
+@@ -0,0 +1,117 @@
++param([Parameter(Mandatory = $true)][string]$EvidenceDirectory)
++
++$ErrorActionPreference = 'Stop'
++Add-Type -AssemblyName System.Drawing
++
++$run = [System.IO.Path]::GetFullPath($EvidenceDirectory)
++if ([System.IO.Path]::GetFileName($run) -ne 'stage17-run') {
++    throw "evidence directory must be the controlled stage17-run directory: $run"
++}
++if (-not (Test-Path -LiteralPath $run -PathType Container)) {
++    throw "missing evidence directory: $run"
++}
++
++$marker = Join-Path $run 'run.marker'
++$statePath = Join-Path $run 'stage17-skill-stones-state.txt'
++if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
++    throw "missing run marker: $marker"
++}
++if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
++    throw "missing state evidence: $statePath"
++}
++$markerTime = (Get-Item -LiteralPath $marker).LastWriteTimeUtc
++
++$images = @(
++    '01-new-default-1280x720.png',
++    '02-draw-slash-hit-1280x720.png',
++    '03-storm-array-1280x720.png',
++    '04-storm-finisher-1280x720.png',
++    '05-restarted-loadout-1280x720.png'
++)
++$pixelHashes = [System.Collections.Generic.HashSet[string]]::new()
++foreach ($name in $images) {
++    $path = Join-Path $run $name
++    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
++        throw "missing PNG evidence: $path"
++    }
++    $file = Get-Item -LiteralPath $path
++    if ($file.Length -le 4096) { throw "PNG evidence is too small: $path" }
++    if ($file.LastWriteTimeUtc -le $markerTime) {
++        throw "PNG evidence is not newer than run marker: $path"
++    }
++
++    $bitmap = [System.Drawing.Bitmap]::new($path)
++    try {
++        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720) {
++            throw "PNG dimensions rejected for $name`: $($bitmap.Width)x$($bitmap.Height)"
++        }
++        $rect = [System.Drawing.Rectangle]::new(0, 0, $bitmap.Width, $bitmap.Height)
++        $data = $bitmap.LockBits($rect,
++            [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
++            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
++        try {
++            $length = [Math]::Abs($data.Stride) * $data.Height
++            $pixels = [byte[]]::new($length)
++            [System.Runtime.InteropServices.Marshal]::Copy(
++                $data.Scan0, $pixels, 0, $length)
++            $sha = [System.Security.Cryptography.SHA256]::Create()
++            try {
++                $hash = [BitConverter]::ToString(
++                    $sha.ComputeHash($pixels)).Replace('-', '')
++            } finally {
++                $sha.Dispose()
++            }
++        } finally {
++            $bitmap.UnlockBits($data)
++        }
++    } finally {
++        $bitmap.Dispose()
++    }
++    if (-not $pixelHashes.Add($hash)) {
++        throw "duplicate decoded pixel content: $name"
++    }
++}
++
++$lines = @(Get-Content -LiteralPath $statePath -Encoding UTF8)
++$fields = @{}
++foreach ($line in $lines) {
++    if (-not $line.Contains('=')) { throw "malformed state line: $line" }
++    $pair = $line -split '=', 2
++    if ($fields.ContainsKey($pair[0])) { throw "duplicate state field: $($pair[0])" }
++    $fields[$pair[0]] = $pair[1]
++}
++$expected = [ordered]@{
++    schema = 'stage17-skill-stones-evidence-v1'
++    result = 'PASS'
++    renderer = 'raylib-6.0-opengl'
++    window = '1280x720'
++    save_version = '8'
++    initial_slots = 'draw_slash,storm_swords,none,none,none'
++    final_slots = 'none,draw_slash,none,none,storm_swords'
++    restarted_slots = 'none,draw_slash,none,none,storm_swords'
++    owned_active_bits = '3'
++    support_none_count = '25'
++    digit_1_cast = 'accepted'
++    digit_2_cast = 'accepted'
++    digit_3_5_effect = 'none'
++    draw_slash_hit_count = '2'
++    storm_strike_hit_count = '3'
++    storm_finisher_hit_count = '1'
++    storm_strike_count = '12'
++    storm_center_locked = 'true'
++    loadout_transactions = 'remove1,equip5,swap2_5'
++    restart_persisted = 'true'
++    cooldown_persisted = 'false'
++    public_input_path = 'true'
++    production_transactions = 'true'
++}
++if ($fields.Count -ne $expected.Count) {
++    throw "state field count rejected: expected $($expected.Count), got $($fields.Count)"
++}
++foreach ($key in $expected.Keys) {
++    if (-not $fields.ContainsKey($key)) { throw "missing state field: $key" }
++    if ($fields[$key] -cne $expected[$key]) {
++        throw "state field rejected: $key=$($fields[$key])"
++    }
++}
++Write-Output '[stage17-skill-stones-evidence] PASS'
+diff --git a/tests/platform/stage17_skill_stones_validator_self_test.ps1 b/tests/platform/stage17_skill_stones_validator_self_test.ps1
+new file mode 100644
+index 0000000..10e4730
+--- /dev/null
++++ b/tests/platform/stage17_skill_stones_validator_self_test.ps1
+@@ -0,0 +1,60 @@
++param(
++    [Parameter(Mandatory = $true)][string]$EvidenceDirectory,
++    [Parameter(Mandatory = $true)][string]$Validator,
++    [Parameter(Mandatory = $true)][string]$MutationRoot
++)
++
++$ErrorActionPreference = 'Stop'
++$evidence = [System.IO.Path]::GetFullPath($EvidenceDirectory)
++$mutation = [System.IO.Path]::GetFullPath($MutationRoot)
++$prefix = $evidence.TrimEnd([System.IO.Path]::DirectorySeparatorChar) +
++    [System.IO.Path]::DirectorySeparatorChar
++if (-not $mutation.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
++    throw "mutation root escapes evidence root: $mutation"
++}
++& $Validator -EvidenceDirectory $evidence | Out-Null
++
++if (Test-Path -LiteralPath $mutation) {
++    Remove-Item -LiteralPath $mutation -Recurse -Force
++}
++New-Item -ItemType Directory -Path $mutation | Out-Null
++
++function Assert-ValidatorRejects([string]$Name, [scriptblock]$Mutate) {
++    $caseRoot = Join-Path $mutation $Name
++    $caseRun = Join-Path $caseRoot 'stage17-run'
++    New-Item -ItemType Directory -Path $caseRun -Force | Out-Null
++    Get-ChildItem -LiteralPath $evidence | Where-Object {
++        $_.FullName -ne $mutation
++    } | Copy-Item -Destination $caseRun -Recurse
++    & $Mutate $caseRun
++    $rejected = $false
++    try {
++        & $Validator -EvidenceDirectory $caseRun 2>$null | Out-Null
++    } catch {
++        $rejected = $true
++    }
++    if (-not $rejected) { throw "validator accepted mutation: $Name" }
++}
++
++Assert-ValidatorRejects 'broken-png' {
++    param($caseRun)
++    [System.IO.File]::WriteAllBytes(
++        (Join-Path $caseRun '02-draw-slash-hit-1280x720.png'),
++        [byte[]](0x89, 0x50, 0x4E, 0x47))
++}
++Assert-ValidatorRejects 'forged-state' {
++    param($caseRun)
++    $path = Join-Path $caseRun 'stage17-skill-stones-state.txt'
++    $text = [System.IO.File]::ReadAllText($path).Replace(
++        'save_version=8', 'save_version=7')
++    [System.IO.File]::WriteAllText(
++        $path, $text, [System.Text.UTF8Encoding]::new($false))
++}
++Assert-ValidatorRejects 'stale-png' {
++    param($caseRun)
++    $marker = Get-Item -LiteralPath (Join-Path $caseRun 'run.marker')
++    (Get-Item -LiteralPath (Join-Path $caseRun '03-storm-array-1280x720.png')).LastWriteTimeUtc =
++        $marker.LastWriteTimeUtc.AddSeconds(-1)
++}
++
++Write-Output '[stage17-skill-stones-evidence-self-test] PASS'

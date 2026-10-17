@@ -1,0 +1,1259 @@
+# Review package: c4c97fe..HEAD
+
+## Commits
+d1ce4b0 feat: route number keys to active skill slots
+
+## Files changed
+ .superpowers/sdd/task-6-report.md              | 373 +++----------------------
+ src/dungeon/dungeon_session.cpp                |  14 +
+ src/dungeon/dungeon_session.hpp                |   2 +
+ src/platform/raylib/host_input.cpp             |  24 +-
+ src/platform/raylib/host_input.hpp             |  10 +-
+ src/platform/raylib/raylib_host.cpp            |   6 +-
+ tests/dungeon/CMakeLists.txt                   |   1 +
+ tests/dungeon/dungeon_skill_cast_tests.cpp     |  82 ++++++
+ tests/dungeon/dungeon_test_main.cpp            |   4 +-
+ tests/platform/CMakeLists.txt                  |   1 +
+ tests/platform/active_skill_input_tests.cpp    | 102 +++++++
+ tests/platform/host_input_source_test.cmake    |   6 +-
+ tests/platform/host_input_tests.cpp            |  11 +-
+ tests/platform/input_latency_source_test.cmake |   6 +-
+ tests/platform/platform_test_main.cpp          |   4 +-
+ 15 files changed, 292 insertions(+), 354 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-6-report.md b/.superpowers/sdd/task-6-report.md
+index 7147a1f..add16d4 100644
+--- a/.superpowers/sdd/task-6-report.md
++++ b/.superpowers/sdd/task-6-report.md
+@@ -1,339 +1,44 @@
+-# Stage 11-D Task 6 报告
++# Stage 17 Task 6 报告：数字键活动技能槽路由
+ 
+-## 状态
++## Status
+ 
+-完成 Renderer and Draft Preview Integration，并按真实 RED -> GREEN 执行 TDD。范围停在 ground loot 图标/标签渲染、HUD 字体覆盖和 Host draft/committed policy separation；未实现 pickup feedback（Task 7）或 formal evidence（Task 9）。
++完成。范围限于 1～5 的单帧采样、`HostFrameInput` 路由、
++`DungeonSession` 槽位施放入口及其单元测试；未实现 HUD、暂停装配 UI、
++持久化版本或技能数值改动。
+ 
+ ## 实现
+ 
+-- `CombatRenderPlan` 每次由 `CombatRenderer::draw` 构建一次，内部只拥有一个预构建 `GroundLootView`。
+-- room icon 与 HUD label 两个 stage 直接共享同一个 `CombatRenderPlan::ground_loot`；两个 pass 不再各自过滤或重建 ordinal 集。
+-- production render stage 顺序由可测 plan 驱动：`room -> actors -> ground_loot_labels -> normal_hud`。room 与 actors 在 `BeginMode2D` 内；标签在 actors 后结束 world mode，再由正常 HUD 绘制前呈现。
+-- `room_renderer.cpp` 不再遍历所有 snapshot 掉落绘制图标，而是只按传入 View 的 ordinal 查找对应 snapshot item，保留 slot/rarity/world projection 的实际图标绘制。
+-- `HudRenderer::draw_ground_loot(const GroundLootView&)` 复用 HUD 已加载 Font、HUD palette 和 `DrawTextEx`；标签路径不使用 `TextFormat`、`std::string` 或 `std::vector`。
+-- `hud_font.cpp` 在 HUD shared font plan 中补齐 `普通魔法稀有已拾取未知装备` 的 codepoint，并将完整短语列入 required text coverage。
+-- 新增 `CombatRenderer::set_loot_filter_mode(settings::LootFilterMode) noexcept`，仅控制 `draw` 的表现 plan。
+-- Host 仅在 `PauseScreen::settings` 向 renderer 发送 `pause_menu.draft.loot_filter_mode`；closed/root/capture/quit-confirm 都发送 `live_settings` 的已提交 mode。
+-- `PauseCommand::preview` 对音量、窗口和 VSync 继续 live preview，但构造 preview settings 时强制保留 `pause_menu.committed.loot_filter_mode`。因此 `DungeonRuntime::fixed_tick` 仍读取 `loot_pickup_policy(live_settings.loot_filter_mode)`，且该字段的语义现在真实等于 committed policy。
+-- Apply 成功后 committed/draft/live 一起发布新 mode；Cancel 和可成功回滚的 Apply failure 恢复旧 mode。Apply failure 仍保留其他 draft 字段用于既有重试流程，只将表现相关 loot mode 复位为 committed。
+-
+-## TDD 证据
+-
+-### RED 1：Host / render plan API
+-
+-先只修改测试，加入 settings-only draft selection、renderer/live policy separation、单 View reuse、ordinal 与 stage ordering 断言，未修改生产接口。
+-
+-共享 `out/build/task5-debug` 受当前执行身份 ACL 影响，出现 `.ninja_lock permission denied`，因此使用独立构建目录 `E:/game/task6-build`：
+-
+-```powershell
+-cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake -S . -B E:/game/task6-build -G Ninja -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DFETCHCONTENT_SOURCE_DIR_RAYLIB=E:/game/.worktrees/stage11d-loot-filter/out/build/windows-msvc-debug/_deps/raylib-src && cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1'
+-```
+-
+-有效 RED：
+-
+-```text
+-pause_host_gate_tests.cpp: error C2039/C3861:
+-renderer_loot_filter_mode 不是 arpg::platform 的成员 / 找不到标识符
+-```
+-
+-补最小 Host selection helper 后继续构建，得到下一条有效 RED：
+-
+-```text
+-hud_host_integration_tests.cpp: error C2039/C3861:
+-CombatRenderPlan、make_combat_render_plan、ground-loot stage 接口、
+-CombatRenderStage 尚不存在
+-```
+-
+-失败原因准确来自 Task 6 production API 与 render plan 尚不存在。
+-
+-### RED 2：HUD glyph coverage
+-
+-完成最小 renderer/Host 接线并成功编译后运行：
+-
+-```powershell
+-ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
+-```
+-
+-有效 RED：
+-
+-```text
+-[FAIL] hud_font.ground loot Chinese coverage:
+-death_overlay_font_covers_text(plan.shared, "普通魔法稀有已拾取未知装备")
+-```
+-
+-同时 suite case-count guard 从 253 报告实际 257，这是新增 4 个用例后的预期登记更新。
+-
+-### GREEN
+-
+-补齐 HUD shared glyph plan 并更新 case-count 后：
+-
+-```powershell
+-cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1
+-ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
+-```
+-
+-结果：`platform.units` 1/1 CTest 通过，257 cases、0 failures；100k GroundLootView 探针仍为 allocations=0。
+-
+-Task 6 新增/扩展的测试覆盖：
+-
+-- 一个 `CombatRenderPlan` 只拥有一个 View；room icon 与 HUD label 直接读取同一个 `plan.ground_loot`。
+-- `magic_or_better` 下 normal ordinal 被排除，icon/label 共用的 ordinal 为 20、30。
+-- production stage 顺序固定为 room、actors、ground labels、normal HUD。
+-- settings screen 使用 draft mode，其余所有 pause screens 使用 committed/live mode。
+-- Preview 后 renderer 可见 rare-only draft，但 `live_settings` 与 runtime pickup policy 保持 committed。
+-- Cancel 恢复 renderer old mode；Apply failure 恢复 live/draft renderer mode；Apply 成功后 live/committed 才发布新 mode。
+-- HUD-owned shared font 覆盖 `普通魔法稀有已拾取未知装备`。
+-
+-## focused 回归
+-
+-```powershell
+-ctest --test-dir E:/game/task6-build -R "^(platform\.pause_menu_state_boundary|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?)$" --output-on-failure
+-```
+-
+-结果：9/9 通过、0 failures。包括 Task 4 要求的 `stage11b.settings_evidence_guard` 与 mutation self-test；唯一 fixed tick 仍为：
+-
+-```cpp
+-runtime.fixed_tick(step_movement,
+-    loot_pickup_policy(live_settings.loot_filter_mode));
+-```
+-
+-```powershell
+-cmake --build E:/game/task6-build --target arpg_settings_tests -- -j1
+-ctest --test-dir E:/game/task6-build -R '^settings\.units$' --output-on-failure
+-```
+-
+-结果：`settings.units` 1/1 通过、0 failures。
+-
+-```powershell
+-cmake --build E:/game/task6-build --target arpg_stage11c_hud_stress -- -j1
+-ctest --test-dir E:/game/task6-build -R '^stage11c\.hud_stress\.zero_alloc_100k$' --output-on-failure
+-```
+-
+-结果：HUD stress 1/1 通过、0 failures。
+-
+-## 文件
+-
+-- `src/platform/raylib/combat_renderer.hpp`
+-- `src/platform/raylib/combat_renderer.cpp`
+-- `src/platform/raylib/room_renderer.cpp`
+-- `src/platform/raylib/hud_renderer.hpp`
+-- `src/platform/raylib/hud_renderer.cpp`
+-- `src/platform/raylib/hud_font.cpp`
+-- `src/platform/raylib/raylib_host.hpp`
+-- `src/platform/raylib/raylib_host.cpp`
+-- `tests/platform/hud_font_tests.cpp`
+-- `tests/platform/hud_host_integration_tests.cpp`
+-- `tests/platform/pause_host_gate_tests.cpp`
+-- `tests/platform/platform_test_main.cpp`
+-- `.superpowers/sdd/task-6-report.md`
+-
+-## 提交
+-
+-主题：`feat: render filtered ground loot labels`
+-
+-## 自审
+-
+-- `combat_renderer.cpp` 只有一处 `build_ground_loot_view` 调用；位于每次 `draw` 开头。room/HUD 两个 production stage 都直接读取同一个 `render_plan.ground_loot` 字段，不持有指针或跨帧引用。
+-- room icon path 不调用 `ground_loot_visible` 或 `build_ground_loot_view`；HUD label path 同样不重算 filter。
+-- label path 只使用固定容量 `GroundLootView` 文本和 `DrawTextEx`；源码扫描无 `TextFormat`、`std::string`、`std::vector` 或 `DrawText`。
+-- `CombatRenderer::set_loot_filter_mode` 只写 renderer 私有 presentation 状态；runtime、session、pickup policy 不引用该字段。
+-- settings draft 的 loot mode 不再写入 live runtime field。Apply 成功是唯一将新 loot mode 发布给 committed/live 的路径；Cancel/失败回滚保持旧 policy。
+-- `git diff --check` 通过；platform、settings、settings/HUD architecture guards 与 HUD stress 全部通过。
+-
+-## 顾虑
+-
+-- headless 单元测试无法直接拦截 raylib `Draw*` 调用，因此顺序和复用由真实 production `CombatRenderPlan` 驱动并由纯 plan 测试、源码扫描及现有 architecture guards 验证；本任务未做 Task 9 的像素级 formal evidence。
+-- Apply failure 即使 `rollback_live_settings` 失败，也会无条件恢复 live/draft loot mode；窗口、音量或 VSync 的外部 backend 状态仍遵循既有 rollback error 语义。
+-- 独立 build 目录位于 `E:/game/task6-build`，因为共享 task5 build 目录对当前执行身份不可写。
+-
+-## 审查修复：Apply 隔离与 consumer 生命周期
+-
+-本节记录 `bfec85f feat: render filtered ground loot labels` 后的 Important 审查修复。
+-
+-### RED
+-
+-先新增真实 rollback-failure host 测试：Apply 的首次 fullscreen preview 成功，SettingsStore replace 失败，随后第二次 window-mode set（rollback）失败。生产代码未修改时运行：
+-
+-```powershell
+-cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1
+-ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
+-```
+-
+-得到有效 RED：
+-
+-```text
+-[FAIL] pause_host_gate.Apply rollback failure restores committed loot policy:
+-live.loot_filter_mode == original.loot_filter_mode
+-258 cases, 1 failures
+-```
+-
+-共享 View 生命周期使用独立 architecture guard 先锁定：禁止旧的 wrapper/helper，并要求两个 production stage 直接消费 `render_plan.ground_loot`，同时要求 `build_ground_loot_view` 在 renderer source 恰好一处。修改生产代码前运行：
+-
+-```powershell
+-ctest --test-dir E:/game/task6-build \
+-  -R '^stage11d\.renderer_integration_guard$' -V
+-```
+-
+-得到有效 RED：
+-
+-```text
+-Stage11D renderer exposes forbidden legacy loot wrapper
+-```
+-
+-### GREEN 实现
+-
+-- Apply backend preview 改用 `preview_settings` 副本，其中 loot mode 强制等于 committed；因此 save committed 之前不会把 draft loot 写入 `live_settings`。
+-- SettingsStore 保存继续使用原始 draft（仅按既有规则调整 revision），保存成功后才把新 loot mode 一起发布到 committed/draft/live/input。
+-- Apply preview failure 与 save failure 均在检查 backend rollback 结果之前，无条件把 `live_settings.loot_filter_mode` 和 `pause_menu.draft.loot_filter_mode` 恢复为 committed。即使窗口 rollback 失败，fixed tick/live 与 renderer/draft 仍保持旧 loot policy。
+-- 删除旧的 ground-loot wrapper/helper。production room stage 和 ground-label stage 直接将同一个 `render_plan.ground_loot` const 引用传入 renderer，不再存在可空或 rvalue 悬空指针 API。
+-- C++ plan 测试直接绑定 `plan.ground_loot` 的两个 stage 引用并验证地址、ordinal 和 draw order；Stage11D guard 验证 production 直连、wrapper 缺失和单次 builder 调用。
+-
+-### GREEN 与回归
+-
+-小步 GREEN：
+-
+-```text
+-platform.units: 258 cases, 0 failures
+-stage11d.renderer_integration_guard: Passed
+-```
+-
+-提交前 focused 回归命令：
+-
+-```powershell
+-cmake --build E:/game/task6-build \
+-  --target arpg_platform_tests arpg_settings_tests arpg_stage11c_hud_stress -- -j1
+-ctest --test-dir E:/game/task6-build \
+-  -R "^(platform\.units|settings\.units|stage11c\.hud_stress\.zero_alloc_100k|platform\.pause_menu_state_boundary|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?|stage11d\.renderer_integration_guard)$" \
+-  --output-on-failure
+-```
+-
+-结果：13/13 CTest 通过、0 failures；首次完整回归 43.72 秒，提交前 fresh 重跑 39.62 秒。包含 `platform.units` 258 cases、`settings.units`、HUD 100k stress、Task4 settings guard/self-test、Host/HUD architecture guards 和新 Stage11D renderer guard。
+-
+-### 修复文件与提交
+-
+-- `src/platform/raylib/combat_renderer.hpp`
+-- `src/platform/raylib/combat_renderer.cpp`
+-- `src/platform/raylib/raylib_host.cpp`
+-- `tests/platform/hud_host_integration_tests.cpp`
+-- `tests/platform/pause_host_gate_tests.cpp`
+-- `tests/platform/platform_test_main.cpp`
+-- `tests/platform/CMakeLists.txt`
+-- `tests/platform/stage11d_renderer_integration_guard_test.cmake`
+-- `.superpowers/sdd/task-6-report.md`
+-
+-修复提交主题：`fix: isolate loot preview and render plan lifetime`
+-
+-## 审查修复二：renderer guard 语义与 mutation self-test
+-
+-本节记录 `362e469 fix: isolate loot preview and render plan lifetime` 后对 architecture guard 的加固；production renderer 无需改动。
+-
+-### RED
+-
+-先注册新的 mutation self-test，并在旧 guard 上运行：
+-
+-```powershell
+-cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1 && ctest --test-dir E:/game/task6-build -R "^stage11d\.renderer_integration_guard_self_test$" -V'
+-```
+-
+-得到有效 RED；旧 guard 没有约束 `CombatRenderer::draw` 内每帧只调用一次 plan factory：
+-
+-```text
+-Stage11D guard accepted bad duplicate_factory mutation
+-0/1 tests passed, 1 test failed
+-```
+-
+-### GREEN 实现与 mutation 结果
+-
+-- guard 现在读取 `combat_renderer.cpp`、`room_renderer.cpp` 和 `hud_renderer.cpp`，要求 `CombatRenderer::draw` 内 `make_combat_render_plan` 恰好调用一次，且 factory 内 `build_ground_loot_view` 恰好一处。
+-- room/HUD source 禁止独立调用 `build_ground_loot_view`、`ground_loot_visible`、`make_combat_render_plan` 或引入 loot-filter mode 重算。
+-- guard 从 factory 结果声明中解析局部 plan 名称，再把 room icon 与 HUD label 参数解析回同一个 `plan.ground_loot` 数据源；允许空白/换行变化、局部 plan 改名以及 `const GroundLootView&` / `const auto&` 别名。
+-- self-test 的所有替换都 fail closed；replacement token 缺失或替换未改变 source 会立即失败。
+-- 4 个坏 mutation 全部被正确原因拒绝：重复 factory、room 重建、HUD 重建、consumer 复制分叉。
+-- 2 个语义等价 variant 全部接受：局部 plan 改名并多行格式化、room/HUD 共用 const-reference alias。总计 6 个变体。
+-
+-GREEN 命令与输出：
+-
+-```powershell
+-ctest --test-dir E:/game/task6-build -R "^stage11d\.renderer_integration_guard_self_test$" -V
+-```
+-
+-```text
+-[stage11d-renderer-guard-self-test] bad_mutations=4 equivalent_variants=2
+-1/1 tests passed, 0 tests failed
+-```
+-
+-### 完整回归
+-
+-```powershell
+-cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake --build E:/game/task6-build --target arpg_platform_tests arpg_stage11c_hud_stress -- -j1 && ctest --test-dir E:/game/task6-build -R "^(platform\.units|stage11c\.hud_stress\.zero_alloc_100k|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?|stage11d\.renderer_integration_guard(_self_test)?)$" --output-on-failure'
+-```
+-
+-结果：12/12 CTest 通过、0 failures，总耗时 41.78 秒；覆盖 `platform.units`、HUD 100k stress、Stage11B/11C architecture/evidence guards 与 self-test、host input source，以及 Stage11D guard 与新 self-test。
+-
+-`platform.units` 的详细复跑结果：
+-
+-```powershell
+-ctest --test-dir E:/game/task6-build -R "^platform\.units$" -V
+-```
+-
+-```text
+-[stage11d-ground-loot] builds=100000 unchanged=50000 alternating=50000 allocations=0
+-258 cases, 0 failures
+-1/1 tests passed, 0 tests failed
+-```
+-
+-### 修复文件与提交
+-
+-- `tests/platform/CMakeLists.txt`
+-- `tests/platform/stage11d_renderer_integration_guard_test.cmake`
+-- `tests/platform/stage11d_renderer_integration_guard_self_test.cmake`
+-- `.superpowers/sdd/task-6-report.md`
+-
+-修复提交主题：`test: harden ground loot renderer guard`
+-
+-
+----
+-
+-# Stage 16 Task 6 Report - Currency Crafting and Recipe Transactions
+-
+-## Delivered
+-
+-- Added `DungeonSession::request_craft(MaterialId, item_id, optional<DirectedCategory>)`.
+-  It validates stable ownership and material count, runs pure `items::craft_item`
+-  first, then consumes exactly one material only after success. The item ID is
+-  retained and the existing item-save path recomputes an equipped target build.
+-- Added `PendingSaveKind::craft` and included it in pending-build consistency
+-  and commit publication.
+-- Tightened three-to-one inputs to exact base ID plus rarity. The output keeps
+-  that base, uses floor average item level, and begins at reinforcement zero.
+-- Added material-bag interaction: select an owned material, click an item to
+-  use it, right-click to cancel; Directed Core cycles
+-  damage/defense/speed/element on its own slot. Reinforced recipe inputs show
+-  a loss warning.
+-
+-## TDD and verification
+-
+-- RED: the new dungeon transaction test failed because `request_craft` did
+-  not exist. A material-bag cancellation test also failed before its API was
+-  implemented.
+-- GREEN: `stage16.crafting_transaction.units` 2/2 PASS;
+-  `items.units` 45/45 PASS; `platform.units` 356/356 PASS.
+-- Built Debug/MSVC x64 targets: `arpg_dungeon_tests`, `arpg_item_tests`,
+-  `arpg_platform_tests`, and `arpg_game`.
+-- `git diff --check` passed before the implementation commit.
+-
+-## Commit
+-
+-`0a7df09 feat: add item currency crafting and recipe safeguards`
+-
+-## Stage 16 Task 6 审查修复：前端配方契约一致性
+-
+-- RED：新增背包缓存用例，三个均为武器且同稀有度、但底材为
+-  `1/7/8` 时，旧缓存错误地将三合一按钮标记为可用；
+-  `platform.units` 357 cases 中该用例失败。
+-- GREEN：`refresh_inventory_view_cache` 改为严格比较 `base_id` 与稀有度，
+-  与 `request_recipe` 的后端规则一致；不改动后端合成、随机或碰撞逻辑。
+-- 同时更新全量地城中的两个旧夹具：压力测试候选三件改为同底材，深渊奖励
+-  碰撞夹具明确将第二、第三件设为第一件的底材，保留原 ID、种子和碰撞语义。
+-- 验证：`dungeon.units` 268/268 PASS（189.11s），`items.units` 45/45 PASS，
+-  `platform.units` 357/357 PASS，`stage16.crafting_transaction.units` 2/2 PASS。
++- `PhysicalKeySnapshot` 与 `HostFrameInput` 均携带五个
++  `active_skill_slots` pressed 边沿；`sample_physical_keys` 是唯一读取
++  `KEY_ONE + index` 的位置。
++- 映射层原样复制槽位边沿，并将任一技能键加入既有 `keys.attack` 门禁。
++- `DungeonSession::request_active_skill_slot` 只接受 combat phase、有 combat
++  世界且槽号有效的请求；空/无效/非 combat 返回 `SkillCastResult::none`。
++- `submit_frame_actions` 现返回 `SubmittedFrameActions`：保留三种基础动作
++  接受结果，按槽位升序提交技能请求，并在首个 `accepted` 后停止。
++- Raylib host 每个 presented frame 只调用一次 `submit_frame_actions`；既有
++  Stage 11 验证改用 `submitted_actions.combat[0]`。
++
++## TDD
++
++- RED：先加入 `active_skill_input_tests.cpp` 与 `dungeon_skill_cast_tests.cpp`
++  及测试注册。首次构建先被空 `WindowsSDKVersion` 阻断；加载 VS 开发环境后，
++  新测试按预期因缺少槽数组/API 进入失败编译。
++- GREEN：补最小槽数组、会话入口、提交结果结构和主循环调用点；修正测试中
++  `CombatSnapshot.active_skill` 的正确读取位置后通过。
++
++## 验证
++
++- `cmake --build --preset windows-msvc-debug --target arpg_platform_tests arpg_dungeon_tests`
++  （通过；在 VS 开发环境及 `WindowsSDKVersion=10.0.26100.0\\` 下运行）
++- `out/build/windows-msvc-debug/bin/arpg_platform_tests.exe`：362 cases, 0 failures。
++- `out/build/windows-msvc-debug/bin/arpg_dungeon_tests.exe`：完整回归已单实例运行并自然结束；新增 dungeon 槽位用例已包含于该目标。
++- `ctest --test-dir out/build/windows-msvc-debug -R '^(platform\\.input_latency_source|platform\\.host_input_source)$' --output-on-failure`：两项通过。
++  - `platform.input_latency_source`：30.07s
++  - `platform.host_input_source`：88.06s
++- `git diff --check`：通过。
++
++## 注意
++
++本机普通 PowerShell 未预加载 VS C++ include 路径，直接构建会报 `<array>`
++找不到；使用 `VsDevCmd.bat -arch=x64 -host_arch=x64` 后可正常构建。
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 733d359..9b1f36f 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -257,20 +257,34 @@ DungeonSession::DungeonSession(
+     }
+     construct_current_room();
+ }
+ 
+ bool DungeonSession::queue_action(combat::Action action) noexcept {
+     return phase_ == RoomPhase::combat && combat_.has_value()
+         ? combat_->queue_action(action)
+         : false;
+ }
+ 
++combat::SkillCastResult DungeonSession::request_active_skill_slot(
++    std::uint8_t slot) noexcept {
++    const std::size_t index = static_cast<std::size_t>(slot);
++    if (phase_ != RoomPhase::combat || !combat_.has_value()
++            || index >= skills::kActiveSkillSlotCount) {
++        return combat::SkillCastResult::none;
++    }
++    const skills::ActiveSkillId skill =
++        stable_state_.skill_loadout.slots[index].active;
++    return skill == skills::ActiveSkillId::none
++        ? combat::SkillCastResult::none
++        : combat_->request_active_skill(skill);
++}
++
+ void DungeonSession::tick(
+     combat::MovementInput movement,
+     AutoPickupPolicy pickup_policy) noexcept {
+     if (phase_ == RoomPhase::committing
+             || phase_ == RoomPhase::death_pending
+             || phase_ == RoomPhase::faulted) {
+         ++session_tick_;
+         return;
+     }
+     if (phase_ == RoomPhase::locked) {
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index 1dde929..8ab4e4f 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -84,20 +84,22 @@ private:
+ class DungeonSession final {
+ public:
+     static constexpr std::size_t kDungeonEventCapacity = 32;
+     static constexpr std::size_t kCombatRelayCapacity = 64;
+ 
+     explicit DungeonSession(DungeonSessionConfig config = {}) noexcept;
+     explicit DungeonSession(
+         DungeonRules rules,
+         DungeonRunState stable_state) noexcept;
+     [[nodiscard]] bool queue_action(combat::Action action) noexcept;
++    [[nodiscard]] combat::SkillCastResult request_active_skill_slot(
++        std::uint8_t slot) noexcept;
+     void tick(
+         combat::MovementInput movement,
+         AutoPickupPolicy pickup_policy = {}) noexcept;
+     [[nodiscard]] bool request_descent(bool player_in_range) noexcept;
+     [[nodiscard]] bool request_passive_allocation(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] bool request_passive_refund(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] RequestResult request_equip(
+         std::uint64_t item_id) noexcept;
+diff --git a/src/platform/raylib/host_input.cpp b/src/platform/raylib/host_input.cpp
+index f602cfe..873cae8 100644
+--- a/src/platform/raylib/host_input.cpp
++++ b/src/platform/raylib/host_input.cpp
+@@ -101,20 +101,25 @@ PhysicalKeySnapshot sample_physical_keys(
+         const auto key = static_cast<settings::StableKey>(index);
+         const int code = raylib_key(key);
+         snapshot.pressed[index] = source.pressed(source.context, code);
+         snapshot.down[index] = source.down(source.context, code);
+     }
+     snapshot.escape = source.pressed(source.context, KEY_ESCAPE);
+     snapshot.enter = source.pressed(source.context, KEY_ENTER);
+     snapshot.f1 = source.pressed(source.context, KEY_F1);
+     snapshot.f12 = source.pressed(source.context, KEY_F12);
+     snapshot.v = snapshot.pressed[stable_index(settings::StableKey::v)];
++    for (std::size_t index = 0U;
++            index < snapshot.active_skill_slots.size(); ++index) {
++        snapshot.active_skill_slots[index] = source.pressed(
++            source.context, KEY_ONE + static_cast<int>(index));
++    }
+     snapshot.mouse_left = source.mouse_left_pressed != nullptr
+         && source.mouse_left_pressed(source.context);
+     snapshot.mouse_right = source.mouse_right_pressed != nullptr
+         && source.mouse_right_pressed(source.context);
+     if (source.mouse_position != nullptr) {
+         snapshot.mouse_position = source.mouse_position(source.context);
+     }
+     if (source.mouse_wheel != nullptr) {
+         snapshot.mouse_wheel = source.mouse_wheel(source.context);
+     }
+@@ -144,20 +149,24 @@ HostFrameInput map_host_frame_input(
+     constexpr std::array<settings::SettingAction, 3> combat_actions{{
+         settings::SettingAction::light_attack,
+         settings::SettingAction::jump,
+         settings::SettingAction::launcher,
+     }};
+     for (std::size_t index = 0U; index < combat_actions.size(); ++index) {
+         input.combat_actions[index] = action_pressed(
+             settings_data, snapshot, combat_actions[index]);
+         input.keys.attack = input.keys.attack || input.combat_actions[index];
+     }
++    input.active_skill_slots = snapshot.active_skill_slots;
++    for (bool requested : input.active_skill_slots) {
++        input.keys.attack = input.keys.attack || requested;
++    }
+ 
+     input.keys.e = action_pressed(
+         settings_data, snapshot, settings::SettingAction::interact);
+     input.keys.inventory = action_pressed(
+         settings_data, snapshot, settings::SettingAction::inventory);
+     input.keys.passives = action_pressed(
+         settings_data, snapshot, settings::SettingAction::passive_tree);
+     input.keys.reset = pressed(snapshot, settings::StableKey::r)
+         && !binding_owns(settings_data, settings::StableKey::r);
+     input.keys.recovery = pressed(snapshot, settings::StableKey::n);
+@@ -170,28 +179,35 @@ HostFrameInput map_host_frame_input(
+     input.keys.focus_lost = snapshot.focus_lost;
+     input.mouse_left_pressed = snapshot.mouse_left;
+     input.mouse_right_pressed = snapshot.mouse_right;
+     input.control_down = down(snapshot, settings::StableKey::left_control)
+         || down(snapshot, settings::StableKey::right_control);
+     input.mouse_wheel = snapshot.mouse_wheel;
+     input.mouse_position = snapshot.mouse_position;
+     return input;
+ }
+ 
+-std::array<bool, 3> submit_frame_actions(
++SubmittedFrameActions submit_frame_actions(
+     dungeon::DungeonSession& session,
+     const HostFrameInput& input) noexcept {
+     constexpr std::array<combat::Action, 3> actions{{
+         combat::Action::light,
+         combat::Action::jump,
+         combat::Action::launcher,
+     }};
+-    std::array<bool, actions.size()> accepted{};
++    SubmittedFrameActions submitted{};
++    submitted.skills.fill(combat::SkillCastResult::none);
+     for (std::size_t index = 0U; index < actions.size(); ++index) {
+         if (input.combat_actions[index]) {
+-            accepted[index] = session.queue_action(actions[index]);
++            submitted.combat[index] = session.queue_action(actions[index]);
+         }
+     }
+-    return accepted;
++    for (std::size_t slot = 0U; slot < input.active_skill_slots.size(); ++slot) {
++        if (!input.active_skill_slots[slot]) continue;
++        submitted.skills[slot] = session.request_active_skill_slot(
++            static_cast<std::uint8_t>(slot));
++        if (submitted.skills[slot] == combat::SkillCastResult::accepted) break;
++    }
++    return submitted;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_input.hpp b/src/platform/raylib/host_input.hpp
+index 0e65e00..7f48de7 100644
+--- a/src/platform/raylib/host_input.hpp
++++ b/src/platform/raylib/host_input.hpp
+@@ -18,31 +18,33 @@ namespace arpg::platform {
+ struct PhysicalKeySnapshot final {
+     std::array<bool,
+         static_cast<std::size_t>(settings::StableKey::count)> down{};
+     std::array<bool,
+         static_cast<std::size_t>(settings::StableKey::count)> pressed{};
+     bool escape{};
+     bool enter{};
+     bool f1{};
+     bool f12{};
+     bool v{};
++    std::array<bool, skills::kActiveSkillSlotCount> active_skill_slots{};
+     bool mouse_left{};
+     bool mouse_right{};
+     bool focus_lost{};
+     float mouse_wheel{};
+     Vector2 mouse_position{};
+ };
+ 
+ struct HostFrameInput final {
+     FrameKeyState keys{};
+     combat::MovementInput movement{};
+     std::array<bool, 3> combat_actions{};
++    std::array<bool, skills::kActiveSkillSlotCount> active_skill_slots{};
+     bool mouse_left_pressed{};
+     bool mouse_right_pressed{};
+     bool control_down{};
+     float mouse_wheel{};
+     Vector2 mouse_position{};
+ };
+ 
+ struct PhysicalKeySource final {
+     void* context{};
+     bool (*pressed)(void*, int) noexcept{};
+@@ -53,15 +55,21 @@ struct PhysicalKeySource final {
+     float (*mouse_wheel)(void*) noexcept{};
+     bool (*focus_lost)(void*) noexcept{};
+ };
+ 
+ [[nodiscard]] PhysicalKeySnapshot sample_physical_keys() noexcept;
+ [[nodiscard]] PhysicalKeySnapshot sample_physical_keys(
+     const PhysicalKeySource& source) noexcept;
+ [[nodiscard]] HostFrameInput map_host_frame_input(
+     const settings::SettingsData& settings,
+     const PhysicalKeySnapshot& snapshot) noexcept;
+-[[nodiscard]] std::array<bool, 3> submit_frame_actions(
++struct SubmittedFrameActions final {
++    std::array<bool, 3> combat{};
++    std::array<combat::SkillCastResult,
++        skills::kActiveSkillSlotCount> skills{};
++};
++
++[[nodiscard]] SubmittedFrameActions submit_frame_actions(
+     dungeon::DungeonSession& session,
+     const HostFrameInput& input) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 03faece..74cab3d 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -2125,31 +2125,31 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 if (selected.has_value()) {
+                     const bool allocated = (current.passive_tree.allocated_bits
+                         & (1ULL << *selected)) != 0U;
+                     static_cast<void>(allocated
+                         ? session->request_passive_refund(*selected)
+                         : session->request_passive_allocation(*selected));
+                     current = session->snapshot();
+                 }
+             }
+             if (forward_actions) {
+-                const std::array<bool, 3> accepted_actions =
++                const SubmittedFrameActions submitted_actions =
+                     submit_frame_actions(*session, frame_input);
+                 if (config.stage11b_validation
+                         == Stage11BValidationScenario::rebound_attack) {
+                     if (stage11b_validation_state.injected_frame == 28U) {
+                         stage11b_validation_state.old_attack_checked = true;
+                         stage11b_validation_state.old_attack_count +=
+-                            accepted_actions[0] ? 1U : 0U;
++                            submitted_actions.combat[0] ? 1U : 0U;
+                     } else if (stage11b_validation_state.injected_frame == 29U) {
+                         stage11b_validation_state.new_attack_count +=
+-                            accepted_actions[0] ? 1U : 0U;
++                            submitted_actions.combat[0] ? 1U : 0U;
+                     }
+                 }
+             }
+             if (forward_descent && frame_input.keys.e) {
+                 const auto snapshot = session->snapshot();
+                 const bool in_range = snapshot.combat.has_value()
+                     && can_prompt_descent(
+                         snapshot, snapshot.combat->player.position);
+                 static_cast<void>(session->request_descent(in_range));
+             }
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index c4b6c6e..90288ae 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -7,20 +7,21 @@ add_executable(arpg_dungeon_tests
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_crafting_transaction_tests.cpp
+     dungeon_skill_loadout_transaction_tests.cpp
++    dungeon_skill_cast_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+     dungeon_material_loot_tests.cpp
+     dungeon_transaction_tests.cpp
+     dungeon_abyss_reward_tests.cpp
+     dungeon_abyss_stress_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_progression_reward_tests.cpp
+diff --git a/tests/dungeon/dungeon_skill_cast_tests.cpp b/tests/dungeon/dungeon_skill_cast_tests.cpp
+new file mode 100644
+index 0000000..3604c89
+--- /dev/null
++++ b/tests/dungeon/dungeon_skill_cast_tests.cpp
+@@ -0,0 +1,82 @@
++#include "test_framework.hpp"
++
++#include "dungeon/dungeon_session.hpp"
++
++#include <cstdint>
++#include <utility>
++
++namespace {
++
++using namespace arpg;
++
++void commit_pending_save(dungeon::DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) return;
++    session.resolve_pending_save({dungeon::SaveDisposition::committed,
++        pending->expected_generation, std::move(pending->next_state),
++        pending->kind});
++}
++
++test::Failure stable_combat_slots_resolve_to_their_equipped_skills() noexcept {
++    dungeon::DungeonSession draw_slash{};
++    draw_slash.tick({});
++    ARPG_REQUIRE(draw_slash.request_active_skill_slot(0U)
++        == combat::SkillCastResult::accepted);
++
++    dungeon::DungeonSession storm_swords{};
++    storm_swords.tick({});
++    ARPG_REQUIRE(storm_swords.request_active_skill_slot(1U)
++        == combat::SkillCastResult::accepted);
++    return {};
++}
++
++test::Failure empty_or_invalid_slot_has_no_combat_side_effect() noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    ARPG_REQUIRE(session.request_active_skill_slot(2U)
++        == combat::SkillCastResult::none);
++    ARPG_REQUIRE(session.request_active_skill_slot(5U)
++        == combat::SkillCastResult::none);
++    ARPG_REQUIRE(session.snapshot().combat.has_value());
++    ARPG_REQUIRE(session.snapshot().combat->active_skill.id
++        == skills::ActiveSkillId::none);
++    return {};
++}
++
++test::Failure non_combat_room_phase_rejects_slot_casts() noexcept {
++    dungeon::DungeonSession session{};
++    ARPG_REQUIRE(session.request_active_skill_slot(0U)
++        == combat::SkillCastResult::none);
++    return {};
++}
++
++test::Failure slot_cast_follows_the_current_loadout_after_a_swap() noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    ARPG_REQUIRE(session.request_swap_active_skill_slots(0U, 1U)
++        == dungeon::RequestResult::accepted);
++    commit_pending_save(session);
++    ARPG_REQUIRE(session.request_active_skill_slot(0U)
++        == combat::SkillCastResult::accepted);
++    ARPG_REQUIRE(session.snapshot().combat.has_value());
++    ARPG_REQUIRE(session.snapshot().combat->active_skill.id
++        == skills::ActiveSkillId::storm_swords);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"stable combat slots resolve equipped skills",
++        &stable_combat_slots_resolve_to_their_equipped_skills},
++    {"empty and invalid slot has no side effect",
++        &empty_or_invalid_slot_has_no_combat_side_effect},
++    {"non combat phase rejects slot casts",
++        &non_combat_room_phase_rejects_slot_casts},
++    {"slot cast follows swapped loadout",
++        &slot_cast_follows_the_current_loadout_after_a_swap},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_skill_cast_suite() noexcept {
++    return arpg::test::make_suite("dungeon_skill_cast", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 345645a..99b19e8 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -13,20 +13,21 @@ arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_skill_loadout_transaction_suite() noexcept;
++arpg::test::TestSuite dungeon_skill_cast_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+@@ -142,20 +143,21 @@ int main() {
+         dungeon_death_lifecycle_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_crafting_transaction_suite(),
+         dungeon_skill_loadout_transaction_suite(),
++        dungeon_skill_cast_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_material_loot_suite(),
+         dungeon_transaction_suite(),
+         dungeon_abyss_reward_suite(),
+         dungeon_abyss_stress_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+@@ -228,13 +230,13 @@ int main() {
+     }
+ 
+     if (stage17_skill_loadout_only()) {
+         const arpg::test::TestSuite loadout_only[] = {
+             dungeon_skill_loadout_transaction_suite(),
+         };
+         return arpg::test::run_suites(loadout_only, 9,
+             "stage 17 task 3 skill loadout transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 281,
++    return arpg::test::run_suites(suites, 285,
+         "stage 11a task 8 death continue validation");
+ }
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 29c5f18..c14d5da 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,15 +1,16 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         host_input_tests.cpp
++        active_skill_input_tests.cpp
+         audio_pack_tests.cpp
+         audio_routing_tests.cpp
+         audio_scene_tests.cpp
+         stage15_audio_pack_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
+         passive_tree_view_tests.cpp
+         host_launch_options_tests.cpp
+diff --git a/tests/platform/active_skill_input_tests.cpp b/tests/platform/active_skill_input_tests.cpp
+new file mode 100644
+index 0000000..c199a5d
+--- /dev/null
++++ b/tests/platform/active_skill_input_tests.cpp
+@@ -0,0 +1,102 @@
++#include "test_framework.hpp"
++
++#include "host_input.hpp"
++
++#include "dungeon/dungeon_session.hpp"
++#include "platform/settings/settings_types.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace {
++
++using namespace arpg;
++
++struct KeySourceState final {
++    std::array<bool, 512> pressed{};
++    std::array<bool, 512> down{};
++};
++
++bool source_pressed(void* context, int key) noexcept {
++    const auto& state = *static_cast<KeySourceState*>(context);
++    return key >= 0 && static_cast<std::size_t>(key) < state.pressed.size()
++        && state.pressed[static_cast<std::size_t>(key)];
++}
++
++bool source_down(void* context, int key) noexcept {
++    const auto& state = *static_cast<KeySourceState*>(context);
++    return key >= 0 && static_cast<std::size_t>(key) < state.down.size()
++        && state.down[static_cast<std::size_t>(key)];
++}
++
++platform::PhysicalKeySource source_for(KeySourceState& state) noexcept {
++    return {&state, &source_pressed, &source_down,
++        nullptr, nullptr, nullptr, nullptr, nullptr};
++}
++
++test::Failure sampler_maps_number_key_edges_to_active_skill_slots() noexcept {
++    for (std::size_t slot = 0U; slot < skills::kActiveSkillSlotCount; ++slot) {
++        KeySourceState state{};
++        state.pressed[static_cast<std::size_t>(KEY_ONE) + slot] = true;
++        const auto snapshot = platform::sample_physical_keys(source_for(state));
++        for (std::size_t candidate = 0U;
++                candidate < skills::kActiveSkillSlotCount; ++candidate) {
++            ARPG_REQUIRE(snapshot.active_skill_slots[candidate]
++                == (candidate == slot));
++        }
++    }
++    return {};
++}
++
++test::Failure held_number_keys_do_not_repeat_as_active_skill_edges() noexcept {
++    KeySourceState state{};
++    state.down[KEY_ONE] = true;
++    const auto snapshot = platform::sample_physical_keys(source_for(state));
++    for (bool pressed : snapshot.active_skill_slots) {
++        ARPG_REQUIRE(!pressed);
++    }
++    return {};
++}
++
++test::Failure mapper_forwards_slots_and_counts_them_as_attack_input() noexcept {
++    platform::PhysicalKeySnapshot snapshot{};
++    snapshot.active_skill_slots[0U] = true;
++    snapshot.active_skill_slots[3U] = true;
++    const auto input = platform::map_host_frame_input(
++        settings::default_settings(), snapshot);
++    ARPG_REQUIRE(input.active_skill_slots == snapshot.active_skill_slots);
++    ARPG_REQUIRE(input.keys.attack);
++    return {};
++}
++
++test::Failure submit_routes_same_frame_slots_in_order_until_one_is_accepted()
++    noexcept {
++    dungeon::DungeonSession session{};
++    session.tick({});
++    platform::HostFrameInput input{};
++    input.active_skill_slots[0U] = true;
++    input.active_skill_slots[1U] = true;
++    const auto submitted = platform::submit_frame_actions(session, input);
++    ARPG_REQUIRE(submitted.skills[0U] == combat::SkillCastResult::accepted);
++    for (std::size_t slot = 1U; slot < skills::kActiveSkillSlotCount; ++slot) {
++        ARPG_REQUIRE(submitted.skills[slot] == combat::SkillCastResult::none);
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"number key edges map to active skill slots",
++        &sampler_maps_number_key_edges_to_active_skill_slots},
++    {"held number keys do not repeat",
++        &held_number_keys_do_not_repeat_as_active_skill_edges},
++    {"mapper forwards skill slots through attack gate",
++        &mapper_forwards_slots_and_counts_them_as_attack_input},
++    {"submit routes same frame skill slots in order",
++        &submit_routes_same_frame_slots_in_order_until_one_is_accepted},
++};
++
++}  // namespace
++
++arpg::test::TestSuite active_skill_input_suite() noexcept {
++    return arpg::test::make_suite("active_skill_input", kCases);
++}
+diff --git a/tests/platform/host_input_source_test.cmake b/tests/platform/host_input_source_test.cmake
+index 4e97913..9f31b87 100644
+--- a/tests/platform/host_input_source_test.cmake
++++ b/tests/platform/host_input_source_test.cmake
+@@ -97,21 +97,21 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
+     inventory.is_open() || inventory_toggled_this_frame);
+ const bool forward_actions = passive_input_gate.forward_actions
+     && inventory_gate.forward_actions
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ const bool forward_descent = passive_input_gate.forward_descent
+     && inventory_gate.forward_descent
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ if (forward_actions) {
+-    const std::array<bool, 3> accepted_actions =
++    const SubmittedFrameActions submitted_actions =
+         submit_frame_actions(*session, frame_input);
+ }
+ if (forward_descent && frame_input.keys.e) {
+     const auto snapshot = session->snapshot();
+     const bool in_range = snapshot.combat.has_value()
+         && can_prompt_descent(snapshot, snapshot.combat->player.position);
+     static_cast<void>(session->request_descent(in_range));
+ }
+ const combat::MovementInput movement = forward_movement
+     ? frame_input.movement : combat::MovementInput{};
+@@ -278,21 +278,21 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
+             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
+             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
+             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
+             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
+             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
+             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+             OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+-            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}std::array<bool,${WS}3>${WS1}accepted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
++            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
+             OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
+             OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
+         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+         return()
+     endif()
+     set("${OUT_VARIABLE}" TRUE PARENT_SCOPE)
+ endfunction()
+ 
+@@ -354,21 +354,21 @@ const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+     stage11c_physical_keys, config, input_settings, current,
+     stage11d_validation_state);
+ ]=])
+ physical_input_chain_valid("${MAP_BEFORE_STAGE11C_STRUCTURE}"
+     MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
+ if(MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
+     message(FATAL_ERROR "host input chain accepted map-before-Stage11C mutation")
+ endif()
+ 
+ set(SUBMIT_DECLARATION [=[
+-                const std::array<bool, 3> accepted_actions =
++                const SubmittedFrameActions submitted_actions =
+                     submit_frame_actions(*session, frame_input);
+ ]=])
+ set(HOST_GATE_DECLARATION
+     "            HostFrameGateResult host_gate{};")
+ string(REPLACE "${SUBMIT_DECLARATION}" ""
+     SUBMIT_BEFORE_GATE_STRUCTURE "${HOST_SOURCE}")
+ string(REPLACE "${HOST_GATE_DECLARATION}"
+     "${SUBMIT_DECLARATION}\n${HOST_GATE_DECLARATION}"
+     SUBMIT_BEFORE_GATE_STRUCTURE "${SUBMIT_BEFORE_GATE_STRUCTURE}")
+ string(REPLACE "            if (forward_actions) {"
+diff --git a/tests/platform/host_input_tests.cpp b/tests/platform/host_input_tests.cpp
+index 341cc01..071be32 100644
+--- a/tests/platform/host_input_tests.cpp
++++ b/tests/platform/host_input_tests.cpp
+@@ -139,21 +139,24 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
+         &query_mouse_right_pressed,
+         &query_mouse_position,
+         &query_mouse_wheel,
+         &query_focus_lost,
+     };
+     const platform::PhysicalKeySnapshot snapshot =
+         platform::sample_physical_keys(source);
+ 
+     for (std::size_t index = 0U; index < kStableKeyCount; ++index) {
+         const int code = kExpectedRaylibKeys[index];
+-        ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(code)] == 1U);
++        const unsigned expected_pressed = code >= KEY_ONE && code <= KEY_FIVE
++            ? 2U : 1U;
++        ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(code)]
++            == expected_pressed);
+         ARPG_REQUIRE(log.down[static_cast<std::size_t>(code)] == 1U);
+     }
+     ARPG_REQUIRE(log.pressed[KEY_ESCAPE] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_ENTER] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_F1] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_F12] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_V] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_R] == 1U);
+     ARPG_REQUIRE(log.pressed[KEY_N] == 1U);
+     ARPG_REQUIRE(log.mouse_left_pressed == 1U);
+@@ -405,43 +408,43 @@ test::Failure mapper_performs_no_heap_allocations() noexcept {
+     ARPG_REQUIRE(test::allocation_count() == before);
+     return {};
+ }
+ 
+ test::Failure submit_forwards_each_combat_action_to_the_session() noexcept {
+     {
+         dungeon::DungeonSession session{};
+         session.tick({});
+         platform::HostFrameInput input{};
+         input.combat_actions[0] = true;
+-        platform::submit_frame_actions(session, input);
++        static_cast<void>(platform::submit_frame_actions(session, input));
+         session.tick({});
+         ARPG_REQUIRE(session.snapshot().combat.has_value());
+         ARPG_REQUIRE(session.snapshot().combat->player.active_attack
+             == combat::AttackId::j1);
+     }
+     {
+         dungeon::DungeonSession session{};
+         session.tick({});
+         platform::HostFrameInput input{};
+         input.combat_actions[1] = true;
+-        platform::submit_frame_actions(session, input);
++        static_cast<void>(platform::submit_frame_actions(session, input));
+         session.tick({});
+         ARPG_REQUIRE(session.snapshot().combat.has_value());
+         ARPG_REQUIRE(session.snapshot().combat->player.state
+             == combat::PlayerState::jump_rise);
+     }
+     {
+         dungeon::DungeonSession session{};
+         session.tick({});
+         platform::HostFrameInput input{};
+         input.combat_actions[2] = true;
+-        platform::submit_frame_actions(session, input);
++        static_cast<void>(platform::submit_frame_actions(session, input));
+         session.tick({});
+         ARPG_REQUIRE(session.snapshot().combat.has_value());
+         ARPG_REQUIRE(session.snapshot().combat->player.active_attack
+             == combat::AttackId::launcher);
+     }
+     return {};
+ }
+ 
+ constexpr test::TestCase kCases[] = {
+     {"45 stable keys round-trip with labels", &adapter_round_trips_all_45_keys_with_unique_codes_and_labels},
+diff --git a/tests/platform/input_latency_source_test.cmake b/tests/platform/input_latency_source_test.cmake
+index 81d7f0b..59a0e90 100644
+--- a/tests/platform/input_latency_source_test.cmake
++++ b/tests/platform/input_latency_source_test.cmake
+@@ -170,21 +170,21 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
+             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
+             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
+             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+             OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
+             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
+             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
+             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+             OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+-            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}std::array<bool,${WS}3>${WS1}accepted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
++            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
+             OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
+             OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
+         set(${OUT_VALID} FALSE PARENT_SCOPE)
+         return()
+     endif()
+     set(${OUT_VALID} TRUE PARENT_SCOPE)
+ endfunction()
+ 
+@@ -224,21 +224,21 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
+     inventory.is_open() || inventory_toggled_this_frame);
+ const bool forward_actions = passive_input_gate.forward_actions
+     && inventory_gate.forward_actions
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ const bool forward_descent = passive_input_gate.forward_descent
+     && inventory_gate.forward_descent
+     && death_gate.forward_gameplay
+     && host_gate.forward_gameplay && !pause_blocks_gameplay;
+ if (forward_actions) {
+-    const std::array<bool, 3> accepted_actions =
++    const SubmittedFrameActions submitted_actions =
+         submit_frame_actions(*session, frame_input);
+ }
+ if (forward_descent && frame_input.keys.e) {
+     const auto snapshot = session->snapshot();
+     const bool in_range = snapshot.combat.has_value()
+         && can_prompt_descent(snapshot, snapshot.combat->player.position);
+     static_cast<void>(session->request_descent(in_range));
+ }
+ const combat::MovementInput movement = forward_movement
+     ? frame_input.movement : combat::MovementInput{};
+@@ -321,21 +321,21 @@ string(REPLACE
+     "stage11c_physical_keys, config, input_settings, current,"
+     "stage11b_physical_keys, config, input_settings, current,"
+     STAGE11D_BYPASS_CHAIN "${STAGE11B_INPUT_CHAIN_REFERENCE}")
+ arpg_physical_input_chain_is_valid("${STAGE11D_BYPASS_CHAIN}"
+     STAGE11D_BYPASS_CHAIN_VALID)
+ if(STAGE11D_BYPASS_CHAIN_VALID)
+     message(FATAL_ERROR "input chain self-check accepted Stage11D bypass mutation")
+ endif()
+ 
+ set(SUBMIT_DECLARATION [=[
+-                const std::array<bool, 3> accepted_actions =
++                const SubmittedFrameActions submitted_actions =
+                     submit_frame_actions(*session, frame_input);
+ ]=])
+ set(HOST_GATE_DECLARATION
+     "            HostFrameGateResult host_gate{};")
+ string(REPLACE "${SUBMIT_DECLARATION}" ""
+     SUBMIT_BEFORE_GATE_CHAIN "${HOST_ENTRY_SOURCE}")
+ string(REPLACE "${HOST_GATE_DECLARATION}"
+     "${SUBMIT_DECLARATION}\n${HOST_GATE_DECLARATION}"
+     SUBMIT_BEFORE_GATE_CHAIN "${SUBMIT_BEFORE_GATE_CHAIN}")
+ string(REPLACE "            if (forward_actions) {"
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 8db78b8..a86cd49 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -6,20 +6,21 @@
+ #endif
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite audio_pack_suite() noexcept;
+ arpg::test::TestSuite audio_routing_suite() noexcept;
+ arpg::test::TestSuite audio_scene_suite() noexcept;
+ arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
+ arpg::test::TestSuite host_input_suite() noexcept;
++arpg::test::TestSuite active_skill_input_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+ arpg::test::TestSuite window_settings_suite() noexcept;
+@@ -54,20 +55,21 @@ int main() {
+ #endif
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
+         audio_pack_suite(),
+         audio_routing_suite(),
+         audio_scene_suite(),
+         stage15_audio_pack_suite(),
+         host_input_suite(),
++        active_skill_input_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         pause_host_gate_suite(),
+         inventory_view_math_suite(),
+         death_input_gate_suite(),
+         death_overlay_view_suite(),
+         pause_menu_state_suite(),
+         pause_menu_view_suite(),
+@@ -84,12 +86,12 @@ int main() {
+         material_loot_view_suite(),
+         material_bag_renderer_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 358, "stage 16 reinforcement UI");
++    return arpg::test::run_suites(suites, 362, "stage 16 reinforcement UI");
+ }

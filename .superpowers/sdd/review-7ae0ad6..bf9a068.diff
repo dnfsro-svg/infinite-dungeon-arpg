@@ -1,0 +1,1224 @@
+# Review package: 7ae0ad6..bf9a068
+
+## Commits
+bf9a068 docs: preserve historical task report
+0a7df09 feat: add item currency crafting and recipe safeguards
+
+## Files changed
+ .superpowers/sdd/task-6-report.md                  |  35 ++++++
+ src/dungeon/dungeon_session.hpp                    |   6 +
+ src/dungeon/dungeon_transition.cpp                 |  63 +++++++++-
+ src/dungeon/dungeon_types.hpp                      |   1 +
+ src/items/item_generation.cpp                      |  10 +-
+ src/platform/raylib/dungeon_runtime.cpp            |   8 ++
+ src/platform/raylib/dungeon_runtime.hpp            |   4 +
+ src/platform/raylib/inventory_renderer.cpp         |  47 +++++++
+ src/platform/raylib/material_bag_renderer.cpp      |  47 +++++++
+ src/platform/raylib/material_bag_renderer.hpp      |   7 ++
+ tests/dungeon/CMakeLists.txt                       |   6 +
+ .../dungeon/dungeon_crafting_transaction_tests.cpp | 136 +++++++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp                |  22 +++-
+ tests/items/item_recipe_tests.cpp                  |  57 +++++----
+ tests/platform/material_bag_renderer_tests.cpp     |  14 +++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ 16 files changed, 432 insertions(+), 33 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-6-report.md b/.superpowers/sdd/task-6-report.md
+index 04f106d..4d7de3f 100644
+--- a/.superpowers/sdd/task-6-report.md
++++ b/.superpowers/sdd/task-6-report.md
+@@ -283,10 +283,45 @@ ctest --test-dir E:/game/task6-build -R "^platform\.units$" -V
+ ```
+ 
+ ### 修复文件与提交
+ 
+ - `tests/platform/CMakeLists.txt`
+ - `tests/platform/stage11d_renderer_integration_guard_test.cmake`
+ - `tests/platform/stage11d_renderer_integration_guard_self_test.cmake`
+ - `.superpowers/sdd/task-6-report.md`
+ 
+ 修复提交主题：`test: harden ground loot renderer guard`
++
++
++---
++
++# Stage 16 Task 6 Report - Currency Crafting and Recipe Transactions
++
++## Delivered
++
++- Added `DungeonSession::request_craft(MaterialId, item_id, optional<DirectedCategory>)`.
++  It validates stable ownership and material count, runs pure `items::craft_item`
++  first, then consumes exactly one material only after success. The item ID is
++  retained and the existing item-save path recomputes an equipped target build.
++- Added `PendingSaveKind::craft` and included it in pending-build consistency
++  and commit publication.
++- Tightened three-to-one inputs to exact base ID plus rarity. The output keeps
++  that base, uses floor average item level, and begins at reinforcement zero.
++- Added material-bag interaction: select an owned material, click an item to
++  use it, right-click to cancel; Directed Core cycles
++  damage/defense/speed/element on its own slot. Reinforced recipe inputs show
++  a loss warning.
++
++## TDD and verification
++
++- RED: the new dungeon transaction test failed because `request_craft` did
++  not exist. A material-bag cancellation test also failed before its API was
++  implemented.
++- GREEN: `stage16.crafting_transaction.units` 2/2 PASS;
++  `items.units` 45/45 PASS; `platform.units` 356/356 PASS.
++- Built Debug/MSVC x64 targets: `arpg_dungeon_tests`, `arpg_item_tests`,
++  `arpg_platform_tests`, and `arpg_game`.
++- `git diff --check` passed before the implementation commit.
++
++## Commit
++
++`0a7df09 feat: add item currency crafting and recipe safeguards`
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index 0e9ba44..6817a86 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -1,15 +1,16 @@
+ #pragma once
+ 
+ #include "core/bounded_queue.hpp"
+ #include "dungeon/encounter_director.hpp"
+ #include "dungeon/dungeon_types.hpp"
++#include "items/item_crafting.hpp"
+ #include "progression/progression_rules.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ 
+ #include <cstddef>
+ #include <cstdint>
+ #include <array>
+ #include <optional>
+ #include <utility>
+ 
+@@ -95,20 +96,25 @@ public:
+         AutoPickupPolicy pickup_policy = {}) noexcept;
+     [[nodiscard]] bool request_descent(bool player_in_range) noexcept;
+     [[nodiscard]] bool request_passive_allocation(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] bool request_passive_refund(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] RequestResult request_equip(
+         std::uint64_t item_id) noexcept;
+     [[nodiscard]] RequestResult request_unequip(
+         items::ItemSlot slot) noexcept;
++    [[nodiscard]] RequestResult request_craft(
++        items::MaterialId material,
++        std::uint64_t item_id,
++        std::optional<items::DirectedCategory> directed_category =
++            std::nullopt) noexcept;
+     [[nodiscard]] RequestResult request_recipe(
+         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+     [[nodiscard]] RequestResult request_pickup(
+         std::uint16_t drop_ordinal) noexcept;
+     [[nodiscard]] RequestResult request_material_pickup(
+         std::uint16_t ordinal) noexcept;
+     [[nodiscard]] RequestResult request_death_continue() noexcept;
+     void request_nearby_pickups(
+         combat::Vec3 player_position,
+         AutoPickupPolicy pickup_policy = {}) noexcept;
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index 54d0ac3..599c368 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -1,16 +1,17 @@
+ #include "dungeon/dungeon_session.hpp"
+ 
+ #include "combat/room_bounds.hpp"
+ #include "dungeon/abyss_reward.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "items/item_catalog.hpp"
++#include "items/item_crafting.hpp"
+ #include "items/item_generation.hpp"
+ #include "passives/passive_tree_rules.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cmath>
+ #include <limits>
+ #include <new>
+ #include <utility>
+@@ -475,20 +476,21 @@ RequestResult DungeonSession::prepare_item_save(
+         resume_phase,
+     });
+     pending_item_build_.emplace(candidate_build.build);
+     phase_ = RoomPhase::committing;
+     return RequestResult::accepted;
+ }
+ 
+ bool DungeonSession::pending_item_cache_consistent() const noexcept {
+     const bool item_pending = pending_save_.has_value()
+         && (pending_save_->kind == PendingSaveKind::equipment
++            || pending_save_->kind == PendingSaveKind::craft
+             || pending_save_->kind == PendingSaveKind::recipe);
+     return item_pending == pending_item_build_.has_value();
+ }
+ 
+ bool DungeonSession::pending_abyss_cache_consistent() const noexcept {
+     const bool start_pending = pending_save_.has_value()
+         && pending_save_->kind == PendingSaveKind::abyss_start;
+     return start_pending == pending_abyss_combat_.has_value();
+ }
+ 
+@@ -743,20 +745,78 @@ RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
+         next.item_ownership.equipment.equipped_ids[slot_index] = 0U;
+         return prepare_item_save(
+             std::move(next), PendingSaveKind::equipment, phase_);
+     } catch (const std::bad_alloc&) {
+         return RequestResult::rejected;
+     } catch (...) {
+         return RequestResult::rejected;
+     }
+ }
+ 
++RequestResult DungeonSession::request_craft(
++    items::MaterialId material,
++    std::uint64_t item_id,
++    std::optional<items::DirectedCategory> directed_category) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
++    const std::size_t material_index = items::material_index(material);
++    if (!item_request_phase(phase_) || !combat_.has_value()
++            || pending_save_.has_value() || item_id == 0U
++            || material_index >= items::kMaterialCount
++            || !items::material_is_crafting_currency(material)) {
++        return RequestResult::rejected;
++    }
++    const items::OwnershipValidationResult stable_validation =
++        items::validate_ownership_detailed(stable_state_.item_ownership);
++    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
++        return RequestResult::rejected;
++    }
++    if (stable_validation != items::OwnershipValidationResult::valid) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return RequestResult::faulted;
++    }
++    const items::ItemInstance* const item = find_item(
++        stable_state_.item_ownership, item_id);
++    if (item == nullptr
++            || stable_state_.item_ownership.materials[material_index] == 0U) {
++        return RequestResult::rejected;
++    }
++    const items::CraftResult crafted = items::craft_item({
++        stable_state_.root_seed, stable_state_.commit_generation,
++        *item, material, directed_category});
++    if (!crafted.applied || !crafted.consumed || crafted.item.id != item_id) {
++        return RequestResult::rejected;
++    }
++    try {
++        DungeonRunState next = stable_state_;
++        next.progression = room_progression_;
++        bool replaced = false;
++        for (items::ItemInstance& owned : next.item_ownership.items) {
++            if (owned.id == item_id) {
++                owned = crafted.item;
++                replaced = true;
++                break;
++            }
++        }
++        if (!replaced) return RequestResult::rejected;
++        --next.item_ownership.materials[material_index];
++        return prepare_item_save(
++            std::move(next), PendingSaveKind::craft, phase_);
++    } catch (const std::bad_alloc&) {
++        return RequestResult::rejected;
++    } catch (...) {
++        return RequestResult::rejected;
++    }
++}
++
+ RequestResult DungeonSession::request_recipe(
+     const std::array<std::uint64_t, 3>& item_ids) noexcept {
+     if (!pending_item_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return RequestResult::faulted;
+     }
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value() || item_ids[0] == 0U
+             || item_ids[1] == 0U || item_ids[2] == 0U
+             || item_ids[0] == item_ids[1] || item_ids[0] == item_ids[2]
+@@ -781,21 +841,21 @@ RequestResult DungeonSession::request_recipe(
+     if (a == nullptr || b == nullptr || c == nullptr
+             || is_equipped(stable_state_.item_ownership, a->id)
+             || is_equipped(stable_state_.item_ownership, b->id)
+             || is_equipped(stable_state_.item_ownership, c->id)) {
+         return RequestResult::rejected;
+     }
+     const items::BaseDefinition* a_base = items::base_definition(a->base_id);
+     const items::BaseDefinition* b_base = items::base_definition(b->base_id);
+     const items::BaseDefinition* c_base = items::base_definition(c->base_id);
+     if (a_base == nullptr || b_base == nullptr || c_base == nullptr
+-            || a_base->slot != b_base->slot || a_base->slot != c_base->slot
++            || a->base_id != b->base_id || a->base_id != c->base_id
+             || a->rarity != b->rarity || a->rarity != c->rarity) {
+         return RequestResult::rejected;
+     }
+     if (stable_state_.item_ownership.next_item_sequence
+             == (std::numeric_limits<std::uint64_t>::max)()) {
+         enter_fault(DungeonFault::item_sequence_overflow);
+         return RequestResult::faulted;
+     }
+     const auto product = items::generate_recipe_item(
+         stable_state_.root_seed,
+@@ -1156,20 +1216,21 @@ void DungeonSession::commit_pending_save(
+             || pending_save_->expected_generation
+                 != pending_save_->next_state.commit_generation
+             || !same_run_state(
+                 result.verified_state, pending_save_->next_state)) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+ 
+     const PendingSaveKind kind = pending_save_->kind;
+     const bool item_commit = kind == PendingSaveKind::equipment
++        || kind == PendingSaveKind::craft
+         || kind == PendingSaveKind::recipe;
+     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+     const bool material_pickup_commit =
+         kind == PendingSaveKind::material_pickup;
+     const bool claim_commit = kind == PendingSaveKind::abyss_reward_claim;
+     const bool start_commit = kind == PendingSaveKind::abyss_start;
+     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
+     const bool abyss_clear_commit = kind == PendingSaveKind::abyss_clear;
+     const bool room_clear_commit = kind == PendingSaveKind::room_clear;
+     const bool clear_commit = abyss_clear_commit || room_clear_commit;
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index 67bc32d..ae9ccaf 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -229,20 +229,21 @@ struct PendingTransition final {
+     DungeonRunState next_state{};
+ };
+ 
+ enum class PendingSaveKind : std::uint8_t {
+     transition,
+     passive_tree,
+     loot_pickup,
+     material_pickup,
+     room_clear,
+     equipment,
++    craft,
+     recipe,
+     abyss_start,
+     abyss_fail,
+     abyss_clear,
+     abyss_reward_materialized,
+     abyss_reward_claim,
+     abyss_abandon,
+     death_retreat,
+     death_continue,
+ };
+diff --git a/src/items/item_generation.cpp b/src/items/item_generation.cpp
+index 8f528a3..60bbaa3 100644
+--- a/src/items/item_generation.cpp
++++ b/src/items/item_generation.cpp
+@@ -267,35 +267,39 @@ std::optional<ItemInstance> generate_recipe_item(
+     if (next_sequence == 0U || !validate_item(a) || !validate_item(b)
+         || !validate_item(c) || a.id == 0U || b.id == 0U || c.id == 0U
+         || a.id == b.id || a.id == c.id || b.id == c.id
+         || a.rarity != b.rarity || a.rarity != c.rarity) {
+         return std::nullopt;
+     }
+     const BaseDefinition* a_base = base_definition(a.base_id);
+     const BaseDefinition* b_base = base_definition(b.base_id);
+     const BaseDefinition* c_base = base_definition(c.base_id);
+     if (a_base == nullptr || b_base == nullptr || c_base == nullptr
+-        || a_base->slot != b_base->slot || a_base->slot != c_base->slot) {
++        || a.base_id != b.base_id || a.base_id != c.base_id) {
+         return std::nullopt;
+     }
+ 
+     std::array<std::uint64_t, 3> ids{{a.id, b.id, c.id}};
+     std::sort(ids.begin(), ids.end());
+     const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+     auto id_stream = core::DeterministicRng::derive_stream(
+         root_seed + next_sequence, kRecipeIdDomain);
+     std::uint64_t output_id =
+         id_stream.next_bounded(maximum).value_or(0U);
+     if (output_id == 0U) output_id = 1U;
+     if (output_id == ids[0] || output_id == ids[1] || output_id == ids[2])
+         return std::nullopt;
+ 
+     const std::uint16_t level_sum = static_cast<std::uint16_t>(a.item_level)
+         + static_cast<std::uint16_t>(b.item_level)
+         + static_cast<std::uint16_t>(c.item_level);
+     const std::uint8_t output_level =
+         static_cast<std::uint8_t>(level_sum / 3U);
+-    return generate_with_rarity(derive_recipe_affix_seed(ids), a_base->slot,
+-        output_level, output_id, a.rarity);
++    auto output = generate_with_rarity(derive_recipe_affix_seed(ids),
++        a_base->slot, output_level, output_id, a.rarity);
++    if (!output.has_value()) return std::nullopt;
++    output->base_id = a.base_id;
++    output->reinforcement = 0U;
++    return validate_item(*output) ? output : std::nullopt;
+ }
+ 
+ }  // namespace arpg::items
+diff --git a/src/platform/raylib/dungeon_runtime.cpp b/src/platform/raylib/dungeon_runtime.cpp
+index 25872bb..424dde3 100644
+--- a/src/platform/raylib/dungeon_runtime.cpp
++++ b/src/platform/raylib/dungeon_runtime.cpp
+@@ -264,20 +264,28 @@ dungeon::RequestResult DungeonRuntime::request_equip(
+         : dungeon::RequestResult::rejected;
+ }
+ 
+ dungeon::RequestResult DungeonRuntime::request_unequip(
+     items::ItemSlot slot) noexcept {
+     return state() == DungeonRuntimeState::running && session_.has_value()
+         ? session_->request_unequip(slot)
+         : dungeon::RequestResult::rejected;
+ }
+ 
++dungeon::RequestResult DungeonRuntime::request_craft(
++    items::MaterialId material, std::uint64_t item_id,
++    std::optional<items::DirectedCategory> directed_category) noexcept {
++    return state() == DungeonRuntimeState::running && session_.has_value()
++        ? session_->request_craft(material, item_id, directed_category)
++        : dungeon::RequestResult::rejected;
++}
++
+ dungeon::RequestResult DungeonRuntime::request_recipe(
+     const std::array<std::uint64_t, 3>& item_ids) noexcept {
+     return state() == DungeonRuntimeState::running && session_.has_value()
+         ? session_->request_recipe(item_ids)
+         : dungeon::RequestResult::rejected;
+ }
+ 
+ dungeon::RequestResult DungeonRuntime::request_death_continue() noexcept {
+     return state() == DungeonRuntimeState::running && session_.has_value()
+         ? session_->request_death_continue()
+diff --git a/src/platform/raylib/dungeon_runtime.hpp b/src/platform/raylib/dungeon_runtime.hpp
+index 32ebb50..3d7c4fd 100644
+--- a/src/platform/raylib/dungeon_runtime.hpp
++++ b/src/platform/raylib/dungeon_runtime.hpp
+@@ -54,20 +54,24 @@ public:
+     [[nodiscard]] bool initialize() noexcept;
+     [[nodiscard]] DungeonRuntimeState state() const noexcept;
+     [[nodiscard]] dungeon::DungeonSession* session() noexcept;
+     [[nodiscard]] const dungeon::DungeonSession* session() const noexcept;
+     [[nodiscard]] dungeon::RequestResult request_pickup(
+         std::uint16_t drop_ordinal) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_equip(
+         std::uint64_t item_id) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_unequip(
+         items::ItemSlot slot) noexcept;
++    [[nodiscard]] dungeon::RequestResult request_craft(
++        items::MaterialId material, std::uint64_t item_id,
++        std::optional<items::DirectedCategory> directed_category =
++            std::nullopt) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_recipe(
+         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_death_continue() noexcept;
+     [[nodiscard]] const items::ItemOwnershipState* item_state() const noexcept;
+     [[nodiscard]] DungeonRenderStatus render_status() const noexcept;
+     void fixed_tick(combat::MovementInput movement,
+         dungeon::AutoPickupPolicy pickup_policy = {}) noexcept;
+     void service_pending_save() noexcept;
+     // Kept until the host is migrated to the generic pending-save entry point.
+     void service_pending_transition() noexcept;
+diff --git a/src/platform/raylib/inventory_renderer.cpp b/src/platform/raylib/inventory_renderer.cpp
+index 36845f6..3bf4f5e 100644
+--- a/src/platform/raylib/inventory_renderer.cpp
++++ b/src/platform/raylib/inventory_renderer.cpp
+@@ -176,20 +176,21 @@ void InventoryRenderer::refresh_comparison(
+     candidate.equipped_ids[static_cast<std::size_t>(base->slot)] = item->id;
+     const auto candidate_build = session.preview_equipment_build(candidate);
+     if (candidate_build.has_value()) {
+         difference_ = compare_player_builds(*current_build_, *candidate_build);
+     }
+ }
+ 
+ void InventoryRenderer::sync(const dungeon::DungeonSession& session,
+     const dungeon::DungeonSnapshot& snapshot) {
+     const items::ItemOwnershipState& state = session.item_state();
++    material_bag_.sync_selection(state);
+     refresh_inventory_view_cache(view_cache_, state,
+         snapshot.commit_generation, filter_, selected_item_id_, recipe_);
+     if (selected_item_id_ != 0U && selected_item(state) == nullptr) {
+         selected_item_id_ = 0U;
+         view_cache_.selected_item_id = 0U;
+     }
+     if (recipe_.ids != view_cache_.resolved_recipe.ids
+         || recipe_.count != view_cache_.resolved_recipe.count) {
+         recipe_ = view_cache_.resolved_recipe;
+         view_cache_.requested_recipe = recipe_;
+@@ -213,24 +214,29 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+     const int columns = grid_columns(layout.grid);
+     const float wheel = input.mouse_wheel;
+     if (wheel != 0.0F) {
+         scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
+             scroll_rows_ - wheel, viewport.height, kCellHeight);
+     }
+     const bool left_pressed = input.mouse_left_pressed;
+     const bool right_pressed = input.mouse_right_pressed;
+     if (!left_pressed && !right_pressed) return false;
+     const Vector2 mouse = input.mouse_position;
++    if (right_pressed && material_bag_.cycle_directed_category(
++            mouse, GetScreenWidth(), GetScreenHeight())) {
++        return false;
++    }
+     if (left_pressed && material_bag_.process_click(mouse, state,
+             GetScreenWidth(), GetScreenHeight())) {
+         return false;
+     }
++    if (right_pressed && material_bag_.clear_selection()) return false;
+     if (left_pressed && contains(slot_filter_button(layout.grid), mouse)) {
+         if (!filter_.slot.has_value()) filter_.slot = items::ItemSlot::weapon;
+         else if (*filter_.slot == items::ItemSlot::accessory) filter_.slot.reset();
+         else filter_.slot = static_cast<items::ItemSlot>(
+             static_cast<std::uint8_t>(*filter_.slot) + 1U);
+         sync(session, snapshot);
+         scroll_rows_ = 0.0F;
+         return false;
+     }
+     if (left_pressed && contains(rarity_filter_button(layout.grid), mouse)) {
+@@ -267,20 +273,35 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+     const VisibleGridRange visible = visible_grid_range(view_cache_.filtered_indices.size(),
+         columns, scroll_rows_, viewport.height, kCellHeight);
+     for (std::size_t offset = 0U; offset < visible.count; ++offset) {
+         const std::size_t filtered_position = visible.first + offset;
+         const Rectangle cell = grid_item_rectangle(viewport, columns,
+             filtered_position, scroll_rows_);
+         if (!contains(cell, mouse)) continue;
+         const items::ItemInstance& item = state.items[
+             view_cache_.filtered_indices[filtered_position]];
+         selected_item_id_ = item.id;
++        if (left_pressed && requests_enabled) {
++            const auto selected_material = material_bag_.selected_material();
++            if (selected_material.has_value()) {
++                const auto category = *selected_material == items::MaterialId::directed
++                    ? std::optional<items::DirectedCategory>{
++                        material_bag_.directed_category()}
++                    : std::nullopt;
++                if (runtime.request_craft(*selected_material, item.id, category)
++                        == dungeon::RequestResult::accepted) {
++                    runtime.service_pending_save();
++                    return true;
++                }
++                return false;
++            }
++        }
+         const bool recipe_toggle = right_pressed || input.control_down;
+         if (recipe_toggle) {
+             static_cast<void>(toggle_recipe_selection(recipe_, item.id));
+         }
+         comparison_generation_ = ~std::uint64_t{0U};
+         sync(session, snapshot);
+         if (recipe_toggle) {
+             click_tracker_ = {};
+             return false;
+         }
+@@ -414,20 +435,46 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
+         DrawText(TextFormat("%s  i%u", rarity_name(item.rarity),
+             static_cast<unsigned>(item.item_level)),
+             static_cast<int>(cell.x + 5.0F), static_cast<int>(cell.y + 31.0F),
+             12, Color{174, 183, 198, 255});
+     }
+     EndScissorMode();
+     const bool enabled = !snapshot.pending_save_kind.has_value()
+         && recipe_ready();
+     draw_button(combine_button(layout.grid), TextFormat("Combine (%u/3)",
+         static_cast<unsigned>(recipe_.count)), enabled);
++    bool reinforced_recipe_input = false;
++    for (std::size_t index = 0U; index < recipe_.count; ++index) {
++        for (const items::ItemInstance& recipe_item : state.items) {
++            if (recipe_item.id == recipe_.ids[index]
++                    && recipe_item.reinforcement != 0U) {
++                reinforced_recipe_input = true;
++                break;
++            }
++        }
++    }
++    if (reinforced_recipe_input) {
++        DrawText("WARNING: Combine removes reinforcement.",
++            static_cast<int>(layout.grid.x + 12.0F),
++            static_cast<int>(layout.grid.y + layout.grid.height - 58.0F),
++            11, Color{255, 173, 81, 255});
++    }
++    if (const auto selected_material = material_bag_.selected_material();
++            selected_material.has_value()) {
++        const items::MaterialDefinition* const definition =
++            items::material_definition(*selected_material);
++        DrawText(TextFormat("Selected: %s - click an item to use (R-click cancels)",
++            definition == nullptr ? "Invalid" : definition->name.data()),
++            static_cast<int>(layout.grid.x + 12.0F),
++            static_cast<int>(layout.grid.y + 23.0F), 11,
++            Color{255, 237, 154, 255});
++    }
+     if (snapshot.pending_save_kind.has_value()) {
+         DrawText("SAVE PENDING - ACTIONS DISABLED",
+             static_cast<int>(layout.grid.x + 12.0F),
+             static_cast<int>(layout.grid.y + 13.0F), 12,
+             Color{255, 191, 96, 255});
+     }
+ 
+     const items::ItemInstance* const item = selected_item(state);
+     const Rectangle first_detail_line = detail_line_rectangle(layout, 0U);
+     const int detail_x = static_cast<int>(first_detail_line.x);
+diff --git a/src/platform/raylib/material_bag_renderer.cpp b/src/platform/raylib/material_bag_renderer.cpp
+index d469041..a449634 100644
+--- a/src/platform/raylib/material_bag_renderer.cpp
++++ b/src/platform/raylib/material_bag_renderer.cpp
+@@ -72,33 +72,67 @@ Rectangle material_bag_detail_bounds(int width, int height) noexcept {
+     return {inventory.detail.x, top, inventory.detail.width, bottom - top};
+ }
+ 
+ bool MaterialBagRenderer::select_slot(std::size_t slot,
+     const items::ItemOwnershipState& state) noexcept {
+     if (slot >= state.materials.size() || state.materials[slot] == 0U) return false;
+     selected_ = static_cast<items::MaterialId>(slot);
+     return true;
+ }
+ 
++bool MaterialBagRenderer::clear_selection() noexcept {
++    if (!selected_.has_value()) return false;
++    selected_.reset();
++    return true;
++}
++
++void MaterialBagRenderer::sync_selection(
++    const items::ItemOwnershipState& state) noexcept {
++    if (!selected_.has_value()
++            || state.materials[items::material_index(*selected_)] != 0U) {
++        return;
++    }
++    selected_.reset();
++}
++
++bool MaterialBagRenderer::cycle_directed_category(
++    Vector2 point, int width, int height) noexcept {
++    if (selected_ != items::MaterialId::directed) return false;
++    const MaterialBagLayout layout = material_bag_layout(width, height);
++    const std::size_t index = items::material_index(items::MaterialId::directed);
++    if (index >= layout.slots.size() || !contains(layout.slots[index], point)) {
++        return false;
++    }
++    const auto next = static_cast<std::uint8_t>(directed_category_) + 1U;
++    directed_category_ = next < static_cast<std::uint8_t>(items::DirectedCategory::count)
++        ? static_cast<items::DirectedCategory>(next)
++        : items::DirectedCategory::damage;
++    return true;
++}
++
+ bool MaterialBagRenderer::process_click(Vector2 point,
+     const items::ItemOwnershipState& state, int width, int height) noexcept {
+     const MaterialBagLayout layout = material_bag_layout(width, height);
+     for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
+         if (contains(layout.slots[index], point)) return select_slot(index, state);
+     }
+     return false;
+ }
+ 
+ std::optional<items::MaterialId> MaterialBagRenderer::selected_material() const noexcept {
+     return selected_;
+ }
+ 
++items::DirectedCategory MaterialBagRenderer::directed_category() const noexcept {
++    return directed_category_;
++}
++
+ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
+     int width, int height) const noexcept {
+     const MaterialBagLayout layout = material_bag_layout(width, height);
+     if (!layout.contains_all_slots()) return;
+     DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
+     DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
+         Color{72, 91, 120, 255});
+     DrawText("MATERIAL BAG", static_cast<int>(layout.panel.x + kInset),
+         static_cast<int>(layout.panel.y + 9.0F), 16, Color{131, 211, 255, 255});
+     for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
+@@ -112,14 +146,27 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
+         DrawRectangleRounded(slot, 0.08F, 4,
+             selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
+         DrawRectangleRoundedLinesEx(slot, 0.08F, 4,
+             selected ? 2.0F : 1.0F, color);
+         const items::MaterialDefinition* const definition = items::material_definition(id);
+         DrawText(definition == nullptr ? "Invalid" : definition->name.data(),
+             static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + 3.0F), 10, color);
+         DrawText(TextFormat("x%llu", static_cast<unsigned long long>(state.materials[index])),
+             static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + slot.height - 13.0F),
+             11, RAYWHITE);
++        if (selected && id == items::MaterialId::directed) {
++            const char* category = "Damage";
++            switch (directed_category_) {
++            case items::DirectedCategory::damage: break;
++            case items::DirectedCategory::defense: category = "Defense"; break;
++            case items::DirectedCategory::speed: category = "Speed"; break;
++            case items::DirectedCategory::element: category = "Element"; break;
++            case items::DirectedCategory::count: break;
++            }
++            DrawText(TextFormat("%s (R-click: cycle)", category),
++                static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + 16.0F),
++                9, Color{255, 237, 154, 255});
++        }
+     }
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_bag_renderer.hpp b/src/platform/raylib/material_bag_renderer.hpp
+index 79746d8..af5d7b1 100644
+--- a/src/platform/raylib/material_bag_renderer.hpp
++++ b/src/platform/raylib/material_bag_renderer.hpp
+@@ -1,13 +1,14 @@
+ #pragma once
+ 
+ #include "inventory_view_math.hpp"
++#include "items/item_crafting.hpp"
+ #include "items/material_catalog.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <optional>
+ 
+ namespace arpg::platform {
+ 
+ struct MaterialBagLayout final {
+     Rectangle panel{};
+@@ -18,18 +19,24 @@ struct MaterialBagLayout final {
+ 
+ [[nodiscard]] MaterialBagLayout material_bag_layout(int width, int height) noexcept;
+ [[nodiscard]] Rectangle material_bag_detail_bounds(int width, int height) noexcept;
+ 
+ class MaterialBagRenderer final {
+ public:
+     [[nodiscard]] bool process_click(Vector2,
+         const items::ItemOwnershipState&, int width, int height) noexcept;
+     [[nodiscard]] bool select_slot(std::size_t,
+         const items::ItemOwnershipState&) noexcept;
++    [[nodiscard]] bool clear_selection() noexcept;
++    void sync_selection(const items::ItemOwnershipState&) noexcept;
++    [[nodiscard]] bool cycle_directed_category(
++        Vector2, int width, int height) noexcept;
+     [[nodiscard]] std::optional<items::MaterialId> selected_material() const noexcept;
++    [[nodiscard]] items::DirectedCategory directed_category() const noexcept;
+     void draw(const items::ItemOwnershipState&, int width, int height) const noexcept;
+ 
+ private:
+     std::optional<items::MaterialId> selected_{};
++    items::DirectedCategory directed_category_{items::DirectedCategory::damage};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 169a8ab..fd4ada5 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -5,20 +5,21 @@ add_executable(arpg_dungeon_tests
+     dungeon_death_lifecycle_tests.cpp
+     dungeon_death_stress_tests.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
++    dungeon_crafting_transaction_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+     dungeon_material_loot_tests.cpp
+     dungeon_transaction_tests.cpp
+     dungeon_abyss_reward_tests.cpp
+     dungeon_abyss_stress_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_progression_reward_tests.cpp
+@@ -39,20 +40,25 @@ if(MSVC)
+     target_link_options(arpg_dungeon_tests PRIVATE /STACK:4194304)
+ endif()
+ 
+ add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+ 
+ add_test(NAME stage16.material_loot.units COMMAND arpg_dungeon_tests)
+ set_tests_properties(stage16.material_loot.units PROPERTIES
+     ENVIRONMENT "ARPG_STAGE16_MATERIAL_LOOT_ONLY=1"
+     LABELS "headless;dungeon;stage16")
+ 
++add_test(NAME stage16.crafting_transaction.units COMMAND arpg_dungeon_tests)
++set_tests_properties(stage16.crafting_transaction.units PROPERTIES
++    ENVIRONMENT "ARPG_STAGE16_CRAFTING_TRANSACTION_ONLY=1"
++    LABELS "headless;dungeon;stage16")
++
+ add_test(NAME stage11.death_stress.determinism_zero_alloc
+     COMMAND arpg_dungeon_tests)
+ set_tests_properties(stage11.death_stress.determinism_zero_alloc PROPERTIES
+     ENVIRONMENT "ARPG_STAGE11_DEATH_STRESS_ONLY=1"
+     LABELS "headless;dungeon;stage11;stress"
+     TIMEOUT 300)
+ 
+ add_executable(arpg_stage8_validation_fixture
+     stage8_validation_fixture.cpp)
+ target_compile_features(arpg_stage8_validation_fixture PRIVATE cxx_std_17)
+diff --git a/tests/dungeon/dungeon_crafting_transaction_tests.cpp b/tests/dungeon/dungeon_crafting_transaction_tests.cpp
+new file mode 100644
+index 0000000..51e101b
+--- /dev/null
++++ b/tests/dungeon/dungeon_crafting_transaction_tests.cpp
+@@ -0,0 +1,136 @@
++#include "test_framework.hpp"
++
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/dungeon_session.hpp"
++#include "items/item_catalog.hpp"
++#include "items/item_generation.hpp"
++#include "items/material_catalog.hpp"
++
++#include <array>
++#include <cstdint>
++#include <initializer_list>
++
++namespace {
++
++using arpg::dungeon::DungeonRules;
++using arpg::dungeon::DungeonRunState;
++using arpg::dungeon::DungeonSession;
++using arpg::dungeon::PendingSaveKind;
++using arpg::dungeon::RequestResult;
++using arpg::dungeon::RoomPhase;
++using arpg::dungeon::SaveDisposition;
++using arpg::items::ItemInstance;
++using arpg::items::ItemRarity;
++using arpg::items::ItemSlot;
++using arpg::items::MaterialId;
++
++ItemInstance generated_item(std::uint64_t id, std::uint8_t base_id,
++    ItemRarity rarity, std::uint8_t level = 100U) noexcept {
++    const arpg::items::BaseDefinition* const base =
++        arpg::items::base_definition(base_id);
++    if (base == nullptr) return {};
++    for (std::uint64_t seed = 1U; seed <= 4096U; ++seed) {
++        const auto item = arpg::items::generate_item(
++            {seed, base->slot, level, id, rarity});
++        if (item.has_value() && item->base_id == base_id) return *item;
++    }
++    return {};
++}
++
++DungeonRunState state_with_items(std::initializer_list<ItemInstance> items) {
++    DungeonRunState state = arpg::dungeon::make_initial_run_state(
++        0xC0FFEE16ULL, DungeonRules{}).state;
++    state.item_ownership.items.assign(items.begin(), items.end());
++    state.item_ownership.next_item_sequence = 17U;
++    return state;
++}
++
++const ItemInstance* find_item(const arpg::items::ItemOwnershipState& ownership,
++    std::uint64_t id) noexcept {
++    for (const ItemInstance& item : ownership.items)
++        if (item.id == id) return &item;
++    return nullptr;
++}
++
++bool commit_pending(DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) return false;
++    session.resolve_pending_save({SaveDisposition::committed,
++        pending->expected_generation, pending->next_state});
++    return session.snapshot().phase != RoomPhase::faulted;
++}
++
++arpg::test::Failure crafting_spends_only_after_a_successful_pure_craft() noexcept {
++    const ItemInstance rare = generated_item(101U, 1U, ItemRarity::rare);
++    ARPG_REQUIRE(arpg::items::validate_item(rare));
++    DungeonRunState state = state_with_items({rare});
++    const std::size_t chaos = arpg::items::material_index(MaterialId::chaos);
++    const std::size_t augment = arpg::items::material_index(MaterialId::augment);
++    state.item_ownership.materials[chaos] = 1U;
++    state.item_ownership.materials[augment] = 1U;
++    DungeonSession session{DungeonRules{}, state};
++
++    ARPG_REQUIRE(session.request_craft(MaterialId::chaos, rare.id)
++        == RequestResult::accepted);
++    const auto pending = session.pending_save();
++    ARPG_REQUIRE(pending.has_value());
++    ARPG_REQUIRE(pending->kind == PendingSaveKind::craft);
++    ARPG_REQUIRE(pending->next_state.item_ownership.materials[chaos] == 0U);
++    const ItemInstance* const crafted = find_item(
++        pending->next_state.item_ownership, rare.id);
++    ARPG_REQUIRE(crafted != nullptr);
++    ARPG_REQUIRE(crafted->id == rare.id);
++    ARPG_REQUIRE(session.item_state().materials[chaos] == 1U);
++
++    session.resolve_pending_save({SaveDisposition::not_committed,
++        pending->expected_generation, pending->next_state});
++    ARPG_REQUIRE(session.item_state().materials[chaos] == 1U);
++    ARPG_REQUIRE(find_item(session.item_state(), rare.id) != nullptr);
++    ARPG_REQUIRE(session.request_craft(MaterialId::augment, rare.id)
++        == RequestResult::rejected);
++    ARPG_REQUIRE(session.item_state().materials[augment] == 1U);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    return {};
++}
++
++arpg::test::Failure recipe_requires_exact_base_and_resets_reinforcement() noexcept {
++    ItemInstance a = generated_item(201U, 2U, ItemRarity::normal, 60U);
++    ItemInstance b = generated_item(202U, 2U, ItemRarity::normal, 61U);
++    ItemInstance c = generated_item(203U, 2U, ItemRarity::normal, 62U);
++    ItemInstance wrong_base = generated_item(204U, 9U, ItemRarity::normal, 63U);
++    ARPG_REQUIRE(arpg::items::validate_item(a));
++    ARPG_REQUIRE(arpg::items::validate_item(b));
++    ARPG_REQUIRE(arpg::items::validate_item(c));
++    ARPG_REQUIRE(arpg::items::validate_item(wrong_base));
++    a.reinforcement = 7U;
++    b.reinforcement = 4U;
++    DungeonRunState state = state_with_items({a, b, c, wrong_base});
++    DungeonSession session{DungeonRules{}, state};
++
++    ARPG_REQUIRE(session.request_recipe({{a.id, b.id, wrong_base.id}})
++        == RequestResult::rejected);
++    ARPG_REQUIRE(session.request_recipe({{a.id, b.id, c.id}})
++        == RequestResult::accepted);
++    const auto pending = session.pending_save();
++    ARPG_REQUIRE(pending.has_value());
++    ARPG_REQUIRE(pending->kind == PendingSaveKind::recipe);
++    ARPG_REQUIRE(pending->next_state.item_ownership.items.size() == 2U);
++    const ItemInstance& product = pending->next_state.item_ownership.items[1];
++    ARPG_REQUIRE(product.base_id == 2U);
++    ARPG_REQUIRE(product.rarity == ItemRarity::normal);
++    ARPG_REQUIRE(product.item_level == 61U);
++    ARPG_REQUIRE(product.reinforcement == 0U);
++    ARPG_REQUIRE(commit_pending(session));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"craft spends only after pure success", &crafting_spends_only_after_a_successful_pure_craft},
++    {"recipe exact base resets reinforcement", &recipe_requires_exact_base_and_resets_reinforcement},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept {
++    return arpg::test::make_suite("dungeon_crafting_transaction", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index d8a95e7..63fa44a 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -11,20 +11,21 @@ arpg::test::TestSuite room_generation_suite() noexcept;
+ arpg::test::TestSuite death_checkpoint_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
++arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+@@ -95,20 +96,30 @@ bool stage11_death_stress_only() noexcept {
+ bool stage16_material_loot_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE16_MATERIAL_LOOT_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool stage16_crafting_transaction_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_STAGE16_CRAFTING_TRANSACTION_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ }  // namespace
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+@@ -118,20 +129,21 @@ int main() {
+         room_generation_suite(),
+         death_checkpoint_suite(),
+         dungeon_death_lifecycle_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
++        dungeon_crafting_transaction_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_material_loot_suite(),
+         dungeon_transaction_suite(),
+         dungeon_abyss_reward_suite(),
+         dungeon_abyss_stress_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+@@ -188,13 +200,21 @@ int main() {
+     }
+ 
+     if (stage16_material_loot_only()) {
+         const arpg::test::TestSuite material_only[] = {
+             dungeon_material_loot_suite(),
+         };
+         return arpg::test::run_suites(material_only, 12,
+             "stage 16 task 4 material loot");
+     }
+ 
+-    return arpg::test::run_suites(suites, 266,
++    if (stage16_crafting_transaction_only()) {
++        const arpg::test::TestSuite crafting_only[] = {
++            dungeon_crafting_transaction_suite(),
++        };
++        return arpg::test::run_suites(crafting_only, 2,
++            "stage 16 task 6 crafting transactions");
++    }
++
++    return arpg::test::run_suites(suites, 268,
+         "stage 11a task 8 death continue validation");
+ }
+diff --git a/tests/items/item_recipe_tests.cpp b/tests/items/item_recipe_tests.cpp
+index 85a9f15..246956d 100644
+--- a/tests/items/item_recipe_tests.cpp
++++ b/tests/items/item_recipe_tests.cpp
+@@ -14,101 +14,104 @@ namespace {
+ using namespace arpg::items;
+ 
+ ItemInstance generated_material(std::uint64_t seed,
+     std::uint64_t id,
+     ItemSlot slot,
+     std::uint8_t level,
+     ItemRarity rarity) noexcept {
+     return generate_item({seed, slot, level, id, rarity}).value();
+ }
+ 
++ItemInstance with_base(ItemInstance item, std::uint8_t base_id) noexcept {
++    item.base_id = base_id;
++    return item;
++}
++
+ bool same_affixes(const ItemInstance& left,
+     const ItemInstance& right) noexcept {
+     return std::memcmp(left.affixes.data(), right.affixes.data(),
+         sizeof(left.affixes)) == 0;
+ }
+ 
+ arpg::test::Failure recipe_is_order_independent_and_averages_level() noexcept {
+     const ItemInstance a = generated_material(
+         11U, 300U, ItemSlot::accessory, 95U, ItemRarity::rare);
+-    const ItemInstance b = generated_material(
+-        22U, 100U, ItemSlot::accessory, 96U, ItemRarity::rare);
+-    const ItemInstance c = generated_material(
+-        33U, 200U, ItemSlot::accessory, 100U, ItemRarity::rare);
++    const ItemInstance b = with_base(generated_material(
++        22U, 100U, ItemSlot::accessory, 96U, ItemRarity::rare), a.base_id);
++    const ItemInstance c = with_base(generated_material(
++        33U, 200U, ItemSlot::accessory, 100U, ItemRarity::rare), a.base_id);
+     const auto abc = generate_recipe_item(0xABCDEFULL, 9U, a, b, c);
+     const auto cba = generate_recipe_item(0xABCDEFULL, 9U, c, b, a);
+     const auto bac = generate_recipe_item(0xABCDEFULL, 9U, b, a, c);
+     ARPG_REQUIRE(abc.has_value());
+     ARPG_REQUIRE(cba.has_value());
+     ARPG_REQUIRE(bac.has_value());
+     ARPG_REQUIRE(std::memcmp(&*abc, &*cba, sizeof(ItemInstance)) == 0);
+     ARPG_REQUIRE(std::memcmp(&*abc, &*bac, sizeof(ItemInstance)) == 0);
+     ARPG_REQUIRE(abc->id != 0U);
+-    const auto accessory_bases = base_ids_for_slot(ItemSlot::accessory);
+-    ARPG_REQUIRE(std::find(accessory_bases.begin(), accessory_bases.end(),
+-        abc->base_id) != accessory_bases.end());
++    ARPG_REQUIRE(abc->base_id == a.base_id);
+     ARPG_REQUIRE(abc->rarity == ItemRarity::rare);
+     ARPG_REQUIRE(abc->item_level == 97U);
+     ARPG_REQUIRE(validate_item(*abc));
+     return {};
+ }
+ 
+ arpg::test::Failure recipe_fully_rerolls_magic_and_rare_affixes() noexcept {
+     const ItemInstance rare_a = generated_material(
+         101U, 41U, ItemSlot::weapon, 100U, ItemRarity::rare);
+-    const ItemInstance rare_b = generated_material(
+-        202U, 42U, ItemSlot::weapon, 100U, ItemRarity::rare);
+-    const ItemInstance rare_c = generated_material(
+-        303U, 43U, ItemSlot::weapon, 100U, ItemRarity::rare);
++    const ItemInstance rare_b = with_base(generated_material(
++        202U, 42U, ItemSlot::weapon, 100U, ItemRarity::rare), rare_a.base_id);
++    const ItemInstance rare_c = with_base(generated_material(
++        303U, 43U, ItemSlot::weapon, 100U, ItemRarity::rare), rare_a.base_id);
+     const auto rare = generate_recipe_item(88U, 3U,
+         rare_a, rare_b, rare_c);
+     ARPG_REQUIRE(rare.has_value());
+     ARPG_REQUIRE(rare->affix_count >= 3U && rare->affix_count <= 6U);
+     ARPG_REQUIRE(!same_affixes(*rare, rare_a));
+     ARPG_REQUIRE(!same_affixes(*rare, rare_b));
+     ARPG_REQUIRE(!same_affixes(*rare, rare_c));
+ 
+     const ItemInstance magic_a = generated_material(
+         404U, 51U, ItemSlot::gloves, 75U, ItemRarity::magic);
+-    const ItemInstance magic_b = generated_material(
+-        505U, 52U, ItemSlot::gloves, 88U, ItemRarity::magic);
+-    const ItemInstance magic_c = generated_material(
+-        606U, 53U, ItemSlot::gloves, 95U, ItemRarity::magic);
++    const ItemInstance magic_b = with_base(generated_material(
++        505U, 52U, ItemSlot::gloves, 88U, ItemRarity::magic), magic_a.base_id);
++    const ItemInstance magic_c = with_base(generated_material(
++        606U, 53U, ItemSlot::gloves, 95U, ItemRarity::magic), magic_a.base_id);
+     const auto magic = generate_recipe_item(99U, 4U,
+         magic_a, magic_b, magic_c);
+     ARPG_REQUIRE(magic.has_value());
+     ARPG_REQUIRE(magic->item_level == 86U);
+     ARPG_REQUIRE(magic->affix_count >= 1U && magic->affix_count <= 2U);
+     ARPG_REQUIRE(validate_item(*magic));
+ 
+     const ItemInstance normal_a = generated_material(
+         1U, 61U, ItemSlot::boots, 1U, ItemRarity::normal);
+-    const ItemInstance normal_b = generated_material(
+-        2U, 62U, ItemSlot::boots, 16U, ItemRarity::normal);
+-    const ItemInstance normal_c = generated_material(
+-        3U, 63U, ItemSlot::boots, 30U, ItemRarity::normal);
++    const ItemInstance normal_b = with_base(generated_material(
++        2U, 62U, ItemSlot::boots, 16U, ItemRarity::normal), normal_a.base_id);
++    const ItemInstance normal_c = with_base(generated_material(
++        3U, 63U, ItemSlot::boots, 30U, ItemRarity::normal), normal_a.base_id);
+     const auto normal = generate_recipe_item(100U, 5U,
+         normal_a, normal_b, normal_c);
+     ARPG_REQUIRE(normal.has_value());
+     ARPG_REQUIRE(normal->item_level == 15U);
+     ARPG_REQUIRE(normal->affix_count == 0U);
+     ARPG_REQUIRE(normal->required_level == 1U);
+     return {};
+ }
+ 
+ arpg::test::Failure recipe_rejects_invalid_material_contracts() noexcept {
+     const ItemInstance a = generated_material(
+         1U, 71U, ItemSlot::helmet, 100U, ItemRarity::magic);
+-    const ItemInstance b = generated_material(
+-        2U, 72U, ItemSlot::helmet, 100U, ItemRarity::magic);
+-    const ItemInstance c = generated_material(
+-        3U, 73U, ItemSlot::helmet, 100U, ItemRarity::magic);
++    const ItemInstance b = with_base(generated_material(
++        2U, 72U, ItemSlot::helmet, 100U, ItemRarity::magic), a.base_id);
++    const ItemInstance c = with_base(generated_material(
++        3U, 73U, ItemSlot::helmet, 100U, ItemRarity::magic), a.base_id);
+     ARPG_REQUIRE(!generate_recipe_item(1U, 0U, a, b, c).has_value());
+ 
+     ItemInstance invalid = a;
+     invalid.required_level = 99U;
+     ARPG_REQUIRE(!generate_recipe_item(1U, 1U, invalid, b, c).has_value());
+     invalid = a;
+     invalid.id = 0U;
+     ARPG_REQUIRE(!generate_recipe_item(1U, 1U, invalid, b, c).has_value());
+     invalid = b;
+     invalid.id = a.id;
+@@ -118,24 +121,24 @@ arpg::test::Failure recipe_rejects_invalid_material_contracts() noexcept {
+     ARPG_REQUIRE(!generate_recipe_item(1U, 1U, a, b, invalid).has_value());
+     invalid = generated_material(
+         5U, 75U, ItemSlot::helmet, 100U, ItemRarity::rare);
+     ARPG_REQUIRE(!generate_recipe_item(1U, 1U, a, b, invalid).has_value());
+     return {};
+ }
+ 
+ arpg::test::Failure recipe_rejects_output_id_collision() noexcept {
+     ItemInstance a = generated_material(
+         1U, 81U, ItemSlot::boots, 30U, ItemRarity::normal);
+-    const ItemInstance b = generated_material(
+-        2U, 82U, ItemSlot::boots, 30U, ItemRarity::normal);
+-    const ItemInstance c = generated_material(
+-        3U, 83U, ItemSlot::boots, 30U, ItemRarity::normal);
++    const ItemInstance b = with_base(generated_material(
++        2U, 82U, ItemSlot::boots, 30U, ItemRarity::normal), a.base_id);
++    const ItemInstance c = with_base(generated_material(
++        3U, 83U, ItemSlot::boots, 30U, ItemRarity::normal), a.base_id);
+     std::optional<ItemInstance> baseline{};
+     std::uint64_t root_seed = 1U;
+     for (; root_seed <= 1024U && !baseline.has_value(); ++root_seed)
+         baseline = generate_recipe_item(root_seed, 7U, a, b, c);
+     ARPG_REQUIRE(baseline.has_value());
+     a.id = baseline->id;
+     ARPG_REQUIRE(!generate_recipe_item(
+         root_seed - 1U, 7U, a, b, c).has_value());
+     return {};
+ }
+diff --git a/tests/platform/material_bag_renderer_tests.cpp b/tests/platform/material_bag_renderer_tests.cpp
+index ac24505..cd81139 100644
+--- a/tests/platform/material_bag_renderer_tests.cpp
++++ b/tests/platform/material_bag_renderer_tests.cpp
+@@ -34,21 +34,35 @@ arpg::test::Failure selected_material_requires_an_owned_material_slot() noexcept
+         items::material_index(items::MaterialId::chaos), state));
+     ARPG_REQUIRE(renderer.selected_material()
+         == items::MaterialId::chaos);
+     ARPG_REQUIRE(!renderer.select_slot(
+         items::material_index(items::MaterialId::exalt), state));
+     ARPG_REQUIRE(renderer.selected_material()
+         == items::MaterialId::chaos);
+     return {};
+ }
+ 
++arpg::test::Failure selected_material_can_be_cancelled_without_changing_counts() noexcept {
++    items::ItemOwnershipState state{};
++    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
++    state.materials[chaos] = 4U;
++    platform::MaterialBagRenderer renderer{};
++    ARPG_REQUIRE(renderer.select_slot(chaos, state));
++    ARPG_REQUIRE(renderer.clear_selection());
++    ARPG_REQUIRE(!renderer.selected_material().has_value());
++    ARPG_REQUIRE(state.materials[chaos] == 4U);
++    ARPG_REQUIRE(!renderer.clear_selection());
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
+     {"minimum layout separates detail and bag", &minimum_layout_keeps_detail_above_material_bag},
+     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
++    {"material bag selection cancels", &selected_material_can_be_cancelled_without_changing_counts},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite material_bag_renderer_suite() noexcept {
+     return arpg::test::make_suite("material_bag_renderer", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 13e2b21..4c49eec 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -84,12 +84,12 @@ int main() {
+         material_loot_view_suite(),
+         material_bag_renderer_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 355, "stage 16 material UI");
++    return arpg::test::run_suites(suites, 356, "stage 16 material UI");
+ }

@@ -1,0 +1,2214 @@
+# Review package: 6863000..HEAD
+
+## Commits
+9d7ccd3 fix: preserve storm finisher visuals without hits
+d05000c feat: add active skill hud and loadout screen
+
+## Files changed
+ .superpowers/sdd/stage17-task-7-report.md          | 179 ++++++++++++++
+ src/platform/raylib/CMakeLists.txt                 |   2 +
+ src/platform/raylib/active_skill_renderer.cpp      | 264 +++++++++++++++++++++
+ src/platform/raylib/active_skill_renderer.hpp      |  54 +++++
+ src/platform/raylib/active_skill_view.cpp          |  68 ++++++
+ src/platform/raylib/active_skill_view.hpp          |  38 +++
+ src/platform/raylib/combat_renderer.cpp            |  28 +++
+ src/platform/raylib/combat_renderer.hpp            |   8 +
+ src/platform/raylib/hud_font.cpp                   |  19 ++
+ src/platform/raylib/hud_renderer.cpp               |   4 +
+ src/platform/raylib/hud_renderer.hpp               |   1 +
+ src/platform/raylib/inventory_renderer.cpp         | 207 +++++++++++++++-
+ src/platform/raylib/inventory_renderer.hpp         |   5 +-
+ src/platform/raylib/inventory_view_math.cpp        | 193 +++++++++++++++
+ src/platform/raylib/inventory_view_math.hpp        |  75 ++++++
+ src/platform/raylib/raylib_host.cpp                |   3 +-
+ tests/platform/CMakeLists.txt                      |   2 +
+ tests/platform/active_skill_loadout_view_tests.cpp | 173 ++++++++++++++
+ tests/platform/active_skill_view_tests.cpp         | 195 +++++++++++++++
+ tests/platform/platform_test_main.cpp              |   6 +-
+ 20 files changed, 1518 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/stage17-task-7-report.md b/.superpowers/sdd/stage17-task-7-report.md
+new file mode 100644
+index 0000000..f55fc6f
+--- /dev/null
++++ b/.superpowers/sdd/stage17-task-7-report.md
+@@ -0,0 +1,179 @@
++# Stage 17 Task 7：五槽 HUD、技能原生表现与技能石装卸页
++
++## 状态
++
++完成。实现范围严格限于 Task 7：五槽主动技能 HUD、拔刀斩/暴风式原生几何表现、现有冻结式背包覆盖层内的技能石子页，以及 remove/equip/swap 原子事务接线。
++
++未修改 J/K/L/WASD、数字键采样/路由、V8 编解码、技能伤害/冷却/施放时序或辅助技能效果。
++
++## 暂停/背包承载结论
++
++现有工程没有 `PauseScreen::inventory`；背包由 `I` 打开、`I/ESC` 关闭，并通过 `InventoryInputGate` 与 fixed-step 门禁冻结游戏。Task 7 文件清单也只指定 `inventory_*` 与 host 接线，不指定 `pause_menu_*`。
++
++因此本任务没有新增 PauseScreen 枚举，而是在既有 `InventoryRenderer` 覆盖层增加两个子页按钮：
++
++- `装备 / 材料`：默认页；每次打开背包都回到该页。既有过滤、材料、配方、装备/卸装流程未改。
++- `技能石`：五个主槽、当前选中槽的五个只读辅助空位、未装备主动石库存和取出按钮。
++
++关闭背包会清空技能页选择；装备/材料页原有选择与缓存字段未被技能页复用。
++
++## TDD 证据
++
++### RED
++
++先只新增并注册：
++
++- `tests/platform/active_skill_view_tests.cpp`
++- `tests/platform/active_skill_loadout_view_tests.cpp`
++
++首次直接执行简报命令时，普通 PowerShell 未加载 VS 开发环境，CMake 因 `WindowsSDKVersion` 为空提前失败；该次不计作功能 RED。
++
++随后通过 VS 2022 BuildTools 开发环境（MSVC 19.44、Windows SDK 10.0.26100.0）运行：
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_platform_tests
++```
++
++实际 RED：
++
++- `active_skill_view_tests.cpp` 因 `active_skill_renderer.hpp` 不存在而失败；
++- `active_skill_loadout_view_tests.cpp` 因 `ActiveSkillLoadoutView`、`ActiveSkillLoadoutLayout`、`ActiveSkillLoadoutCommand` 等纯模型/几何 API 不存在而失败。
++
++失败原因正是 Task 7 功能尚未实现，不是测试拼写或链接错误。
++
++### GREEN
++
++完成最小实现后，同一平台目标构建成功，`platform.units` 首次 1/1 通过。最终直接运行平台测试程序：
++
++```text
++374 cases, 0 failures
++```
++
++### 审查修复 RED → GREEN
++
++审查指出空挥暴风式不会产生 finisher `CombatEvent`，原实现只在单个
++`phase=finisher` tick 或存在事件时显示终结特效。代码核对确认公开快照在
++`elapsed_ticks=24+12*6=96` 进入 finisher，随后进入 recovery。
++
++先新增独立用例 `storm finisher snapshot lifetime`，断言无事件时：finisher
++tick 与 recovery `+1..+7` 可见，`+8` 不可见。生产代码未修改时实际运行：
++
++```text
++[FAIL] active_skill_view.storm finisher snapshot lifetime:
++plan.storm_swords.finisher_visible
++374 cases, 1 failures
++```
++
++随后只修改 `make_active_skill_effect_plan`：以
++`active_skill.elapsed_ticks - 96` 为主 age，事件仅在快照窗口不可用时补充。
++同一平台程序恢复 GREEN：
++
++```text
++374 cases, 0 failures
++```
++
++## 实现摘要
++
++### 五槽 HUD
++
++- 公开 `ActiveSkillHudSlot` / `ActiveSkillHudModel` 使用简报规定字段和固定五槽数组。
++- 槽位键号固定为 1～5；空槽显式设置 `empty=true`、空名称、零冷却。
++- 名称直接投影技能目录；冷却按技能目录总 tick 计算并 clamp 到 `[0,1]`。
++- 布局固定为底部居中，5 个 `58x58` 槽，槽间 `8px`。
++- 冷却遮罩自底向上绘制，并显示剩余秒数；空槽绘制原生石槽轮廓。
++- 新增 HUD/技能页文字全部通过已加载的 `HudFont` 使用 `DrawTextEx`；没有调用默认字体绘制新增文字，并扩充了相应中文 glyph 计划。
++
++### 原生技能几何
++
++- 拔刀斩只读 `CombatSnapshot`：以命中 tick 为起点保留 7 tick（约 0.12 秒）的白蓝扇形弧光，朝向读取 `player.facing`，中心读取技能快照 `locked_center`；使用 `DrawTriangleFan` 和线段。
++- 暴风式只读技能快照/最后战斗事件：围绕锁定中心按固定 12 角度绘制半透明剑形，以 `strike_index` 高亮当前剑；finisher 绘制中心落剑、椭圆冲击波和 7 tick 短闪屏。
++- 没有加载 DNF 或任何新增外部纹理；没有写入战斗世界、伤害、命中或施放时序。
++
++### 技能石子页与事务
++
++- 动作枚举只有 `select/remove/equip/swap`，不存在辅助槽编辑命令。
++- 单击主槽选择；连续单击两个已装备主槽产生 swap；选库存石后点空主槽产生 equip；选已装备槽后点取出产生 remove。
++- 五个辅助框只显示 `空`，点击不产生命令。
++- pending save 时纯命令层拒绝全部操作、取出按钮置灰并显示 `正在保存`。
++- remove/equip/swap 直接调用现有 `DungeonSession` 原子事务并由 `DungeonRuntime::service_pending_save()` 落盘。
++- 选择状态只在 `commit_generation` 实际增长后更新；保存失败时 loadout 与选择均保持原值，并在技能页显示既有 `保存失败` 通知文案。
++
++## 测试覆盖
++
++新增 10 个平台用例覆盖：
++
++- 固定五槽、1～5、空槽、目录名称；
++- 冷却 ratio clamp；
++- 1280x720、1600x900、1920x1080 下 HUD 固定尺寸/间距/居中；
++- 拔刀命中窗口/朝向与暴风 12 剑、当前 strike、finisher 事件寿命；
++- 无 finisher 事件时，暴风终结在 finisher 与 recovery `+1..+7`
++  按公开快照持续，`+8` 截止；
++- 五主槽、每槽五个辅助空位、未装备石库存；
++- 三分辨率下所有交互区和辅助区不重叠；
++- select/remove/equip/swap 命令语义；
++- pending 禁用、辅助位无命令；
++- 动作命令生成时不提前改变选择，支持保存失败保持 UI 选择。
++
++## 最终验证
++
++环境：VS 2022 BuildTools，MSVC 19.44，Windows SDK 10.0.26100.0。
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_game arpg_platform_tests arpg_stage11c_hud_stress
++```
++
++退出码 `0`；真实游戏目标、平台单元目标和 HUD stress 目标均链接成功。
++
++```powershell
++ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.units|stage11c\.hud_stress\.zero_alloc_100k)$' --output-on-failure
++```
++
++2/2 通过：
++
++- `platform.units`：5.59 秒，374 cases / 0 failures；
++- `stage11c.hud_stress.zero_alloc_100k`：0.35 秒，100k HUD 零分配通过。
++
++```powershell
++ctest --test-dir out/build/windows-msvc-debug -R '^(skills\.units|combat\.units|dungeon\.units)$' --output-on-failure
++```
++
++3/3 通过：
++
++- `skills.units`：0.01 秒；
++- `combat.units`：0.94 秒；
++- `dungeon.units`：196.02 秒（包含技能 loadout 原子事务回归）。
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_persistence_tests
++ctest --test-dir out/build/windows-msvc-debug -R '^persistence\.units$' --output-on-failure
++out/build/windows-msvc-debug/bin/arpg_persistence_tests.exe
++```
++
++构建退出码 `0`；最终 `persistence.units` 1/1 通过（0.43 秒），直接程序输出
++`94 cases, 0 failures`，覆盖 V8 技能 loadout 往返/迁移与既有持久化回归。
++
++审查修复后的最终组合回归：
++
++```powershell
++ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.units|stage11c\.hud_stress\.zero_alloc_100k|persistence\.units|combat\.units)$' --output-on-failure
++```
++
++4/4 通过：combat 0.89 秒、persistence 0.43 秒、platform 5.59 秒、
++HUD 100k 零分配 0.35 秒，总耗时 7.27 秒。
++
++```powershell
++git diff --check
++```
++
++退出码 `0`。
++
++## 约束扫描
++
++- 新增 active skill HUD/几何计划全部为 `std::array`、栈缓冲和值类型；没有 `std::vector`、`std::string`、`new` 或智能指针。
++- 新增渲染没有 `LoadTexture`、`LoadImage` 或外部素材路径。
++- 未修改 `host_input.*`、persistence、skills、combat 或 dungeon 生产实现。
++- 工作树原有 `.superpowers/sdd/task-5-report.md` 修改未触碰、未暂存、未覆盖。
++
++## 顾虑
++
++无未解决功能顾虑。Task 7 简报要求的无窗口模型、三分辨率布局、平台单元、HUD 零分配和输入/事务回归均已验证。真实 Raylib 五张截图及持久化重启证据属于后续 Task 8 验收范围，本任务未提前扩展。
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 12d8279..a3c76aa 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -1,11 +1,13 @@
+ add_library(arpg_raylib STATIC
++    active_skill_renderer.cpp
++    active_skill_view.cpp
+     actor_renderer.cpp
+     audio_pack.cpp
+     audio_asset_validation.cpp
+     audio_routing.cpp
+     audio_scene.cpp
+     combat_audio.cpp
+     combat_feedback.cpp
+     combat_renderer.cpp
+     control_hints.cpp
+     combat_view_math.cpp
+diff --git a/src/platform/raylib/active_skill_renderer.cpp b/src/platform/raylib/active_skill_renderer.cpp
+new file mode 100644
+index 0000000..958582a
+--- /dev/null
++++ b/src/platform/raylib/active_skill_renderer.cpp
+@@ -0,0 +1,264 @@
++#include "active_skill_renderer.hpp"
++
++#include "combat/active_skill_runtime.hpp"
++#include "combat_view_math.hpp"
++#include "skills/active_skill_catalog.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdio>
++
++namespace arpg::platform {
++namespace {
++
++constexpr float kPi = 3.14159265358979323846F;
++constexpr std::uint64_t kFlashTicks = 7U;
++constexpr std::uint16_t kStormFinisherTick = static_cast<std::uint16_t>(
++    combat::kStormStartupTicks
++    + static_cast<std::uint16_t>(combat::kStormStrikeCount)
++        * combat::kStormStrikeIntervalTicks);
++
++[[nodiscard]] bool recent_finisher_event(
++    const combat::CombatSnapshot& snapshot,
++    const combat::CombatEvent* event,
++    std::uint64_t& age) noexcept {
++    if (event == nullptr
++        || event->skill != skills::ActiveSkillId::storm_swords
++        || !event->finisher || snapshot.tick < event->tick) {
++        return false;
++    }
++    age = snapshot.tick - event->tick;
++    return age <= kFlashTicks;
++}
++
++void draw_skill_text(Font font, const char* text,
++    float x, float y, float size, Color color) noexcept {
++    if (text == nullptr || text[0] == '\0') return;
++    DrawTextEx(font, text, {x, y}, size, 1.0F, color);
++}
++
++void draw_draw_slash(const DrawSlashVisualPlan& plan,
++    float width, float height) noexcept {
++    if (!plan.visible) return;
++    const ScreenProjection projected = project_combat_position(
++        plan.center, width, height);
++    constexpr std::size_t kArcSegments = 14U;
++    std::array<Vector2, kArcSegments + 2U> fan{};
++    const float direction = plan.facing == combat::Facing::left ? -1.0F : 1.0F;
++    const Vector2 origin{projected.x,
++        projected.ground_y - 42.0F * projected.scale};
++    fan[0U] = origin;
++    const float radius = 250.0F * projected.scale;
++    for (std::size_t index = 0U; index <= kArcSegments; ++index) {
++        const float t = static_cast<float>(index)
++            / static_cast<float>(kArcSegments);
++        const float angle = (-0.62F + t * 1.24F)
++            + (direction < 0.0F ? kPi : 0.0F);
++        fan[index + 1U] = {
++            origin.x + std::cos(angle) * radius,
++            origin.y + std::sin(angle) * radius * 0.58F,
++        };
++    }
++    DrawTriangleFan(fan.data(), static_cast<int>(fan.size()),
++        Fade(Color{150, 224, 255, 255}, 0.24F * plan.opacity));
++    for (std::size_t index = 1U; index + 1U < fan.size(); ++index) {
++        DrawLineEx(fan[index], fan[index + 1U],
++            3.0F * projected.scale,
++            Fade(Color{236, 251, 255, 255}, plan.opacity));
++    }
++}
++
++void draw_sword(Vector2 center, float angle, float scale,
++    bool highlighted, float opacity) noexcept {
++    const Vector2 direction{std::cos(angle), std::sin(angle)};
++    const Vector2 normal{-direction.y, direction.x};
++    const float length = (highlighted ? 50.0F : 38.0F) * scale;
++    const float half_width = (highlighted ? 7.0F : 5.0F) * scale;
++    const Vector2 tip{center.x + direction.x * length * 0.58F,
++        center.y + direction.y * length * 0.58F};
++    const Vector2 base{center.x - direction.x * length * 0.42F,
++        center.y - direction.y * length * 0.42F};
++    const Vector2 left{base.x + normal.x * half_width,
++        base.y + normal.y * half_width};
++    const Vector2 right{base.x - normal.x * half_width,
++        base.y - normal.y * half_width};
++    const Color blade = highlighted
++        ? Fade(Color{244, 252, 255, 255}, opacity)
++        : Fade(Color{111, 194, 255, 255}, opacity * 0.58F);
++    DrawTriangle(tip, left, right, blade);
++    DrawLineEx({base.x + normal.x * half_width * 1.6F,
++                   base.y + normal.y * half_width * 1.6F},
++        {base.x - normal.x * half_width * 1.6F,
++            base.y - normal.y * half_width * 1.6F},
++        2.0F * scale, blade);
++}
++
++void draw_storm_swords(const StormSwordsVisualPlan& plan,
++    float width, float height) noexcept {
++    if (!plan.visible && !plan.finisher_visible) return;
++    const ScreenProjection projected = project_combat_position(
++        plan.center, width, height);
++    const float radius = 155.0F * projected.scale;
++    if (plan.visible) {
++        for (std::size_t index = 0U; index < plan.sword_count; ++index) {
++            const StormSwordVisual& sword = plan.swords[index];
++            const Vector2 position{
++                projected.x + std::cos(sword.angle_radians) * radius,
++                projected.ground_y
++                    + std::sin(sword.angle_radians) * radius * 0.38F
++                    - 54.0F * projected.scale,
++            };
++            draw_sword(position, sword.angle_radians + kPi,
++                projected.scale, sword.highlighted, 0.92F);
++        }
++    }
++    if (!plan.finisher_visible) return;
++    const float opacity = std::clamp(plan.finisher_opacity, 0.0F, 1.0F);
++    const Vector2 sword_center{projected.x,
++        projected.ground_y - 118.0F * projected.scale};
++    draw_sword(sword_center, kPi * 0.5F, projected.scale * 1.8F,
++        true, opacity);
++    const float wave = (95.0F + (1.0F - opacity) * 95.0F) * projected.scale;
++    DrawEllipseLines(static_cast<int>(projected.x),
++        static_cast<int>(projected.ground_y), wave, wave * 0.34F,
++        Fade(Color{225, 247, 255, 255}, opacity));
++}
++
++}  // namespace
++
++ActiveSkillEffectPlan make_active_skill_effect_plan(
++    const combat::CombatSnapshot& snapshot,
++    const combat::CombatEvent* last_event) noexcept {
++    ActiveSkillEffectPlan result{};
++    const combat::ActiveSkillSnapshot& skill = snapshot.active_skill;
++    if (skill.id == skills::ActiveSkillId::draw_slash
++            && skill.elapsed_ticks >= combat::kDrawSlashStartupTicks) {
++        const std::uint16_t age = static_cast<std::uint16_t>(
++            skill.elapsed_ticks - combat::kDrawSlashStartupTicks);
++        if (age <= kFlashTicks) {
++            result.draw_slash.visible = true;
++            result.draw_slash.center = skill.locked_center;
++            result.draw_slash.facing = snapshot.player.facing;
++            result.draw_slash.opacity = 1.0F
++                - static_cast<float>(age)
++                    / static_cast<float>(kFlashTicks + 1U);
++        }
++    }
++
++    if (skill.id == skills::ActiveSkillId::storm_swords) {
++        result.storm_swords.center = skill.locked_center;
++        result.storm_swords.visible = skill.phase == combat::ActiveSkillPhase::startup
++            || skill.phase == combat::ActiveSkillPhase::strikes
++            || skill.phase == combat::ActiveSkillPhase::finisher;
++        result.storm_swords.sword_count = combat::kStormStrikeCount;
++        for (std::size_t index = 0U;
++             index < result.storm_swords.sword_count; ++index) {
++            result.storm_swords.swords[index].angle_radians =
++                static_cast<float>(index) * (2.0F * kPi
++                    / static_cast<float>(combat::kStormStrikeCount));
++            result.storm_swords.swords[index].highlighted =
++                skill.strike_index == index + 1U;
++        }
++    }
++
++    std::uint64_t event_age = 0U;
++    const bool recent_event = recent_finisher_event(
++        snapshot, last_event, event_age);
++    const bool snapshot_finisher_window =
++        skill.id == skills::ActiveSkillId::storm_swords
++        && (skill.phase == combat::ActiveSkillPhase::finisher
++            || skill.phase == combat::ActiveSkillPhase::recovery)
++        && skill.elapsed_ticks >= kStormFinisherTick
++        && skill.elapsed_ticks <= kStormFinisherTick + kFlashTicks;
++    const std::uint64_t snapshot_age = snapshot_finisher_window
++        ? static_cast<std::uint64_t>(
++            skill.elapsed_ticks - kStormFinisherTick)
++        : 0U;
++    if (snapshot_finisher_window || recent_event) {
++        if (!result.storm_swords.visible) {
++            result.storm_swords.center = skill.locked_center;
++        }
++        result.storm_swords.finisher_visible = true;
++        const float age = static_cast<float>(snapshot_finisher_window
++            ? snapshot_age : event_age);
++        result.storm_swords.finisher_opacity = std::clamp(
++            1.0F - age / static_cast<float>(kFlashTicks + 1U), 0.0F, 1.0F);
++        result.screen_flash_alpha = 0.16F
++            * result.storm_swords.finisher_opacity;
++    }
++    return result;
++}
++
++void ActiveSkillRenderer::draw_world(
++    const combat::CombatSnapshot& snapshot,
++    const combat::CombatEvent* last_event,
++    float width, float height) const noexcept {
++    const ActiveSkillEffectPlan plan = make_active_skill_effect_plan(
++        snapshot, last_event);
++    draw_draw_slash(plan.draw_slash, width, height);
++    draw_storm_swords(plan.storm_swords, width, height);
++    if (plan.screen_flash_alpha > 0.0F) {
++        DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
++            Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
++    }
++}
++
++void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
++    const ActiveSkillHudLayout& layout,
++    Font hud_font, bool hud_font_ready) const noexcept {
++    for (std::size_t index = 0U; index < model.slots.size(); ++index) {
++        const ActiveSkillHudSlot& slot = model.slots[index];
++        const Rectangle bounds = layout.slots[index];
++        DrawRectangleRounded(bounds, 0.12F, 4, Color{12, 20, 31, 238});
++        DrawRectangleRoundedLinesEx(bounds, 0.12F, 4, 2.0F,
++            slot.empty ? Color{74, 91, 112, 235}
++                       : Color{107, 199, 255, 255});
++        if (slot.empty) {
++            const Vector2 center{bounds.x + bounds.width * 0.5F,
++                bounds.y + bounds.height * 0.5F + 4.0F};
++            DrawCircleLines(static_cast<int>(center.x),
++                static_cast<int>(center.y), 13.0F,
++                Color{84, 103, 128, 220});
++            DrawLineEx({center.x - 9.0F, center.y},
++                {center.x + 9.0F, center.y}, 1.0F,
++                Color{84, 103, 128, 220});
++        } else {
++            const Vector2 center{bounds.x + bounds.width * 0.5F,
++                bounds.y + 26.0F};
++            DrawPoly(center, 4, 13.0F, 45.0F,
++                Color{50, 135, 185, 230});
++            DrawPolyLinesEx(center, 4, 13.0F, 45.0F, 2.0F,
++                Color{201, 242, 255, 255});
++        }
++
++        if (slot.cooldown_ratio > 0.0F) {
++            const float ratio = std::clamp(slot.cooldown_ratio, 0.0F, 1.0F);
++            const float overlay_height = bounds.height * ratio;
++            DrawRectangleRec({bounds.x, bounds.y + bounds.height - overlay_height,
++                bounds.width, overlay_height}, Color{3, 7, 14, 190});
++        }
++        if (!hud_font_ready) continue;
++        char key[2]{static_cast<char>('0' + slot.key_number), '\0'};
++        draw_skill_text(hud_font, key, bounds.x + 4.0F,
++            bounds.y + 2.0F, 13.0F, Color{245, 249, 255, 255});
++        if (!slot.empty) {
++            draw_skill_text(hud_font, slot.name.data(), bounds.x + 3.0F,
++                bounds.y + bounds.height - 13.0F, 9.0F,
++                Color{219, 240, 255, 255});
++        }
++        if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;
++        const skills::ActiveSkillDefinition* const definition =
++            skills::active_skill_definition(slot.id);
++        if (definition == nullptr) continue;
++        const float seconds = std::ceil(slot.cooldown_ratio
++            * static_cast<float>(definition->cooldown_ticks) / 60.0F);
++        char remaining[12]{};
++        static_cast<void>(std::snprintf(remaining, sizeof(remaining),
++            "%.0fs", seconds));
++        draw_skill_text(hud_font, remaining, bounds.x + 18.0F,
++            bounds.y + 21.0F, 14.0F, WHITE);
++    }
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/active_skill_renderer.hpp b/src/platform/raylib/active_skill_renderer.hpp
+new file mode 100644
+index 0000000..fe5b5df
+--- /dev/null
++++ b/src/platform/raylib/active_skill_renderer.hpp
+@@ -0,0 +1,54 @@
++#pragma once
++
++#include "active_skill_view.hpp"
++#include "combat/combat_types.hpp"
++
++#include <raylib.h>
++
++#include <array>
++#include <cstddef>
++
++namespace arpg::platform {
++
++struct DrawSlashVisualPlan final {
++    bool visible{};
++    combat::Vec3 center{};
++    combat::Facing facing{combat::Facing::right};
++    float opacity{};
++};
++
++struct StormSwordVisual final {
++    float angle_radians{};
++    bool highlighted{};
++};
++
++struct StormSwordsVisualPlan final {
++    bool visible{};
++    bool finisher_visible{};
++    combat::Vec3 center{};
++    std::array<StormSwordVisual, 12> swords{};
++    std::size_t sword_count{};
++    float finisher_opacity{};
++};
++
++struct ActiveSkillEffectPlan final {
++    DrawSlashVisualPlan draw_slash{};
++    StormSwordsVisualPlan storm_swords{};
++    float screen_flash_alpha{};
++};
++
++[[nodiscard]] ActiveSkillEffectPlan make_active_skill_effect_plan(
++    const combat::CombatSnapshot& snapshot,
++    const combat::CombatEvent* last_event) noexcept;
++
++class ActiveSkillRenderer final {
++public:
++    void draw_world(const combat::CombatSnapshot& snapshot,
++        const combat::CombatEvent* last_event,
++        float width, float height) const noexcept;
++    void draw_hud(const ActiveSkillHudModel& model,
++        const ActiveSkillHudLayout& layout,
++        Font hud_font, bool hud_font_ready) const noexcept;
++};
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/active_skill_view.cpp b/src/platform/raylib/active_skill_view.cpp
+new file mode 100644
+index 0000000..1676b72
+--- /dev/null
++++ b/src/platform/raylib/active_skill_view.cpp
+@@ -0,0 +1,68 @@
++#include "active_skill_view.hpp"
++
++#include "skills/active_skill_catalog.hpp"
++
++#include <algorithm>
++#include <cstdio>
++
++namespace arpg::platform {
++namespace {
++
++constexpr float kSlotSize = 58.0F;
++constexpr float kSlotGap = 8.0F;
++constexpr float kBottomMargin = 20.0F;
++
++}  // namespace
++
++ActiveSkillHudModel make_active_skill_hud_model(
++    const skills::SkillLoadoutState& loadout,
++    const std::array<std::uint16_t, skills::kActiveSkillCount>& cooldowns)
++    noexcept {
++    ActiveSkillHudModel result{};
++    for (std::size_t index = 0U; index < result.slots.size(); ++index) {
++        ActiveSkillHudSlot& slot = result.slots[index];
++        slot.key_number = static_cast<std::uint8_t>(index + 1U);
++        slot.id = loadout.slots[index].active;
++        slot.empty = slot.id == skills::ActiveSkillId::none;
++        if (slot.empty) continue;
++        const skills::ActiveSkillDefinition* const definition =
++            skills::active_skill_definition(slot.id);
++        if (definition == nullptr || definition->cooldown_ticks == 0U) {
++            slot.id = skills::ActiveSkillId::none;
++            slot.empty = true;
++            continue;
++        }
++        static_cast<void>(std::snprintf(slot.name.data(), slot.name.size(),
++            "%s", definition->display_name));
++        slot.name.back() = '\0';
++        const std::size_t cooldown_index = static_cast<std::size_t>(slot.id);
++        if (cooldown_index < cooldowns.size()) {
++            slot.cooldown_ratio = std::clamp(
++                static_cast<float>(cooldowns[cooldown_index])
++                    / static_cast<float>(definition->cooldown_ticks),
++                0.0F, 1.0F);
++        }
++    }
++    return result;
++}
++
++ActiveSkillHudLayout active_skill_hud_layout(
++    int width, int height) noexcept {
++    if (width <= 0 || height <= 0) return {};
++    constexpr float kTotalWidth =
++        static_cast<float>(skills::kActiveSkillSlotCount) * kSlotSize
++        + static_cast<float>(skills::kActiveSkillSlotCount - 1U) * kSlotGap;
++    const float x = (static_cast<float>(width) - kTotalWidth) * 0.5F;
++    const float y = static_cast<float>(height) - kSlotSize - kBottomMargin;
++    ActiveSkillHudLayout result{};
++    result.bounds = {x, y, kTotalWidth, kSlotSize};
++    for (std::size_t index = 0U; index < result.slots.size(); ++index) {
++        result.slots[index] = {
++            x + static_cast<float>(index) * (kSlotSize + kSlotGap),
++            y, kSlotSize, kSlotSize,
++        };
++    }
++    return result;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/active_skill_view.hpp b/src/platform/raylib/active_skill_view.hpp
+new file mode 100644
+index 0000000..47d928b
+--- /dev/null
++++ b/src/platform/raylib/active_skill_view.hpp
+@@ -0,0 +1,38 @@
++#pragma once
++
++#include "skills/active_skill_types.hpp"
++
++#include <raylib.h>
++
++#include <array>
++#include <cstdint>
++
++namespace arpg::platform {
++
++struct ActiveSkillHudSlot final {
++    std::uint8_t key_number{};
++    skills::ActiveSkillId id{skills::ActiveSkillId::none};
++    std::array<char, 48> name{};
++    float cooldown_ratio{};
++    bool empty{};
++};
++
++struct ActiveSkillHudModel final {
++    std::array<ActiveSkillHudSlot,
++        skills::kActiveSkillSlotCount> slots{};
++};
++
++struct ActiveSkillHudLayout final {
++    Rectangle bounds{};
++    std::array<Rectangle, skills::kActiveSkillSlotCount> slots{};
++};
++
++[[nodiscard]] ActiveSkillHudModel make_active_skill_hud_model(
++    const skills::SkillLoadoutState& loadout,
++    const std::array<std::uint16_t, skills::kActiveSkillCount>& cooldowns)
++    noexcept;
++
++[[nodiscard]] ActiveSkillHudLayout active_skill_hud_layout(
++    int width, int height) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index b7c5f01..6e1855c 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -109,20 +109,26 @@ void CombatRenderer::observe_hud(
+         hud_notices_.publish_loot_pickup(
+             material_feedback.text, material_feedback.emphasized);
+     }
+     hud_notices_.observe(previous, current, runtime_status, control_hints,
+         runtime_status.recovery_required);
+     hud_notices_.update(frame_seconds, paused);
+     HudViewModel model{};
+     hud_projector_.build(model, current, runtime_status, control_hints);
+     attach_notice_view(model, hud_notices_.view());
+     hud_model_ = model;
++    const std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns =
++        current.combat.has_value()
++        ? current.combat->skill_cooldowns
++        : std::array<std::uint16_t, skills::kActiveSkillCount>{};
++    active_skill_hud_model_ = make_active_skill_hud_model(
++        current.skill_loadout, cooldowns);
+     hud_layout_ = IsWindowReady()
+         ? make_hud_layout(GetScreenWidth(), GetScreenHeight(), false)
+         : HudLayout{};
+     hud_binding_revision_ = control_hints.revision;
+     ++hud_observation_count_;
+ }
+ 
+ void CombatRenderer::observe_presented_hud_frame(
+     HudPresentedFrame frame,
+     const dungeon::DungeonSnapshot& previous,
+@@ -157,20 +163,33 @@ HudStaticFormattingDiagnostics
+ CombatRenderer::hud_static_formatting_diagnostics() const noexcept {
+     return hud_projector_.static_formatting_diagnostics();
+ }
+ 
+ std::uint64_t CombatRenderer::hud_presented_frame_count(
+     HudPresentedFrame frame) const noexcept {
+     const auto index = hud_presented_frame_index(frame);
+     return index.has_value() ? hud_presented_frame_counts_[*index] : 0U;
+ }
+ 
++const ActiveSkillHudModel& CombatRenderer::active_skill_hud_model()
++    const noexcept {
++    return active_skill_hud_model_;
++}
++
++Font CombatRenderer::hud_font() const noexcept {
++    return hud_renderer_.hud_font();
++}
++
++bool CombatRenderer::hud_font_ready() const noexcept {
++    return hud_renderer_.font_ready();
++}
++
+ GroundLootView CombatRenderer::draw(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     float interpolation_alpha,
+     bool draw_debug,
+     const CombatFeedback& feedback,
+     bool audio_ready) noexcept {
+     transition_ = transition_after_room_phase(transition_, current.phase);
+ 
+@@ -191,27 +210,36 @@ GroundLootView CombatRenderer::draw(
+             world_mode = false;
+         }
+         switch (stage) {
+         case CombatRenderStage::room:
+             draw_room(current, render_plan.ground_loot, render_plan.material_loot);
+             break;
+         case CombatRenderStage::actors:
+             draw_actors(previous, current,
+                 std::clamp(interpolation_alpha, 0.0F, 1.0F),
+                 draw_debug, feedback);
++            if (current.combat.has_value()) {
++                active_skill_renderer_.draw_world(*current.combat,
++                    has_last_event_ ? &last_event_ : nullptr,
++                    static_cast<float>(GetScreenWidth()),
++                    static_cast<float>(GetScreenHeight()));
++            }
+             break;
+         case CombatRenderStage::ground_loot_labels:
+             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
+             hud_renderer_.draw_material_loot(render_plan.material_loot);
+             break;
+         case CombatRenderStage::normal_hud:
+             draw_hud();
++            active_skill_renderer_.draw_hud(active_skill_hud_model_,
++                active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
++                hud_renderer_.hud_font(), hud_renderer_.font_ready());
+             break;
+         }
+     }
+     if (world_mode) EndMode2D();
+ 
+     if (draw_debug) {
+         const DebugOverlayDiagnosticsPlan diagnostics =
+             make_debug_overlay_diagnostics_plan(current, hud_model_.diagnostics,
+                 hud_notices_.dropped_count(), hud_binding_revision_, last_event_,
+                 has_last_event_, hud_renderer_.font_ready());
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index ab15f1d..e0219d2 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -1,12 +1,14 @@
+ #pragma once
+ 
++#include "active_skill_renderer.hpp"
++#include "active_skill_view.hpp"
+ #include "combat_feedback.hpp"
+ #include "death_overlay_renderer.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "ground_loot_view.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_renderer.hpp"
+ #include "loot_pickup_feedback.hpp"
+ #include "material_loot_view.hpp"
+ #include "material_pack.hpp"
+@@ -88,20 +90,24 @@ public:
+         float frame_seconds,
+         bool paused) noexcept;
+     [[nodiscard]] const HudViewModel& hud_model() const noexcept;
+     [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
+     [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;
+     [[nodiscard]] std::uint64_t hud_observation_count() const noexcept;
+     [[nodiscard]] HudStaticFormattingDiagnostics
+         hud_static_formatting_diagnostics() const noexcept;
+     [[nodiscard]] std::uint64_t hud_presented_frame_count(
+         HudPresentedFrame) const noexcept;
++    [[nodiscard]] const ActiveSkillHudModel& active_skill_hud_model()
++        const noexcept;
++    [[nodiscard]] Font hud_font() const noexcept;
++    [[nodiscard]] bool hud_font_ready() const noexcept;
+     [[nodiscard]] GroundLootView draw(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback,
+         bool audio_ready) noexcept;
+ 
+ private:
+@@ -123,27 +129,29 @@ private:
+         int line_step) const noexcept;
+     void draw_debug_world_volumes(
+         const combat::CombatSnapshot& snapshot,
+         float width,
+         float height) const noexcept;
+     combat::CombatEvent last_event_{};
+     bool has_last_event_{};
+     TransitionVisualState transition_{};
+     DeathOverlayRenderer death_overlay_{};
+     HudRenderer hud_renderer_{};
++    ActiveSkillRenderer active_skill_renderer_{};
+     DebugOverlayRenderer debug_overlay_{};
+     HudNoticeState hud_notices_{};
+     LootPickupFeedbackState loot_pickup_feedback_{};
+     MaterialPickupFeedbackState material_pickup_feedback_{};
+     MaterialPack material_pack_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
++    ActiveSkillHudModel active_skill_hud_model_{};
+     HudLayout hud_layout_{};
+     std::uint64_t hud_binding_revision_{};
+     std::uint64_t hud_observation_count_{};
+     std::array<std::uint64_t,
+         static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
+     settings::LootFilterMode loot_filter_mode_{
+         settings::LootFilterMode::show_all};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_font.cpp b/src/platform/raylib/hud_font.cpp
+index 167bd1e..c01029f 100644
+--- a/src/platform/raylib/hud_font.cpp
++++ b/src/platform/raylib/hud_font.cpp
+@@ -15,38 +15,57 @@ void add_ground_loot_codepoints(DeathOverlayFontPlan& plan) noexcept {
+     constexpr int kCodepoints[] = {
+         0x666E, 0x901A, 0x9B54, 0x6CD5, 0x7A00,
+         0x6709, 0x5DF2, 0x62FE, 0x53D6, 0x672A,
+         0x77E5, 0x88C5, 0x5907,
+     };
+     for (const int codepoint : kCodepoints) {
+         add_hud_codepoint(plan, codepoint);
+     }
+ }
+ 
++void add_active_skill_codepoints(DeathOverlayFontPlan& plan) noexcept {
++    constexpr int kCodepoints[] = {
++        0x4E3B, 0x52A8, 0x6280, 0x80FD, 0x77F3, 0x69FD,
++        0x88C5, 0x5907, 0x6750, 0x6599, 0x8F85, 0x52A9,
++        0xFF08, 0x53EA, 0x8BFB, 0xFF09, 0x7A7A, 0x672A,
++        0x65E0, 0x53D6, 0x51FA, 0x6B63, 0x5728, 0x4FDD,
++        0x5B58, 0x5931, 0x8D25,
++        0x80CC, 0x5305, 0x5173, 0x95ED,
++    };
++    for (const int codepoint : kCodepoints) {
++        add_hud_codepoint(plan, codepoint);
++    }
++}
++
+ }  // namespace
+ 
+ HudFontPlan hud_font_plan() noexcept {
+     HudFontPlan plan{};
+     plan.shared = death_overlay_font_plan();
+     add_ground_loot_codepoints(plan.shared);
++    add_active_skill_codepoints(plan.shared);
+     constexpr const char* kRequiredText[] = {
+         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
+         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
+         u8"减速", u8"腐蚀", u8"无敌", u8"深度", u8"层房间", u8"生态",
+         u8"第", u8"波", u8"下一波即将开始", u8"待领奖励", u8"未领取",
+         u8"正在保存房间", u8"正在处理撤退", u8"房间状态异常", u8"深渊",
+         u8"目标", u8"个敌人", u8"待结算经验",
+         u8"需要恢复存档", u8"离开后再次触碰同一出口以放弃全部剩余奖励",
+         u8"再次交互，放弃剩余奖励并下降", u8"进入下一层", u8"进入出口",
+         u8"房间已清理", u8"奖励", u8"升级至级", u8"有未分配被动点",
+         u8"打开背包", u8"打开被动树",
+         u8"普通魔法稀有已拾取未知装备",
++        u8"装备 / 材料", u8"技能石", u8"主动技能石槽",
++        u8"空主技能槽", u8"辅助技能石（只读）", u8"未装备技能石",
++        u8"无", u8"取出", u8"正在保存",
++        u8"技能石背包关闭",
+     };
+     plan.covers_required_text = true;
+     for (const char* text : kRequiredText) {
+         if (!death_overlay_font_covers_text(plan.shared, text)) {
+             plan.covers_required_text = false;
+             break;
+         }
+     }
+     return plan;
+ }
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index 3ab2631..5fb973d 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -384,20 +384,24 @@ void HudRenderer::shutdown() noexcept {
+         make_hud_font_selection_plan(font_ready_);
+     if (selection.owns_loaded_font && IsWindowReady()) UnloadFont(font_);
+     font_ = {};
+     font_ready_ = false;
+ }
+ 
+ bool HudRenderer::font_ready() const noexcept {
+     return font_ready_;
+ }
+ 
++Font HudRenderer::hud_font() const noexcept {
++    return font_;
++}
++
+ void HudRenderer::draw_ground_loot(
+     const GroundLootView& view) const noexcept {
+     if (!IsWindowReady()) return;
+     const HudFontSelectionPlan selection =
+         make_hud_font_selection_plan(font_ready_);
+     const Font draw_font = selection.use_default_font
+         ? GetFontDefault() : font_;
+     const HudPalette palette = hud_palette();
+     const HudReadabilityStyle style = hud_readability_style();
+     for (std::size_t index = 0U; index < view.count; ++index) {
+diff --git a/src/platform/raylib/hud_renderer.hpp b/src/platform/raylib/hud_renderer.hpp
+index 96d4a02..84f0c92 100644
+--- a/src/platform/raylib/hud_renderer.hpp
++++ b/src/platform/raylib/hud_renderer.hpp
+@@ -116,20 +116,21 @@ struct HudReadabilityStyle final {
+ class HudRenderer final {
+ public:
+     HudRenderer() noexcept = default;
+     ~HudRenderer() noexcept;
+     HudRenderer(const HudRenderer&) = delete;
+     HudRenderer& operator=(const HudRenderer&) = delete;
+ 
+     [[nodiscard]] bool initialize() noexcept;
+     void shutdown() noexcept;
+     [[nodiscard]] bool font_ready() const noexcept;
++    [[nodiscard]] Font hud_font() const noexcept;
+     void draw_ground_loot(const GroundLootView&) const noexcept;
+     void draw_material_loot(const MaterialLootView&) const noexcept;
+     void draw(const HudViewModel&, const HudLayout&) const noexcept;
+ 
+ private:
+     Font font_{};
+     bool font_ready_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/inventory_renderer.cpp b/src/platform/raylib/inventory_renderer.cpp
+index 35f2589..be188e0 100644
+--- a/src/platform/raylib/inventory_renderer.cpp
++++ b/src/platform/raylib/inventory_renderer.cpp
+@@ -76,20 +76,141 @@ void draw_button(Rectangle rectangle, const char* label,
+     const Color fill = !enabled ? Color{42, 45, 52, 255}
+         : active ? Color{42, 104, 139, 255} : Color{28, 47, 67, 255};
+     const Color text = enabled ? RAYWHITE : Color{118, 123, 133, 255};
+     DrawRectangleRounded(rectangle, 0.12F, 4, fill);
+     DrawRectangleRoundedLinesEx(rectangle, 0.12F, 4, 1.0F,
+         enabled ? Color{90, 151, 190, 255} : Color{65, 68, 75, 255});
+     DrawText(label, static_cast<int>(rectangle.x + 7.0F),
+         static_cast<int>(rectangle.y + 6.0F), 14, text);
+ }
+ 
++void draw_hud_font_text(Font font, bool ready, const char* text,
++    float x, float y, float size, Color color) noexcept {
++    if (!ready || text == nullptr || text[0] == '\0') return;
++    DrawTextEx(font, text, {x, y}, size, 1.0F, color);
++}
++
++void draw_inventory_page_button(Rectangle rectangle, const char* label,
++    bool active, Font font, bool font_ready) noexcept {
++    DrawRectangleRounded(rectangle, 0.14F, 4,
++        active ? Color{42, 104, 139, 255} : Color{23, 39, 57, 255});
++    DrawRectangleRoundedLinesEx(rectangle, 0.14F, 4, 1.0F,
++        active ? Color{151, 225, 255, 255} : Color{75, 105, 137, 255});
++    draw_hud_font_text(font, font_ready, label,
++        rectangle.x + 12.0F, rectangle.y + 6.0F, 16.0F,
++        active ? Color{242, 250, 255, 255}
++               : Color{174, 194, 216, 255});
++}
++
++void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
++    const DungeonRenderStatus& status,
++    const ActiveSkillLoadoutSelection& selection,
++    Font font, bool font_ready) noexcept {
++    const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
++        GetScreenWidth(), GetScreenHeight());
++    const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
++        snapshot.skill_loadout, selection,
++        snapshot.pending_save_kind.has_value());
++    DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
++    DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
++        Color{72, 91, 120, 255});
++    draw_hud_font_text(font, font_ready, u8"主动技能石槽",
++        layout.panel.x + 18.0F, layout.panel.y + 16.0F, 21.0F,
++        Color{141, 221, 255, 255});
++
++    for (std::size_t index = 0U; index < view.slots.size(); ++index) {
++        const ActiveSkillLoadoutSlotView& slot = view.slots[index];
++        const Rectangle bounds = layout.main_slots[index];
++        DrawRectangleRounded(bounds, 0.08F, 4,
++            slot.selected ? Color{38, 83, 111, 255}
++                          : Color{20, 30, 44, 255});
++        DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
++            slot.selected ? 3.0F : 1.0F,
++            slot.selected ? Color{148, 225, 255, 255}
++                          : Color{77, 105, 137, 255});
++        char number[8]{};
++        static_cast<void>(std::snprintf(number, sizeof(number), "%u",
++            static_cast<unsigned>(slot.slot_number)));
++        draw_hud_font_text(font, font_ready, number,
++            bounds.x + 8.0F, bounds.y + 7.0F, 18.0F, WHITE);
++        draw_hud_font_text(font, font_ready,
++            slot.empty ? u8"空主技能槽" : slot.name.data(),
++            bounds.x + 28.0F, bounds.y + 27.0F, 15.0F,
++            slot.empty ? Color{116, 132, 151, 255}
++                       : Color{210, 241, 255, 255});
++    }
++
++    draw_hud_font_text(font, font_ready, u8"辅助技能石（只读）",
++        layout.support_slots[0U].x,
++        layout.support_slots[0U].y - 31.0F, 17.0F,
++        Color{171, 193, 217, 255});
++    for (const Rectangle support : layout.support_slots) {
++        DrawRectangleRounded(support, 0.08F, 4, Color{17, 24, 35, 255});
++        DrawRectangleRoundedLinesEx(support, 0.08F, 4, 1.0F,
++            Color{61, 79, 101, 255});
++        draw_hud_font_text(font, font_ready, u8"空",
++            support.x + 17.0F, support.y + 17.0F, 15.0F,
++            Color{105, 121, 141, 255});
++    }
++
++    draw_hud_font_text(font, font_ready, u8"未装备技能石",
++        layout.inventory_slots[0U].x,
++        layout.inventory_slots[0U].y - 31.0F, 17.0F,
++        Color{171, 193, 217, 255});
++    for (std::size_t index = 0U; index < view.inventory_count; ++index) {
++        const ActiveSkillInventoryStoneView& stone = view.inventory[index];
++        const Rectangle bounds = layout.inventory_slots[index];
++        DrawRectangleRounded(bounds, 0.08F, 4,
++            stone.selected ? Color{38, 83, 111, 255}
++                           : Color{20, 30, 44, 255});
++        DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
++            stone.selected ? 3.0F : 1.0F,
++            stone.selected ? Color{148, 225, 255, 255}
++                           : Color{77, 105, 137, 255});
++        draw_hud_font_text(font, font_ready, stone.name.data(),
++            bounds.x + 10.0F, bounds.y + 20.0F, 16.0F,
++            Color{210, 241, 255, 255});
++    }
++    if (view.inventory_count == 0U) {
++        draw_hud_font_text(font, font_ready, u8"无",
++            layout.inventory_slots[0U].x,
++            layout.inventory_slots[0U].y + 20.0F, 16.0F,
++            Color{105, 121, 141, 255});
++    }
++
++    const bool removable = !view.save_pending
++        && selection.selected_slot < snapshot.skill_loadout.slots.size()
++        && snapshot.skill_loadout.slots[selection.selected_slot].active
++            != skills::ActiveSkillId::none;
++    DrawRectangleRounded(layout.remove_button, 0.12F, 4,
++        removable ? Color{74, 53, 65, 255} : Color{42, 45, 52, 255});
++    DrawRectangleRoundedLinesEx(layout.remove_button, 0.12F, 4, 1.0F,
++        removable ? Color{219, 125, 151, 255}
++                  : Color{65, 68, 75, 255});
++    draw_hud_font_text(font, font_ready, u8"取出",
++        layout.remove_button.x + 61.0F,
++        layout.remove_button.y + 9.0F, 16.0F,
++        removable ? WHITE : Color{118, 123, 133, 255});
++
++    if (view.save_pending) {
++        draw_hud_font_text(font, font_ready, u8"正在保存",
++            layout.panel.x + 18.0F,
++            layout.panel.y + layout.panel.height - 32.0F,
++            17.0F, Color{255, 191, 96, 255});
++    } else if (status.indicator == SaveIndicator::error) {
++        draw_hud_font_text(font, font_ready, u8"保存失败",
++            layout.panel.x + 18.0F,
++            layout.panel.y + layout.panel.height - 32.0F,
++            17.0F, Color{255, 118, 118, 255});
++    }
++}
++
+ int grid_columns(Rectangle grid) noexcept {
+     return std::max(1, static_cast<int>((grid.width - 20.0F) / 112.0F));
+ }
+ 
+ float grid_cell_width(Rectangle grid, int columns) noexcept {
+     return (grid.width - 20.0F) / static_cast<float>(columns);
+ }
+ 
+ Rectangle grid_viewport(Rectangle grid) noexcept {
+     return {grid.x + 10.0F, grid.y + kGridTopInset,
+@@ -134,25 +255,29 @@ std::size_t base_value_index(std::uint8_t item_level) noexcept {
+         }
+     }
+     return 0U;
+ }
+ 
+ }  // namespace
+ 
+ void InventoryRenderer::open(const dungeon::DungeonSession& session,
+     const dungeon::DungeonSnapshot& snapshot) {
+     open_ = true;
++    page_ = InventoryPage::equipment_materials;
++    active_skill_selection_ = {};
+     sync(session, snapshot);
+ }
+ 
+ void InventoryRenderer::close() noexcept {
+     open_ = false;
++    page_ = InventoryPage::equipment_materials;
++    active_skill_selection_ = {};
+     click_tracker_ = {};
+     static_cast<void>(material_bag_.resolve_reinforcement_confirmation(false));
+ }
+ 
+ bool InventoryRenderer::is_open() const noexcept { return open_; }
+ 
+ const items::ItemInstance* InventoryRenderer::selected_item(
+     const items::ItemOwnershipState& state) const noexcept {
+     return cached_selected_item(view_cache_, state);
+ }
+@@ -217,20 +342,76 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+     if (wheel != 0.0F) {
+         scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
+             scroll_rows_ - wheel, viewport.height, kCellHeight);
+     }
+     const bool left_pressed = input.mouse_left_pressed;
+     const bool right_pressed = input.mouse_right_pressed;
+     if (!left_pressed && !right_pressed) return false;
+     const Vector2 mouse = input.mouse_position;
+     const bool requests_enabled = !snapshot.pending_save_kind.has_value()
+         && runtime.state() == DungeonRuntimeState::running;
++    const ActiveSkillLoadoutLayout skill_layout = active_skill_loadout_layout(
++        GetScreenWidth(), GetScreenHeight());
++    if (left_pressed && contains(skill_layout.equipment_page_button, mouse)) {
++        page_ = InventoryPage::equipment_materials;
++        return false;
++    }
++    if (left_pressed && contains(skill_layout.skill_stones_page_button, mouse)) {
++        page_ = InventoryPage::skill_stones;
++        if (active_skill_selection_.selected_slot
++                == kNoActiveSkillLoadoutSelection
++            && active_skill_selection_.selected_inventory
++                == skills::ActiveSkillId::none) {
++            active_skill_selection_.selected_slot = 0U;
++        }
++        return false;
++    }
++    if (page_ == InventoryPage::skill_stones) {
++        if (!left_pressed) return false;
++        const auto command = active_skill_loadout_command_after_click(
++            snapshot.skill_loadout, skill_layout, mouse,
++            active_skill_selection_, !requests_enabled);
++        if (!command.has_value()
++                || command->kind == ActiveSkillLoadoutActionKind::select) {
++            return false;
++        }
++        dungeon::RequestResult request = dungeon::RequestResult::rejected;
++        switch (command->kind) {
++        case ActiveSkillLoadoutActionKind::select:
++            return false;
++        case ActiveSkillLoadoutActionKind::remove:
++            request = session.request_remove_active_skill(command->slot);
++            break;
++        case ActiveSkillLoadoutActionKind::equip:
++            request = session.request_equip_active_skill(
++                command->skill, command->slot);
++            break;
++        case ActiveSkillLoadoutActionKind::swap:
++            request = session.request_swap_active_skill_slots(
++                command->slot, command->other_slot);
++            break;
++        }
++        if (request != dungeon::RequestResult::accepted) return false;
++        const std::uint64_t generation_before = snapshot.commit_generation;
++        runtime.service_pending_save();
++        const dungeon::DungeonSnapshot after = session.snapshot();
++        if (after.commit_generation != generation_before) {
++            if (command->kind == ActiveSkillLoadoutActionKind::equip) {
++                active_skill_selection_.selected_slot = command->slot;
++                active_skill_selection_.selected_inventory =
++                    skills::ActiveSkillId::none;
++            } else if (command->kind == ActiveSkillLoadoutActionKind::swap) {
++                active_skill_selection_.selected_slot = command->other_slot;
++            }
++        }
++        return true;
++    }
+     if (material_bag_.reinforcement_confirmation_item().has_value()) {
+         const ReinforcementConfirmationLayout confirmation =
+             reinforcement_confirmation_layout(GetScreenWidth(), GetScreenHeight());
+         if (right_pressed || (left_pressed
+                 && contains(confirmation.cancel, mouse))) {
+             static_cast<void>(
+                 material_bag_.resolve_reinforcement_confirmation(false));
+             return false;
+         }
+         if (left_pressed && contains(confirmation.confirm, mouse)) {
+@@ -357,28 +538,48 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+             runtime.service_pending_save();
+             return true;
+         }
+         return false;
+     }
+     return false;
+ }
+ 
+ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
+     const dungeon::DungeonSnapshot& snapshot,
+-    const DungeonRenderStatus&) {
++    const DungeonRenderStatus& status,
++    Font hud_font, bool hud_font_ready) {
+     if (!open_) return;
+     sync(session, snapshot);
+     const items::ItemOwnershipState& state = session.item_state();
+     const InventoryLayout layout = inventory_layout(GetScreenWidth(), GetScreenHeight());
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{3, 5, 9, 225});
+-    DrawText("EQUIPMENT INVENTORY - I / ESC CLOSE", 14, 16, 24,
+-        Color{141, 221, 255, 255});
++    const ActiveSkillLoadoutLayout skill_layout = active_skill_loadout_layout(
++        GetScreenWidth(), GetScreenHeight());
++    if (page_ == InventoryPage::equipment_materials) {
++        DrawText("EQUIPMENT INVENTORY - I / ESC CLOSE", 14, 16, 24,
++            Color{141, 221, 255, 255});
++    } else {
++        draw_hud_font_text(hud_font, hud_font_ready,
++            u8"技能石背包 - I / ESC 关闭", 14.0F, 16.0F, 22.0F,
++            Color{141, 221, 255, 255});
++    }
++    draw_inventory_page_button(skill_layout.equipment_page_button,
++        u8"装备 / 材料", page_ == InventoryPage::equipment_materials,
++        hud_font, hud_font_ready);
++    draw_inventory_page_button(skill_layout.skill_stones_page_button,
++        u8"技能石", page_ == InventoryPage::skill_stones,
++        hud_font, hud_font_ready);
++    if (page_ == InventoryPage::skill_stones) {
++        draw_active_skill_loadout(snapshot, status, active_skill_selection_,
++            hud_font, hud_font_ready);
++        return;
++    }
+     draw_panel(layout.equipment, "EQUIPMENT");
+     draw_panel(layout.grid, "INVENTORY");
+     draw_panel(layout.detail, "ITEM DETAIL");
+     material_bag_.draw(state, GetScreenWidth(), GetScreenHeight());
+ 
+     for (std::size_t index = 0U; index < state.equipment.equipped_ids.size(); ++index) {
+         const auto slot = static_cast<items::ItemSlot>(index);
+         const Rectangle rectangle = equipment_slot_rectangle(layout, slot);
+         DrawRectangleRounded(rectangle, 0.08F, 4, Color{21, 28, 40, 255});
+         DrawRectangleRoundedLinesEx(rectangle, 0.08F, 4, 1.0F,
+diff --git a/src/platform/raylib/inventory_renderer.hpp b/src/platform/raylib/inventory_renderer.hpp
+index 2e0eaf4..15235a7 100644
+--- a/src/platform/raylib/inventory_renderer.hpp
++++ b/src/platform/raylib/inventory_renderer.hpp
+@@ -21,32 +21,35 @@ class InventoryRenderer final {
+ public:
+     void open(const dungeon::DungeonSession& session,
+         const dungeon::DungeonSnapshot& snapshot);
+     void close() noexcept;
+     [[nodiscard]] bool is_open() const noexcept;
+     [[nodiscard]] bool process_input(DungeonRuntime& runtime,
+         const dungeon::DungeonSnapshot& snapshot,
+         const HostFrameInput& input);
+     void draw(const dungeon::DungeonSession& session,
+         const dungeon::DungeonSnapshot& snapshot,
+-        const DungeonRenderStatus& status);
++        const DungeonRenderStatus& status,
++        Font hud_font, bool hud_font_ready);
+ 
+ private:
+     void sync(const dungeon::DungeonSession& session,
+         const dungeon::DungeonSnapshot& snapshot);
+     void refresh_comparison(const dungeon::DungeonSession& session,
+         const dungeon::DungeonSnapshot& snapshot);
+     [[nodiscard]] const items::ItemInstance* selected_item(
+         const items::ItemOwnershipState& state) const noexcept;
+     [[nodiscard]] bool recipe_ready() const noexcept;
+ 
+     bool open_{};
++    InventoryPage page_{InventoryPage::equipment_materials};
++    ActiveSkillLoadoutSelection active_skill_selection_{};
+     InventoryFilter filter_{};
+     float scroll_rows_{};
+     std::uint64_t selected_item_id_{};
+     RecipeSelection recipe_{};
+     InventoryClickTracker click_tracker_{};
+     InventoryViewCache view_cache_{};
+     MaterialBagRenderer material_bag_{};
+     std::uint64_t comparison_generation_{~std::uint64_t{0U}};
+     std::uint64_t comparison_item_id_{};
+     items::EquipmentState comparison_equipment_{};
+diff --git a/src/platform/raylib/inventory_view_math.cpp b/src/platform/raylib/inventory_view_math.cpp
+index ad3500e..f5d8aa5 100644
+--- a/src/platform/raylib/inventory_view_math.cpp
++++ b/src/platform/raylib/inventory_view_math.cpp
+@@ -1,47 +1,76 @@
+ #include "inventory_view_math.hpp"
+ 
+ #include "items/item_catalog.hpp"
++#include "skills/active_skill_catalog.hpp"
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdio>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kMargin = 12.0F;
+ constexpr float kTop = 54.0F;
+ constexpr float kGap = 10.0F;
+ constexpr float kEquipmentFraction = 0.27F;
+ constexpr float kGridFraction = 0.42F;
+ constexpr double kDoubleClickSeconds = 0.30;
+ 
++constexpr float kSkillMainWidth = 132.0F;
++constexpr float kSkillMainHeight = 72.0F;
++constexpr float kSkillMainGap = 12.0F;
++constexpr float kSkillSupportSize = 54.0F;
++constexpr float kSkillSupportGap = 12.0F;
++constexpr float kPageButtonWidth = 136.0F;
++constexpr float kPageButtonHeight = 30.0F;
++
+ bool contains(Rectangle rectangle, Vector2 point) noexcept {
+     return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width
+         && point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
+ }
+ 
+ bool equipped(const items::EquipmentState& equipment,
+     std::uint64_t id) noexcept {
+     return std::find(equipment.equipped_ids.begin(),
+         equipment.equipped_ids.end(), id) != equipment.equipped_ids.end();
+ }
+ 
+ bool same_filter(InventoryFilter left, InventoryFilter right) noexcept {
+     return left.slot == right.slot && left.rarity == right.rarity;
+ }
+ 
+ bool same_recipe(const RecipeSelection& left,
+     const RecipeSelection& right) noexcept {
+     return left.count == right.count && left.ids == right.ids;
+ }
+ 
++[[nodiscard]] bool skill_equipped(
++    const skills::SkillLoadoutState& state,
++    skills::ActiveSkillId id) noexcept {
++    for (const skills::ActiveSkillSlot& slot : state.slots) {
++        if (slot.active == id) return true;
++    }
++    return false;
++}
++
++void copy_skill_name(std::array<char, 48>& output,
++    skills::ActiveSkillId id) noexcept {
++    const skills::ActiveSkillDefinition* const definition =
++        skills::active_skill_definition(id);
++    if (definition == nullptr) return;
++    static_cast<void>(std::snprintf(output.data(), output.size(), "%s",
++        definition->display_name));
++    output.back() = '\0';
++}
++
+ bool matches_inventory_filter(const items::ItemInstance& item,
+     bool is_equipped, InventoryFilter filter) noexcept {
+     if (is_equipped) return false;
+     const items::BaseDefinition* const base =
+         items::base_definition(item.base_id);
+     if (base == nullptr) return false;
+     return (!filter.slot.has_value() || base->slot == *filter.slot)
+         && (!filter.rarity.has_value() || item.rarity == *filter.rarity);
+ }
+ 
+@@ -107,20 +136,184 @@ InventoryLayout inventory_layout(int width, int height) noexcept {
+     const float grid_width = std::floor(content_width * kGridFraction);
+     const float detail_width = std::max(0.0F,
+         content_width - equipment_width - grid_width);
+     const Rectangle equipment{kMargin, kTop, equipment_width, content_height};
+     const Rectangle grid{equipment.x + equipment.width + kGap, kTop,
+         grid_width, content_height};
+     return {equipment, grid,
+         {grid.x + grid.width + kGap, kTop, detail_width, content_height}};
+ }
+ 
++ActiveSkillLoadoutLayout active_skill_loadout_layout(
++    int width, int height) noexcept {
++    if (width <= 0 || height <= 0) return {};
++    const float screen_width = static_cast<float>(width);
++    const float screen_height = static_cast<float>(height);
++    ActiveSkillLoadoutLayout layout{};
++    layout.panel = {40.0F, 70.0F, std::max(0.0F, screen_width - 80.0F),
++        std::max(0.0F, screen_height - 100.0F)};
++    layout.equipment_page_button = {
++        screen_width * 0.5F - kPageButtonWidth - 6.0F,
++        18.0F, kPageButtonWidth, kPageButtonHeight,
++    };
++    layout.skill_stones_page_button = {
++        screen_width * 0.5F + 6.0F,
++        18.0F, kPageButtonWidth, kPageButtonHeight,
++    };
++
++    constexpr float kMainWidth =
++        static_cast<float>(skills::kActiveSkillSlotCount) * kSkillMainWidth
++        + static_cast<float>(skills::kActiveSkillSlotCount - 1U)
++            * kSkillMainGap;
++    const float main_x = (screen_width - kMainWidth) * 0.5F;
++    const float main_y = layout.panel.y + 62.0F;
++    for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
++        layout.main_slots[index] = {
++            main_x + static_cast<float>(index)
++                * (kSkillMainWidth + kSkillMainGap),
++            main_y, kSkillMainWidth, kSkillMainHeight,
++        };
++    }
++
++    constexpr float kSupportWidth =
++        static_cast<float>(skills::kSupportSlotsPerActive) * kSkillSupportSize
++        + static_cast<float>(skills::kSupportSlotsPerActive - 1U)
++            * kSkillSupportGap;
++    const float support_x = (screen_width - kSupportWidth) * 0.5F;
++    const float support_y = main_y + kSkillMainHeight + 78.0F;
++    for (std::size_t index = 0U; index < layout.support_slots.size(); ++index) {
++        layout.support_slots[index] = {
++            support_x + static_cast<float>(index)
++                * (kSkillSupportSize + kSkillSupportGap),
++            support_y, kSkillSupportSize, kSkillSupportSize,
++        };
++    }
++
++    constexpr float kInventoryWidth = 180.0F;
++    constexpr float kInventoryHeight = 62.0F;
++    constexpr float kInventoryGap = 18.0F;
++    const float inventory_total =
++        static_cast<float>(skills::kActiveSkillCount) * kInventoryWidth
++        + static_cast<float>(skills::kActiveSkillCount - 1U) * kInventoryGap;
++    const float inventory_x = (screen_width - inventory_total) * 0.5F;
++    const float inventory_y = support_y + kSkillSupportSize + 82.0F;
++    for (std::size_t index = 0U; index < layout.inventory_slots.size(); ++index) {
++        layout.inventory_slots[index] = {
++            inventory_x + static_cast<float>(index)
++                * (kInventoryWidth + kInventoryGap),
++            inventory_y, kInventoryWidth, kInventoryHeight,
++        };
++    }
++    layout.remove_button = {
++        (screen_width - 164.0F) * 0.5F,
++        std::min(inventory_y + kInventoryHeight + 42.0F,
++            screen_height - 62.0F),
++        164.0F, 38.0F,
++    };
++    return layout;
++}
++
++ActiveSkillLoadoutView make_active_skill_loadout_view(
++    const skills::SkillLoadoutState& state,
++    const ActiveSkillLoadoutSelection& selection,
++    bool save_pending) noexcept {
++    ActiveSkillLoadoutView view{};
++    view.save_pending = save_pending;
++    for (std::size_t index = 0U; index < view.slots.size(); ++index) {
++        ActiveSkillLoadoutSlotView& output = view.slots[index];
++        const skills::ActiveSkillSlot& input = state.slots[index];
++        output.slot_number = static_cast<std::uint8_t>(index + 1U);
++        output.id = input.active;
++        output.empty = output.id == skills::ActiveSkillId::none;
++        output.selected = selection.selected_slot == index;
++        copy_skill_name(output.name, output.id);
++        for (std::size_t support = 0U;
++             support < output.support_empty.size(); ++support) {
++            output.support_empty[support] =
++                input.supports[support] == skills::SupportSkillId::none;
++        }
++    }
++    for (std::size_t raw_id = 0U; raw_id < skills::kActiveSkillCount; ++raw_id) {
++        const auto id = static_cast<skills::ActiveSkillId>(raw_id);
++        const std::uint64_t bit = 1ULL << raw_id;
++        if ((state.owned_active_bits & bit) == 0U
++                || skill_equipped(state, id)) {
++            continue;
++        }
++        ActiveSkillInventoryStoneView& stone =
++            view.inventory[view.inventory_count++];
++        stone.id = id;
++        stone.selected = selection.selected_inventory == id;
++        copy_skill_name(stone.name, id);
++    }
++    return view;
++}
++
++std::optional<ActiveSkillLoadoutCommand>
++active_skill_loadout_command_after_click(
++    const skills::SkillLoadoutState& state,
++    const ActiveSkillLoadoutLayout& layout,
++    Vector2 point,
++    ActiveSkillLoadoutSelection& selection,
++    bool save_pending) noexcept {
++    if (save_pending) return std::nullopt;
++    const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
++        state, selection, false);
++    for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
++        if (!contains(layout.main_slots[index], point)) continue;
++        if (selection.selected_inventory != skills::ActiveSkillId::none
++                && state.slots[index].active == skills::ActiveSkillId::none) {
++            return ActiveSkillLoadoutCommand{
++                ActiveSkillLoadoutActionKind::equip,
++                static_cast<std::uint8_t>(index), 0xFFU,
++                selection.selected_inventory};
++        }
++        if (selection.selected_slot < state.slots.size()
++                && selection.selected_slot != index
++                && state.slots[selection.selected_slot].active
++                    != skills::ActiveSkillId::none
++                && state.slots[index].active != skills::ActiveSkillId::none) {
++            return ActiveSkillLoadoutCommand{
++                ActiveSkillLoadoutActionKind::swap,
++                static_cast<std::uint8_t>(selection.selected_slot),
++                static_cast<std::uint8_t>(index),
++                skills::ActiveSkillId::none};
++        }
++        selection.selected_slot = index;
++        selection.selected_inventory = skills::ActiveSkillId::none;
++        return ActiveSkillLoadoutCommand{
++            ActiveSkillLoadoutActionKind::select,
++            static_cast<std::uint8_t>(index), 0xFFU,
++            state.slots[index].active};
++    }
++
++    if (contains(layout.remove_button, point)
++            && selection.selected_slot < state.slots.size()
++            && state.slots[selection.selected_slot].active
++                != skills::ActiveSkillId::none) {
++        return ActiveSkillLoadoutCommand{
++            ActiveSkillLoadoutActionKind::remove,
++            static_cast<std::uint8_t>(selection.selected_slot), 0xFFU,
++            state.slots[selection.selected_slot].active};
++    }
++
++    for (std::size_t index = 0U; index < view.inventory_count; ++index) {
++        if (!contains(layout.inventory_slots[index], point)) continue;
++        selection.selected_slot = kNoActiveSkillLoadoutSelection;
++        selection.selected_inventory = view.inventory[index].id;
++        return ActiveSkillLoadoutCommand{
++            ActiveSkillLoadoutActionKind::select, 0xFFU, 0xFFU,
++            view.inventory[index].id};
++    }
++    return std::nullopt;
++}
++
+ float clamp_inventory_scroll_rows(std::size_t filtered_count, int columns,
+     float scroll_rows, float viewport_height, float cell_height) noexcept {
+     if (columns <= 0 || viewport_height <= 0.0F || cell_height <= 0.0F
+         || !std::isfinite(scroll_rows)) return 0.0F;
+     const float total_rows = std::ceil(static_cast<float>(filtered_count)
+         / static_cast<float>(columns));
+     const float visible_rows = viewport_height / cell_height;
+     return std::clamp(scroll_rows, 0.0F,
+         std::max(0.0F, total_rows - visible_rows));
+ }
+diff --git a/src/platform/raylib/inventory_view_math.hpp b/src/platform/raylib/inventory_view_math.hpp
+index cf1dfc9..e2a515a 100644
+--- a/src/platform/raylib/inventory_view_math.hpp
++++ b/src/platform/raylib/inventory_view_math.hpp
+@@ -1,32 +1,94 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
+ #include "items/item_catalog.hpp"
++#include "skills/active_skill_types.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ #include <string_view>
+ #include <vector>
+ 
+ namespace arpg::platform {
+ 
+ struct InventoryLayout final {
+     Rectangle equipment{};
+     Rectangle grid{};
+     Rectangle detail{};
+ };
+ 
++enum class InventoryPage : std::uint8_t {
++    equipment_materials,
++    skill_stones,
++};
++
++inline constexpr std::size_t kNoActiveSkillLoadoutSelection =
++    ~std::size_t{0U};
++
++struct ActiveSkillLoadoutSelection final {
++    std::size_t selected_slot{kNoActiveSkillLoadoutSelection};
++    skills::ActiveSkillId selected_inventory{skills::ActiveSkillId::none};
++};
++
++struct ActiveSkillLoadoutSlotView final {
++    std::uint8_t slot_number{};
++    skills::ActiveSkillId id{skills::ActiveSkillId::none};
++    std::array<char, 48> name{};
++    std::array<bool, skills::kSupportSlotsPerActive> support_empty{};
++    bool empty{};
++    bool selected{};
++};
++
++struct ActiveSkillInventoryStoneView final {
++    skills::ActiveSkillId id{skills::ActiveSkillId::none};
++    std::array<char, 48> name{};
++    bool selected{};
++};
++
++struct ActiveSkillLoadoutView final {
++    std::array<ActiveSkillLoadoutSlotView,
++        skills::kActiveSkillSlotCount> slots{};
++    std::array<ActiveSkillInventoryStoneView,
++        skills::kActiveSkillCount> inventory{};
++    std::size_t inventory_count{};
++    bool save_pending{};
++};
++
++struct ActiveSkillLoadoutLayout final {
++    Rectangle panel{};
++    std::array<Rectangle, skills::kActiveSkillSlotCount> main_slots{};
++    std::array<Rectangle, skills::kSupportSlotsPerActive> support_slots{};
++    std::array<Rectangle, skills::kActiveSkillCount> inventory_slots{};
++    Rectangle remove_button{};
++    Rectangle equipment_page_button{};
++    Rectangle skill_stones_page_button{};
++};
++
++enum class ActiveSkillLoadoutActionKind : std::uint8_t {
++    select,
++    remove,
++    equip,
++    swap,
++};
++
++struct ActiveSkillLoadoutCommand final {
++    ActiveSkillLoadoutActionKind kind{ActiveSkillLoadoutActionKind::select};
++    std::uint8_t slot{0xFFU};
++    std::uint8_t other_slot{0xFFU};
++    skills::ActiveSkillId skill{skills::ActiveSkillId::none};
++};
++
+ struct VisibleGridRange final {
+     std::size_t first{};
+     std::size_t count{};
+ };
+ 
+ struct InventoryFilter final {
+     std::optional<items::ItemSlot> slot{};
+     std::optional<items::ItemRarity> rarity{};
+ };
+ 
+@@ -91,20 +153,33 @@ struct InventoryViewCache final {
+ };
+ 
+ struct ItemAttributeLabel final {
+     const char* name{};
+     const char* scope{};
+     const char* suffix{};
+     const char* qualifier{};
+ };
+ 
+ [[nodiscard]] InventoryLayout inventory_layout(int width, int height) noexcept;
++[[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
++    int width, int height) noexcept;
++[[nodiscard]] ActiveSkillLoadoutView make_active_skill_loadout_view(
++    const skills::SkillLoadoutState& state,
++    const ActiveSkillLoadoutSelection& selection,
++    bool save_pending) noexcept;
++[[nodiscard]] std::optional<ActiveSkillLoadoutCommand>
++active_skill_loadout_command_after_click(
++    const skills::SkillLoadoutState& state,
++    const ActiveSkillLoadoutLayout& layout,
++    Vector2 point,
++    ActiveSkillLoadoutSelection& selection,
++    bool save_pending) noexcept;
+ [[nodiscard]] VisibleGridRange visible_grid_range(
+     std::size_t filtered_count, int columns, float scroll_rows,
+     float viewport_height, float cell_height) noexcept;
+ [[nodiscard]] float clamp_inventory_scroll_rows(
+     std::size_t filtered_count, int columns, float scroll_rows,
+     float viewport_height, float cell_height) noexcept;
+ [[nodiscard]] std::vector<std::size_t> filtered_inventory_indices(
+     const items::ItemOwnershipState& state, InventoryFilter filter);
+ [[nodiscard]] InventoryClickKind register_inventory_click(
+     InventoryClickTracker& tracker, std::uint64_t item_id,
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 74cab3d..463280a 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -2314,21 +2314,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     && !stage11d_validation_state.captured) {
+                 stage11d_record_semantics(stage11d_validation_state, current,
+                     runtime.item_state(), ground_loot_view,
+                     renderer.hud_notice_view());
+             }
+ // STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics
+             if (passive_overlay_open) {
+                 draw_passive_tree_overlay(current, runtime.render_status());
+             }
+             if (inventory.is_open()) {
+-                inventory.draw(*session, current, runtime.render_status());
++                inventory.draw(*session, current, runtime.render_status(),
++                    renderer.hud_font(), renderer.hud_font_ready());
+             }
+             if (stage11b_validation_state.resume_observed) {
+                 stage11b_validation_state.resume_ticks_after =
+                     stage11b_validation_state.fixed_ticks;
+             }
+             if (pause_menu.screen != PauseScreen::closed) {
+                 pause_menu_renderer.draw(pause_menu);
+                 if (config.stage11b_validation
+                         == Stage11BValidationScenario::corrupt_defaults
+                     && pause_menu.message == kSettingsRecoveredDefaults
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index c14d5da..70e5188 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,16 +1,18 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         host_input_tests.cpp
+         active_skill_input_tests.cpp
++        active_skill_view_tests.cpp
++        active_skill_loadout_view_tests.cpp
+         audio_pack_tests.cpp
+         audio_routing_tests.cpp
+         audio_scene_tests.cpp
+         stage15_audio_pack_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
+         passive_tree_view_tests.cpp
+         host_launch_options_tests.cpp
+diff --git a/tests/platform/active_skill_loadout_view_tests.cpp b/tests/platform/active_skill_loadout_view_tests.cpp
+new file mode 100644
+index 0000000..13f9c3a
+--- /dev/null
++++ b/tests/platform/active_skill_loadout_view_tests.cpp
+@@ -0,0 +1,173 @@
++#include "test_framework.hpp"
++
++#include "inventory_view_math.hpp"
++#include "skills/skill_loadout.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace {
++
++namespace platform = arpg::platform;
++namespace skills = arpg::skills;
++
++bool overlaps(Rectangle left, Rectangle right) noexcept {
++    return left.x < right.x + right.width
++        && right.x < left.x + left.width
++        && left.y < right.y + right.height
++        && right.y < left.y + left.height;
++}
++
++Vector2 center(Rectangle rectangle) noexcept {
++    return {rectangle.x + rectangle.width * 0.5F,
++        rectangle.y + rectangle.height * 0.5F};
++}
++
++arpg::test::Failure view_has_five_main_slots_five_read_only_supports_and_inventory()
++    noexcept {
++    skills::SkillLoadoutState state = skills::default_skill_loadout();
++    state.slots[0U].active = skills::ActiveSkillId::none;
++    platform::ActiveSkillLoadoutSelection selection{};
++    selection.selected_slot = 1U;
++    const platform::ActiveSkillLoadoutView view =
++        platform::make_active_skill_loadout_view(state, selection, false);
++
++    ARPG_REQUIRE(view.slots.size() == skills::kActiveSkillSlotCount);
++    ARPG_REQUIRE(view.slots[1U].selected);
++    for (const platform::ActiveSkillLoadoutSlotView& slot : view.slots) {
++        ARPG_REQUIRE(slot.support_empty.size()
++            == skills::kSupportSlotsPerActive);
++        for (const bool empty : slot.support_empty) ARPG_REQUIRE(empty);
++    }
++    ARPG_REQUIRE(view.inventory_count == 1U);
++    ARPG_REQUIRE(view.inventory[0U].id == skills::ActiveSkillId::draw_slash);
++    return {};
++}
++
++arpg::test::Failure loadout_hit_regions_do_not_overlap_at_supported_resolutions()
++    noexcept {
++    constexpr std::array<std::array<int, 2>, 3> kViewports{{
++        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
++    }};
++    for (const auto viewport : kViewports) {
++        const platform::ActiveSkillLoadoutLayout layout =
++            platform::active_skill_loadout_layout(viewport[0], viewport[1]);
++        std::array<Rectangle, 13> hit_regions{};
++        std::size_t count = 0U;
++        for (const Rectangle rectangle : layout.main_slots) {
++            hit_regions[count++] = rectangle;
++        }
++        for (const Rectangle rectangle : layout.inventory_slots) {
++            hit_regions[count++] = rectangle;
++        }
++        hit_regions[count++] = layout.remove_button;
++        hit_regions[count++] = layout.equipment_page_button;
++        hit_regions[count++] = layout.skill_stones_page_button;
++        for (std::size_t left = 0U; left < count; ++left) {
++            for (std::size_t right = left + 1U; right < count; ++right) {
++                ARPG_REQUIRE(!overlaps(hit_regions[left], hit_regions[right]));
++            }
++        }
++        for (const Rectangle support : layout.support_slots) {
++            for (std::size_t interactive = 0U;
++                 interactive < count; ++interactive) {
++                ARPG_REQUIRE(!overlaps(support, hit_regions[interactive]));
++            }
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure slot_clicks_emit_only_select_remove_and_swap_commands()
++    noexcept {
++    const skills::SkillLoadoutState state = skills::default_skill_loadout();
++    const platform::ActiveSkillLoadoutLayout layout =
++        platform::active_skill_loadout_layout(1280, 720);
++    platform::ActiveSkillLoadoutSelection selection{};
++
++    auto command = platform::active_skill_loadout_command_after_click(
++        state, layout, center(layout.main_slots[0U]), selection, false);
++    ARPG_REQUIRE(command.has_value());
++    ARPG_REQUIRE(command->kind
++        == platform::ActiveSkillLoadoutActionKind::select);
++    ARPG_REQUIRE(selection.selected_slot == 0U);
++
++    command = platform::active_skill_loadout_command_after_click(
++        state, layout, center(layout.remove_button), selection, false);
++    ARPG_REQUIRE(command.has_value());
++    ARPG_REQUIRE(command->kind
++        == platform::ActiveSkillLoadoutActionKind::remove);
++    ARPG_REQUIRE(command->slot == 0U);
++    ARPG_REQUIRE(selection.selected_slot == 0U);
++
++    command = platform::active_skill_loadout_command_after_click(
++        state, layout, center(layout.main_slots[1U]), selection, false);
++    ARPG_REQUIRE(command.has_value());
++    ARPG_REQUIRE(command->kind
++        == platform::ActiveSkillLoadoutActionKind::swap);
++    ARPG_REQUIRE(command->slot == 0U);
++    ARPG_REQUIRE(command->other_slot == 1U);
++    ARPG_REQUIRE(selection.selected_slot == 0U);
++    return {};
++}
++
++arpg::test::Failure inventory_selection_then_empty_slot_emits_equip_command()
++    noexcept {
++    skills::SkillLoadoutState state = skills::default_skill_loadout();
++    state.slots[0U].active = skills::ActiveSkillId::none;
++    const platform::ActiveSkillLoadoutLayout layout =
++        platform::active_skill_loadout_layout(1280, 720);
++    platform::ActiveSkillLoadoutSelection selection{};
++
++    auto command = platform::active_skill_loadout_command_after_click(
++        state, layout, center(layout.inventory_slots[0U]), selection, false);
++    ARPG_REQUIRE(command.has_value());
++    ARPG_REQUIRE(command->kind
++        == platform::ActiveSkillLoadoutActionKind::select);
++    ARPG_REQUIRE(selection.selected_inventory
++        == skills::ActiveSkillId::draw_slash);
++
++    command = platform::active_skill_loadout_command_after_click(
++        state, layout, center(layout.main_slots[0U]), selection, false);
++    ARPG_REQUIRE(command.has_value());
++    ARPG_REQUIRE(command->kind
++        == platform::ActiveSkillLoadoutActionKind::equip);
++    ARPG_REQUIRE(command->skill == skills::ActiveSkillId::draw_slash);
++    ARPG_REQUIRE(command->slot == 0U);
++    ARPG_REQUIRE(selection.selected_inventory
++        == skills::ActiveSkillId::draw_slash);
++    return {};
++}
++
++arpg::test::Failure pending_save_and_support_slots_never_emit_edit_commands()
++    noexcept {
++    const skills::SkillLoadoutState state = skills::default_skill_loadout();
++    const platform::ActiveSkillLoadoutLayout layout =
++        platform::active_skill_loadout_layout(1280, 720);
++    platform::ActiveSkillLoadoutSelection selection{};
++
++    const auto support = platform::active_skill_loadout_command_after_click(
++        state, layout, center(layout.support_slots[0U]), selection, false);
++    ARPG_REQUIRE(!support.has_value());
++    const auto pending = platform::active_skill_loadout_command_after_click(
++        state, layout, center(layout.main_slots[0U]), selection, true);
++    ARPG_REQUIRE(!pending.has_value());
++    ARPG_REQUIRE(selection.selected_slot
++        == platform::kNoActiveSkillLoadoutSelection);
++    ARPG_REQUIRE(selection.selected_inventory == skills::ActiveSkillId::none);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"active skill loadout view projection", &view_has_five_main_slots_five_read_only_supports_and_inventory},
++    {"active skill loadout non-overlapping layout", &loadout_hit_regions_do_not_overlap_at_supported_resolutions},
++    {"active skill loadout slot commands", &slot_clicks_emit_only_select_remove_and_swap_commands},
++    {"active skill loadout equip command", &inventory_selection_then_empty_slot_emits_equip_command},
++    {"active skill support read only and pending disabled", &pending_save_and_support_slots_never_emit_edit_commands},
++};
++
++}  // namespace
++
++arpg::test::TestSuite active_skill_loadout_view_suite() noexcept {
++    return arpg::test::make_suite("active_skill_loadout_view", kCases);
++}
+diff --git a/tests/platform/active_skill_view_tests.cpp b/tests/platform/active_skill_view_tests.cpp
+new file mode 100644
+index 0000000..c004217
+--- /dev/null
++++ b/tests/platform/active_skill_view_tests.cpp
+@@ -0,0 +1,195 @@
++#include "test_framework.hpp"
++
++#include "active_skill_renderer.hpp"
++#include "active_skill_view.hpp"
++#include "combat/active_skill_runtime.hpp"
++#include "skills/active_skill_catalog.hpp"
++#include "skills/skill_loadout.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstring>
++
++namespace {
++
++namespace combat = arpg::combat;
++namespace platform = arpg::platform;
++namespace skills = arpg::skills;
++
++bool overlaps(Rectangle left, Rectangle right) noexcept {
++    return left.x < right.x + right.width
++        && right.x < left.x + left.width
++        && left.y < right.y + right.height
++        && right.y < left.y + left.height;
++}
++
++arpg::test::Failure hud_projects_exactly_five_numbered_slots_and_catalog_names()
++    noexcept {
++    const skills::SkillLoadoutState loadout = skills::default_skill_loadout();
++    const platform::ActiveSkillHudModel view =
++        platform::make_active_skill_hud_model(loadout, {});
++
++    ARPG_REQUIRE(view.slots.size() == skills::kActiveSkillSlotCount);
++    for (std::size_t index = 0U; index < view.slots.size(); ++index) {
++        ARPG_REQUIRE(view.slots[index].key_number == index + 1U);
++    }
++    ARPG_REQUIRE(!view.slots[0U].empty);
++    ARPG_REQUIRE(!view.slots[1U].empty);
++    ARPG_REQUIRE(view.slots[2U].empty);
++    ARPG_REQUIRE(view.slots[3U].empty);
++    ARPG_REQUIRE(view.slots[4U].empty);
++    ARPG_REQUIRE(std::strcmp(view.slots[0U].name.data(),
++        skills::active_skill_definition(skills::ActiveSkillId::draw_slash)
++            ->display_name) == 0);
++    ARPG_REQUIRE(std::strcmp(view.slots[1U].name.data(),
++        skills::active_skill_definition(skills::ActiveSkillId::storm_swords)
++            ->display_name) == 0);
++    ARPG_REQUIRE(view.slots[2U].name[0U] == '\0');
++    return {};
++}
++
++arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
++    noexcept {
++    const skills::SkillLoadoutState loadout = skills::default_skill_loadout();
++    std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns{{
++        static_cast<std::uint16_t>(skills::kDrawSlashCooldownTicks / 2U),
++        0xFFFFU,
++    }};
++    const platform::ActiveSkillHudModel view =
++        platform::make_active_skill_hud_model(loadout, cooldowns);
++
++    ARPG_REQUIRE(arpg::test::near(view.slots[0U].cooldown_ratio, 0.5F));
++    ARPG_REQUIRE(arpg::test::near(view.slots[1U].cooldown_ratio, 1.0F));
++    for (std::size_t index = 2U; index < view.slots.size(); ++index) {
++        ARPG_REQUIRE(arpg::test::near(
++            view.slots[index].cooldown_ratio, 0.0F));
++    }
++    return {};
++}
++
++arpg::test::Failure hud_layout_is_bottom_centered_with_fixed_slot_geometry()
++    noexcept {
++    constexpr std::array<std::array<int, 2>, 3> kViewports{{
++        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
++    }};
++    constexpr float kExpectedWidth = 5.0F * 58.0F + 4.0F * 8.0F;
++    for (const auto viewport : kViewports) {
++        const platform::ActiveSkillHudLayout layout =
++            platform::active_skill_hud_layout(viewport[0], viewport[1]);
++        ARPG_REQUIRE(arpg::test::near(layout.bounds.width, kExpectedWidth));
++        ARPG_REQUIRE(arpg::test::near(layout.bounds.x
++            + layout.bounds.width * 0.5F,
++            static_cast<float>(viewport[0]) * 0.5F));
++        ARPG_REQUIRE(layout.bounds.y + layout.bounds.height
++            <= static_cast<float>(viewport[1]));
++        for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
++            ARPG_REQUIRE(arpg::test::near(layout.slots[index].width, 58.0F));
++            ARPG_REQUIRE(arpg::test::near(layout.slots[index].height, 58.0F));
++            if (index != 0U) {
++                ARPG_REQUIRE(arpg::test::near(layout.slots[index].x
++                    - (layout.slots[index - 1U].x
++                        + layout.slots[index - 1U].width), 8.0F));
++                ARPG_REQUIRE(!overlaps(
++                    layout.slots[index - 1U], layout.slots[index]));
++            }
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
++    noexcept {
++    combat::CombatSnapshot snapshot{};
++    snapshot.player.facing = combat::Facing::left;
++    snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
++    snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
++    snapshot.active_skill.elapsed_ticks = combat::kDrawSlashStartupTicks;
++    snapshot.active_skill.locked_center = {2.0F, 3.0F, 0.0F};
++    platform::ActiveSkillEffectPlan plan =
++        platform::make_active_skill_effect_plan(snapshot, nullptr);
++    ARPG_REQUIRE(plan.draw_slash.visible);
++    ARPG_REQUIRE(plan.draw_slash.facing == combat::Facing::left);
++    ARPG_REQUIRE(arpg::test::near(plan.draw_slash.center.x, 2.0F));
++    snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
++        combat::kDrawSlashStartupTicks + 8U);
++    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
++    ARPG_REQUIRE(!plan.draw_slash.visible);
++
++    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
++    snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
++    snapshot.active_skill.strike_index = 4U;
++    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
++    ARPG_REQUIRE(plan.storm_swords.visible);
++    ARPG_REQUIRE(plan.storm_swords.sword_count == combat::kStormStrikeCount);
++    for (std::size_t index = 0U; index < plan.storm_swords.swords.size(); ++index) {
++        ARPG_REQUIRE(plan.storm_swords.swords[index].highlighted
++            == (index == 3U));
++    }
++
++    combat::CombatEvent finisher{};
++    finisher.tick = 100U;
++    finisher.skill = skills::ActiveSkillId::storm_swords;
++    finisher.finisher = true;
++    snapshot.tick = 103U;
++    snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
++    plan = platform::make_active_skill_effect_plan(snapshot, &finisher);
++    ARPG_REQUIRE(plan.storm_swords.finisher_visible);
++    ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
++    snapshot.tick = 108U;
++    plan = platform::make_active_skill_effect_plan(snapshot, &finisher);
++    ARPG_REQUIRE(!plan.storm_swords.finisher_visible);
++    ARPG_REQUIRE(arpg::test::near(plan.screen_flash_alpha, 0.0F));
++    return {};
++}
++
++arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
++    noexcept {
++    constexpr std::uint16_t kFinisherTick = static_cast<std::uint16_t>(
++        combat::kStormStartupTicks
++        + static_cast<std::uint16_t>(combat::kStormStrikeCount)
++            * combat::kStormStrikeIntervalTicks);
++    combat::CombatSnapshot snapshot{};
++    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
++    snapshot.active_skill.locked_center = {4.0F, -2.0F, 0.0F};
++    snapshot.active_skill.phase = combat::ActiveSkillPhase::finisher;
++    snapshot.active_skill.elapsed_ticks = kFinisherTick;
++    platform::ActiveSkillEffectPlan plan =
++        platform::make_active_skill_effect_plan(snapshot, nullptr);
++    ARPG_REQUIRE(plan.storm_swords.finisher_visible);
++    ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
++
++    snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
++    for (std::uint16_t age = 1U; age <= 7U; ++age) {
++        snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
++            kFinisherTick + age);
++        plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
++        ARPG_REQUIRE(plan.storm_swords.finisher_visible);
++        ARPG_REQUIRE(plan.storm_swords.finisher_opacity > 0.0F);
++        ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
++        ARPG_REQUIRE(arpg::test::near(
++            plan.storm_swords.center.x, 4.0F));
++        ARPG_REQUIRE(arpg::test::near(
++            plan.storm_swords.center.y, -2.0F));
++    }
++
++    snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
++        kFinisherTick + 8U);
++    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
++    ARPG_REQUIRE(!plan.storm_swords.finisher_visible);
++    ARPG_REQUIRE(arpg::test::near(plan.screen_flash_alpha, 0.0F));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"active skill HUD fixed slots", &hud_projects_exactly_five_numbered_slots_and_catalog_names},
++    {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
++    {"active skill HUD fixed layout", &hud_layout_is_bottom_centered_with_fixed_slot_geometry},
++    {"active skill native effect plan", &native_effect_plan_uses_snapshot_timing_and_twelve_swords},
++    {"storm finisher snapshot lifetime", &storm_finisher_persists_from_snapshot_without_hit_event},
++};
++
++}  // namespace
++
++arpg::test::TestSuite active_skill_view_suite() noexcept {
++    return arpg::test::make_suite("active_skill_view", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 240a625..9403b96 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -7,20 +7,22 @@
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite audio_pack_suite() noexcept;
+ arpg::test::TestSuite audio_routing_suite() noexcept;
+ arpg::test::TestSuite audio_scene_suite() noexcept;
+ arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
+ arpg::test::TestSuite host_input_suite() noexcept;
+ arpg::test::TestSuite active_skill_input_suite() noexcept;
++arpg::test::TestSuite active_skill_view_suite() noexcept;
++arpg::test::TestSuite active_skill_loadout_view_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+ arpg::test::TestSuite window_settings_suite() noexcept;
+@@ -56,20 +58,22 @@ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
+         audio_pack_suite(),
+         audio_routing_suite(),
+         audio_scene_suite(),
+         stage15_audio_pack_suite(),
+         host_input_suite(),
+         active_skill_input_suite(),
++        active_skill_view_suite(),
++        active_skill_loadout_view_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         pause_host_gate_suite(),
+         inventory_view_math_suite(),
+         death_input_gate_suite(),
+         death_overlay_view_suite(),
+         pause_menu_state_suite(),
+         pause_menu_view_suite(),
+@@ -86,12 +90,12 @@ int main() {
+         material_loot_view_suite(),
+         material_bag_renderer_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 364, "stage 16 reinforcement UI");
++    return arpg::test::run_suites(suites, 374, "stage 17 active skill UI");
+ }

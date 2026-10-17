@@ -1,0 +1,804 @@
+# Review package: 7ab4fb6..HEAD
+
+## Commits
+5da5355 feat: implement storm swords awakening skill
+
+## Files changed
+ src/combat/active_skill_runtime.cpp       |  78 ++++++-
+ src/combat/active_skill_runtime.hpp       |  12 ++
+ src/combat/combat_types.hpp               |   3 +
+ src/combat/combat_world.cpp               |  13 +-
+ src/combat/combat_world.hpp               |   4 +
+ src/combat/hit_resolution.cpp             |   6 +
+ tests/combat/CMakeLists.txt               |   3 +-
+ tests/combat/combat_test_main.cpp         |  26 ++-
+ tests/combat/storm_swords_skill_tests.cpp | 330 ++++++++++++++++++++++++++++++
+ 9 files changed, 468 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/src/combat/active_skill_runtime.cpp b/src/combat/active_skill_runtime.cpp
+index eb19447..023b892 100644
+--- a/src/combat/active_skill_runtime.cpp
++++ b/src/combat/active_skill_runtime.cpp
+@@ -73,27 +73,69 @@ void CombatWorld::simulate_active_skill_movement(MovementInput movement) noexcep
+ 
+ void CombatWorld::tick_active_skill_cooldowns() noexcept {
+     for (std::uint16_t& cooldown : active_skill_.cooldowns) {
+         if (cooldown != 0U) --cooldown;
+     }
+ }
+ 
+ void CombatWorld::tick_active_skill() noexcept {
+     ActiveSkillSnapshot& cast = active_skill_.snapshot;
+     if (cast.id == skills::ActiveSkillId::none) return;
+-    if (cast.id != skills::ActiveSkillId::draw_slash) {
++    if (cast.id != skills::ActiveSkillId::draw_slash
++        && cast.id != skills::ActiveSkillId::storm_swords) {
+         active_skill_.snapshot = ActiveSkillSnapshot{};
+         active_skill_.hit_latch.fill(false);
+         return;
+     }
+ 
+     ++cast.elapsed_ticks;
++    if (cast.id == skills::ActiveSkillId::storm_swords) {
++        const std::uint16_t finisher_tick = static_cast<std::uint16_t>(
++            kStormStartupTicks
++            + static_cast<std::uint16_t>(kStormStrikeCount)
++                * kStormStrikeIntervalTicks);
++        if (cast.elapsed_ticks < kStormStartupTicks) {
++            cast.phase = ActiveSkillPhase::startup;
++            player_.state = PlayerState::attack_startup;
++            return;
++        }
++        if (cast.elapsed_ticks < finisher_tick) {
++            cast.phase = ActiveSkillPhase::strikes;
++            player_.state = PlayerState::attack_active;
++            const std::uint16_t strike_elapsed = static_cast<std::uint16_t>(
++                cast.elapsed_ticks - kStormStartupTicks);
++            if (strike_elapsed % kStormStrikeIntervalTicks == 0U) {
++                cast.strike_index = static_cast<std::uint8_t>(
++                    1U + strike_elapsed / kStormStrikeIntervalTicks);
++                active_skill_.hit_latch.fill(false);
++                resolve_storm_swords_hits(false);
++            }
++            return;
++        }
++        if (cast.elapsed_ticks == finisher_tick) {
++            cast.phase = ActiveSkillPhase::finisher;
++            player_.state = PlayerState::attack_active;
++            active_skill_.hit_latch.fill(false);
++            resolve_storm_swords_hits(true);
++            return;
++        }
++        if (cast.elapsed_ticks <= finisher_tick + kStormRecoveryTicks) {
++            cast.phase = ActiveSkillPhase::recovery;
++            player_.state = PlayerState::attack_recovery;
++            return;
++        }
++
++        active_skill_.snapshot = ActiveSkillSnapshot{};
++        active_skill_.hit_latch.fill(false);
++        return;
++    }
++
+     if (cast.elapsed_ticks < kDrawSlashStartupTicks) {
+         cast.phase = ActiveSkillPhase::startup;
+         player_.state = PlayerState::attack_startup;
+         return;
+     }
+     if (cast.elapsed_ticks == kDrawSlashStartupTicks) {
+         cast.phase = ActiveSkillPhase::strikes;
+         resolve_draw_slash_hits();
+         player_.state = PlayerState::attack_active;
+         return;
+@@ -108,31 +150,63 @@ void CombatWorld::tick_active_skill() noexcept {
+     active_skill_.hit_latch.fill(false);
+ }
+ 
+ void CombatWorld::resolve_draw_slash_hits() noexcept {
+     const float facing = active_skill_.locked_facing == Facing::right
+         ? 1.0F : -1.0F;
+     const Vec3 center = active_skill_.snapshot.locked_center;
+     const PlayerAttackHitSpec hit_spec{
+         AttackId::none, kDrawSlashBasePhysical, kDrawSlashBreakDamage,
+         ImpactKind::medium_hitstun, kDrawSlashKnockbackSpeed, 0.0F,
+-        FeedbackLevel::medium};
++        FeedbackLevel::medium, skills::ActiveSkillId::draw_slash, 0U, false};
+     for (std::size_t index = 0U; index < monsters_.slots_.size(); ++index) {
+         const MonsterRuntime& monster = monsters_.slots_[index];
+         if (active_skill_.hit_latch[index] || !monster.active || monster.hp <= 0
+             || monster.reaction == ReactionState::defeated
+             || monster.reaction == ReactionState::respawning) {
+             continue;
+         }
+ 
+         const float forward = (monster.position.x - center.x) * facing;
+         if (forward < 0.0F || forward > kDrawSlashRange) continue;
+         const float half_width = kDrawSlashHalfWidthAtEnd
+             * (forward / kDrawSlashRange);
+         if (std::fabs(monster.position.y - center.y) > half_width) continue;
+ 
+         static_cast<void>(resolve_player_attack_hit(
+             index, hit_spec, active_skill_.hit_latch));
+     }
+ }
+ 
++void CombatWorld::resolve_storm_swords_hits(bool finisher) noexcept {
++    const Vec3 center = active_skill_.snapshot.locked_center;
++    const float radius = finisher ? kStormFinisherRadius : kStormStrikeRadius;
++    const float radius_squared = radius * radius;
++    const PlayerAttackHitSpec hit_spec{
++        AttackId::none,
++        finisher ? kStormFinisherBasePhysical : kStormStrikeBasePhysical,
++        0,
++        finisher ? ImpactKind::launch : ImpactKind::light_hitstun,
++        finisher ? kStormFinisherKnockbackSpeed : 0.0F,
++        finisher ? kStormFinisherLaunchSpeed : 0.0F,
++        finisher ? FeedbackLevel::heavy : FeedbackLevel::light,
++        skills::ActiveSkillId::storm_swords,
++        active_skill_.snapshot.strike_index,
++        finisher};
++
++    for (std::size_t index = 0U; index < monsters_.slots_.size(); ++index) {
++        const MonsterRuntime& monster = monsters_.slots_[index];
++        if (active_skill_.hit_latch[index] || !monster.active || monster.hp <= 0
++            || monster.reaction == ReactionState::defeated
++            || monster.reaction == ReactionState::respawning) {
++            continue;
++        }
++
++        const float delta_x = monster.position.x - center.x;
++        const float delta_y = monster.position.y - center.y;
++        if (delta_x * delta_x + delta_y * delta_y > radius_squared) continue;
++        static_cast<void>(resolve_player_attack_hit(
++            index, hit_spec, active_skill_.hit_latch));
++    }
++}
++
+ }  // namespace arpg::combat
+diff --git a/src/combat/active_skill_runtime.hpp b/src/combat/active_skill_runtime.hpp
+index 26fb1f6..0c1619d 100644
+--- a/src/combat/active_skill_runtime.hpp
++++ b/src/combat/active_skill_runtime.hpp
+@@ -8,18 +8,30 @@
+ namespace arpg::combat {
+ 
+ inline constexpr std::uint16_t kDrawSlashStartupTicks = 10U;
+ inline constexpr std::uint16_t kDrawSlashRecoveryTicks = 14U;
+ inline constexpr int kDrawSlashBasePhysical = 220;
+ inline constexpr int kDrawSlashBreakDamage = 36;
+ inline constexpr float kDrawSlashRange = 5.0F;
+ inline constexpr float kDrawSlashHalfWidthAtEnd = 3.2F;
+ inline constexpr float kDrawSlashKnockbackSpeed = 0.22F;
+ 
++inline constexpr std::uint16_t kStormStartupTicks = 24U;
++inline constexpr std::uint8_t kStormStrikeCount = 12U;
++inline constexpr std::uint16_t kStormStrikeIntervalTicks = 6U;
++inline constexpr std::uint16_t kStormRecoveryTicks = 24U;
++inline constexpr float kStormCenterForward = 3.5F;
++inline constexpr float kStormStrikeRadius = 2.8F;
++inline constexpr float kStormFinisherRadius = 3.8F;
++inline constexpr int kStormStrikeBasePhysical = 42;
++inline constexpr int kStormFinisherBasePhysical = 360;
++inline constexpr float kStormFinisherKnockbackSpeed = 0.26F;
++inline constexpr float kStormFinisherLaunchSpeed = 0.24F;
++
+ struct ActiveSkillRuntime final {
+     ActiveSkillSnapshot snapshot{};
+     Facing locked_facing{Facing::right};
+     std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns{};
+     std::array<bool, kMonsterCapacity> hit_latch{};
+ };
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index 89fb091..bfcfe94 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -346,20 +346,23 @@ struct DefeatPayload final {
+     MonsterId monster_id{MonsterId::count};
+     std::uint16_t spawn_ordinal{};
+     std::uint16_t affix_score{};
+     bool reward_eligible{};
+ };
+ 
+ struct CombatEvent final {
+     CombatEventKind kind{};
+     std::uint64_t tick{};
+     AttackId attack{AttackId::none};
++    skills::ActiveSkillId skill{skills::ActiveSkillId::none};
++    std::uint8_t strike_index{};
++    bool finisher{};
+     std::uint8_t target_index{0xFF};
+     std::uint8_t hit_count{};
+     FeedbackLevel feedback{};
+     Vec3 position{};
+     int value{};
+     MonsterId monster_id{MonsterId::count};
+     std::uint16_t spawn_ordinal{};
+     std::uint16_t affix_score{};
+     bool reward_eligible{};
+ };
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 5612a62..ed24a78 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -540,28 +540,35 @@ SkillCastResult CombatWorld::request_active_skill(
+         || player_.hit_stop_ticks != 0U || death_snapshot_.has_value()) {
+         return SkillCastResult::player_unavailable;
+     }
+     if (attack_.id != AttackId::none) return SkillCastResult::basic_attack_active;
+     if (active_skill_.cooldowns[index] != 0U) {
+         return SkillCastResult::cooling_down;
+     }
+     if (active_skill_.snapshot.id != skills::ActiveSkillId::none) {
+         return SkillCastResult::skill_active;
+     }
+-    if (skill != skills::ActiveSkillId::draw_slash) {
++    if (skill != skills::ActiveSkillId::draw_slash
++        && skill != skills::ActiveSkillId::storm_swords) {
+         return SkillCastResult::invalid_skill;
+     }
+ 
++    Vec3 locked_center = player_.position;
++    if (skill == skills::ActiveSkillId::storm_swords) {
++        const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
++        locked_center.x += facing * kStormCenterForward;
++    }
+     active_skill_.snapshot = ActiveSkillSnapshot{
+-        skill, ActiveSkillPhase::startup, 0U, player_.position, 0U};
++        skill, ActiveSkillPhase::startup, 0U, locked_center, 0U};
+     active_skill_.locked_facing = player_.facing;
+-    active_skill_.cooldowns[index] = skills::kDrawSlashCooldownTicks;
++    active_skill_.cooldowns[index] = skill == skills::ActiveSkillId::draw_slash
++        ? skills::kDrawSlashCooldownTicks : skills::kStormSwordsCooldownTicks;
+     active_skill_.hit_latch.fill(false);
+     player_.velocity.x = 0.0F;
+     player_.velocity.y = 0.0F;
+     player_.state = PlayerState::attack_startup;
+     return SkillCastResult::accepted;
+ }
+ 
+ void CombatWorld::tick(MovementInput movement) noexcept {
+     if (death_snapshot_.has_value()) {
+         ++tick_;
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index e032b5a..151db13 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -21,20 +21,23 @@ struct DungeonSessionTestAccess;
+ namespace arpg::combat {
+ 
+ struct PlayerAttackHitSpec final {
+     AttackId source{AttackId::none};
+     int base_physical{};
+     int break_damage{};
+     ImpactKind impact{ImpactKind::light_hitstun};
+     float knockback_speed{};
+     float launch_speed{};
+     FeedbackLevel feedback{FeedbackLevel::light};
++    skills::ActiveSkillId skill{skills::ActiveSkillId::none};
++    std::uint8_t strike_index{};
++    bool finisher{};
+ };
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     [[nodiscard]] SkillCastResult request_active_skill(
+         skills::ActiveSkillId skill) noexcept;
+@@ -87,20 +90,21 @@ private:
+         bool connected{};
+         bool impact_event_emitted{};
+         std::array<bool, kMonsterCapacity> hit_targets{};
+     };
+ 
+     void simulate_player(MovementInput movement) noexcept;
+     void simulate_active_skill_movement(MovementInput movement) noexcept;
+     void tick_active_skill_cooldowns() noexcept;
+     void tick_active_skill() noexcept;
+     void resolve_draw_slash_hits() noexcept;
++    void resolve_storm_swords_hits(bool finisher) noexcept;
+     [[nodiscard]] bool resolve_player_attack_hit(
+         std::size_t index,
+         const PlayerAttackHitSpec& spec,
+         std::array<bool, kMonsterCapacity>& hit_latch) noexcept;
+     void simulate_target(std::size_t index) noexcept;
+     void simulate_monster(std::size_t slot) noexcept;
+     void simulate_projectiles() noexcept;
+     void simulate_hazards() noexcept;
+     void simulate_abyss_environment() noexcept;
+     [[nodiscard]] static DamagePacket environment_damage_packet(
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 28156fc..d7c6c96 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -212,31 +212,37 @@ bool CombatWorld::resolve_player_attack_hit(
+             accepts_impact = true;
+         }
+     }
+     const std::uint16_t hit_stop = hit_stop_for(spec.feedback);
+     dummy.hit_stop_ticks = std::max(dummy.hit_stop_ticks, hit_stop);
+ 
+     CombatEvent hit{};
+     hit.kind = CombatEventKind::hit;
+     hit.tick = tick_;
+     hit.attack = spec.source;
++    hit.skill = spec.skill;
++    hit.strike_index = spec.strike_index;
++    hit.finisher = spec.finisher;
+     hit.target_index = static_cast<std::uint8_t>(index);
+     hit.hit_count = 1;
+     hit.feedback = spec.feedback;
+     hit.position = dummy.position;
+     hit.value = packet_total;
+     emit_event(hit);
+     if (starts_break) {
+         CombatEvent break_started{};
+         break_started.kind = CombatEventKind::break_started;
+         break_started.tick = tick_;
+         break_started.attack = spec.source;
++        break_started.skill = spec.skill;
++        break_started.strike_index = spec.strike_index;
++        break_started.finisher = spec.finisher;
+         break_started.target_index = static_cast<std::uint8_t>(index);
+         break_started.feedback = spec.feedback;
+         break_started.position = dummy.position;
+         emit_event(break_started);
+     }
+     const AttackDefinition impact{
+         spec.source, 0U, 0U, 0U, spec.base_physical, spec.break_damage,
+         spec.impact, {}, 0.0F, spec.knockback_speed, spec.launch_speed,
+         spec.feedback};
+     if (dummy.hp == 0 || accepts_impact) apply_dummy_impact(index, impact);
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index db73da3..8963203 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -17,20 +17,21 @@ add_executable(arpg_combat_tests
+     monster_catalog_tests.cpp
+     monster_melee_tests.cpp
+     monster_ranged_tests.cpp
+     monster_special_tests.cpp
+     monster_pool_tests.cpp
+     movement_jump_tests.cpp
+     player_health_tests.cpp
+     player_build_tests.cpp
+     player_damage_history_tests.cpp
+     player_death_snapshot_tests.cpp
+-    player_defense_tests.cpp)
++    player_defense_tests.cpp
++    storm_swords_skill_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+ add_test(NAME combat.units COMMAND arpg_combat_tests)
+ set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 9bdffbc..6981741 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -19,40 +19,63 @@ arpg::test::TestSuite monster_affix_runtime_suite() noexcept;
+ arpg::test::TestSuite monster_affix_trigger_suite() noexcept;
+ arpg::test::TestSuite monster_melee_suite() noexcept;
+ arpg::test::TestSuite monster_ranged_suite() noexcept;
+ arpg::test::TestSuite monster_special_suite() noexcept;
+ arpg::test::TestSuite monster_pool_suite() noexcept;
+ arpg::test::TestSuite player_health_suite() noexcept;
+ arpg::test::TestSuite player_build_suite() noexcept;
+ arpg::test::TestSuite player_damage_history_suite() noexcept;
+ arpg::test::TestSuite player_death_snapshot_suite() noexcept;
+ arpg::test::TestSuite player_defense_suite() noexcept;
++arpg::test::TestSuite storm_swords_skill_suite() noexcept;
+ 
+ namespace {
+ 
+ bool draw_slash_only_enabled() noexcept {
+ #if defined(_MSC_VER)
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(
+         &value, &length, "ARPG_STAGE17_DRAW_SLASH_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ #else
+     return std::getenv("ARPG_STAGE17_DRAW_SLASH_ONLY") != nullptr;
+ #endif
+ }
+ 
++bool storm_swords_only_enabled() noexcept {
++#if defined(_MSC_VER)
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(
++        &value, &length, "ARPG_STAGE17_STORM_SWORDS_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++#else
++    return std::getenv("ARPG_STAGE17_STORM_SWORDS_ONLY") != nullptr;
++#endif
++}
++
+ }  // namespace
+ 
+ int main() {
++    if (storm_swords_only_enabled()) {
++        const arpg::test::TestSuite storm_swords_suites[] = {
++            storm_swords_skill_suite(),
++        };
++        return arpg::test::run_suites(
++            storm_swords_suites, 9, "stage 17 task 5 storm swords");
++    }
++
+     if (draw_slash_only_enabled()) {
+         const arpg::test::TestSuite draw_slash_suites[] = {
+             draw_slash_skill_suite(),
+         };
+         return arpg::test::run_suites(
+             draw_slash_suites, 13, "stage 17 task 4 draw slash");
+     }
+ 
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+@@ -72,14 +95,15 @@ int main() {
+         monster_affix_trigger_suite(),
+         monster_melee_suite(),
+         monster_ranged_suite(),
+         monster_special_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+         player_build_suite(),
+         player_damage_history_suite(),
+         player_death_snapshot_suite(),
+         player_defense_suite(),
++        storm_swords_skill_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 219, "stage 17 task 4 draw slash");
++    return arpg::test::run_suites(suites, 228, "stage 17 task 5 storm swords");
+ }
+diff --git a/tests/combat/storm_swords_skill_tests.cpp b/tests/combat/storm_swords_skill_tests.cpp
+new file mode 100644
+index 0000000..4a73604
+--- /dev/null
++++ b/tests/combat/storm_swords_skill_tests.cpp
+@@ -0,0 +1,330 @@
++#include "test_framework.hpp"
++
++#include "allocation_probe.hpp"
++#include "combat_test_support.hpp"
++
++#include "combat/active_skill_runtime.hpp"
++#include "combat/combat_world.hpp"
++#include "skills/active_skill_catalog.hpp"
++#include "skills/active_skill_types.hpp"
++
++#include <cstdint>
++#include <limits>
++#include <type_traits>
++#include <utility>
++
++namespace {
++
++using namespace arpg::combat;
++using arpg::skills::ActiveSkillId;
++using arpg::test::tick_n;
++
++constexpr double kFloatTolerance = 1.0e-4;
++
++CombatLabConfig storm_config() noexcept {
++    CombatLabConfig config{};
++    config.dummy_spawns = {{{12.0F, 4.0F, 0.0F},
++                            {12.0F, 0.0F, 0.0F},
++                            {12.0F, -4.0F, 0.0F}}};
++    return config;
++}
++
++template <typename Event, typename = void>
++struct HasStormMetadata : std::false_type {};
++
++template <typename Event>
++struct HasStormMetadata<Event, std::void_t<
++    decltype(std::declval<Event>().skill),
++    decltype(std::declval<Event>().strike_index),
++    decltype(std::declval<Event>().finisher)>> : std::true_type {};
++
++template <typename Event>
++bool carries_storm_metadata(
++    const Event& event, std::uint8_t strike_index, bool finisher) noexcept {
++    if constexpr (HasStormMetadata<Event>::value) {
++        return event.skill == ActiveSkillId::storm_swords
++            && event.strike_index == strike_index
++            && event.finisher == finisher;
++    } else {
++        return false;
++    }
++}
++
++arpg::test::Failure accepts_storm_and_locks_center_ahead_of_cast_facing() noexcept {
++    CombatWorld world{storm_config()};
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.active_skill.id == ActiveSkillId::storm_swords);
++    ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::startup);
++    ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == 0U);
++    ARPG_REQUIRE(snapshot.active_skill.strike_index == 0U);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.active_skill.locked_center.x, 3.5, kFloatTolerance));
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.active_skill.locked_center.y, 0.0, kFloatTolerance));
++    ARPG_REQUIRE(snapshot.skill_cooldowns[1] == 1800U);
++
++    tick_n(world, 8, MovementInput{-1, 1});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.position.x < 0.0F);
++    ARPG_REQUIRE(snapshot.player.position.y > 0.0F);
++    ARPG_REQUIRE(snapshot.player.facing == Facing::right);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.active_skill.locked_center.x, 3.5, kFloatTolerance));
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.active_skill.locked_center.y, 0.0, kFloatTolerance));
++    return {};
++}
++
++arpg::test::Failure twelve_strikes_follow_six_tick_cadence_then_finish_and_recover() noexcept {
++    CombatWorld world{storm_config()};
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++
++    tick_n(world, 23);
++    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::startup);
++    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 23U);
++    ARPG_REQUIRE(world.snapshot().active_skill.strike_index == 0U);
++
++    for (std::uint8_t strike = 1U; strike <= 12U; ++strike) {
++        const std::uint16_t boundary = static_cast<std::uint16_t>(
++            24U + static_cast<std::uint16_t>(strike - 1U) * 6U);
++        const std::uint16_t elapsed = world.snapshot().active_skill.elapsed_ticks;
++        tick_n(world, static_cast<int>(boundary - elapsed));
++        const CombatSnapshot snapshot = world.snapshot();
++        ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::strikes);
++        ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == boundary);
++        ARPG_REQUIRE(snapshot.active_skill.strike_index == strike);
++        if (strike != 12U) {
++            tick_n(world, 5);
++            ARPG_REQUIRE(world.snapshot().active_skill.phase
++                         == ActiveSkillPhase::strikes);
++            ARPG_REQUIRE(world.snapshot().active_skill.strike_index == strike);
++        }
++    }
++
++    tick_n(world, 5);
++    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 95U);
++    ARPG_REQUIRE(world.snapshot().active_skill.strike_index == 12U);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::finisher);
++    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 96U);
++    ARPG_REQUIRE(world.snapshot().active_skill.strike_index == 12U);
++
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::recovery);
++    tick_n(world, 23);
++    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 120U);
++    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::recovery);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().active_skill.id == ActiveSkillId::none);
++    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::none);
++    return {};
++}
++
++arpg::test::Failure each_strike_hits_each_target_once_and_latch_resets_next_strike() noexcept {
++    CombatLabConfig config = storm_config();
++    config.dummy_spawns = {{{3.5F, 0.0F, 0.0F},
++                            {3.0F, 0.5F, 0.0F},
++                            {4.0F, -0.5F, 0.0F}}};
++    CombatWorld world{config};
++    const CombatSnapshot before = world.snapshot();
++    arpg::test::drain_events(world);
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++
++    tick_n(world, 24);
++    CombatSnapshot snapshot = world.snapshot();
++    for (std::size_t index = 0U; index < 3U; ++index) {
++        ARPG_REQUIRE(before.monsters[index].hp - snapshot.monsters[index].hp == 42);
++    }
++    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
++
++    std::uint8_t first_strike_hits{};
++    while (const auto event = world.try_pop_event()) {
++        if (event->kind == CombatEventKind::hit) {
++            ARPG_REQUIRE(event->attack == AttackId::none);
++            ARPG_REQUIRE(event->value == 42);
++            ARPG_REQUIRE(carries_storm_metadata(*event, 1U, false));
++            ++first_strike_hits;
++        }
++    }
++    ARPG_REQUIRE(first_strike_hits == 3U);
++
++    tick_n(world, 5);
++    snapshot = world.snapshot();
++    for (std::size_t index = 0U; index < 3U; ++index) {
++        ARPG_REQUIRE(before.monsters[index].hp - snapshot.monsters[index].hp == 42);
++    }
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    for (std::size_t index = 0U; index < 3U; ++index) {
++        ARPG_REQUIRE(before.monsters[index].hp - snapshot.monsters[index].hp == 84);
++    }
++    return {};
++}
++
++arpg::test::Failure normal_and_finisher_radii_are_independent_and_finisher_launches() noexcept {
++    CombatLabConfig config = storm_config();
++    config.dummy_spawns = {{{3.5F, 2.8F, 0.0F},
++                            {3.5F, 3.0F, 0.0F},
++                            {3.5F, 3.8001F, 0.0F}}};
++    CombatWorld world{config};
++    const CombatSnapshot before = world.snapshot();
++    arpg::test::drain_events(world);
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++
++    tick_n(world, 24);
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(before.monsters[0].hp - snapshot.monsters[0].hp == 42);
++    ARPG_REQUIRE(before.monsters[1].hp == snapshot.monsters[1].hp);
++    ARPG_REQUIRE(before.monsters[2].hp == snapshot.monsters[2].hp);
++
++    arpg::test::drain_events(world);
++    tick_n(world, 72);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::finisher);
++    ARPG_REQUIRE(before.monsters[1].hp - snapshot.monsters[1].hp == 360);
++    ARPG_REQUIRE(before.monsters[2].hp == snapshot.monsters[2].hp);
++    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.monsters[1].velocity.x > 0.0F);
++    ARPG_REQUIRE(snapshot.monsters[1].velocity.z > 0.0F);
++
++    bool saw_finisher = false;
++    while (const auto event = world.try_pop_event()) {
++        saw_finisher = saw_finisher
++            || (event->kind == CombatEventKind::hit
++                && event->target_index == 1U && event->value == 360
++                && event->attack == AttackId::none
++                && carries_storm_metadata(*event, 12U, true));
++    }
++    ARPG_REQUIRE(saw_finisher);
++    return {};
++}
++
++arpg::test::Failure reset_cancels_remaining_storm_damage_and_cooldown() noexcept {
++    CombatLabConfig config = storm_config();
++    config.dummy_spawns[0] = {3.5F, 0.0F, 0.0F};
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++    tick_n(world, 24);
++    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 258);
++
++    world.reset();
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.active_skill.id == ActiveSkillId::none);
++    ARPG_REQUIRE(snapshot.skill_cooldowns[1] == 0U);
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 300);
++    arpg::test::drain_events(world);
++    tick_n(world, 150);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.monsters[0].hp == 300);
++    while (const auto event = world.try_pop_event()) {
++        ARPG_REQUIRE(event->kind != CombatEventKind::hit);
++    }
++    return {};
++}
++
++arpg::test::Failure load_wave_cancels_remaining_storm_without_late_hits() noexcept {
++    CombatLabConfig config = storm_config();
++    config.dummy_spawns[0] = {3.5F, 0.0F, 0.0F};
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++    tick_n(world, 24);
++
++    EncounterWave empty{};
++    ARPG_REQUIRE(world.load_wave(empty));
++    ARPG_REQUIRE(world.snapshot().active_skill.id == ActiveSkillId::none);
++    ARPG_REQUIRE(world.snapshot().skill_cooldowns[1] == 0U);
++    tick_n(world, 150);
++    while (const auto event = world.try_pop_event()) {
++        ARPG_REQUIRE(event->kind != CombatEventKind::hit);
++    }
++    return {};
++}
++
++arpg::test::Failure lethal_damage_cancels_remaining_storm_without_late_hits() noexcept {
++    CombatLabConfig config = storm_config();
++    config.dummy_spawns[0] = {3.5F, 0.0F, 0.0F};
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++    tick_n(world, 24);
++    const int hp_after_first_strike = world.snapshot().monsters[0].hp;
++
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{(std::numeric_limits<int>::max)()},
++        DamageDelivery::direct, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);
++    ARPG_REQUIRE(world.player_defeated());
++    ARPG_REQUIRE(world.snapshot().active_skill.id == ActiveSkillId::none);
++    ARPG_REQUIRE(world.snapshot().skill_cooldowns[1] == 0U);
++    tick_n(world, 150);
++    ARPG_REQUIRE(world.snapshot().monsters[0].hp == hp_after_first_strike);
++    return {};
++}
++
++arpg::test::Failure cooldown_counts_1800_world_ticks_without_underflow() noexcept {
++    CombatWorld world{storm_config()};
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++    ARPG_REQUIRE(world.snapshot().skill_cooldowns[1] == 1800U);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().skill_cooldowns[1] == 1799U);
++    tick_n(world, 1799);
++    ARPG_REQUIRE(world.snapshot().skill_cooldowns[1] == 0U);
++    tick_n(world, 50);
++    ARPG_REQUIRE(world.snapshot().skill_cooldowns[1] == 0U);
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++    return {};
++}
++
++arpg::test::Failure storm_hot_paths_allocate_nothing() noexcept {
++    CombatLabConfig config = storm_config();
++    config.dummy_spawns[0] = {3.5F, 0.0F, 0.0F};
++    config.dummy_spawns[1] = {3.5F, 3.0F, 0.0F};
++    CombatWorld world{config};
++
++    const std::uint64_t request_before = arpg::test::allocation_count();
++    ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
++                 == SkillCastResult::accepted);
++    ARPG_REQUIRE(arpg::test::allocation_count() == request_before);
++
++    tick_n(world, 23);
++    const std::uint64_t strike_before = arpg::test::allocation_count();
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(arpg::test::allocation_count() == strike_before);
++
++    tick_n(world, 71);
++    const std::uint64_t finisher_before = arpg::test::allocation_count();
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(arpg::test::allocation_count() == finisher_before);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"accepts storm and locks center ahead of facing",
++     &accepts_storm_and_locks_center_ahead_of_cast_facing},
++    {"twelve strikes use six tick cadence then finisher and recovery",
++     &twelve_strikes_follow_six_tick_cadence_then_finish_and_recover},
++    {"per-strike latch resets only for next strike",
++     &each_strike_hits_each_target_once_and_latch_resets_next_strike},
++    {"normal and finisher radii are independent and finisher launches",
++     &normal_and_finisher_radii_are_independent_and_finisher_launches},
++    {"reset cancels remaining storm damage", &reset_cancels_remaining_storm_damage_and_cooldown},
++    {"load wave cancels remaining storm damage", &load_wave_cancels_remaining_storm_without_late_hits},
++    {"lethal damage cancels remaining storm damage", &lethal_damage_cancels_remaining_storm_without_late_hits},
++    {"cooldown counts 1800 ticks without underflow", &cooldown_counts_1800_world_ticks_without_underflow},
++    {"storm hot paths allocate nothing", &storm_hot_paths_allocate_nothing},
++};
++
++}  // namespace
++
++arpg::test::TestSuite storm_swords_skill_suite() noexcept {
++    return arpg::test::make_suite("storm_swords_skill", kCases);
++}

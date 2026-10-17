@@ -1,0 +1,1281 @@
+# Review package: e6f0c21..8e5c24c
+
+## Commits
+8e5c24c feat: add equipment reinforcement and coupons
+
+## Files changed
+ src/dungeon/dungeon_session.hpp                    |   9 +-
+ src/dungeon/dungeon_snapshot.cpp                   |   1 +
+ src/dungeon/dungeon_transition.cpp                 | 209 ++++++++++++++++++++-
+ src/dungeon/dungeon_types.hpp                      |  16 ++
+ src/platform/raylib/dungeon_runtime.cpp            |  14 ++
+ src/platform/raylib/dungeon_runtime.hpp            |   4 +
+ src/platform/raylib/inventory_renderer.cpp         |  74 +++++++-
+ src/platform/raylib/material_bag_renderer.cpp      |  65 +++++++
+ src/platform/raylib/material_bag_renderer.hpp      |  16 ++
+ .../dungeon/dungeon_crafting_transaction_tests.cpp |  82 ++++++++
+ tests/dungeon/dungeon_test_main.cpp                |   6 +-
+ tests/platform/material_bag_renderer_tests.cpp     |  14 ++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ 13 files changed, 502 insertions(+), 10 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index 6817a86..c2fe290 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -103,20 +103,24 @@ public:
+         std::uint64_t item_id) noexcept;
+     [[nodiscard]] RequestResult request_unequip(
+         items::ItemSlot slot) noexcept;
+     [[nodiscard]] RequestResult request_craft(
+         items::MaterialId material,
+         std::uint64_t item_id,
+         std::optional<items::DirectedCategory> directed_category =
+             std::nullopt) noexcept;
+     [[nodiscard]] RequestResult request_recipe(
+         const std::array<std::uint64_t, 3>& item_ids) noexcept;
++    [[nodiscard]] RequestResult request_reinforcement(
++        std::uint64_t item_id) noexcept;
++    [[nodiscard]] RequestResult request_coupon(
++        items::MaterialId coupon, std::uint64_t item_id) noexcept;
+     [[nodiscard]] RequestResult request_pickup(
+         std::uint16_t drop_ordinal) noexcept;
+     [[nodiscard]] RequestResult request_material_pickup(
+         std::uint16_t ordinal) noexcept;
+     [[nodiscard]] RequestResult request_death_continue() noexcept;
+     void request_nearby_pickups(
+         combat::Vec3 player_position,
+         AutoPickupPolicy pickup_policy = {}) noexcept;
+     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
+     [[nodiscard]] std::optional<combat::PlayerCombatBuild>
+@@ -203,21 +207,23 @@ private:
+     void clear_abyss_exit_confirmation() noexcept;
+     void update_abyss_exit_confirmation_range(
+         combat::Vec3 player_position) noexcept;
+     [[nodiscard]] std::uint8_t abyss_pending_reward_count() const noexcept;
+     [[nodiscard]] std::uint8_t abyss_unpicked_reward_count() const noexcept;
+     [[nodiscard]] bool prepare_passive_mutation(
+         passives::PassiveNodeId node, bool refund) noexcept;
+     [[nodiscard]] RequestResult prepare_item_save(
+         DungeonRunState&& next,
+         PendingSaveKind kind,
+-        RoomPhase resume_phase) noexcept;
++        RoomPhase resume_phase,
++        std::optional<ReinforcementReceipt> reinforcement_receipt =
++            std::nullopt) noexcept;
+     [[nodiscard]] PlayerBuildResult build_for(
+         const checkpoint::DungeonRunState& state,
+         const items::EquipmentState* equipment_override = nullptr) const noexcept;
+     [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_abyss_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_abyss_reward_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_abyss_claim_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_death_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_material_cache_consistent() const noexcept;
+     void commit_pending_save(const PendingSaveResult& result) noexcept;
+@@ -242,20 +248,21 @@ private:
+     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
+     std::optional<PendingAbyssReward> pending_abyss_reward_{};
+     AbyssExitConfirmation abyss_exit_confirmation_{};
+     std::optional<combat::CombatWorld> combat_{};
+     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
+     std::array<std::uint64_t, 3> rolled_drop_bits_{};
+     std::array<GroundMaterial, kGroundMaterialCapacity> ground_materials_{};
+     std::array<std::uint64_t, kMaterialDropBitWordCount>
+         rolled_material_bits_{};
+     MaterialPickupReceipt material_pickup_receipt_{};
++    ReinforcementReceipt reinforcement_receipt_{};
+     RoomEncounterPlan encounter_plan_{};
+     std::uint8_t wave_index_{};
+     std::uint16_t wave_delay_ticks_{};
+     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
+     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
+         combat_events_{};
+     RoomPhase phase_{RoomPhase::locked};
+     ExitDirection last_exit_{ExitDirection::none};
+     std::uint64_t session_tick_{};
+     DungeonDiagnostics diagnostics_{};
+diff --git a/src/dungeon/dungeon_snapshot.cpp b/src/dungeon/dungeon_snapshot.cpp
+index 6ae3916..7121fce 100644
+--- a/src/dungeon/dungeon_snapshot.cpp
++++ b/src/dungeon/dungeon_snapshot.cpp
+@@ -137,20 +137,21 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
+     for (const GroundMaterial& ground : ground_materials_) {
+         if (!ground.active) continue;
+         GroundMaterialSnapshot& packed =
+             result.ground_materials[result.ground_material_count++];
+         packed.ordinal = ground.ordinal;
+         packed.source = ground.source;
+         packed.position = ground.position;
+         packed.material = ground.material;
+     }
+     result.material_pickup_receipt = material_pickup_receipt_;
++    result.reinforcement_receipt = reinforcement_receipt_;
+     if (pending_save_.has_value()) {
+         result.pending_save_kind = pending_save_->kind;
+         if (pending_save_->kind == PendingSaveKind::loot_pickup
+                 || pending_save_->kind
+                     == PendingSaveKind::abyss_reward_claim) {
+             result.pending_pickup_ordinal = pending_save_->pickup_ordinal;
+         }
+         if (pending_save_->kind == PendingSaveKind::material_pickup) {
+             result.pending_material_pickup_ordinal =
+                 pending_save_->pickup_ordinal;
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index 599c368..ace6067 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -1,31 +1,35 @@
+ #include "dungeon/dungeon_session.hpp"
+ 
+ #include "combat/room_bounds.hpp"
++#include "core/deterministic_rng.hpp"
+ #include "dungeon/abyss_reward.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "items/item_catalog.hpp"
+ #include "items/item_crafting.hpp"
+ #include "items/item_generation.hpp"
+ #include "passives/passive_tree_rules.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cmath>
+ #include <limits>
+ #include <new>
+ #include <utility>
+ 
+ namespace arpg::dungeon {
+ namespace {
+ 
++inline constexpr std::uint64_t kReinforcementDomain =
++    0x5245494E464F5243ULL;
++
+ void saturating_increment(std::uint32_t& value) noexcept {
+     if (value != (std::numeric_limits<std::uint32_t>::max)()) {
+         ++value;
+     }
+ }
+ 
+ bool item_request_phase(RoomPhase phase) noexcept {
+     return phase == RoomPhase::locked || phase == RoomPhase::combat
+         || phase == RoomPhase::wave_delay || phase == RoomPhase::cleared
+         || phase == RoomPhase::awaiting_exit;
+@@ -48,20 +52,34 @@ bool is_equipped(
+     }
+     return false;
+ }
+ 
+ bool contains_id(
+     const std::array<std::uint64_t, 3>& ids,
+     std::uint64_t id) noexcept {
+     return ids[0] == id || ids[1] == id || ids[2] == id;
+ }
+ 
++bool reinforcement_succeeds(std::uint64_t root_seed,
++    std::uint64_t item_id,
++    std::uint32_t current,
++    std::uint64_t nonce,
++    std::uint16_t chance_bp) noexcept {
++    const std::uint64_t stream = kReinforcementDomain
++        ^ item_id
++        ^ (static_cast<std::uint64_t>(current) << 32U)
++        ^ nonce;
++    core::DeterministicRng rng = core::DeterministicRng::derive_stream(
++        root_seed, stream);
++    return rng.next_bounded(10000U).value_or(9999U) < chance_bp;
++}
++
+ template <std::size_t Size>
+ bool bit_is_set(
+     const std::array<std::uint64_t, Size>& bits,
+     std::uint16_t ordinal) noexcept {
+     const std::size_t word = ordinal / 64U;
+     const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
+     return word < bits.size()
+         && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
+ }
+ 
+@@ -422,21 +440,22 @@ bool DungeonSession::prepare_passive_mutation(
+         ExitDirection::none,
+         RoomPhase::awaiting_exit,
+     };
+     phase_ = RoomPhase::committing;
+     return true;
+ }
+ 
+ RequestResult DungeonSession::prepare_item_save(
+     DungeonRunState&& next,
+     PendingSaveKind kind,
+-    RoomPhase resume_phase) noexcept {
++    RoomPhase resume_phase,
++    std::optional<ReinforcementReceipt> reinforcement_receipt) noexcept {
+     if (!pending_item_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return RequestResult::faulted;
+     }
+     const items::OwnershipValidationResult validation =
+         items::validate_ownership_detailed(next.item_ownership);
+     if (validation == items::OwnershipValidationResult::allocation_failure) {
+         return RequestResult::rejected;
+     }
+     if (validation != items::OwnershipValidationResult::valid
+@@ -460,38 +479,45 @@ RequestResult DungeonSession::prepare_item_save(
+     }
+     try {
+         const std::size_t item_count = next.item_ownership.items.size();
+         stable_state_.item_ownership.items.reserve(item_count);
+         death_validation_scratch_.item_ownership.items.reserve(item_count);
+     } catch (...) {
+         return RequestResult::rejected;
+     }
+     ++next.commit_generation;
+     const std::uint64_t expected_generation = next.commit_generation;
++    if (reinforcement_receipt.has_value()) {
++        reinforcement_receipt->commit_generation = expected_generation;
++    }
+     pending_save_.emplace(PendingSave{
+         kind,
+         expected_generation,
+         std::move(next),
+         TransitionKind::none,
+         ExitDirection::none,
+         resume_phase,
++        0xFFFFU,
++        std::nullopt,
++        reinforcement_receipt,
+     });
+     pending_item_build_.emplace(candidate_build.build);
+     phase_ = RoomPhase::committing;
+     return RequestResult::accepted;
+ }
+ 
+ bool DungeonSession::pending_item_cache_consistent() const noexcept {
+     const bool item_pending = pending_save_.has_value()
+         && (pending_save_->kind == PendingSaveKind::equipment
+             || pending_save_->kind == PendingSaveKind::craft
+-            || pending_save_->kind == PendingSaveKind::recipe);
++            || pending_save_->kind == PendingSaveKind::recipe
++            || pending_save_->kind == PendingSaveKind::reinforcement);
+     return item_pending == pending_item_build_.has_value();
+ }
+ 
+ bool DungeonSession::pending_abyss_cache_consistent() const noexcept {
+     const bool start_pending = pending_save_.has_value()
+         && pending_save_->kind == PendingSaveKind::abyss_start;
+     return start_pending == pending_abyss_combat_.has_value();
+ }
+ 
+ bool DungeonSession::pending_abyss_reward_cache_consistent() const noexcept {
+@@ -803,20 +829,161 @@ RequestResult DungeonSession::request_craft(
+         --next.item_ownership.materials[material_index];
+         return prepare_item_save(
+             std::move(next), PendingSaveKind::craft, phase_);
+     } catch (const std::bad_alloc&) {
+         return RequestResult::rejected;
+     } catch (...) {
+         return RequestResult::rejected;
+     }
+ }
+ 
++RequestResult DungeonSession::request_reinforcement(
++    std::uint64_t item_id) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
++    const std::size_t stone = items::material_index(
++        items::MaterialId::reinforcement_stone);
++    if (!item_request_phase(phase_) || !combat_.has_value()
++            || pending_save_.has_value() || item_id == 0U
++            || stone >= items::kMaterialCount
++            || stable_state_.item_ownership.materials[stone] == 0U) {
++        return RequestResult::rejected;
++    }
++    const items::OwnershipValidationResult stable_validation =
++        items::validate_ownership_detailed(stable_state_.item_ownership);
++    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
++        return RequestResult::rejected;
++    }
++    if (stable_validation != items::OwnershipValidationResult::valid) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return RequestResult::faulted;
++    }
++    const items::ItemInstance* const item = find_item(
++        stable_state_.item_ownership, item_id);
++    if (item == nullptr) return RequestResult::rejected;
++    const items::ReinforcementPreview preview =
++        items::reinforcement_preview(*item);
++    if (!preview.can_attempt) return RequestResult::rejected;
++
++    const bool success = reinforcement_succeeds(stable_state_.root_seed,
++        item->id, item->reinforcement, stable_state_.commit_generation,
++        preview.success_chance_bp);
++    ReinforcementReceipt receipt{true, false, success, false, 0U,
++        item->id, item->reinforcement, item->reinforcement,
++        preview.success_chance_bp, items::MaterialId::reinforcement_stone};
++    try {
++        DungeonRunState next = stable_state_;
++        next.progression = room_progression_;
++        auto& owned = next.item_ownership.items;
++        if (success) {
++            for (items::ItemInstance& candidate : owned) {
++                if (candidate.id == item_id) {
++                    candidate.reinforcement = preview.target;
++                    receipt.after = candidate.reinforcement;
++                    break;
++                }
++            }
++        } else {
++            const items::ReinforcementFailure failure =
++                items::reinforcement_failure(item->reinforcement);
++            if (failure == items::ReinforcementFailure::destroy) {
++                std::size_t write = 0U;
++                for (std::size_t read = 0U; read < owned.size(); ++read) {
++                    if (owned[read].id == item_id) continue;
++                    if (write != read) owned[write] = owned[read];
++                    ++write;
++                }
++                owned.resize(write);
++                for (std::uint64_t& equipped
++                        : next.item_ownership.equipment.equipped_ids) {
++                    if (equipped == item_id) equipped = 0U;
++                }
++                receipt.destroyed = true;
++                receipt.after = 0U;
++            } else {
++                const std::uint32_t after = failure
++                        == items::ReinforcementFailure::reset_six ? 6U
++                    : failure == items::ReinforcementFailure::reset_zero ? 0U
++                    : item->reinforcement;
++                for (items::ItemInstance& candidate : owned) {
++                    if (candidate.id == item_id) {
++                        candidate.reinforcement = after;
++                        receipt.after = after;
++                        break;
++                    }
++                }
++            }
++        }
++        --next.item_ownership.materials[stone];
++        return prepare_item_save(std::move(next),
++            PendingSaveKind::reinforcement, phase_, receipt);
++    } catch (const std::bad_alloc&) {
++        return RequestResult::rejected;
++    } catch (...) {
++        return RequestResult::rejected;
++    }
++}
++
++RequestResult DungeonSession::request_coupon(
++    items::MaterialId coupon, std::uint64_t item_id) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
++    const std::size_t coupon_index = items::material_index(coupon);
++    if (!item_request_phase(phase_) || !combat_.has_value()
++            || pending_save_.has_value() || item_id == 0U
++            || coupon_index >= items::kMaterialCount
++            || !items::material_is_coupon(coupon)
++            || stable_state_.item_ownership.materials[coupon_index] == 0U) {
++        return RequestResult::rejected;
++    }
++    const items::OwnershipValidationResult stable_validation =
++        items::validate_ownership_detailed(stable_state_.item_ownership);
++    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
++        return RequestResult::rejected;
++    }
++    if (stable_validation != items::OwnershipValidationResult::valid) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return RequestResult::faulted;
++    }
++    const items::ItemInstance* const item = find_item(
++        stable_state_.item_ownership, item_id);
++    if (item == nullptr) return RequestResult::rejected;
++    const auto upgraded = items::apply_coupon(*item, coupon);
++    if (!upgraded.has_value()) return RequestResult::rejected;
++
++    ReinforcementReceipt receipt{true, true, true, false, 0U,
++        item_id, item->reinforcement, upgraded->reinforcement, 10000U, coupon};
++    try {
++        DungeonRunState next = stable_state_;
++        next.progression = room_progression_;
++        bool replaced = false;
++        for (items::ItemInstance& candidate : next.item_ownership.items) {
++            if (candidate.id != item_id) continue;
++            candidate = *upgraded;
++            replaced = true;
++            break;
++        }
++        if (!replaced) return RequestResult::rejected;
++        --next.item_ownership.materials[coupon_index];
++        return prepare_item_save(std::move(next),
++            PendingSaveKind::reinforcement, phase_, receipt);
++    } catch (const std::bad_alloc&) {
++        return RequestResult::rejected;
++    } catch (...) {
++        return RequestResult::rejected;
++    }
++}
++
+ RequestResult DungeonSession::request_recipe(
+     const std::array<std::uint64_t, 3>& item_ids) noexcept {
+     if (!pending_item_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return RequestResult::faulted;
+     }
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value() || item_ids[0] == 0U
+             || item_ids[1] == 0U || item_ids[2] == 0U
+             || item_ids[0] == item_ids[1] || item_ids[0] == item_ids[2]
+@@ -1217,21 +1384,23 @@ void DungeonSession::commit_pending_save(
+                 != pending_save_->next_state.commit_generation
+             || !same_run_state(
+                 result.verified_state, pending_save_->next_state)) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+ 
+     const PendingSaveKind kind = pending_save_->kind;
+     const bool item_commit = kind == PendingSaveKind::equipment
+         || kind == PendingSaveKind::craft
+-        || kind == PendingSaveKind::recipe;
++        || kind == PendingSaveKind::recipe
++        || kind == PendingSaveKind::reinforcement;
++    const bool reinforcement_commit = kind == PendingSaveKind::reinforcement;
+     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+     const bool material_pickup_commit =
+         kind == PendingSaveKind::material_pickup;
+     const bool claim_commit = kind == PendingSaveKind::abyss_reward_claim;
+     const bool start_commit = kind == PendingSaveKind::abyss_start;
+     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
+     const bool abyss_clear_commit = kind == PendingSaveKind::abyss_clear;
+     const bool room_clear_commit = kind == PendingSaveKind::room_clear;
+     const bool clear_commit = abyss_clear_commit || room_clear_commit;
+     const bool reward_commit = kind
+@@ -1260,20 +1429,51 @@ void DungeonSession::commit_pending_save(
+     }
+     if (material_pickup_commit) {
+         if (pickup_ordinal >= ground_materials_.size()
+                 || !ground_materials_[pickup_ordinal].active
+                 || ground_materials_[pickup_ordinal].ordinal
+                     != pickup_ordinal) {
+             enter_fault(DungeonFault::save_receipt_mismatch);
+             return;
+         }
+     }
++    ReinforcementReceipt published_reinforcement_receipt{};
++    if (reinforcement_commit) {
++        if (!pending_save_->reinforcement_receipt.has_value()) {
++            enter_fault(DungeonFault::save_receipt_mismatch);
++            return;
++        }
++        published_reinforcement_receipt = *pending_save_->reinforcement_receipt;
++        const std::size_t material_index = items::material_index(
++            published_reinforcement_receipt.material);
++        const items::ItemInstance* const published = find_item(
++            pending_save_->next_state.item_ownership,
++            published_reinforcement_receipt.item_id);
++        if (!published_reinforcement_receipt.valid
++                || published_reinforcement_receipt.commit_generation
++                    != pending_save_->expected_generation
++                || material_index >= items::kMaterialCount
++                || !((published_reinforcement_receipt.coupon
++                        && items::material_is_coupon(
++                            published_reinforcement_receipt.material))
++                    || (!published_reinforcement_receipt.coupon
++                        && published_reinforcement_receipt.material
++                            == items::MaterialId::reinforcement_stone))
++                || (published_reinforcement_receipt.destroyed
++                    ? published != nullptr
++                    : published == nullptr
++                        || published->reinforcement
++                            != published_reinforcement_receipt.after)) {
++            enter_fault(DungeonFault::save_receipt_mismatch);
++            return;
++        }
++    }
+     combat::PlayerCombatBuild published_build{};
+     if (item_commit) {
+         if (!combat_.has_value()) {
+             enter_fault(DungeonFault::invalid_item_state);
+             return;
+         }
+         published_build = *pending_item_build_;
+     }
+     PendingAbyssReward published_reward{};
+     if (reward_commit) published_reward = *pending_abyss_reward_;
+@@ -1361,20 +1561,23 @@ void DungeonSession::commit_pending_save(
+         ground_materials_ = {};
+         rolled_material_bits_ = {};
+         combat_.reset();
+         phase_ = RoomPhase::transitioning;
+         emit_committed(previous_room, stable_state_);
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+     if (item_commit) {
+         combat_->apply_player_build(published_build);
++        if (reinforcement_commit) {
++            reinforcement_receipt_ = published_reinforcement_receipt;
++        }
+         phase_ = resume_phase;
+         return;
+     }
+     if (pickup_commit || claim_commit) {
+         ground_items_[pickup_ordinal] = GroundItem{};
+         phase_ = resume_phase;
+         return;
+     }
+     if (material_pickup_commit) {
+         ground_materials_[pickup_ordinal] = GroundMaterial{};
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index ae9ccaf..d25b236 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -159,20 +159,33 @@ struct DeathSnapshot final {
+     bool continue_failed{};
+ };
+ 
+ struct MaterialPickupReceipt final {
+     bool valid{};
+     bool room_vacuum{};
+     std::uint64_t commit_generation{};
+     std::array<std::uint64_t, items::kMaterialCount> counts{};
+ };
+ 
++struct ReinforcementReceipt final {
++    bool valid{};
++    bool coupon{};
++    bool success{};
++    bool destroyed{};
++    std::uint64_t commit_generation{};
++    std::uint64_t item_id{};
++    std::uint32_t before{};
++    std::uint32_t after{};
++    std::uint16_t success_chance_bp{};
++    items::MaterialId material{items::MaterialId::count};
++};
++
+ struct DungeonSnapshot final {
+     std::uint64_t session_tick{};
+     std::uint64_t root_seed{};
+     std::uint64_t commit_generation{};
+     std::uint64_t room_index{};
+     std::uint64_t room_seed{};
+     std::uint64_t depth{1};
+     std::uint64_t floor_room_index{1};
+     std::array<std::uint32_t, 4> biases{};
+     RoomPhase phase{RoomPhase::locked};
+@@ -202,20 +215,21 @@ struct DungeonSnapshot final {
+     passives::PassiveTreeError passive_tree_error{
+         passives::PassiveTreeError::none};
+     std::uint32_t inventory_count{};
+     std::array<std::uint64_t, 6> equipped_ids{};
+     std::uint16_t ground_item_count{};
+     std::array<GroundItemSnapshot, kGroundDropCapacity> ground_items{};
+     std::uint16_t ground_material_count{};
+     std::array<GroundMaterialSnapshot, kGroundMaterialCapacity>
+         ground_materials{};
+     MaterialPickupReceipt material_pickup_receipt{};
++    ReinforcementReceipt reinforcement_receipt{};
+     std::optional<PendingSaveKind> pending_save_kind{};
+     std::optional<std::uint16_t> pending_pickup_ordinal{};
+     std::optional<std::uint16_t> pending_material_pickup_ordinal{};
+     std::optional<DeathSnapshot> death{};
+     std::optional<combat::CombatSnapshot> combat{};
+     DungeonEncounterDiagnostics encounter{};
+     DungeonDiagnostics diagnostics{};
+     progression::ProgressionState progression{};
+     std::uint64_t pending_room_experience{};
+     std::uint64_t last_room_experience{};
+@@ -231,39 +245,41 @@ struct PendingTransition final {
+ 
+ enum class PendingSaveKind : std::uint8_t {
+     transition,
+     passive_tree,
+     loot_pickup,
+     material_pickup,
+     room_clear,
+     equipment,
+     craft,
+     recipe,
++    reinforcement,
+     abyss_start,
+     abyss_fail,
+     abyss_clear,
+     abyss_reward_materialized,
+     abyss_reward_claim,
+     abyss_abandon,
+     death_retreat,
+     death_continue,
+ };
+ 
+ struct PendingSave final {
+     PendingSaveKind kind{PendingSaveKind::transition};
+     std::uint64_t expected_generation{};
+     DungeonRunState next_state{};
+     TransitionKind transition{TransitionKind::none};
+     ExitDirection direction{ExitDirection::none};
+     RoomPhase resume_phase{RoomPhase::awaiting_exit};
+     std::uint16_t pickup_ordinal{0xFFFFU};
+     std::optional<combat::CombatDeathSnapshot> death_snapshot{};
++    std::optional<ReinforcementReceipt> reinforcement_receipt{};
+ };
+ 
+ struct PendingSaveResult final {
+     SaveDisposition disposition{SaveDisposition::indeterminate};
+     std::uint64_t generation{};
+     DungeonRunState verified_state{};
+     std::optional<PendingSaveKind> kind{};
+ };
+ 
+ using TransitionSaveResult = PendingSaveResult;
+diff --git a/src/platform/raylib/dungeon_runtime.cpp b/src/platform/raylib/dungeon_runtime.cpp
+index 424dde3..8ac10d1 100644
+--- a/src/platform/raylib/dungeon_runtime.cpp
++++ b/src/platform/raylib/dungeon_runtime.cpp
+@@ -279,20 +279,34 @@ dungeon::RequestResult DungeonRuntime::request_craft(
+         : dungeon::RequestResult::rejected;
+ }
+ 
+ dungeon::RequestResult DungeonRuntime::request_recipe(
+     const std::array<std::uint64_t, 3>& item_ids) noexcept {
+     return state() == DungeonRuntimeState::running && session_.has_value()
+         ? session_->request_recipe(item_ids)
+         : dungeon::RequestResult::rejected;
+ }
+ 
++dungeon::RequestResult DungeonRuntime::request_reinforcement(
++    std::uint64_t item_id) noexcept {
++    return state() == DungeonRuntimeState::running && session_.has_value()
++        ? session_->request_reinforcement(item_id)
++        : dungeon::RequestResult::rejected;
++}
++
++dungeon::RequestResult DungeonRuntime::request_coupon(
++    items::MaterialId coupon, std::uint64_t item_id) noexcept {
++    return state() == DungeonRuntimeState::running && session_.has_value()
++        ? session_->request_coupon(coupon, item_id)
++        : dungeon::RequestResult::rejected;
++}
++
+ dungeon::RequestResult DungeonRuntime::request_death_continue() noexcept {
+     return state() == DungeonRuntimeState::running && session_.has_value()
+         ? session_->request_death_continue()
+         : dungeon::RequestResult::rejected;
+ }
+ 
+ const items::ItemOwnershipState* DungeonRuntime::item_state() const noexcept {
+     return session_.has_value() ? &session_->item_state() : nullptr;
+ }
+ 
+diff --git a/src/platform/raylib/dungeon_runtime.hpp b/src/platform/raylib/dungeon_runtime.hpp
+index 3d7c4fd..5154a00 100644
+--- a/src/platform/raylib/dungeon_runtime.hpp
++++ b/src/platform/raylib/dungeon_runtime.hpp
+@@ -60,20 +60,24 @@ public:
+     [[nodiscard]] dungeon::RequestResult request_equip(
+         std::uint64_t item_id) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_unequip(
+         items::ItemSlot slot) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_craft(
+         items::MaterialId material, std::uint64_t item_id,
+         std::optional<items::DirectedCategory> directed_category =
+             std::nullopt) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_recipe(
+         const std::array<std::uint64_t, 3>& item_ids) noexcept;
++    [[nodiscard]] dungeon::RequestResult request_reinforcement(
++        std::uint64_t item_id) noexcept;
++    [[nodiscard]] dungeon::RequestResult request_coupon(
++        items::MaterialId coupon, std::uint64_t item_id) noexcept;
+     [[nodiscard]] dungeon::RequestResult request_death_continue() noexcept;
+     [[nodiscard]] const items::ItemOwnershipState* item_state() const noexcept;
+     [[nodiscard]] DungeonRenderStatus render_status() const noexcept;
+     void fixed_tick(combat::MovementInput movement,
+         dungeon::AutoPickupPolicy pickup_policy = {}) noexcept;
+     void service_pending_save() noexcept;
+     // Kept until the host is migrated to the generic pending-save entry point.
+     void service_pending_transition() noexcept;
+     [[nodiscard]] bool recover_with_new_run() noexcept;
+ 
+diff --git a/src/platform/raylib/inventory_renderer.cpp b/src/platform/raylib/inventory_renderer.cpp
+index 3bf4f5e..35f2589 100644
+--- a/src/platform/raylib/inventory_renderer.cpp
++++ b/src/platform/raylib/inventory_renderer.cpp
+@@ -140,20 +140,21 @@ std::size_t base_value_index(std::uint8_t item_level) noexcept {
+ 
+ void InventoryRenderer::open(const dungeon::DungeonSession& session,
+     const dungeon::DungeonSnapshot& snapshot) {
+     open_ = true;
+     sync(session, snapshot);
+ }
+ 
+ void InventoryRenderer::close() noexcept {
+     open_ = false;
+     click_tracker_ = {};
++    static_cast<void>(material_bag_.resolve_reinforcement_confirmation(false));
+ }
+ 
+ bool InventoryRenderer::is_open() const noexcept { return open_; }
+ 
+ const items::ItemInstance* InventoryRenderer::selected_item(
+     const items::ItemOwnershipState& state) const noexcept {
+     return cached_selected_item(view_cache_, state);
+ }
+ 
+ void InventoryRenderer::refresh_comparison(
+@@ -214,20 +215,44 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+     const int columns = grid_columns(layout.grid);
+     const float wheel = input.mouse_wheel;
+     if (wheel != 0.0F) {
+         scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
+             scroll_rows_ - wheel, viewport.height, kCellHeight);
+     }
+     const bool left_pressed = input.mouse_left_pressed;
+     const bool right_pressed = input.mouse_right_pressed;
+     if (!left_pressed && !right_pressed) return false;
+     const Vector2 mouse = input.mouse_position;
++    const bool requests_enabled = !snapshot.pending_save_kind.has_value()
++        && runtime.state() == DungeonRuntimeState::running;
++    if (material_bag_.reinforcement_confirmation_item().has_value()) {
++        const ReinforcementConfirmationLayout confirmation =
++            reinforcement_confirmation_layout(GetScreenWidth(), GetScreenHeight());
++        if (right_pressed || (left_pressed
++                && contains(confirmation.cancel, mouse))) {
++            static_cast<void>(
++                material_bag_.resolve_reinforcement_confirmation(false));
++            return false;
++        }
++        if (left_pressed && contains(confirmation.confirm, mouse)) {
++            const auto confirmed =
++                material_bag_.resolve_reinforcement_confirmation(true);
++            if (requests_enabled && confirmed.has_value()
++                    && runtime.request_reinforcement(*confirmed)
++                        == dungeon::RequestResult::accepted) {
++                runtime.service_pending_save();
++                return true;
++            }
++            return false;
++        }
++        return false;
++    }
+     if (right_pressed && material_bag_.cycle_directed_category(
+             mouse, GetScreenWidth(), GetScreenHeight())) {
+         return false;
+     }
+     if (left_pressed && material_bag_.process_click(mouse, state,
+             GetScreenWidth(), GetScreenHeight())) {
+         return false;
+     }
+     if (right_pressed && material_bag_.clear_selection()) return false;
+     if (left_pressed && contains(slot_filter_button(layout.grid), mouse)) {
+@@ -241,22 +266,20 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+     }
+     if (left_pressed && contains(rarity_filter_button(layout.grid), mouse)) {
+         if (!filter_.rarity.has_value()) filter_.rarity = items::ItemRarity::normal;
+         else if (*filter_.rarity == items::ItemRarity::rare) filter_.rarity.reset();
+         else filter_.rarity = static_cast<items::ItemRarity>(
+             static_cast<std::uint8_t>(*filter_.rarity) + 1U);
+         sync(session, snapshot);
+         scroll_rows_ = 0.0F;
+         return false;
+     }
+-    const bool requests_enabled = !snapshot.pending_save_kind.has_value()
+-        && runtime.state() == DungeonRuntimeState::running;
+     if (left_pressed) {
+         if (const auto slot = hit_test_equipped_slot(
+                 mouse, layout, state.equipment)) {
+             if (requests_enabled
+                 && runtime.request_unequip(*slot)
+                     == dungeon::RequestResult::accepted) {
+                 runtime.service_pending_save();
+                 return true;
+             }
+             return false;
+@@ -276,20 +299,42 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+         const std::size_t filtered_position = visible.first + offset;
+         const Rectangle cell = grid_item_rectangle(viewport, columns,
+             filtered_position, scroll_rows_);
+         if (!contains(cell, mouse)) continue;
+         const items::ItemInstance& item = state.items[
+             view_cache_.filtered_indices[filtered_position]];
+         selected_item_id_ = item.id;
+         if (left_pressed && requests_enabled) {
+             const auto selected_material = material_bag_.selected_material();
+             if (selected_material.has_value()) {
++                if (*selected_material == items::MaterialId::reinforcement_stone) {
++                    if (item.reinforcement >= 12U) {
++                        static_cast<void>(
++                            material_bag_.begin_reinforcement_confirmation(
++                                item.id, item.reinforcement));
++                        return false;
++                    }
++                    if (runtime.request_reinforcement(item.id)
++                            == dungeon::RequestResult::accepted) {
++                        runtime.service_pending_save();
++                        return true;
++                    }
++                    return false;
++                }
++                if (items::material_is_coupon(*selected_material)) {
++                    if (runtime.request_coupon(*selected_material, item.id)
++                            == dungeon::RequestResult::accepted) {
++                        runtime.service_pending_save();
++                        return true;
++                    }
++                    return false;
++                }
+                 const auto category = *selected_material == items::MaterialId::directed
+                     ? std::optional<items::DirectedCategory>{
+                         material_bag_.directed_category()}
+                     : std::nullopt;
+                 if (runtime.request_craft(*selected_material, item.id, category)
+                         == dungeon::RequestResult::accepted) {
+                     runtime.service_pending_save();
+                     return true;
+                 }
+                 return false;
+@@ -467,20 +512,41 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
+             static_cast<int>(layout.grid.x + 12.0F),
+             static_cast<int>(layout.grid.y + 23.0F), 11,
+             Color{255, 237, 154, 255});
+     }
+     if (snapshot.pending_save_kind.has_value()) {
+         DrawText("SAVE PENDING - ACTIONS DISABLED",
+             static_cast<int>(layout.grid.x + 12.0F),
+             static_cast<int>(layout.grid.y + 13.0F), 12,
+             Color{255, 191, 96, 255});
+     }
++    if (snapshot.reinforcement_receipt.valid) {
++        const dungeon::ReinforcementReceipt& receipt =
++            snapshot.reinforcement_receipt;
++        const char* const result = receipt.destroyed ? "DESTROYED"
++            : receipt.success ? "SUCCESS" : "FAILED";
++        const char* const action = receipt.coupon ? "Coupon" : "Reinforcement";
++        const Color color = receipt.success ? Color{147, 244, 169, 255}
++                                            : Color{255, 145, 118, 255};
++        if (receipt.destroyed) {
++            DrawText(TextFormat("%s %s: +%u -> DESTROYED", action, result,
++                static_cast<unsigned>(receipt.before)),
++                static_cast<int>(layout.grid.x + 12.0F),
++                static_cast<int>(layout.grid.y + 13.0F), 12, color);
++        } else {
++            DrawText(TextFormat("%s %s: +%u -> +%u", action, result,
++                static_cast<unsigned>(receipt.before),
++                static_cast<unsigned>(receipt.after)),
++                static_cast<int>(layout.grid.x + 12.0F),
++                static_cast<int>(layout.grid.y + 13.0F), 12, color);
++        }
++    }
+ 
+     const items::ItemInstance* const item = selected_item(state);
+     const Rectangle first_detail_line = detail_line_rectangle(layout, 0U);
+     const int detail_x = static_cast<int>(first_detail_line.x);
+     const int detail_y = static_cast<int>(first_detail_line.y);
+     if (item == nullptr) {
+         DrawText("Click an item to inspect.", detail_x, detail_y, 15,
+             Color{166, 175, 191, 255});
+         return;
+     }
+@@ -495,20 +561,22 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
+     const auto draw_detail_line = [&](const char* text, Color color) noexcept {
+         const Rectangle line = detail_line_rectangle(layout, detail_line++);
+         DrawText(text, static_cast<int>(line.x), static_cast<int>(line.y),
+             10, color);
+     };
+     draw_detail_line(TextFormat("%s %s", rarity_name(item->rarity),
+         base->name.data()), rarity_color(item->rarity));
+     draw_detail_line(TextFormat("iLvl %u  Required %u",
+         static_cast<unsigned>(item->item_level),
+         static_cast<unsigned>(item->required_level)), RAYWHITE);
++    draw_detail_line(TextFormat("Reinforcement +%u",
++        static_cast<unsigned>(item->reinforcement)), Color{255, 225, 123, 255});
+     for (std::size_t effect_index = 0U;
+          effect_index < base->effect_count; ++effect_index) {
+         const items::BaseEffect& effect = base->effects[effect_index];
+         const ItemAttributeLabel inherent = item_attribute_label(effect.effect,
+             effect.stat, effect.operation, base->slot, 0xFFU);
+         const std::int32_t inherent_raw =
+             effect.values[base_value_index(item->item_level)];
+         draw_detail_line(TextFormat("Base [%s] %s %+g%s%s", inherent.scope,
+             inherent.name, item_attribute_display_value(inherent_raw, inherent),
+             inherent.suffix, inherent.qualifier), Color{150, 210, 255, 255});
+@@ -569,13 +637,15 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
+             diff.damage_reduction[2] / 100.0,
+             diff.damage_reduction[3] / 100.0), RAYWHITE);
+         draw_detail_line(TextFormat("F/W cap %+g/%+g%%",
+             diff.damage_reduction_cap_bonus[0] / 100.0,
+             diff.damage_reduction_cap_bonus[1] / 100.0), RAYWHITE);
+         draw_detail_line(TextFormat("L/C cap %+g/%+g%%",
+             diff.damage_reduction_cap_bonus[2] / 100.0,
+             diff.damage_reduction_cap_bonus[3] / 100.0), RAYWHITE);
+     }
+     EndScissorMode();
++    material_bag_.draw_reinforcement_confirmation(
++        GetScreenWidth(), GetScreenHeight());
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_bag_renderer.cpp b/src/platform/raylib/material_bag_renderer.cpp
+index a449634..f682b0f 100644
+--- a/src/platform/raylib/material_bag_renderer.cpp
++++ b/src/platform/raylib/material_bag_renderer.cpp
+@@ -65,33 +65,75 @@ MaterialBagLayout material_bag_layout(int width, int height) noexcept {
+ Rectangle material_bag_detail_bounds(int width, int height) noexcept {
+     const InventoryLayout inventory = inventory_layout(width, height);
+     const MaterialBagLayout bag = material_bag_layout(width, height);
+     constexpr float kDetailTopInset = 36.0F;
+     constexpr float kDetailBagGap = 4.0F;
+     const float top = inventory.detail.y + kDetailTopInset;
+     const float bottom = (std::max)(top, bag.panel.y - kDetailBagGap);
+     return {inventory.detail.x, top, inventory.detail.width, bottom - top};
+ }
+ 
++ReinforcementConfirmationLayout reinforcement_confirmation_layout(
++    int width, int height) noexcept {
++    const float panel_width = (std::min)(360.0F,
++        (std::max)(180.0F, static_cast<float>(width) - 32.0F));
++    const float panel_height = 124.0F;
++    const Rectangle panel{(static_cast<float>(width) - panel_width) * 0.5F,
++        (static_cast<float>(height) - panel_height) * 0.5F,
++        panel_width, panel_height};
++    constexpr float kModalInset = 14.0F;
++    constexpr float kModalGap = 8.0F;
++    const float button_width = (panel.width - kModalInset * 2.0F
++        - kModalGap) * 0.5F;
++    return {panel,
++        {panel.x + kModalInset, panel.y + panel.height - 38.0F,
++            button_width, 24.0F},
++        {panel.x + kModalInset + button_width + kModalGap,
++            panel.y + panel.height - 38.0F, button_width, 24.0F}};
++}
++
+ bool MaterialBagRenderer::select_slot(std::size_t slot,
+     const items::ItemOwnershipState& state) noexcept {
+     if (slot >= state.materials.size() || state.materials[slot] == 0U) return false;
+     selected_ = static_cast<items::MaterialId>(slot);
+     return true;
+ }
+ 
+ bool MaterialBagRenderer::clear_selection() noexcept {
+     if (!selected_.has_value()) return false;
+     selected_.reset();
+     return true;
+ }
+ 
++bool MaterialBagRenderer::begin_reinforcement_confirmation(
++    std::uint64_t item_id, std::uint32_t current) noexcept {
++    if (item_id == 0U || current < 12U
++            || reinforcement_confirmation_item_.has_value()) {
++        return false;
++    }
++    reinforcement_confirmation_item_ = item_id;
++    return true;
++}
++
++std::optional<std::uint64_t>
++MaterialBagRenderer::resolve_reinforcement_confirmation(
++    bool confirmed) noexcept {
++    const auto item = reinforcement_confirmation_item_;
++    reinforcement_confirmation_item_.reset();
++    return confirmed ? item : std::nullopt;
++}
++
++std::optional<std::uint64_t>
++MaterialBagRenderer::reinforcement_confirmation_item() const noexcept {
++    return reinforcement_confirmation_item_;
++}
++
+ void MaterialBagRenderer::sync_selection(
+     const items::ItemOwnershipState& state) noexcept {
+     if (!selected_.has_value()
+             || state.materials[items::material_index(*selected_)] != 0U) {
+         return;
+     }
+     selected_.reset();
+ }
+ 
+ bool MaterialBagRenderer::cycle_directed_category(
+@@ -162,11 +204,34 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
+             case items::DirectedCategory::element: category = "Element"; break;
+             case items::DirectedCategory::count: break;
+             }
+             DrawText(TextFormat("%s (R-click: cycle)", category),
+                 static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + 16.0F),
+                 9, Color{255, 237, 154, 255});
+         }
+     }
+ }
+ 
++void MaterialBagRenderer::draw_reinforcement_confirmation(
++    int width, int height) const noexcept {
++    if (!reinforcement_confirmation_item_.has_value()) return;
++    const ReinforcementConfirmationLayout layout =
++        reinforcement_confirmation_layout(width, height);
++    DrawRectangleRounded(layout.panel, 0.04F, 5, Color{29, 15, 18, 252});
++    DrawRectangleRoundedLinesEx(layout.panel, 0.04F, 5, 2.0F,
++        Color{255, 113, 96, 255});
++    DrawText("DANGER: FAILURE DESTROYS EQUIPMENT",
++        static_cast<int>(layout.panel.x + 14.0F),
++        static_cast<int>(layout.panel.y + 16.0F), 14,
++        Color{255, 180, 160, 255});
++    DrawText("Use one Reinforcement Stone?",
++        static_cast<int>(layout.panel.x + 14.0F),
++        static_cast<int>(layout.panel.y + 42.0F), 13, RAYWHITE);
++    DrawRectangleRounded(layout.confirm, 0.10F, 4, Color{113, 39, 39, 255});
++    DrawRectangleRounded(layout.cancel, 0.10F, 4, Color{44, 58, 74, 255});
++    DrawText("CONFIRM", static_cast<int>(layout.confirm.x + 8.0F),
++        static_cast<int>(layout.confirm.y + 5.0F), 13, RAYWHITE);
++    DrawText("CANCEL", static_cast<int>(layout.cancel.x + 10.0F),
++        static_cast<int>(layout.cancel.y + 5.0F), 13, RAYWHITE);
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_bag_renderer.hpp b/src/platform/raylib/material_bag_renderer.hpp
+index af5d7b1..335f719 100644
+--- a/src/platform/raylib/material_bag_renderer.hpp
++++ b/src/platform/raylib/material_bag_renderer.hpp
+@@ -10,33 +10,49 @@
+ 
+ namespace arpg::platform {
+ 
+ struct MaterialBagLayout final {
+     Rectangle panel{};
+     std::array<Rectangle, items::kMaterialCount> slots{};
+ 
+     [[nodiscard]] bool contains_all_slots() const noexcept;
+ };
+ 
++struct ReinforcementConfirmationLayout final {
++    Rectangle panel{};
++    Rectangle confirm{};
++    Rectangle cancel{};
++};
++
+ [[nodiscard]] MaterialBagLayout material_bag_layout(int width, int height) noexcept;
+ [[nodiscard]] Rectangle material_bag_detail_bounds(int width, int height) noexcept;
++[[nodiscard]] ReinforcementConfirmationLayout
++reinforcement_confirmation_layout(int width, int height) noexcept;
+ 
+ class MaterialBagRenderer final {
+ public:
+     [[nodiscard]] bool process_click(Vector2,
+         const items::ItemOwnershipState&, int width, int height) noexcept;
+     [[nodiscard]] bool select_slot(std::size_t,
+         const items::ItemOwnershipState&) noexcept;
+     [[nodiscard]] bool clear_selection() noexcept;
++    [[nodiscard]] bool begin_reinforcement_confirmation(
++        std::uint64_t item_id, std::uint32_t current) noexcept;
++    [[nodiscard]] std::optional<std::uint64_t>
++    resolve_reinforcement_confirmation(bool confirmed) noexcept;
++    [[nodiscard]] std::optional<std::uint64_t>
++    reinforcement_confirmation_item() const noexcept;
+     void sync_selection(const items::ItemOwnershipState&) noexcept;
+     [[nodiscard]] bool cycle_directed_category(
+         Vector2, int width, int height) noexcept;
+     [[nodiscard]] std::optional<items::MaterialId> selected_material() const noexcept;
+     [[nodiscard]] items::DirectedCategory directed_category() const noexcept;
+     void draw(const items::ItemOwnershipState&, int width, int height) const noexcept;
++    void draw_reinforcement_confirmation(int width, int height) const noexcept;
+ 
+ private:
+     std::optional<items::MaterialId> selected_{};
++    std::optional<std::uint64_t> reinforcement_confirmation_item_{};
+     items::DirectedCategory directed_category_{items::DirectedCategory::damage};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/dungeon/dungeon_crafting_transaction_tests.cpp b/tests/dungeon/dungeon_crafting_transaction_tests.cpp
+index 51e101b..3fe6a91 100644
+--- a/tests/dungeon/dungeon_crafting_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_crafting_transaction_tests.cpp
+@@ -117,20 +117,102 @@ arpg::test::Failure recipe_requires_exact_base_and_resets_reinforcement() noexce
+     ARPG_REQUIRE(pending->next_state.item_ownership.items.size() == 2U);
+     const ItemInstance& product = pending->next_state.item_ownership.items[1];
+     ARPG_REQUIRE(product.base_id == 2U);
+     ARPG_REQUIRE(product.rarity == ItemRarity::normal);
+     ARPG_REQUIRE(product.item_level == 61U);
+     ARPG_REQUIRE(product.reinforcement == 0U);
+     ARPG_REQUIRE(commit_pending(session));
+     return {};
+ }
+ 
++arpg::test::Failure reinforcement_failure_bands_apply_through_saved_transactions() noexcept {
++    const ItemInstance source = generated_item(301U, 1U, ItemRarity::normal);
++    ARPG_REQUIRE(arpg::items::validate_item(source));
++    const std::size_t stone = arpg::items::material_index(
++        MaterialId::reinforcement_stone);
++
++    const auto exercise_failure = [&](std::uint32_t current,
++        std::uint32_t expected, bool expect_destroy) noexcept {
++        for (std::uint64_t seed = 1U; seed <= 256U; ++seed) {
++            ItemInstance item = source;
++            item.reinforcement = current;
++            DungeonRunState state = state_with_items({item});
++            state.root_seed = seed;
++            state.item_ownership.materials[stone] = 1U;
++            if (expect_destroy) {
++                state.item_ownership.equipment.equipped_ids[
++                    static_cast<std::size_t>(ItemSlot::weapon)] = item.id;
++            }
++            DungeonSession session{DungeonRules{}, state};
++            if (session.request_reinforcement(item.id)
++                    != RequestResult::accepted) {
++                continue;
++            }
++            const auto pending = session.pending_save();
++            if (!pending.has_value()) return false;
++            const ItemInstance* const after = find_item(
++                pending->next_state.item_ownership, item.id);
++            if (expect_destroy ? after != nullptr
++                    : after == nullptr || after->reinforcement != expected) {
++                continue;
++            }
++            if (expect_destroy && pending->next_state.item_ownership.equipment
++                    .equipped_ids[static_cast<std::size_t>(ItemSlot::weapon)]
++                    != 0U) {
++                return false;
++            }
++            if (pending->next_state.item_ownership.materials[stone] != 0U
++                    || pending->kind != PendingSaveKind::reinforcement
++                    || !commit_pending(session)) {
++                return false;
++            }
++            const ItemInstance* const committed = find_item(
++                session.item_state(), item.id);
++            return expect_destroy ? committed == nullptr
++                                  : committed != nullptr
++                && committed->reinforcement == expected;
++        }
++        return false;
++    };
++
++    ARPG_REQUIRE(exercise_failure(7U, 6U, false));
++    ARPG_REQUIRE(exercise_failure(10U, 0U, false));
++    ARPG_REQUIRE(exercise_failure(12U, 0U, true));
++    return {};
++}
++
++arpg::test::Failure coupon_fifteen_sets_level_through_atomic_transaction() noexcept {
++    ItemInstance item = generated_item(401U, 1U, ItemRarity::normal);
++    ARPG_REQUIRE(arpg::items::validate_item(item));
++    item.reinforcement = 3U;
++    DungeonRunState state = state_with_items({item});
++    const std::size_t coupon = arpg::items::material_index(MaterialId::coupon_15);
++    state.item_ownership.materials[coupon] = 1U;
++    DungeonSession session{DungeonRules{}, state};
++
++    ARPG_REQUIRE(session.request_coupon(MaterialId::coupon_15, item.id)
++        == RequestResult::accepted);
++    const auto pending = session.pending_save();
++    ARPG_REQUIRE(pending.has_value());
++    ARPG_REQUIRE(pending->kind == PendingSaveKind::reinforcement);
++    const ItemInstance* const after = find_item(
++        pending->next_state.item_ownership, item.id);
++    ARPG_REQUIRE(after != nullptr);
++    ARPG_REQUIRE(after->reinforcement == 15U);
++    ARPG_REQUIRE(pending->next_state.item_ownership.materials[coupon] == 0U);
++    ARPG_REQUIRE(commit_pending(session));
++    ARPG_REQUIRE(find_item(session.item_state(), item.id)->reinforcement == 15U);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"craft spends only after pure success", &crafting_spends_only_after_a_successful_pure_craft},
+     {"recipe exact base resets reinforcement", &recipe_requires_exact_base_and_resets_reinforcement},
++    {"reinforcement failure bands save atomically", &reinforcement_failure_bands_apply_through_saved_transactions},
++    {"coupon fifteen saves atomically", &coupon_fifteen_sets_level_through_atomic_transaction},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept {
+     return arpg::test::make_suite("dungeon_crafting_transaction", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 63fa44a..07324b2 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -204,17 +204,17 @@ int main() {
+             dungeon_material_loot_suite(),
+         };
+         return arpg::test::run_suites(material_only, 12,
+             "stage 16 task 4 material loot");
+     }
+ 
+     if (stage16_crafting_transaction_only()) {
+         const arpg::test::TestSuite crafting_only[] = {
+             dungeon_crafting_transaction_suite(),
+         };
+-        return arpg::test::run_suites(crafting_only, 2,
+-            "stage 16 task 6 crafting transactions");
++        return arpg::test::run_suites(crafting_only, 4,
++            "stage 16 task 7 crafting and reinforcement transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 268,
++    return arpg::test::run_suites(suites, 270,
+         "stage 11a task 8 death continue validation");
+ }
+diff --git a/tests/platform/material_bag_renderer_tests.cpp b/tests/platform/material_bag_renderer_tests.cpp
+index cd81139..f3c3e0a 100644
+--- a/tests/platform/material_bag_renderer_tests.cpp
++++ b/tests/platform/material_bag_renderer_tests.cpp
+@@ -47,22 +47,36 @@ arpg::test::Failure selected_material_can_be_cancelled_without_changing_counts()
+     state.materials[chaos] = 4U;
+     platform::MaterialBagRenderer renderer{};
+     ARPG_REQUIRE(renderer.select_slot(chaos, state));
+     ARPG_REQUIRE(renderer.clear_selection());
+     ARPG_REQUIRE(!renderer.selected_material().has_value());
+     ARPG_REQUIRE(state.materials[chaos] == 4U);
+     ARPG_REQUIRE(!renderer.clear_selection());
+     return {};
+ }
+ 
++arpg::test::Failure reinforcement_stone_requires_explicit_destroy_confirmation() noexcept {
++    platform::MaterialBagRenderer renderer{};
++    ARPG_REQUIRE(!renderer.begin_reinforcement_confirmation(77U, 11U));
++    ARPG_REQUIRE(renderer.begin_reinforcement_confirmation(77U, 12U));
++    ARPG_REQUIRE(renderer.reinforcement_confirmation_item() == 77U);
++    ARPG_REQUIRE(!renderer.resolve_reinforcement_confirmation(false).has_value());
++    ARPG_REQUIRE(!renderer.reinforcement_confirmation_item().has_value());
++    ARPG_REQUIRE(renderer.begin_reinforcement_confirmation(77U, 13U));
++    ARPG_REQUIRE(renderer.resolve_reinforcement_confirmation(true) == 77U);
++    ARPG_REQUIRE(!renderer.reinforcement_confirmation_item().has_value());
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
+     {"minimum layout separates detail and bag", &minimum_layout_keeps_detail_above_material_bag},
+     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
+     {"material bag selection cancels", &selected_material_can_be_cancelled_without_changing_counts},
++    {"reinforcement requires destroy confirmation", &reinforcement_stone_requires_explicit_destroy_confirmation},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite material_bag_renderer_suite() noexcept {
+     return arpg::test::make_suite("material_bag_renderer", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 6149ee0..8db78b8 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -84,12 +84,12 @@ int main() {
+         material_loot_view_suite(),
+         material_bag_renderer_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 357, "stage 16 material UI");
++    return arpg::test::run_suites(suites, 358, "stage 16 reinforcement UI");
+ }
