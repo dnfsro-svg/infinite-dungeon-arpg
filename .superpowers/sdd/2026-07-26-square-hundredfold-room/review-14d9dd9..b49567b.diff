@@ -1,0 +1,339 @@
+# Review package: 14d9dd9f377f15ec56df398ffcd8aa695c24e9fb..b49567b48573d2b33c856ae93759ff9ab026ee43
+
+## Commits
+b49567b feat: persist large room progress in checkpoint v9
+
+## Files changed
+ .../2026-07-26-square-hundredfold-room/progress.md |  1 +
+ .../task-5-report.md                               | 44 +++++++++++
+ .../persistence/save_commit_stack_guard_test.cmake | 45 ++++++++++-
+ tests/platform/host_input_source_test.cmake        | 90 ++++++++++++++++++++++
+ 4 files changed, 177 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md b/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md
+index 36ab233..6dfcf57 100644
+--- a/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md
++++ b/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md
+@@ -1,9 +1,10 @@
+ # SDD ledger — plan: docs/superpowers/plans/2026-07-26-square-hundredfold-room.md
+ 
+ Task 1: complete (commit cadbb83, reviewed and verified)
+ Task 2: complete (commit ed0a358, reviewed and verified)
+ Task 3: complete (commit 062173b, reviewed and verified)
+ Task 4: fix round 1/5 (resource-allocation rollback, residency-switch, and ledger atomicity tests addressed)
+ Task 4: fix round 2/5 (platform clear fixture preserved affix XP without visual drops; review clean)
+ Task 4: complete (commit c6ecd4f, reviews clean; Task4 12/12, platform 488/488, game link verified)
+ Task 5: fix round 1/5 (preallocated descent snapshot, gameplay/rearm movement guards, heap-state stack guard, and pre-window OOM order addressed)
++Task 5: fix round 2/5 (auto-by-value DungeonSnapshot and HostValidationStates stack-guard gaps closed)
+diff --git a/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md b/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md
+index a0b548f..c661539 100644
+--- a/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md
++++ b/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md
+@@ -155,10 +155,54 @@ This round closed only the four requested source-guard/runtime findings:
+ - `ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.units|stage17\.skill_stones\.)' --output-on-failure -j1`:
+   4/4 passed. `platform.units` remained 495 cases/0 failures (14.86 s), with
+   Stage17 real-raylib/validator/self-test at 20.19/1.30/1.76 s.
+ - `ctest --test-dir out/build/windows-msvc-debug -R '^platform\.host_input_source$' --output-on-failure -j1`:
+   passed on its only full run in 181.98 s. Process monitoring showed exactly one
+   `ctest` parent and one CMake sanitizer child; no duplicate process was started.
+ 
+ All builds and tests in this round used
+ `CMAKE_BUILD_PARALLEL_LEVEL=1`, `CTEST_PARALLEL_LEVEL=1`, and `-j1`.
+ The post-edit `git diff --check` completed with exit code 0.
++
++## Review fix round 2/5 (2026-07-27)
++
++This round closed the single remaining large-stack source-guard gap without
++changing production code. Both the persistence stack guard and the sanitized
++host source guard now reject automatic objects written with deduced types:
++
++- `[const] auto name = [dungeon::]DungeonSnapshot { ... }`
++- `[const] auto name = HostValidationStates { ... }`
++
++The patterns allow normal spaces, tabs, and line breaks, and cover both
++qualified and unqualified `DungeonSnapshot`. They inspect only by-value braced
++construction after `=`, so the existing `make_unique`/nothrow owners and
++`DungeonSnapshot&` aliases remain valid. All owner counts, aliases, allocation
++order, and no-argument snapshot constraints from round 1 remain unchanged.
++
++### RED evidence
++
++- `ctest --test-dir out/build/windows-msvc-debug -R '^persistence\.save_commit_stack_guard$' --output-on-failure -j1`
++  failed in 2.59 s after the new mutation was added but before the matcher was
++  changed. The expected failure was
++  `stack guard accepted auto namespaced DungeonSnapshot mutation`.
++- The host guard's lightweight self-test mode was run with
++  `cmake -DRAYLIB_SOURCE_DIR=E:/game/.worktrees/square-hundredfold-room/src/platform/raylib -DARPG_HOST_AUTO_GUARD_SELF_TEST_ONLY=ON -P tests/platform/host_input_source_test.cmake`.
++  It failed in 0.6 s and listed all three accepted mutations:
++  namespaced auto `DungeonSnapshot`, unqualified/multiline const-auto
++  `DungeonSnapshot`, and multiline auto `HostValidationStates`.
++
++### GREEN evidence
++
++- The same lightweight host mutation command completed with exit code 0 after
++  the matcher change. Its reference includes `make_unique` snapshot ownership,
++  a `DungeonSnapshot&` alias, and the nothrow `HostValidationStates` owner, so
++  the GREEN also proves those valid forms were not rejected.
++- `persistence.save_commit_stack_guard` passed in 2.60 s. Its production-source
++  mutations independently cover namespaced auto, unqualified/multiline
++  const-auto, and auto validation-state construction.
++- `ctest --test-dir out/build/windows-msvc-debug -R '^platform\.host_input_source$' --output-on-failure -j1`
++  passed on the updated guard's only full run in 184.43 s. Monitoring showed
++  one `ctest` parent and one CMake sanitizer child with no duplicate instance.
++
++All round-2 commands used `CMAKE_BUILD_PARALLEL_LEVEL=1`,
++`CTEST_PARALLEL_LEVEL=1`, and `-j1` where applicable.
++The round-2 post-edit `git diff --check` completed with exit code 0.
+diff --git a/tests/persistence/save_commit_stack_guard_test.cmake b/tests/persistence/save_commit_stack_guard_test.cmake
+index c2f6440..1d23b1f 100644
+--- a/tests/persistence/save_commit_stack_guard_test.cmake
++++ b/tests/persistence/save_commit_stack_guard_test.cmake
+@@ -67,38 +67,50 @@ function(host_large_state_ownership_valid SOURCE OUT_VALID)
+         if(NOT SNAPSHOT_OWNER_MATCH_COUNT EQUAL 1
+                 OR NOT SNAPSHOT_ALIAS_MATCH_COUNT EQUAL 1)
+             message(STATUS
+                 "host ownership guard: ${SNAPSHOT_NAME} owners=${SNAPSHOT_OWNER_MATCH_COUNT} aliases=${SNAPSHOT_ALIAS_MATCH_COUNT}")
+             set("${OUT_VALID}" FALSE PARENT_SCOPE)
+             return()
+         endif()
+     endforeach()
+ 
+     string(REGEX MATCHALL
+-        "(^|[^A-Za-z0-9_])(const${WS1})?dungeon::DungeonSnapshot${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}(\\{|;|=)"
++        "(^|[^A-Za-z0-9_])(const${WS1})?(dungeon::)?DungeonSnapshot${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}(\\{|;|=)"
+         AUTOMATIC_SNAPSHOT_DECLARATIONS "${HOST_ENTRY_SOURCE}")
+     list(LENGTH AUTOMATIC_SNAPSHOT_DECLARATIONS
+         AUTOMATIC_SNAPSHOT_DECLARATION_COUNT)
++    string(REGEX MATCHALL
++        "(^|[^A-Za-z0-9_])(const${WS1})?auto${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}=${WS}(dungeon::)?DungeonSnapshot${WS}\\{"
++        AUTO_SNAPSHOT_VALUE_DECLARATIONS "${HOST_ENTRY_SOURCE}")
++    list(LENGTH AUTO_SNAPSHOT_VALUE_DECLARATIONS
++        AUTO_SNAPSHOT_VALUE_DECLARATION_COUNT)
+     string(REGEX MATCHALL
+         "(runtime\\.session\\(\\)|session)->snapshot${WS}\\(${WS}\\)"
+         BY_VALUE_SNAPSHOT_CALLS "${HOST_ENTRY_SOURCE}")
+     list(LENGTH BY_VALUE_SNAPSHOT_CALLS BY_VALUE_SNAPSHOT_CALL_COUNT)
+     string(REGEX MATCHALL
+         "(^|[^A-Za-z0-9_])(const${WS1})?HostValidationStates${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}(\\{|;|=)"
+         AUTOMATIC_VALIDATION_DECLARATIONS "${HOST_ENTRY_SOURCE}")
+     list(LENGTH AUTOMATIC_VALIDATION_DECLARATIONS
+         AUTOMATIC_VALIDATION_DECLARATION_COUNT)
++    string(REGEX MATCHALL
++        "(^|[^A-Za-z0-9_])(const${WS1})?auto${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}=${WS}HostValidationStates${WS}\\{"
++        AUTO_VALIDATION_VALUE_DECLARATIONS "${HOST_ENTRY_SOURCE}")
++    list(LENGTH AUTO_VALIDATION_VALUE_DECLARATIONS
++        AUTO_VALIDATION_VALUE_DECLARATION_COUNT)
+     if(NOT AUTOMATIC_SNAPSHOT_DECLARATION_COUNT EQUAL 0
++            OR NOT AUTO_SNAPSHOT_VALUE_DECLARATION_COUNT EQUAL 0
+             OR NOT BY_VALUE_SNAPSHOT_CALL_COUNT EQUAL 0
+-            OR NOT AUTOMATIC_VALIDATION_DECLARATION_COUNT EQUAL 0)
++            OR NOT AUTOMATIC_VALIDATION_DECLARATION_COUNT EQUAL 0
++            OR NOT AUTO_VALIDATION_VALUE_DECLARATION_COUNT EQUAL 0)
+         message(STATUS
+-            "host ownership guard: automatic snapshots=${AUTOMATIC_SNAPSHOT_DECLARATION_COUNT} by-value=${BY_VALUE_SNAPSHOT_CALL_COUNT} automatic validation=${AUTOMATIC_VALIDATION_DECLARATION_COUNT}")
++            "host ownership guard: automatic snapshots=${AUTOMATIC_SNAPSHOT_DECLARATION_COUNT} auto snapshot values=${AUTO_SNAPSHOT_VALUE_DECLARATION_COUNT} by-value=${BY_VALUE_SNAPSHOT_CALL_COUNT} automatic validation=${AUTOMATIC_VALIDATION_DECLARATION_COUNT} auto validation values=${AUTO_VALIDATION_VALUE_DECLARATION_COUNT}")
+         set("${OUT_VALID}" FALSE PARENT_SCOPE)
+         return()
+     endif()
+ 
+     string(REGEX MATCH
+         "const${WS1}std::unique_ptr${WS}<${WS}HostValidationStates${WS}>${WS}validation_states${WS}\\{${WS}new${WS}\\(${WS}std::nothrow${WS}\\)${WS}HostValidationStates${WS}\\{${WS}\\}${WS}\\}${WS};"
+         VALIDATION_OWNER_MATCH "${HOST_ENTRY_SOURCE}")
+     string(REGEX MATCH
+         "if${WS}\\(${WS}validation_states${WS}==${WS}nullptr${WS}\\)"
+         VALIDATION_NULL_MATCH "${HOST_ENTRY_SOURCE}")
+@@ -155,20 +167,38 @@ string(REPLACE "${CURRENT_SNAPSHOT_OWNER}"
+     AUTOMATIC_SNAPSHOT_MUTATION "${host_source}")
+ if(AUTOMATIC_SNAPSHOT_MUTATION STREQUAL host_source)
+     message(FATAL_ERROR "automatic DungeonSnapshot mutation did not modify host source")
+ endif()
+ host_large_state_ownership_valid("${AUTOMATIC_SNAPSHOT_MUTATION}"
+     AUTOMATIC_SNAPSHOT_MUTATION_VALID)
+ if(AUTOMATIC_SNAPSHOT_MUTATION_VALID)
+     message(FATAL_ERROR "stack guard accepted automatic DungeonSnapshot mutation")
+ endif()
+ 
++set(AUTO_NAMESPACED_SNAPSHOT_MUTATION
++    "${host_source}\nauto stack_snapshot = dungeon::DungeonSnapshot{};\n")
++host_large_state_ownership_valid("${AUTO_NAMESPACED_SNAPSHOT_MUTATION}"
++    AUTO_NAMESPACED_SNAPSHOT_MUTATION_VALID)
++if(AUTO_NAMESPACED_SNAPSHOT_MUTATION_VALID)
++    message(FATAL_ERROR
++        "stack guard accepted auto namespaced DungeonSnapshot mutation")
++endif()
++
++set(AUTO_UNQUALIFIED_SNAPSHOT_MUTATION
++    "${host_source}\nconst auto stack_snapshot =\n    DungeonSnapshot { };\n")
++host_large_state_ownership_valid("${AUTO_UNQUALIFIED_SNAPSHOT_MUTATION}"
++    AUTO_UNQUALIFIED_SNAPSHOT_MUTATION_VALID)
++if(AUTO_UNQUALIFIED_SNAPSHOT_MUTATION_VALID)
++    message(FATAL_ERROR
++        "stack guard accepted auto unqualified DungeonSnapshot mutation")
++endif()
++
+ string(REPLACE "session->snapshot(current);"
+     "const auto by_value_snapshot = session->snapshot();"
+     BY_VALUE_SNAPSHOT_MUTATION "${host_source}")
+ if(BY_VALUE_SNAPSHOT_MUTATION STREQUAL host_source)
+     message(FATAL_ERROR "by-value DungeonSnapshot mutation did not modify host source")
+ endif()
+ host_large_state_ownership_valid("${BY_VALUE_SNAPSHOT_MUTATION}"
+     BY_VALUE_SNAPSHOT_MUTATION_VALID)
+ if(BY_VALUE_SNAPSHOT_MUTATION_VALID)
+     message(FATAL_ERROR "stack guard accepted by-value DungeonSnapshot mutation")
+@@ -185,20 +215,29 @@ string(REPLACE "${VALIDATION_STATES_OWNER}"
+     AUTOMATIC_VALIDATION_MUTATION "${host_source}")
+ if(AUTOMATIC_VALIDATION_MUTATION STREQUAL host_source)
+     message(FATAL_ERROR "automatic HostValidationStates mutation did not modify host source")
+ endif()
+ host_large_state_ownership_valid("${AUTOMATIC_VALIDATION_MUTATION}"
+     AUTOMATIC_VALIDATION_MUTATION_VALID)
+ if(AUTOMATIC_VALIDATION_MUTATION_VALID)
+     message(FATAL_ERROR "stack guard accepted automatic HostValidationStates mutation")
+ endif()
+ 
++set(AUTO_VALIDATION_MUTATION
++    "${host_source}\nauto stack_validation =\n    HostValidationStates { };\n")
++host_large_state_ownership_valid("${AUTO_VALIDATION_MUTATION}"
++    AUTO_VALIDATION_MUTATION_VALID)
++if(AUTO_VALIDATION_MUTATION_VALID)
++    message(FATAL_ERROR
++        "stack guard accepted auto HostValidationStates mutation")
++endif()
++
+ string(REPLACE "${VALIDATION_STATES_OWNER}" ""
+     LATE_VALIDATION_MUTATION "${host_source}")
+ string(REPLACE "        core::FixedStepRunner fixed_step;"
+     "${VALIDATION_STATES_OWNER}\n        core::FixedStepRunner fixed_step;"
+     LATE_VALIDATION_MUTATION "${LATE_VALIDATION_MUTATION}")
+ if(LATE_VALIDATION_MUTATION STREQUAL host_source)
+     message(FATAL_ERROR "late HostValidationStates mutation did not modify host source")
+ endif()
+ host_large_state_ownership_valid("${LATE_VALIDATION_MUTATION}"
+     LATE_VALIDATION_MUTATION_VALID)
+diff --git a/tests/platform/host_input_source_test.cmake b/tests/platform/host_input_source_test.cmake
+index 23e7937..4b51679 100644
+--- a/tests/platform/host_input_source_test.cmake
++++ b/tests/platform/host_input_source_test.cmake
+@@ -18,30 +18,120 @@ include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+ 
+ function(require_match_count SOURCE PATTERN EXPECTED LABEL)
+     string(REGEX MATCHALL "${PATTERN}" MATCHES "${SOURCE}")
+     list(LENGTH MATCHES ACTUAL)
+     if(NOT ACTUAL EQUAL EXPECTED)
+         message(FATAL_ERROR
+             "${LABEL}: expected ${EXPECTED} matches, found ${ACTUAL}")
+     endif()
+ endfunction()
+ 
++function(host_large_automatic_objects_absent SOURCE OUT_VALID)
++    set(WS "[ \t\r\n]*")
++    set(WS1 "[ \t\r\n]+")
++    string(REGEX MATCHALL
++        "(^|[^A-Za-z0-9_])(const${WS1})?(dungeon::)?DungeonSnapshot${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}(\\{|;|=)"
++        AUTOMATIC_SNAPSHOT_DECLARATIONS "${SOURCE}")
++    list(LENGTH AUTOMATIC_SNAPSHOT_DECLARATIONS
++        AUTOMATIC_SNAPSHOT_DECLARATION_COUNT)
++    string(REGEX MATCHALL
++        "(^|[^A-Za-z0-9_])(const${WS1})?auto${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}=${WS}(dungeon::)?DungeonSnapshot${WS}\\{"
++        AUTO_SNAPSHOT_VALUE_DECLARATIONS "${SOURCE}")
++    list(LENGTH AUTO_SNAPSHOT_VALUE_DECLARATIONS
++        AUTO_SNAPSHOT_VALUE_DECLARATION_COUNT)
++    string(REGEX MATCHALL
++        "(^|[^A-Za-z0-9_])(const${WS1})?HostValidationStates${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}(\\{|;|=)"
++        AUTOMATIC_VALIDATION_DECLARATIONS "${SOURCE}")
++    list(LENGTH AUTOMATIC_VALIDATION_DECLARATIONS
++        AUTOMATIC_VALIDATION_DECLARATION_COUNT)
++    string(REGEX MATCHALL
++        "(^|[^A-Za-z0-9_])(const${WS1})?auto${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}=${WS}HostValidationStates${WS}\\{"
++        AUTO_VALIDATION_VALUE_DECLARATIONS "${SOURCE}")
++    list(LENGTH AUTO_VALIDATION_VALUE_DECLARATIONS
++        AUTO_VALIDATION_VALUE_DECLARATION_COUNT)
++    if(AUTOMATIC_SNAPSHOT_DECLARATION_COUNT EQUAL 0
++            AND AUTO_SNAPSHOT_VALUE_DECLARATION_COUNT EQUAL 0
++            AND AUTOMATIC_VALIDATION_DECLARATION_COUNT EQUAL 0
++            AND AUTO_VALIDATION_VALUE_DECLARATION_COUNT EQUAL 0)
++        set("${OUT_VALID}" TRUE PARENT_SCOPE)
++    else()
++        set("${OUT_VALID}" FALSE PARENT_SCOPE)
++    endif()
++endfunction()
++
++function(require_host_large_auto_mutations_rejected SOURCE)
++    set(AUTO_LARGE_STATE_ACCEPTANCES)
++    set(AUTO_NAMESPACED_SNAPSHOT_MUTATION
++        "${SOURCE}\nauto stack_snapshot = dungeon::DungeonSnapshot{};\n")
++    host_large_automatic_objects_absent(
++        "${AUTO_NAMESPACED_SNAPSHOT_MUTATION}" AUTO_NAMESPACED_SNAPSHOT_VALID)
++    if(AUTO_NAMESPACED_SNAPSHOT_VALID)
++        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
++            "auto-namespaced-DungeonSnapshot")
++    endif()
++    set(AUTO_UNQUALIFIED_SNAPSHOT_MUTATION
++        "${SOURCE}\nconst auto stack_snapshot =\n    DungeonSnapshot { };\n")
++    host_large_automatic_objects_absent(
++        "${AUTO_UNQUALIFIED_SNAPSHOT_MUTATION}" AUTO_UNQUALIFIED_SNAPSHOT_VALID)
++    if(AUTO_UNQUALIFIED_SNAPSHOT_VALID)
++        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
++            "auto-unqualified-DungeonSnapshot")
++    endif()
++    set(AUTO_VALIDATION_MUTATION
++        "${SOURCE}\nauto stack_validation =\n    HostValidationStates { };\n")
++    host_large_automatic_objects_absent(
++        "${AUTO_VALIDATION_MUTATION}" AUTO_VALIDATION_VALID)
++    if(AUTO_VALIDATION_VALID)
++        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
++            "auto-HostValidationStates")
++    endif()
++    if(AUTO_LARGE_STATE_ACCEPTANCES)
++        list(JOIN AUTO_LARGE_STATE_ACCEPTANCES ", " AUTO_LARGE_STATE_NAMES)
++        message(FATAL_ERROR
++            "host large-state guard accepted mutations: ${AUTO_LARGE_STATE_NAMES}")
++    endif()
++endfunction()
++
++if(ARPG_HOST_AUTO_GUARD_SELF_TEST_ONLY)
++    set(HOST_AUTO_GUARD_REFERENCE [=[
++const auto current_storage = std::make_unique<dungeon::DungeonSnapshot>();
++dungeon::DungeonSnapshot& current = *current_storage;
++const std::unique_ptr<HostValidationStates> validation_states{
++    new (std::nothrow) HostValidationStates{}};
++]=])
++    host_large_automatic_objects_absent(
++        "${HOST_AUTO_GUARD_REFERENCE}" HOST_AUTO_GUARD_REFERENCE_VALID)
++    if(NOT HOST_AUTO_GUARD_REFERENCE_VALID)
++        message(FATAL_ERROR
++            "host auto guard rejected heap owners/reference aliases")
++    endif()
++    require_host_large_auto_mutations_rejected("${HOST_AUTO_GUARD_REFERENCE}")
++    return()
++endif()
++
+ arpg_sanitize_cpp_source("${HOST_SOURCE}" SANITIZED_HOST_SOURCE)
+ arpg_sanitize_cpp_source(
+     "${DUNGEON_SESSION_SOURCE}" SANITIZED_DUNGEON_SESSION_SOURCE)
+ string(FIND "${SANITIZED_HOST_SOURCE}"
+     "HostExitCode run_raylib_host" SANITIZED_HOST_ENTRY_INDEX)
+ if(SANITIZED_HOST_ENTRY_INDEX EQUAL -1)
+     message(FATAL_ERROR "raylib host entry is missing")
+ endif()
+ string(SUBSTRING "${SANITIZED_HOST_SOURCE}"
+     ${SANITIZED_HOST_ENTRY_INDEX} -1 SANITIZED_HOST_ENTRY_SOURCE)
++host_large_automatic_objects_absent(
++    "${SANITIZED_HOST_ENTRY_SOURCE}" HOST_LARGE_AUTOMATIC_OBJECTS_ABSENT)
++if(NOT HOST_LARGE_AUTOMATIC_OBJECTS_ABSENT)
++    message(FATAL_ERROR
++        "raylib host must not create automatic large state objects")
++endif()
++require_host_large_auto_mutations_rejected("${SANITIZED_HOST_ENTRY_SOURCE}")
+ 
+ require_match_count(
+     "${SANITIZED_HOST_SOURCE}"
+     "new[ \t\r\n]*\\([ \t\r\n]*std::nothrow[ \t\r\n]*\\)[ \t\r\n]*HostValidationStates[ \t\r\n]*\\{[ \t\r\n]*\\}"
+     1
+     "raylib host nothrow heap validation-state allocation")
+ require_match_count(
+     "${SANITIZED_HOST_ENTRY_SOURCE}"
+     "(^|[^A-Za-z0-9_])(const[ \t\r\n]+)?HostValidationStates[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*(\\{|;|=)"
+     0

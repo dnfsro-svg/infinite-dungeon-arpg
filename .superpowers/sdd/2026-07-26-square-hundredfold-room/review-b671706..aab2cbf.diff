@@ -1,0 +1,183 @@
+# Review package: b671706c6d205084cfb9c08966d326248d155580..aab2cbf53a177e0770649ac0326815a74fa55a7a
+
+## Commits
+aab2cbf feat: persist large room progress in checkpoint v9
+
+## Files changed
+ .../2026-07-26-square-hundredfold-room/progress.md |  1 +
+ .../task-5-report.md                               | 38 +++++++++++++++
+ .../persistence/save_commit_stack_guard_test.cmake | 56 +++++++++++++++++++++-
+ 3 files changed, 94 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md b/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md
+index 1f227f9..c03b4b3 100644
+--- a/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md
++++ b/.superpowers/sdd/2026-07-26-square-hundredfold-room/progress.md
+@@ -2,10 +2,11 @@
+ 
+ Task 1: complete (commit cadbb83, reviewed and verified)
+ Task 2: complete (commit ed0a358, reviewed and verified)
+ Task 3: complete (commit 062173b, reviewed and verified)
+ Task 4: fix round 1/5 (resource-allocation rollback, residency-switch, and ledger atomicity tests addressed)
+ Task 4: fix round 2/5 (platform clear fixture preserved affix XP without visual drops; review clean)
+ Task 4: complete (commit c6ecd4f, reviews clean; Task4 12/12, platform 488/488, game link verified)
+ Task 5: fix round 1/5 (preallocated descent snapshot, gameplay/rearm movement guards, heap-state stack guard, and pre-window OOM order addressed)
+ Task 5: fix round 2/5 (auto-by-value DungeonSnapshot and HostValidationStates stack-guard gaps closed)
+ Task 5: fix round 3/5 (prefix-independent direct-construction invariants close namespace, auto-const, and parenthesized large-state guard gaps)
++Task 5: fix round 4/5 (canonical comment-as-whitespace sanitization closes persistence stack-guard bypasses)
+diff --git a/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md b/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md
+index 061da19..4f06d8f 100644
+--- a/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md
++++ b/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-5-report.md
+@@ -245,10 +245,48 @@ cannot bypass them:
+   unique validation-state owner, safe pre-window allocation order, and no
+   no-argument/by-value snapshot capture.
+ - `ctest --test-dir out/build/windows-msvc-debug -R '^platform\.host_input_source$' --output-on-failure -j1`
+   passed on this round's only full run in 203.67 s. The preflight found no
+   competing instance; monitoring at approximately 45 and 95 seconds confirmed
+   exactly one `ctest` parent and one CPU-progressing CMake sanitizer child.
+ 
+ All round-3 commands used `CMAKE_BUILD_PARALLEL_LEVEL=1`,
+ `CTEST_PARALLEL_LEVEL=1`, and `-j1` where applicable.
+ The round-3 post-edit `git diff --check` completed with exit code 0.
++
++## Review fix round 4/5 (2026-07-27)
++
++This round closed the persistence stack guard's comment-as-whitespace bypass
++without changing production code or the platform host guard. The persistence
++test now includes the project's canonical `cpp_source_lexer.cmake` sanitizer,
++sanitizes the complete production host source exactly once, and passes that
++result to the existing ownership/structure guard and all pre-existing
++mutations. Four small raw mutation fixtures are sanitized independently before
++being appended to the already-sanitized production baseline, covering:
++
++- `auto x = dungeon::DungeonSnapshot/**/{};`
++- `auto y = HostValidationStates/**/{};`
++- `dungeon::DungeonSnapshot/**/x{};`
++- `auto z = dungeon::DungeonSnapshot// comment` followed by newline and `{}`
++
++### RED evidence
++
++- Before including or invoking the sanitizer,
++  `ctest --test-dir out/build/windows-msvc-debug -R '^persistence\.save_commit_stack_guard$' --output-on-failure -j1`
++  failed in 6.60 s wall time (CTest reported 6.27 s). The expected aggregate
++  failure listed all four comment-as-whitespace mutations as accepted. The
++  preflight found no competing CMake/CTest process.
++
++### GREEN evidence
++
++- With `CMAKE_BUILD_PARALLEL_LEVEL=1`, `CTEST_PARALLEL_LEVEL=1`, and `-j1`, the
++  same focused command passed 1/1 in 40.92 s. The monitored wrapper completed
++  in 61.17 s because of its 20-second polling interval.
++- The preflight found no competing instance. Monitoring at 20.5 and 40.8
++  seconds showed exactly one `ctest` parent and one CMake sanitizer child;
++  CMake CPU time advanced from 19.95 to 40.12 seconds. No duplicate test or
++  sanitizer process was started.
++- Because the original structure guard is unchanged and every prior mutation
++  now runs on the single sanitized production baseline, the GREEN preserves
++  the three `make_unique` owners, three reference aliases, sole nothrow
++  `HostValidationStates` owner, pre-window allocation order, no-argument
++  snapshot prohibition, and direct `{}`/`()` construction checks.
+diff --git a/tests/persistence/save_commit_stack_guard_test.cmake b/tests/persistence/save_commit_stack_guard_test.cmake
+index b08799b..18f08c4 100644
+--- a/tests/persistence/save_commit_stack_guard_test.cmake
++++ b/tests/persistence/save_commit_stack_guard_test.cmake
+@@ -25,21 +25,23 @@ foreach(path IN LISTS guarded_sources)
+         endif()
+         if(stripped MATCHES "std::array<.*kMaximumEncodedCheckpointBytes"
+                 AND NOT path MATCHES "src[/\\\\]persistence[/\\\\]save_commit_worker.hpp$")
+             message(FATAL_ERROR
+                 "8 MiB codec buffer declared outside heap storage in ${path}: ${stripped}")
+         endif()
+     endforeach()
+ endforeach()
+ 
+ set(host_source_path "${ROOT}/src/platform/raylib/raylib_host.cpp")
+-file(READ "${host_source_path}" host_source)
++file(READ "${host_source_path}" HOST_SOURCE)
++include("${CMAKE_CURRENT_LIST_DIR}/../platform/cpp_source_lexer.cmake")
++arpg_sanitize_cpp_source("${HOST_SOURCE}" host_source)
+ 
+ function(host_large_state_ownership_valid SOURCE OUT_VALID)
+     set(WS "[ \t\r\n]*")
+     set(WS1 "[ \t\r\n]+")
+     string(FIND "${SOURCE}" "HostExitCode run_raylib_host" HOST_ENTRY_INDEX)
+     if(HOST_ENTRY_INDEX EQUAL -1)
+         message(STATUS "host ownership guard: missing host entry")
+         set("${OUT_VALID}" FALSE PARENT_SCOPE)
+         return()
+     endif()
+@@ -294,20 +296,72 @@ endif()
+ 
+ set(PAREN_VALIDATION_MUTATION
+     "${host_source}\nauto stack_validation = HostValidationStates();\n")
+ host_large_state_ownership_valid("${PAREN_VALIDATION_MUTATION}"
+     PAREN_VALIDATION_MUTATION_VALID)
+ if(PAREN_VALIDATION_MUTATION_VALID)
+     message(FATAL_ERROR
+         "stack guard accepted paren HostValidationStates mutation")
+ endif()
+ 
++set(COMMENT_AS_WHITESPACE_ACCEPTANCES)
++arpg_sanitize_cpp_source(
++    "auto x = dungeon::DungeonSnapshot/**/{};"
++    COMMENT_SNAPSHOT_EXPRESSION_FIXTURE)
++set(COMMENT_SNAPSHOT_EXPRESSION_MUTATION
++    "${host_source}\n${COMMENT_SNAPSHOT_EXPRESSION_FIXTURE}\n")
++host_large_state_ownership_valid("${COMMENT_SNAPSHOT_EXPRESSION_MUTATION}"
++    COMMENT_SNAPSHOT_EXPRESSION_VALID)
++if(COMMENT_SNAPSHOT_EXPRESSION_VALID)
++    list(APPEND COMMENT_AS_WHITESPACE_ACCEPTANCES
++        "commented-DungeonSnapshot-expression")
++endif()
++arpg_sanitize_cpp_source(
++    "auto y = HostValidationStates/**/{};"
++    COMMENT_VALIDATION_EXPRESSION_FIXTURE)
++set(COMMENT_VALIDATION_EXPRESSION_MUTATION
++    "${host_source}\n${COMMENT_VALIDATION_EXPRESSION_FIXTURE}\n")
++host_large_state_ownership_valid("${COMMENT_VALIDATION_EXPRESSION_MUTATION}"
++    COMMENT_VALIDATION_EXPRESSION_VALID)
++if(COMMENT_VALIDATION_EXPRESSION_VALID)
++    list(APPEND COMMENT_AS_WHITESPACE_ACCEPTANCES
++        "commented-HostValidationStates-expression")
++endif()
++arpg_sanitize_cpp_source(
++    "dungeon::DungeonSnapshot/**/x{};"
++    COMMENT_SNAPSHOT_DECLARATION_FIXTURE)
++set(COMMENT_SNAPSHOT_DECLARATION_MUTATION
++    "${host_source}\n${COMMENT_SNAPSHOT_DECLARATION_FIXTURE}\n")
++host_large_state_ownership_valid("${COMMENT_SNAPSHOT_DECLARATION_MUTATION}"
++    COMMENT_SNAPSHOT_DECLARATION_VALID)
++if(COMMENT_SNAPSHOT_DECLARATION_VALID)
++    list(APPEND COMMENT_AS_WHITESPACE_ACCEPTANCES
++        "commented-DungeonSnapshot-declaration")
++endif()
++arpg_sanitize_cpp_source(
++    "auto z = dungeon::DungeonSnapshot// comment\n{};"
++    LINE_COMMENT_SNAPSHOT_EXPRESSION_FIXTURE)
++set(LINE_COMMENT_SNAPSHOT_EXPRESSION_MUTATION
++    "${host_source}\n${LINE_COMMENT_SNAPSHOT_EXPRESSION_FIXTURE}\n")
++host_large_state_ownership_valid("${LINE_COMMENT_SNAPSHOT_EXPRESSION_MUTATION}"
++    LINE_COMMENT_SNAPSHOT_EXPRESSION_VALID)
++if(LINE_COMMENT_SNAPSHOT_EXPRESSION_VALID)
++    list(APPEND COMMENT_AS_WHITESPACE_ACCEPTANCES
++        "line-comment-DungeonSnapshot-expression")
++endif()
++if(COMMENT_AS_WHITESPACE_ACCEPTANCES)
++    list(JOIN COMMENT_AS_WHITESPACE_ACCEPTANCES ", "
++        COMMENT_AS_WHITESPACE_ACCEPTANCE_NAMES)
++    message(FATAL_ERROR
++        "stack guard accepted comment-as-whitespace mutations: ${COMMENT_AS_WHITESPACE_ACCEPTANCE_NAMES}")
++endif()
++
+ string(REPLACE "${VALIDATION_STATES_OWNER}" ""
+     LATE_VALIDATION_MUTATION "${host_source}")
+ string(REPLACE "        core::FixedStepRunner fixed_step;"
+     "${VALIDATION_STATES_OWNER}\n        core::FixedStepRunner fixed_step;"
+     LATE_VALIDATION_MUTATION "${LATE_VALIDATION_MUTATION}")
+ if(LATE_VALIDATION_MUTATION STREQUAL host_source)
+     message(FATAL_ERROR "late HostValidationStates mutation did not modify host source")
+ endif()
+ host_large_state_ownership_valid("${LATE_VALIDATION_MUTATION}"
+     LATE_VALIDATION_MUTATION_VALID)
