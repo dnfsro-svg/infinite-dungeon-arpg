@@ -1,0 +1,1017 @@
+# Review package: ba52ba4..446cf9b
+
+## Commits
+446cf9b fix: harden atomic item transactions
+
+## Files changed
+ src/dungeon/dungeon_session.cpp                  |  34 ++--
+ src/dungeon/dungeon_session.hpp                  |  11 +-
+ src/dungeon/dungeon_transition.cpp               |  15 +-
+ src/items/item_modifiers.cpp                     |  33 +++-
+ src/items/item_modifiers.hpp                     |  15 ++
+ tests/core/CMakeLists.txt                        |   4 +
+ tests/core/allocation_probe.cpp                  |  29 +++
+ tests/core/allocation_probe.hpp                  |  15 ++
+ tests/core/allocation_probe_tests.cpp            |  36 ++++
+ tests/core/test_main.cpp                         |   4 +-
+ tests/dungeon/dungeon_item_transaction_tests.cpp | 232 ++++++++++++++++++++++-
+ tests/dungeon/dungeon_test_main.cpp              |   2 +-
+ tests/items/item_modifier_tests.cpp              |  17 ++
+ tests/items/item_test_main.cpp                   |   2 +-
+ 14 files changed, 415 insertions(+), 34 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index e53f58e..8bcaef0 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -181,79 +181,85 @@ void DungeonSession::construct_current_room() noexcept {
+         stable_state_.current_room.seed,
+         stable_state_.current_room.depth,
+         stable_state_.current_room.ecology,
+         rules_.encounter);
+     if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
+         enter_fault(plan.fault == DungeonFault::none
+             ? DungeonFault::invalid_rules : plan.fault);
+         return;
+     }
+     const auto player_build = build_for(stable_state_);
+-    if (!player_build.has_value()) {
++    if (player_build.status != PlayerBuildStatus::valid) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return;
+     }
+     auto evasion_stream = core::DeterministicRng::derive_stream(
+         stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+     const auto config = make_combat_encounter_config(
+         stable_state_.current_room.entry,
+         rules_.rules_version,
+         plan.plan.waves[0],
+         true,
+-        *player_build,
++        player_build.build,
+         evasion_stream.next_u64());
+     if (!config.has_value()) {
+         enter_fault(DungeonFault::invalid_rules);
+         return;
+     }
+     encounter_plan_ = plan.plan;
+     wave_index_ = 0U;
+     wave_delay_ticks_ = 0U;
+     combat_.emplace(*config);
+     phase_ = RoomPhase::locked;
+ }
+ 
+-std::optional<combat::PlayerCombatBuild> DungeonSession::build_for(
++DungeonSession::PlayerBuildResult DungeonSession::build_for(
+     const checkpoint::DungeonRunState& state) const noexcept {
+     if (!passives::valid_passive_tree_state(
+-            state.passive_tree, state.progression)
+-            || items::validate_ownership_detailed(state.item_ownership)
+-                != items::OwnershipValidationResult::valid) {
+-        return std::nullopt;
++            state.passive_tree, state.progression)) {
++        return {};
++    }
++    const items::EquipmentProjectionResult equipment_result =
++        items::project_equipment_detailed(state.item_ownership);
++    if (equipment_result.status
++            == items::EquipmentProjectionStatus::allocation_failure) {
++        return {{}, PlayerBuildStatus::allocation_failure};
+     }
++    if (equipment_result.status != items::EquipmentProjectionStatus::valid) {
++        return {};
++    }
++    const items::EquipmentProjection& equipment =
++        equipment_result.projection;
+     std::array<modifiers::Modifier, 256> modifiers{};
+     std::size_t modifier_count = 0U;
+     if (!passives::append_passive_modifiers(state.passive_tree,
+             modifiers.data(), modifiers.size(), modifier_count)) {
+-        return std::nullopt;
++        return {};
+     }
+-
+-    const items::EquipmentProjection equipment =
+-        items::project_equipment(state.item_ownership);
+     if (!equipment.valid
+             || equipment.modifier_count > modifiers.size() - modifier_count) {
+-        return std::nullopt;
++        return {};
+     }
+     for (std::size_t index = 0U;
+          index < equipment.modifier_count; ++index) {
+         modifiers[modifier_count++] = equipment.modifiers[index];
+     }
+ 
+     combat::PlayerCombatBuild build{};
+     build.values = modifiers::evaluate_player_modifiers(
+         {modifiers.data(), modifier_count});
+     build.weapon_physical = equipment.weapon_physical;
+     build.local_attack_speed_bp = equipment.local_attack_speed_bp;
+     if (!combat::build_player_hit_packet(0, build).has_value()) {
+-        return std::nullopt;
++        return {};
+     }
+-    return build;
++    return {build, PlayerBuildStatus::valid};
+ }
+ 
+ void DungeonSession::start_next_wave() noexcept {
+     if (!combat_.has_value() || wave_index_ + 1U >= encounter_plan_.wave_count) {
+         enter_fault(DungeonFault::invalid_rules);
+         return;
+     }
+     const std::uint8_t next_wave = static_cast<std::uint8_t>(wave_index_ + 1U);
+     if (!combat_->load_wave(encounter_plan_.waves[next_wave], false)) {
+         enter_fault(DungeonFault::invalid_rules);
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index ecf663a..51aa840 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -48,35 +48,44 @@ public:
+     void resolve_pending_transition(
+         const TransitionSaveResult& result) noexcept;
+     void reset_current_room() noexcept;
+     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
+     [[nodiscard]] std::optional<combat::CombatEvent>
+     try_pop_combat_event() noexcept;
+ 
+ private:
+     friend struct ::arpg::test::DungeonSessionTestAccess;
++    enum class PlayerBuildStatus : std::uint8_t {
++        valid,
++        invalid_state,
++        allocation_failure,
++    };
++    struct PlayerBuildResult final {
++        combat::PlayerCombatBuild build{};
++        PlayerBuildStatus status{PlayerBuildStatus::invalid_state};
++    };
+     void construct_current_room() noexcept;
+     void start_next_wave() noexcept;
+     void relay_combat_events() noexcept;
+     void settle_room_experience() noexcept;
+     void attempt_exit(ExitDirection direction) noexcept;
+     [[nodiscard]] bool prepare_transition(
+         TransitionKind kind,
+         ExitDirection direction) noexcept;
+     [[nodiscard]] bool prepare_passive_mutation(
+         passives::PassiveNodeId node, bool refund) noexcept;
+     [[nodiscard]] RequestResult prepare_item_save(
+         DungeonRunState&& next,
+         PendingSaveKind kind,
+         RoomPhase resume_phase) noexcept;
+-    [[nodiscard]] std::optional<combat::PlayerCombatBuild> build_for(
++    [[nodiscard]] PlayerBuildResult build_for(
+         const checkpoint::DungeonRunState& state) const noexcept;
+     void commit_pending_save(const PendingSaveResult& result) noexcept;
+     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
+     void enter_fault(DungeonFault fault) noexcept;
+     void emit_committed(
+         const DungeonRunState& previous,
+         const DungeonRunState& current) noexcept;
+     bool emit(
+         DungeonEventKind kind,
+         const DungeonRunState* subject = nullptr,
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index dbd633b..f272ff2 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -177,23 +177,28 @@ RequestResult DungeonSession::prepare_item_save(
+         items::validate_ownership_detailed(next.item_ownership);
+     if (validation == items::OwnershipValidationResult::allocation_failure) {
+         return RequestResult::rejected;
+     }
+     if (validation != items::OwnershipValidationResult::valid
+             || !passives::valid_passive_tree_state(
+                 next.passive_tree, next.progression)) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return RequestResult::faulted;
+     }
+-    if (!build_for(next).has_value()) {
++    const PlayerBuildResult candidate_build = build_for(next);
++    if (candidate_build.status == PlayerBuildStatus::allocation_failure) {
+         return RequestResult::rejected;
+     }
++    if (candidate_build.status != PlayerBuildStatus::valid) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return RequestResult::faulted;
++    }
+     if (next.commit_generation
+             == (std::numeric_limits<std::uint64_t>::max)()) {
+         enter_fault(DungeonFault::commit_generation_overflow);
+         return RequestResult::faulted;
+     }
+     ++next.commit_generation;
+     const std::uint64_t expected_generation = next.commit_generation;
+     pending_save_.emplace(PendingSave{
+         kind,
+         expected_generation,
+@@ -386,44 +391,44 @@ void DungeonSession::commit_pending_save(
+     if (result.generation != pending_save_->expected_generation
+             || pending_save_->expected_generation
+                 != pending_save_->next_state.commit_generation
+             || !same_run_state(
+                 result.verified_state, pending_save_->next_state)) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+ 
+     const PendingSaveKind kind = pending_save_->kind;
+-    std::optional<combat::PlayerCombatBuild> published_build{};
++    PlayerBuildResult published_build{};
+     if (kind == PendingSaveKind::equipment
+             || kind == PendingSaveKind::recipe) {
+         if (!combat_.has_value()) {
+             enter_fault(DungeonFault::invalid_item_state);
+             return;
+         }
+         published_build = build_for(result.verified_state);
+-        if (!published_build.has_value()) {
++        if (published_build.status != PlayerBuildStatus::valid) {
+             enter_fault(DungeonFault::invalid_item_state);
+             return;
+         }
+     }
+ 
+     DungeonRunState previous = std::move(stable_state_);
+     stable_state_ = std::move(pending_save_->next_state);
+     const RoomPhase resume_phase = pending_save_->resume_phase;
+     pending_save_.reset();
+     if (kind == PendingSaveKind::transition) {
+         combat_.reset();
+         phase_ = RoomPhase::transitioning;
+         emit_committed(previous, stable_state_);
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+-    if (published_build.has_value()) {
+-        combat_->apply_player_build(*published_build);
++    if (published_build.status == PlayerBuildStatus::valid) {
++        combat_->apply_player_build(published_build.build);
+         phase_ = resume_phase;
+         return;
+     }
+     phase_ = RoomPhase::awaiting_exit;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/items/item_modifiers.cpp b/src/items/item_modifiers.cpp
+index 36cc10b..96b1292 100644
+--- a/src/items/item_modifiers.cpp
++++ b/src/items/item_modifiers.cpp
+@@ -173,55 +173,68 @@ bool checked_weapon_formula(std::int64_t base_and_flat,
+             factor, whole)
+         || !checked_multiply(base_and_flat % modifiers::kFixedOne,
+             factor, remainder))
+         return false;
+     remainder /= modifiers::kFixedOne;
+     return checked_add(whole, remainder, output);
+ }
+ 
+ }  // namespace
+ 
+-EquipmentProjection project_equipment(
++EquipmentProjectionResult project_equipment_detailed(
+     const ItemOwnershipState& state) noexcept {
+-    EquipmentProjection projection{};
+-    if (!validate_ownership(state)) return projection;
++    EquipmentProjectionResult result{};
++    const OwnershipValidationResult validation =
++        validate_ownership_detailed(state);
++    if (validation == OwnershipValidationResult::allocation_failure) {
++        result.status = EquipmentProjectionStatus::allocation_failure;
++        return result;
++    }
++    if (validation != OwnershipValidationResult::valid) return result;
++    EquipmentProjection& projection = result.projection;
+ 
+     std::int64_t local_flat = 0;
+     std::int64_t local_increased = 0;
+     for (std::size_t slot_index = 0U;
+          slot_index < state.equipment.equipped_ids.size(); ++slot_index) {
+         const std::uint64_t id = state.equipment.equipped_ids[slot_index];
+         if (id == 0U) continue;
+         const ItemInstance* item = equipped_item(state, id);
+-        if (item == nullptr) return EquipmentProjection{};
++        if (item == nullptr) return {};
+         const BaseDefinition* base = base_definition(item->base_id);
+-        if (base == nullptr) return EquipmentProjection{};
++        if (base == nullptr) return {};
+         const ItemSlot slot = static_cast<ItemSlot>(slot_index);
+         const std::size_t base_value_index = value_index(item->item_level);
+         if (!apply_effect(projection, slot, base->effect, base->stat,
+                 base->operation, base->values[base_value_index], 0xFFU,
+                 kBaseSourceStart, local_flat, local_increased))
+-            return EquipmentProjection{};
++            return {};
+ 
+         for (std::size_t affix_index = 0U;
+              affix_index < item->affix_count; ++affix_index) {
+             const AffixRoll& roll = item->affixes[affix_index];
+             const AffixDefinition* affix = affix_definition(roll.affix_id);
+-            if (affix == nullptr) return EquipmentProjection{};
++            if (affix == nullptr) return {};
+             const std::size_t index = static_cast<std::size_t>(8U - roll.tier);
+             const std::uint16_t source = static_cast<std::uint16_t>(
+                 kAffixSourceStart + affix_index * kSourceStride);
+             if (!apply_effect(projection, slot, affix->effect, affix->stat,
+                     affix->operation, affix->values[index], roll.variant,
+                     source, local_flat, local_increased))
+-                return EquipmentProjection{};
++                return {};
+         }
+     }
+ 
+     if (!checked_weapon_formula(
+             local_flat, local_increased, projection.weapon_physical))
+-        return EquipmentProjection{};
++        return {};
+     projection.valid = true;
+-    return projection;
++    result.status = EquipmentProjectionStatus::valid;
++    return result;
++}
++
++EquipmentProjection project_equipment(
++    const ItemOwnershipState& state) noexcept {
++    return project_equipment_detailed(state).projection;
+ }
+ 
+ }  // namespace arpg::items
+diff --git a/src/items/item_modifiers.hpp b/src/items/item_modifiers.hpp
+index 5f4ad5f..ca85936 100644
+--- a/src/items/item_modifiers.hpp
++++ b/src/items/item_modifiers.hpp
+@@ -10,14 +10,29 @@
+ namespace arpg::items {
+ 
+ struct EquipmentProjection final {
+     std::array<modifiers::Modifier, 128> modifiers{};
+     std::size_t modifier_count{};
+     std::int64_t weapon_physical{};
+     std::int32_t local_attack_speed_bp{};
+     bool valid{};
+ };
+ 
++enum class EquipmentProjectionStatus : std::uint8_t {
++    valid,
++    invalid_state,
++    allocation_failure,
++};
++
++struct EquipmentProjectionResult final {
++    EquipmentProjection projection{};
++    EquipmentProjectionStatus status{
++        EquipmentProjectionStatus::invalid_state};
++};
++
++[[nodiscard]] EquipmentProjectionResult project_equipment_detailed(
++    const ItemOwnershipState& state) noexcept;
++
+ [[nodiscard]] EquipmentProjection project_equipment(
+     const ItemOwnershipState& state) noexcept;
+ 
+ }  // namespace arpg::items
+diff --git a/tests/core/CMakeLists.txt b/tests/core/CMakeLists.txt
+index bc449dd..fb982c2 100644
+--- a/tests/core/CMakeLists.txt
++++ b/tests/core/CMakeLists.txt
+@@ -1,14 +1,18 @@
+ add_executable(arpg_core_tests
+     test_main.cpp
+     allocation_probe.cpp
++    allocation_probe_tests.cpp
+     fixed_step_tests.cpp
+     deterministic_rng_tests.cpp
+     fixed_pool_tests.cpp
+     bounded_queue_tests.cpp)
+ 
+ target_compile_features(arpg_core_tests PRIVATE cxx_std_17)
+ target_link_libraries(arpg_core_tests PRIVATE arpg_core)
+ arpg_enable_project_warnings(arpg_core_tests)
++if(MSVC)
++    target_compile_options(arpg_core_tests PRIVATE /EHsc)
++endif()
+ 
+ add_test(NAME core.units COMMAND arpg_core_tests)
+ set_tests_properties(core.units PROPERTIES LABELS "headless;core")
+diff --git a/tests/core/allocation_probe.cpp b/tests/core/allocation_probe.cpp
+index e237b5b..22d7d74 100644
+--- a/tests/core/allocation_probe.cpp
++++ b/tests/core/allocation_probe.cpp
+@@ -1,37 +1,51 @@
+ #include "allocation_probe.hpp"
+ 
+ #include <atomic>
+ #include <cstddef>
+ #include <cstdlib>
++#include <limits>
+ #include <new>
+ 
+ #if defined(_MSC_VER)
+ #include <malloc.h>
+ #endif
+ 
+ namespace {
+ 
+ std::atomic<std::uint64_t> g_allocations{0};
++thread_local std::int64_t g_allocations_before_failure = -1;
++
++[[nodiscard]] bool should_fail_allocation() noexcept {
++    if (g_allocations_before_failure < 0) return false;
++    if (g_allocations_before_failure == 0) {
++        g_allocations_before_failure = -1;
++        return true;
++    }
++    --g_allocations_before_failure;
++    return false;
++}
+ 
+ [[nodiscard]] void* allocate_unaligned(std::size_t size) {
+     g_allocations.fetch_add(1, std::memory_order_relaxed);
++    if (should_fail_allocation()) throw std::bad_alloc{};
+     if (void* memory = std::malloc(size == 0 ? 1 : size)) {
+         return memory;
+     }
+     throw std::bad_alloc{};
+ }
+ 
+ [[nodiscard]] void* allocate_aligned(
+     std::size_t size,
+     std::size_t alignment) {
+     g_allocations.fetch_add(1, std::memory_order_relaxed);
++    if (should_fail_allocation()) throw std::bad_alloc{};
+ #if defined(_MSC_VER)
+     if (void* memory =
+             _aligned_malloc(size == 0 ? 1 : size, alignment)) {
+         return memory;
+     }
+ #else
+     void* memory = nullptr;
+     if (posix_memalign(
+             &memory,
+             alignment,
+@@ -51,20 +65,35 @@ void free_aligned(void* memory) noexcept {
+ }
+ 
+ }  // namespace
+ 
+ namespace arpg::test {
+ 
+ std::uint64_t allocation_count() noexcept {
+     return g_allocations.load(std::memory_order_relaxed);
+ }
+ 
++ScopedAllocationFailure::ScopedAllocationFailure(
++    std::size_t successful_allocations_before_failure) noexcept
++    : previous_(g_allocations_before_failure) {
++    const auto maximum = static_cast<std::size_t>(
++        (std::numeric_limits<std::int64_t>::max)());
++    g_allocations_before_failure = successful_allocations_before_failure
++        > maximum ? (std::numeric_limits<std::int64_t>::max)()
++                  : static_cast<std::int64_t>(
++                      successful_allocations_before_failure);
++}
++
++ScopedAllocationFailure::~ScopedAllocationFailure() noexcept {
++    g_allocations_before_failure = previous_;
++}
++
+ }  // namespace arpg::test
+ 
+ void* operator new(std::size_t size) {
+     return allocate_unaligned(size);
+ }
+ 
+ void* operator new[](std::size_t size) {
+     return allocate_unaligned(size);
+ }
+ 
+diff --git a/tests/core/allocation_probe.hpp b/tests/core/allocation_probe.hpp
+index feda2f2..2bf447a 100644
+--- a/tests/core/allocation_probe.hpp
++++ b/tests/core/allocation_probe.hpp
+@@ -1,9 +1,24 @@
+ #pragma once
+ 
++#include <cstddef>
+ #include <cstdint>
+ 
+ namespace arpg::test {
+ 
+ [[nodiscard]] std::uint64_t allocation_count() noexcept;
+ 
++class ScopedAllocationFailure final {
++public:
++    explicit ScopedAllocationFailure(
++        std::size_t successful_allocations_before_failure) noexcept;
++    ~ScopedAllocationFailure() noexcept;
++
++    ScopedAllocationFailure(const ScopedAllocationFailure&) = delete;
++    ScopedAllocationFailure& operator=(
++        const ScopedAllocationFailure&) = delete;
++
++private:
++    std::int64_t previous_{};
++};
++
+ }  // namespace arpg::test
+diff --git a/tests/core/allocation_probe_tests.cpp b/tests/core/allocation_probe_tests.cpp
+new file mode 100644
+index 0000000..2a10930
+--- /dev/null
++++ b/tests/core/allocation_probe_tests.cpp
+@@ -0,0 +1,36 @@
++#include "test_framework.hpp"
++
++#include "allocation_probe.hpp"
++
++#include <new>
++
++namespace {
++
++arpg::test::Failure nested_failure_scopes_restore_previous_state() noexcept {
++    {
++        arpg::test::ScopedAllocationFailure outer{0U};
++        {
++            arpg::test::ScopedAllocationFailure inner{1U};
++            void* first = ::operator new(1U, std::nothrow);
++            ARPG_REQUIRE(first != nullptr);
++            ::operator delete(first);
++            ARPG_REQUIRE(::operator new(1U, std::nothrow) == nullptr);
++        }
++        ARPG_REQUIRE(::operator new(1U, std::nothrow) == nullptr);
++    }
++    void* after = ::operator new(1U, std::nothrow);
++    ARPG_REQUIRE(after != nullptr);
++    ::operator delete(after);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"nested failure scopes restore state",
++        &nested_failure_scopes_restore_previous_state},
++};
++
++}  // namespace
++
++arpg::test::TestSuite allocation_probe_suite() noexcept {
++    return arpg::test::make_suite("allocation_probe", kCases);
++}
+diff --git a/tests/core/test_main.cpp b/tests/core/test_main.cpp
+index fd7e777..99b82fe 100644
+--- a/tests/core/test_main.cpp
++++ b/tests/core/test_main.cpp
+@@ -1,17 +1,19 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite fixed_step_suite() noexcept;
+ arpg::test::TestSuite deterministic_rng_suite() noexcept;
+ arpg::test::TestSuite fixed_pool_suite() noexcept;
+ arpg::test::TestSuite bounded_queue_suite() noexcept;
++arpg::test::TestSuite allocation_probe_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         fixed_step_suite(),
+         deterministic_rng_suite(),
+         fixed_pool_suite(),
+         bounded_queue_suite(),
++        allocation_probe_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 24, "stage 0");
++    return arpg::test::run_suites(suites, 25, "stage 8 allocation probe");
+ }
+diff --git a/tests/dungeon/dungeon_item_transaction_tests.cpp b/tests/dungeon/dungeon_item_transaction_tests.cpp
+index 393d525..f052fa2 100644
+--- a/tests/dungeon/dungeon_item_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_item_transaction_tests.cpp
+@@ -1,19 +1,21 @@
+ #include "test_framework.hpp"
+ 
++#include "allocation_probe.hpp"
+ #include "dungeon_test_support.hpp"
+ 
+ #include "dungeon/dungeon_progression.hpp"
+ #include "items/item_catalog.hpp"
+ #include "items/item_generation.hpp"
+ 
+ #include <array>
++#include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ #include <utility>
+ 
+ namespace {
+ 
+ using arpg::dungeon::DungeonFault;
+ using arpg::dungeon::DungeonRules;
+ using arpg::dungeon::DungeonRunState;
+ using arpg::dungeon::DungeonSession;
+@@ -56,20 +58,106 @@ DungeonRunState state_with_items(
+ }
+ 
+ bool commit_pending(DungeonSession& session) noexcept {
+     const auto pending = session.pending_save();
+     if (!pending.has_value()) return false;
+     session.resolve_pending_save({SaveDisposition::committed,
+         pending->expected_generation, pending->next_state});
+     return session.snapshot().phase != RoomPhase::faulted;
+ }
+ 
++bool clear_to_awaiting_exit(DungeonSession& session) noexcept {
++    arpg::test::EventSummary events{};
++    if (!arpg::test::drive_until_cleared(session, events)) return false;
++    if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
++    return session.snapshot().phase == RoomPhase::awaiting_exit;
++}
++
++bool same_build(const arpg::combat::PlayerCombatBuild& left,
++    const arpg::combat::PlayerCombatBuild& right) noexcept {
++    const auto& a = left.values;
++    const auto& b = right.values;
++    return left.weapon_physical == right.weapon_physical
++        && left.local_attack_speed_bp == right.local_attack_speed_bp
++        && a.flat_damage == b.flat_damage
++        && a.damage_increased == b.damage_increased
++        && a.damage_reduction == b.damage_reduction
++        && a.damage_reduction_cap_bonus == b.damage_reduction_cap_bonus
++        && a.armor == b.armor && a.evasion == b.evasion
++        && a.melee_damage == b.melee_damage
++        && a.max_health == b.max_health
++        && a.max_health_more == b.max_health_more
++        && a.max_barrier == b.max_barrier
++        && a.damage_taken == b.damage_taken
++        && a.movement_speed == b.movement_speed
++        && a.attack_speed == b.attack_speed
++        && a.impulse_scale == b.impulse_scale
++        && a.jump_speed == b.jump_speed
++        && a.air_control == b.air_control && a.valid == b.valid;
++}
++
++struct AtomicStateProbe final {
++    RoomPhase phase{RoomPhase::faulted};
++    std::uint64_t generation{};
++    std::array<std::uint64_t, 8> item_ids{};
++    std::size_t item_count{};
++    arpg::items::EquipmentState equipment{};
++    std::uint64_t next_item_sequence{};
++    arpg::combat::PlayerCombatBuild build{};
++    int hp{};
++    int max_hp{};
++    int barrier{};
++    int max_barrier{};
++    bool pending{};
++};
++
++AtomicStateProbe capture_atomic_state(
++    const DungeonSession& session) noexcept {
++    AtomicStateProbe result{};
++    const auto snapshot = session.snapshot();
++    result.phase = snapshot.phase;
++    result.generation = snapshot.commit_generation;
++    result.pending = snapshot.pending_save_kind.has_value();
++    const auto& ownership = session.item_state();
++    result.item_count = ownership.items.size();
++    for (std::size_t index = 0U;
++         index < ownership.items.size() && index < result.item_ids.size();
++         ++index) {
++        result.item_ids[index] = ownership.items[index].id;
++    }
++    result.equipment = ownership.equipment;
++    result.next_item_sequence = ownership.next_item_sequence;
++    result.build = arpg::test::player_build(session);
++    if (snapshot.combat.has_value()) {
++        result.hp = snapshot.combat->player.hp;
++        result.max_hp = snapshot.combat->player.max_hp;
++        result.barrier = snapshot.combat->player.barrier;
++        result.max_barrier = snapshot.combat->player.max_barrier;
++    }
++    return result;
++}
++
++bool same_atomic_state(const AtomicStateProbe& left,
++    const AtomicStateProbe& right) noexcept {
++    return left.phase == right.phase
++        && left.generation == right.generation
++        && left.item_ids == right.item_ids
++        && left.item_count == right.item_count
++        && left.equipment.equipped_ids == right.equipment.equipped_ids
++        && left.next_item_sequence == right.next_item_sequence
++        && same_build(left.build, right.build)
++        && left.hp == right.hp && left.max_hp == right.max_hp
++        && left.barrier == right.barrier
++        && left.max_barrier == right.max_barrier
++        && left.pending == right.pending;
++}
++
+ arpg::test::Failure item_snapshot_is_lightweight_and_reports_pending_kind() noexcept {
+     DungeonRunState state = state_with_items({
+         normal_item(11U, 2U), normal_item(12U, 3U)});
+     state.item_ownership.equipment.equipped_ids[2] = 12U;
+     DungeonSession session{DungeonRules{}, state};
+     const auto before = session.snapshot();
+     ARPG_REQUIRE(before.inventory_count == 1U);
+     ARPG_REQUIRE(before.equipped_ids[2] == 12U);
+     ARPG_REQUIRE(before.ground_item_count == 0U);
+     for (const auto& ground : before.ground_items) {
+@@ -100,21 +188,21 @@ arpg::test::Failure equip_rejects_missing_level_and_no_change_requests() noexcep
+         == RequestResult::rejected);
+     ARPG_REQUIRE(session.request_unequip(ItemSlot::count)
+         == RequestResult::rejected);
+     ARPG_REQUIRE(!session.pending_save().has_value());
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == helmet.id);
+     return {};
+ }
+ 
+ arpg::test::Failure equip_publishes_only_after_commit_and_preserves_health() noexcept {
+     DungeonSession session{DungeonRules{},
+-        state_with_items({normal_item(31U, 2U)})};
++        state_with_items({normal_item(31U, 2U), normal_item(32U, 3U)})};
+     session.tick({});
+     const int base_max_hp = session.snapshot().combat->player.max_hp;
+     arpg::test::damage_current_player(session, 30);
+     const auto damaged = session.snapshot();
+     ARPG_REQUIRE(damaged.phase == RoomPhase::combat);
+     ARPG_REQUIRE(damaged.combat->player.max_hp == base_max_hp);
+     ARPG_REQUIRE(damaged.combat->player.hp < damaged.combat->player.max_hp);
+     const int damaged_hp = damaged.combat->player.hp;
+ 
+     ARPG_REQUIRE(session.request_equip(31U) == RequestResult::accepted);
+@@ -129,29 +217,157 @@ arpg::test::Failure equip_publishes_only_after_commit_and_preserves_health() noe
+     ARPG_REQUIRE(session.snapshot().combat->player.max_hp == base_max_hp);
+ 
+     ARPG_REQUIRE(session.request_equip(31U) == RequestResult::accepted);
+     ARPG_REQUIRE(commit_pending(session));
+     const auto equipped = session.snapshot();
+     ARPG_REQUIRE(equipped.phase == RoomPhase::combat);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 31U);
+     ARPG_REQUIRE(equipped.combat->player.max_hp == base_max_hp + 38);
+     ARPG_REQUIRE(equipped.combat->player.hp == damaged_hp);
+ 
++    ARPG_REQUIRE(session.request_equip(32U) == RequestResult::accepted);
++    ARPG_REQUIRE(commit_pending(session));
++    const auto barrier_equipped = session.snapshot();
++    ARPG_REQUIRE(barrier_equipped.combat->player.max_barrier == 46);
++    ARPG_REQUIRE(barrier_equipped.combat->player.barrier == 0);
++    ARPG_REQUIRE(barrier_equipped.combat->player.hp == damaged_hp);
++
+     ARPG_REQUIRE(session.request_unequip(ItemSlot::helmet)
+         == RequestResult::accepted);
+     ARPG_REQUIRE(commit_pending(session));
+     const auto unequipped = session.snapshot();
+     ARPG_REQUIRE(unequipped.combat->player.max_hp == base_max_hp);
+     ARPG_REQUIRE(unequipped.combat->player.hp == damaged_hp);
+     return {};
+ }
+ 
++arpg::test::Failure ownership_scratch_oom_rejects_atomically() noexcept {
++    DungeonSession session{DungeonRules{}, state_with_items({
++        normal_item(131U, 2U), normal_item(132U, 3U)})};
++    const AtomicStateProbe before = capture_atomic_state(session);
++    RequestResult result{};
++    {
++        arpg::test::ScopedAllocationFailure fail{0U};
++        result = session.request_equip(131U);
++    }
++    ARPG_REQUIRE(result == RequestResult::rejected);
++    ARPG_REQUIRE(same_atomic_state(before, capture_atomic_state(session)));
++    return {};
++}
++
++arpg::test::Failure stable_vector_copy_oom_rejects_atomically() noexcept {
++    DungeonSession session{DungeonRules{}, state_with_items({
++        normal_item(141U, 2U), normal_item(142U, 3U)})};
++    const AtomicStateProbe before = capture_atomic_state(session);
++    RequestResult result{};
++    {
++        // Ownership validation allocates first; the stable item-vector copy
++        // is the second allocation and must be caught by request_equip.
++        arpg::test::ScopedAllocationFailure fail{1U};
++        result = session.request_equip(141U);
++    }
++    ARPG_REQUIRE(result == RequestResult::rejected);
++    ARPG_REQUIRE(same_atomic_state(before, capture_atomic_state(session)));
++    return {};
++}
++
++arpg::test::Failure recipe_post_copy_scratch_oom_rejects_atomically() noexcept {
++    DungeonSession session{DungeonRules{}, state_with_items({
++        normal_item(151U, 2U), normal_item(152U, 2U),
++        normal_item(153U, 2U), normal_item(154U, 3U)})};
++    const AtomicStateProbe before = capture_atomic_state(session);
++    RequestResult result{};
++    {
++        // After validation and the single stable-state vector copy, deleting
++        // three items leaves capacity for the one product, so append cannot
++        // grow. This third allocation is prepare_item_save's validation
++        // scratch and exercises rollback after the local recipe mutation.
++        arpg::test::ScopedAllocationFailure fail{2U};
++        result = session.request_recipe({{151U, 152U, 153U}});
++    }
++    ARPG_REQUIRE(result == RequestResult::rejected);
++    ARPG_REQUIRE(same_atomic_state(before, capture_atomic_state(session)));
++    return {};
++}
++
++arpg::test::Failure build_projection_scratch_oom_rejects_atomically() noexcept {
++    DungeonSession session{DungeonRules{}, state_with_items({
++        normal_item(161U, 2U), normal_item(162U, 3U)})};
++    const AtomicStateProbe before = capture_atomic_state(session);
++    RequestResult result{};
++    {
++        // Stable validation, vector copy, and candidate validation succeed;
++        // detailed equipment projection then reports allocation_failure.
++        arpg::test::ScopedAllocationFailure fail{3U};
++        result = session.request_equip(161U);
++    }
++    ARPG_REQUIRE(result == RequestResult::rejected);
++    ARPG_REQUIRE(same_atomic_state(before, capture_atomic_state(session)));
++    return {};
++}
++
++arpg::test::Failure commit_generation_overflow_faults_without_publish() noexcept {
++    DungeonRunState state = state_with_items({normal_item(171U, 2U)});
++    state.commit_generation = (std::numeric_limits<std::uint64_t>::max)();
++    DungeonSession session{DungeonRules{}, state};
++    const AtomicStateProbe before = capture_atomic_state(session);
++    ARPG_REQUIRE(session.request_equip(171U) == RequestResult::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == DungeonFault::commit_generation_overflow);
++    ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
++    ARPG_REQUIRE(session.item_state().next_item_sequence
++        == before.next_item_sequence);
++    ARPG_REQUIRE(session.snapshot().commit_generation == before.generation);
++    const AtomicStateProbe after = capture_atomic_state(session);
++    ARPG_REQUIRE(after.item_ids == before.item_ids);
++    ARPG_REQUIRE(after.equipment.equipped_ids
++        == before.equipment.equipped_ids);
++    ARPG_REQUIRE(same_build(after.build, before.build));
++    ARPG_REQUIRE(after.hp == before.hp && after.barrier == before.barrier);
++    return {};
++}
++
++arpg::test::Failure item_transactions_restore_locked_and_awaiting_phases() noexcept {
++    DungeonSession locked{DungeonRules{},
++        state_with_items({normal_item(181U, 2U)})};
++    ARPG_REQUIRE(locked.snapshot().phase == RoomPhase::locked);
++    ARPG_REQUIRE(locked.request_equip(181U) == RequestResult::accepted);
++    const auto locked_pending = *locked.pending_save();
++    locked.resolve_pending_save({SaveDisposition::not_committed,
++        locked_pending.expected_generation, locked_pending.next_state});
++    ARPG_REQUIRE(locked.snapshot().phase == RoomPhase::locked);
++    ARPG_REQUIRE(locked.item_state().equipment.equipped_ids[1] == 0U);
++
++    DungeonSession awaiting{DungeonRules{},
++        state_with_items({normal_item(182U, 3U)})};
++    ARPG_REQUIRE(clear_to_awaiting_exit(awaiting));
++    ARPG_REQUIRE(awaiting.request_equip(182U) == RequestResult::accepted);
++    ARPG_REQUIRE(commit_pending(awaiting));
++    ARPG_REQUIRE(awaiting.snapshot().phase == RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(awaiting.item_state().equipment.equipped_ids[2] == 182U);
++    return {};
++}
++
++arpg::test::Failure invalid_combined_build_faults() noexcept {
++    DungeonRunState state = state_with_items({normal_item(191U, 2U)});
++    state.progression = {2U, 0U, 1U, 0U};
++    state.passive_tree.allocated_bits =
++        (std::uint64_t{1U} << 0U) | (std::uint64_t{1U} << 2U);
++    state.item_ownership.items[0].reserved[0] = 1U;
++    state.item_ownership.equipment.equipped_ids[1] = 191U;
++    DungeonSession session{DungeonRules{}, state};
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == DungeonFault::invalid_item_state);
++    return {};
++}
++
+ arpg::test::Failure equipment_indeterminate_save_faults() noexcept {
+     DungeonSession session{DungeonRules{},
+         state_with_items({normal_item(41U, 2U)})};
+     ARPG_REQUIRE(session.request_equip(41U) == RequestResult::accepted);
+     session.resolve_pending_save({SaveDisposition::indeterminate, 0U, {}});
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+     ARPG_REQUIRE(session.snapshot().diagnostics.fault
+         == DungeonFault::save_commit_indeterminate);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
+     return {};
+@@ -331,17 +547,31 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"recipe product collision faults",
+         &recipe_product_collision_faults_without_mutation},
+     {"recipe sequence overflow faults",
+         &recipe_sequence_overflow_has_explicit_fault},
+     {"invalid loaded progression tree faults",
+         &invalid_loaded_progression_tree_is_faulted},
+     {"room build combines passives and equipment",
+         &room_build_combines_passives_and_equipment},
+     {"same run state compares item ownership",
+         &same_run_state_compares_all_item_ownership_fields},
++    {"ownership scratch oom is atomic",
++        &ownership_scratch_oom_rejects_atomically},
++    {"stable vector copy oom is atomic",
++        &stable_vector_copy_oom_rejects_atomically},
++    {"recipe post-copy scratch oom is atomic",
++        &recipe_post_copy_scratch_oom_rejects_atomically},
++    {"build projection scratch oom is atomic",
++        &build_projection_scratch_oom_rejects_atomically},
++    {"commit generation overflow faults",
++        &commit_generation_overflow_faults_without_publish},
++    {"item transaction phase restoration",
++        &item_transactions_restore_locked_and_awaiting_phases},
++    {"invalid combined build faults",
++        &invalid_combined_build_faults},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept {
+     return arpg::test::make_suite("dungeon_item_transaction", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 9defef7..3d4157a 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -22,12 +22,12 @@ int main() {
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_transaction_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 92, "stage 8 task 6 dungeon");
++    return arpg::test::run_suites(suites, 99, "stage 8 task 6 dungeon");
+ }
+diff --git a/tests/items/item_modifier_tests.cpp b/tests/items/item_modifier_tests.cpp
+index 26aad05..11f3487 100644
+--- a/tests/items/item_modifier_tests.cpp
++++ b/tests/items/item_modifier_tests.cpp
+@@ -140,25 +140,42 @@ arpg::test::Failure projection_validates_ownership_and_ignores_unequipped() noex
+     ARPG_REQUIRE(find_modifier(projection,
+         StatId::max_barrier, ModifierOperation::flat) == nullptr);
+ 
+     state.equipment.equipped_ids[1] = 999U;
+     const auto invalid = project_equipment(state);
+     ARPG_REQUIRE(!invalid.valid);
+     ARPG_REQUIRE(invalid.modifier_count == 0U);
+     return {};
+ }
+ 
++arpg::test::Failure detailed_projection_distinguishes_invalid_state() noexcept {
++    ItemOwnershipState state{};
++    state.items.push_back(normal_item(31U, 2U));
++    state.equipment.equipped_ids[1] = 999U;
++    const auto invalid = project_equipment_detailed(state);
++    ARPG_REQUIRE(invalid.status == EquipmentProjectionStatus::invalid_state);
++    ARPG_REQUIRE(!invalid.projection.valid);
++
++    state.equipment.equipped_ids[1] = 31U;
++    const auto valid = project_equipment_detailed(state);
++    ARPG_REQUIRE(valid.status == EquipmentProjectionStatus::valid);
++    ARPG_REQUIRE(valid.projection.valid);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"weapon local floor formula", &weapon_local_values_use_frozen_floor_order},
+     {"base intrinsic projection",
+         &base_intrinsics_project_through_global_modifier_path},
+     {"slot-dependent and variant mapping",
+         &slot_dependent_and_variant_affixes_map_globally},
+     {"ownership validation and equipped-only projection",
+         &projection_validates_ownership_and_ignores_unequipped},
++    {"detailed projection status",
++        &detailed_projection_distinguishes_invalid_state},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite item_modifier_suite() noexcept {
+     return arpg::test::make_suite("item_modifiers", kCases);
+ }
+diff --git a/tests/items/item_test_main.cpp b/tests/items/item_test_main.cpp
+index 44d740d..d2da889 100644
+--- a/tests/items/item_test_main.cpp
++++ b/tests/items/item_test_main.cpp
+@@ -2,12 +2,12 @@
+ 
+ arpg::test::TestSuite item_catalog_suite() noexcept;
+ arpg::test::TestSuite item_generation_suite() noexcept;
+ arpg::test::TestSuite item_modifier_suite() noexcept;
+ arpg::test::TestSuite item_recipe_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         item_catalog_suite(), item_generation_suite(), item_modifier_suite(),
+         item_recipe_suite()};
+-    return arpg::test::run_suites(suites, 27, "stage 8 task 5 items");
++    return arpg::test::run_suites(suites, 28, "stage 8 task 6 items");
+ }

@@ -1,0 +1,2358 @@
+# Review package: 44ab3ad..ce38820
+
+## Commits
+ce38820 feat: add deterministic ground equipment drops
+
+## Files changed
+ src/dungeon/dungeon_session.cpp           | 125 +++++-
+ src/dungeon/dungeon_session.hpp           |   7 +
+ src/dungeon/dungeon_snapshot.cpp          |  14 +
+ src/dungeon/dungeon_transition.cpp        | 167 +++++++
+ src/dungeon/dungeon_types.hpp             |   9 +
+ tests/dungeon/CMakeLists.txt              |   1 +
+ tests/dungeon/dungeon_loot_drop_tests.cpp | 707 ++++++++++++++++++++++++++++++
+ tests/dungeon/dungeon_stress_tests.cpp    | 235 ++++++++--
+ tests/dungeon/dungeon_test_main.cpp       |   4 +-
+ tests/dungeon/dungeon_test_support.hpp    | 130 ++++++
+ 10 files changed, 1347 insertions(+), 52 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index f22606d..8b38a2c 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -1,32 +1,62 @@
+ #include "dungeon/dungeon_session.hpp"
+ 
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/room_combat_template.hpp"
+ #include "dungeon/room_navigation.hpp"
+ #include "core/deterministic_rng.hpp"
+ #include "items/item_catalog.hpp"
++#include "items/item_generation.hpp"
+ #include "items/item_modifiers.hpp"
+ #include "modifiers/player_modifier_values.hpp"
+ #include "passives/passive_tree_rules.hpp"
+ 
+ #include <array>
+ #include <cassert>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::dungeon {
+ namespace {
+ 
+ constexpr std::uint16_t kWaveDelayTicks = 45U;
+ constexpr std::uint64_t kPlayerEvasionSeedDomain = 0x45564153494F4E31ULL;
++constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
++constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
++constexpr std::uint64_t kDropContentDomain = 0x44524F505F49544DULL;
++constexpr std::uint64_t kDropItemIdDomain = 0x44524F505F49445FULL;
++
++[[nodiscard]] core::DeterministicRng drop_stream(
++    std::uint64_t seed,
++    std::uint16_t ordinal,
++    std::uint64_t domain) noexcept {
++    auto ordinal_stream = core::DeterministicRng::derive_stream(seed, ordinal);
++    return core::DeterministicRng::derive_stream(
++        ordinal_stream.next_u64(), domain);
++}
++
++[[nodiscard]] bool bit_is_set(
++    const std::array<std::uint64_t, 3>& bits,
++    std::uint16_t ordinal) noexcept {
++    const std::size_t word = ordinal / 64U;
++    const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
++    return word < bits.size() && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
++}
++
++void set_bit(
++    std::array<std::uint64_t, 3>& bits,
++    std::uint16_t ordinal) noexcept {
++    const std::size_t word = ordinal / 64U;
++    const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
++    if (word < bits.size()) bits[word] |= std::uint64_t{1U} << bit;
++}
+ 
+ void saturating_increment(std::uint32_t& value) noexcept {
+     if (value != (std::numeric_limits<std::uint32_t>::max)()) {
+         ++value;
+     }
+ }
+ 
+ void saturating_add(std::uint64_t& value, std::uint64_t addition) noexcept {
+     const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+     value = addition > maximum - value ? maximum : value + addition;
+@@ -104,26 +134,33 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
+                     settle_room_experience();
+                     phase_ = RoomPhase::cleared;
+                     if (emit(DungeonEventKind::room_cleared)
+                             && phase_ != RoomPhase::faulted) {
+                         static_cast<void>(emit(DungeonEventKind::exits_opened));
+                     }
+                 }
+             }
+         }
+ 
+-        if (phase_ == RoomPhase::awaiting_exit) {
+-            const combat::CombatSnapshot state = combat_->snapshot();
+-            if (const auto requested = requested_exit(
+-                    state.player.position, movement)) {
+-                attempt_exit(*requested);
+-            }
++    }
++
++    if (combat_.has_value() && phase_ != RoomPhase::committing
++            && phase_ != RoomPhase::transitioning
++            && phase_ != RoomPhase::faulted) {
++        request_nearby_pickups(combat_->snapshot().player.position);
++    }
++
++    if (combat_.has_value() && phase_ == RoomPhase::awaiting_exit) {
++        const combat::CombatSnapshot state = combat_->snapshot();
++        if (const auto requested = requested_exit(
++                state.player.position, movement)) {
++            attempt_exit(*requested);
+         }
+     }
+ 
+     ++session_tick_;
+ }
+ 
+ std::optional<PendingTransition>
+ DungeonSession::pending_transition() const noexcept {
+     if (!pending_save_.has_value()
+             || pending_save_->kind != PendingSaveKind::transition) {
+@@ -167,20 +204,26 @@ void DungeonSession::reset_current_room() noexcept {
+ std::optional<DungeonEvent> DungeonSession::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+ std::optional<combat::CombatEvent>
+ DungeonSession::try_pop_combat_event() noexcept {
+     return combat_events_.try_pop();
+ }
+ 
+ void DungeonSession::construct_current_room() noexcept {
++    ground_items_ = {};
++    rolled_drop_bits_ = {};
++    if (stable_state_.current_room.depth == 0U) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return;
++    }
+     room_progression_ = stable_state_.progression;
+     pending_room_experience_ = 0U;
+     last_room_experience_ = 0U;
+     last_levels_gained_ = 0U;
+     const EncounterPlanResult plan = build_encounter_plan(
+         stable_state_.current_room.seed,
+         stable_state_.current_room.depth,
+         stable_state_.current_room.ecology,
+         rules_.encounter);
+     if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
+@@ -268,40 +311,110 @@ void DungeonSession::start_next_wave() noexcept {
+     }
+     wave_index_ = next_wave;
+     phase_ = RoomPhase::combat;
+ }
+ 
+ void DungeonSession::relay_combat_events() noexcept {
+     if (!combat_.has_value()) {
+         return;
+     }
+     while (auto event = combat_->try_pop_event()) {
++        if (event->kind == combat::CombatEventKind::defeated) {
++            roll_ground_drop(*event);
++        }
+         if (event->kind == combat::CombatEventKind::defeated
+             && event->target_index < combat_->snapshot().monsters.size()) {
+             const combat::MonsterId id = combat_->snapshot()
+                 .monsters[event->target_index].id;
+             const std::size_t monster_index = static_cast<std::size_t>(id);
+             if (monster_index < progression_rules_.monster_experience.size()) {
+                 saturating_add(pending_room_experience_,
+                     progression_rules_.monster_experience[monster_index]);
+             }
+         }
+         const bool relayed = combat_events_.try_push(*event);
+         if (!relayed) {
+             saturating_increment(diagnostics_.combat_relay_overflow_count);
+             enter_fault(DungeonFault::combat_relay_overflow);
+             assert(relayed && "Dungeon combat event relay overflow");
+             return;
+         }
+     }
+ }
+ 
++void DungeonSession::roll_ground_drop(
++    const combat::CombatEvent& event) noexcept {
++    if (wave_index_ >= encounter_plan_.wave_count) return;
++    const auto& wave = encounter_plan_.waves[wave_index_];
++    if (event.target_index >= wave.spawn_count) return;
++    const std::uint16_t ordinal = static_cast<std::uint16_t>(
++        static_cast<std::uint16_t>(wave_index_) * 96U
++        + event.target_index);
++    if (ordinal >= kGroundDropCapacity
++            || bit_is_set(stable_state_.item_ownership.claimed_drop_bits, ordinal)
++            || bit_is_set(rolled_drop_bits_, ordinal)) {
++        return;
++    }
++    set_bit(rolled_drop_bits_, ordinal);
++
++    auto chance = drop_stream(
++        stable_state_.current_room.seed, ordinal, kDropChanceDomain);
++    if (chance.next_bounded(100U).value() != 0U) return;
++
++    auto slot = drop_stream(
++        stable_state_.current_room.seed, ordinal, kDropSlotDomain);
++    auto content = drop_stream(
++        stable_state_.current_room.seed, ordinal, kDropContentDomain);
++    auto room_stream = core::DeterministicRng::derive_stream(
++        stable_state_.root_seed, stable_state_.current_room.index);
++    auto item_id_stream = drop_stream(
++        room_stream.next_u64(), ordinal, kDropItemIdDomain);
++    std::uint64_t item_id = item_id_stream.next_u64();
++    if (item_id == 0U) item_id = 1U;
++
++    for (const items::ItemInstance& item : stable_state_.item_ownership.items) {
++        if (item.id == item_id) {
++            enter_fault(DungeonFault::item_id_collision);
++            return;
++        }
++    }
++    for (const GroundItem& ground : ground_items_) {
++        if (ground.active && ground.item.id == item_id) {
++            enter_fault(DungeonFault::item_id_collision);
++            return;
++        }
++    }
++
++    const std::uint64_t depth = stable_state_.current_room.depth;
++    if (depth == 0U) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return;
++    }
++    const auto generated = items::generate_item({
++        content.next_u64(),
++        static_cast<items::ItemSlot>(slot.next_bounded(6U).value()),
++        static_cast<std::uint8_t>(depth > 100U ? 100U : depth),
++        item_id,
++        std::nullopt,
++    });
++    if (!generated.has_value()) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return;
++    }
++    ground_items_[ordinal] = GroundItem{
++        true,
++        ordinal,
++        {event.position.x, event.position.y, 0.0F},
++        *generated,
++    };
++}
++
+ void DungeonSession::settle_room_experience() noexcept {
+     saturating_add(pending_room_experience_,
+         progression_rules_.room_clear_experience);
+     last_room_experience_ = pending_room_experience_;
+     const progression::ProgressionAward award = progression::apply_experience(
+         room_progression_, pending_room_experience_, progression_rules_);
+     room_progression_ = award.state;
+     last_levels_gained_ = award.levels_gained;
+     pending_room_experience_ = 0U;
+ }
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index a670088..c856850 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -33,20 +33,24 @@ public:
+     [[nodiscard]] bool request_passive_allocation(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] bool request_passive_refund(
+         passives::PassiveNodeId node) noexcept;
+     [[nodiscard]] RequestResult request_equip(
+         std::uint64_t item_id) noexcept;
+     [[nodiscard]] RequestResult request_unequip(
+         items::ItemSlot slot) noexcept;
+     [[nodiscard]] RequestResult request_recipe(
+         const std::array<std::uint64_t, 3>& item_ids) noexcept;
++    [[nodiscard]] RequestResult request_pickup(
++        std::uint16_t drop_ordinal) noexcept;
++    void request_nearby_pickups(
++        combat::Vec3 player_position) noexcept;
+     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
+     [[nodiscard]] std::optional<PendingSave> pending_save() const noexcept;
+     void resolve_pending_save(const PendingSaveResult& result) noexcept;
+     [[nodiscard]] std::optional<PendingTransition>
+     pending_transition() const noexcept;
+     void resolve_pending_transition(
+         const TransitionSaveResult& result) noexcept;
+     void reset_current_room() noexcept;
+     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
+@@ -60,20 +64,21 @@ private:
+         invalid_state,
+         allocation_failure,
+     };
+     struct PlayerBuildResult final {
+         combat::PlayerCombatBuild build{};
+         PlayerBuildStatus status{PlayerBuildStatus::invalid_state};
+     };
+     void construct_current_room() noexcept;
+     void start_next_wave() noexcept;
+     void relay_combat_events() noexcept;
++    void roll_ground_drop(const combat::CombatEvent& event) noexcept;
+     void settle_room_experience() noexcept;
+     void attempt_exit(ExitDirection direction) noexcept;
+     [[nodiscard]] bool prepare_transition(
+         TransitionKind kind,
+         ExitDirection direction) noexcept;
+     [[nodiscard]] bool prepare_passive_mutation(
+         passives::PassiveNodeId node, bool refund) noexcept;
+     [[nodiscard]] RequestResult prepare_item_save(
+         DungeonRunState&& next,
+         PendingSaveKind kind,
+@@ -93,20 +98,22 @@ private:
+         const DungeonRunState* destination = nullptr,
+         TransitionKind transition = TransitionKind::none,
+         ExitDirection direction = ExitDirection::none) noexcept;
+     [[nodiscard]] std::uint8_t remaining_targets() const noexcept;
+ 
+     DungeonRules rules_{};
+     DungeonRunState stable_state_{};
+     std::optional<PendingSave> pending_save_{};
+     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
+     std::optional<combat::CombatWorld> combat_{};
++    std::array<GroundItem, kGroundDropCapacity> ground_items_{};
++    std::array<std::uint64_t, 3> rolled_drop_bits_{};
+     RoomEncounterPlan encounter_plan_{};
+     std::uint8_t wave_index_{};
+     std::uint16_t wave_delay_ticks_{};
+     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
+     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
+         combat_events_{};
+     RoomPhase phase_{RoomPhase::locked};
+     ExitDirection last_exit_{ExitDirection::none};
+     std::uint64_t session_tick_{};
+     DungeonDiagnostics diagnostics_{};
+diff --git a/src/dungeon/dungeon_snapshot.cpp b/src/dungeon/dungeon_snapshot.cpp
+index 027a73b..cddc31b 100644
+--- a/src/dungeon/dungeon_snapshot.cpp
++++ b/src/dungeon/dungeon_snapshot.cpp
+@@ -1,12 +1,14 @@
+ #include "dungeon/dungeon_session.hpp"
+ 
++#include "items/item_catalog.hpp"
++
+ namespace arpg::dungeon {
+ namespace {
+ 
+ bool equipped(const items::EquipmentState& equipment,
+     std::uint64_t item_id) noexcept {
+     for (const std::uint64_t equipped_id : equipment.equipped_ids) {
+         if (equipped_id == item_id) return true;
+     }
+     return false;
+ }
+@@ -46,20 +48,32 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
+     result.passive_tree = stable_state_.passive_tree;
+     result.passive_save_pending = pending_save_.has_value()
+         && pending_save_->kind == PendingSaveKind::passive_tree;
+     result.passive_tree_error = last_passive_tree_error_;
+     result.equipped_ids = stable_state_.item_ownership.equipment.equipped_ids;
+     for (const items::ItemInstance& item : stable_state_.item_ownership.items) {
+         if (!equipped(stable_state_.item_ownership.equipment, item.id)) {
+             ++result.inventory_count;
+         }
+     }
++    for (const GroundItem& ground : ground_items_) {
++        if (!ground.active) continue;
++        GroundItemSnapshot& packed =
++            result.ground_items[result.ground_item_count++];
++        packed.ordinal = ground.drop_ordinal;
++        packed.position = ground.position;
++        packed.item_id = ground.item.id;
++        const items::BaseDefinition* base =
++            items::base_definition(ground.item.base_id);
++        if (base != nullptr) packed.slot = base->slot;
++        packed.rarity = ground.item.rarity;
++    }
+     if (pending_save_.has_value()) {
+         result.pending_save_kind = pending_save_->kind;
+     }
+     if (combat_.has_value()) {
+         result.combat.emplace(combat_->snapshot());
+     }
+     result.encounter.total_budget = encounter_plan_.total_budget;
+     result.encounter.plan_valid = encounter_plan_legal(
+         encounter_plan_, rules_.encounter);
+     if (wave_index_ < encounter_plan_.wave_count) {
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index 44abf8f..789e10d 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -44,20 +44,67 @@ bool is_equipped(
+     }
+     return false;
+ }
+ 
+ bool contains_id(
+     const std::array<std::uint64_t, 3>& ids,
+     std::uint64_t id) noexcept {
+     return ids[0] == id || ids[1] == id || ids[2] == id;
+ }
+ 
++bool bit_is_set(
++    const std::array<std::uint64_t, 3>& bits,
++    std::uint16_t ordinal) noexcept {
++    const std::size_t word = ordinal / 64U;
++    const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
++    return word < bits.size()
++        && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
++}
++
++void set_bit(
++    std::array<std::uint64_t, 3>& bits,
++    std::uint16_t ordinal) noexcept {
++    const std::size_t word = ordinal / 64U;
++    const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
++    if (word < bits.size()) bits[word] |= std::uint64_t{1U} << bit;
++}
++
++bool pickup_distance_ok(
++    combat::Vec3 player,
++    combat::Vec3 item) noexcept {
++    const float x = player.x - item.x;
++    const float y = player.y - item.y;
++    return x * x + y * y <= kPickupRadius * kPickupRadius;
++}
++
++bool same_item(
++    const items::ItemInstance& left,
++    const items::ItemInstance& right) noexcept {
++    if (left.id != right.id || left.base_id != right.base_id
++            || left.rarity != right.rarity
++            || left.item_level != right.item_level
++            || left.required_level != right.required_level
++            || left.affix_count != right.affix_count
++            || left.reserved != right.reserved) {
++        return false;
++    }
++    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
++        const items::AffixRoll& a = left.affixes[index];
++        const items::AffixRoll& b = right.affixes[index];
++        if (a.affix_id != b.affix_id || a.tier != b.tier
++                || a.variant != b.variant) {
++            return false;
++        }
++    }
++    return true;
++}
++
+ }  // namespace
+ 
+ bool DungeonSession::request_descent(bool player_in_range) noexcept {
+     if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
+             || !player_in_range || pending_save_.has_value()
+             || !stable_state_.current_room.has_hole) {
+         saturating_increment(diagnostics_.rejected_exit_count);
+         return false;
+     }
+     return prepare_transition(TransitionKind::descent, ExitDirection::none);
+@@ -102,20 +149,21 @@ bool DungeonSession::prepare_transition(
+     if (built.fault != DungeonFault::none) {
+         if (built.fault == DungeonFault::room_index_overflow) {
+             diagnostics_.room_index_overflow = true;
+         }
+         enter_fault(built.fault);
+         return false;
+     }
+ 
+     RunStateBuildResult next = built;
+     next.state.progression = room_progression_;
++    next.state.item_ownership.claimed_drop_bits = {};
+     if (kind == TransitionKind::descent) {
+         last_exit_ = ExitDirection::none;
+     }
+     pending_save_ = PendingSave{
+         PendingSaveKind::transition,
+         next.state.commit_generation,
+         next.state,
+         kind,
+         direction,
+         RoomPhase::awaiting_exit,
+@@ -390,20 +438,112 @@ RequestResult DungeonSession::request_recipe(
+         ++next.item_ownership.next_item_sequence;
+         return prepare_item_save(
+             std::move(next), PendingSaveKind::recipe, phase_);
+     } catch (const std::bad_alloc&) {
+         return RequestResult::rejected;
+     } catch (...) {
+         return RequestResult::rejected;
+     }
+ }
+ 
++RequestResult DungeonSession::request_pickup(
++    std::uint16_t drop_ordinal) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
++    if (!item_request_phase(phase_) || !combat_.has_value()
++            || pending_save_.has_value()
++            || drop_ordinal >= ground_items_.size()) {
++        return RequestResult::rejected;
++    }
++    const GroundItem& ground = ground_items_[drop_ordinal];
++    if (!ground.active || ground.drop_ordinal != drop_ordinal
++            || !pickup_distance_ok(
++                combat_->snapshot().player.position, ground.position)) {
++        return RequestResult::rejected;
++    }
++    const items::OwnershipValidationResult stable_validation =
++        items::validate_ownership_detailed(stable_state_.item_ownership);
++    if (stable_validation
++            == items::OwnershipValidationResult::allocation_failure) {
++        return RequestResult::rejected;
++    }
++    if (stable_validation != items::OwnershipValidationResult::valid
++            || !items::validate_item(ground.item)
++            || !passives::valid_passive_tree_state(
++                stable_state_.passive_tree, room_progression_)) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return RequestResult::faulted;
++    }
++    if (find_item(stable_state_.item_ownership, ground.item.id) != nullptr) {
++        enter_fault(DungeonFault::item_id_collision);
++        return RequestResult::faulted;
++    }
++    if (stable_state_.commit_generation
++            == (std::numeric_limits<std::uint64_t>::max)()) {
++        enter_fault(DungeonFault::commit_generation_overflow);
++        return RequestResult::faulted;
++    }
++
++    try {
++        DungeonRunState next = stable_state_;
++        next.progression = room_progression_;
++        next.item_ownership.items.push_back(ground.item);
++        set_bit(next.item_ownership.claimed_drop_bits, drop_ordinal);
++        const items::OwnershipValidationResult validation =
++            items::validate_ownership_detailed(next.item_ownership);
++        if (validation == items::OwnershipValidationResult::allocation_failure) {
++            return RequestResult::rejected;
++        }
++        if (validation != items::OwnershipValidationResult::valid) {
++            enter_fault(DungeonFault::invalid_item_state);
++            return RequestResult::faulted;
++        }
++        ++next.commit_generation;
++        const std::uint64_t expected_generation = next.commit_generation;
++        pending_save_.emplace(PendingSave{
++            PendingSaveKind::loot_pickup,
++            expected_generation,
++            std::move(next),
++            TransitionKind::none,
++            ExitDirection::none,
++            phase_,
++            drop_ordinal,
++        });
++        phase_ = RoomPhase::committing;
++        return RequestResult::accepted;
++    } catch (const std::bad_alloc&) {
++        return RequestResult::rejected;
++    } catch (...) {
++        return RequestResult::rejected;
++    }
++}
++
++void DungeonSession::request_nearby_pickups(
++    combat::Vec3 player_position) noexcept {
++    if (!item_request_phase(phase_) || !combat_.has_value()
++            || pending_save_.has_value()) {
++        return;
++    }
++    for (std::uint16_t ordinal = 0U;
++         ordinal < ground_items_.size(); ++ordinal) {
++        const GroundItem& ground = ground_items_[ordinal];
++        if (!ground.active
++                || !pickup_distance_ok(player_position, ground.position)) {
++            continue;
++        }
++        const RequestResult result = request_pickup(ordinal);
++        if (result != RequestResult::rejected) return;
++    }
++}
++
+ void DungeonSession::commit_pending_save(
+     const PendingSaveResult& result) noexcept {
+     if (phase_ != RoomPhase::committing || !pending_save_.has_value()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+     if (!pending_item_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+@@ -430,40 +570,67 @@ void DungeonSession::commit_pending_save(
+                 != pending_save_->next_state.commit_generation
+             || !same_run_state(
+                 result.verified_state, pending_save_->next_state)) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+ 
+     const PendingSaveKind kind = pending_save_->kind;
+     const bool item_commit = kind == PendingSaveKind::equipment
+         || kind == PendingSaveKind::recipe;
++    const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
++    const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
++    if (pickup_commit) {
++        if (pickup_ordinal >= ground_items_.size()) {
++            enter_fault(DungeonFault::save_receipt_mismatch);
++            return;
++        }
++        const GroundItem& ground = ground_items_[pickup_ordinal];
++        const items::ItemInstance* published = find_item(
++            pending_save_->next_state.item_ownership, ground.item.id);
++        if (!ground.active || ground.drop_ordinal != pickup_ordinal
++                || published == nullptr
++                || !same_item(*published, ground.item)
++                || !bit_is_set(
++                    pending_save_->next_state.item_ownership.claimed_drop_bits,
++                    pickup_ordinal)) {
++            enter_fault(DungeonFault::save_receipt_mismatch);
++            return;
++        }
++    }
+     combat::PlayerCombatBuild published_build{};
+     if (item_commit) {
+         if (!combat_.has_value()) {
+             enter_fault(DungeonFault::invalid_item_state);
+             return;
+         }
+         published_build = *pending_item_build_;
+     }
+ 
+     DungeonRunState previous = std::move(stable_state_);
+     stable_state_ = std::move(pending_save_->next_state);
+     const RoomPhase resume_phase = pending_save_->resume_phase;
+     pending_save_.reset();
+     pending_item_build_.reset();
+     if (kind == PendingSaveKind::transition) {
++        ground_items_ = {};
++        rolled_drop_bits_ = {};
+         combat_.reset();
+         phase_ = RoomPhase::transitioning;
+         emit_committed(previous, stable_state_);
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+     if (item_commit) {
+         combat_->apply_player_build(published_build);
+         phase_ = resume_phase;
+         return;
+     }
++    if (pickup_commit) {
++        ground_items_[pickup_ordinal] = GroundItem{};
++        phase_ = resume_phase;
++        return;
++    }
+     phase_ = RoomPhase::awaiting_exit;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index 5e5c182..115a558 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -90,20 +90,28 @@ struct DungeonSessionConfig final {
+ };
+ 
+ struct RoomDescriptor final {
+     std::uint64_t index{};
+     std::uint64_t seed{};
+     EntrySide entry{EntrySide::initial};
+     combat::CombatLabConfig combat{};
+ };
+ 
+ inline constexpr std::size_t kGroundDropCapacity = 192U;
++inline constexpr float kPickupRadius = 1.5F;
++
++struct GroundItem final {
++    bool active{};
++    std::uint16_t drop_ordinal{};
++    combat::Vec3 position{};
++    items::ItemInstance item{};
++};
+ 
+ struct GroundItemSnapshot final {
+     std::uint16_t ordinal{};
+     combat::Vec3 position{};
+     std::uint64_t item_id{};
+     items::ItemSlot slot{items::ItemSlot::weapon};
+     items::ItemRarity rarity{items::ItemRarity::normal};
+ };
+ 
+ struct DungeonSnapshot final {
+@@ -162,20 +170,21 @@ enum class PendingSaveKind : std::uint8_t {
+     recipe,
+ };
+ 
+ struct PendingSave final {
+     PendingSaveKind kind{PendingSaveKind::transition};
+     std::uint64_t expected_generation{};
+     DungeonRunState next_state{};
+     TransitionKind transition{TransitionKind::none};
+     ExitDirection direction{ExitDirection::none};
+     RoomPhase resume_phase{RoomPhase::awaiting_exit};
++    std::uint16_t pickup_ordinal{0xFFFFU};
+ };
+ 
+ struct PendingSaveResult final {
+     SaveDisposition disposition{SaveDisposition::indeterminate};
+     std::uint64_t generation{};
+     DungeonRunState verified_state{};
+ };
+ 
+ using TransitionSaveResult = PendingSaveResult;
+ 
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index abce842..3e5351c 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -2,20 +2,21 @@ add_executable(arpg_dungeon_tests
+     ../core/allocation_probe.cpp
+     dungeon_test_main.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
++    dungeon_loot_drop_tests.cpp
+     dungeon_transaction_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE dungeon_progression_reward_tests.cpp)
+ 
+ target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_dungeon_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon)
+ arpg_enable_project_warnings(arpg_dungeon_tests)
+diff --git a/tests/dungeon/dungeon_loot_drop_tests.cpp b/tests/dungeon/dungeon_loot_drop_tests.cpp
+new file mode 100644
+index 0000000..2995ad5
+--- /dev/null
++++ b/tests/dungeon/dungeon_loot_drop_tests.cpp
+@@ -0,0 +1,707 @@
++#include "test_framework.hpp"
++
++#include "dungeon_test_support.hpp"
++
++#include "core/deterministic_rng.hpp"
++#include "combat/room_bounds.hpp"
++#include "dungeon/dungeon_progression.hpp"
++#include "items/item_catalog.hpp"
++#include "items/item_generation.hpp"
++#include "allocation_probe.hpp"
++
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++#include <optional>
++
++namespace {
++
++using arpg::core::DeterministicRng;
++using arpg::dungeon::DungeonRules;
++using arpg::dungeon::DungeonRunState;
++using arpg::dungeon::DungeonSession;
++
++constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
++constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
++constexpr std::uint64_t kDropContentDomain = 0x44524F505F49544DULL;
++constexpr std::uint64_t kDropItemIdDomain = 0x44524F505F49445FULL;
++
++DeterministicRng drop_stream(
++    std::uint64_t seed,
++    std::uint16_t ordinal,
++    std::uint64_t domain) noexcept {
++    auto ordinal_stream = DeterministicRng::derive_stream(seed, ordinal);
++    return DeterministicRng::derive_stream(
++        ordinal_stream.next_u64(), domain);
++}
++
++std::uint64_t expected_item_id(
++    const DungeonRunState& state,
++    std::uint16_t ordinal) noexcept {
++    auto room_stream = DeterministicRng::derive_stream(
++        state.root_seed, state.current_room.index);
++    auto stream = drop_stream(
++        room_stream.next_u64(), ordinal, kDropItemIdDomain);
++    const std::uint64_t id = stream.next_u64();
++    return id == 0U ? 1U : id;
++}
++
++std::optional<arpg::items::ItemInstance> expected_drop(
++    const DungeonRunState& state,
++    std::uint16_t ordinal) noexcept {
++    auto chance = drop_stream(
++        state.current_room.seed, ordinal, kDropChanceDomain);
++    if (chance.next_bounded(100U).value() != 0U) {
++        return std::nullopt;
++    }
++    auto slot = drop_stream(
++        state.current_room.seed, ordinal, kDropSlotDomain);
++    auto content = drop_stream(
++        state.current_room.seed, ordinal, kDropContentDomain);
++    return arpg::items::generate_item({
++        content.next_u64(),
++        static_cast<arpg::items::ItemSlot>(
++            slot.next_bounded(6U).value()),
++        static_cast<std::uint8_t>(
++            state.current_room.depth > 100U
++                ? 100U : state.current_room.depth),
++        expected_item_id(state, ordinal),
++        std::nullopt,
++    });
++}
++
++DungeonRunState trace_state() noexcept {
++    DungeonRules rules;
++    for (std::uint64_t root = 1U; root < 10000U; ++root) {
++        DungeonRunState state =
++            arpg::dungeon::make_initial_run_state(root, rules).state;
++        std::size_t drops = 0U;
++        for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
++            drops += expected_drop(state, ordinal).has_value() ? 1U : 0U;
++        }
++        if (drops >= 2U) return state;
++    }
++    return {};
++}
++
++bool same_item(
++    const arpg::items::ItemInstance& left,
++    const arpg::items::ItemInstance& right) noexcept {
++    if (left.id != right.id || left.base_id != right.base_id
++            || left.rarity != right.rarity
++            || left.item_level != right.item_level
++            || left.required_level != right.required_level
++            || left.affix_count != right.affix_count
++            || left.reserved != right.reserved) {
++        return false;
++    }
++    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
++        if (left.affixes[index].affix_id != right.affixes[index].affix_id
++                || left.affixes[index].tier != right.affixes[index].tier
++                || left.affixes[index].variant
++                    != right.affixes[index].variant) {
++            return false;
++        }
++    }
++    return true;
++}
++
++std::uint16_t first_drop_ordinal(const DungeonRunState& state) noexcept {
++    for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
++        if (expected_drop(state, ordinal).has_value()) return ordinal;
++    }
++    return 192U;
++}
++
++std::uint16_t second_drop_ordinal(const DungeonRunState& state) noexcept {
++    bool found_first = false;
++    for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
++        if (!expected_drop(state, ordinal).has_value()) continue;
++        if (found_first) return ordinal;
++        found_first = true;
++    }
++    return 192U;
++}
++
++bool inject_drop(
++    DungeonSession& session,
++    std::uint16_t ordinal,
++    arpg::combat::Vec3 position) noexcept {
++    if (!arpg::test::relay_defeated(
++            session,
++            static_cast<std::uint8_t>(ordinal / 96U),
++            static_cast<std::uint8_t>(ordinal % 96U),
++            position)) {
++        return false;
++    }
++    return session.try_pop_combat_event().has_value();
++}
++
++bool resolve_committed(DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) return false;
++    session.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::committed,
++        pending->expected_generation,
++        pending->next_state,
++    });
++    return true;
++}
++
++arpg::items::ItemInstance normal_item(
++    std::uint64_t id,
++    arpg::items::ItemSlot slot = arpg::items::ItemSlot::helmet) noexcept {
++    const auto item = arpg::items::generate_item({
++        id ^ 0xA5A5A5A5ULL,
++        slot,
++        1U,
++        id,
++        arpg::items::ItemRarity::normal,
++    });
++    return item.value_or(arpg::items::ItemInstance{});
++}
++
++arpg::test::Failure two_wave_trace_rolls_each_ordinal_once() noexcept {
++    const DungeonRules rules;
++    const DungeonRunState state = trace_state();
++    ARPG_REQUIRE(state.root_seed != 0U);
++    DungeonSession session{rules, state};
++
++    std::size_t expected_count = 0U;
++    for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
++        const auto expected = expected_drop(state, ordinal);
++        expected_count += expected.has_value() ? 1U : 0U;
++        const std::uint8_t wave = static_cast<std::uint8_t>(ordinal / 96U);
++        const std::uint8_t target = static_cast<std::uint8_t>(ordinal % 96U);
++        const arpg::combat::Vec3 position{
++            static_cast<float>(ordinal),
++            -static_cast<float>(ordinal),
++            77.0F,
++        };
++        ARPG_REQUIRE(arpg::test::relay_defeated(
++            session, wave, target, position));
++        ARPG_REQUIRE(session.try_pop_combat_event().has_value());
++    }
++
++    const auto snapshot = session.snapshot();
++    ARPG_REQUIRE(snapshot.ground_item_count == expected_count);
++    ARPG_REQUIRE((arpg::test::rolled_drop_bits(session)
++        == std::array<std::uint64_t, 3>{{
++            (std::numeric_limits<std::uint64_t>::max)(),
++            (std::numeric_limits<std::uint64_t>::max)(),
++            (std::numeric_limits<std::uint64_t>::max)(),
++        }}));
++    std::size_t packed = 0U;
++    for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
++        const auto expected = expected_drop(state, ordinal);
++        if (!expected.has_value()) continue;
++        const auto& ground = snapshot.ground_items[packed++];
++        ARPG_REQUIRE(ground.ordinal == ordinal);
++        ARPG_REQUIRE(ground.position.x == static_cast<float>(ordinal));
++        ARPG_REQUIRE(ground.position.y == -static_cast<float>(ordinal));
++        ARPG_REQUIRE(ground.position.z == 0.0F);
++        ARPG_REQUIRE(ground.item_id == expected->id);
++        const auto* base = arpg::items::base_definition(expected->base_id);
++        ARPG_REQUIRE(base != nullptr);
++        ARPG_REQUIRE(ground.slot == base->slot);
++        ARPG_REQUIRE(ground.rarity == expected->rarity);
++    }
++    for (; packed < snapshot.ground_items.size(); ++packed) {
++        const auto& ground = snapshot.ground_items[packed];
++        ARPG_REQUIRE(ground.ordinal == 0U);
++        ARPG_REQUIRE(ground.item_id == 0U);
++        ARPG_REQUIRE(ground.position.x == 0.0F);
++        ARPG_REQUIRE(ground.position.y == 0.0F);
++        ARPG_REQUIRE(ground.position.z == 0.0F);
++    }
++
++    ARPG_REQUIRE(arpg::test::relay_defeated(
++        session, 0U, 0U, {999.0F, 999.0F, 999.0F}));
++    ARPG_REQUIRE(session.try_pop_combat_event().has_value());
++    ARPG_REQUIRE(session.snapshot().ground_item_count == expected_count);
++    return {};
++}
++
++arpg::test::Failure nearby_tick_prepares_atomic_pickup() noexcept {
++    const DungeonRules rules;
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    ARPG_REQUIRE(ordinal < 192U);
++    const auto expected = expected_drop(state, ordinal);
++    ARPG_REQUIRE(expected.has_value());
++    DungeonSession session{rules, state};
++    const auto before = session.snapshot();
++    ARPG_REQUIRE(before.phase == arpg::dungeon::RoomPhase::locked);
++    ARPG_REQUIRE(before.combat.has_value());
++    const auto player = before.combat->player.position;
++    ARPG_REQUIRE(arpg::test::relay_defeated(
++        session,
++        static_cast<std::uint8_t>(ordinal / 96U),
++        static_cast<std::uint8_t>(ordinal % 96U),
++        player));
++    ARPG_REQUIRE(session.try_pop_combat_event().has_value());
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
++
++    session.tick({});
++
++    const auto pending_snapshot = session.snapshot();
++    ARPG_REQUIRE(pending_snapshot.phase
++        == arpg::dungeon::RoomPhase::committing);
++    ARPG_REQUIRE(pending_snapshot.pending_save_kind
++        == arpg::dungeon::PendingSaveKind::loot_pickup);
++    ARPG_REQUIRE(pending_snapshot.ground_item_count == 1U);
++    ARPG_REQUIRE(session.item_state().items.empty());
++    const auto pending = session.pending_save();
++    ARPG_REQUIRE(pending.has_value());
++    ARPG_REQUIRE(pending->resume_phase == arpg::dungeon::RoomPhase::combat);
++    ARPG_REQUIRE(pending->next_state.item_ownership.items.size() == 1U);
++    ARPG_REQUIRE(same_item(
++        pending->next_state.item_ownership.items[0], *expected));
++    const std::size_t word = ordinal / 64U;
++    const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
++    ARPG_REQUIRE((pending->next_state.item_ownership.claimed_drop_bits[word]
++        & (std::uint64_t{1U} << bit)) != 0U);
++    ARPG_REQUIRE(pending->expected_generation == state.commit_generation + 1U);
++    return {};
++}
++
++arpg::test::Failure auto_pickup_precedes_same_tick_exit_request() noexcept {
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    DungeonSession session{DungeonRules{}, state};
++    const arpg::combat::Vec3 doorway{
++        arpg::combat::room_bounds::max_x, 0.0F, 0.0F};
++    arpg::test::set_player_position(session, doorway);
++    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(inject_drop(session, ordinal, doorway));
++
++    session.tick({1, 0});
++
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::committing);
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(session.pending_save()->kind
++        == arpg::dungeon::PendingSaveKind::loot_pickup);
++    ARPG_REQUIRE(!session.pending_transition().has_value());
++    return {};
++}
++
++arpg::test::Failure explicit_pickup_uses_inclusive_xy_radius() noexcept {
++    const DungeonRules rules;
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    DungeonSession outside{rules, state};
++    const auto player = outside.snapshot().combat->player.position;
++    ARPG_REQUIRE(inject_drop(outside, ordinal,
++        {player.x + 1.5001F, player.y, 90.0F}));
++    ARPG_REQUIRE(outside.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::rejected);
++    ARPG_REQUIRE(!outside.pending_save().has_value());
++
++    DungeonSession boundary{rules, state};
++    ARPG_REQUIRE(inject_drop(boundary, ordinal,
++        {player.x + 1.5F, player.y, -90.0F}));
++    ARPG_REQUIRE(boundary.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(boundary.pending_save()->pickup_ordinal == ordinal);
++    return {};
++}
++
++arpg::test::Failure nearby_pickup_chooses_lowest_ordinal_only() noexcept {
++    const DungeonRunState state = trace_state();
++    const std::uint16_t first = first_drop_ordinal(state);
++    const std::uint16_t second = second_drop_ordinal(state);
++    ARPG_REQUIRE(first < second && second < 192U);
++    DungeonSession session{DungeonRules{}, state};
++    const auto player = session.snapshot().combat->player.position;
++    ARPG_REQUIRE(inject_drop(session, second, player));
++    ARPG_REQUIRE(inject_drop(session, first, player));
++    session.request_nearby_pickups(player);
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(session.pending_save()->pickup_ordinal == first);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 2U);
++    return {};
++}
++
++arpg::test::Failure pickup_save_outcomes_are_atomic() noexcept {
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++
++    DungeonSession rollback{DungeonRules{}, state};
++    const auto player = rollback.snapshot().combat->player.position;
++    ARPG_REQUIRE(inject_drop(rollback, ordinal, player));
++    ARPG_REQUIRE(rollback.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    const auto failed = *rollback.pending_save();
++    rollback.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::not_committed,
++        failed.expected_generation,
++        failed.next_state,
++    });
++    ARPG_REQUIRE(rollback.snapshot().phase
++        == arpg::dungeon::RoomPhase::locked);
++    ARPG_REQUIRE(rollback.snapshot().ground_item_count == 1U);
++    ARPG_REQUIRE(rollback.item_state().items.empty());
++    ARPG_REQUIRE(!rollback.pending_save().has_value());
++
++    DungeonSession indeterminate{DungeonRules{}, state};
++    ARPG_REQUIRE(inject_drop(indeterminate, ordinal, player));
++    ARPG_REQUIRE(indeterminate.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    indeterminate.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::indeterminate, 0U, {}});
++    ARPG_REQUIRE(indeterminate.snapshot().phase
++        == arpg::dungeon::RoomPhase::faulted);
++    ARPG_REQUIRE(indeterminate.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::save_commit_indeterminate);
++    ARPG_REQUIRE(indeterminate.snapshot().ground_item_count == 1U);
++    ARPG_REQUIRE(indeterminate.item_state().items.empty());
++    return {};
++}
++
++arpg::test::Failure pickup_commit_publishes_without_allocation() noexcept {
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    DungeonSession session{DungeonRules{}, state};
++    const auto player = session.snapshot().combat->player.position;
++    ARPG_REQUIRE(inject_drop(session, ordinal, player));
++    ARPG_REQUIRE(session.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    const auto pending = *session.pending_save();
++    const arpg::dungeon::PendingSaveResult receipt{
++        arpg::dungeon::SaveDisposition::committed,
++        pending.expected_generation,
++        pending.next_state,
++    };
++    const std::uint64_t before = arpg::test::allocation_count();
++    {
++        arpg::test::ScopedAllocationFailure fail{0U};
++        session.resolve_pending_save(receipt);
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == before);
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::locked);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++    ARPG_REQUIRE(session.item_state().items.size() == 1U);
++    ARPG_REQUIRE(same_item(session.item_state().items[0],
++        pending.next_state.item_ownership.items.back()));
++    return {};
++}
++
++arpg::test::Failure disappeared_ground_rejects_committed_receipt() noexcept {
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    DungeonSession session{DungeonRules{}, state};
++    const auto player = session.snapshot().combat->player.position;
++    ARPG_REQUIRE(inject_drop(session, ordinal, player));
++    ARPG_REQUIRE(session.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    const auto pending = *session.pending_save();
++    arpg::test::clear_ground_item(session, ordinal);
++    session.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::committed,
++        pending.expected_generation,
++        pending.next_state,
++    });
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(session.item_state().items.empty());
++    return {};
++}
++
++arpg::test::Failure wrong_ordinal_or_replaced_ground_rejects_receipt() noexcept {
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    const std::uint16_t wrong = ordinal == 191U ? 190U : ordinal + 1U;
++    DungeonSession position_source{DungeonRules{}, state};
++    const auto player = position_source.snapshot().combat->player.position;
++
++    DungeonSession wrong_ordinal{DungeonRules{}, state};
++    ARPG_REQUIRE(inject_drop(wrong_ordinal, ordinal, player));
++    ARPG_REQUIRE(wrong_ordinal.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    const auto wrong_pending = *wrong_ordinal.pending_save();
++    arpg::test::set_pending_pickup_ordinal(wrong_ordinal, wrong);
++    wrong_ordinal.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::committed,
++        wrong_pending.expected_generation,
++        wrong_pending.next_state,
++    });
++    ARPG_REQUIRE(wrong_ordinal.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(wrong_ordinal.item_state().items.empty());
++
++    DungeonSession replaced{DungeonRules{}, state};
++    ARPG_REQUIRE(inject_drop(replaced, ordinal, player));
++    ARPG_REQUIRE(replaced.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    const auto replaced_pending = *replaced.pending_save();
++    const std::uint64_t id = replaced_pending.next_state
++        .item_ownership.items.back().id;
++    const auto replacement = normal_item(id, arpg::items::ItemSlot::boots);
++    ARPG_REQUIRE(!same_item(replacement,
++        replaced_pending.next_state.item_ownership.items.back()));
++    arpg::test::install_ground_item(
++        replaced, ordinal, replacement, player);
++    replaced.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::committed,
++        replaced_pending.expected_generation,
++        replaced_pending.next_state,
++    });
++    ARPG_REQUIRE(replaced.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(replaced.item_state().items.empty());
++    return {};
++}
++
++arpg::test::Failure pickup_allocation_failures_roll_back() noexcept {
++    const DungeonRunState base = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(base);
++    for (std::size_t failure_index = 0U; failure_index < 4U;
++         ++failure_index) {
++        DungeonRunState state = base;
++        state.item_ownership.items.push_back(normal_item(0xCAFE0000U));
++        DungeonSession session{DungeonRules{}, state};
++        const auto player = session.snapshot().combat->player.position;
++        ARPG_REQUIRE(inject_drop(session, ordinal, player));
++        arpg::dungeon::RequestResult result{};
++        {
++            arpg::test::ScopedAllocationFailure fail{failure_index};
++            result = session.request_pickup(ordinal);
++        }
++        ARPG_REQUIRE(result == arpg::dungeon::RequestResult::rejected);
++        ARPG_REQUIRE(session.snapshot().phase
++            == arpg::dungeon::RoomPhase::locked);
++        ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
++        ARPG_REQUIRE(session.item_state().items.size() == 1U);
++        ARPG_REQUIRE(session.item_state().items[0].id == 0xCAFE0000U);
++        ARPG_REQUIRE(session.snapshot().commit_generation
++            == state.commit_generation);
++        ARPG_REQUIRE(!session.pending_save().has_value());
++    }
++    return {};
++}
++
++arpg::test::Failure claimed_and_unclaimed_reload_semantics() noexcept {
++    const DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    const auto expected = expected_drop(state, ordinal);
++    ARPG_REQUIRE(expected.has_value());
++
++    DungeonSession first{DungeonRules{}, state};
++    const auto player = first.snapshot().combat->player.position;
++    ARPG_REQUIRE(inject_drop(first, ordinal, player));
++    const auto first_ground = first.snapshot().ground_items[0];
++
++    DungeonSession unclaimed_reload{DungeonRules{}, state};
++    ARPG_REQUIRE(inject_drop(unclaimed_reload, ordinal, player));
++    const auto reloaded_ground = unclaimed_reload.snapshot().ground_items[0];
++    ARPG_REQUIRE(reloaded_ground.item_id == first_ground.item_id);
++    ARPG_REQUIRE(reloaded_ground.ordinal == first_ground.ordinal);
++    ARPG_REQUIRE(unclaimed_reload.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(same_item(
++        unclaimed_reload.pending_save()->next_state.item_ownership.items[0],
++        *expected));
++
++    ARPG_REQUIRE(first.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    const DungeonRunState claimed_state = first.pending_save()->next_state;
++    ARPG_REQUIRE(resolve_committed(first));
++    DungeonSession claimed_reload{DungeonRules{}, claimed_state};
++    ARPG_REQUIRE(inject_drop(claimed_reload, ordinal, player));
++    ARPG_REQUIRE(claimed_reload.snapshot().ground_item_count == 0U);
++    return {};
++}
++
++arpg::test::Failure miss_is_rolled_once_until_room_reset() noexcept {
++    DungeonRunState state = trace_state();
++    std::uint16_t miss = 192U;
++    for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
++        if (!expected_drop(state, ordinal).has_value()) {
++            miss = ordinal;
++            break;
++        }
++    }
++    ARPG_REQUIRE(miss < 192U);
++    DungeonSession session{DungeonRules{}, state};
++    ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++
++    std::uint64_t hit_seed = 0U;
++    for (std::uint64_t seed = 1U; seed < 10000U; ++seed) {
++        DungeonRunState changed = state;
++        changed.current_room.seed = seed;
++        if (expected_drop(changed, miss).has_value()) {
++            hit_seed = seed;
++            break;
++        }
++    }
++    ARPG_REQUIRE(hit_seed != 0U);
++    arpg::test::set_current_room_seed(session, hit_seed);
++    ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++    session.reset_current_room();
++    ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
++    return {};
++}
++
++arpg::test::Failure ground_pool_has_full_192_capacity() noexcept {
++    DungeonSession session;
++    for (std::uint16_t ordinal = 0U; ordinal < 192U; ++ordinal) {
++        const auto item = normal_item(
++            0x100000000ULL + ordinal,
++            static_cast<arpg::items::ItemSlot>(ordinal % 6U));
++        ARPG_REQUIRE(item.id != 0U);
++        arpg::test::install_ground_item(session, ordinal, item,
++            {static_cast<float>(ordinal), 0.0F, 0.0F});
++    }
++    const auto snapshot = session.snapshot();
++    ARPG_REQUIRE(snapshot.ground_item_count == 192U);
++    ARPG_REQUIRE(snapshot.ground_items[0].ordinal == 0U);
++    ARPG_REQUIRE(snapshot.ground_items[95].ordinal == 95U);
++    ARPG_REQUIRE(snapshot.ground_items[96].ordinal == 96U);
++    ARPG_REQUIRE(snapshot.ground_items[191].ordinal == 191U);
++    return {};
++}
++
++arpg::test::Failure drop_id_collision_and_invalid_depth_fault() noexcept {
++    DungeonRunState collision = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(collision);
++    collision.item_ownership.items.push_back(
++        normal_item(expected_item_id(collision, ordinal)));
++    DungeonSession collision_session{DungeonRules{}, collision};
++    ARPG_REQUIRE(inject_drop(collision_session, ordinal,
++        {10.0F, 20.0F, 30.0F}));
++    ARPG_REQUIRE(collision_session.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::item_id_collision);
++    ARPG_REQUIRE(collision_session.snapshot().ground_item_count == 0U);
++
++    DungeonRunState ground_collision = trace_state();
++    const std::uint16_t ground_ordinal = first_drop_ordinal(ground_collision);
++    const auto colliding_ground = expected_drop(
++        ground_collision, ground_ordinal);
++    ARPG_REQUIRE(colliding_ground.has_value());
++    DungeonSession ground_collision_session{DungeonRules{}, ground_collision};
++    const std::uint16_t occupied = ground_ordinal == 191U
++        ? 190U : ground_ordinal + 1U;
++    arpg::test::install_ground_item(ground_collision_session, occupied,
++        *colliding_ground, {0.0F, 0.0F, 0.0F});
++    ARPG_REQUIRE(inject_drop(ground_collision_session, ground_ordinal,
++        {10.0F, 20.0F, 30.0F}));
++    ARPG_REQUIRE(ground_collision_session.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::item_id_collision);
++
++    DungeonRunState invalid_loaded = trace_state();
++    invalid_loaded.current_room.depth = 0U;
++    DungeonSession invalid_loaded_session{DungeonRules{}, invalid_loaded};
++    ARPG_REQUIRE(invalid_loaded_session.snapshot().phase
++        == arpg::dungeon::RoomPhase::faulted);
++    ARPG_REQUIRE(invalid_loaded_session.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::invalid_item_state);
++
++    DungeonRunState invalid = trace_state();
++    const std::uint16_t invalid_ordinal = first_drop_ordinal(invalid);
++    DungeonSession invalid_session{DungeonRules{}, invalid};
++    arpg::test::set_current_room_depth(invalid_session, 0U);
++    ARPG_REQUIRE(inject_drop(invalid_session, invalid_ordinal,
++        {10.0F, 20.0F, 30.0F}));
++    ARPG_REQUIRE(invalid_session.snapshot().diagnostics.fault
++        == arpg::dungeon::DungeonFault::invalid_item_state);
++    ARPG_REQUIRE(invalid_session.snapshot().ground_item_count == 0U);
++    return {};
++}
++
++arpg::test::Failure deep_room_caps_drop_item_level_at_100() noexcept {
++    DungeonRunState state = trace_state();
++    state.current_room.depth = 150U;
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    const auto expected = expected_drop(state, ordinal);
++    ARPG_REQUIRE(expected.has_value());
++    ARPG_REQUIRE(expected->item_level == 100U);
++    DungeonSession session{DungeonRules{}, state};
++    const auto player = session.snapshot().combat->player.position;
++    ARPG_REQUIRE(inject_drop(session, ordinal, player));
++    ARPG_REQUIRE(session.request_pickup(ordinal)
++        == arpg::dungeon::RequestResult::accepted);
++    ARPG_REQUIRE(session.pending_save()->next_state
++        .item_ownership.items.back().item_level == 100U);
++    return {};
++}
++
++arpg::test::Failure transition_clears_claimed_and_ground_only_on_commit() noexcept {
++    DungeonRunState state = trace_state();
++    const std::uint16_t ordinal = first_drop_ordinal(state);
++    const std::uint16_t claimed = ordinal == 191U ? 190U : ordinal + 1U;
++    state.item_ownership.claimed_drop_bits[claimed / 64U]
++        |= std::uint64_t{1U} << (claimed % 64U);
++    DungeonSession session{DungeonRules{}, state};
++    ARPG_REQUIRE(inject_drop(session, ordinal, {100.0F, 100.0F, 0.0F}));
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
++    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
++    arpg::test::attempt_exit(session, arpg::dungeon::ExitDirection::right);
++    const auto first = session.pending_save();
++    ARPG_REQUIRE(first.has_value());
++    ARPG_REQUIRE(first->kind == arpg::dungeon::PendingSaveKind::transition);
++    ARPG_REQUIRE(first->pickup_ordinal == 0xFFFFU);
++    ARPG_REQUIRE((first->next_state.item_ownership.claimed_drop_bits
++        == std::array<std::uint64_t, 3>{}));
++    session.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::not_committed,
++        first->expected_generation,
++        first->next_state,
++    });
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
++    ARPG_REQUIRE(session.item_state().claimed_drop_bits
++        == state.item_ownership.claimed_drop_bits);
++
++    arpg::test::attempt_exit(session, arpg::dungeon::ExitDirection::right);
++    ARPG_REQUIRE(resolve_committed(session));
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::transitioning);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++    ARPG_REQUIRE((session.item_state().claimed_drop_bits
++        == std::array<std::uint64_t, 3>{}));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"two wave trace rolls each ordinal once",
++        &two_wave_trace_rolls_each_ordinal_once},
++    {"nearby tick prepares atomic pickup",
++        &nearby_tick_prepares_atomic_pickup},
++    {"auto pickup precedes exit",
++        &auto_pickup_precedes_same_tick_exit_request},
++    {"explicit pickup inclusive radius",
++        &explicit_pickup_uses_inclusive_xy_radius},
++    {"nearby pickup lowest ordinal only",
++        &nearby_pickup_chooses_lowest_ordinal_only},
++    {"pickup save outcomes atomic", &pickup_save_outcomes_are_atomic},
++    {"pickup commit no allocation",
++        &pickup_commit_publishes_without_allocation},
++    {"disappeared ground rejects receipt",
++        &disappeared_ground_rejects_committed_receipt},
++    {"wrong ordinal or replaced ground rejects receipt",
++        &wrong_ordinal_or_replaced_ground_rejects_receipt},
++    {"pickup allocation rollback", &pickup_allocation_failures_roll_back},
++    {"claimed and unclaimed reload",
++        &claimed_and_unclaimed_reload_semantics},
++    {"miss rolls once until reset", &miss_is_rolled_once_until_room_reset},
++    {"ground pool full capacity", &ground_pool_has_full_192_capacity},
++    {"drop collision and invalid depth",
++        &drop_id_collision_and_invalid_depth_fault},
++    {"deep room caps item level", &deep_room_caps_drop_item_level_at_100},
++    {"transition cleanup commit semantics",
++        &transition_clears_claimed_and_ground_only_on_commit},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_loot_drop_suite() noexcept {
++    return arpg::test::make_suite("dungeon_loot_drop", kCases);
++}
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index a233d40..6690aea 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -120,20 +120,25 @@ std::uint64_t golden_room_trace_hash(
+     return hash;
+ }
+ 
+ struct StressSummary final {
+     std::uint32_t dungeon_events{};
+     std::uint32_t combat_events{};
+     std::uint32_t dungeon_overflow{};
+     std::uint32_t relay_overflow{};
+     std::uint32_t combat_overflow{};
+     std::uint32_t input_overflow{};
++    std::uint64_t save_boundaries{};
++    std::uint64_t save_boundary_allocations{};
++    std::uint64_t room_load_boundaries{};
++    std::uint64_t room_load_allocations{};
++    std::uint64_t unexpected_hot_path_allocations{};
+ };
+ 
+ bool same_vec(const arpg::combat::Vec3& lhs, const arpg::combat::Vec3& rhs) noexcept {
+     return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
+ }
+ 
+ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept {
+     if (lhs.tick != rhs.tick
+             || !same_vec(lhs.player.position, rhs.player.position)
+             || !same_vec(lhs.player.velocity, rhs.player.velocity)
+@@ -172,60 +177,79 @@ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept
+                 || a.hit_stop_ticks != b.hit_stop_ticks
+                 || a.ai_phase != b.ai_phase
+                 || !same_vec(a.attack_target_position, b.attack_target_position)
+                 || !same_vec(a.attack_vector, b.attack_vector)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
++bool same_ground_item(
++    const arpg::dungeon::GroundItemSnapshot& lhs,
++    const arpg::dungeon::GroundItemSnapshot& rhs) noexcept {
++    return lhs.ordinal == rhs.ordinal
++        && same_vec(lhs.position, rhs.position)
++        && lhs.item_id == rhs.item_id
++        && lhs.slot == rhs.slot
++        && lhs.rarity == rhs.rarity;
++}
++
+ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
+     if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
+             || lhs.commit_generation != rhs.commit_generation
+             || lhs.room_index != rhs.room_index
+             || lhs.room_seed != rhs.room_seed || lhs.phase != rhs.phase
+             || lhs.depth != rhs.depth
+             || lhs.floor_room_index != rhs.floor_room_index
+             || lhs.biases != rhs.biases
+             || lhs.has_active_room != rhs.has_active_room
+             || lhs.exits_open != rhs.exits_open
+             || lhs.wave_index != rhs.wave_index
+             || lhs.wave_count != rhs.wave_count
+             || lhs.wave_delay_ticks != rhs.wave_delay_ticks
+             || lhs.remaining_targets != rhs.remaining_targets
+             || lhs.entry_side != rhs.entry_side || lhs.last_exit != rhs.last_exit
+             || lhs.last_transition != rhs.last_transition
+             || lhs.ecology != rhs.ecology
+             || lhs.has_hole != rhs.has_hole
+             || lhs.is_abyss != rhs.is_abyss
+             || lhs.has_pending_transition != rhs.has_pending_transition
++            || lhs.inventory_count != rhs.inventory_count
++            || lhs.equipped_ids != rhs.equipped_ids
++            || lhs.ground_item_count != rhs.ground_item_count
++            || lhs.pending_save_kind != rhs.pending_save_kind
+             || lhs.encounter.total_budget != rhs.encounter.total_budget
+             || lhs.encounter.current_wave_budget
+                 != rhs.encounter.current_wave_budget
+             || lhs.encounter.current_wave_spawn_count
+                 != rhs.encounter.current_wave_spawn_count
+             || lhs.encounter.plan_valid != rhs.encounter.plan_valid
+             || lhs.diagnostics.event_overflow_count
+                 != rhs.diagnostics.event_overflow_count
+             || lhs.diagnostics.combat_relay_overflow_count
+                 != rhs.diagnostics.combat_relay_overflow_count
+             || lhs.diagnostics.rejected_exit_count
+                 != rhs.diagnostics.rejected_exit_count
+             || lhs.diagnostics.save_failure_count
+                 != rhs.diagnostics.save_failure_count
+             || lhs.diagnostics.fault != rhs.diagnostics.fault
+             || lhs.diagnostics.room_index_overflow
+                 != rhs.diagnostics.room_index_overflow
+             || lhs.combat.has_value() != rhs.combat.has_value()) {
+         return false;
+     }
++    for (std::size_t index = 0U; index < lhs.ground_items.size(); ++index) {
++        if (!same_ground_item(lhs.ground_items[index], rhs.ground_items[index])) {
++            return false;
++        }
++    }
+     return !lhs.combat.has_value() || same_combat(*lhs.combat, *rhs.combat);
+ }
+ 
+ bool same_event(const DungeonEvent& lhs, const DungeonEvent& rhs) noexcept {
+     return lhs.kind == rhs.kind && lhs.session_tick == rhs.session_tick
+         && lhs.room_index == rhs.room_index && lhs.room_seed == rhs.room_seed
+         && lhs.destination_room_index == rhs.destination_room_index
+         && lhs.destination_room_seed == rhs.destination_room_seed
+         && lhs.transition == rhs.transition
+         && lhs.direction == rhs.direction;
+@@ -251,20 +275,61 @@ void sample_diagnostics(const DungeonSnapshot& state, StressSummary& summary) no
+ void drain(DungeonSession& session, StressSummary& summary) noexcept {
+     while (session.try_pop_event().has_value()) {
+         ++summary.dungeon_events;
+     }
+     while (session.try_pop_combat_event().has_value()) {
+         ++summary.combat_events;
+     }
+     sample_diagnostics(session.snapshot(), summary);
+ }
+ 
++void record_allocations(
++    StressSummary& summary,
++    std::uint64_t before,
++    bool save_boundary) noexcept {
++    const std::uint64_t after = arpg::test::allocation_count();
++    const std::uint64_t delta = after - before;
++    if (save_boundary) {
++        summary.save_boundary_allocations += delta;
++    } else {
++        summary.unexpected_hot_path_allocations += delta;
++    }
++}
++
++void tracked_tick(
++    DungeonSession& session,
++    MovementInput movement,
++    StressSummary& summary) noexcept {
++    const std::uint64_t before = arpg::test::allocation_count();
++    const RoomPhase phase_before = session.snapshot().phase;
++    session.tick(movement);
++    const DungeonSnapshot state = session.snapshot();
++    const bool save_boundary = state.phase == RoomPhase::committing
++        && state.pending_save_kind.has_value()
++        && (*state.pending_save_kind
++                == arpg::dungeon::PendingSaveKind::transition
++            || *state.pending_save_kind
++                == arpg::dungeon::PendingSaveKind::loot_pickup);
++    const bool room_load = phase_before == RoomPhase::transitioning
++        && state.phase == RoomPhase::locked;
++    const std::uint64_t delta = arpg::test::allocation_count() - before;
++    if (save_boundary) {
++        ++summary.save_boundaries;
++        summary.save_boundary_allocations += delta;
++    } else if (room_load) {
++        ++summary.room_load_boundaries;
++        summary.room_load_allocations += delta;
++    } else {
++        summary.unexpected_hot_path_allocations += delta;
++    }
++}
++
+ bool tick_equal(
+     DungeonSession& lhs,
+     DungeonSession& rhs,
+     MovementInput movement) noexcept {
+     lhs.tick(movement);
+     rhs.tick(movement);
+     if (!same_snapshot(lhs.snapshot(), rhs.snapshot())) {
+         return false;
+     }
+     for (;;) {
+@@ -292,34 +357,38 @@ bool tick_equal(
+         if (!same_event(*a, *b)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ bool commit_equal(
+     DungeonSession& lhs,
+     DungeonSession& rhs) noexcept {
+-    const auto a = lhs.pending_transition();
+-    const auto b = rhs.pending_transition();
++    const auto a = lhs.pending_save();
++    const auto b = rhs.pending_save();
+     if (!a.has_value() || !b.has_value()
+-            || a->kind != b->kind || a->direction != b->direction
++            || a->kind != b->kind
++            || a->transition != b->transition
++            || a->direction != b->direction
++            || a->resume_phase != b->resume_phase
++            || a->pickup_ordinal != b->pickup_ordinal
+             || a->expected_generation != b->expected_generation
+             || !arpg::dungeon::same_run_state(a->next_state, b->next_state)) {
+         return false;
+     }
+-    lhs.resolve_pending_transition({
++    lhs.resolve_pending_save({
+         arpg::dungeon::SaveDisposition::committed,
+         a->expected_generation,
+         a->next_state,
+     });
+-    rhs.resolve_pending_transition({
++    rhs.resolve_pending_save({
+         arpg::dungeon::SaveDisposition::committed,
+         b->expected_generation,
+         b->next_state,
+     });
+     if (!same_snapshot(lhs.snapshot(), rhs.snapshot())) {
+         return false;
+     }
+     for (;;) {
+         const auto x = lhs.try_pop_event();
+         const auto y = rhs.try_pop_event();
+@@ -329,20 +398,51 @@ bool commit_equal(
+         if (!x.has_value()) {
+             break;
+         }
+         if (!same_event(*x, *y)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
++bool confirm_pending_save(
++    DungeonSession& session,
++    StressSummary& summary) noexcept {
++    const std::uint64_t before = arpg::test::allocation_count();
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) {
++        record_allocations(summary, before, false);
++        return false;
++    }
++    const auto kind = pending->kind;
++    session.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::committed,
++        pending->expected_generation,
++        pending->next_state,
++    });
++    const DungeonSnapshot saved = session.snapshot();
++    record_allocations(summary, before, true);
++    if (kind == arpg::dungeon::PendingSaveKind::loot_pickup) {
++        return saved.phase == pending->resume_phase
++            && !saved.pending_save_kind.has_value()
++            && saved.commit_generation == pending->expected_generation;
++    }
++    return kind == arpg::dungeon::PendingSaveKind::transition
++        && saved.phase == RoomPhase::transitioning
++        && !saved.has_pending_transition
++        && saved.commit_generation == pending->expected_generation
++        && saved.room_index == pending->next_state.current_room.index
++        && saved.room_seed == pending->next_state.current_room.seed
++        && !saved.has_active_room && !saved.combat.has_value();
++}
++
+ MovementInput outward(ExitDirection direction) noexcept {
+     switch (direction) {
+     case ExitDirection::up: return {0, -1};
+     case ExitDirection::down: return {0, 1};
+     case ExitDirection::left: return {-1, 0};
+     case ExitDirection::right: return {1, 0};
+     case ExitDirection::none: return {};
+     }
+     return {};
+ }
+@@ -357,93 +457,88 @@ MovementInput align_center(const DungeonSnapshot& state, ExitDirection direction
+     } else {
+         movement.x = position.x > kTolerance ? -1
+             : (position.x < -kTolerance ? 1 : 0);
+     }
+     return movement;
+ }
+ 
+ bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
+     for (int tick = 0; tick < 8192; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
++        if (state.phase == RoomPhase::committing) {
++            if (!confirm_pending_save(session, summary)) return false;
++            drain(session, summary);
++            continue;
++        }
+         if (state.phase == RoomPhase::cleared) {
+-            session.tick(MovementInput{});
++            tracked_tick(session, MovementInput{}, summary);
+             drain(session, summary);
++            if (session.snapshot().phase == RoomPhase::committing) {
++                if (!confirm_pending_save(session, summary)) return false;
++                drain(session, summary);
++            }
+             return session.snapshot().phase == RoomPhase::awaiting_exit;
+         }
+         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
+             arpg::test::force_defeat_current_wave(session);
+         }
+-        session.tick({});
++        tracked_tick(session, {}, summary);
+         drain(session, summary);
+     }
+     return false;
+ }
+ 
+-bool confirm_pending_save(DungeonSession& session) noexcept {
+-    const auto pending = session.pending_transition();
+-    if (!pending.has_value()) {
+-        return false;
+-    }
+-    session.resolve_pending_transition({
+-        arpg::dungeon::SaveDisposition::committed,
+-        pending->expected_generation,
+-        pending->next_state,
+-    });
+-    const DungeonSnapshot saved = session.snapshot();
+-    return saved.phase == RoomPhase::transitioning
+-        && !saved.has_pending_transition
+-        && saved.commit_generation == pending->expected_generation
+-        && saved.room_index == pending->next_state.current_room.index
+-        && saved.room_seed == pending->next_state.current_room.seed
+-        && !saved.has_active_room && !saved.combat.has_value();
+-}
+-
+ bool drive_exit(
+     DungeonSession& session,
+     ExitDirection direction,
+     StressSummary& summary,
+     bool verify_phases) noexcept {
+     for (int tick = 0; tick < 512; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
++        if (state.phase == RoomPhase::committing) {
++            if (!confirm_pending_save(session, summary)) return false;
++            drain(session, summary);
++            continue;
++        }
+         const MovementInput movement = align_center(state, direction);
+         if (movement.x == 0 && movement.y == 0) {
+             break;
+         }
+-        session.tick(movement);
++        tracked_tick(session, movement, summary);
+         drain(session, summary);
+     }
+     for (int tick = 0; tick < 512; ++tick) {
+-        session.tick(outward(direction));
++        tracked_tick(session, outward(direction), summary);
+         drain(session, summary);
+         if (session.snapshot().phase == RoomPhase::committing) {
+-            if (!confirm_pending_save(session)) {
++            if (!confirm_pending_save(session, summary)) {
+                 return false;
+             }
+             drain(session, summary);
+         }
+         if (session.snapshot().phase == RoomPhase::transitioning) {
+             break;
+         }
+     }
+     const DungeonSnapshot transition = session.snapshot();
+     if (transition.phase != RoomPhase::transitioning
+             || transition.has_active_room || transition.combat.has_value()) {
+         return false;
+     }
+-    session.tick(outward(direction));
++    tracked_tick(session, outward(direction), summary);
+     drain(session, summary);
+     const DungeonSnapshot locked = session.snapshot();
+     if (locked.phase != RoomPhase::locked || !locked.has_active_room
+             || !locked.combat.has_value() || locked.combat->tick != 0U) {
+         return false;
+     }
+-    session.tick(outward(direction));
++    tracked_tick(session, outward(direction), summary);
+     drain(session, summary);
+     const DungeonSnapshot combat = session.snapshot();
+     return combat.phase == RoomPhase::combat && combat.has_active_room
+         && combat.combat.has_value() && combat.combat->tick == 0U
+         && (!verify_phases || combat.room_index == transition.room_index);
+ }
+ 
+ bool drive_rooms(
+     DungeonSession& session,
+     std::size_t exits,
+@@ -488,40 +583,46 @@ bool node_is_allocated(std::uint64_t bits,
+ bool has_allocated_neighbor(std::uint64_t bits,
+     const arpg::passives::PassiveNode& node) noexcept {
+     for (std::size_t index = 0U; index < node.neighbor_count; ++index) {
+         if (node_is_allocated(bits, node.neighbors[index])) {
+             return true;
+         }
+     }
+     return false;
+ }
+ 
+-bool commit_passive_receipt(DungeonSession& session) noexcept {
++bool commit_passive_receipt(
++    DungeonSession& session,
++    StressSummary& summary) noexcept {
++    const std::uint64_t allocation_before = arpg::test::allocation_count();
+     const auto pending = session.pending_save();
+     if (!pending.has_value()
+             || pending->kind != arpg::dungeon::PendingSaveKind::passive_tree) {
++        record_allocations(summary, allocation_before, false);
+         return false;
+     }
+     session.resolve_pending_save({
+         arpg::dungeon::SaveDisposition::committed,
+         pending->expected_generation,
+         pending->next_state,
+     });
+     const DungeonSnapshot committed = session.snapshot();
++    record_allocations(summary, allocation_before, true);
+     return !committed.passive_save_pending
+         && committed.commit_generation == pending->expected_generation
+         && committed.passive_tree.allocated_bits
+             == pending->next_state.passive_tree.allocated_bits;
+ }
+ 
+ bool allocate_route_node(DungeonSession& session,
+-    arpg::passives::PassiveNodeId requested) noexcept {
++    arpg::passives::PassiveNodeId requested,
++    StressSummary& summary) noexcept {
+     const DungeonSnapshot before = session.snapshot();
+     const auto& nodes = arpg::passives::passive_nodes();
+     const auto& target = nodes[requested];
+     arpg::passives::PassiveNodeId chosen = requested;
+     bool found = !node_is_allocated(before.passive_tree.allocated_bits, requested)
+         && has_allocated_neighbor(before.passive_tree.allocated_bits, target);
+     if (!found) {
+         bool has_candidate = false;
+         for (std::size_t index = 0U; index < target.neighbor_count; ++index) {
+             const auto neighbor = target.neighbors[index];
+@@ -533,42 +634,45 @@ bool allocate_route_node(DungeonSession& session,
+             if (!has_candidate || neighbor < chosen) {
+                 chosen = neighbor;
+                 has_candidate = true;
+             }
+         }
+         found = has_candidate;
+     }
+     if (!found) {
+         return true;
+     }
+-    return session.request_passive_allocation(chosen)
+-        && commit_passive_receipt(session);
++    const std::uint64_t allocation_before = arpg::test::allocation_count();
++    const bool accepted = session.request_passive_allocation(chosen);
++    if (accepted) ++summary.save_boundaries;
++    record_allocations(summary, allocation_before, accepted);
++    return accepted && commit_passive_receipt(session, summary);
+ }
+ 
+ DungeonSession passive_trace_session(std::uint64_t root_seed) noexcept {
+     auto built = arpg::dungeon::make_initial_run_state(root_seed, DungeonRules{});
+     built.state.progression = {64U, 0U, 63U, 63U};
+     return DungeonSession(DungeonRules{}, built.state);
+ }
+ 
+ bool generate_passive_stress_trace(
+     std::array<PassiveStressRecord, 1000U>& trace) noexcept {
+     DungeonSession session = passive_trace_session(0x7A6E4F1B2C3DULL);
+     StressSummary summary{};
+     for (std::size_t room_index = 0U; room_index < trace.size(); ++room_index) {
+         if (!drive_clear(session, summary)) {
+             return false;
+         }
+         if (room_index % 25U == 0U) {
+             const auto next = kPassiveRouteCycle[(room_index / 25U)
+                 % kPassiveRouteCycle.size()];
+-            if (!allocate_route_node(session, next)) {
++            if (!allocate_route_node(session, next, summary)) {
+                 return false;
+             }
+         }
+         const DungeonSnapshot snapshot = session.snapshot();
+         if (!snapshot.combat.has_value()
+                 || snapshot.passive_tree.allocated_bits == 0U
+                 || snapshot.commit_generation == 0U) {
+             return false;
+         }
+         trace[room_index] = {
+@@ -722,20 +826,25 @@ void drain_real_input_events(
+ }
+ 
+ bool drive_real_input_clear(
+     DungeonSession& session,
+     StressSummary& summary,
+     RealInputTrace& trace,
+     arpg::combat::Action action) noexcept {
+     for (int tick = 0; tick < 4096; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         capture_trace(state, trace);
++        if (state.phase == RoomPhase::committing) {
++            if (!confirm_pending_save(session, summary)) return false;
++            drain_real_input_events(session, summary, trace);
++            continue;
++        }
+         if (state.combat.has_value()) {
+             const auto& player = state.combat->player;
+             if (player.active_attack != arpg::combat::AttackId::none
+                     && player.attack_phase == arpg::combat::AttackPhase::active) {
+                 ++trace.active_samples;
+             }
+             if (trace.attack_in_flight
+                     && player.active_attack == arpg::combat::AttackId::none) {
+                 if (!trace.attack_had_hit && !trace.first_whiff_seen) {
+                     trace.first_whiff_seen = true;
+@@ -745,22 +854,26 @@ bool drive_real_input_clear(
+                     trace.first_whiff_dy = trace.target_position.y
+                         - trace.player_position.y;
+                     trace.first_whiff_facing = trace.player_facing;
+                     trace.first_whiff_ai = trace.target_phase;
+                     trace.first_whiff_reaction = trace.target_reaction;
+                 }
+                 trace.attack_in_flight = false;
+             }
+         }
+         if (state.phase == RoomPhase::cleared) {
+-            session.tick({});
++            tracked_tick(session, {}, summary);
+             drain_real_input_events(session, summary, trace);
++            if (session.snapshot().phase == RoomPhase::committing) {
++                if (!confirm_pending_save(session, summary)) return false;
++                drain_real_input_events(session, summary, trace);
++            }
+             capture_trace(session.snapshot(), trace);
+             return session.snapshot().phase == RoomPhase::awaiting_exit;
+         }
+         if (state.phase == RoomPhase::faulted || !state.combat.has_value()) {
+             return false;
+         }
+ 
+         MovementInput movement{};
+         if (state.phase == RoomPhase::combat) {
+             const auto* target = arpg::test::nearest_living_monster(*state.combat);
+@@ -775,21 +888,21 @@ bool drive_real_input_clear(
+                             state.combat->player, *target)) {
+                     ++trace.action_attempts;
+                     if (!session.queue_action(action)) {
+                         ++trace.action_rejected;
+                         return false;
+                     }
+                     ++trace.action_accepted;
+                 }
+             }
+         }
+-        session.tick(movement);
++        tracked_tick(session, movement, summary);
+         drain_real_input_events(session, summary, trace);
+     }
+     capture_trace(session.snapshot(), trace);
+     return false;
+ }
+ 
+ void print_real_input_trace(
+     const char* label,
+     const RealInputTrace& trace,
+     bool cleared) noexcept {
+@@ -880,29 +993,45 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
+         const bool cleared = drive_real_input_clear(
+             session, summary, trace, arpg::combat::Action::launcher);
+         if (!cleared) {
+             print_real_input_trace("launcher-1000-failure", trace, false);
+         }
+         ARPG_REQUIRE(cleared);
+         ARPG_REQUIRE(drive_exit(session, kRoute[room % kRoute.size()], summary,
+             true));
+     }
+     const DungeonSnapshot final = session.snapshot();
++    const std::uint64_t allocation_delta = arpg::test::allocation_count()
++        - allocations_before;
+     std::printf("[real-input] launcher-1000 rooms=%llu allocation-delta=%llu "
++        "save-boundaries=%llu save-alloc=%llu room-loads=%llu "
++        "room-load-alloc=%llu unexpected=%llu "
+         "overflow=%u/%u/%u/%u\n",
+         static_cast<unsigned long long>(final.room_index),
+-        static_cast<unsigned long long>(arpg::test::allocation_count()
+-            - allocations_before),
++        static_cast<unsigned long long>(allocation_delta),
++        static_cast<unsigned long long>(summary.save_boundaries),
++        static_cast<unsigned long long>(summary.save_boundary_allocations),
++        static_cast<unsigned long long>(summary.room_load_boundaries),
++        static_cast<unsigned long long>(summary.room_load_allocations),
++        static_cast<unsigned long long>(
++            summary.unexpected_hot_path_allocations),
+         summary.dungeon_overflow, summary.relay_overflow,
+         summary.combat_overflow, summary.input_overflow);
+     ARPG_REQUIRE(final.room_index == 1000U);
+-    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
++    ARPG_REQUIRE(allocation_delta == summary.save_boundary_allocations
++        + summary.room_load_allocations
++        + summary.unexpected_hot_path_allocations);
++    ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
++    ARPG_REQUIRE(summary.save_boundary_allocations
++        <= summary.save_boundaries * 8U);
++    ARPG_REQUIRE(summary.room_load_allocations
++        <= summary.room_load_boundaries);
+     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
+     ARPG_REQUIRE(summary.relay_overflow == 0U);
+     ARPG_REQUIRE(summary.combat_overflow == 0U);
+     ARPG_REQUIRE(summary.input_overflow == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure launcher_robot_clears_room38_reverse_deadband_regression() noexcept {
+     constexpr std::uint64_t kSeed = 0x5245414C494E5055ULL;
+     const DungeonRules rules = single_chaser_rules();
+@@ -1074,34 +1203,50 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
+         ARPG_REQUIRE(drive_rooms(warm_up, 1U, warm_summary));
+     }
+ 
+     DungeonSession measured;
+     StressSummary summary{};
+     drain(measured, summary);
+     const std::uint64_t before = arpg::test::allocation_count();
+     ARPG_REQUIRE(drive_rooms(measured, 1000U, summary));
+     const std::uint64_t after = arpg::test::allocation_count();
+     const DungeonSnapshot final = measured.snapshot();
++    const std::uint64_t allocation_delta = after - before;
+     std::printf(
+         "[stress] exits=1000 index=%llu allocation_before=%llu "
+-        "allocation_after=%llu delta=%llu dungeon_overflow=%u "
++        "allocation_after=%llu delta=%llu save-boundaries=%llu "
++        "save-alloc=%llu room-loads=%llu room-load-alloc=%llu "
++        "unexpected=%llu dungeon_overflow=%u "
+         "relay_overflow=%u combat_overflow=%u input_overflow=%u\n",
+         static_cast<unsigned long long>(final.room_index),
+         static_cast<unsigned long long>(before),
+         static_cast<unsigned long long>(after),
+-        static_cast<unsigned long long>(after - before),
++        static_cast<unsigned long long>(allocation_delta),
++        static_cast<unsigned long long>(summary.save_boundaries),
++        static_cast<unsigned long long>(summary.save_boundary_allocations),
++        static_cast<unsigned long long>(summary.room_load_boundaries),
++        static_cast<unsigned long long>(summary.room_load_allocations),
++        static_cast<unsigned long long>(
++            summary.unexpected_hot_path_allocations),
+         summary.dungeon_overflow,
+         summary.relay_overflow,
+         summary.combat_overflow,
+         summary.input_overflow);
+     ARPG_REQUIRE(final.room_index == 1000U);
+-    ARPG_REQUIRE(after == before);
++    ARPG_REQUIRE(allocation_delta == summary.save_boundary_allocations
++        + summary.room_load_allocations
++        + summary.unexpected_hot_path_allocations);
++    ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
++    ARPG_REQUIRE(summary.save_boundary_allocations
++        <= summary.save_boundaries * 8U);
++    ARPG_REQUIRE(summary.room_load_allocations
++        <= summary.room_load_boundaries);
+     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
+     ARPG_REQUIRE(summary.relay_overflow == 0U);
+     ARPG_REQUIRE(summary.combat_overflow == 0U);
+     ARPG_REQUIRE(summary.input_overflow == 0U);
+     ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
+     ARPG_REQUIRE(final.diagnostics.combat_relay_overflow_count == 0U);
+     ARPG_REQUIRE(final.combat->diagnostics.event_overflow_count == 0U);
+     return {};
+ }
+ 
+@@ -1124,19 +1269,19 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"launcher input robot clears ten minimal committed rooms",
+      &launcher_input_robot_clears_ten_minimal_committed_rooms},
+     {"launcher input robot clears thousand minimal committed rooms",
+      &launcher_input_robot_clears_thousand_minimal_committed_rooms},
+     {"ten thousand director plans are legal deterministic and allocation free",
+      &ten_thousand_director_plans_are_legal_deterministic_and_allocation_free},
+     {"identical seed and route are field equal", &identical_seed_and_route_are_field_equal},
+     {"one changed direction changes only committed room", &one_changed_direction_changes_only_committed_room},
+     {"fixed seed room trace matches baseline golden", &fixed_seed_room_trace_matches_baseline_golden},
+     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},
+-    {"measured thousand rooms allocate nothing and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
++    {"measured thousand rooms isolate save allocations and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
+     {"passive star chart end to end trace is deterministic", &passive_star_chart_end_to_end_trace_is_deterministic},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_stress_suite() noexcept {
+     return arpg::test::make_suite("dungeon_stress", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index b8d0c24..bcfe176 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -1,33 +1,35 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite room_generation_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
++arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         room_generation_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
++        dungeon_loot_drop_suite(),
+         dungeon_transaction_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 100, "stage 8 task 6 dungeon");
++    return arpg::test::run_suites(suites, 116, "stage 8 task 7 dungeon");
+ }
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index 0399a88..2f1f516 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -47,20 +47,91 @@ struct DungeonSessionTestAccess final {
+             combat::MonsterRuntime& monster = world.monsters_.slots_[index];
+             if (!monster.active || monster.hp <= 0) {
+                 continue;
+             }
+             monster.hp = 0;
+             combat::AttackDefinition defeat{};
+             defeat.feedback = combat::FeedbackLevel::light;
+             world.apply_dummy_impact(index, defeat);
+         }
+     }
++    static bool relay_defeated(
++        dungeon::DungeonSession& session,
++        std::uint8_t wave_index,
++        std::uint8_t target_index,
++        combat::Vec3 position) noexcept {
++        if (!session.combat_.has_value() || wave_index >= 2U) {
++            return false;
++        }
++        session.encounter_plan_.wave_count = 2U;
++        session.encounter_plan_.waves[wave_index].spawn_count = 96U;
++        session.wave_index_ = wave_index;
++        combat::CombatEvent event{};
++        event.kind = combat::CombatEventKind::defeated;
++        event.target_index = target_index;
++        event.position = position;
++        if (!session.combat_->events_.try_push(event)) {
++            return false;
++        }
++        session.relay_combat_events();
++        return true;
++    }
++    static void set_current_room_seed(
++        dungeon::DungeonSession& session,
++        std::uint64_t seed) noexcept {
++        session.stable_state_.current_room.seed = seed;
++    }
++    static void set_current_room_depth(
++        dungeon::DungeonSession& session,
++        std::uint64_t depth) noexcept {
++        session.stable_state_.current_room.depth = depth;
++    }
++    static void set_phase(
++        dungeon::DungeonSession& session,
++        dungeon::RoomPhase phase) noexcept {
++        session.phase_ = phase;
++    }
++    static void set_player_position(
++        dungeon::DungeonSession& session,
++        combat::Vec3 position) noexcept {
++        if (session.combat_.has_value()) {
++            session.combat_->player_.position = position;
++        }
++    }
++    static void clear_ground_item(
++        dungeon::DungeonSession& session,
++        std::uint16_t ordinal) noexcept {
++        if (ordinal < session.ground_items_.size()) {
++            session.ground_items_[ordinal] = {};
++        }
++    }
++    static void install_ground_item(
++        dungeon::DungeonSession& session,
++        std::uint16_t ordinal,
++        const items::ItemInstance& item,
++        combat::Vec3 position) noexcept {
++        if (ordinal < session.ground_items_.size()) {
++            session.ground_items_[ordinal] = {
++                true, ordinal, position, item};
++        }
++    }
++    static void set_pending_pickup_ordinal(
++        dungeon::DungeonSession& session,
++        std::uint16_t ordinal) noexcept {
++        if (session.pending_save_.has_value()) {
++            session.pending_save_->pickup_ordinal = ordinal;
++        }
++    }
++    static const std::array<std::uint64_t, 3>& rolled_drop_bits(
++        const dungeon::DungeonSession& session) noexcept {
++        return session.rolled_drop_bits_;
++    }
+ };
+ 
+ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
+     DungeonSessionTestAccess::force_defeat_current_wave(session);
+ }
+ 
+ inline void damage_current_player(
+     dungeon::DungeonSession& session, int damage) noexcept {
+     DungeonSessionTestAccess::damage_current_player(session, damage);
+ }
+@@ -83,20 +154,79 @@ inline const combat::CombatWorld* combat_world_address(
+ inline void set_current_room_hole(
+     dungeon::DungeonSession& session, bool has_hole) noexcept {
+     DungeonSessionTestAccess::set_current_room_hole(session, has_hole);
+ }
+ 
+ inline void attempt_exit(dungeon::DungeonSession& session,
+     dungeon::ExitDirection direction) noexcept {
+     DungeonSessionTestAccess::attempt_exit(session, direction);
+ }
+ 
++inline bool relay_defeated(
++    dungeon::DungeonSession& session,
++    std::uint8_t wave_index,
++    std::uint8_t target_index,
++    combat::Vec3 position) noexcept {
++    return DungeonSessionTestAccess::relay_defeated(
++        session, wave_index, target_index, position);
++}
++
++inline void set_current_room_seed(
++    dungeon::DungeonSession& session,
++    std::uint64_t seed) noexcept {
++    DungeonSessionTestAccess::set_current_room_seed(session, seed);
++}
++
++inline void set_current_room_depth(
++    dungeon::DungeonSession& session,
++    std::uint64_t depth) noexcept {
++    DungeonSessionTestAccess::set_current_room_depth(session, depth);
++}
++
++inline void set_phase(
++    dungeon::DungeonSession& session,
++    dungeon::RoomPhase phase) noexcept {
++    DungeonSessionTestAccess::set_phase(session, phase);
++}
++
++inline void set_player_position(
++    dungeon::DungeonSession& session,
++    combat::Vec3 position) noexcept {
++    DungeonSessionTestAccess::set_player_position(session, position);
++}
++
++inline void clear_ground_item(
++    dungeon::DungeonSession& session,
++    std::uint16_t ordinal) noexcept {
++    DungeonSessionTestAccess::clear_ground_item(session, ordinal);
++}
++
++inline void install_ground_item(
++    dungeon::DungeonSession& session,
++    std::uint16_t ordinal,
++    const items::ItemInstance& item,
++    combat::Vec3 position) noexcept {
++    DungeonSessionTestAccess::install_ground_item(
++        session, ordinal, item, position);
++}
++
++inline void set_pending_pickup_ordinal(
++    dungeon::DungeonSession& session,
++    std::uint16_t ordinal) noexcept {
++    DungeonSessionTestAccess::set_pending_pickup_ordinal(session, ordinal);
++}
++
++inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
++    const dungeon::DungeonSession& session) noexcept {
++    return DungeonSessionTestAccess::rolled_drop_bits(session);
++}
++
+ inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
+     const dungeon::RoomEncounterPlan& right) noexcept {
+     if (left.wave_count != right.wave_count
+             || left.total_budget != right.total_budget) return false;
+     for (std::size_t wave = 0; wave < left.wave_count; ++wave) {
+         const auto& a = left.waves[wave];
+         const auto& b = right.waves[wave];
+         if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) return false;
+         for (std::size_t spawn = 0; spawn < a.spawn_count; ++spawn) {
+             if (a.spawns[spawn].id != b.spawns[spawn].id

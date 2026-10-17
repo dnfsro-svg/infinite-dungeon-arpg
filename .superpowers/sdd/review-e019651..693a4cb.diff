@@ -1,0 +1,1945 @@
+# Review package: e019651..693a4cb
+
+## Commits
+693a4cb fix: validate public player hit builds
+6a0b1c9 fix: validate combat builds before evasion
+509abcd fix: migrate dungeon defense snapshot consumer
+4b7dec5 feat: apply equipment defenses in combat
+
+## Files changed
+ src/combat/combat_snapshot.cpp               |   4 +-
+ src/combat/combat_types.hpp                  |  22 +-
+ src/combat/combat_world.cpp                  | 377 +++++++++++++++++++++++----
+ src/combat/combat_world.hpp                  |  11 +-
+ src/combat/hit_resolution.cpp                |   6 +-
+ src/combat/monster_ai.cpp                    |   3 +-
+ src/combat/monster_ai_special.cpp            |   3 +-
+ src/combat/player_simulation.cpp             |  12 +-
+ tests/combat/CMakeLists.txt                  |   3 +-
+ tests/combat/combat_test_main.cpp            |   4 +-
+ tests/combat/combat_test_support.hpp         |  12 +-
+ tests/combat/player_build_tests.cpp          | 304 ++++++++++++++++++++-
+ tests/combat/player_defense_tests.cpp        | 375 ++++++++++++++++++++++++++
+ tests/dungeon/dungeon_passive_tree_tests.cpp |  10 +-
+ 14 files changed, 1069 insertions(+), 77 deletions(-)
+
+## Diff
+diff --git a/src/combat/combat_snapshot.cpp b/src/combat/combat_snapshot.cpp
+index 41e992d..2c3ed62 100644
+--- a/src/combat/combat_snapshot.cpp
++++ b/src/combat/combat_snapshot.cpp
+@@ -10,21 +10,23 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+     result.player = PlayerSnapshot{
+         player_.position, player_.velocity, player_.facing, player_.state,
+         attack_.id,
+         attack_.id == AttackId::none
+             ? AttackPhase::finished
+             : attack_phase_at(
+                   *find_attack_definition(attack_.id), attack_.elapsed_ticks,
+                   attack_.startup_ticks, attack_.recovery_ticks),
+         attack_.elapsed_ticks, player_.combo_stage, player_.hit_stop_ticks,
+         player_.air_attack_available, player_.hp, player_.max_hp,
+-        player_.barrier, player_.max_barrier, player_.resistance,
++        player_.barrier, player_.max_barrier, player_.damage_reduction,
++        player_.damage_reduction_cap, player_.armor, player_.evasion,
++        player_.armor_reduction_bp, player_.evasion_rate_bp,
+         player_.hurt_ticks, player_.invulnerability_ticks,
+     };
+     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
+         const MonsterRuntime& monster = monsters_.slots()[index];
+         result.monsters[index] = MonsterSnapshot{
+             monster.active, monster.generation, monster.id, monster.spawn,
+             monster.position, monster.velocity, monster.kind, monster.facing,
+             monster.reaction, monster.armor, monster.hp, monster.max_hp,
+             monster.break_value, monster.max_break, monster.shield,
+             monster.max_shield, monster.shield_ticks, monster.max_shield_ticks,
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index 8019023..6914b85 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -1,15 +1,16 @@
+ #pragma once
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
++#include <optional>
+ 
+ #include "modifiers/damage_types.hpp"
+ #include "modifiers/player_modifier_values.hpp"
+ 
+ namespace arpg::test {
+ struct CombatWorldTestAccess;
+ }
+ 
+ namespace arpg::combat {
+ 
+@@ -61,30 +62,37 @@ struct DamagePacket final {
+     friend bool operator==(
+         const DamagePacket& left, const DamagePacket& right) noexcept {
+         return left.amount == right.amount;
+     }
+     friend bool operator!=(
+         const DamagePacket& left, const DamagePacket& right) noexcept {
+         return !(left == right);
+     }
+ };
+ 
++enum class DamageDelivery : std::uint8_t {
++    direct,
++    ground_or_environment,
++};
++
+ struct PlayerCombatBuild final {
+     modifiers::PlayerModifierValues values{};
++    std::int64_t weapon_physical{};
++    std::int32_t local_attack_speed_bp{};
+ };
+ 
+-[[nodiscard]] DamagePacket build_player_hit_packet(
++[[nodiscard]] std::optional<DamagePacket> build_player_hit_packet(
+     int base_physical, const PlayerCombatBuild& build) noexcept;
+-[[nodiscard]] int resolve_player_damage(
++[[nodiscard]] std::optional<int> resolve_player_damage(
+     DamagePacket packet, const PlayerCombatBuild& build) noexcept;
+ [[nodiscard]] std::uint16_t scaled_phase_ticks(
+-    std::uint16_t base, modifiers::FixedValue attack_speed) noexcept;
++    std::uint16_t base, std::int64_t attack_speed) noexcept;
+ 
+ enum class ImpactKind : std::uint8_t {
+     light_hitstun,
+     medium_hitstun,
+     knockdown,
+     launch,
+ };
+ 
+ enum class MonsterId : std::uint8_t {
+     fire_bomber,
+@@ -288,38 +296,44 @@ struct CombatLabConfig final {
+     Facing initial_facing{Facing::right};
+     bool respawn_defeated_dummies{true};
+ };
+ 
+ struct CombatEncounterConfig final {
+     Vec3 player_spawn{};
+     Facing initial_facing{Facing::right};
+     EncounterWave wave{};
+     bool reset_player_health{true};
+     PlayerCombatBuild player_build{};
++    std::uint64_t evasion_seed{};
+ };
+ 
+ struct PlayerSnapshot final {
+     Vec3 position{};
+     Vec3 velocity{};
+     Facing facing{Facing::right};
+     PlayerState state{PlayerState::idle};
+     AttackId active_attack{AttackId::none};
+     AttackPhase attack_phase{AttackPhase::finished};
+     std::uint16_t attack_elapsed_ticks{};
+     std::uint8_t combo_stage{};
+     std::uint16_t hit_stop_ticks{};
+     bool air_attack_available{true};
+     int hp{};
+     int max_hp{};
+     int barrier{};
+     int max_barrier{};
+-    std::array<int, modifiers::kElementCount> resistance{};
++    std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
++    std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
++    std::int64_t armor{};
++    std::int64_t evasion{};
++    std::int32_t armor_reduction_bp{};
++    std::int32_t evasion_rate_bp{};
+     std::uint16_t hurt_ticks{};
+     std::uint16_t invulnerability_ticks{};
+ };
+ 
+ struct MonsterSnapshot final {
+     bool active{};
+     std::uint16_t generation{};
+     MonsterId id{MonsterId::chaos_chaser};
+     Vec3 spawn{};
+     Vec3 position{};
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 4ef8c1b..5e1eaba 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -6,105 +6,343 @@
+ 
+ #include <array>
+ #include <algorithm>
+ #include <cmath>
+ #include <limits>
+ 
+ namespace arpg::combat {
+ 
+ namespace {
+ 
+-constexpr int fixed_floor(modifiers::FixedValue value) noexcept {
+-    return static_cast<int>(value / modifiers::kFixedOne);
++constexpr std::int64_t fixed_floor(std::int64_t value) noexcept {
++    const std::int64_t quotient = value / modifiers::kFixedOne;
++    return quotient - (value < 0 && value % modifiers::kFixedOne != 0 ? 1 : 0);
+ }
+ 
+-int fixed_scale(int value, modifiers::FixedValue factor) noexcept {
+-    const auto product = static_cast<std::int64_t>(value) * factor;
+-    return static_cast<int>(product / modifiers::kFixedOne);
++bool checked_add(
++    std::int64_t left, std::int64_t right, std::int64_t& result) noexcept {
++    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
++    if ((right > 0 && left > maximum - right)
++        || (right < 0 && left < minimum - right)) {
++        return false;
++    }
++    result = left + right;
++    return true;
+ }
+ 
+-}  // namespace
++bool checked_multiply(
++    std::int64_t left, std::int64_t right, std::int64_t& result) noexcept {
++    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
++    if (left == 0 || right == 0) {
++        result = 0;
++        return true;
++    }
++    if ((left == -1 && right == minimum)
++        || (right == -1 && left == minimum)) {
++        return false;
++    }
++    if (left > 0) {
++        if ((right > 0 && left > maximum / right)
++            || (right < 0 && right < minimum / left)) return false;
++    } else if ((right > 0 && left < minimum / right)
++               || (right < 0 && left < maximum / right)) {
++        return false;
++    }
++    result = left * right;
++    return true;
++}
++
++std::optional<std::int64_t> fixed_scale_floor(
++    std::int64_t value, std::int64_t factor) noexcept {
++    std::int64_t product{};
++    if (!checked_multiply(value, factor, product)) return std::nullopt;
++    return fixed_floor(product);
++}
+ 
+-DamagePacket build_player_hit_packet(
++bool validate_player_build_fields(const PlayerCombatBuild& build) noexcept {
++    const auto& values = build.values;
++    if (!values.valid || build.weapon_physical < 0
++        || build.local_attack_speed_bp < 0 || values.armor < 0
++        || values.evasion < 0 || values.melee_damage < 0
++        || values.max_health < 0 || values.max_health_more < 0
++        || values.max_barrier < 0 || values.damage_taken < 0
++        || values.movement_speed < 0 || values.attack_speed < 0
++        || values.impulse_scale < 0 || values.jump_speed < 0
++        || values.air_control < 0) {
++        return false;
++    }
++    for (const auto factor : values.damage_increased) {
++        if (factor < 0) return false;
++    }
++    for (const auto bonus : values.damage_reduction_cap_bonus) {
++        if (bonus < 0) return false;
++    }
++    return true;
++}
++
++bool valid_player_build(const PlayerCombatBuild& build) noexcept;
++
++std::optional<DamagePacket> build_player_hit_packet_checked_unvalidated(
+     int base_physical, const PlayerCombatBuild& build) noexcept {
++    if (base_physical < 0) return std::nullopt;
++
+     DamagePacket packet{};
+     const auto& values = build.values;
++    std::int64_t physical{};
++    if (!checked_add(base_physical, build.weapon_physical, physical)
++        || !checked_add(physical,
++                        fixed_floor(values.flat_damage[
++                            modifiers::damage_index(
++                                modifiers::DamageType::physical)]),
++                        physical)) {
++        return std::nullopt;
++    }
++    auto scaled = fixed_scale_floor(
++        physical, values.damage_increased[
++                      modifiers::damage_index(modifiers::DamageType::physical)]);
++    if (!scaled.has_value()) return std::nullopt;
++    scaled = fixed_scale_floor(*scaled, values.melee_damage);
++    if (!scaled.has_value()) return std::nullopt;
++    if (*scaled < (std::numeric_limits<int>::min)()
++        || *scaled > (std::numeric_limits<int>::max)()) {
++        return std::nullopt;
++    }
+     packet.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
+-        fixed_scale(std::max(0, base_physical), values.melee_damage);
++        static_cast<int>(*scaled);
+     for (std::size_t index = 1; index < modifiers::kDamageTypeCount; ++index) {
+-        const int flat = fixed_floor(values.flat_damage[index]);
+-        const int increased = fixed_scale(flat, values.damage_increased[index]);
+-        packet.amount[index] = fixed_scale(increased, values.melee_damage);
++        scaled = fixed_scale_floor(
++            fixed_floor(values.flat_damage[index]),
++            values.damage_increased[index]);
++        if (!scaled.has_value()) return std::nullopt;
++        scaled = fixed_scale_floor(*scaled, values.melee_damage);
++        if (!scaled.has_value()
++            || *scaled < (std::numeric_limits<int>::min)()
++            || *scaled > (std::numeric_limits<int>::max)()) {
++            return std::nullopt;
++        }
++        packet.amount[index] = static_cast<int>(*scaled);
+     }
+     return packet;
+ }
+ 
+-int resolve_player_damage(
++}  // namespace
++
++std::optional<DamagePacket> build_player_hit_packet(
++    int base_physical, const PlayerCombatBuild& build) noexcept {
++    if (!valid_player_build(build)) return std::nullopt;
++    return build_player_hit_packet_checked_unvalidated(base_physical, build);
++}
++
++std::optional<int> resolve_player_damage(
+     DamagePacket packet, const PlayerCombatBuild& build) noexcept {
++    if (!valid_player_build(build)) return std::nullopt;
++
++    const auto checked_add = [](std::int64_t left, std::int64_t right,
++                                std::int64_t& result) noexcept {
++        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++        if (right > 0 && left > maximum - right) return false;
++        result = left + right;
++        return true;
++    };
++    const auto checked_multiply = [](std::int64_t left, std::int64_t right,
++                                     std::int64_t& result) noexcept {
++        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++        if (left != 0 && right > maximum / left) return false;
++        result = left * right;
++        return true;
++    };
++    const auto reduced_component = [&checked_multiply](
++        int raw, std::int32_t reduction) noexcept -> std::optional<std::int64_t> {
++        if (raw <= 0) return std::int64_t{0};
++        const std::int64_t multiplier = modifiers::kFixedOne - reduction;
++        std::int64_t product{};
++        if (!checked_multiply(raw, multiplier, product)) return std::nullopt;
++        return product / modifiers::kFixedOne
++            + (product % modifiers::kFixedOne != 0 ? 1 : 0);
++    };
++
+     std::int64_t total = 0;
+-    total += std::max(0, packet.amount[
+-        modifiers::damage_index(modifiers::DamageType::physical)]);
++    const auto physical = reduced_component(
++        packet.amount[modifiers::damage_index(modifiers::DamageType::physical)],
++        modifiers::rating_to_basis_points(build.values.armor));
++    if (!physical.has_value() || !checked_add(total, *physical, total)) {
++        return std::nullopt;
++    }
+     for (std::size_t element = 0; element < modifiers::kElementCount; ++element) {
+-        const auto resistance = std::clamp(
+-            static_cast<modifiers::FixedValue>(
+-                build.values.damage_reduction[element]),
+-            modifiers::FixedValue{-6000},
+-            modifiers::FixedValue{7500});
+-        const auto multiplier = modifiers::kFixedOne - resistance;
+-        const int raw = std::max(0, packet.amount[element + 1U]);
+-        total += static_cast<std::int64_t>(raw) * multiplier
+-            / modifiers::kFixedOne;
++        if (build.values.damage_reduction_cap_bonus[element] < 0) {
++            return std::nullopt;
++        }
++        const std::int64_t uncapped = std::int64_t{7500}
++            + build.values.damage_reduction_cap_bonus[element];
++        const auto cap = static_cast<std::int32_t>(
++            std::min<std::int64_t>(9500, uncapped));
++        const auto reduction = std::clamp(
++            build.values.damage_reduction[element], std::int32_t{-6000}, cap);
++        const auto component = reduced_component(
++            packet.amount[element + 1U], reduction);
++        if (!component.has_value()
++            || !checked_add(total, *component, total)) {
++            return std::nullopt;
++        }
+     }
+-    total = total * std::max<modifiers::FixedValue>(
+-        0, build.values.damage_taken) / modifiers::kFixedOne;
+-    if (total <= 0) return 0;
+-    if (total > std::numeric_limits<int>::max()) {
+-        return std::numeric_limits<int>::max();
++    if (build.values.damage_taken < 0) return std::nullopt;
++    std::int64_t scaled{};
++    if (!checked_multiply(total, build.values.damage_taken, scaled)) {
++        return std::nullopt;
+     }
+-    return static_cast<int>(total);
++    scaled /= modifiers::kFixedOne;
++    if (scaled > (std::numeric_limits<int>::max)()) return std::nullopt;
++    return static_cast<int>(scaled);
+ }
+ 
+ std::uint16_t scaled_phase_ticks(
+-    std::uint16_t base, modifiers::FixedValue attack_speed) noexcept {
++    std::uint16_t base, std::int64_t attack_speed) noexcept {
+     if (base == 0U) return 1U;
+-    const auto speed = std::max<modifiers::FixedValue>(
+-        1, attack_speed);
++    const auto speed = std::max<std::int64_t>(1, attack_speed);
+     const auto scaled = static_cast<std::int64_t>(base)
+         * modifiers::kFixedOne / speed;
+     return static_cast<std::uint16_t>(std::max<std::int64_t>(1, scaled));
+ }
+ 
+ namespace {
+ 
+ constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
+ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
+ constexpr int kStage4PlayerMaxHp = 1000;
+ constexpr std::uint16_t kPlayerHurtTicks = 12;
+ constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
+ 
++struct DerivedPlayerBuild final {
++    int max_hp{};
++    int max_barrier{};
++    std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
++    std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
++    std::int64_t armor{};
++    std::int64_t evasion{};
++    std::int32_t armor_reduction_bp{};
++    std::int32_t evasion_rate_bp{};
++};
++
++bool checked_nonnegative_multiply(
++    std::int64_t left, std::int64_t right, std::int64_t& result) noexcept {
++    if (left < 0 || right < 0) return false;
++    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++    if (left != 0 && right > maximum / left) return false;
++    result = left * right;
++    return true;
++}
++
++bool derive_player_build(
++    const PlayerCombatBuild& build, DerivedPlayerBuild& result) noexcept {
++    const auto& values = build.values;
++    if (!validate_player_build_fields(build)) return false;
++
++    const std::int64_t health_flat = values.max_health / modifiers::kFixedOne;
++    if (health_flat > (std::numeric_limits<std::int64_t>::max)()
++                          - kStage4PlayerMaxHp) {
++        return false;
++    }
++    const std::int64_t health_base = kStage4PlayerMaxHp + health_flat;
++    std::int64_t health_product{};
++    if (!checked_nonnegative_multiply(
++            health_base, values.max_health_more, health_product)) {
++        return false;
++    }
++    const std::int64_t scaled_health =
++        health_product / modifiers::kFixedOne;
++    if (scaled_health > (std::numeric_limits<int>::max)()) return false;
++    result.max_hp = static_cast<int>(std::max<std::int64_t>(1, scaled_health));
++
++    const std::int64_t barrier = values.max_barrier / modifiers::kFixedOne;
++    if (barrier > (std::numeric_limits<int>::max)()) return false;
++    result.max_barrier = static_cast<int>(barrier);
++
++    const std::int64_t local_multiplier = modifiers::kFixedOne
++        + static_cast<std::int64_t>(build.local_attack_speed_bp);
++    std::int64_t attack_speed_product{};
++    if (!checked_nonnegative_multiply(
++            values.attack_speed, local_multiplier, attack_speed_product)) {
++        return false;
++    }
++    const std::int64_t effective_attack_speed = std::max<std::int64_t>(
++        1, attack_speed_product / modifiers::kFixedOne);
++
++    constexpr std::array<AttackId, 5> attack_ids{{
++        AttackId::j1, AttackId::j2, AttackId::j3,
++        AttackId::launcher, AttackId::air_j}};
++    for (const AttackId id : attack_ids) {
++        const AttackDefinition* definition = find_attack_definition(id);
++        if (definition == nullptr) return false;
++        const auto phase_ticks_fit = [effective_attack_speed](
++            std::uint16_t base) noexcept {
++            const std::int64_t scaled = static_cast<std::int64_t>(base)
++                * modifiers::kFixedOne / effective_attack_speed;
++            return scaled <= (std::numeric_limits<std::uint16_t>::max)();
++        };
++        if (!phase_ticks_fit(definition->startup_ticks)
++            || !phase_ticks_fit(definition->recovery_ticks)) {
++            return false;
++        }
++        const auto packet = build_player_hit_packet_checked_unvalidated(
++            definition->damage, build);
++        if (!packet.has_value()) return false;
++        std::int64_t packet_total = 0;
++        for (const int amount : packet->amount) {
++            if (amount <= 0) continue;
++            if (!checked_add(packet_total, amount, packet_total)) return false;
++        }
++        if (packet_total > (std::numeric_limits<int>::max)()) return false;
++    }
++
++    result.armor = values.armor;
++    result.evasion = values.evasion;
++    result.armor_reduction_bp = modifiers::rating_to_basis_points(values.armor);
++    result.evasion_rate_bp = modifiers::rating_to_basis_points(values.evasion);
++    for (std::size_t index = 0; index < modifiers::kElementCount; ++index) {
++        const std::int64_t cap = std::min<std::int64_t>(
++            9500, std::int64_t{7500} + values.damage_reduction_cap_bonus[index]);
++        result.damage_reduction_cap[index] = static_cast<std::int32_t>(cap);
++        result.damage_reduction[index] = std::clamp(
++            values.damage_reduction[index], std::int32_t{-6000},
++            result.damage_reduction_cap[index]);
++    }
++    return true;
++}
++
++bool valid_player_build(const PlayerCombatBuild& build) noexcept {
++    DerivedPlayerBuild ignored{};
++    return derive_player_build(build, ignored);
++}
++
+ void saturating_increment(std::uint32_t& counter) noexcept {
+     if (counter != (std::numeric_limits<std::uint32_t>::max)()) {
+         ++counter;
+     }
+ }
+ 
+ }  // namespace
+ 
+ CombatWorld::CombatWorld(CombatLabConfig config) noexcept
+     : legacy_config_(config), legacy_mode_(true) {
+     encounter_config_.player_spawn = config.player_spawn;
+     encounter_config_.initial_facing = config.initial_facing;
+     initialize_runtime();
+ }
+ 
+ CombatWorld::CombatWorld(CombatEncounterConfig config) noexcept
+     : encounter_config_(config), legacy_mode_(false) {
++    DerivedPlayerBuild derived{};
++    if (!derive_player_build(encounter_config_.player_build, derived)) {
++        encounter_config_.player_build = PlayerCombatBuild{};
++    }
+     initialize_runtime();
+ }
+ 
+ bool CombatWorld::queue_action(Action action) noexcept {
+     return input_buffer_.push(action);
+ }
+ 
+ void CombatWorld::tick(MovementInput movement) noexcept {
+     const bool player_frozen = player_.hit_stop_ticks != 0;
+     const bool player_hurt = player_.hurt_ticks != 0;
+@@ -154,21 +392,39 @@ void CombatWorld::tick(MovementInput movement) noexcept {
+ void CombatWorld::reset() noexcept {
+     initialize_runtime();
+ 
+     CombatEvent reset_event{};
+     reset_event.kind = CombatEventKind::reset;
+     reset_event.tick = 0;
+     reset_event.position = player_.position;
+     emit_event(reset_event);
+ }
+ 
++void CombatWorld::apply_player_build(PlayerCombatBuild build) noexcept {
++    DerivedPlayerBuild derived{};
++    if (!derive_player_build(build, derived)) return;
++
++    encounter_config_.player_build = build;
++    player_.max_hp = derived.max_hp;
++    player_.max_barrier = derived.max_barrier;
++    player_.damage_reduction = derived.damage_reduction;
++    player_.damage_reduction_cap = derived.damage_reduction_cap;
++    player_.armor = derived.armor;
++    player_.evasion = derived.evasion;
++    player_.armor_reduction_bp = derived.armor_reduction_bp;
++    player_.evasion_rate_bp = derived.evasion_rate_bp;
++    player_.hp = std::clamp(player_.hp, 0, player_.max_hp);
++    player_.barrier = std::clamp(player_.barrier, 0, player_.max_barrier);
++}
++
+ void CombatWorld::initialize_runtime() noexcept {
++    evasion_rng_ = core::DeterministicRng{encounter_config_.evasion_seed};
+     initialize_player();
+     monsters_.clear();
+     for (auto& owner : effect_owners_) owner = {};
+     projectiles_.clear();
+     hazards_.clear();
+     if (legacy_mode_) {
+         initialize_legacy_monsters();
+     } else {
+         static_cast<void>(load_wave(
+             encounter_config_.wave, encounter_config_.reset_player_health));
+@@ -184,32 +440,34 @@ void CombatWorld::initialize_runtime() noexcept {
+     projectile_saturation_count_ = 0;
+     projectile_invalid_owner_count_ = 0;
+     hazard_saturation_count_ = 0;
+     hazard_invalid_owner_count_ = 0;
+ }
+ 
+ void CombatWorld::initialize_player() noexcept {
+     player_ = PlayerRuntime{};
+     player_.position = encounter_config_.player_spawn;
+     player_.facing = encounter_config_.initial_facing;
+-    const auto& values = encounter_config_.player_build.values;
+-    player_.max_hp = std::max(
+-        1, fixed_scale(kStage4PlayerMaxHp + fixed_floor(values.max_health),
+-                       std::max<modifiers::FixedValue>(0,
+-                                                        values.max_health_more)));
+-    player_.max_barrier = std::max(0, fixed_floor(values.max_barrier));
+-    for (std::size_t index = 0; index < modifiers::kElementCount; ++index) {
+-        player_.resistance[index] = static_cast<int>(std::clamp(
+-            static_cast<modifiers::FixedValue>(values.damage_reduction[index]),
+-            modifiers::FixedValue{-6000},
+-            modifiers::FixedValue{7500}));
++    DerivedPlayerBuild derived{};
++    if (!derive_player_build(encounter_config_.player_build, derived)) {
++        encounter_config_.player_build = PlayerCombatBuild{};
++        static_cast<void>(derive_player_build(
++            encounter_config_.player_build, derived));
+     }
++    player_.max_hp = derived.max_hp;
++    player_.max_barrier = derived.max_barrier;
++    player_.damage_reduction = derived.damage_reduction;
++    player_.damage_reduction_cap = derived.damage_reduction_cap;
++    player_.armor = derived.armor;
++    player_.evasion = derived.evasion;
++    player_.armor_reduction_bp = derived.armor_reduction_bp;
++    player_.evasion_rate_bp = derived.evasion_rate_bp;
+     player_.barrier = player_.max_barrier;
+     player_.hp = player_.max_hp;
+ }
+ 
+ void CombatWorld::initialize_legacy_monsters() noexcept {
+     for (std::size_t index = 0; index < kDummyCount; ++index) {
+         const auto handle = monsters_.spawn(
+             index == 0U ? MonsterId::fire_bomber
+                         : index == 1U ? MonsterId::fire_charger
+                                       : MonsterId::water_bulwark,
+@@ -308,27 +566,44 @@ bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
+     }
+     return true;
+ }
+ 
+ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+ void CombatWorld::apply_player_damage(
+     DamagePacket packet,
++    DamageDelivery delivery,
+     Vec3 source_position,
+     FeedbackLevel feedback) noexcept {
+-    const int damage = resolve_player_damage(packet,
+-                                              encounter_config_.player_build);
+-    if (damage <= 0 || player_.invulnerability_ticks != 0) {
++    const bool has_positive_component = std::any_of(
++        packet.amount.begin(), packet.amount.end(), [](int value) noexcept {
++            return value > 0;
++        });
++    const auto resolved = resolve_player_damage(
++        packet, encounter_config_.player_build);
++    if (!resolved.has_value()) return;
++
++    if (delivery == DamageDelivery::direct && has_positive_component
++        && player_.evasion_rate_bp > 0) {
++        const auto roll = evasion_rng_.next_bounded(modifiers::kFixedOne);
++        if (roll.has_value()
++            && *roll < static_cast<std::uint64_t>(player_.evasion_rate_bp)) {
++            return;
++        }
++    }
++
++    if (*resolved <= 0 || player_.invulnerability_ticks != 0) {
+         return;
+     }
++    const int damage = *resolved;
+ 
+     const int absorbed = std::min(player_.barrier, damage);
+     player_.barrier -= absorbed;
+     const int hp_damage = damage - absorbed;
+     player_.hp = hp_damage >= player_.hp ? 1 : player_.hp - hp_damage;
+     player_.hurt_ticks = kPlayerHurtTicks;
+     player_.invulnerability_ticks = kPlayerInvulnerabilityTicks;
+     player_.velocity.x = 0.0F;
+     player_.velocity.y = 0.0F;
+ 
+@@ -348,21 +623,22 @@ void CombatWorld::apply_player_damage(
+     hurt_started.feedback = feedback;
+     hurt_started.position = source_position;
+     hurt_started.value = damage;
+     emit_event(hurt_started);
+ }
+ 
+ void CombatWorld::apply_player_damage(
+     int damage,
+     Vec3 source_position,
+     FeedbackLevel feedback) noexcept {
+-    apply_player_damage(DamagePacket{damage}, source_position, feedback);
++    apply_player_damage(DamagePacket{damage}, DamageDelivery::direct,
++                        source_position, feedback);
+ }
+ 
+ bool CombatWorld::spawn_projectile(
+     MonsterHandle owner,
+     Vec3 position,
+     Vec3 velocity,
+     std::uint16_t lifetime_ticks,
+     DamagePacket damage,
+     float radius) noexcept {
+     if (monsters_.get(owner) == nullptr) {
+@@ -488,21 +764,22 @@ void CombatWorld::simulate_projectiles() noexcept {
+         const float rz = player_radius_z + projectile.radius;
+         const bool hit_player = std::fabs(dx) <= rx && std::fabs(dy) <= ry
+                               && std::fabs(dz) <= rz;
+         const bool outside = projectile.position.x < room_bounds::min_x
+                           || projectile.position.x > room_bounds::max_x
+                           || projectile.position.y < room_bounds::min_y
+                           || projectile.position.y > room_bounds::max_y;
+         const bool expired = projectile.lifetime_ticks == 0;
+         if (hit_player) {
+             apply_player_damage(
+-                projectile.damage, projectile.position,
++                projectile.damage, DamageDelivery::direct,
++                projectile.position,
+                 FeedbackLevel::medium);
+         }
+         if (hit_player || outside || expired) {
+             static_cast<void>(projectiles_.destroy(ProjectileHandle{
+                 static_cast<std::uint16_t>(index), projectile.generation}));
+         }
+     }
+ }
+ 
+ void CombatWorld::simulate_hazards() noexcept {
+@@ -536,21 +813,23 @@ void CombatWorld::simulate_hazards() noexcept {
+                     hazard.player_latched = false;
+                 }
+             }
+             const float dx = hazard.center.x - player_.position.x;
+             const float dy = hazard.center.y - player_.position.y;
+             const float dz = hazard.center.z - player_.position.z;
+             const bool intersects = std::fabs(dx) <= hazard.radius + kPlayerRadiusX
+                 && std::fabs(dy) <= hazard.radius + kPlayerRadiusY
+                 && std::fabs(dz) <= hazard.radius + kPlayerRadiusZ;
+             if (intersects && !hazard.player_latched) {
+-                apply_player_damage(hazard.damage, hazard.center,
++                apply_player_damage(hazard.damage,
++                                    DamageDelivery::ground_or_environment,
++                                    hazard.center,
+                                     FeedbackLevel::heavy);
+                 hazard.player_latched = true;
+                 hazard.damage_cooldown_ticks = hazard.damage_interval_ticks;
+             }
+             if (hazard.active_ticks != 0U) {
+                 --hazard.active_ticks;
+             }
+         }
+         if (hazard.lifetime_ticks == 0U || hazard.active_ticks == 0U) {
+             static_cast<void>(hazards_.destroy(HazardHandle{
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index cc45be6..5c76127 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -1,15 +1,16 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
+ #include "combat/input_buffer.hpp"
+ #include "combat/monster_pool.hpp"
++#include "core/deterministic_rng.hpp"
+ #include "modifiers/effect_set.hpp"
+ #include "core/bounded_queue.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::test {
+ struct DungeonSessionTestAccess;
+@@ -18,20 +19,21 @@ struct DungeonSessionTestAccess;
+ namespace arpg::combat {
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     void tick(MovementInput movement) noexcept;
+     void reset() noexcept;
++    void apply_player_build(PlayerCombatBuild build) noexcept;
+     [[nodiscard]] bool load_wave(
+         const EncounterWave& wave,
+         bool reset_player_health = true) noexcept;
+     [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_monster_count() const noexcept;
+     [[nodiscard]] std::size_t active_projectile_count() const noexcept;
+     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+ 
+ private:
+@@ -40,21 +42,26 @@ private:
+         Vec3 velocity{};
+         Facing facing{Facing::right};
+         PlayerState state{PlayerState::idle};
+         std::uint8_t combo_stage{};
+         std::uint16_t hit_stop_ticks{};
+         bool air_attack_available{true};
+         int hp{};
+         int max_hp{};
+         int barrier{};
+         int max_barrier{};
+-        std::array<int, modifiers::kElementCount> resistance{};
++        std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
++        std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
++        std::int64_t armor{};
++        std::int64_t evasion{};
++        std::int32_t armor_reduction_bp{};
++        std::int32_t evasion_rate_bp{};
+         std::uint16_t hurt_ticks{};
+         std::uint16_t invulnerability_ticks{};
+     };
+ 
+     struct AttackRuntime final {
+         AttackId id{AttackId::none};
+         std::uint16_t elapsed_ticks{};
+         std::uint16_t startup_ticks{};
+         std::uint16_t recovery_ticks{};
+         bool connected{};
+@@ -69,20 +76,21 @@ private:
+     void simulate_hazards() noexcept;
+     void resolve_monster_contact_attack(std::size_t slot) noexcept;
+     void apply_dummy_impact(
+         std::size_t index,
+         const AttackDefinition& definition) noexcept;
+     void respawn_dummy(std::size_t index) noexcept;
+     void apply_attack_assist(const AttackDefinition& definition) noexcept;
+     void resolve_attack_hits() noexcept;
+     void apply_player_damage(
+         DamagePacket damage,
++        DamageDelivery delivery,
+         Vec3 source_position,
+         FeedbackLevel feedback) noexcept;
+     void apply_player_damage(
+         int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
+     [[nodiscard]] bool spawn_projectile(
+         MonsterHandle owner,
+         Vec3 position,
+         Vec3 velocity,
+         std::uint16_t lifetime_ticks,
+         DamagePacket damage,
+@@ -156,13 +164,14 @@ private:
+         bool occupied{};
+     };
+     std::array<EffectOwner, 8> effect_owners_{};
+     core::BoundedQueue<CombatEvent, 64> events_{};
+     std::uint64_t tick_{};
+     std::uint32_t event_overflow_count_{};
+     std::uint32_t projectile_saturation_count_{};
+     std::uint32_t projectile_invalid_owner_count_{};
+     std::uint32_t hazard_saturation_count_{};
+     std::uint32_t hazard_invalid_owner_count_{};
++    core::DeterministicRng evasion_rng_{0};
+ };
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 4381812..c5e1380 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -113,24 +113,26 @@ void CombatWorld::resolve_attack_hits() noexcept {
+     }
+ 
+     if (hit_count == 0) {
+         return;
+     }
+ 
+     const std::uint16_t hit_stop = hit_stop_for(definition->feedback);
+     for (std::size_t collected = 0; collected < hit_count; ++collected) {
+         const std::size_t index = hit_indices[collected];
+         MonsterRuntime& dummy = monsters_.slots_[index];
++        const auto resolved_packet = build_player_hit_packet(
++            definition->damage, encounter_config_.player_build);
++        if (!resolved_packet.has_value()) continue;
++        const DamagePacket& packet = *resolved_packet;
+         attack_.hit_targets[index] = true;
+         attack_.connected = true;
+-        const DamagePacket packet = build_player_hit_packet(
+-            definition->damage, encounter_config_.player_build);
+         int hp_damage = 0;
+         for (const int value : packet.amount) hp_damage += std::max(0, value);
+         const int packet_total = hp_damage;
+         if (dummy.shield != 0 && hp_damage > 0) {
+             const int absorbed = std::min(dummy.shield, hp_damage);
+             dummy.shield -= absorbed;
+             hp_damage -= absorbed;
+             if (dummy.shield == 0) {
+                 dummy.shield_ticks = 0;
+             }
+diff --git a/src/combat/monster_ai.cpp b/src/combat/monster_ai.cpp
+index 9e47e8f..43dfe31 100644
+--- a/src/combat/monster_ai.cpp
++++ b/src/combat/monster_ai.cpp
+@@ -81,21 +81,22 @@ void CombatWorld::resolve_monster_contact_attack(
+     const Aabb player_hurtbox{
+         {player_.position.x - kPlayerHalfWidth,
+          player_.position.y - kPlayerHalfDepth,
+          player_.position.z - kPlayerHalfHeight},
+         {player_.position.x + kPlayerHalfWidth,
+          player_.position.y + kPlayerHalfDepth,
+          player_.position.z + kPlayerHalfHeight},
+     };
+     if (overlaps_inclusive(contact, player_hurtbox)) {
+         apply_player_damage(
+-            definition->contact_damage, monster.position,
++            definition->contact_damage, DamageDelivery::direct,
++            monster.position,
+             definition->feedback);
+     }
+ }
+ 
+ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
+     if (slot >= monsters_.slots_.size()) {
+         return;
+     }
+     MonsterRuntime& monster = monsters_.slots_[slot];
+     if (!monster.active) {
+diff --git a/src/combat/monster_ai_special.cpp b/src/combat/monster_ai_special.cpp
+index 3164450..6595f55 100644
+--- a/src/combat/monster_ai_special.cpp
++++ b/src/combat/monster_ai_special.cpp
+@@ -67,21 +67,22 @@ void CombatWorld::simulate_special_ai(
+             monster.ai_ticks = std::max<std::uint16_t>(1U, definition.active_ticks);
+             ++monster.attack_serial;
+             monster.contact_attack_resolved = false;
+         }
+         return;
+     case MonsterAiPhase::active:
+         monster.velocity = Vec3{};
+         if (is_bomber) {
+             if (!monster.contact_attack_resolved) {
+                 if (target_distance(monster.position, player_.position) <= 1.60F) {
+-                    apply_player_damage(definition.contact_damage, monster.position,
++                    apply_player_damage(definition.contact_damage,
++                                        DamageDelivery::direct, monster.position,
+                                         definition.feedback);
+                 }
+                 monster.contact_attack_resolved = true;
+                 static_cast<void>(destroy_monster(MonsterHandle{
+                     static_cast<std::uint16_t>(slot), monster.generation}));
+             }
+             return;
+         }
+         if (is_charger || is_dasher) {
+             monster.velocity = monster.attack_vector;
+diff --git a/src/combat/player_simulation.cpp b/src/combat/player_simulation.cpp
+index 6a02140..bf5b7b2 100644
+--- a/src/combat/player_simulation.cpp
++++ b/src/combat/player_simulation.cpp
+@@ -85,26 +85,30 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
+     };
+ 
+     const auto start_attack = [this](AttackId id) noexcept {
+         const AttackDefinition* definition = find_attack_definition(id);
+         if (definition == nullptr) {
+             return;
+         }
+ 
+         attack_.id = id;
+         attack_.elapsed_ticks = 0;
++        const auto& build = encounter_config_.player_build;
++        const std::int64_t local_multiplier = modifiers::kFixedOne
++            + static_cast<std::int64_t>(build.local_attack_speed_bp);
++        const std::int64_t attack_speed =
++            build.values.attack_speed * local_multiplier
++            / modifiers::kFixedOne;
+         attack_.startup_ticks = scaled_phase_ticks(
+-            definition->startup_ticks,
+-            encounter_config_.player_build.values.attack_speed);
++            definition->startup_ticks, attack_speed);
+         attack_.recovery_ticks = scaled_phase_ticks(
+-            definition->recovery_ticks,
+-            encounter_config_.player_build.values.attack_speed);
++            definition->recovery_ticks, attack_speed);
+         attack_.connected = false;
+         attack_.impact_event_emitted = false;
+         attack_.hit_targets.fill(false);
+ 
+         player_.combo_stage = combo_stage_for(id);
+         player_.velocity.x = 0.0F;
+         player_.velocity.y = 0.0F;
+         const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
+         player_.position.x = std::clamp(
+             player_.position.x + definition->lunge_distance * facing,
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index 4c78ca2..9ad3da4 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -8,20 +8,21 @@ add_executable(arpg_combat_tests
+     dummy_reaction_tests.cpp
+     hit_resolution_tests.cpp
+     input_buffer_tests.cpp
+     monster_catalog_tests.cpp
+     monster_melee_tests.cpp
+     monster_ranged_tests.cpp
+     monster_special_tests.cpp
+     monster_pool_tests.cpp
+     movement_jump_tests.cpp
+     player_health_tests.cpp
+-    player_build_tests.cpp)
++    player_build_tests.cpp
++    player_defense_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+ add_test(NAME combat.units COMMAND arpg_combat_tests)
+ set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index cb159bd..a741740 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -8,32 +8,34 @@ arpg::test::TestSuite dummy_reaction_suite() noexcept;
+ arpg::test::TestSuite input_buffer_suite() noexcept;
+ arpg::test::TestSuite movement_jump_suite() noexcept;
+ arpg::test::TestSuite hit_resolution_suite() noexcept;
+ arpg::test::TestSuite monster_catalog_suite() noexcept;
+ arpg::test::TestSuite monster_melee_suite() noexcept;
+ arpg::test::TestSuite monster_ranged_suite() noexcept;
+ arpg::test::TestSuite monster_special_suite() noexcept;
+ arpg::test::TestSuite monster_pool_suite() noexcept;
+ arpg::test::TestSuite player_health_suite() noexcept;
+ arpg::test::TestSuite player_build_suite() noexcept;
++arpg::test::TestSuite player_defense_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+         attack_state_suite(),
+         break_stress_suite(),
+         combat_config_suite(),
+         dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
+         monster_catalog_suite(),
+         monster_melee_suite(),
+         monster_ranged_suite(),
+         monster_special_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+         player_build_suite(),
++        player_defense_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 76, "stage 7 task 3");
++    return arpg::test::run_suites(suites, 99, "stage 8 task 4");
+ }
+diff --git a/tests/combat/combat_test_support.hpp b/tests/combat/combat_test_support.hpp
+index 671e606..3917bb3 100644
+--- a/tests/combat/combat_test_support.hpp
++++ b/tests/combat/combat_test_support.hpp
+@@ -12,23 +12,33 @@ struct CombatWorldTestAccess final {
+         combat::CombatWorld& world,
+         int damage,
+         combat::Vec3 source_position,
+         combat::FeedbackLevel feedback) noexcept {
+         world.apply_player_damage(damage, source_position, feedback);
+     }
+ 
+     static void apply_damage(
+         combat::CombatWorld& world,
+         combat::DamagePacket packet,
++        combat::DamageDelivery delivery,
+         combat::Vec3 source_position,
+         combat::FeedbackLevel feedback) noexcept {
+-        world.apply_player_damage(packet, source_position, feedback);
++        world.apply_player_damage(packet, delivery, source_position, feedback);
++    }
++
++    static void apply_damage(
++        combat::CombatWorld& world,
++        combat::DamagePacket packet,
++        combat::Vec3 source_position,
++        combat::FeedbackLevel feedback) noexcept {
++        apply_damage(world, packet, combat::DamageDelivery::direct,
++                     source_position, feedback);
+     }
+ 
+     static void fill_projectiles(
+         combat::CombatWorld& world,
+         combat::MonsterHandle owner) noexcept {
+         for (std::size_t index = 0; index < combat::kProjectileCapacity;
+              ++index) {
+             static_cast<void>(world.spawn_projectile(
+                 owner, combat::Vec3{}, combat::Vec3{0.01F, 0.0F, 0.0F},
+                 1000U, 1, 0.1F));
+diff --git a/tests/combat/player_build_tests.cpp b/tests/combat/player_build_tests.cpp
+index e6a88af..119e242 100644
+--- a/tests/combat/player_build_tests.cpp
++++ b/tests/combat/player_build_tests.cpp
+@@ -1,17 +1,19 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ #include "modifiers/damage_types.hpp"
+ 
++#include <limits>
++
+ namespace {
+ 
+ using namespace arpg::combat;
+ using namespace arpg::modifiers;
+ 
+ CombatEncounterConfig one_monster_config() noexcept {
+     CombatEncounterConfig config{};
+     config.wave.spawn_count = 1U;
+     config.wave.spawns[0] = MonsterSpawnSpec{
+         MonsterId::chaos_chaser, Vec3{1.0F, 0.0F, 0.0F}};
+@@ -29,46 +31,48 @@ arpg::test::Failure fire_damage_reduction_then_barrier_absorbs_damage() noexcept
+         world, DamagePacket{{0, 40, 0, 0, 0}}, Vec3{}, FeedbackLevel::light);
+     const auto player = world.snapshot().player;
+     ARPG_REQUIRE(player.barrier == 0);
+     ARPG_REQUIRE(player.hp == player.max_hp);
+     return {};
+ }
+ 
+ arpg::test::Failure player_attack_adds_element_without_converting_physical() noexcept {
+     PlayerCombatBuild build{};
+     build.values.flat_damage[damage_index(DamageType::fire)] = 30000;
+-    const DamagePacket packet = build_player_hit_packet(28, build);
+-    ARPG_REQUIRE(packet.amount[damage_index(DamageType::physical)] == 28);
+-    ARPG_REQUIRE(packet.amount[damage_index(DamageType::fire)] == 3);
++    const auto packet = build_player_hit_packet(28, build);
++    ARPG_REQUIRE(packet.has_value());
++    ARPG_REQUIRE(packet->amount[damage_index(DamageType::physical)] == 28);
++    ARPG_REQUIRE(packet->amount[damage_index(DamageType::fire)] == 3);
+     return {};
+ }
+ 
+ arpg::test::Failure negative_water_damage_reduction_increases_damage() noexcept {
+     PlayerCombatBuild build{};
+     build.values.damage_reduction[element_index(DamageType::water)] = -5000;
+     const DamagePacket packet{{0, 0, 20, 0, 0}};
+     ARPG_REQUIRE(resolve_player_damage(packet, build) == 30);
+     return {};
+ }
+ 
+ arpg::test::Failure chaos_more_damage_taken_is_applied_after_reduction() noexcept {
+     PlayerCombatBuild build{};
+     build.values.damage_taken = 11500;
+     const DamagePacket packet{{0, 0, 0, 0, 20}};
+     ARPG_REQUIRE(resolve_player_damage(packet, build) == 23);
+     return {};
+ }
+ 
+ arpg::test::Failure default_build_preserves_j1_damage() noexcept {
+-    const DamagePacket packet = build_player_hit_packet(28, PlayerCombatBuild{});
+-    ARPG_REQUIRE(packet.amount[damage_index(DamageType::physical)] == 28);
+-    ARPG_REQUIRE(resolve_player_damage(packet, PlayerCombatBuild{}) == 28);
++    const auto packet = build_player_hit_packet(28, PlayerCombatBuild{});
++    ARPG_REQUIRE(packet.has_value());
++    ARPG_REQUIRE(packet->amount[damage_index(DamageType::physical)] == 28);
++    ARPG_REQUIRE(resolve_player_damage(*packet, PlayerCombatBuild{}) == 28);
+     return {};
+ }
+ 
+ arpg::test::Failure attack_speed_scales_only_startup_and_recovery() noexcept {
+     PlayerCombatBuild build{};
+     build.values.attack_speed = 20000;
+     CombatEncounterConfig config{};
+     config.player_build = build;
+     CombatWorld world{config};
+     ARPG_REQUIRE(world.queue_action(Action::light));
+@@ -146,30 +150,318 @@ arpg::test::Failure hit_event_keeps_packet_total_when_monster_shield_absorbs() n
+         saw_hit = true;
+         ARPG_REQUIRE(event->value == 31);
+         break;
+     }
+     ARPG_REQUIRE(saw_hit);
+     ARPG_REQUIRE(world.snapshot().monsters[0].hp == 689);
+     ARPG_REQUIRE(world.snapshot().monsters[0].shield == 0);
+     return {};
+ }
+ 
++bool same_player_state(
++    const PlayerSnapshot& left, const PlayerSnapshot& right) noexcept {
++    return left.position.x == right.position.x
++        && left.position.y == right.position.y
++        && left.position.z == right.position.z
++        && left.velocity.x == right.velocity.x
++        && left.velocity.y == right.velocity.y
++        && left.velocity.z == right.velocity.z
++        && left.facing == right.facing
++        && left.state == right.state
++        && left.active_attack == right.active_attack
++        && left.attack_phase == right.attack_phase
++        && left.attack_elapsed_ticks == right.attack_elapsed_ticks
++        && left.combo_stage == right.combo_stage
++        && left.hit_stop_ticks == right.hit_stop_ticks
++        && left.air_attack_available == right.air_attack_available
++        && left.hp == right.hp
++        && left.max_hp == right.max_hp
++        && left.barrier == right.barrier
++        && left.max_barrier == right.max_barrier
++        && left.damage_reduction == right.damage_reduction
++        && left.damage_reduction_cap == right.damage_reduction_cap
++        && left.armor == right.armor
++        && left.evasion == right.evasion
++        && left.armor_reduction_bp == right.armor_reduction_bp
++        && left.evasion_rate_bp == right.evasion_rate_bp
++        && left.hurt_ticks == right.hurt_ticks
++        && left.invulnerability_ticks == right.invulnerability_ticks;
++}
++
++arpg::test::Failure hot_swap_preserves_runtime_and_clamps_only_downward() noexcept {
++    PlayerCombatBuild initial{};
++    initial.values.max_barrier = 100000;
++    CombatEncounterConfig config = one_monster_config();
++    config.player_build = initial;
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 15, Vec3{}, FeedbackLevel::light);
++    const auto damaged = world.snapshot().player;
++    ARPG_REQUIRE(damaged.hp == 995);
++    ARPG_REQUIRE(damaged.barrier == 0);
++    ARPG_REQUIRE(damaged.active_attack == AttackId::j1);
++    ARPG_REQUIRE(damaged.hurt_ticks != 0U);
++
++    PlayerCombatBuild higher = initial;
++    higher.values.max_health = 500000;
++    higher.values.max_barrier = 200000;
++    world.apply_player_build(higher);
++    const auto raised = world.snapshot().player;
++    ARPG_REQUIRE(raised.max_hp == 1050);
++    ARPG_REQUIRE(raised.max_barrier == 20);
++    ARPG_REQUIRE(raised.hp == damaged.hp);
++    ARPG_REQUIRE(raised.barrier == damaged.barrier);
++    ARPG_REQUIRE(raised.position.x == damaged.position.x);
++    ARPG_REQUIRE(raised.velocity.x == damaged.velocity.x);
++    ARPG_REQUIRE(raised.active_attack == damaged.active_attack);
++    ARPG_REQUIRE(raised.attack_elapsed_ticks == damaged.attack_elapsed_ticks);
++    ARPG_REQUIRE(raised.hurt_ticks == damaged.hurt_ticks);
++    ARPG_REQUIRE(raised.invulnerability_ticks == damaged.invulnerability_ticks);
++
++    PlayerCombatBuild lower{};
++    lower.values.max_health_more = 9000;
++    world.apply_player_build(lower);
++    const auto lowered = world.snapshot().player;
++    ARPG_REQUIRE(lowered.max_hp == 900);
++    ARPG_REQUIRE(lowered.max_barrier == 0);
++    ARPG_REQUIRE(lowered.hp == 900);
++    ARPG_REQUIRE(lowered.barrier == 0);
++    ARPG_REQUIRE(lowered.position.x == raised.position.x);
++    ARPG_REQUIRE(lowered.active_attack == raised.active_attack);
++    ARPG_REQUIRE(lowered.hurt_ticks == raised.hurt_ticks);
++    ARPG_REQUIRE(lowered.invulnerability_ticks == raised.invulnerability_ticks);
++    return {};
++}
++
++arpg::test::Failure invalid_hot_swap_keeps_old_build_and_player_state() noexcept {
++    CombatWorld world{one_monster_config()};
++    const auto before = world.snapshot().player;
++    PlayerCombatBuild invalid{};
++    invalid.values.valid = false;
++    invalid.values.max_health = 500000;
++    invalid.values.armor = 1000000;
++    invalid.weapon_physical = -1;
++    invalid.local_attack_speed_bp = -1;
++    world.apply_player_build(invalid);
++    ARPG_REQUIRE(same_player_state(before, world.snapshot().player));
++
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 10, Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == before.hp - 10);
++
++    PlayerCombatBuild overflowing{};
++    overflowing.values.max_health =
++        (std::numeric_limits<std::int64_t>::max)();
++    const auto before_overflow = world.snapshot().player;
++    world.apply_player_build(overflowing);
++    ARPG_REQUIRE(same_player_state(before_overflow, world.snapshot().player));
++    return {};
++}
++
++arpg::test::Failure invalid_constructor_build_is_rejected() noexcept {
++    CombatEncounterConfig config{};
++    config.player_build.values.valid = false;
++    config.player_build.values.max_health = 500000;
++    config.player_build.values.armor = 1000000;
++    CombatWorld world{config};
++    const auto player = world.snapshot().player;
++    ARPG_REQUIRE(player.max_hp == 1000);
++    ARPG_REQUIRE(player.armor == 0);
++    ARPG_REQUIRE(player.armor_reduction_bp == 0);
++    return {};
++}
++
++arpg::test::Failure weapon_physical_uses_physical_flat_increased_and_more() noexcept {
++    PlayerCombatBuild build{};
++    build.weapon_physical = 12;
++    build.values.flat_damage[damage_index(DamageType::physical)] = 20000;
++    build.values.damage_increased[damage_index(DamageType::physical)] = 15000;
++    build.values.melee_damage = 20000;
++    const auto packet = build_player_hit_packet(28, build);
++    ARPG_REQUIRE(packet.has_value());
++    ARPG_REQUIRE(packet->amount[damage_index(DamageType::physical)] == 126);
++    return {};
++}
++
++arpg::test::Failure hit_packet_reports_zero_and_invalid_without_partial_packet() noexcept {
++    const auto zero = build_player_hit_packet(0, PlayerCombatBuild{});
++    ARPG_REQUIRE(zero.has_value());
++    ARPG_REQUIRE(*zero == DamagePacket{});
++    ARPG_REQUIRE(!build_player_hit_packet(-1, PlayerCombatBuild{}).has_value());
++
++    PlayerCombatBuild invalid{};
++    invalid.values.valid = false;
++    ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
++    invalid = PlayerCombatBuild{};
++    invalid.weapon_physical = -1;
++    ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
++    invalid = PlayerCombatBuild{};
++    invalid.local_attack_speed_bp = -1;
++    ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
++
++    PlayerCombatBuild overflowing{};
++    overflowing.weapon_physical =
++        (std::numeric_limits<std::int64_t>::max)();
++    ARPG_REQUIRE(!build_player_hit_packet(1, overflowing).has_value());
++    overflowing = PlayerCombatBuild{};
++    overflowing.values.flat_damage[damage_index(DamageType::physical)] =
++        (std::numeric_limits<std::int64_t>::max)();
++    overflowing.values.damage_increased[damage_index(DamageType::physical)] =
++        (std::numeric_limits<std::int32_t>::max)();
++    ARPG_REQUIRE(!build_player_hit_packet(52, overflowing).has_value());
++    return {};
++}
++
++arpg::test::Failure unrelated_invalid_build_field_is_rejected_consistently() noexcept {
++    PlayerCombatBuild invalid{};
++    invalid.values.max_health = -1;
++    invalid.values.armor = 100;
++    ARPG_REQUIRE(!build_player_hit_packet(28, invalid).has_value());
++    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{10}, invalid).has_value());
++
++    CombatEncounterConfig config{};
++    config.player_build = invalid;
++    CombatWorld constructed{config};
++    ARPG_REQUIRE(constructed.snapshot().player.max_hp == 1000);
++    ARPG_REQUIRE(constructed.snapshot().player.armor == 0);
++
++    CombatWorld hot_swap{CombatEncounterConfig{}};
++    const auto before = hot_swap.snapshot().player;
++    hot_swap.apply_player_build(invalid);
++    ARPG_REQUIRE(same_player_state(before, hot_swap.snapshot().player));
++    return {};
++}
++
++arpg::test::Failure overflowing_health_build_is_rejected_consistently() noexcept {
++    PlayerCombatBuild invalid{};
++    invalid.values.max_health =
++        (std::numeric_limits<std::int64_t>::max)();
++    ARPG_REQUIRE(!build_player_hit_packet(28, invalid).has_value());
++    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{10}, invalid).has_value());
++
++    CombatEncounterConfig config{};
++    config.player_build = invalid;
++    CombatWorld constructed{config};
++    ARPG_REQUIRE(constructed.snapshot().player.max_hp == 1000);
++
++    CombatWorld hot_swap{CombatEncounterConfig{}};
++    const auto before = hot_swap.snapshot().player;
++    hot_swap.apply_player_build(invalid);
++    ARPG_REQUIRE(same_player_state(before, hot_swap.snapshot().player));
++    return {};
++}
++
++arpg::test::Failure unrepresentable_speed_build_is_rejected_consistently() noexcept {
++    PlayerCombatBuild invalid{};
++    invalid.values.attack_speed = 1;
++    ARPG_REQUIRE(!build_player_hit_packet(28, invalid).has_value());
++    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{10}, invalid).has_value());
++
++    CombatEncounterConfig config{};
++    config.player_build = invalid;
++    CombatWorld constructed{config};
++    ARPG_REQUIRE(constructed.snapshot().player.max_hp == 1000);
++    ARPG_REQUIRE(constructed.snapshot().player.evasion_rate_bp == 0);
++
++    CombatWorld hot_swap{CombatEncounterConfig{}};
++    const auto before = hot_swap.snapshot().player;
++    hot_swap.apply_player_build(invalid);
++    ARPG_REQUIRE(same_player_state(before, hot_swap.snapshot().player));
++    return {};
++}
++
++arpg::test::Failure weapon_physical_is_applied_by_real_melee_hit() noexcept {
++    PlayerCombatBuild build{};
++    build.weapon_physical = 50;
++    CombatEncounterConfig config{};
++    config.player_build = build;
++    config.wave.spawn_count = 1U;
++    config.wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::chaos_chaser, Vec3{1.0F, 0.0F, 0.0F}};
++    CombatWorld world{config};
++    arpg::test::drain_events(world);
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    arpg::test::tick_n(world, 8);
++    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 182);
++    bool saw_weapon_hit = false;
++    while (const auto event = world.try_pop_event()) {
++        if (event->kind == CombatEventKind::hit) {
++            saw_weapon_hit = true;
++            ARPG_REQUIRE(event->value == 78);
++        }
++    }
++    ARPG_REQUIRE(saw_weapon_hit);
++    return {};
++}
++
++arpg::test::Failure local_attack_speed_multiplies_global_without_scaling_active() noexcept {
++    PlayerCombatBuild build{};
++    build.values.attack_speed = 15000;
++    build.local_attack_speed_bp = 10000;
++    CombatEncounterConfig config{};
++    config.player_build = build;
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::startup);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::recovery);
++    return {};
++}
++
++arpg::test::Failure overflowing_weapon_build_is_rejected_atomically() noexcept {
++    CombatWorld world{one_monster_config()};
++    const auto before = world.snapshot().player;
++    PlayerCombatBuild invalid{};
++    invalid.weapon_physical =
++        (std::numeric_limits<std::int64_t>::max)();
++    invalid.values.max_health = 500000;
++    world.apply_player_build(invalid);
++    ARPG_REQUIRE(same_player_state(before, world.snapshot().player));
++
++    PlayerCombatBuild unrepresentable_speed{};
++    unrepresentable_speed.values.attack_speed = 1;
++    unrepresentable_speed.values.max_health = 500000;
++    world.apply_player_build(unrepresentable_speed);
++    ARPG_REQUIRE(same_player_state(before, world.snapshot().player));
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"fire damage reduction and barrier",
+         &fire_damage_reduction_then_barrier_absorbs_damage},
+     {"elemental add does not convert physical", &player_attack_adds_element_without_converting_physical},
+     {"negative water damage reduction",
+         &negative_water_damage_reduction_increases_damage},
+     {"chaos damage taken",
+         &chaos_more_damage_taken_is_applied_after_reduction},
+     {"default j1 damage", &default_build_preserves_j1_damage},
+     {"attack speed phase scaling", &attack_speed_scales_only_startup_and_recovery},
+     {"impulse scale", &impulse_scale_affects_knockback_and_launch},
+     {"wave load barrier policy", &wave_load_preserves_barrier_without_health_reset},
+     {"shield preserves packet event total", &hit_event_keeps_packet_total_when_monster_shield_absorbs},
++    {"hot swap clamps without healing", &hot_swap_preserves_runtime_and_clamps_only_downward},
++    {"invalid hot swap is atomic", &invalid_hot_swap_keeps_old_build_and_player_state},
++    {"invalid constructor build", &invalid_constructor_build_is_rejected},
++    {"weapon physical evaluation", &weapon_physical_uses_physical_flat_increased_and_more},
++    {"hit packet invalid semantics", &hit_packet_reports_zero_and_invalid_without_partial_packet},
++    {"unrelated invalid build field", &unrelated_invalid_build_field_is_rejected_consistently},
++    {"overflowing health build consistency", &overflowing_health_build_is_rejected_consistently},
++    {"unrepresentable speed build consistency", &unrepresentable_speed_build_is_rejected_consistently},
++    {"weapon physical real hit", &weapon_physical_is_applied_by_real_melee_hit},
++    {"local and global attack speed", &local_attack_speed_multiplies_global_without_scaling_active},
++    {"overflowing weapon build", &overflowing_weapon_build_is_rejected_atomically},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite player_build_suite() noexcept {
+     return arpg::test::make_suite("player_build", kCases);
+ }
+diff --git a/tests/combat/player_defense_tests.cpp b/tests/combat/player_defense_tests.cpp
+new file mode 100644
+index 0000000..52b76ac
+--- /dev/null
++++ b/tests/combat/player_defense_tests.cpp
+@@ -0,0 +1,375 @@
++#include "test_framework.hpp"
++
++#include "combat_test_support.hpp"
++
++#include "combat/combat_world.hpp"
++#include "modifiers/damage_types.hpp"
++
++#include <array>
++#include <cstdint>
++#include <limits>
++#include <type_traits>
++
++namespace {
++
++using namespace arpg::combat;
++using namespace arpg::modifiers;
++
++static_assert(std::is_same_v<
++    decltype(PlayerSnapshot{}.damage_reduction),
++    std::array<std::int32_t, 4>>);
++static_assert(std::is_same_v<
++    decltype(PlayerSnapshot{}.damage_reduction_cap),
++    std::array<std::int32_t, 4>>);
++static_assert(std::is_same_v<decltype(PlayerSnapshot{}.armor), std::int64_t>);
++static_assert(std::is_same_v<decltype(PlayerSnapshot{}.evasion), std::int64_t>);
++static_assert(std::is_same_v<
++    decltype(PlayerSnapshot{}.armor_reduction_bp), std::int32_t>);
++static_assert(std::is_same_v<
++    decltype(PlayerSnapshot{}.evasion_rate_bp), std::int32_t>);
++
++CombatEncounterConfig defense_config(PlayerCombatBuild build = {}) noexcept {
++    CombatEncounterConfig config{};
++    config.player_build = build;
++    config.evasion_seed = 1U;
++    return config;
++}
++
++void wait_for_protection(CombatWorld& world) noexcept {
++    arpg::test::tick_n(world, 30);
++}
++
++bool same_player_snapshot(
++    const PlayerSnapshot& left, const PlayerSnapshot& right) noexcept {
++    return left.position.x == right.position.x
++        && left.position.y == right.position.y
++        && left.position.z == right.position.z
++        && left.velocity.x == right.velocity.x
++        && left.velocity.y == right.velocity.y
++        && left.velocity.z == right.velocity.z
++        && left.facing == right.facing
++        && left.state == right.state
++        && left.active_attack == right.active_attack
++        && left.attack_phase == right.attack_phase
++        && left.attack_elapsed_ticks == right.attack_elapsed_ticks
++        && left.combo_stage == right.combo_stage
++        && left.hit_stop_ticks == right.hit_stop_ticks
++        && left.air_attack_available == right.air_attack_available
++        && left.hp == right.hp
++        && left.max_hp == right.max_hp
++        && left.barrier == right.barrier
++        && left.max_barrier == right.max_barrier
++        && left.damage_reduction == right.damage_reduction
++        && left.damage_reduction_cap == right.damage_reduction_cap
++        && left.armor == right.armor
++        && left.evasion == right.evasion
++        && left.armor_reduction_bp == right.armor_reduction_bp
++        && left.evasion_rate_bp == right.evasion_rate_bp
++        && left.hurt_ticks == right.hurt_ticks
++        && left.invulnerability_ticks == right.invulnerability_ticks;
++}
++
++arpg::test::Failure armor_and_each_element_resolve_independently() noexcept {
++    PlayerCombatBuild build{};
++    build.values.armor = 100;
++    build.values.damage_reduction[element_index(DamageType::fire)] = 5000;
++    build.values.damage_reduction[element_index(DamageType::water)] = -6000;
++    build.values.damage_reduction[element_index(DamageType::lightning)] = 7500;
++    build.values.damage_reduction[element_index(DamageType::chaos)] = 9500;
++    build.values.damage_reduction_cap_bonus[element_index(DamageType::chaos)] =
++        2000;
++    const auto damage = resolve_player_damage(
++        DamagePacket{{10, 10, 10, 1, 100}}, build);
++    ARPG_REQUIRE(damage.has_value());
++    ARPG_REQUIRE(*damage == 35);
++    return {};
++}
++
++arpg::test::Failure elemental_cap_defaults_to_7500_and_can_reach_9500() noexcept {
++    PlayerCombatBuild build{};
++    build.values.damage_reduction[element_index(DamageType::fire)] = 9500;
++    auto damage = resolve_player_damage(DamagePacket{{0, 100, 0, 0, 0}}, build);
++    ARPG_REQUIRE(damage.has_value());
++    ARPG_REQUIRE(*damage == 25);
++
++    build.values.damage_reduction_cap_bonus[element_index(DamageType::fire)] =
++        2000;
++    damage = resolve_player_damage(DamagePacket{{0, 100, 0, 0, 0}}, build);
++    ARPG_REQUIRE(damage.has_value());
++    ARPG_REQUIRE(*damage == 5);
++    return {};
++}
++
++arpg::test::Failure positive_component_uses_ceil_and_stays_at_least_one() noexcept {
++    PlayerCombatBuild build{};
++    build.values.armor = 10000000;
++    build.values.damage_reduction[element_index(DamageType::fire)] = 9500;
++    build.values.damage_reduction_cap_bonus[element_index(DamageType::fire)] =
++        2000;
++    const auto damage = resolve_player_damage(
++        DamagePacket{{1, 1, 0, 0, 0}}, build);
++    ARPG_REQUIRE(damage.has_value());
++    ARPG_REQUIRE(*damage == 2);
++    return {};
++}
++
++arpg::test::Failure invalid_resolution_is_distinct_from_legal_zero() noexcept {
++    const auto zero = resolve_player_damage(DamagePacket{}, PlayerCombatBuild{});
++    ARPG_REQUIRE(zero.has_value());
++    ARPG_REQUIRE(*zero == 0);
++
++    PlayerCombatBuild invalid{};
++    invalid.values.valid = false;
++    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
++    invalid = PlayerCombatBuild{};
++    invalid.weapon_physical = -1;
++    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
++    invalid = PlayerCombatBuild{};
++    invalid.local_attack_speed_bp = -1;
++    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
++
++    PlayerCombatBuild overflowing{};
++    overflowing.values.damage_taken = 20000;
++    constexpr int maximum = (std::numeric_limits<int>::max)();
++    ARPG_REQUIRE(!resolve_player_damage(
++        DamagePacket{{maximum, maximum, maximum, maximum, maximum}},
++        overflowing).has_value());
++    return {};
++}
++
++arpg::test::Failure invalid_direct_packet_does_not_advance_evasion_rng() noexcept {
++    PlayerCombatBuild build{};
++    build.values.evasion = 50;
++    CombatWorld with_invalid{defense_config(build)};
++    CombatWorld control{defense_config(build)};
++    arpg::test::drain_events(with_invalid);
++    arpg::test::drain_events(control);
++
++    const auto before = with_invalid.snapshot();
++    constexpr int maximum = (std::numeric_limits<int>::max)();
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        with_invalid,
++        DamagePacket{{maximum, maximum, maximum, maximum, maximum}},
++        DamageDelivery::direct, Vec3{}, FeedbackLevel::heavy);
++    const auto after_invalid = with_invalid.snapshot();
++    ARPG_REQUIRE(after_invalid.tick == before.tick);
++    ARPG_REQUIRE(same_player_snapshot(after_invalid.player, before.player));
++    ARPG_REQUIRE(!with_invalid.try_pop_event().has_value());
++
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        with_invalid, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        control, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(with_invalid.snapshot().player.hp
++                 == control.snapshot().player.hp);
++    ARPG_REQUIRE(with_invalid.snapshot().player.hp
++                 == before.player.max_hp - 10);
++
++    wait_for_protection(with_invalid);
++    wait_for_protection(control);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        with_invalid, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        control, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(with_invalid.snapshot().player.hp
++                 == control.snapshot().player.hp);
++    ARPG_REQUIRE(with_invalid.snapshot().player.hp
++                 == before.player.max_hp - 10);
++    return {};
++}
++
++arpg::test::Failure zero_evasion_does_not_advance_future_evasion_stream() noexcept {
++    CombatWorld world{defense_config()};
++    const int maximum = world.snapshot().player.max_hp;
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == maximum - 10);
++    wait_for_protection(world);
++
++    PlayerCombatBuild evasive{};
++    evasive.values.evasion = 50;
++    world.apply_player_build(evasive);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == maximum - 20);
++    return {};
++}
++
++arpg::test::Failure identical_seed_and_trace_produce_identical_damage() noexcept {
++    PlayerCombatBuild build{};
++    build.values.evasion = 50;
++    CombatWorld left{defense_config(build)};
++    CombatWorld right{defense_config(build)};
++    for (int index = 0; index < 4; ++index) {
++        const DamageDelivery delivery = index == 2
++            ? DamageDelivery::ground_or_environment
++            : DamageDelivery::direct;
++        const DamagePacket packet = index == 1
++            ? DamagePacket{}
++            : DamagePacket{{3, 2, 1, 4, 5}};
++        arpg::test::CombatWorldTestAccess::apply_damage(
++            left, packet, delivery, Vec3{}, FeedbackLevel::light);
++        arpg::test::CombatWorldTestAccess::apply_damage(
++            right, packet, delivery, Vec3{}, FeedbackLevel::light);
++        ARPG_REQUIRE(left.snapshot().player.hp == right.snapshot().player.hp);
++        ARPG_REQUIRE(
++            left.snapshot().player.barrier == right.snapshot().player.barrier);
++        wait_for_protection(left);
++        wait_for_protection(right);
++    }
++    return {};
++}
++
++arpg::test::Failure real_ground_hazard_bypasses_evasion() noexcept {
++    PlayerCombatBuild build{};
++    build.values.evasion = 1000000;
++    CombatEncounterConfig config = defense_config(build);
++    config.wave.spawn_count = 1U;
++    config.wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::chaos_hazard, Vec3{4.0F, 0.0F, 0.0F}};
++    CombatWorld world{config};
++    const int maximum = world.snapshot().player.max_hp;
++    for (int tick = 0; tick < 500 && world.snapshot().player.hp == maximum;
++         ++tick) {
++        world.tick(MovementInput{});
++    }
++    ARPG_REQUIRE(world.snapshot().player.hp < maximum);
++    return {};
++}
++
++arpg::test::Failure five_component_direct_packet_consumes_one_roll() noexcept {
++    PlayerCombatBuild build{};
++    build.values.evasion = 50;
++    CombatWorld world{defense_config(build)};
++    const int maximum = world.snapshot().player.max_hp;
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{{1, 1, 1, 1, 1}}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == maximum - 5);
++
++    wait_for_protection(world);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == maximum - 5);
++    return {};
++}
++
++arpg::test::Failure ground_and_zero_packets_do_not_consume_evasion_rng() noexcept {
++    PlayerCombatBuild build{};
++    build.values.evasion = 50;
++    CombatWorld ground{defense_config(build)};
++    const int maximum = ground.snapshot().player.max_hp;
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        ground, DamagePacket{10}, DamageDelivery::ground_or_environment,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(ground.snapshot().player.hp == maximum - 10);
++    wait_for_protection(ground);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        ground, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(ground.snapshot().player.hp == maximum - 20);
++
++    CombatWorld zero{defense_config(build)};
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        zero, DamagePacket{}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        zero, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(zero.snapshot().player.hp == maximum - 10);
++    return {};
++}
++
++arpg::test::Failure reset_reseeds_evasion_stream() noexcept {
++    PlayerCombatBuild build{};
++    build.values.evasion = 50;
++    CombatWorld world{defense_config(build)};
++    const int maximum = world.snapshot().player.max_hp;
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == maximum - 10);
++    wait_for_protection(world);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == maximum - 10);
++
++    world.reset();
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{10}, DamageDelivery::direct,
++        Vec3{}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == maximum - 10);
++    return {};
++}
++
++bool first_attack_is_evaded(MonsterId id, Vec3 spawn) noexcept {
++    PlayerCombatBuild build{};
++    build.values.evasion = 1000000;
++    CombatEncounterConfig config = defense_config(build);
++    config.wave.spawn_count = 1U;
++    config.wave.spawns[0] = MonsterSpawnSpec{id, spawn};
++    CombatWorld world{config};
++    const int maximum = world.snapshot().player.max_hp;
++    bool saw_active = false;
++    bool saw_projectile = false;
++    bool completed_attempt = false;
++    for (int tick = 0; tick < 500; ++tick) {
++        world.tick(MovementInput{});
++        const auto snapshot = world.snapshot();
++        if (snapshot.player.invulnerability_ticks != 0U) return false;
++        saw_active = saw_active
++            || snapshot.monsters[0].ai_phase == MonsterAiPhase::active;
++        saw_projectile = saw_projectile || snapshot.projectile_count != 0U;
++        if (id == MonsterId::lightning_shooter
++            && saw_projectile && snapshot.projectile_count == 0U) {
++            completed_attempt = true;
++            break;
++        }
++        if ((id == MonsterId::chaos_chaser || id == MonsterId::fire_charger)
++            && saw_active
++            && snapshot.monsters[0].ai_phase == MonsterAiPhase::recovery) {
++            completed_attempt = true;
++            break;
++        }
++    }
++    return completed_attempt && world.snapshot().player.hp == maximum;
++}
++
++arpg::test::Failure melee_projectile_and_charge_calls_are_direct() noexcept {
++    ARPG_REQUIRE(first_attack_is_evaded(
++        MonsterId::chaos_chaser, Vec3{0.65F, 0.0F, 0.0F}));
++    ARPG_REQUIRE(first_attack_is_evaded(
++        MonsterId::lightning_shooter, Vec3{4.5F, 0.0F, 0.0F}));
++    ARPG_REQUIRE(first_attack_is_evaded(
++        MonsterId::fire_charger, Vec3{3.0F, 0.0F, 0.0F}));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"armor and elemental components", &armor_and_each_element_resolve_independently},
++    {"elemental cap bonus", &elemental_cap_defaults_to_7500_and_can_reach_9500},
++    {"positive component ceil", &positive_component_uses_ceil_and_stays_at_least_one},
++    {"invalid versus zero", &invalid_resolution_is_distinct_from_legal_zero},
++    {"invalid direct does not roll", &invalid_direct_packet_does_not_advance_evasion_rng},
++    {"zero evasion does not roll", &zero_evasion_does_not_advance_future_evasion_stream},
++    {"identical seed and trace", &identical_seed_and_trace_produce_identical_damage},
++    {"real hazard bypasses evasion", &real_ground_hazard_bypasses_evasion},
++    {"one direct roll per packet", &five_component_direct_packet_consumes_one_roll},
++    {"ground and zero do not roll", &ground_and_zero_packets_do_not_consume_evasion_rng},
++    {"reset reseeds evasion", &reset_reseeds_evasion_stream},
++    {"direct delivery call sites", &melee_projectile_and_charge_calls_are_direct},
++};
++
++}  // namespace
++
++arpg::test::TestSuite player_defense_suite() noexcept {
++    return arpg::test::make_suite("player_defense", kCases);
++}
+diff --git a/tests/dungeon/dungeon_passive_tree_tests.cpp b/tests/dungeon/dungeon_passive_tree_tests.cpp
+index 629b271..319e6af 100644
+--- a/tests/dungeon/dungeon_passive_tree_tests.cpp
++++ b/tests/dungeon/dungeon_passive_tree_tests.cpp
+@@ -164,64 +164,64 @@ arpg::test::Failure next_room_uses_committed_passive_player_build() noexcept {
+     ARPG_REQUIRE(session.request_descent(true));
+     const auto transition = session.pending_save();
+     ARPG_REQUIRE(transition.has_value());
+     ARPG_REQUIRE(transition->kind == PendingSaveKind::transition);
+     session.resolve_pending_save({SaveDisposition::committed,
+         transition->next_state.commit_generation, transition->next_state});
+     session.tick({});
+     const auto snapshot = session.snapshot();
+     ARPG_REQUIRE(snapshot.combat.has_value());
+     ARPG_REQUIRE(snapshot.combat->player.max_barrier == 10);
+-    ARPG_REQUIRE(snapshot.combat->player.resistance[0] == 700);
++    ARPG_REQUIRE(snapshot.combat->player.damage_reduction[0] == 700);
+     const auto& build = arpg::test::player_build(session);
+     ARPG_REQUIRE(build.values.flat_damage[
+         arpg::modifiers::damage_index(arpg::modifiers::DamageType::fire)]
+         == 30000);
+     return {};
+ }
+ 
+ arpg::test::Failure current_room_keeps_old_build_until_transition() noexcept {
+     DungeonSession session = session_with_passive_points(1U);
+     ARPG_REQUIRE(clear_to_awaiting_exit(session));
+     const auto before = session.snapshot();
+     const auto* const combat_before = arpg::test::combat_world_address(session);
+     ARPG_REQUIRE(before.combat.has_value());
+     ARPG_REQUIRE(combat_before != nullptr);
+     ARPG_REQUIRE(before.combat->tick != 0U);
+     ARPG_REQUIRE(before.combat->player.max_barrier == 0);
+     ARPG_REQUIRE(before.combat->player.barrier == 0);
+-    ARPG_REQUIRE(before.combat->player.resistance[0] == 0);
++    ARPG_REQUIRE(before.combat->player.damage_reduction[0] == 0);
+ 
+     ARPG_REQUIRE(session.request_passive_allocation(2U));
+     ARPG_REQUIRE(commit_passive_save(session));
+     const auto after_commit = session.snapshot();
+     ARPG_REQUIRE(after_commit.combat.has_value());
+     ARPG_REQUIRE(arpg::test::combat_world_address(session) == combat_before);
+     ARPG_REQUIRE(after_commit.combat->tick == before.combat->tick);
+     ARPG_REQUIRE(after_commit.combat->player.max_barrier
+         == before.combat->player.max_barrier);
+     ARPG_REQUIRE(after_commit.combat->player.barrier
+         == before.combat->player.barrier);
+-    ARPG_REQUIRE(after_commit.combat->player.resistance
+-        == before.combat->player.resistance);
++    ARPG_REQUIRE(after_commit.combat->player.damage_reduction
++        == before.combat->player.damage_reduction);
+ 
+     arpg::test::set_current_room_hole(session, true);
+     ARPG_REQUIRE(session.request_descent(true));
+     const auto transition = *session.pending_save();
+     session.resolve_pending_save({SaveDisposition::committed,
+         transition.next_state.commit_generation, transition.next_state});
+     session.tick({});
+     const auto next_room = session.snapshot();
+     ARPG_REQUIRE(next_room.combat.has_value());
+     ARPG_REQUIRE(next_room.combat->player.max_barrier == 10);
+     ARPG_REQUIRE(next_room.combat->player.barrier == 10);
+-    ARPG_REQUIRE(next_room.combat->player.resistance[0] == 0);
++    ARPG_REQUIRE(next_room.combat->player.damage_reduction[0] == 0);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"passive mutation only after clear", &passive_mutation_is_only_available_after_clear},
+     {"not committed passive mutation keeps old state", &not_committed_passive_mutation_keeps_old_state},
+     {"committed passive mutation adopts tree", &committed_passive_mutation_adopts_new_tree_and_points},
+     {"indeterminate passive mutation faults", &indeterminate_passive_mutation_faults},
+     {"committed passive generation mismatch faults", &committed_passive_generation_mismatch_faults},
+     {"committed passive bitset mismatch faults", &committed_passive_bitset_mismatch_faults},

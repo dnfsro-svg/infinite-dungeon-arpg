@@ -1,0 +1,1614 @@
+# Review package: edc2e37..e019651
+
+## Commits
+e019651 fix: make item instance bytes deterministic
+db1e731 feat: generate and project deterministic equipment
+
+## Files changed
+ src/items/CMakeLists.txt                    |   6 +-
+ src/items/item_catalog.cpp                  |   2 +
+ src/items/item_generation.cpp               | 289 ++++++++++++++++++++++++++++
+ src/items/item_generation.hpp               |  38 ++++
+ src/items/item_modifiers.cpp                | 227 ++++++++++++++++++++++
+ src/items/item_modifiers.hpp                |  23 +++
+ src/items/item_types.hpp                    |  10 +
+ src/passives/passive_tree_rules.cpp         |  45 +++--
+ src/passives/passive_tree_rules.hpp         |   8 +
+ tests/items/CMakeLists.txt                  |   5 +-
+ tests/items/item_catalog_tests.cpp          |  23 +++
+ tests/items/item_generation_tests.cpp       | 187 ++++++++++++++++++
+ tests/items/item_modifier_tests.cpp         | 164 ++++++++++++++++
+ tests/items/item_recipe_tests.cpp           | 152 +++++++++++++++
+ tests/items/item_test_main.cpp              |   9 +-
+ tests/passives/passive_test_main.cpp        |   2 +-
+ tests/passives/passive_tree_rules_tests.cpp |  72 +++++++
+ 17 files changed, 1241 insertions(+), 21 deletions(-)
+
+## Diff
+diff --git a/src/items/CMakeLists.txt b/src/items/CMakeLists.txt
+index dfd3ba8..2e9383e 100644
+--- a/src/items/CMakeLists.txt
++++ b/src/items/CMakeLists.txt
+@@ -1,7 +1,9 @@
+ add_library(arpg_items STATIC
+-    item_catalog.cpp)
++    item_catalog.cpp
++    item_generation.cpp
++    item_modifiers.cpp)
+ 
+ target_include_directories(arpg_items PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_items PUBLIC cxx_std_17)
+-target_link_libraries(arpg_items PUBLIC arpg_modifiers)
++target_link_libraries(arpg_items PUBLIC arpg_core arpg_modifiers)
+ arpg_enable_project_warnings(arpg_items)
+diff --git a/src/items/item_catalog.cpp b/src/items/item_catalog.cpp
+index 954d3da..e4c429f 100644
+--- a/src/items/item_catalog.cpp
++++ b/src/items/item_catalog.cpp
+@@ -214,20 +214,22 @@ bool validate_catalog() noexcept {
+         if (prefix_counts[slot] < 3U || suffix_counts[slot] < 3U)
+             return false;
+     }
+     return true;
+ }
+ 
+ bool validate_item(const ItemInstance& item) noexcept {
+     const BaseDefinition* base = base_definition(item.base_id);
+     if (base == nullptr || item.affix_count > item.affixes.size())
+         return false;
++    for (const std::uint8_t byte : item.reserved)
++        if (byte != 0U) return false;
+ 
+     std::uint8_t minimum_affixes = 0U;
+     std::uint8_t maximum_affixes = 0U;
+     switch (item.rarity) {
+     case ItemRarity::normal:
+         maximum_affixes = 0U;
+         break;
+     case ItemRarity::magic:
+         minimum_affixes = 1U;
+         maximum_affixes = 2U;
+diff --git a/src/items/item_generation.cpp b/src/items/item_generation.cpp
+new file mode 100644
+index 0000000..fa011f0
+--- /dev/null
++++ b/src/items/item_generation.cpp
+@@ -0,0 +1,289 @@
++#include "items/item_generation.hpp"
++
++#include "core/deterministic_rng.hpp"
++#include "items/item_catalog.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++
++namespace arpg::items {
++namespace {
++
++inline constexpr std::uint64_t kItemRarityDomain = 0x4954454D52415201ULL;
++inline constexpr std::uint64_t kItemAffixCountDomain = 0x4954454D434E5401ULL;
++inline constexpr std::uint64_t kItemAffixSelectionDomain = 0x4954454D53454C01ULL;
++inline constexpr std::uint64_t kItemAffixTierDomain = 0x4954454D54494501ULL;
++inline constexpr std::uint64_t kItemAffixVariantDomain = 0x4954454D56415201ULL;
++inline constexpr std::uint64_t kRecipeIdDomain = 0x5245434950454944ULL;
++inline constexpr std::uint64_t kRecipeAffixSeedDomain = 0x5245434950454146ULL;
++
++struct Candidate final {
++    const AffixDefinition* definition{};
++};
++
++bool valid_rarity(ItemRarity rarity) noexcept {
++    return rarity == ItemRarity::normal || rarity == ItemRarity::magic
++        || rarity == ItemRarity::rare;
++}
++
++std::uint64_t roll_bounded(
++    std::uint64_t seed,
++    std::uint64_t domain,
++    std::uint64_t bound) noexcept {
++    auto stream = core::DeterministicRng::derive_stream(seed, domain);
++    return stream.next_bounded(bound).value_or(0U);
++}
++
++template <std::size_t N>
++std::size_t roll_weighted_index(
++    std::uint64_t seed,
++    std::uint64_t domain,
++    const std::array<std::uint32_t, N>& weights) noexcept {
++    std::uint64_t total = 0U;
++    for (const std::uint32_t weight : weights) total += weight;
++    const std::uint64_t roll = roll_bounded(seed, domain, total);
++    std::uint64_t cumulative = 0U;
++    for (std::size_t index = 0U; index < weights.size(); ++index) {
++        cumulative += weights[index];
++        if (roll < cumulative) return index;
++    }
++    return weights.size() - 1U;
++}
++
++std::uint8_t affix_target_count(
++    std::uint64_t seed,
++    ItemRarity rarity) noexcept {
++    if (rarity == ItemRarity::normal) return 0U;
++    const std::uint64_t roll = roll_bounded(seed, kItemAffixCountDomain,
++        rarity == ItemRarity::magic ? 2U : 10U);
++    if (rarity == ItemRarity::magic)
++        return static_cast<std::uint8_t>(1U + roll);
++    if (roll < 4U) return 3U;
++    if (roll < 7U) return 4U;
++    if (roll < 9U) return 5U;
++    return 6U;
++}
++
++std::optional<ItemRarity> select_rarity(
++    std::uint64_t seed,
++    std::uint8_t item_level) noexcept {
++    const auto weights = rarity_weights(item_level);
++    if (!weights.has_value()) return std::nullopt;
++    const std::array<std::uint32_t, 3> values{{
++        weights->normal, weights->magic, weights->rare}};
++    return static_cast<ItemRarity>(
++        roll_weighted_index(seed, kItemRarityDomain, values));
++}
++
++std::uint8_t select_tier(
++    std::uint64_t seed,
++    std::uint8_t item_level,
++    std::size_t affix_index) noexcept {
++    const auto weights = tier_weights(item_level);
++    if (!weights.has_value()) return 0U;
++    const std::size_t index = roll_weighted_index(seed,
++        kItemAffixTierDomain + affix_index, *weights);
++    return static_cast<std::uint8_t>(8U - index);
++}
++
++std::size_t collect_candidates(ItemSlot slot,
++    std::array<Candidate, 24>& candidates) noexcept {
++    std::size_t count = 0U;
++    for (std::uint16_t id = 1U; id <= 12U; ++id) {
++        const AffixDefinition* definition = affix_definition(id);
++        if (definition != nullptr
++            && (definition->slot_mask & slot_bit(slot)) != 0U)
++            candidates[count++].definition = definition;
++    }
++    for (std::uint16_t id = 101U; id <= 112U; ++id) {
++        const AffixDefinition* definition = affix_definition(id);
++        if (definition != nullptr
++            && (definition->slot_mask & slot_bit(slot)) != 0U)
++            candidates[count++].definition = definition;
++    }
++    return count;
++}
++
++bool already_selected(const ItemInstance& item,
++    std::uint16_t group_id) noexcept {
++    for (std::size_t index = 0U; index < item.affix_count; ++index) {
++        const AffixDefinition* definition =
++            affix_definition(item.affixes[index].affix_id);
++        if (definition != nullptr && definition->group_id == group_id)
++            return true;
++    }
++    return false;
++}
++
++std::optional<ItemInstance> generate_with_rarity(
++    std::uint64_t seed,
++    ItemSlot slot,
++    std::uint8_t item_level,
++    std::uint64_t item_id,
++    ItemRarity rarity) noexcept {
++    ItemInstance item{};
++    item.id = item_id;
++    item.base_id = static_cast<std::uint8_t>(slot) + 1U;
++    item.rarity = rarity;
++    item.item_level = item_level;
++    item.required_level = 1U;
++
++    const std::uint8_t target_count = affix_target_count(seed, rarity);
++    std::array<Candidate, 24> candidates{};
++    const std::size_t candidate_count = collect_candidates(slot, candidates);
++    std::size_t prefix_candidates = 0U;
++    std::size_t suffix_candidates = 0U;
++    for (std::size_t index = 0U; index < candidate_count; ++index) {
++        if (candidates[index].definition->kind == AffixKind::prefix)
++            ++prefix_candidates;
++        else
++            ++suffix_candidates;
++    }
++    const std::size_t target = target_count;
++    if (prefix_candidates < (std::min)(std::size_t{3U}, target)
++        || suffix_candidates < (std::min)(std::size_t{3U}, target)
++        || prefix_candidates + suffix_candidates < target_count) {
++        return std::nullopt;
++    }
++
++    std::uint8_t prefixes = 0U;
++    std::uint8_t suffixes = 0U;
++    while (item.affix_count < target_count) {
++        std::array<const AffixDefinition*, 24> eligible{};
++        std::size_t eligible_count = 0U;
++        for (std::size_t index = 0U; index < candidate_count; ++index) {
++            const AffixDefinition* definition = candidates[index].definition;
++            if (already_selected(item, definition->group_id)) continue;
++            if (definition->kind == AffixKind::prefix && prefixes >= 3U)
++                continue;
++            if (definition->kind == AffixKind::suffix && suffixes >= 3U)
++                continue;
++            eligible[eligible_count++] = definition;
++        }
++        if (eligible_count == 0U) return std::nullopt;
++        const std::size_t output_index = item.affix_count;
++        const std::size_t selected_index = static_cast<std::size_t>(
++            roll_bounded(seed, kItemAffixSelectionDomain + output_index,
++                eligible_count));
++        const AffixDefinition& selected = *eligible[selected_index];
++        const std::uint8_t tier = select_tier(seed, item_level, output_index);
++        if (tier == 0U) return std::nullopt;
++        const std::uint8_t variant = selected.id == 112U
++            ? static_cast<std::uint8_t>(roll_bounded(seed,
++                kItemAffixVariantDomain + output_index, 4U))
++            : 0xFFU;
++        item.affixes[output_index] = {selected.id, tier, variant};
++        ++item.affix_count;
++        prefixes += selected.kind == AffixKind::prefix ? 1U : 0U;
++        suffixes += selected.kind == AffixKind::suffix ? 1U : 0U;
++        const std::uint8_t level = tier_minimum_level(tier);
++        if (level > item.required_level) item.required_level = level;
++    }
++    return validate_item(item) ? std::optional<ItemInstance>{item} : std::nullopt;
++}
++
++std::uint64_t derive_recipe_affix_seed(
++    const std::array<std::uint64_t, 3>& ids) noexcept {
++    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
++    std::uint64_t seed = kRecipeAffixSeedDomain;
++    for (const std::uint64_t id : ids) {
++        auto stream = core::DeterministicRng::derive_stream(
++            seed ^ id, kRecipeAffixSeedDomain);
++        seed = stream.next_bounded(maximum).value_or(0U);
++    }
++    return seed;
++}
++
++}  // namespace
++
++std::optional<RarityWeights> rarity_weights(
++    std::uint8_t item_level) noexcept {
++    if (item_level == 0U || item_level > 100U) return std::nullopt;
++    const std::uint32_t x = static_cast<std::uint32_t>(item_level - 1U);
++    RarityWeights result{};
++    result.normal = 70U - (30U * x) / 99U;
++    result.magic = 25U + (15U * x) / 99U;
++    result.rare = 100U - result.normal - result.magic;
++    return result;
++}
++
++std::optional<std::array<std::uint32_t, 8>> tier_weights(
++    std::uint8_t item_level) noexcept {
++    if (item_level == 0U || item_level > 100U) return std::nullopt;
++    std::array<std::uint32_t, 8> result{};
++    std::array<std::size_t, 8> unlocked{};
++    std::size_t unlocked_count = 0U;
++    for (std::uint8_t tier = 8U; tier >= 1U; --tier) {
++        const std::size_t index = static_cast<std::size_t>(8U - tier);
++        if (item_level >= tier_minimum_level(tier)) {
++            result[index] = tier_base_weight(tier);
++            unlocked[unlocked_count++] = index;
++        }
++        if (tier == 1U) break;
++    }
++    result[unlocked[unlocked_count - 1U]] += item_level / 5U;
++    if (unlocked_count > 1U)
++        result[unlocked[unlocked_count - 2U]] += item_level / 10U;
++    return result;
++}
++
++std::optional<ItemInstance> generate_item(
++    const ItemGenerationRequest& request) noexcept {
++    if (request.item_id == 0U || request.item_level == 0U
++        || request.item_level > 100U || slot_bit(request.slot) == 0U
++        || (request.forced_rarity.has_value()
++            && !valid_rarity(*request.forced_rarity))) {
++        return std::nullopt;
++    }
++    const auto rarity = request.forced_rarity.has_value()
++        ? request.forced_rarity
++        : select_rarity(request.seed, request.item_level);
++    if (!rarity.has_value()) return std::nullopt;
++    return generate_with_rarity(request.seed, request.slot,
++        request.item_level, request.item_id, *rarity);
++}
++
++std::optional<ItemInstance> generate_recipe_item(
++    std::uint64_t root_seed,
++    std::uint64_t next_sequence,
++    const ItemInstance& a,
++    const ItemInstance& b,
++    const ItemInstance& c) noexcept {
++    if (next_sequence == 0U || !validate_item(a) || !validate_item(b)
++        || !validate_item(c) || a.id == 0U || b.id == 0U || c.id == 0U
++        || a.id == b.id || a.id == c.id || b.id == c.id
++        || a.rarity != b.rarity || a.rarity != c.rarity) {
++        return std::nullopt;
++    }
++    const BaseDefinition* a_base = base_definition(a.base_id);
++    const BaseDefinition* b_base = base_definition(b.base_id);
++    const BaseDefinition* c_base = base_definition(c.base_id);
++    if (a_base == nullptr || b_base == nullptr || c_base == nullptr
++        || a_base->slot != b_base->slot || a_base->slot != c_base->slot) {
++        return std::nullopt;
++    }
++
++    std::array<std::uint64_t, 3> ids{{a.id, b.id, c.id}};
++    std::sort(ids.begin(), ids.end());
++    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
++    auto id_stream = core::DeterministicRng::derive_stream(
++        root_seed + next_sequence, kRecipeIdDomain);
++    std::uint64_t output_id =
++        id_stream.next_bounded(maximum).value_or(0U);
++    if (output_id == 0U) output_id = 1U;
++    if (output_id == ids[0] || output_id == ids[1] || output_id == ids[2])
++        return std::nullopt;
++
++    const std::uint16_t level_sum = static_cast<std::uint16_t>(a.item_level)
++        + static_cast<std::uint16_t>(b.item_level)
++        + static_cast<std::uint16_t>(c.item_level);
++    const std::uint8_t output_level =
++        static_cast<std::uint8_t>(level_sum / 3U);
++    return generate_with_rarity(derive_recipe_affix_seed(ids), a_base->slot,
++        output_level, output_id, a.rarity);
++}
++
++}  // namespace arpg::items
+diff --git a/src/items/item_generation.hpp b/src/items/item_generation.hpp
+new file mode 100644
+index 0000000..253567c
+--- /dev/null
++++ b/src/items/item_generation.hpp
+@@ -0,0 +1,38 @@
++#pragma once
++
++#include "items/item_types.hpp"
++
++#include <array>
++#include <cstdint>
++#include <optional>
++
++namespace arpg::items {
++
++struct RarityWeights final {
++    std::uint32_t normal{};
++    std::uint32_t magic{};
++    std::uint32_t rare{};
++};
++
++struct ItemGenerationRequest final {
++    std::uint64_t seed{};
++    ItemSlot slot{};
++    std::uint8_t item_level{};
++    std::uint64_t item_id{};
++    std::optional<ItemRarity> forced_rarity{};
++};
++
++[[nodiscard]] std::optional<RarityWeights> rarity_weights(
++    std::uint8_t item_level) noexcept;
++[[nodiscard]] std::optional<std::array<std::uint32_t, 8>> tier_weights(
++    std::uint8_t item_level) noexcept;
++[[nodiscard]] std::optional<ItemInstance> generate_item(
++    const ItemGenerationRequest& request) noexcept;
++[[nodiscard]] std::optional<ItemInstance> generate_recipe_item(
++    std::uint64_t root_seed,
++    std::uint64_t next_sequence,
++    const ItemInstance& a,
++    const ItemInstance& b,
++    const ItemInstance& c) noexcept;
++
++}  // namespace arpg::items
+diff --git a/src/items/item_modifiers.cpp b/src/items/item_modifiers.cpp
+new file mode 100644
+index 0000000..36cc10b
+--- /dev/null
++++ b/src/items/item_modifiers.cpp
+@@ -0,0 +1,227 @@
++#include "items/item_modifiers.hpp"
++
++#include "items/item_catalog.hpp"
++
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++
++namespace arpg::items {
++namespace {
++
++inline constexpr modifiers::ModifierId kEquipmentModifierDomain =
++    0x80000000U;
++inline constexpr std::uint16_t kBaseSourceStart = 1U;
++inline constexpr std::uint16_t kAffixSourceStart = 0x100U;
++inline constexpr std::uint16_t kSourceStride = 4U;
++
++bool checked_add(std::int64_t left,
++    std::int64_t right,
++    std::int64_t& output) noexcept {
++    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
++    if ((right > 0 && left > maximum - right)
++        || (right < 0 && left < minimum - right))
++        return false;
++    output = left + right;
++    return true;
++}
++
++bool checked_multiply(std::int64_t left,
++    std::int64_t right,
++    std::int64_t& output) noexcept {
++    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
++    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
++    if (left == 0 || right == 0) {
++        output = 0;
++        return true;
++    }
++    if ((left == -1 && right == minimum)
++        || (right == -1 && left == minimum))
++        return false;
++    if (left > 0) {
++        if ((right > 0 && left > maximum / right)
++            || (right < 0 && right < minimum / left))
++            return false;
++    } else if ((right > 0 && left < minimum / right)
++        || (right < 0 && left < maximum / right)) {
++        return false;
++    }
++    output = left * right;
++    return true;
++}
++
++bool checked_add_int32(std::int32_t left,
++    std::int32_t right,
++    std::int32_t& output) noexcept {
++    const std::int64_t sum = static_cast<std::int64_t>(left) + right;
++    if (sum < (std::numeric_limits<std::int32_t>::min)()
++        || sum > (std::numeric_limits<std::int32_t>::max)())
++        return false;
++    output = static_cast<std::int32_t>(sum);
++    return true;
++}
++
++std::size_t value_index(std::uint8_t item_level) noexcept {
++    for (std::uint8_t tier = 1U; tier <= 8U; ++tier) {
++        if (item_level >= tier_minimum_level(tier))
++            return static_cast<std::size_t>(8U - tier);
++    }
++    return 0U;
++}
++
++bool uses_fixed_units(modifiers::StatId stat,
++    modifiers::ModifierOperation operation) noexcept {
++    if (operation != modifiers::ModifierOperation::flat) return false;
++    return stat == modifiers::StatId::physical_flat_damage
++        || stat == modifiers::StatId::fire_flat_damage
++        || stat == modifiers::StatId::water_flat_damage
++        || stat == modifiers::StatId::lightning_flat_damage
++        || stat == modifiers::StatId::chaos_flat_damage
++        || stat == modifiers::StatId::max_health
++        || stat == modifiers::StatId::max_barrier;
++}
++
++modifiers::ModifierId modifier_id(ItemSlot slot,
++    std::uint16_t source) noexcept {
++    return kEquipmentModifierDomain
++        | (static_cast<modifiers::ModifierId>(slot) << 16U)
++        | source;
++}
++
++bool append_modifier(EquipmentProjection& projection,
++    ItemSlot slot,
++    std::uint16_t source,
++    modifiers::StatId stat,
++    modifiers::ModifierOperation operation,
++    std::int32_t raw_value) noexcept {
++    if (projection.modifier_count >= projection.modifiers.size()) return false;
++    std::int64_t value = raw_value;
++    if (uses_fixed_units(stat, operation)
++        && !checked_multiply(value, modifiers::kFixedOne, value))
++        return false;
++    projection.modifiers[projection.modifier_count++] = modifiers::Modifier{
++        modifier_id(slot, source), stat, operation, value};
++    return true;
++}
++
++bool apply_effect(EquipmentProjection& projection,
++    ItemSlot slot,
++    ItemEffectKind effect,
++    modifiers::StatId stat,
++    modifiers::ModifierOperation operation,
++    std::int32_t value,
++    std::uint8_t variant,
++    std::uint16_t source,
++    std::int64_t& local_flat,
++    std::int64_t& local_increased) noexcept {
++    switch (effect) {
++    case ItemEffectKind::global_modifier:
++        return append_modifier(projection, slot, source,
++            stat, operation, value);
++    case ItemEffectKind::local_weapon_physical_flat:
++        return slot == ItemSlot::weapon
++            && checked_add(local_flat, value, local_flat);
++    case ItemEffectKind::local_weapon_physical_increased:
++        return slot == ItemSlot::weapon
++            && checked_add(local_increased, value, local_increased);
++    case ItemEffectKind::slot_dependent_attack_speed:
++        if (slot == ItemSlot::weapon) {
++            return checked_add_int32(projection.local_attack_speed_bp,
++                value, projection.local_attack_speed_bp);
++        }
++        return append_modifier(projection, slot, source,
++            modifiers::StatId::attack_speed,
++            modifiers::ModifierOperation::increased, value);
++    case ItemEffectKind::all_element_damage_reduction:
++        for (std::uint16_t element = 0U; element < 4U; ++element) {
++            const auto element_stat = static_cast<modifiers::StatId>(
++                static_cast<std::uint16_t>(
++                    modifiers::StatId::fire_damage_reduction) + element);
++            if (!append_modifier(projection, slot,
++                    static_cast<std::uint16_t>(source + element),
++                    element_stat, modifiers::ModifierOperation::flat, value))
++                return false;
++        }
++        return true;
++    case ItemEffectKind::variant_element_damage_reduction_cap:
++        if (variant >= 4U) return false;
++        return append_modifier(projection, slot, source,
++            static_cast<modifiers::StatId>(static_cast<std::uint16_t>(
++                modifiers::StatId::fire_damage_reduction_cap) + variant),
++            modifiers::ModifierOperation::flat, value);
++    }
++    return false;
++}
++
++const ItemInstance* equipped_item(const ItemOwnershipState& state,
++    std::uint64_t id) noexcept {
++    for (const ItemInstance& item : state.items)
++        if (item.id == id) return &item;
++    return nullptr;
++}
++
++bool checked_weapon_formula(std::int64_t base_and_flat,
++    std::int64_t local_increased,
++    std::int64_t& output) noexcept {
++    std::int64_t factor{};
++    if (!checked_add(modifiers::kFixedOne, local_increased, factor))
++        return false;
++    std::int64_t whole{};
++    std::int64_t remainder{};
++    if (!checked_multiply(base_and_flat / modifiers::kFixedOne,
++            factor, whole)
++        || !checked_multiply(base_and_flat % modifiers::kFixedOne,
++            factor, remainder))
++        return false;
++    remainder /= modifiers::kFixedOne;
++    return checked_add(whole, remainder, output);
++}
++
++}  // namespace
++
++EquipmentProjection project_equipment(
++    const ItemOwnershipState& state) noexcept {
++    EquipmentProjection projection{};
++    if (!validate_ownership(state)) return projection;
++
++    std::int64_t local_flat = 0;
++    std::int64_t local_increased = 0;
++    for (std::size_t slot_index = 0U;
++         slot_index < state.equipment.equipped_ids.size(); ++slot_index) {
++        const std::uint64_t id = state.equipment.equipped_ids[slot_index];
++        if (id == 0U) continue;
++        const ItemInstance* item = equipped_item(state, id);
++        if (item == nullptr) return EquipmentProjection{};
++        const BaseDefinition* base = base_definition(item->base_id);
++        if (base == nullptr) return EquipmentProjection{};
++        const ItemSlot slot = static_cast<ItemSlot>(slot_index);
++        const std::size_t base_value_index = value_index(item->item_level);
++        if (!apply_effect(projection, slot, base->effect, base->stat,
++                base->operation, base->values[base_value_index], 0xFFU,
++                kBaseSourceStart, local_flat, local_increased))
++            return EquipmentProjection{};
++
++        for (std::size_t affix_index = 0U;
++             affix_index < item->affix_count; ++affix_index) {
++            const AffixRoll& roll = item->affixes[affix_index];
++            const AffixDefinition* affix = affix_definition(roll.affix_id);
++            if (affix == nullptr) return EquipmentProjection{};
++            const std::size_t index = static_cast<std::size_t>(8U - roll.tier);
++            const std::uint16_t source = static_cast<std::uint16_t>(
++                kAffixSourceStart + affix_index * kSourceStride);
++            if (!apply_effect(projection, slot, affix->effect, affix->stat,
++                    affix->operation, affix->values[index], roll.variant,
++                    source, local_flat, local_increased))
++                return EquipmentProjection{};
++        }
++    }
++
++    if (!checked_weapon_formula(
++            local_flat, local_increased, projection.weapon_physical))
++        return EquipmentProjection{};
++    projection.valid = true;
++    return projection;
++}
++
++}  // namespace arpg::items
+diff --git a/src/items/item_modifiers.hpp b/src/items/item_modifiers.hpp
+new file mode 100644
+index 0000000..5f4ad5f
+--- /dev/null
++++ b/src/items/item_modifiers.hpp
+@@ -0,0 +1,23 @@
++#pragma once
++
++#include "items/item_types.hpp"
++#include "modifiers/modifier_types.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::items {
++
++struct EquipmentProjection final {
++    std::array<modifiers::Modifier, 128> modifiers{};
++    std::size_t modifier_count{};
++    std::int64_t weapon_physical{};
++    std::int32_t local_attack_speed_bp{};
++    bool valid{};
++};
++
++[[nodiscard]] EquipmentProjection project_equipment(
++    const ItemOwnershipState& state) noexcept;
++
++}  // namespace arpg::items
+diff --git a/src/items/item_types.hpp b/src/items/item_types.hpp
+index af9ccbe..5c8b75b 100644
+--- a/src/items/item_types.hpp
++++ b/src/items/item_types.hpp
+@@ -1,14 +1,16 @@
+ #pragma once
+ 
+ #include <array>
++#include <cstddef>
+ #include <cstdint>
++#include <type_traits>
+ #include <vector>
+ 
+ namespace arpg::items {
+ 
+ enum class ItemSlot : std::uint8_t {
+     weapon,
+     helmet,
+     chest,
+     gloves,
+     boots,
+@@ -41,22 +43,30 @@ struct AffixRoll final {
+ };
+ 
+ struct ItemInstance final {
+     std::uint64_t id{};
+     std::uint8_t base_id{};
+     ItemRarity rarity{};
+     std::uint8_t item_level{};
+     std::uint8_t required_level{};
+     std::array<AffixRoll, 6> affixes{};
+     std::uint8_t affix_count{};
++    std::array<std::uint8_t, 3> reserved{};
+ };
+ 
++static_assert(std::is_standard_layout_v<ItemInstance>);
++static_assert(std::is_trivially_copyable_v<ItemInstance>);
++static_assert(sizeof(ItemInstance) == 40U);
++static_assert(offsetof(ItemInstance, affixes) == 12U);
++static_assert(offsetof(ItemInstance, affix_count) == 36U);
++static_assert(offsetof(ItemInstance, reserved) == 37U);
++
+ struct EquipmentState final {
+     std::array<std::uint64_t, 6> equipped_ids{};
+ };
+ 
+ struct ItemOwnershipState final {
+     std::vector<ItemInstance> items{};
+     EquipmentState equipment{};
+     std::array<std::uint64_t, 3> claimed_drop_bits{};
+     std::uint64_t next_item_sequence{1};
+ };
+diff --git a/src/passives/passive_tree_rules.cpp b/src/passives/passive_tree_rules.cpp
+index 8d06e6f..876a9f4 100644
+--- a/src/passives/passive_tree_rules.cpp
++++ b/src/passives/passive_tree_rules.cpp
+@@ -94,34 +94,49 @@ PassiveTreeResult refund_node(PassiveTreeState& state,
+     if (!connected(state)) {
+         state.allocated_bits |= std::uint64_t{1U} << node;
+         return result_snapshot(state, progression, PassiveTreeError::disconnects_tree, false);
+     }
+     ++progression.unspent_passive_points;
+     return result_snapshot(state, progression, PassiveTreeError::none, true);
+ }
+ 
+ modifiers::PlayerModifierValues evaluate_passive_tree(
+     const PassiveTreeState& state) noexcept {
+-    if ((state.allocated_bits & 1U) == 0U || !connected(state)) {
++    std::array<modifiers::Modifier, 128U> collected{};
++    std::size_t count = 0U;
++    if (!append_passive_modifiers(
++            state, collected.data(), collected.size(), count)) {
+         modifiers::PlayerModifierValues invalid{};
+         invalid.valid = false;
+         return invalid;
+     }
+-    std::array<modifiers::Modifier, 128U> modifiers{};
+-    std::size_t count = 0U;
++    return modifiers::evaluate_player_modifiers(
++        modifiers::ModifierSpan{collected.data(), count});
++}
++
++bool append_passive_modifiers(
++    const PassiveTreeState& tree,
++    modifiers::Modifier* output,
++    std::size_t capacity,
++    std::size_t& count) noexcept {
++    if (count > capacity || (output == nullptr && capacity != 0U)
++        || (tree.allocated_bits & 1U) == 0U || !catalog_is_valid()
++        || !connected(tree)) {
++        return false;
++    }
++    std::size_t appended = 0U;
+     for (const auto& node : passive_nodes()) {
+-        if (!allocated(state, node.id)) continue;
+-        for (std::size_t index = 0; index < node.modifier_count; ++index) {
+-            if (count >= modifiers.size()) {
+-                modifiers::PlayerModifierValues invalid{};
+-                invalid.valid = false;
+-                return invalid;
+-            }
+-            modifiers[count++] = node.modifiers[index];
+-        }
++        if (!allocated(tree, node.id)) continue;
++        if (node.modifier_count > capacity - count - appended) return false;
++        appended += node.modifier_count;
+     }
+-    const auto result = modifiers::evaluate_player_modifiers(
+-        modifiers::ModifierSpan{modifiers.data(), count});
+-    return result;
++    std::size_t write = count;
++    for (const auto& node : passive_nodes()) {
++        if (!allocated(tree, node.id)) continue;
++        for (std::size_t index = 0U; index < node.modifier_count; ++index)
++            output[write++] = node.modifiers[index];
++    }
++    count = write;
++    return true;
+ }
+ 
+ }  // namespace arpg::passives
+diff --git a/src/passives/passive_tree_rules.hpp b/src/passives/passive_tree_rules.hpp
+index 1bdb99e..3a93211 100644
+--- a/src/passives/passive_tree_rules.hpp
++++ b/src/passives/passive_tree_rules.hpp
+@@ -1,25 +1,33 @@
+ #pragma once
+ 
+ #include "modifiers/player_modifier_values.hpp"
+ #include "passives/passive_tree_catalog.hpp"
+ 
++#include <cstddef>
++
+ namespace arpg::passives {
+ 
+ [[nodiscard]] bool valid_passive_tree_state(
+     const PassiveTreeState& state,
+     const progression::ProgressionState& progression) noexcept;
+ 
+ [[nodiscard]] PassiveTreeResult allocate_node(
+     PassiveTreeState& state,
+     progression::ProgressionState& progression,
+     PassiveNodeId node) noexcept;
+ 
+ [[nodiscard]] PassiveTreeResult refund_node(
+     PassiveTreeState& state,
+     progression::ProgressionState& progression,
+     PassiveNodeId node) noexcept;
+ 
+ [[nodiscard]] modifiers::PlayerModifierValues evaluate_passive_tree(
+     const PassiveTreeState& state) noexcept;
+ 
++[[nodiscard]] bool append_passive_modifiers(
++    const PassiveTreeState& tree,
++    modifiers::Modifier* output,
++    std::size_t capacity,
++    std::size_t& count) noexcept;
++
+ }  // namespace arpg::passives
+diff --git a/tests/items/CMakeLists.txt b/tests/items/CMakeLists.txt
+index 3f302db..9d19c09 100644
+--- a/tests/items/CMakeLists.txt
++++ b/tests/items/CMakeLists.txt
+@@ -1,13 +1,16 @@
+ add_executable(arpg_item_tests
+     item_test_main.cpp
+-    item_catalog_tests.cpp)
++    item_catalog_tests.cpp
++    item_generation_tests.cpp
++    item_modifier_tests.cpp
++    item_recipe_tests.cpp)
+ 
+ target_include_directories(arpg_item_tests PRIVATE
+     "${PROJECT_SOURCE_DIR}/tests/core"
+     "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_item_tests PRIVATE cxx_std_17)
+ target_link_libraries(arpg_item_tests PRIVATE arpg_items)
+ arpg_enable_project_warnings(arpg_item_tests)
+ 
+ add_test(NAME items.units COMMAND arpg_item_tests)
+ set_tests_properties(items.units PROPERTIES LABELS "headless;items")
+diff --git a/tests/items/item_catalog_tests.cpp b/tests/items/item_catalog_tests.cpp
+index 2b57194..0c6362f 100644
+--- a/tests/items/item_catalog_tests.cpp
++++ b/tests/items/item_catalog_tests.cpp
+@@ -19,20 +19,29 @@ using arpg::modifiers::StatId;
+ static_assert(std::is_same_v<
+     std::underlying_type_t<ItemSlot>, std::uint8_t>);
+ static_assert(std::is_same_v<
+     std::underlying_type_t<ItemRarity>, std::uint8_t>);
+ static_assert(std::is_same_v<
+     std::underlying_type_t<AffixKind>, std::uint8_t>);
+ static_assert(std::is_same_v<decltype(AffixRoll::affix_id), std::uint16_t>);
+ static_assert(std::is_same_v<decltype(ItemInstance::id), std::uint64_t>);
+ static_assert(std::is_same_v<
+     decltype(ItemInstance::affixes), std::array<AffixRoll, 6>>);
++static_assert(std::is_same_v<
++    decltype(ItemInstance::reserved), std::array<std::uint8_t, 3>>);
++static_assert(std::is_standard_layout_v<ItemInstance>);
++static_assert(std::is_trivially_copyable_v<ItemInstance>);
++static_assert(sizeof(ItemInstance) == 40U);
++static_assert(offsetof(ItemInstance, id) == 0U);
++static_assert(offsetof(ItemInstance, affixes) == 12U);
++static_assert(offsetof(ItemInstance, affix_count) == 36U);
++static_assert(offsetof(ItemInstance, reserved) == 37U);
+ static_assert(std::is_same_v<
+     decltype(EquipmentState::equipped_ids), std::array<std::uint64_t, 6>>);
+ static_assert(std::is_same_v<
+     decltype(ItemOwnershipState::claimed_drop_bits),
+     std::array<std::uint64_t, 3>>);
+ static_assert(static_cast<std::uint8_t>(ItemSlot::weapon) == 0U);
+ static_assert(static_cast<std::uint8_t>(ItemSlot::accessory) == 5U);
+ static_assert(static_cast<std::uint8_t>(ItemSlot::count) == 6U);
+ 
+ constexpr std::uint8_t slots(std::initializer_list<ItemSlot> values) noexcept {
+@@ -388,20 +397,32 @@ arpg::test::Failure item_requires_unused_rolls_to_be_zero() noexcept {
+     ARPG_REQUIRE(!validate_item(item));
+     item.affixes[1] = {};
+     item.affixes[1].tier = 1U;
+     ARPG_REQUIRE(!validate_item(item));
+     item.affixes[1] = {};
+     item.affixes[1].variant = 0xFFU;
+     ARPG_REQUIRE(!validate_item(item));
+     return {};
+ }
+ 
++arpg::test::Failure item_requires_reserved_bytes_to_be_zero() noexcept {
++    ItemInstance item = valid_magic_weapon();
++    ARPG_REQUIRE(validate_item(item));
++    for (std::size_t index = 0U; index < item.reserved.size(); ++index) {
++        item.reserved[index] = static_cast<std::uint8_t>(index + 1U);
++        ARPG_REQUIRE(!validate_item(item));
++        item.reserved[index] = 0U;
++    }
++    ARPG_REQUIRE(validate_item(item));
++    return {};
++}
++
+ arpg::test::Failure valid_normal_magic_and_rare_items_are_accepted() noexcept {
+     ARPG_REQUIRE(validate_item(normal_item(0U, 1U)));
+     ARPG_REQUIRE(validate_item(valid_magic_weapon()));
+     ARPG_REQUIRE(validate_item(valid_rare_accessory()));
+     return {};
+ }
+ 
+ arpg::test::Failure ownership_enforces_ids_and_equipment_references() noexcept {
+     ItemOwnershipState state{};
+     for (std::uint8_t index = 0U; index < 6U; ++index) {
+@@ -448,20 +469,22 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"persistent tier constants", &tier_constants_use_persistent_tier_encoding},
+     {"frozen base catalog", &bases_match_frozen_catalog},
+     {"frozen affix catalog", &affixes_match_frozen_catalog},
+     {"slot candidate coverage", &every_slot_has_enough_affix_candidates},
+     {"rarity affix counts", &item_rarity_controls_affix_count},
+     {"base slot group and kind validation",
+         &item_rejects_bad_base_slot_group_and_kind_counts},
+     {"tier variant and level validation",
+         &item_enforces_tier_variant_and_required_level},
+     {"unused roll zero validation", &item_requires_unused_rolls_to_be_zero},
++    {"reserved byte zero validation",
++        &item_requires_reserved_bytes_to_be_zero},
+     {"valid item acceptance", &valid_normal_magic_and_rare_items_are_accepted},
+     {"ownership identity and equipment validation",
+         &ownership_enforces_ids_and_equipment_references},
+     {"ownership capacity", &ownership_enforces_exact_capacity_boundary},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite item_catalog_suite() noexcept {
+     return arpg::test::make_suite("item_catalog", kCases);
+diff --git a/tests/items/item_generation_tests.cpp b/tests/items/item_generation_tests.cpp
+new file mode 100644
+index 0000000..b2076dc
+--- /dev/null
++++ b/tests/items/item_generation_tests.cpp
+@@ -0,0 +1,187 @@
++#include "test_framework.hpp"
++
++#include "items/item_catalog.hpp"
++#include "items/item_generation.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <type_traits>
++
++namespace {
++
++using namespace arpg::items;
++
++static_assert(std::is_trivially_copyable_v<ItemInstance>);
++
++arpg::test::Failure rarity_weights_follow_frozen_integer_formula() noexcept {
++    ARPG_REQUIRE(!rarity_weights(0U).has_value());
++    ARPG_REQUIRE(!rarity_weights(101U).has_value());
++    const auto level_one = rarity_weights(1U);
++    const auto level_hundred = rarity_weights(100U);
++    ARPG_REQUIRE(level_one.has_value());
++    ARPG_REQUIRE(level_hundred.has_value());
++    ARPG_REQUIRE(level_one->normal == 70U);
++    ARPG_REQUIRE(level_one->magic == 25U);
++    ARPG_REQUIRE(level_one->rare == 5U);
++    ARPG_REQUIRE(level_hundred->normal == 40U);
++    ARPG_REQUIRE(level_hundred->magic == 40U);
++    ARPG_REQUIRE(level_hundred->rare == 20U);
++    for (std::uint8_t level = 1U; level <= 100U; ++level) {
++        const auto weights = rarity_weights(level);
++        ARPG_REQUIRE(weights.has_value());
++        const std::uint32_t x = static_cast<std::uint32_t>(level - 1U);
++        ARPG_REQUIRE(weights->normal == 70U - (30U * x) / 99U);
++        ARPG_REQUIRE(weights->magic == 25U + (15U * x) / 99U);
++        ARPG_REQUIRE(weights->normal + weights->magic + weights->rare == 100U);
++    }
++    return {};
++}
++
++arpg::test::Failure tier_weights_unlock_and_boost_highest_two_tiers() noexcept {
++    ARPG_REQUIRE(!tier_weights(0U).has_value());
++    ARPG_REQUIRE(!tier_weights(101U).has_value());
++    for (std::uint8_t level = 1U; level <= 100U; ++level) {
++        const auto weights = tier_weights(level);
++        ARPG_REQUIRE(weights.has_value());
++        std::array<std::uint8_t, 8> unlocked{};
++        std::size_t unlocked_count = 0U;
++        for (std::uint8_t tier = 8U; tier >= 1U; --tier) {
++            const std::size_t index = static_cast<std::size_t>(8U - tier);
++            if (level >= tier_minimum_level(tier))
++                unlocked[unlocked_count++] = tier;
++            else
++                ARPG_REQUIRE((*weights)[index] == 0U);
++            if (tier == 1U) break;
++        }
++        ARPG_REQUIRE(unlocked_count != 0U);
++        for (std::size_t index = 0U; index < unlocked_count; ++index) {
++            const std::uint8_t tier = unlocked[index];
++            std::uint32_t expected = tier_base_weight(tier);
++            if (index + 1U == unlocked_count)
++                expected += level / 5U;
++            else if (index + 2U == unlocked_count)
++                expected += level / 10U;
++            ARPG_REQUIRE((*weights)[8U - tier] == expected);
++        }
++    }
++    const auto sixteen = tier_weights(16U);
++    ARPG_REQUIRE((*sixteen)[0] == 65U);
++    ARPG_REQUIRE((*sixteen)[1] == 51U);
++    const auto hundred = tier_weights(100U);
++    ARPG_REQUIRE((*hundred)[6] == 21U);
++    ARPG_REQUIRE((*hundred)[7] == 28U);
++    return {};
++}
++
++arpg::test::Failure generation_rejects_invalid_local_inputs() noexcept {
++    ItemGenerationRequest request{1U, ItemSlot::weapon, 1U, 1U, ItemRarity::normal};
++    ARPG_REQUIRE(generate_item(request).has_value());
++    request.item_level = 0U;
++    ARPG_REQUIRE(!generate_item(request).has_value());
++    request.item_level = 101U;
++    ARPG_REQUIRE(!generate_item(request).has_value());
++    request.item_level = 1U;
++    request.item_id = 0U;
++    ARPG_REQUIRE(!generate_item(request).has_value());
++    request.item_id = 1U;
++    request.slot = ItemSlot::count;
++    ARPG_REQUIRE(!generate_item(request).has_value());
++    request.slot = ItemSlot::weapon;
++    request.forced_rarity = static_cast<ItemRarity>(3U);
++    ARPG_REQUIRE(!generate_item(request).has_value());
++    return {};
++}
++
++arpg::test::Failure generation_is_byte_deterministic_and_items_are_valid() noexcept {
++    const ItemGenerationRequest request{
++        0x123456789ABCDEF0ULL, ItemSlot::accessory, 100U, 77U, ItemRarity::rare};
++    const auto first = generate_item(request);
++    const auto second = generate_item(request);
++    ARPG_REQUIRE(first.has_value());
++    ARPG_REQUIRE(second.has_value());
++    ARPG_REQUIRE(std::memcmp(&*first, &*second, sizeof(ItemInstance)) == 0);
++    ARPG_REQUIRE(first->id == 77U);
++    ARPG_REQUIRE(first->base_id == 6U);
++    ARPG_REQUIRE(first->rarity == ItemRarity::rare);
++    ARPG_REQUIRE(first->item_level == 100U);
++    ARPG_REQUIRE(validate_item(*first));
++    std::uint8_t required = 1U;
++    std::uint8_t prefixes = 0U;
++    std::uint8_t suffixes = 0U;
++    for (std::size_t index = 0U; index < first->affix_count; ++index) {
++        const auto* definition = affix_definition(first->affixes[index].affix_id);
++        ARPG_REQUIRE(definition != nullptr);
++        required = (std::max)(required,
++            tier_minimum_level(first->affixes[index].tier));
++        prefixes += definition->kind == AffixKind::prefix ? 1U : 0U;
++        suffixes += definition->kind == AffixKind::suffix ? 1U : 0U;
++        for (std::size_t prior = 0U; prior < index; ++prior) {
++            const auto* prior_definition =
++                affix_definition(first->affixes[prior].affix_id);
++            ARPG_REQUIRE(prior_definition->group_id != definition->group_id);
++        }
++    }
++    ARPG_REQUIRE(prefixes <= 3U);
++    ARPG_REQUIRE(suffixes <= 3U);
++    ARPG_REQUIRE(first->required_level == required);
++    return {};
++}
++
++arpg::test::Failure rarity_counts_and_all_slots_support_six_affixes() noexcept {
++    const auto normal = generate_item(
++        {11U, ItemSlot::helmet, 100U, 1U, ItemRarity::normal});
++    ARPG_REQUIRE(normal.has_value());
++    ARPG_REQUIRE(normal->affix_count == 0U);
++    ARPG_REQUIRE(normal->required_level == 1U);
++
++    std::array<bool, 3> magic_counts{};
++    std::array<bool, 7> rare_counts{};
++    for (std::uint64_t seed = 1U; seed <= 4096U; ++seed) {
++        const auto magic = generate_item(
++            {seed, ItemSlot::helmet, 100U, seed, ItemRarity::magic});
++        const auto rare = generate_item(
++            {seed, ItemSlot::helmet, 100U, seed, ItemRarity::rare});
++        ARPG_REQUIRE(magic.has_value());
++        ARPG_REQUIRE(rare.has_value());
++        magic_counts[magic->affix_count] = true;
++        rare_counts[rare->affix_count] = true;
++    }
++    ARPG_REQUIRE(magic_counts[1U] && magic_counts[2U]);
++    ARPG_REQUIRE(rare_counts[3U] && rare_counts[4U]
++        && rare_counts[5U] && rare_counts[6U]);
++
++    for (std::uint8_t raw_slot = 0U;
++         raw_slot < static_cast<std::uint8_t>(ItemSlot::count); ++raw_slot) {
++        bool found_six = false;
++        for (std::uint64_t seed = 1U; seed <= 4096U && !found_six; ++seed) {
++            const auto item = generate_item({seed,
++                static_cast<ItemSlot>(raw_slot), 100U,
++                static_cast<std::uint64_t>(raw_slot) + 1U,
++                ItemRarity::rare});
++            ARPG_REQUIRE(item.has_value());
++            found_six = item->affix_count == 6U;
++        }
++        ARPG_REQUIRE(found_six);
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"frozen rarity weights", &rarity_weights_follow_frozen_integer_formula},
++    {"tier unlock and highest-two boosts",
++        &tier_weights_unlock_and_boost_highest_two_tiers},
++    {"invalid generation inputs", &generation_rejects_invalid_local_inputs},
++    {"deterministic valid generation",
++        &generation_is_byte_deterministic_and_items_are_valid},
++    {"rarity counts and six-affix slots",
++        &rarity_counts_and_all_slots_support_six_affixes},
++};
++
++}  // namespace
++
++arpg::test::TestSuite item_generation_suite() noexcept {
++    return arpg::test::make_suite("item_generation", kCases);
++}
+diff --git a/tests/items/item_modifier_tests.cpp b/tests/items/item_modifier_tests.cpp
+new file mode 100644
+index 0000000..26aad05
+--- /dev/null
++++ b/tests/items/item_modifier_tests.cpp
+@@ -0,0 +1,164 @@
++#include "test_framework.hpp"
++
++#include "items/item_catalog.hpp"
++#include "items/item_modifiers.hpp"
++#include "modifiers/player_modifier_values.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace {
++
++using namespace arpg::items;
++using arpg::modifiers::Modifier;
++using arpg::modifiers::ModifierOperation;
++using arpg::modifiers::StatId;
++
++ItemInstance normal_item(std::uint64_t id,
++    std::uint8_t base_id,
++    std::uint8_t level = 95U) noexcept {
++    ItemInstance item{};
++    item.id = id;
++    item.base_id = base_id;
++    item.rarity = ItemRarity::normal;
++    item.item_level = level;
++    item.required_level = 1U;
++    return item;
++}
++
++const Modifier* find_modifier(const EquipmentProjection& projection,
++    StatId stat,
++    ModifierOperation operation) noexcept {
++    for (std::size_t index = 0U; index < projection.modifier_count; ++index) {
++        if (projection.modifiers[index].stat == stat
++            && projection.modifiers[index].operation == operation)
++            return &projection.modifiers[index];
++    }
++    return nullptr;
++}
++
++arpg::test::Failure weapon_local_values_use_frozen_floor_order() noexcept {
++    ItemInstance weapon = normal_item(1U, 1U);
++    weapon.rarity = ItemRarity::rare;
++    weapon.required_level = 95U;
++    weapon.affixes[0] = {1U, 1U, 0xFFU};
++    weapon.affixes[1] = {2U, 1U, 0xFFU};
++    weapon.affixes[2] = {101U, 1U, 0xFFU};
++    weapon.affix_count = 3U;
++    ARPG_REQUIRE(validate_item(weapon));
++    ItemOwnershipState state{};
++    state.items.push_back(weapon);
++    state.equipment.equipped_ids[0] = weapon.id;
++    const auto projection = project_equipment(state);
++    ARPG_REQUIRE(projection.valid);
++    ARPG_REQUIRE(projection.weapon_physical == 39);
++    ARPG_REQUIRE(projection.local_attack_speed_bp == 1200);
++    ARPG_REQUIRE(projection.modifier_count == 0U);
++    return {};
++}
++
++arpg::test::Failure base_intrinsics_project_through_global_modifier_path() noexcept {
++    ItemOwnershipState state{};
++    for (std::uint8_t slot = 0U;
++         slot < static_cast<std::uint8_t>(ItemSlot::count); ++slot) {
++        state.items.push_back(normal_item(slot + 1U, slot + 1U));
++        state.equipment.equipped_ids[slot] = slot + 1U;
++    }
++    const auto projection = project_equipment(state);
++    ARPG_REQUIRE(projection.valid);
++    ARPG_REQUIRE(projection.weapon_physical == 16);
++    ARPG_REQUIRE(projection.local_attack_speed_bp == 0);
++    ARPG_REQUIRE(projection.modifier_count == 8U);
++    const auto values = arpg::modifiers::evaluate_player_modifiers(
++        {projection.modifiers.data(), projection.modifier_count});
++    ARPG_REQUIRE(values.valid);
++    ARPG_REQUIRE(values.max_health == 38 * arpg::modifiers::kFixedOne);
++    ARPG_REQUIRE(values.max_barrier == 46 * arpg::modifiers::kFixedOne);
++    ARPG_REQUIRE(values.attack_speed == 10800);
++    ARPG_REQUIRE(values.movement_speed == 10800);
++    for (const std::int32_t reduction : values.damage_reduction)
++        ARPG_REQUIRE(reduction == 1000);
++
++    for (std::size_t index = 0U; index < projection.modifier_count; ++index) {
++        const auto id = projection.modifiers[index].id;
++        ARPG_REQUIRE(id != 0U);
++        ARPG_REQUIRE((id & 0x80000000U) != 0U);
++        ARPG_REQUIRE(id < 1000U || id > 1189U);
++        for (std::size_t prior = 0U; prior < index; ++prior)
++            ARPG_REQUIRE(projection.modifiers[prior].id != id);
++    }
++    return {};
++}
++
++arpg::test::Failure slot_dependent_and_variant_affixes_map_globally() noexcept {
++    ItemInstance gloves = normal_item(11U, 4U);
++    gloves.rarity = ItemRarity::magic;
++    gloves.required_level = 95U;
++    gloves.affixes[0] = {101U, 1U, 0xFFU};
++    gloves.affix_count = 1U;
++    ItemInstance accessory = normal_item(12U, 6U);
++    accessory.rarity = ItemRarity::magic;
++    accessory.required_level = 95U;
++    accessory.affixes[0] = {112U, 1U, 2U};
++    accessory.affix_count = 1U;
++    ARPG_REQUIRE(validate_item(gloves));
++    ARPG_REQUIRE(validate_item(accessory));
++    ItemOwnershipState state{};
++    state.items.push_back(gloves);
++    state.items.push_back(accessory);
++    state.equipment.equipped_ids[3] = gloves.id;
++    state.equipment.equipped_ids[5] = accessory.id;
++    const auto projection = project_equipment(state);
++    ARPG_REQUIRE(projection.valid);
++    ARPG_REQUIRE(projection.local_attack_speed_bp == 0);
++    ARPG_REQUIRE(projection.modifier_count == 7U);
++    const auto* speed = find_modifier(
++        projection, StatId::attack_speed, ModifierOperation::increased);
++    const auto* cap = find_modifier(projection,
++        StatId::lightning_damage_reduction_cap, ModifierOperation::flat);
++    ARPG_REQUIRE(speed != nullptr);
++    ARPG_REQUIRE(cap != nullptr);
++    const auto values = arpg::modifiers::evaluate_player_modifiers(
++        {projection.modifiers.data(), projection.modifier_count});
++    ARPG_REQUIRE(values.valid);
++    ARPG_REQUIRE(values.attack_speed == 12000);
++    ARPG_REQUIRE(values.damage_reduction_cap_bonus[2] == 600);
++    return {};
++}
++
++arpg::test::Failure projection_validates_ownership_and_ignores_unequipped() noexcept {
++    ItemOwnershipState state{};
++    state.items.push_back(normal_item(21U, 2U));
++    state.items.push_back(normal_item(22U, 3U));
++    state.equipment.equipped_ids[1] = 21U;
++    const auto projection = project_equipment(state);
++    ARPG_REQUIRE(projection.valid);
++    ARPG_REQUIRE(projection.modifier_count == 1U);
++    ARPG_REQUIRE(find_modifier(projection,
++        StatId::max_health, ModifierOperation::flat) != nullptr);
++    ARPG_REQUIRE(find_modifier(projection,
++        StatId::max_barrier, ModifierOperation::flat) == nullptr);
++
++    state.equipment.equipped_ids[1] = 999U;
++    const auto invalid = project_equipment(state);
++    ARPG_REQUIRE(!invalid.valid);
++    ARPG_REQUIRE(invalid.modifier_count == 0U);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"weapon local floor formula", &weapon_local_values_use_frozen_floor_order},
++    {"base intrinsic projection",
++        &base_intrinsics_project_through_global_modifier_path},
++    {"slot-dependent and variant mapping",
++        &slot_dependent_and_variant_affixes_map_globally},
++    {"ownership validation and equipped-only projection",
++        &projection_validates_ownership_and_ignores_unequipped},
++};
++
++}  // namespace
++
++arpg::test::TestSuite item_modifier_suite() noexcept {
++    return arpg::test::make_suite("item_modifiers", kCases);
++}
+diff --git a/tests/items/item_recipe_tests.cpp b/tests/items/item_recipe_tests.cpp
+new file mode 100644
+index 0000000..0505ce6
+--- /dev/null
++++ b/tests/items/item_recipe_tests.cpp
+@@ -0,0 +1,152 @@
++#include "test_framework.hpp"
++
++#include "items/item_catalog.hpp"
++#include "items/item_generation.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++namespace {
++
++using namespace arpg::items;
++
++ItemInstance generated_material(std::uint64_t seed,
++    std::uint64_t id,
++    ItemSlot slot,
++    std::uint8_t level,
++    ItemRarity rarity) noexcept {
++    return generate_item({seed, slot, level, id, rarity}).value();
++}
++
++bool same_affixes(const ItemInstance& left,
++    const ItemInstance& right) noexcept {
++    return std::memcmp(left.affixes.data(), right.affixes.data(),
++        sizeof(left.affixes)) == 0;
++}
++
++arpg::test::Failure recipe_is_order_independent_and_averages_level() noexcept {
++    const ItemInstance a = generated_material(
++        11U, 300U, ItemSlot::accessory, 95U, ItemRarity::rare);
++    const ItemInstance b = generated_material(
++        22U, 100U, ItemSlot::accessory, 96U, ItemRarity::rare);
++    const ItemInstance c = generated_material(
++        33U, 200U, ItemSlot::accessory, 100U, ItemRarity::rare);
++    const auto abc = generate_recipe_item(0xABCDEFULL, 9U, a, b, c);
++    const auto cba = generate_recipe_item(0xABCDEFULL, 9U, c, b, a);
++    const auto bac = generate_recipe_item(0xABCDEFULL, 9U, b, a, c);
++    ARPG_REQUIRE(abc.has_value());
++    ARPG_REQUIRE(cba.has_value());
++    ARPG_REQUIRE(bac.has_value());
++    ARPG_REQUIRE(std::memcmp(&*abc, &*cba, sizeof(ItemInstance)) == 0);
++    ARPG_REQUIRE(std::memcmp(&*abc, &*bac, sizeof(ItemInstance)) == 0);
++    ARPG_REQUIRE(abc->id != 0U);
++    ARPG_REQUIRE(abc->base_id == 6U);
++    ARPG_REQUIRE(abc->rarity == ItemRarity::rare);
++    ARPG_REQUIRE(abc->item_level == 97U);
++    ARPG_REQUIRE(validate_item(*abc));
++    return {};
++}
++
++arpg::test::Failure recipe_fully_rerolls_magic_and_rare_affixes() noexcept {
++    const ItemInstance rare_a = generated_material(
++        101U, 41U, ItemSlot::weapon, 100U, ItemRarity::rare);
++    const ItemInstance rare_b = generated_material(
++        202U, 42U, ItemSlot::weapon, 100U, ItemRarity::rare);
++    const ItemInstance rare_c = generated_material(
++        303U, 43U, ItemSlot::weapon, 100U, ItemRarity::rare);
++    const auto rare = generate_recipe_item(88U, 3U,
++        rare_a, rare_b, rare_c);
++    ARPG_REQUIRE(rare.has_value());
++    ARPG_REQUIRE(rare->affix_count >= 3U && rare->affix_count <= 6U);
++    ARPG_REQUIRE(!same_affixes(*rare, rare_a));
++    ARPG_REQUIRE(!same_affixes(*rare, rare_b));
++    ARPG_REQUIRE(!same_affixes(*rare, rare_c));
++
++    const ItemInstance magic_a = generated_material(
++        404U, 51U, ItemSlot::gloves, 75U, ItemRarity::magic);
++    const ItemInstance magic_b = generated_material(
++        505U, 52U, ItemSlot::gloves, 88U, ItemRarity::magic);
++    const ItemInstance magic_c = generated_material(
++        606U, 53U, ItemSlot::gloves, 95U, ItemRarity::magic);
++    const auto magic = generate_recipe_item(99U, 4U,
++        magic_a, magic_b, magic_c);
++    ARPG_REQUIRE(magic.has_value());
++    ARPG_REQUIRE(magic->item_level == 86U);
++    ARPG_REQUIRE(magic->affix_count >= 1U && magic->affix_count <= 2U);
++    ARPG_REQUIRE(validate_item(*magic));
++
++    const ItemInstance normal_a = generated_material(
++        1U, 61U, ItemSlot::boots, 1U, ItemRarity::normal);
++    const ItemInstance normal_b = generated_material(
++        2U, 62U, ItemSlot::boots, 16U, ItemRarity::normal);
++    const ItemInstance normal_c = generated_material(
++        3U, 63U, ItemSlot::boots, 30U, ItemRarity::normal);
++    const auto normal = generate_recipe_item(100U, 5U,
++        normal_a, normal_b, normal_c);
++    ARPG_REQUIRE(normal.has_value());
++    ARPG_REQUIRE(normal->item_level == 15U);
++    ARPG_REQUIRE(normal->affix_count == 0U);
++    ARPG_REQUIRE(normal->required_level == 1U);
++    return {};
++}
++
++arpg::test::Failure recipe_rejects_invalid_material_contracts() noexcept {
++    const ItemInstance a = generated_material(
++        1U, 71U, ItemSlot::helmet, 100U, ItemRarity::magic);
++    const ItemInstance b = generated_material(
++        2U, 72U, ItemSlot::helmet, 100U, ItemRarity::magic);
++    const ItemInstance c = generated_material(
++        3U, 73U, ItemSlot::helmet, 100U, ItemRarity::magic);
++    ARPG_REQUIRE(!generate_recipe_item(1U, 0U, a, b, c).has_value());
++
++    ItemInstance invalid = a;
++    invalid.required_level = 99U;
++    ARPG_REQUIRE(!generate_recipe_item(1U, 1U, invalid, b, c).has_value());
++    invalid = a;
++    invalid.id = 0U;
++    ARPG_REQUIRE(!generate_recipe_item(1U, 1U, invalid, b, c).has_value());
++    invalid = b;
++    invalid.id = a.id;
++    ARPG_REQUIRE(!generate_recipe_item(1U, 1U, a, invalid, c).has_value());
++    invalid = generated_material(
++        4U, 74U, ItemSlot::chest, 100U, ItemRarity::magic);
++    ARPG_REQUIRE(!generate_recipe_item(1U, 1U, a, b, invalid).has_value());
++    invalid = generated_material(
++        5U, 75U, ItemSlot::helmet, 100U, ItemRarity::rare);
++    ARPG_REQUIRE(!generate_recipe_item(1U, 1U, a, b, invalid).has_value());
++    return {};
++}
++
++arpg::test::Failure recipe_rejects_output_id_collision() noexcept {
++    ItemInstance a = generated_material(
++        1U, 81U, ItemSlot::boots, 30U, ItemRarity::normal);
++    const ItemInstance b = generated_material(
++        2U, 82U, ItemSlot::boots, 30U, ItemRarity::normal);
++    const ItemInstance c = generated_material(
++        3U, 83U, ItemSlot::boots, 30U, ItemRarity::normal);
++    std::optional<ItemInstance> baseline{};
++    std::uint64_t root_seed = 1U;
++    for (; root_seed <= 1024U && !baseline.has_value(); ++root_seed)
++        baseline = generate_recipe_item(root_seed, 7U, a, b, c);
++    ARPG_REQUIRE(baseline.has_value());
++    a.id = baseline->id;
++    ARPG_REQUIRE(!generate_recipe_item(
++        root_seed - 1U, 7U, a, b, c).has_value());
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"order-independent average recipe",
++        &recipe_is_order_independent_and_averages_level},
++    {"complete affix reroll", &recipe_fully_rerolls_magic_and_rare_affixes},
++    {"invalid recipe contracts", &recipe_rejects_invalid_material_contracts},
++    {"output id collision", &recipe_rejects_output_id_collision},
++};
++
++}  // namespace
++
++arpg::test::TestSuite item_recipe_suite() noexcept {
++    return arpg::test::make_suite("item_recipe", kCases);
++}
+diff --git a/tests/items/item_test_main.cpp b/tests/items/item_test_main.cpp
+index c6f0f17..06d2475 100644
+--- a/tests/items/item_test_main.cpp
++++ b/tests/items/item_test_main.cpp
+@@ -1,8 +1,13 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite item_catalog_suite() noexcept;
++arpg::test::TestSuite item_generation_suite() noexcept;
++arpg::test::TestSuite item_modifier_suite() noexcept;
++arpg::test::TestSuite item_recipe_suite() noexcept;
+ 
+ int main() {
+-    const arpg::test::TestSuite suites[] = {item_catalog_suite()};
+-    return arpg::test::run_suites(suites, 12, "stage 8 task 2");
++    const arpg::test::TestSuite suites[] = {
++        item_catalog_suite(), item_generation_suite(), item_modifier_suite(),
++        item_recipe_suite()};
++    return arpg::test::run_suites(suites, 26, "stage 8 task 3 items");
+ }
+diff --git a/tests/passives/passive_test_main.cpp b/tests/passives/passive_test_main.cpp
+index 27c4b38..9820508 100644
+--- a/tests/passives/passive_test_main.cpp
++++ b/tests/passives/passive_test_main.cpp
+@@ -1,10 +1,10 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite passive_tree_catalog_suite() noexcept;
+ arpg::test::TestSuite passive_tree_rules_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         passive_tree_catalog_suite(), passive_tree_rules_suite()};
+-    return arpg::test::run_suites(suites, 9, "stage 7 task 2");
++    return arpg::test::run_suites(suites, 12, "stage 8 task 3");
+ }
+diff --git a/tests/passives/passive_tree_rules_tests.cpp b/tests/passives/passive_tree_rules_tests.cpp
+index 3ab13e8..5e3cca6 100644
+--- a/tests/passives/passive_tree_rules_tests.cpp
++++ b/tests/passives/passive_tree_rules_tests.cpp
+@@ -1,14 +1,18 @@
+ #include "test_framework.hpp"
+ 
+ #include "passives/passive_tree_rules.hpp"
+ 
++#include <array>
++#include <cstddef>
++#include <cstring>
++
+ namespace {
+ 
+ using namespace arpg::passives;
+ using arpg::progression::ProgressionState;
+ 
+ arpg::test::Failure allocation_requires_adjacency_and_refund_keeps_connectivity() noexcept {
+     ProgressionState progress{10U, 0U, 9U, 9U};
+     PassiveTreeState state{};
+     ARPG_REQUIRE(!allocate_node(state, progress, 21U).changed);
+     ARPG_REQUIRE(allocate_node(state, progress, 8U).changed);
+@@ -75,23 +79,91 @@ arpg::test::Failure projection_is_deterministic_for_same_bitmap() noexcept {
+     const auto storm_values = evaluate_passive_tree(stormstep);
+     ARPG_REQUIRE(storm_values.max_health_more == 8000);
+     PassiveTreeState vitality{};
+     vitality.allocated_bits |= std::uint64_t{1U} << 1U;
+     const auto vitality_values = evaluate_passive_tree(vitality);
+     ARPG_REQUIRE(vitality_values.max_health == 20 * arpg::modifiers::kFixedOne);
+     ARPG_REQUIRE(vitality_values.max_health_more == arpg::modifiers::kFixedOne);
+     return {};
+ }
+ 
++arpg::test::Failure raw_modifiers_append_after_existing_prefix() noexcept {
++    PassiveTreeState state{};
++    state.allocated_bits |= std::uint64_t{1U} << 1U;
++    std::array<arpg::modifiers::Modifier, 4> output{};
++    output[0] = {42U, arpg::modifiers::StatId::armor,
++        arpg::modifiers::ModifierOperation::flat, 123U};
++    const arpg::modifiers::Modifier prefix = output[0];
++    std::size_t count = 1U;
++    ARPG_REQUIRE(append_passive_modifiers(
++        state, output.data(), output.size(), count));
++    ARPG_REQUIRE(count == 2U);
++    ARPG_REQUIRE(std::memcmp(&output[0], &prefix, sizeof(prefix)) == 0);
++    ARPG_REQUIRE(output[1].id == 1003U);
++    ARPG_REQUIRE(output[1].stat == arpg::modifiers::StatId::max_health);
++    ARPG_REQUIRE(output[1].value == 20 * arpg::modifiers::kFixedOne);
++    const auto values = arpg::modifiers::evaluate_player_modifiers(
++        {output.data() + 1U, count - 1U});
++    const auto compatibility = evaluate_passive_tree(state);
++    ARPG_REQUIRE(values.valid && compatibility.valid);
++    ARPG_REQUIRE(values.max_health == compatibility.max_health);
++    return {};
++}
++
++arpg::test::Failure append_failure_is_transactional() noexcept {
++    PassiveTreeState state{};
++    state.allocated_bits |= std::uint64_t{1U} << 1U;
++    std::array<arpg::modifiers::Modifier, 2> output{{
++        {51U, arpg::modifiers::StatId::armor,
++            arpg::modifiers::ModifierOperation::flat, 1U},
++        {52U, arpg::modifiers::StatId::evasion,
++            arpg::modifiers::ModifierOperation::flat, 2U},
++    }};
++    const auto before = output;
++    std::size_t count = output.size();
++    ARPG_REQUIRE(!append_passive_modifiers(
++        state, output.data(), output.size(), count));
++    ARPG_REQUIRE(count == output.size());
++    ARPG_REQUIRE(std::memcmp(output.data(), before.data(),
++        sizeof(output)) == 0);
++
++    count = 1U;
++    ARPG_REQUIRE(!append_passive_modifiers(state, nullptr, 2U, count));
++    ARPG_REQUIRE(count == 1U);
++    PassiveTreeState invalid{};
++    invalid.allocated_bits = std::uint64_t{1U} << 1U;
++    ARPG_REQUIRE(!append_passive_modifiers(
++        invalid, output.data(), output.size(), count));
++    ARPG_REQUIRE(count == 1U);
++    ARPG_REQUIRE(std::memcmp(output.data(), before.data(),
++        sizeof(output)) == 0);
++    return {};
++}
++
++arpg::test::Failure null_zero_capacity_accepts_empty_tree_output() noexcept {
++    PassiveTreeState state{};
++    std::size_t count = 0U;
++    ARPG_REQUIRE(append_passive_modifiers(state, nullptr, 0U, count));
++    ARPG_REQUIRE(count == 0U);
++    count = 1U;
++    ARPG_REQUIRE(!append_passive_modifiers(state, nullptr, 0U, count));
++    ARPG_REQUIRE(count == 1U);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"allocation requires adjacency and connected refund", &allocation_requires_adjacency_and_refund_keeps_connectivity},
+     {"duplicate no-points and unknown nodes are rejected", &duplicate_no_points_and_unknown_nodes_are_rejected},
+     {"invalid state rejects disconnected bits", &invalid_state_rejects_disconnected_bits},
+     {"point conservation is checked", &point_conservation_is_checked},
+     {"projection is deterministic", &projection_is_deterministic_for_same_bitmap},
++    {"raw modifier prefix append", &raw_modifiers_append_after_existing_prefix},
++    {"transactional append failure", &append_failure_is_transactional},
++    {"null zero-capacity empty append",
++        &null_zero_capacity_accepts_empty_tree_output},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite passive_tree_rules_suite() noexcept {
+     return arpg::test::make_suite("passive_tree_rules", kCases);
+ }

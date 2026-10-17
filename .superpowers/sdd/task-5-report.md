@@ -1,0 +1,127 @@
+# Stage 8 Task 5 Report
+
+## Status
+
+Implemented V4 bounded variable-length checkpoints with V1-V3 migration,
+dynamic dual-slot persistence, allocation-failure handling, and unchanged fault
+injection semantics.
+
+## TDD rounds
+
+1. Ownership validator: RED `ownership sequence` accepted
+   `next_item_sequence=0`; GREEN after adding the unified validator check
+   (`arpg_item_tests`: 27/27).
+2. V4 golden/migration: RED build showed missing `item_ownership`, one-argument
+   dynamic encoder, V4 constants, and chained CRC API; GREEN with `IARPGS05`,
+   format 4, per-field record mapping, and V1/V2/V3 empty-ownership migration.
+3. Corrupt lengths/semantics: expanded after the base V4 RED. The matrix was
+   GREEN on its first focused run because bounded-length and unified-validator
+   behavior were implemented in the preceding minimal codec pass. It covers
+   count > 65,535, checked length mismatch, truncate/trailing/CRC, record
+   reserved bytes, unused rolls, zero/duplicate IDs, catalog/level/group
+   errors, dangling/wrong-slot/duplicate equipment, sequence zero, and the
+   exact maximum boundary.
+4. Dynamic save store: RED `same state includes ownership bytes and order`
+   proved item-order changes were ignored; GREEN after field-by-field ownership
+   comparison. Large-to-small A/B rotation selects the newest generation.
+5. Fault injection/allocation: all seven transaction fault points preserve the
+   prior large state before publish and recover the new small state after
+   publish. One-shot allocator faults return `allocation_failure` on decode and
+   `nullopt` on encode; hostile count is rejected before allocation.
+
+## Frozen sizes and ABI
+
+- Header: 32 bytes.
+- Payload: `172 + 40*N`; file: `204 + 40*N`.
+- N=0: payload 172, file 204. N=3: payload 292, file 324.
+- Maximum N=65,535: payload 2,621,572, file 2,621,604.
+- Payload offsets: item count 88, sequence 92, claimed bits 100, equipped IDs
+  124, records 172. Records are mapped field by field; no `memcpy(ItemInstance)`.
+
+## Migration, slots, and failures
+
+- V1/V2/V3 decode to empty items/equipment/claimed bits and sequence 1.
+- V4 CRC uses finalized chain semantics and covers header bytes 8..27 plus the
+  exact payload. Null/zero-size updates preserve the previous CRC.
+- Exact total length and count arithmetic are checked before the single item
+  allocation. No trailing bytes are accepted.
+- Dynamic vectors flow through temp write, flush, validation, publish, final
+  scan, archive, and recovery without a fixed-size fallback.
+- MSVC `/EHsc` is enabled on persistence and consumers so `bad_alloc` catches
+  are effective rather than warning-only.
+
+## Files and self-review
+
+Changed the brief-listed dungeon checkpoint/CMake, persistence codec/CRC/store,
+persistence tests, and the approved item validator/tests/entrypoint. No dungeon
+session/runtime/raylib, transaction gameplay, loot, or drop implementation was
+touched. Self-review confirmed exact offsets, ordered item equality, legacy
+magic separation, checked multiply/add, validation-before-allocation, no fixed
+encoder overload, no ItemInstance memcpy, and no persistence-to-raylib link.
+
+## Verification and concerns
+
+Verification commands: both test executables, CTest items/persistence selection,
+and `git diff --check`. Final results are recorded after the last run below.
+
+- `arpg_item_tests`: 27 cases, 0 failures.
+- `arpg_persistence_tests`: 47 cases, 0 failures after review fixes.
+- CTest items/persistence selection: 8/8 passed (includes architecture guards).
+- `git diff --check`: exit 0; only Git LF-to-CRLF worktree notices.
+
+## Review-fix RED/GREEN evidence
+
+### Detailed ownership validation and scratch OOM
+
+- RED command: `cmake --build build-release --target arpg_item_tests`.
+  Compilation failed because `validate_ownership_detailed` and
+  `OwnershipValidationResult` did not exist.
+- GREEN: added `valid`, `invalid_state`, and `allocation_failure` results plus
+  the backward-compatible bool wrapper; `arpg_item_tests` passed 27/27.
+- Second RED command: build `arpg_persistence_tests`, then run
+  `build-release\bin\arpg_persistence_tests.exe` with allocation countdown 1.
+  `items.resize` succeeded, validator ID scratch failed, and
+  `codec allocation failures do not escape noexcept` failed because decode
+  returned `invalid_state` instead of `allocation_failure` (45 cases, 1 fail).
+- GREEN: codec now calls only `validate_ownership_detailed` as the ownership
+  semantic gate; scratch OOM maps to `CodecError::allocation_failure`, while
+  semantic corruption remains `invalid_state`. Items 27/27 and persistence
+  45/45 passed before the added ABI cases.
+
+### Independent ABI and migration locks
+
+- Added a literal 84-byte fixed ownership slice covering count, sequence,
+  three claimed words, and six equipped IDs.
+- Added a literal complete 40-byte record with all six rolls, including affix
+  112 variant 2. Expected bytes are not generated by the encoder.
+- V1, V2, and V3 each separately assert empty items, all six equipped IDs zero,
+  all three claimed words zero, and sequence 1.
+
+### Mutation-kill evidence
+
+Each mutation used `apply_patch`, then the focused command
+`cmake --build build-release --target arpg_persistence_tests` followed by
+`build-release\bin\arpg_persistence_tests.exe`; the inverse `apply_patch`
+restored production immediately afterward.
+
+1. Exact length/count guard removed: `v4 length count crc and capacity are
+   bounded` failed on the CRC-consistent `item_count=2` mismatch
+   (46 cases, 1 failure at the time of the run).
+2. CRC guard removed: `v4 length count crc and capacity are bounded`, `crc32
+   known value and covered flip are detected`, and `crc covers passive bits`
+   failed (46 cases, 3 failures at the time of the run).
+3. Record guards:
+   - ignoring bytes 13..15 made `rejects(217U, 1U)` fail (46 cases, 1 failure);
+   - ignoring unused-roll zero validation made `rejects(220U, 1U)` fail
+     (46 cases, 1 failure).
+4. Unified detailed validator removed: `v4 unified validator rejects semantic
+   state`, the unused-roll semantic case, and scratch-OOM mapping all failed
+   (47 cases, 3 failures).
+
+Post-restoration `rg` confirmed all four guards and both detailed-validator
+calls are present. `git diff --stat` contains only the seven formal review-fix
+files; no temporary mutation remains.
+
+Concerns: the original corruption matrix history remains accurately recorded
+above; the required mutation-kill evidence now independently proves the guards.
+No known runtime or ABI concern remains.

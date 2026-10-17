@@ -1,0 +1,490 @@
+# Review package: 446cf9b..44ab3ad
+
+## Commits
+44ab3ad fix: publish committed equipment without allocation
+
+## Files changed
+ src/dungeon/dungeon_session.cpp                  |  2 +
+ src/dungeon/dungeon_session.hpp                  |  2 +
+ src/dungeon/dungeon_transition.cpp               | 55 +++++++++++++++++++-----
+ tests/dungeon/dungeon_item_transaction_tests.cpp | 50 +++++++++++++++++++--
+ tests/dungeon/dungeon_test_main.cpp              |  2 +-
+ 5 files changed, 97 insertions(+), 14 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 8bcaef0..f22606d 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -151,20 +151,21 @@ void DungeonSession::reset_current_room() noexcept {
+             || phase_ == RoomPhase::faulted) {
+         return;
+     }
+ 
+     while (events_.try_pop().has_value()) {
+     }
+     while (combat_events_.try_pop().has_value()) {
+     }
+     combat_.reset();
+     pending_save_.reset();
++    pending_item_build_.reset();
+     last_passive_tree_error_ = passives::PassiveTreeError::none;
+     construct_current_room();
+     static_cast<void>(emit(DungeonEventKind::room_reset));
+ }
+ 
+ std::optional<DungeonEvent> DungeonSession::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+ std::optional<combat::CombatEvent>
+@@ -304,20 +305,21 @@ void DungeonSession::settle_room_experience() noexcept {
+     last_levels_gained_ = award.levels_gained;
+     pending_room_experience_ = 0U;
+ }
+ 
+ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
+     if (fault == DungeonFault::none) {
+         return;
+     }
+     diagnostics_.fault = fault;
+     phase_ = RoomPhase::faulted;
++    pending_item_build_.reset();
+ 
+     const DungeonEvent event{
+         DungeonEventKind::faulted,
+         session_tick_,
+         stable_state_.current_room.index,
+         stable_state_.current_room.seed,
+         0U,
+         0U,
+         TransitionKind::none,
+         last_exit_,
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index 51aa840..a670088 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -73,37 +73,39 @@ private:
+         TransitionKind kind,
+         ExitDirection direction) noexcept;
+     [[nodiscard]] bool prepare_passive_mutation(
+         passives::PassiveNodeId node, bool refund) noexcept;
+     [[nodiscard]] RequestResult prepare_item_save(
+         DungeonRunState&& next,
+         PendingSaveKind kind,
+         RoomPhase resume_phase) noexcept;
+     [[nodiscard]] PlayerBuildResult build_for(
+         const checkpoint::DungeonRunState& state) const noexcept;
++    [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
+     void commit_pending_save(const PendingSaveResult& result) noexcept;
+     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
+     void enter_fault(DungeonFault fault) noexcept;
+     void emit_committed(
+         const DungeonRunState& previous,
+         const DungeonRunState& current) noexcept;
+     bool emit(
+         DungeonEventKind kind,
+         const DungeonRunState* subject = nullptr,
+         const DungeonRunState* destination = nullptr,
+         TransitionKind transition = TransitionKind::none,
+         ExitDirection direction = ExitDirection::none) noexcept;
+     [[nodiscard]] std::uint8_t remaining_targets() const noexcept;
+ 
+     DungeonRules rules_{};
+     DungeonRunState stable_state_{};
+     std::optional<PendingSave> pending_save_{};
++    std::optional<combat::PlayerCombatBuild> pending_item_build_{};
+     std::optional<combat::CombatWorld> combat_{};
+     RoomEncounterPlan encounter_plan_{};
+     std::uint8_t wave_index_{};
+     std::uint16_t wave_delay_ticks_{};
+     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
+     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
+         combat_events_{};
+     RoomPhase phase_{RoomPhase::locked};
+     ExitDirection last_exit_{ExitDirection::none};
+     std::uint64_t session_tick_{};
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index f272ff2..44abf8f 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -85,20 +85,24 @@ void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
+         return;
+     }
+ 
+     last_exit_ = direction;
+     static_cast<void>(prepare_transition(TransitionKind::door, direction));
+ }
+ 
+ bool DungeonSession::prepare_transition(
+     TransitionKind kind,
+     ExitDirection direction) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return false;
++    }
+     const RunStateBuildResult built = kind == TransitionKind::descent
+         ? make_descent_transition(stable_state_, rules_)
+         : make_door_transition(stable_state_, direction, rules_);
+     if (built.fault != DungeonFault::none) {
+         if (built.fault == DungeonFault::room_index_overflow) {
+             diagnostics_.room_index_overflow = true;
+         }
+         enter_fault(built.fault);
+         return false;
+     }
+@@ -131,20 +135,24 @@ bool DungeonSession::request_passive_allocation(
+     return prepare_passive_mutation(node, false);
+ }
+ 
+ bool DungeonSession::request_passive_refund(
+     passives::PassiveNodeId node) noexcept {
+     return prepare_passive_mutation(node, true);
+ }
+ 
+ bool DungeonSession::prepare_passive_mutation(
+     passives::PassiveNodeId node, bool refund) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return false;
++    }
+     if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
+             || pending_save_.has_value()) {
+         return false;
+     }
+ 
+     DungeonRunState next = stable_state_;
+     next.progression = room_progression_;
+     const passives::PassiveTreeResult mutation = refund
+         ? passives::refund_node(next.passive_tree, next.progression, node)
+         : passives::allocate_node(next.passive_tree, next.progression, node);
+@@ -166,20 +174,24 @@ bool DungeonSession::prepare_passive_mutation(
+         RoomPhase::awaiting_exit,
+     };
+     phase_ = RoomPhase::committing;
+     return true;
+ }
+ 
+ RequestResult DungeonSession::prepare_item_save(
+     DungeonRunState&& next,
+     PendingSaveKind kind,
+     RoomPhase resume_phase) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
+     const items::OwnershipValidationResult validation =
+         items::validate_ownership_detailed(next.item_ownership);
+     if (validation == items::OwnershipValidationResult::allocation_failure) {
+         return RequestResult::rejected;
+     }
+     if (validation != items::OwnershipValidationResult::valid
+             || !passives::valid_passive_tree_state(
+                 next.passive_tree, next.progression)) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return RequestResult::faulted;
+@@ -200,25 +212,37 @@ RequestResult DungeonSession::prepare_item_save(
+     ++next.commit_generation;
+     const std::uint64_t expected_generation = next.commit_generation;
+     pending_save_.emplace(PendingSave{
+         kind,
+         expected_generation,
+         std::move(next),
+         TransitionKind::none,
+         ExitDirection::none,
+         resume_phase,
+     });
++    pending_item_build_.emplace(candidate_build.build);
+     phase_ = RoomPhase::committing;
+     return RequestResult::accepted;
+ }
+ 
++bool DungeonSession::pending_item_cache_consistent() const noexcept {
++    const bool item_pending = pending_save_.has_value()
++        && (pending_save_->kind == PendingSaveKind::equipment
++            || pending_save_->kind == PendingSaveKind::recipe);
++    return item_pending == pending_item_build_.has_value();
++}
++
+ RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value() || item_id == 0U) {
+         return RequestResult::rejected;
+     }
+     const items::OwnershipValidationResult stable_validation =
+         items::validate_ownership_detailed(stable_state_.item_ownership);
+     if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+         return RequestResult::rejected;
+     }
+     if (stable_validation != items::OwnershipValidationResult::valid) {
+@@ -247,20 +271,24 @@ RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
+         return prepare_item_save(
+             std::move(next), PendingSaveKind::equipment, phase_);
+     } catch (const std::bad_alloc&) {
+         return RequestResult::rejected;
+     } catch (...) {
+         return RequestResult::rejected;
+     }
+ }
+ 
+ RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
+     const std::size_t slot_index = static_cast<std::size_t>(slot);
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value()
+             || slot_index >= static_cast<std::size_t>(items::ItemSlot::count)) {
+         return RequestResult::rejected;
+     }
+     const items::OwnershipValidationResult stable_validation =
+         items::validate_ownership_detailed(stable_state_.item_ownership);
+     if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+         return RequestResult::rejected;
+@@ -281,20 +309,24 @@ RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
+             std::move(next), PendingSaveKind::equipment, phase_);
+     } catch (const std::bad_alloc&) {
+         return RequestResult::rejected;
+     } catch (...) {
+         return RequestResult::rejected;
+     }
+ }
+ 
+ RequestResult DungeonSession::request_recipe(
+     const std::array<std::uint64_t, 3>& item_ids) noexcept {
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return RequestResult::faulted;
++    }
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value() || item_ids[0] == 0U
+             || item_ids[1] == 0U || item_ids[2] == 0U
+             || item_ids[0] == item_ids[1] || item_ids[0] == item_ids[2]
+             || item_ids[1] == item_ids[2]) {
+         return RequestResult::rejected;
+     }
+     const items::OwnershipValidationResult stable_validation =
+         items::validate_ownership_detailed(stable_state_.item_ownership);
+     if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+@@ -364,71 +396,74 @@ RequestResult DungeonSession::request_recipe(
+         return RequestResult::rejected;
+     }
+ }
+ 
+ void DungeonSession::commit_pending_save(
+     const PendingSaveResult& result) noexcept {
+     if (phase_ != RoomPhase::committing || !pending_save_.has_value()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
++    if (!pending_item_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return;
++    }
+     if (result.disposition == SaveDisposition::indeterminate) {
+         enter_fault(DungeonFault::save_commit_indeterminate);
+         return;
+     }
+     if (result.disposition == SaveDisposition::not_committed) {
+         const RoomPhase resume_phase = pending_save_->resume_phase;
+         phase_ = resume_phase;
+         saturating_increment(diagnostics_.save_failure_count);
+         static_cast<void>(emit(
+             DungeonEventKind::save_failed,
+             &stable_state_,
+             &pending_save_->next_state,
+             pending_save_->next_state.last_transition,
+             pending_save_->next_state.last_direction));
+         pending_save_.reset();
++        pending_item_build_.reset();
+         return;
+     }
+     if (result.generation != pending_save_->expected_generation
+             || pending_save_->expected_generation
+                 != pending_save_->next_state.commit_generation
+             || !same_run_state(
+                 result.verified_state, pending_save_->next_state)) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+ 
+     const PendingSaveKind kind = pending_save_->kind;
+-    PlayerBuildResult published_build{};
+-    if (kind == PendingSaveKind::equipment
+-            || kind == PendingSaveKind::recipe) {
++    const bool item_commit = kind == PendingSaveKind::equipment
++        || kind == PendingSaveKind::recipe;
++    combat::PlayerCombatBuild published_build{};
++    if (item_commit) {
+         if (!combat_.has_value()) {
+             enter_fault(DungeonFault::invalid_item_state);
+             return;
+         }
+-        published_build = build_for(result.verified_state);
+-        if (published_build.status != PlayerBuildStatus::valid) {
+-            enter_fault(DungeonFault::invalid_item_state);
+-            return;
+-        }
++        published_build = *pending_item_build_;
+     }
+ 
+     DungeonRunState previous = std::move(stable_state_);
+     stable_state_ = std::move(pending_save_->next_state);
+     const RoomPhase resume_phase = pending_save_->resume_phase;
+     pending_save_.reset();
++    pending_item_build_.reset();
+     if (kind == PendingSaveKind::transition) {
+         combat_.reset();
+         phase_ = RoomPhase::transitioning;
+         emit_committed(previous, stable_state_);
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+-    if (published_build.status == PlayerBuildStatus::valid) {
+-        combat_->apply_player_build(published_build.build);
++    if (item_commit) {
++        combat_->apply_player_build(published_build);
+         phase_ = resume_phase;
+         return;
+     }
+     phase_ = RoomPhase::awaiting_exit;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/tests/dungeon/dungeon_item_transaction_tests.cpp b/tests/dungeon/dungeon_item_transaction_tests.cpp
+index f052fa2..4060e8d 100644
+--- a/tests/dungeon/dungeon_item_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_item_transaction_tests.cpp
+@@ -298,20 +298,62 @@ arpg::test::Failure build_projection_scratch_oom_rejects_atomically() noexcept {
+         // Stable validation, vector copy, and candidate validation succeed;
+         // detailed equipment projection then reports allocation_failure.
+         arpg::test::ScopedAllocationFailure fail{3U};
+         result = session.request_equip(161U);
+     }
+     ARPG_REQUIRE(result == RequestResult::rejected);
+     ARPG_REQUIRE(same_atomic_state(before, capture_atomic_state(session)));
+     return {};
+ }
+ 
++arpg::test::Failure committed_receipt_publishes_without_allocation() noexcept {
++    DungeonSession session{DungeonRules{},
++        state_with_items({normal_item(165U, 2U)})};
++    session.tick({});
++    arpg::test::damage_current_player(session, 30);
++    const auto before = session.snapshot();
++    ARPG_REQUIRE(before.phase == RoomPhase::combat);
++    ARPG_REQUIRE(before.combat.has_value());
++    const int hp_before = before.combat->player.hp;
++    const int barrier_before = before.combat->player.barrier;
++    const int max_hp_before = before.combat->player.max_hp;
++    const int max_barrier_before = before.combat->player.max_barrier;
++
++    ARPG_REQUIRE(session.request_equip(165U) == RequestResult::accepted);
++    const auto pending = *session.pending_save();
++    const arpg::dungeon::PendingSaveResult receipt{
++        SaveDisposition::committed,
++        pending.expected_generation,
++        pending.next_state,
++    };
++    const std::uint64_t allocations_before =
++        arpg::test::allocation_count();
++    {
++        arpg::test::ScopedAllocationFailure fail{0U};
++        session.resolve_pending_save(receipt);
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
++    const auto after = session.snapshot();
++    ARPG_REQUIRE(after.phase == RoomPhase::combat);
++    ARPG_REQUIRE(!after.pending_save_kind.has_value());
++    ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 165U);
++    ARPG_REQUIRE(after.commit_generation == pending.expected_generation);
++    ARPG_REQUIRE(after.combat.has_value());
++    ARPG_REQUIRE(after.combat->player.max_hp == max_hp_before + 38);
++    ARPG_REQUIRE(after.combat->player.hp == hp_before);
++    ARPG_REQUIRE(after.combat->player.max_barrier == max_barrier_before);
++    ARPG_REQUIRE(after.combat->player.barrier == barrier_before);
++    ARPG_REQUIRE(arpg::test::player_build(session).values.max_health
++        == 38 * arpg::modifiers::kFixedOne);
++    return {};
++}
++
+ arpg::test::Failure commit_generation_overflow_faults_without_publish() noexcept {
+     DungeonRunState state = state_with_items({normal_item(171U, 2U)});
+     state.commit_generation = (std::numeric_limits<std::uint64_t>::max)();
+     DungeonSession session{DungeonRules{}, state};
+     const AtomicStateProbe before = capture_atomic_state(session);
+     ARPG_REQUIRE(session.request_equip(171U) == RequestResult::faulted);
+     ARPG_REQUIRE(session.snapshot().diagnostics.fault
+         == DungeonFault::commit_generation_overflow);
+     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
+     ARPG_REQUIRE(session.item_state().next_item_sequence
+@@ -340,21 +382,21 @@ arpg::test::Failure item_transactions_restore_locked_and_awaiting_phases() noexc
+     DungeonSession awaiting{DungeonRules{},
+         state_with_items({normal_item(182U, 3U)})};
+     ARPG_REQUIRE(clear_to_awaiting_exit(awaiting));
+     ARPG_REQUIRE(awaiting.request_equip(182U) == RequestResult::accepted);
+     ARPG_REQUIRE(commit_pending(awaiting));
+     ARPG_REQUIRE(awaiting.snapshot().phase == RoomPhase::awaiting_exit);
+     ARPG_REQUIRE(awaiting.item_state().equipment.equipped_ids[2] == 182U);
+     return {};
+ }
+ 
+-arpg::test::Failure invalid_combined_build_faults() noexcept {
++arpg::test::Failure invalid_loaded_equipment_ownership_faults() noexcept {
+     DungeonRunState state = state_with_items({normal_item(191U, 2U)});
+     state.progression = {2U, 0U, 1U, 0U};
+     state.passive_tree.allocated_bits =
+         (std::uint64_t{1U} << 0U) | (std::uint64_t{1U} << 2U);
+     state.item_ownership.items[0].reserved[0] = 1U;
+     state.item_ownership.equipment.equipped_ids[1] = 191U;
+     DungeonSession session{DungeonRules{}, state};
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+     ARPG_REQUIRE(session.snapshot().diagnostics.fault
+         == DungeonFault::invalid_item_state);
+@@ -559,19 +601,21 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"stable vector copy oom is atomic",
+         &stable_vector_copy_oom_rejects_atomically},
+     {"recipe post-copy scratch oom is atomic",
+         &recipe_post_copy_scratch_oom_rejects_atomically},
+     {"build projection scratch oom is atomic",
+         &build_projection_scratch_oom_rejects_atomically},
+     {"commit generation overflow faults",
+         &commit_generation_overflow_faults_without_publish},
+     {"item transaction phase restoration",
+         &item_transactions_restore_locked_and_awaiting_phases},
+-    {"invalid combined build faults",
+-        &invalid_combined_build_faults},
++    {"invalid loaded equipment ownership faults",
++        &invalid_loaded_equipment_ownership_faults},
++    {"committed receipt publishes without allocation",
++        &committed_receipt_publishes_without_allocation},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept {
+     return arpg::test::make_suite("dungeon_item_transaction", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 3d4157a..b8d0c24 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -22,12 +22,12 @@ int main() {
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_transaction_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 99, "stage 8 task 6 dungeon");
++    return arpg::test::run_suites(suites, 100, "stage 8 task 6 dungeon");
+ }
