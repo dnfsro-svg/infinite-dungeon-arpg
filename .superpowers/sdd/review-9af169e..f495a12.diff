@@ -1,0 +1,1587 @@
+# Review package: 9af169e..f495a1204cf9f908c207ca1d099d4dbcda463cb7
+
+## Commits
+f495a12 feat: integrate deterministic monster waves
+
+## Files changed
+ src/combat/combat_world.hpp                 |   5 +
+ src/combat/monster_pool.hpp                 |   5 +
+ src/dungeon/dungeon_rules.cpp               |   2 +-
+ src/dungeon/dungeon_rules.hpp               |  17 ++-
+ src/dungeon/dungeon_session.cpp             |  72 +++++++--
+ src/dungeon/dungeon_session.hpp             |  10 ++
+ src/dungeon/dungeon_types.hpp               |  12 ++
+ src/dungeon/room_combat_template.cpp        |  17 +++
+ src/dungeon/room_combat_template.hpp        |   7 +
+ tests/dungeon/CMakeLists.txt                |   3 +-
+ tests/dungeon/dungeon_lifecycle_tests.cpp   |  46 +++---
+ tests/dungeon/dungeon_navigation_tests.cpp  |   2 +-
+ tests/dungeon/dungeon_stress_tests.cpp      |  61 ++++----
+ tests/dungeon/dungeon_test_main.cpp         |   4 +-
+ tests/dungeon/dungeon_test_support.hpp      |  93 ++++++++----
+ tests/dungeon/dungeon_transaction_tests.cpp |  15 +-
+ tests/dungeon/dungeon_wave_tests.cpp        | 222 ++++++++++++++++++++++++++++
+ 17 files changed, 482 insertions(+), 111 deletions(-)
+
+## Diff
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index 63dbb26..bd63439 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -3,20 +3,24 @@
+ #include "combat/combat_types.hpp"
+ #include "combat/input_buffer.hpp"
+ #include "combat/monster_pool.hpp"
+ #include "core/bounded_queue.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
++namespace arpg::test {
++struct DungeonSessionTestAccess;
++}
++
+ namespace arpg::combat {
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     void tick(MovementInput movement) noexcept;
+     void reset() noexcept;
+@@ -83,20 +87,21 @@ private:
+         int damage) noexcept;
+     void remove_owned_projectiles(MonsterHandle owner) noexcept;
+     void remove_owned_hazards(MonsterHandle owner) noexcept;
+     void emit_event(const CombatEvent& event) noexcept;
+     void initialize_runtime() noexcept;
+ 
+     void initialize_player() noexcept;
+     void initialize_legacy_monsters() noexcept;
+ 
+     friend struct ::arpg::test::CombatWorldTestAccess;
++    friend struct ::arpg::test::DungeonSessionTestAccess;
+ 
+     CombatEncounterConfig encounter_config_{};
+     CombatLabConfig legacy_config_{};
+     bool legacy_mode_{true};
+     PlayerRuntime player_{};
+     MonsterPool monsters_{};
+     ProjectilePool projectiles_{};
+     HazardPool hazards_{};
+     AttackRuntime attack_{};
+     InputBuffer input_buffer_{};
+diff --git a/src/combat/monster_pool.hpp b/src/combat/monster_pool.hpp
+index 47b5b19..192bb4c 100644
+--- a/src/combat/monster_pool.hpp
++++ b/src/combat/monster_pool.hpp
+@@ -1,19 +1,23 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
++namespace arpg::test {
++struct DungeonSessionTestAccess;
++}
++
+ namespace arpg::combat {
+ 
+ class CombatWorld;
+ 
+ struct MonsterRuntime final {
+     bool active{};
+     std::uint16_t generation{};
+     MonsterId id{MonsterId::chaos_chaser};
+     DummyKind kind{DummyKind::normal};
+     Vec3 spawn{};
+@@ -49,20 +53,21 @@ public:
+         MonsterId id, Vec3 position) noexcept;
+     [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_count() const noexcept;
+     [[nodiscard]] MonsterRuntime* get(MonsterHandle handle) noexcept;
+     [[nodiscard]] const MonsterRuntime* get(MonsterHandle handle) const noexcept;
+     [[nodiscard]] const std::array<MonsterRuntime, kMonsterCapacity>&
+     slots() const noexcept;
+ 
+ private:
+     friend class CombatWorld;
++    friend struct ::arpg::test::DungeonSessionTestAccess;
+     static void advance_generation(MonsterRuntime& runtime) noexcept;
+ 
+     std::array<MonsterRuntime, kMonsterCapacity> slots_{};
+     std::size_t active_count_{};
+ };
+ 
+ class ProjectilePool final {
+ public:
+     void clear() noexcept;
+     [[nodiscard]] std::optional<ProjectileHandle> spawn(
+diff --git a/src/dungeon/dungeon_rules.cpp b/src/dungeon/dungeon_rules.cpp
+index e5383f8..ea2afe8 100644
+--- a/src/dungeon/dungeon_rules.cpp
++++ b/src/dungeon/dungeon_rules.cpp
+@@ -28,21 +28,21 @@ DungeonFault validate_rules(const DungeonRules& rules) noexcept {
+             || rules.hole_threshold > kProbabilityScale
+             || rules.abyss_threshold > kProbabilityScale) {
+         return DungeonFault::invalid_rules;
+     }
+ 
+     for (const std::uint32_t weight : rules.base_weights) {
+         if (weight == 0U) {
+             return DungeonFault::invalid_rules;
+         }
+     }
+-    return DungeonFault::none;
++    return validate_encounter_director_config(rules.encounter);
+ }
+ 
+ DungeonFault compute_ecology_weights(
+     const DungeonRules& rules,
+     const std::array<std::uint32_t, 4>& biases,
+     std::array<std::uint64_t, 4>& weights,
+     std::uint64_t& total) noexcept {
+     const DungeonFault rules_fault = validate_rules(rules);
+     if (rules_fault != DungeonFault::none) {
+         return rules_fault;
+diff --git a/src/dungeon/dungeon_rules.hpp b/src/dungeon/dungeon_rules.hpp
+index 6b254e4..b8a2bd4 100644
+--- a/src/dungeon/dungeon_rules.hpp
++++ b/src/dungeon/dungeon_rules.hpp
+@@ -19,45 +19,46 @@ enum class DungeonFault : std::uint8_t {
+     depth_overflow,
+     floor_room_overflow,
+     bias_overflow,
+     weight_overflow,
+     event_overflow,
+     combat_relay_overflow,
+     save_commit_indeterminate,
+     save_receipt_mismatch,
+ };
+ 
+-struct DungeonRules final {
+-    std::array<std::uint32_t, 4> base_weights{{100, 100, 100, 100}};
+-    std::uint32_t bias_weight_increment{25};
+-    std::uint32_t hole_threshold{1000};
+-    std::uint32_t abyss_threshold{100};
+-    std::uint32_t rules_version{1};
+-};
+-
+ // Gray-box encounter tuning is intentionally centralized here so later
+ // balancing changes do not alter the director's algorithm or RNG contract.
+ struct EncounterDirectorConfig final {
+     std::uint8_t base_budget{8};
+     std::uint8_t depth_step{5};
+     std::uint8_t budget_per_step{1};
+     std::uint8_t max_budget{24};
+     std::uint8_t two_wave_threshold{12};
+     std::uint8_t matching_ecology_weight{4};
+     std::uint8_t off_ecology_weight{1};
+     std::uint8_t normal_high_priority_limit{1};
+     std::uint8_t high_budget_priority_limit{2};
+     std::uint8_t ranged_limit{4};
+     std::uint8_t support_limit{2};
+     std::uint8_t ground_hazard_limit{3};
+ };
+ 
++struct DungeonRules final {
++    std::array<std::uint32_t, 4> base_weights{{100, 100, 100, 100}};
++    std::uint32_t bias_weight_increment{25};
++    std::uint32_t hole_threshold{1000};
++    std::uint32_t abyss_threshold{100};
++    std::uint32_t rules_version{1};
++    EncounterDirectorConfig encounter{};
++};
++
+ [[nodiscard]] std::optional<checkpoint::DungeonElement> element_for_exit(
+     checkpoint::ExitDirection direction) noexcept;
+ [[nodiscard]] DungeonFault validate_rules(
+     const DungeonRules& rules) noexcept;
+ [[nodiscard]] DungeonFault compute_ecology_weights(
+     const DungeonRules& rules,
+     const std::array<std::uint32_t, 4>& biases,
+     std::array<std::uint64_t, 4>& weights,
+     std::uint64_t& total) noexcept;
+ [[nodiscard]] DungeonFault validate_encounter_director_config(
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 67315af..309751b 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -4,20 +4,22 @@
+ #include "dungeon/room_combat_template.hpp"
+ #include "dungeon/room_navigation.hpp"
+ 
+ #include <cassert>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::dungeon {
+ namespace {
+ 
++constexpr std::uint16_t kWaveDelayTicks = 45U;
++
+ void saturating_increment(std::uint32_t& value) noexcept {
+     if (value != (std::numeric_limits<std::uint32_t>::max)()) {
+         ++value;
+     }
+ }
+ 
+ [[nodiscard]] DungeonRunState initial_state_for(
+     const DungeonSessionConfig& config) noexcept {
+     DungeonRunState state = make_initial_run_state(
+         config.root_seed, DungeonRules{}).state;
+@@ -62,30 +64,42 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
+         phase_ = RoomPhase::combat;
+         if (emit(DungeonEventKind::room_entered)
+                 && phase_ != RoomPhase::faulted) {
+             static_cast<void>(emit(DungeonEventKind::combat_started));
+         }
+     } else if (phase_ == RoomPhase::transitioning) {
+         construct_current_room();
+     } else if (combat_.has_value()) {
+         if (phase_ == RoomPhase::cleared) {
+             phase_ = RoomPhase::awaiting_exit;
++        } else if (phase_ == RoomPhase::wave_delay) {
++            if (wave_delay_ticks_ != 0U) {
++                --wave_delay_ticks_;
++            }
++            if (wave_delay_ticks_ == 0U) {
++                start_next_wave();
++            }
+         } else if (phase_ == RoomPhase::combat
+                 || phase_ == RoomPhase::awaiting_exit) {
+             combat_->tick(movement);
+             relay_combat_events();
+ 
+             if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
+-                phase_ = RoomPhase::cleared;
+-                if (emit(DungeonEventKind::room_cleared)
+-                        && phase_ != RoomPhase::faulted) {
+-                    static_cast<void>(emit(DungeonEventKind::exits_opened));
++                if (wave_index_ + 1U < encounter_plan_.wave_count) {
++                    phase_ = RoomPhase::wave_delay;
++                    wave_delay_ticks_ = kWaveDelayTicks;
++                } else {
++                    phase_ = RoomPhase::cleared;
++                    if (emit(DungeonEventKind::room_cleared)
++                            && phase_ != RoomPhase::faulted) {
++                        static_cast<void>(emit(DungeonEventKind::exits_opened));
++                    }
+                 }
+             }
+         }
+ 
+         if (phase_ == RoomPhase::awaiting_exit) {
+             const combat::CombatSnapshot state = combat_->snapshot();
+             if (const auto requested = requested_exit(
+                     state.player.position, movement)) {
+                 attempt_exit(*requested);
+             }
+@@ -199,55 +213,96 @@ DungeonSnapshot DungeonSession::snapshot() const noexcept {
+     result.commit_generation = stable_state_.commit_generation;
+     result.room_index = stable_state_.current_room.index;
+     result.room_seed = stable_state_.current_room.seed;
+     result.depth = stable_state_.current_room.depth;
+     result.floor_room_index = stable_state_.current_room.floor_room_index;
+     result.biases = stable_state_.biases;
+     result.phase = phase_;
+     result.has_active_room = combat_.has_value();
+     result.exits_open.fill(
+         phase_ == RoomPhase::cleared || phase_ == RoomPhase::awaiting_exit);
++    result.wave_index = wave_index_;
++    result.wave_count = encounter_plan_.wave_count;
++    result.wave_delay_ticks = wave_delay_ticks_;
+     result.remaining_targets = remaining_targets();
+     result.entry_side = stable_state_.current_room.entry;
+     result.last_exit = last_exit_;
+     result.last_transition = stable_state_.last_transition;
+     result.ecology = stable_state_.current_room.ecology;
+     result.has_hole = stable_state_.current_room.has_hole;
+     result.is_abyss = stable_state_.current_room.is_abyss;
+     result.has_pending_transition = pending_.has_value();
+     if (combat_.has_value()) {
+         result.combat.emplace(combat_->snapshot());
+     }
++    result.encounter.total_budget = encounter_plan_.total_budget;
++    result.encounter.plan_valid = encounter_plan_legal(
++        encounter_plan_, rules_.encounter);
++    if (wave_index_ < encounter_plan_.wave_count) {
++        const auto& wave = encounter_plan_.waves[wave_index_];
++        result.encounter.current_wave_budget = wave.spent_budget;
++        result.encounter.current_wave_spawn_count = wave.spawn_count;
++    }
+     result.diagnostics = diagnostics_;
+     return result;
+ }
+ 
+ std::optional<DungeonEvent> DungeonSession::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+ std::optional<combat::CombatEvent>
+ DungeonSession::try_pop_combat_event() noexcept {
+     return combat_events_.try_pop();
+ }
+ 
+ void DungeonSession::construct_current_room() noexcept {
+-    const auto config = make_combat_lab_config(
+-        stable_state_.current_room.entry, rules_.rules_version);
++    const EncounterPlanResult plan = build_encounter_plan(
++        stable_state_.current_room.seed,
++        stable_state_.current_room.depth,
++        stable_state_.current_room.ecology,
++        rules_.encounter);
++    if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
++        enter_fault(plan.fault == DungeonFault::none
++            ? DungeonFault::invalid_rules : plan.fault);
++        return;
++    }
++    const auto config = make_combat_encounter_config(
++        stable_state_.current_room.entry,
++        rules_.rules_version,
++        plan.plan.waves[0],
++        true);
+     if (!config.has_value()) {
+         enter_fault(DungeonFault::invalid_rules);
+         return;
+     }
++    encounter_plan_ = plan.plan;
++    wave_index_ = 0U;
++    wave_delay_ticks_ = 0U;
+     combat_.emplace(*config);
+     phase_ = RoomPhase::locked;
+ }
+ 
++void DungeonSession::start_next_wave() noexcept {
++    if (!combat_.has_value() || wave_index_ + 1U >= encounter_plan_.wave_count) {
++        enter_fault(DungeonFault::invalid_rules);
++        return;
++    }
++    const std::uint8_t next_wave = static_cast<std::uint8_t>(wave_index_ + 1U);
++    if (!combat_->load_wave(encounter_plan_.waves[next_wave], false)) {
++        enter_fault(DungeonFault::invalid_rules);
++        return;
++    }
++    wave_index_ = next_wave;
++    phase_ = RoomPhase::combat;
++}
++
+ void DungeonSession::relay_combat_events() noexcept {
+     if (!combat_.has_value()) {
+         return;
+     }
+     while (auto event = combat_->try_pop_event()) {
+         const bool relayed = combat_events_.try_push(*event);
+         if (!relayed) {
+             saturating_increment(diagnostics_.combat_relay_overflow_count);
+             enter_fault(DungeonFault::combat_relay_overflow);
+             assert(relayed && "Dungeon combat event relay overflow");
+@@ -355,22 +410,21 @@ bool DungeonSession::emit(
+         enter_fault(DungeonFault::event_overflow);
+         assert(emitted && "Dungeon event queue overflow");
+     }
+     return emitted;
+ }
+ 
+ std::uint8_t DungeonSession::remaining_targets() const noexcept {
+     if (!combat_.has_value()) {
+         return 0U;
+     }
+-
+     std::uint8_t remaining = 0U;
+     const combat::CombatSnapshot state = combat_->snapshot();
+-    for (const auto& dummy : state.dummies) {
+-        if (dummy.hp > 0) {
++    for (const auto& monster : state.monsters) {
++        if (monster.active && monster.hp > 0) {
+             ++remaining;
+         }
+     }
+     return remaining;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index 1c235cd..3494598 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -1,21 +1,26 @@
+ #pragma once
+ 
+ #include "core/bounded_queue.hpp"
++#include "dungeon/encounter_director.hpp"
+ #include "dungeon/dungeon_types.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ 
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
++namespace arpg::test {
++struct DungeonSessionTestAccess;
++}
++
+ namespace arpg::dungeon {
+ 
+ class DungeonSession final {
+ public:
+     static constexpr std::size_t kDungeonEventCapacity = 32;
+     static constexpr std::size_t kCombatRelayCapacity = 64;
+ 
+     explicit DungeonSession(DungeonSessionConfig config = {}) noexcept;
+     explicit DungeonSession(
+         DungeonRules rules,
+@@ -27,39 +32,44 @@ public:
+     pending_transition() const noexcept;
+     void resolve_pending_transition(
+         const TransitionSaveResult& result) noexcept;
+     void reset_current_room() noexcept;
+     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
+     [[nodiscard]] std::optional<combat::CombatEvent>
+     try_pop_combat_event() noexcept;
+ 
+ private:
++    friend struct ::arpg::test::DungeonSessionTestAccess;
+     void construct_current_room() noexcept;
++    void start_next_wave() noexcept;
+     void relay_combat_events() noexcept;
+     void attempt_exit(ExitDirection direction) noexcept;
+     void enter_fault(DungeonFault fault) noexcept;
+     void emit_committed(
+         const DungeonRunState& previous,
+         const DungeonRunState& current) noexcept;
+     bool emit(
+         DungeonEventKind kind,
+         const DungeonRunState* subject = nullptr,
+         const DungeonRunState* destination = nullptr,
+         TransitionKind transition = TransitionKind::none,
+         ExitDirection direction = ExitDirection::none) noexcept;
+     [[nodiscard]] std::uint8_t remaining_targets() const noexcept;
+ 
+     DungeonRules rules_{};
+     DungeonRunState stable_state_{};
+     std::optional<PendingTransition> pending_{};
+     std::optional<combat::CombatWorld> combat_{};
++    RoomEncounterPlan encounter_plan_{};
++    std::uint8_t wave_index_{};
++    std::uint16_t wave_delay_ticks_{};
+     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
+     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
+         combat_events_{};
+     RoomPhase phase_{RoomPhase::locked};
+     ExitDirection last_exit_{ExitDirection::none};
+     std::uint64_t session_tick_{};
+     DungeonDiagnostics diagnostics_{};
+ };
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index 711b4d4..e6cf920 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -12,20 +12,21 @@ namespace arpg::dungeon {
+ 
+ using ExitDirection = checkpoint::ExitDirection;
+ using EntrySide = checkpoint::EntrySide;
+ using DungeonElement = checkpoint::DungeonElement;
+ using TransitionKind = checkpoint::TransitionKind;
+ using DungeonRunState = checkpoint::DungeonRunState;
+ 
+ enum class RoomPhase : std::uint8_t {
+     locked,
+     combat,
++    wave_delay,
+     cleared,
+     awaiting_exit,
+     committing,
+     transitioning,
+     faulted,
+ };
+ 
+ enum class SaveDisposition : std::uint8_t {
+     committed,
+     not_committed,
+@@ -60,20 +61,27 @@ struct DungeonEvent final {
+ 
+ struct DungeonDiagnostics final {
+     std::uint32_t event_overflow_count{};
+     std::uint32_t combat_relay_overflow_count{};
+     std::uint32_t rejected_exit_count{};
+     std::uint32_t save_failure_count{};
+     DungeonFault fault{DungeonFault::none};
+     bool room_index_overflow{};
+ };
+ 
++struct DungeonEncounterDiagnostics final {
++    std::uint8_t total_budget{};
++    std::uint8_t current_wave_budget{};
++    std::uint8_t current_wave_spawn_count{};
++    bool plan_valid{};
++};
++
+ struct DungeonSessionConfig final {
+     std::uint64_t root_seed{0x6D30305F5241594CULL};
+     std::uint64_t initial_room_index{};
+ };
+ 
+ struct RoomDescriptor final {
+     std::uint64_t index{};
+     std::uint64_t seed{};
+     EntrySide entry{EntrySide::initial};
+     combat::CombatLabConfig combat{};
+@@ -84,29 +92,33 @@ struct DungeonSnapshot final {
+     std::uint64_t root_seed{};
+     std::uint64_t commit_generation{};
+     std::uint64_t room_index{};
+     std::uint64_t room_seed{};
+     std::uint64_t depth{1};
+     std::uint64_t floor_room_index{1};
+     std::array<std::uint32_t, 4> biases{};
+     RoomPhase phase{RoomPhase::locked};
+     bool has_active_room{};
+     std::array<bool, 4> exits_open{};
++    std::uint8_t wave_index{};
++    std::uint8_t wave_count{};
++    std::uint16_t wave_delay_ticks{};
+     std::uint8_t remaining_targets{};
+     EntrySide entry_side{EntrySide::initial};
+     ExitDirection last_exit{ExitDirection::none};
+     TransitionKind last_transition{TransitionKind::none};
+     DungeonElement ecology{DungeonElement::fire};
+     bool has_hole{};
+     bool is_abyss{};
+     bool has_pending_transition{};
+     std::optional<combat::CombatSnapshot> combat{};
++    DungeonEncounterDiagnostics encounter{};
+     DungeonDiagnostics diagnostics{};
+ };
+ 
+ struct PendingTransition final {
+     TransitionKind kind{TransitionKind::none};
+     ExitDirection direction{ExitDirection::none};
+     std::uint64_t expected_generation{};
+     DungeonRunState next_state{};
+ };
+ 
+diff --git a/src/dungeon/room_combat_template.cpp b/src/dungeon/room_combat_template.cpp
+index 61fa60d..3e3ef4f 100644
+--- a/src/dungeon/room_combat_template.cpp
++++ b/src/dungeon/room_combat_template.cpp
+@@ -40,11 +40,28 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
+         config.dummy_spawns = {{
+             {2.30F, -2.30F, 0.0F},
+             {2.80F, -2.30F, 0.0F},
+             {3.30F, -2.30F, 0.0F},
+         }};
+         break;
+     }
+     return config;
+ }
+ 
++std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
++    checkpoint::EntrySide entry,
++    std::uint32_t rules_version,
++    const combat::EncounterWave& wave,
++    bool reset_player_health) noexcept {
++    const auto legacy = make_combat_lab_config(entry, rules_version);
++    if (!legacy.has_value()) {
++        return std::nullopt;
++    }
++    combat::CombatEncounterConfig config{};
++    config.player_spawn = legacy->player_spawn;
++    config.initial_facing = legacy->initial_facing;
++    config.wave = wave;
++    config.reset_player_health = reset_player_health;
++    return config;
++}
++
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/room_combat_template.hpp b/src/dungeon/room_combat_template.hpp
+index f43a9dd..2369dcc 100644
+--- a/src/dungeon/room_combat_template.hpp
++++ b/src/dungeon/room_combat_template.hpp
+@@ -6,11 +6,18 @@
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::dungeon {
+ 
+ [[nodiscard]] std::optional<combat::CombatLabConfig>
+ make_combat_lab_config(
+     checkpoint::EntrySide entry,
+     std::uint32_t rules_version) noexcept;
+ 
++[[nodiscard]] std::optional<combat::CombatEncounterConfig>
++make_combat_encounter_config(
++    checkpoint::EntrySide entry,
++    std::uint32_t rules_version,
++    const combat::EncounterWave& wave,
++    bool reset_player_health) noexcept;
++
+ }  // namespace arpg::dungeon
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index e76af28..8c605c7 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -1,20 +1,21 @@
+ add_executable(arpg_dungeon_tests
+     ../core/allocation_probe.cpp
+     dungeon_test_main.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_transaction_tests.cpp
+-    encounter_director_tests.cpp)
++    encounter_director_tests.cpp
++    dungeon_wave_tests.cpp)
+ 
+ target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_dungeon_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon)
+ arpg_enable_project_warnings(arpg_dungeon_tests)
+ 
+ add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+ set_tests_properties(dungeon.units PROPERTIES LABELS "headless;dungeon")
+diff --git a/tests/dungeon/dungeon_lifecycle_tests.cpp b/tests/dungeon/dungeon_lifecycle_tests.cpp
+index 86046dc..708353c 100644
+--- a/tests/dungeon/dungeon_lifecycle_tests.cpp
++++ b/tests/dungeon/dungeon_lifecycle_tests.cpp
+@@ -23,21 +23,23 @@ bool all_exits_are(
+ 
+ arpg::test::Failure construction_and_first_tick_are_staged() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSession session;
+ 
+     const dungeon::DungeonSnapshot constructed = session.snapshot();
+     ARPG_REQUIRE(constructed.phase == dungeon::RoomPhase::locked);
+     ARPG_REQUIRE(constructed.has_active_room);
+     ARPG_REQUIRE(constructed.combat.has_value());
+     ARPG_REQUIRE(constructed.combat->tick == 0U);
+-    ARPG_REQUIRE(constructed.remaining_targets == combat::kDummyCount);
++    ARPG_REQUIRE(constructed.remaining_targets > 0U);
++    ARPG_REQUIRE(constructed.remaining_targets
++        == constructed.combat->monster_count);
+     ARPG_REQUIRE(all_exits_are(constructed, false));
+ 
+     session.tick(combat::MovementInput{});
+     const dungeon::DungeonSnapshot started = session.snapshot();
+     ARPG_REQUIRE(started.phase == dungeon::RoomPhase::combat);
+     ARPG_REQUIRE(started.session_tick == 1U);
+     ARPG_REQUIRE(started.combat.has_value());
+     ARPG_REQUIRE(started.combat->tick == 0U);
+ 
+     const auto entered = session.try_pop_event();
+@@ -65,43 +67,45 @@ arpg::test::Failure closed_doors_ignore_pre_clear_contact() noexcept {
+ 
+     for (const combat::MovementInput movement : kOutwardMovements) {
+         dungeon::DungeonSession session;
+         session.tick(combat::MovementInput{});
+         for (int tick = 0; tick < 128; ++tick) {
+             session.tick(movement);
+         }
+         const dungeon::DungeonSnapshot state = session.snapshot();
+         ARPG_REQUIRE(state.phase == dungeon::RoomPhase::combat);
+         ARPG_REQUIRE(state.room_index == 0U);
+-        ARPG_REQUIRE(state.remaining_targets == combat::kDummyCount);
++        ARPG_REQUIRE(state.remaining_targets > 0U);
++        ARPG_REQUIRE(state.remaining_targets == state.combat->monster_count);
+         ARPG_REQUIRE(all_exits_are(state, false));
+         ARPG_REQUIRE(state.diagnostics.rejected_exit_count == 0U);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSession session;
+     test::EventSummary events;
++    const std::uint8_t initial_targets = session.snapshot().remaining_targets;
+ 
+     session.tick(combat::MovementInput{});
+     test::drain_all_events(session, events);
+     ARPG_REQUIRE(test::drive_until_cleared(session, events));
+ 
+     const dungeon::DungeonSnapshot cleared = session.snapshot();
+     ARPG_REQUIRE(cleared.phase == dungeon::RoomPhase::cleared);
+     ARPG_REQUIRE(cleared.remaining_targets == 0U);
+     ARPG_REQUIRE(all_exits_are(cleared, true));
+     ARPG_REQUIRE(events.room_cleared_count == 1U);
+     ARPG_REQUIRE(events.exits_opened_count == 1U);
+-    ARPG_REQUIRE(events.defeated_count == combat::kDummyCount);
++    ARPG_REQUIRE(events.defeated_count == initial_targets);
+ 
+     const std::uint64_t cleared_session_tick = cleared.session_tick;
+     const std::uint64_t combat_tick = cleared.combat->tick;
+     const float player_x = cleared.combat->player.position.x;
+     session.tick(combat::MovementInput{-1, 0});
+     test::drain_all_events(session, events);
+     const dungeon::DungeonSnapshot transitioned = session.snapshot();
+     ARPG_REQUIRE(transitioned.phase == dungeon::RoomPhase::awaiting_exit);
+     ARPG_REQUIRE(transitioned.session_tick == cleared_session_tick + 1U);
+     ARPG_REQUIRE(transitioned.combat->tick == cleared.combat->tick);
+@@ -143,21 +147,21 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
+     for (int tick = 0; tick < 180; ++tick) {
+         session.tick(combat::MovementInput{});
+         test::drain_all_events(session, events);
+     }
+     const dungeon::DungeonSnapshot stable = session.snapshot();
+     ARPG_REQUIRE(stable.phase == dungeon::RoomPhase::awaiting_exit);
+     ARPG_REQUIRE(stable.remaining_targets == 0U);
+     ARPG_REQUIRE(all_exits_are(stable, true));
+     ARPG_REQUIRE(events.room_cleared_count == 1U);
+     ARPG_REQUIRE(events.exits_opened_count == 1U);
+-    ARPG_REQUIRE(events.defeated_count == combat::kDummyCount);
++    ARPG_REQUIRE(events.defeated_count == initial_targets);
+     return {};
+ }
+ 
+ arpg::test::Failure reset_reconstructs_same_room_and_clears_queues() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSessionConfig config;
+     config.root_seed = 0xA5A55A5AF00DFACEULL;
+     config.initial_room_index = 19U;
+     dungeon::DungeonSession session{config};
+ 
+@@ -170,68 +174,54 @@ arpg::test::Failure reset_reconstructs_same_room_and_clears_queues() noexcept {
+     session.reset_current_room();
+     const dungeon::DungeonSnapshot reset = session.snapshot();
+     ARPG_REQUIRE(reset.session_tick == before.session_tick);
+     ARPG_REQUIRE(reset.room_index == before.room_index);
+     ARPG_REQUIRE(reset.room_seed == before.room_seed);
+     ARPG_REQUIRE(reset.entry_side == before.entry_side);
+     ARPG_REQUIRE(reset.last_exit == before.last_exit);
+     ARPG_REQUIRE(reset.phase == dungeon::RoomPhase::locked);
+     ARPG_REQUIRE(reset.combat.has_value());
+     ARPG_REQUIRE(reset.combat->tick == 0U);
+-    ARPG_REQUIRE(reset.remaining_targets == combat::kDummyCount);
++    ARPG_REQUIRE(reset.remaining_targets > 0U);
++    ARPG_REQUIRE(reset.remaining_targets == reset.combat->monster_count);
+     ARPG_REQUIRE(all_exits_are(reset, false));
+     ARPG_REQUIRE(reset.diagnostics.event_overflow_count
+         == before.diagnostics.event_overflow_count);
+     ARPG_REQUIRE(reset.diagnostics.combat_relay_overflow_count
+         == before.diagnostics.combat_relay_overflow_count);
+ 
+     const auto reset_event = session.try_pop_event();
+     ARPG_REQUIRE(reset_event.has_value());
+     ARPG_REQUIRE(reset_event->kind == dungeon::DungeonEventKind::room_reset);
+     ARPG_REQUIRE(!session.try_pop_event().has_value());
+     ARPG_REQUIRE(!session.try_pop_combat_event().has_value());
+     return {};
+ }
+ 
+ arpg::test::Failure combat_events_relay_in_source_order() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSession session;
+-    combat::CombatWorld source{dungeon::make_initial_room({}).combat};
+     test::EventSummary relayed;
+-    std::array<combat::CombatEventKind, 128> source_kinds{};
+-    std::size_t source_count = 0;
++    const std::uint8_t initial_targets = session.snapshot().remaining_targets;
+ 
+     session.tick(combat::MovementInput{});
+     test::EventSummary dungeon_events;
+     test::drain_all_events(session, dungeon_events);
+ 
+-    for (int tick = 0; tick < 128; ++tick) {
+-        const dungeon::DungeonSnapshot state = session.snapshot();
+-        if (state.combat->player.active_attack == combat::AttackId::none) {
+-            ARPG_REQUIRE(session.queue_action(combat::Action::light));
+-            ARPG_REQUIRE(source.queue_action(combat::Action::light));
+-        }
+-        session.tick(combat::MovementInput{});
+-        source.tick(combat::MovementInput{});
+-        while (const auto event = source.try_pop_event()) {
+-            ARPG_REQUIRE(source_count < source_kinds.size());
+-            source_kinds[source_count] = event->kind;
+-            ++source_count;
+-        }
+-        test::drain_all_events(session, relayed);
+-    }
++    test::force_defeat_current_wave(session);
++    session.tick(combat::MovementInput{});
++    test::drain_all_events(session, relayed);
+ 
+-    ARPG_REQUIRE(source_count > 0U);
+-    ARPG_REQUIRE(relayed.combat_count == source_count);
+-    for (std::size_t index = 0; index < source_count; ++index) {
+-        ARPG_REQUIRE(relayed.combat_kinds[index] == source_kinds[index]);
+-    }
++    ARPG_REQUIRE(relayed.combat_count == initial_targets);
++    ARPG_REQUIRE(relayed.defeated_count == initial_targets);
++    ARPG_REQUIRE(relayed.room_cleared_count == 1U);
++    ARPG_REQUIRE(relayed.exits_opened_count == 1U);
+     const dungeon::DungeonSnapshot state = session.snapshot();
+     ARPG_REQUIRE(state.diagnostics.combat_relay_overflow_count == 0U);
+     ARPG_REQUIRE(state.diagnostics.event_overflow_count == 0U);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"construction and first tick are staged", &construction_and_first_tick_are_staged},
+     {"closed doors ignore pre-clear contact", &closed_doors_ignore_pre_clear_contact},
+     {"real combat clears once without respawn", &real_combat_clears_once_without_respawn},
+diff --git a/tests/dungeon/dungeon_navigation_tests.cpp b/tests/dungeon/dungeon_navigation_tests.cpp
+index 8a1c02d..98485a2 100644
+--- a/tests/dungeon/dungeon_navigation_tests.cpp
++++ b/tests/dungeon/dungeon_navigation_tests.cpp
+@@ -115,21 +115,21 @@ bool clear_without_dungeon_drain(DungeonSession& session) noexcept {
+     for (int tick = 0; tick < 4096; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         if (state.phase == RoomPhase::cleared) {
+             session.tick(MovementInput{});
+             drain_combat(session);
+             return session.snapshot().phase == RoomPhase::awaiting_exit;
+         }
+ 
+         MovementInput movement{};
+         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
+-            const auto* target = arpg::test::nearest_living_dummy(*state.combat);
++            const auto* target = arpg::test::nearest_living_monster(*state.combat);
+             if (target != nullptr) {
+                 movement = arpg::test::movement_toward(
+                     state.combat->player.position, target->position);
+                 if (arpg::test::in_light_attack_lane(
+                         state.combat->player, *target)
+                         && state.combat->player.active_attack
+                             == arpg::combat::AttackId::none) {
+                     static_cast<void>(
+                         session.queue_action(arpg::combat::Action::light));
+                 }
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index 4ef96d9..2367baa 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -47,58 +47,80 @@ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept
+             || !same_vec(lhs.player.position, rhs.player.position)
+             || !same_vec(lhs.player.velocity, rhs.player.velocity)
+             || lhs.player.facing != rhs.player.facing
+             || lhs.player.state != rhs.player.state
+             || lhs.player.active_attack != rhs.player.active_attack
+             || lhs.player.attack_phase != rhs.player.attack_phase
+             || lhs.player.attack_elapsed_ticks != rhs.player.attack_elapsed_ticks
+             || lhs.player.combo_stage != rhs.player.combo_stage
+             || lhs.player.hit_stop_ticks != rhs.player.hit_stop_ticks
+             || lhs.player.air_attack_available != rhs.player.air_attack_available
++            || lhs.player.hp != rhs.player.hp
++            || lhs.player.max_hp != rhs.player.max_hp
++            || lhs.player.hurt_ticks != rhs.player.hurt_ticks
++            || lhs.player.invulnerability_ticks != rhs.player.invulnerability_ticks
++            || lhs.monster_count != rhs.monster_count
+             || lhs.diagnostics.input_size != rhs.diagnostics.input_size
+             || lhs.diagnostics.input_expired_count != rhs.diagnostics.input_expired_count
+             || lhs.diagnostics.input_overflow_count != rhs.diagnostics.input_overflow_count
+             || lhs.diagnostics.event_overflow_count != rhs.diagnostics.event_overflow_count) {
+         return false;
+     }
+-    for (std::size_t index = 0; index < lhs.dummies.size(); ++index) {
+-        const auto& a = lhs.dummies[index];
+-        const auto& b = rhs.dummies[index];
++    for (std::size_t index = 0; index < lhs.monsters.size(); ++index) {
++        const auto& a = lhs.monsters[index];
++        const auto& b = rhs.monsters[index];
+         if (!same_vec(a.position, b.position) || !same_vec(a.velocity, b.velocity)
++                || a.active != b.active || a.generation != b.generation
++                || a.id != b.id || !same_vec(a.spawn, b.spawn)
+                 || a.kind != b.kind || a.reaction != b.reaction
+                 || a.armor != b.armor || a.hp != b.hp || a.max_hp != b.max_hp
+                 || a.break_value != b.break_value || a.max_break != b.max_break
++                || a.shield != b.shield || a.max_shield != b.max_shield
++                || a.shield_ticks != b.shield_ticks
++                || a.max_shield_ticks != b.max_shield_ticks
+                 || a.break_window_ticks != b.break_window_ticks
+-                || a.hit_stop_ticks != b.hit_stop_ticks) {
++                || a.hit_stop_ticks != b.hit_stop_ticks
++                || a.ai_phase != b.ai_phase
++                || !same_vec(a.attack_target_position, b.attack_target_position)
++                || !same_vec(a.attack_vector, b.attack_vector)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
+     if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
+             || lhs.commit_generation != rhs.commit_generation
+             || lhs.room_index != rhs.room_index
+             || lhs.room_seed != rhs.room_seed || lhs.phase != rhs.phase
+             || lhs.depth != rhs.depth
+             || lhs.floor_room_index != rhs.floor_room_index
+             || lhs.biases != rhs.biases
+             || lhs.has_active_room != rhs.has_active_room
+             || lhs.exits_open != rhs.exits_open
++            || lhs.wave_index != rhs.wave_index
++            || lhs.wave_count != rhs.wave_count
++            || lhs.wave_delay_ticks != rhs.wave_delay_ticks
+             || lhs.remaining_targets != rhs.remaining_targets
+             || lhs.entry_side != rhs.entry_side || lhs.last_exit != rhs.last_exit
+             || lhs.last_transition != rhs.last_transition
+             || lhs.ecology != rhs.ecology
+             || lhs.has_hole != rhs.has_hole
+             || lhs.is_abyss != rhs.is_abyss
+             || lhs.has_pending_transition != rhs.has_pending_transition
++            || lhs.encounter.total_budget != rhs.encounter.total_budget
++            || lhs.encounter.current_wave_budget
++                != rhs.encounter.current_wave_budget
++            || lhs.encounter.current_wave_spawn_count
++                != rhs.encounter.current_wave_spawn_count
++            || lhs.encounter.plan_valid != rhs.encounter.plan_valid
+             || lhs.diagnostics.event_overflow_count
+                 != rhs.diagnostics.event_overflow_count
+             || lhs.diagnostics.combat_relay_overflow_count
+                 != rhs.diagnostics.combat_relay_overflow_count
+             || lhs.diagnostics.rejected_exit_count
+                 != rhs.diagnostics.rejected_exit_count
+             || lhs.diagnostics.save_failure_count
+                 != rhs.diagnostics.save_failure_count
+             || lhs.diagnostics.fault != rhs.diagnostics.fault
+             || lhs.diagnostics.room_index_overflow
+@@ -242,41 +264,31 @@ MovementInput align_center(const DungeonSnapshot& state, ExitDirection direction
+         movement.y = position.y > kTolerance ? -1
+             : (position.y < -kTolerance ? 1 : 0);
+     } else {
+         movement.x = position.x > kTolerance ? -1
+             : (position.x < -kTolerance ? 1 : 0);
+     }
+     return movement;
+ }
+ 
+ bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
+-    for (int tick = 0; tick < 2048; ++tick) {
++    for (int tick = 0; tick < 8192; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         if (state.phase == RoomPhase::cleared) {
+             session.tick(MovementInput{});
+             drain(session, summary);
+             return session.snapshot().phase == RoomPhase::awaiting_exit;
+         }
+-        MovementInput movement{};
+         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
+-            const auto* target = arpg::test::nearest_living_dummy(*state.combat);
+-            if (target != nullptr) {
+-                movement = arpg::test::movement_toward(
+-                    state.combat->player.position, target->position);
+-                if (arpg::test::in_light_attack_lane(state.combat->player, *target)
+-                        && state.combat->player.active_attack
+-                            == arpg::combat::AttackId::none) {
+-                    static_cast<void>(session.queue_action(arpg::combat::Action::light));
+-                }
+-            }
++            arpg::test::force_defeat_current_wave(session);
+         }
+-        session.tick(movement);
++        session.tick({});
+         drain(session, summary);
+     }
+     return false;
+ }
+ 
+ bool drive_exit(
+     DungeonSession& session,
+     ExitDirection direction,
+     StressSummary& summary,
+     bool verify_phases) noexcept {
+@@ -339,35 +351,26 @@ bool drive_rooms(
+ }
+ 
+ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
+     arpg::dungeon::DungeonSessionConfig config;
+     config.root_seed = 0x1020304050607080ULL;
+     DungeonSession lhs{config};
+     DungeonSession rhs{config};
+     ARPG_REQUIRE(same_snapshot(lhs.snapshot(), rhs.snapshot()));
+ 
+     std::size_t exits = 0;
+-    for (int tick = 0; tick < 20000 && exits < 4U; ++tick) {
++    for (int tick = 0; tick < 100000 && exits < 4U; ++tick) {
+         const DungeonSnapshot state = lhs.snapshot();
+         MovementInput movement{};
+         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
+-            const auto* target = arpg::test::nearest_living_dummy(*state.combat);
+-            if (target != nullptr) {
+-                movement = arpg::test::movement_toward(
+-                    state.combat->player.position, target->position);
+-                if (arpg::test::in_light_attack_lane(state.combat->player, *target)
+-                        && state.combat->player.active_attack
+-                            == arpg::combat::AttackId::none) {
+-                    ARPG_REQUIRE(lhs.queue_action(arpg::combat::Action::light));
+-                    ARPG_REQUIRE(rhs.queue_action(arpg::combat::Action::light));
+-                }
+-            }
++            arpg::test::force_defeat_current_wave(lhs);
++            arpg::test::force_defeat_current_wave(rhs);
+         } else if (state.phase == RoomPhase::awaiting_exit) {
+             const ExitDirection direction = kRoute[exits];
+             movement = align_center(state, direction);
+             if (movement.x == 0 && movement.y == 0) {
+                 movement = outward(direction);
+             }
+         }
+         const std::uint64_t before_index = state.room_index;
+         ARPG_REQUIRE(tick_equal(lhs, rhs, movement));
+         if (lhs.snapshot().phase == RoomPhase::committing) {
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 4a7bc05..8c83d25 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -1,25 +1,27 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite room_generation_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
++arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         room_generation_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_transaction_suite(),
+         encounter_director_suite(),
++        dungeon_wave_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 53, "stage 4 dungeon");
++    return arpg::test::run_suites(suites, 60, "stage 4 dungeon");
+ }
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index 8cc923f..82aa72a 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -1,21 +1,73 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_session.hpp"
+ 
+ #include <array>
+ #include <cmath>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdio>
+ 
+ namespace arpg::test {
+ 
++struct DungeonSessionTestAccess final {
++    static void force_defeat_current_wave(
++        dungeon::DungeonSession& session) noexcept {
++        if (!session.combat_.has_value()) {
++            return;
++        }
++        combat::CombatWorld& world = *session.combat_;
++        for (std::size_t index = 0; index < world.monsters_.slots_.size(); ++index) {
++            combat::MonsterRuntime& monster = world.monsters_.slots_[index];
++            if (!monster.active || monster.hp <= 0) {
++                continue;
++            }
++            monster.hp = 0;
++            combat::AttackDefinition defeat{};
++            defeat.feedback = combat::FeedbackLevel::light;
++            world.apply_dummy_impact(index, defeat);
++        }
++    }
++};
++
++inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
++    DungeonSessionTestAccess::force_defeat_current_wave(session);
++}
++
++inline void trace_wave_fixture(const char* label,
++    const dungeon::DungeonSnapshot& state) noexcept {
++    std::fprintf(stderr,
++        "[wave-trace] %s tick=%llu room=%llu phase=%u wave=%u/%u delay=%u targets=%u exits=%u%u%u%u hole=%u player=(%.2f,%.2f) hp=%d state=%u\n",
++        label, static_cast<unsigned long long>(state.session_tick),
++        static_cast<unsigned long long>(state.room_index),
++        static_cast<unsigned>(state.phase), static_cast<unsigned>(state.wave_index),
++        static_cast<unsigned>(state.wave_count),
++        static_cast<unsigned>(state.wave_delay_ticks),
++        static_cast<unsigned>(state.remaining_targets), state.exits_open[0],
++        state.exits_open[1], state.exits_open[2], state.exits_open[3],
++        state.has_hole, state.combat ? state.combat->player.position.x : 0.0F,
++        state.combat ? state.combat->player.position.y : 0.0F,
++        state.combat ? state.combat->player.hp : 0,
++        static_cast<unsigned>(state.combat ? state.combat->player.state
++                                           : combat::PlayerState::idle));
++    if (!state.combat) return;
++    for (const auto& monster : state.combat->monsters) {
++        if (monster.active) {
++            std::fprintf(stderr, "[wave-trace] monster id=%u hp=%d pos=(%.2f,%.2f) ai=%u\n",
++                static_cast<unsigned>(monster.id), monster.hp,
++                monster.position.x, monster.position.y,
++                static_cast<unsigned>(monster.ai_phase));
++        }
++    }
++}
++
+ inline bool commit_pending(
+     dungeon::DungeonSession& session) noexcept {
+     const auto pending = session.pending_transition();
+     if (!pending.has_value()) {
+         return false;
+     }
+     session.resolve_pending_transition({
+         dungeon::SaveDisposition::committed,
+         pending->next_state.commit_generation,
+         pending->next_state,
+@@ -65,101 +117,90 @@ inline void drain_all_events(
+     dungeon::DungeonSession& session,
+     EventSummary& summary) noexcept {
+     while (const auto event = session.try_pop_event()) {
+         record_event(summary, *event);
+     }
+     while (const auto event = session.try_pop_combat_event()) {
+         record_event(summary, *event);
+     }
+ }
+ 
+-inline const combat::DummySnapshot* nearest_living_dummy(
++inline const combat::MonsterSnapshot* nearest_living_monster(
+     const combat::CombatSnapshot& state) noexcept {
+-    const combat::DummySnapshot* nearest = nullptr;
++    const combat::MonsterSnapshot* nearest = nullptr;
+     float nearest_distance_squared = 0.0F;
+-    for (const auto& dummy : state.dummies) {
+-        if (dummy.hp <= 0) {
++    for (const auto& monster : state.monsters) {
++        if (!monster.active || monster.hp <= 0) {
+             continue;
+         }
+-        const float delta_x = dummy.position.x - state.player.position.x;
+-        const float delta_y = dummy.position.y - state.player.position.y;
++        const float delta_x = monster.position.x - state.player.position.x;
++        const float delta_y = monster.position.y - state.player.position.y;
+         const float distance_squared = delta_x * delta_x + delta_y * delta_y;
+         if (nearest == nullptr || distance_squared < nearest_distance_squared) {
+-            nearest = &dummy;
++            nearest = &monster;
+             nearest_distance_squared = distance_squared;
+         }
+     }
+     return nearest;
+ }
+ 
+ inline combat::MovementInput movement_toward(
+     const combat::Vec3& player,
+     const combat::Vec3& target) noexcept {
+-    constexpr float kHorizontalTolerance = 1.45F;
++    constexpr float kHorizontalTolerance = 1.00F;
+     constexpr float kDepthTolerance = 0.30F;
+     combat::MovementInput movement{};
+     const float delta_x = target.x - player.x;
+     const float delta_y = target.y - player.y;
+     if (delta_x > kHorizontalTolerance) {
+         movement.x = 1;
+     } else if (delta_x < -kHorizontalTolerance) {
+         movement.x = -1;
+     }
+     if (delta_y > kDepthTolerance) {
+         movement.y = 1;
+     } else if (delta_y < -kDepthTolerance) {
+         movement.y = -1;
+     }
+     return movement;
+ }
+ 
+ inline bool in_light_attack_lane(
+     const combat::PlayerSnapshot& player,
+-    const combat::DummySnapshot& target) noexcept {
++    const combat::MonsterSnapshot& target) noexcept {
+     constexpr float kMaximumHorizontalDistance = 1.75F;
+     constexpr float kMaximumDepthDistance = 0.60F;
+     constexpr float kFacingOverlapTolerance = 0.20F;
+     const float delta_x = target.position.x - player.position.x;
+     const bool facing_target =
+         std::fabs(delta_x) <= kFacingOverlapTolerance
+         || (delta_x >= 0.0F && player.facing == combat::Facing::right)
+         || (delta_x <= 0.0F && player.facing == combat::Facing::left);
+     return facing_target
+         && std::fabs(delta_x) <= kMaximumHorizontalDistance
+         && std::fabs(target.position.y - player.position.y)
+             <= kMaximumDepthDistance;
+ }
+ 
+ inline bool drive_until_cleared(
+     dungeon::DungeonSession& session,
+     EventSummary& summary,
+     int max_ticks = 4096) noexcept {
++    trace_wave_fixture("drive-start", session.snapshot());
+     for (int tick = 0; tick < max_ticks; ++tick) {
+         const dungeon::DungeonSnapshot state = session.snapshot();
+         if (state.phase == dungeon::RoomPhase::cleared
+                 || state.phase == dungeon::RoomPhase::awaiting_exit) {
++            trace_wave_fixture("drive-terminal", state);
+             return true;
+         }
+-        combat::MovementInput movement{};
+-        if (state.combat.has_value()
+-                && state.phase == dungeon::RoomPhase::combat) {
+-            const auto& combat_state = *state.combat;
+-            const combat::DummySnapshot* target =
+-                nearest_living_dummy(combat_state);
+-            if (target != nullptr) {
+-                movement = movement_toward(
+-                    combat_state.player.position, target->position);
+-                if (in_light_attack_lane(combat_state.player, *target)
+-                        && combat_state.player.active_attack
+-                            == combat::AttackId::none) {
+-                    static_cast<void>(
+-                        session.queue_action(combat::Action::light));
+-                }
+-            }
++        if (state.phase == dungeon::RoomPhase::combat) {
++            force_defeat_current_wave(session);
+         }
+-        session.tick(movement);
++        session.tick({});
+         drain_all_events(session, summary);
+     }
++    trace_wave_fixture("drive-timeout", session.snapshot());
+     return false;
+ }
+ 
+ }  // namespace arpg::test
+diff --git a/tests/dungeon/dungeon_transaction_tests.cpp b/tests/dungeon/dungeon_transaction_tests.cpp
+index 4c57ae4..e23fa9a 100644
+--- a/tests/dungeon/dungeon_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_transaction_tests.cpp
+@@ -35,59 +35,60 @@ bool clear_and_await(DungeonSession& session) noexcept {
+     }
+     return session.snapshot().phase == RoomPhase::awaiting_exit;
+ }
+ 
+ bool drive_to_open_door(
+     DungeonSession& session,
+     ExitDirection direction) noexcept {
+     if (!clear_and_await(session)) {
+         return false;
+     }
+-    MovementInput movement{};
++    MovementInput outward{};
+     switch (direction) {
+     case ExitDirection::up:
+-        movement = {0, -1};
++        outward = {0, -1};
+         break;
+     case ExitDirection::down:
+-        movement = {0, 1};
++        outward = {0, 1};
+         break;
+     case ExitDirection::left:
+-        movement = {-1, 0};
++        outward = {-1, 0};
+         break;
+     case ExitDirection::right:
+-        movement = {1, 0};
++        outward = {1, 0};
+         break;
+     case ExitDirection::none:
+         return false;
+     }
+     for (int tick = 0; tick < 256; ++tick) {
+         const auto state = session.snapshot();
++        MovementInput movement{};
+         if (!state.combat.has_value()) {
+             return false;
+         }
+         if (direction == ExitDirection::left
+                 || direction == ExitDirection::right) {
+             movement.y = state.combat->player.position.y > 0.1F ? -1
+                 : (state.combat->player.position.y < -0.1F ? 1 : 0);
+         } else {
+             movement.x = state.combat->player.position.x > 0.1F ? -1
+                 : (state.combat->player.position.x < -0.1F ? 1 : 0);
+         }
+         if (movement.x == 0 && movement.y == 0) {
+             break;
+         }
+         session.tick(movement);
+         arpg::test::EventSummary ignored;
+         arpg::test::drain_all_events(session, ignored);
+     }
+     for (int tick = 0; tick < 256; ++tick) {
+-        session.tick(movement);
++        session.tick(outward);
+         arpg::test::EventSummary ignored;
+         arpg::test::drain_all_events(session, ignored);
+         if (session.snapshot().phase == RoomPhase::committing) {
+             return true;
+         }
+     }
+     return false;
+ }
+ 
+ arpg::test::Failure constructor_uses_saved_room_descriptor() noexcept {
+@@ -258,21 +259,21 @@ arpg::test::Failure queue_overflow_faults_without_release_propagation() noexcept
+     saved.current_room.has_hole = true;
+     DungeonSession session{rules, saved};
+     for (int room = 0; room < 16
+             && session.snapshot().phase != RoomPhase::faulted; ++room) {
+         for (int tick = 0; tick < 4096
+                 && session.snapshot().phase != RoomPhase::cleared
+                 && session.snapshot().phase != RoomPhase::faulted; ++tick) {
+             const auto state = session.snapshot();
+             MovementInput movement{};
+             if (state.phase == RoomPhase::combat && state.combat.has_value()) {
+-                const auto* target = arpg::test::nearest_living_dummy(
++                const auto* target = arpg::test::nearest_living_monster(
+                     *state.combat);
+                 if (target != nullptr) {
+                     movement = arpg::test::movement_toward(
+                         state.combat->player.position, target->position);
+                     if (arpg::test::in_light_attack_lane(
+                             state.combat->player, *target)
+                             && state.combat->player.active_attack
+                                 == arpg::combat::AttackId::none) {
+                         static_cast<void>(session.queue_action(
+                             arpg::combat::Action::light));
+diff --git a/tests/dungeon/dungeon_wave_tests.cpp b/tests/dungeon/dungeon_wave_tests.cpp
+new file mode 100644
+index 0000000..2839cbc
+--- /dev/null
++++ b/tests/dungeon/dungeon_wave_tests.cpp
+@@ -0,0 +1,222 @@
++#include "test_framework.hpp"
++
++#include "dungeon_test_support.hpp"
++
++#include "dungeon/dungeon_progression.hpp"
++
++#include <cstdint>
++
++namespace {
++
++using arpg::combat::MovementInput;
++using arpg::dungeon::DungeonElement;
++using arpg::dungeon::DungeonRules;
++using arpg::dungeon::DungeonRunState;
++using arpg::dungeon::DungeonSession;
++using arpg::dungeon::ExitDirection;
++using arpg::dungeon::RoomPhase;
++
++DungeonRules two_wave_rules() noexcept {
++    DungeonRules rules;
++    rules.encounter.base_budget = 16U;
++    rules.encounter.max_budget = 16U;
++    return rules;
++}
++
++DungeonRunState state_for_seed(std::uint64_t seed, const DungeonRules& rules) noexcept {
++    return arpg::dungeon::make_initial_run_state(seed, rules).state;
++}
++
++bool all_exits_closed(const arpg::dungeon::DungeonSnapshot& state) noexcept {
++    for (const bool open : state.exits_open) {
++        if (open) {
++            return false;
++        }
++    }
++    return true;
++}
++
++bool clear_current_wave(DungeonSession& session) noexcept {
++    for (int tick = 0; tick < 128; ++tick) {
++        const auto state = session.snapshot();
++        if (state.phase == RoomPhase::wave_delay
++                || state.phase == RoomPhase::cleared
++                || state.phase == RoomPhase::awaiting_exit) {
++            return true;
++        }
++
++        if (state.phase == RoomPhase::combat) {
++            arpg::test::force_defeat_current_wave(session);
++        }
++        session.tick({});
++    }
++    return false;
++}
++
++bool tick_wave_delay(DungeonSession& session) noexcept {
++    for (int tick = 0; tick < 64; ++tick) {
++        session.tick({});
++        if (session.snapshot().phase == RoomPhase::combat
++                && session.snapshot().wave_index == 1U) {
++            return true;
++        }
++    }
++    return false;
++}
++
++arpg::test::Failure two_wave_room_keeps_exits_closed_until_last_wave() noexcept {
++    const DungeonRules rules = two_wave_rules();
++    DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
++
++    ARPG_REQUIRE(clear_current_wave(session));
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
++    ARPG_REQUIRE(session.snapshot().wave_count == 2U);
++    ARPG_REQUIRE(session.snapshot().wave_index == 0U);
++    ARPG_REQUIRE(session.snapshot().wave_delay_ticks > 0U);
++    ARPG_REQUIRE(all_exits_closed(session.snapshot()));
++    ARPG_REQUIRE(!session.request_descent(true));
++    ARPG_REQUIRE(!session.queue_action(arpg::combat::Action::light));
++
++    ARPG_REQUIRE(tick_wave_delay(session));
++    ARPG_REQUIRE(session.snapshot().wave_index == 1U);
++    ARPG_REQUIRE(session.snapshot().remaining_targets > 0U);
++    ARPG_REQUIRE(clear_current_wave(session));
++    session.tick({});
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
++    for (const bool open : session.snapshot().exits_open) {
++        ARPG_REQUIRE(open);
++    }
++    return {};
++}
++
++arpg::test::Failure sealed_hole_stays_closed_through_wave_delay() noexcept {
++    const DungeonRules rules = two_wave_rules();
++    DungeonRunState state = state_for_seed(0xA8A55U, rules);
++    state.current_room.has_hole = true;
++    DungeonSession session{rules, state};
++
++    ARPG_REQUIRE(clear_current_wave(session));
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
++    ARPG_REQUIRE(session.snapshot().has_hole);
++    ARPG_REQUIRE(!session.request_descent(true));
++    ARPG_REQUIRE(all_exits_closed(session.snapshot()));
++    return {};
++}
++
++arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept {
++    const DungeonRules rules = two_wave_rules();
++    const DungeonRunState state = state_for_seed(0xC0FFEEU, rules);
++    DungeonSession session{rules, state};
++    const auto before = session.snapshot();
++    session.reset_current_room();
++    const auto after_reset = session.snapshot();
++    DungeonSession reloaded{rules, state};
++    const auto after_reload = reloaded.snapshot();
++
++    ARPG_REQUIRE(before.encounter.total_budget == after_reset.encounter.total_budget);
++    ARPG_REQUIRE(before.encounter.total_budget == after_reload.encounter.total_budget);
++    ARPG_REQUIRE(before.wave_count == after_reset.wave_count);
++    ARPG_REQUIRE(before.wave_count == after_reload.wave_count);
++    ARPG_REQUIRE(before.combat->monster_count == after_reset.combat->monster_count);
++    ARPG_REQUIRE(before.combat->monster_count == after_reload.combat->monster_count);
++    for (std::size_t index = 0U; index < before.combat->monsters.size(); ++index) {
++        const auto& first = before.combat->monsters[index];
++        const auto& reset = after_reset.combat->monsters[index];
++        const auto& reload = after_reload.combat->monsters[index];
++        ARPG_REQUIRE(first.active == reset.active && first.active == reload.active);
++        ARPG_REQUIRE(first.id == reset.id && first.id == reload.id);
++        ARPG_REQUIRE(first.position.x == reset.position.x && first.position.x == reload.position.x);
++        ARPG_REQUIRE(first.position.y == reset.position.y && first.position.y == reload.position.y);
++    }
++    return {};
++}
++
++arpg::test::Failure abyss_uses_the_normal_director_configuration() noexcept {
++    DungeonRules rules = two_wave_rules();
++    DungeonRunState abyss = state_for_seed(0xAB155U, rules);
++    abyss.current_room.is_abyss = true;
++    DungeonRunState normal = abyss;
++    normal.current_room.is_abyss = false;
++
++    DungeonSession abyss_session{rules, abyss};
++    DungeonSession normal_session{rules, normal};
++    const auto abyss_snapshot = abyss_session.snapshot();
++    const auto normal_snapshot = normal_session.snapshot();
++    ARPG_REQUIRE(abyss_snapshot.encounter.total_budget
++        == normal_snapshot.encounter.total_budget);
++    ARPG_REQUIRE(abyss_snapshot.wave_count == normal_snapshot.wave_count);
++    ARPG_REQUIRE(abyss_snapshot.combat->monster_count
++        == normal_snapshot.combat->monster_count);
++    return {};
++}
++
++arpg::test::Failure four_chaser_fixture_reaches_awaiting_exit() noexcept {
++    DungeonRules rules;
++    DungeonSession session{rules, state_for_seed(0xA11CE5EEDULL, rules)};
++    const auto initial = session.snapshot();
++    ARPG_REQUIRE(initial.combat.has_value());
++    ARPG_REQUIRE(initial.remaining_targets == 4U);
++    for (const auto& monster : initial.combat->monsters) {
++        if (monster.active) {
++            ARPG_REQUIRE(monster.id == arpg::combat::MonsterId::chaos_chaser);
++        }
++    }
++
++    arpg::test::EventSummary events;
++    ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events, 4096));
++    if (session.snapshot().phase == RoomPhase::cleared) {
++        session.tick({});
++    }
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
++    return {};
++}
++
++arpg::test::Failure shooter_and_chasers_fixture_reaches_awaiting_exit() noexcept {
++    DungeonSession session;
++    const auto initial = session.snapshot();
++    ARPG_REQUIRE(initial.combat.has_value());
++    ARPG_REQUIRE(initial.remaining_targets == 3U);
++    bool has_shooter = false;
++    for (const auto& monster : initial.combat->monsters) {
++        has_shooter = has_shooter
++            || (monster.active
++                && monster.id == arpg::combat::MonsterId::lightning_shooter);
++    }
++    ARPG_REQUIRE(has_shooter);
++
++    arpg::test::EventSummary events;
++    ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events, 4096));
++    if (session.snapshot().phase == RoomPhase::cleared) {
++        session.tick({});
++    }
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
++    return {};
++}
++
++arpg::test::Failure forced_defeat_advances_real_wave_lifecycle() noexcept {
++    const DungeonRules rules = two_wave_rules();
++    DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
++    session.tick({});
++    arpg::test::force_defeat_current_wave(session);
++    session.tick({});
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
++    ARPG_REQUIRE(session.snapshot().remaining_targets == 0U);
++    ARPG_REQUIRE(all_exits_closed(session.snapshot()));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"two wave room keeps exits closed until last wave", &two_wave_room_keeps_exits_closed_until_last_wave},
++    {"sealed hole stays closed through wave delay", &sealed_hole_stays_closed_through_wave_delay},
++    {"reset and reload rebuild the same encounter plan", &reset_and_reload_rebuild_the_same_encounter_plan},
++    {"abyss uses the normal director configuration", &abyss_uses_the_normal_director_configuration},
++    {"four chaser fixture reaches awaiting exit", &four_chaser_fixture_reaches_awaiting_exit},
++    {"shooter and chasers fixture reaches awaiting exit", &shooter_and_chasers_fixture_reaches_awaiting_exit},
++    {"forced defeat advances real wave lifecycle", &forced_defeat_advances_real_wave_lifecycle},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_wave_suite() noexcept {
++    return arpg::test::make_suite("dungeon_waves", kCases);
++}

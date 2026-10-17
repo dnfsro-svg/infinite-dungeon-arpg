@@ -1,0 +1,607 @@
+# Review package: dc290f3..48cf1ecb6a6b6f27d3412cb36e31625d426ae04d
+
+## Commits
+48cf1ec test: verify stage 4 encounter endurance
+
+## Files changed
+ src/combat/combat_world.cpp            |  15 ++-
+ tests/combat/break_stress_tests.cpp    | 170 +++++++++++++++++++++++++++++++++
+ tests/combat/combat_test_main.cpp      |   2 +-
+ tests/combat/combat_test_support.hpp   |  23 +++++
+ tests/dungeon/dungeon_stress_tests.cpp |  51 +++++++++-
+ tests/dungeon/dungeon_test_main.cpp    |   2 +-
+ 6 files changed, 256 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 7c8a616..906e793 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -1,28 +1,35 @@
+ #include "combat/combat_world.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
+ #include "combat/monster_catalog.hpp"
+ 
+ #include <array>
+ #include <algorithm>
+ #include <cmath>
++#include <limits>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+ constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
+ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
+ constexpr int kStage4PlayerMaxHp = 1000;
+ constexpr std::uint16_t kPlayerHurtTicks = 12;
+ constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
+ 
++void saturating_increment(std::uint32_t& counter) noexcept {
++    if (counter != (std::numeric_limits<std::uint32_t>::max)()) {
++        ++counter;
++    }
++}
++
+ }  // namespace
+ 
+ CombatWorld::CombatWorld(CombatLabConfig config) noexcept
+     : legacy_config_(config), legacy_mode_(true) {
+     encounter_config_.player_spawn = config.player_spawn;
+     encounter_config_.initial_facing = config.initial_facing;
+     initialize_runtime();
+ }
+ 
+ CombatWorld::CombatWorld(CombatEncounterConfig config) noexcept
+@@ -380,27 +387,27 @@ void CombatWorld::apply_player_damage(
+ }
+ 
+ bool CombatWorld::spawn_projectile(
+     MonsterHandle owner,
+     Vec3 position,
+     Vec3 velocity,
+     std::uint16_t lifetime_ticks,
+     int damage,
+     float radius) noexcept {
+     if (monsters_.get(owner) == nullptr) {
+-        ++projectile_invalid_owner_count_;
++        saturating_increment(projectile_invalid_owner_count_);
+         return false;
+     }
+     if (!projectiles_.spawn(
+             owner, position, velocity, lifetime_ticks, damage, radius)
+              .has_value()) {
+-        ++projectile_saturation_count_;
++        saturating_increment(projectile_saturation_count_);
+         return false;
+     }
+     return true;
+ }
+ 
+ void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
+     for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
+         const ProjectileRuntime* projectile = projectiles_.get(ProjectileHandle{
+             static_cast<std::uint16_t>(index),
+             projectiles_.slots()[index].generation});
+@@ -418,26 +425,26 @@ void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
+ 
+ bool CombatWorld::spawn_hazard(
+     MonsterHandle owner,
+     Vec3 center,
+     float radius,
+     std::uint16_t telegraph_ticks,
+     std::uint16_t active_ticks,
+     std::uint16_t damage_interval_ticks,
+     int damage) noexcept {
+     if (monsters_.get(owner) == nullptr) {
+-        ++hazard_invalid_owner_count_;
++        saturating_increment(hazard_invalid_owner_count_);
+         return false;
+     }
+     if (!hazards_.spawn(owner, center, radius, telegraph_ticks, active_ticks,
+                         damage_interval_ticks, damage).has_value()) {
+-        ++hazard_saturation_count_;
++        saturating_increment(hazard_saturation_count_);
+         return false;
+     }
+     return true;
+ }
+ 
+ void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
+     for (std::size_t index = 0; index < kHazardCapacity; ++index) {
+         const HazardRuntime& hazard = hazards_.slots()[index];
+         if (!hazard.active || hazard.persists_after_owner_death
+             || hazard.owner.index != owner.index
+diff --git a/tests/combat/break_stress_tests.cpp b/tests/combat/break_stress_tests.cpp
+index ea6adf5..47c166e 100644
+--- a/tests/combat/break_stress_tests.cpp
++++ b/tests/combat/break_stress_tests.cpp
+@@ -1,19 +1,21 @@
+ #include "allocation_probe.hpp"
+ #include "combat_test_support.hpp"
+ #include "test_framework.hpp"
+ 
+ #include "combat/combat_world.hpp"
++#include "combat/monster_pool.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
++#include <limits>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::drain_events;
+ using arpg::test::finish_attack;
+ using arpg::test::tick_n;
+ 
+ CombatLabConfig heavy_target_config() noexcept {
+     CombatLabConfig config;
+@@ -461,28 +463,196 @@ arpg::test::Failure replay_and_stress_are_deterministic_without_allocations() no
+             drain_events(stress);
+         }
+     }
+     ARPG_REQUIRE(all_queued);
+     ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+     ARPG_REQUIRE(max_input_overflow == 0);
+     ARPG_REQUIRE(max_event_overflow == 0);
+     return {};
+ }
+ 
++CombatWorld all_roles_world() noexcept {
++    EncounterWave wave{};
++    wave.spawn_count = static_cast<std::uint8_t>(MonsterId::count);
++    for (std::size_t index = 0; index < wave.spawn_count; ++index) {
++        wave.spawns[index] = MonsterSpawnSpec{
++            static_cast<MonsterId>(index),
++            Vec3{2.0F + static_cast<float>(index % 4U) * 1.1F,
++                -1.5F + static_cast<float>(index / 4U) * 3.0F, 0.0F},
++        };
++    }
++    CombatEncounterConfig config{};
++    config.wave = wave;
++    return CombatWorld{config};
++}
++
++MonsterHandle first_active_owner(const CombatWorld& world) noexcept {
++    const CombatSnapshot snapshot = world.snapshot();
++    return {0U, snapshot.monsters[0].generation};
++}
++
++bool same_projectiles(
++    const CombatSnapshot& lhs,
++    const CombatSnapshot& rhs) noexcept {
++    if (lhs.projectile_count != rhs.projectile_count) {
++        return false;
++    }
++    for (std::size_t index = 0; index < lhs.projectiles.size(); ++index) {
++        const ProjectileSnapshot& a = lhs.projectiles[index];
++        const ProjectileSnapshot& b = rhs.projectiles[index];
++        if (a.active != b.active || a.generation != b.generation
++                || a.owner.index != b.owner.index
++                || a.owner.generation != b.owner.generation
++                || !vec_equal(a.position, b.position)
++                || !vec_equal(a.velocity, b.velocity)
++                || a.lifetime_ticks != b.lifetime_ticks
++                || a.damage != b.damage || a.radius != b.radius) {
++            return false;
++        }
++    }
++    return true;
++}
++
++bool same_monster_runtime(
++    const MonsterRuntime& lhs,
++    const MonsterRuntime& rhs) noexcept {
++    return lhs.active == rhs.active && lhs.generation == rhs.generation
++        && lhs.id == rhs.id && lhs.kind == rhs.kind
++        && vec_equal(lhs.spawn, rhs.spawn)
++        && vec_equal(lhs.position, rhs.position)
++        && vec_equal(lhs.velocity, rhs.velocity)
++        && lhs.facing == rhs.facing && lhs.reaction == rhs.reaction
++        && lhs.armor == rhs.armor && lhs.reaction_ticks == rhs.reaction_ticks
++        && lhs.ai_phase == rhs.ai_phase && lhs.ai_ticks == rhs.ai_ticks
++        && lhs.attack_serial == rhs.attack_serial
++        && lhs.contact_attack_resolved == rhs.contact_attack_resolved
++        && lhs.hp == rhs.hp && lhs.max_hp == rhs.max_hp
++        && lhs.break_value == rhs.break_value && lhs.max_break == rhs.max_break
++        && lhs.shield == rhs.shield && lhs.max_shield == rhs.max_shield
++        && lhs.shield_ticks == rhs.shield_ticks
++        && lhs.max_shield_ticks == rhs.max_shield_ticks
++        && lhs.break_window_ticks == rhs.break_window_ticks
++        && lhs.hit_stop_ticks == rhs.hit_stop_ticks
++        && lhs.owner_transient_counter == rhs.owner_transient_counter
++        && vec_equal(lhs.attack_target_position, rhs.attack_target_position)
++        && vec_equal(lhs.attack_vector, rhs.attack_vector);
++}
++
++bool same_hazards(
++    const CombatSnapshot& lhs,
++    const CombatSnapshot& rhs) noexcept {
++    if (lhs.hazard_count != rhs.hazard_count) {
++        return false;
++    }
++    for (std::size_t index = 0; index < lhs.hazards.size(); ++index) {
++        const HazardSnapshot& a = lhs.hazards[index];
++        const HazardSnapshot& b = rhs.hazards[index];
++        if (a.active != b.active || a.generation != b.generation
++                || a.owner.index != b.owner.index
++                || a.owner.generation != b.owner.generation
++                || !vec_equal(a.center, b.center) || a.radius != b.radius
++                || a.telegraph_ticks != b.telegraph_ticks
++                || a.active_ticks != b.active_ticks
++                || a.lifetime_ticks != b.lifetime_ticks
++                || a.damage_interval_ticks != b.damage_interval_ticks
++                || a.player_latched != b.player_latched
++                || a.damage != b.damage) {
++            return false;
++        }
++    }
++    return true;
++}
++
++arpg::test::Failure all_monster_roles_tick_without_allocation_or_overflow() noexcept {
++    CombatWorld world = all_roles_world();
++    for (int tick = 0; tick < 180; ++tick) {
++        world.tick(scheduled_movement(tick));
++        drain_events(world);
++    }
++
++    const std::uint64_t allocations_before = arpg::test::allocation_count();
++    for (int tick = 0; tick < 12000; ++tick) {
++        world.tick(scheduled_movement(tick));
++        drain_events(world);
++    }
++    const CombatSnapshot final = world.snapshot();
++    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
++    ARPG_REQUIRE(final.monster_count <= kMonsterCapacity);
++    ARPG_REQUIRE(final.projectile_count <= kProjectileCapacity);
++    ARPG_REQUIRE(final.hazard_count <= kHazardCapacity);
++    ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
++    ARPG_REQUIRE(final.diagnostics.projectile_saturation_count == 0U);
++    ARPG_REQUIRE(final.diagnostics.hazard_saturation_count == 0U);
++    ARPG_REQUIRE(final.diagnostics.projectile_invalid_owner_count == 0U);
++    ARPG_REQUIRE(final.diagnostics.hazard_invalid_owner_count == 0U);
++    return {};
++}
++
++arpg::test::Failure full_pools_reject_without_mutation_and_saturate_diagnostics() noexcept {
++    MonsterPool monsters;
++    for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
++        ARPG_REQUIRE(monsters.spawn(MonsterId::chaos_chaser,
++            Vec3{static_cast<float>(index), 0.0F, 0.0F}).has_value());
++    }
++    const auto monster_slots = monsters.slots();
++    ARPG_REQUIRE(!monsters.spawn(MonsterId::fire_bomber, Vec3{}).has_value());
++    for (std::size_t index = 0; index < monster_slots.size(); ++index) {
++        ARPG_REQUIRE(same_monster_runtime(
++            monsters.slots()[index], monster_slots[index]));
++    }
++
++    CombatWorld projectile_world = all_roles_world();
++    const MonsterHandle projectile_owner = first_active_owner(projectile_world);
++    for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
++        ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::spawn_projectile(
++            projectile_world, projectile_owner));
++    }
++    const CombatSnapshot projectiles_before = projectile_world.snapshot();
++    arpg::test::CombatWorldTestAccess::set_saturation_counts(
++        projectile_world, (std::numeric_limits<std::uint32_t>::max)(), 0U);
++    ARPG_REQUIRE(!arpg::test::CombatWorldTestAccess::spawn_projectile(
++        projectile_world, projectile_owner));
++    const CombatSnapshot projectiles_after = projectile_world.snapshot();
++    ARPG_REQUIRE(same_projectiles(projectiles_before, projectiles_after));
++    ARPG_REQUIRE(projectiles_after.diagnostics.projectile_saturation_count
++        == (std::numeric_limits<std::uint32_t>::max)());
++
++    CombatWorld hazard_world = all_roles_world();
++    const MonsterHandle hazard_owner = first_active_owner(hazard_world);
++    for (std::size_t index = 0; index < kHazardCapacity; ++index) {
++        ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::spawn_hazard(
++            hazard_world, hazard_owner));
++    }
++    const CombatSnapshot hazards_before = hazard_world.snapshot();
++    arpg::test::CombatWorldTestAccess::set_saturation_counts(
++        hazard_world, 0U, (std::numeric_limits<std::uint32_t>::max)());
++    ARPG_REQUIRE(!arpg::test::CombatWorldTestAccess::spawn_hazard(
++        hazard_world, hazard_owner));
++    const CombatSnapshot hazards_after = hazard_world.snapshot();
++    ARPG_REQUIRE(same_hazards(hazards_before, hazards_after));
++    ARPG_REQUIRE(hazards_after.diagnostics.hazard_saturation_count
++        == (std::numeric_limits<std::uint32_t>::max)());
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"armored suppression before break",
+      &armored_launcher_suppresses_control_before_break},
+     {"breaking blow and exact local window",
+      &breaking_blow_has_exact_local_window},
+     {"Defeated priority over break recovery",
+      &defeated_has_priority_over_break_recovery},
+     {"complete reset and one reset event",
+      &reset_reconstructs_runtime_and_emits_once},
+     {"deterministic replay and allocation stress",
+      &replay_and_stress_are_deterministic_without_allocations},
++    {"all monster roles tick without allocation or overflow",
++     &all_monster_roles_tick_without_allocation_or_overflow},
++    {"full pools reject without mutation and saturate diagnostics",
++     &full_pools_reject_without_mutation_and_saturate_diagnostics},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite break_stress_suite() noexcept {
+     return arpg::test::make_suite("break_stress", kCases);
+ }
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 7603167..8cbcbbe 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -26,12 +26,12 @@ int main() {
+         movement_jump_suite(),
+         hit_resolution_suite(),
+         monster_catalog_suite(),
+         monster_melee_suite(),
+         monster_ranged_suite(),
+         monster_special_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 62, "stage 4 task 7");
++    return arpg::test::run_suites(suites, 64, "stage 4 task 10");
+ }
+diff --git a/tests/combat/combat_test_support.hpp b/tests/combat/combat_test_support.hpp
+index d15a49e..415d7a7 100644
+--- a/tests/combat/combat_test_support.hpp
++++ b/tests/combat/combat_test_support.hpp
+@@ -1,15 +1,16 @@
+ #pragma once
+ 
+ #include "combat/combat_world.hpp"
+ 
+ #include <cstddef>
++#include <cstdint>
+ 
+ namespace arpg::test {
+ 
+ struct CombatWorldTestAccess final {
+     static void apply_damage(
+         combat::CombatWorld& world,
+         int damage,
+         combat::Vec3 source_position,
+         combat::FeedbackLevel feedback) noexcept {
+         world.apply_player_damage(damage, source_position, feedback);
+@@ -20,20 +21,42 @@ struct CombatWorldTestAccess final {
+         combat::MonsterHandle owner) noexcept {
+         for (std::size_t index = 0; index < combat::kProjectileCapacity;
+              ++index) {
+             static_cast<void>(world.spawn_projectile(
+                 owner, combat::Vec3{}, combat::Vec3{0.01F, 0.0F, 0.0F},
+                 1000U, 1, 0.1F));
+         }
+         static_cast<void>(world.spawn_projectile(
+             owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F));
+     }
++
++    static bool spawn_projectile(
++        combat::CombatWorld& world,
++        combat::MonsterHandle owner) noexcept {
++        return world.spawn_projectile(
++            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F);
++    }
++
++    static bool spawn_hazard(
++        combat::CombatWorld& world,
++        combat::MonsterHandle owner) noexcept {
++        return world.spawn_hazard(owner, combat::Vec3{}, 1.0F,
++            1000U, 1000U, 30U, 1);
++    }
++
++    static void set_saturation_counts(
++        combat::CombatWorld& world,
++        std::uint32_t projectile,
++        std::uint32_t hazard) noexcept {
++        world.projectile_saturation_count_ = projectile;
++        world.hazard_saturation_count_ = hazard;
++    }
+ };
+ 
+ inline void tick_n(
+     combat::CombatWorld& world,
+     int count,
+     combat::MovementInput movement = {}) noexcept {
+     for (int tick = 0; tick < count; ++tick) {
+         world.tick(movement);
+     }
+ }
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index 2367baa..9ef3cc1 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -1,33 +1,36 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "dungeon_test_support.hpp"
+ 
+ #include "dungeon/room_generation.hpp"
+ #include "dungeon/dungeon_progression.hpp"
++#include "dungeon/encounter_director.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstdio>
+ 
+ namespace {
+ 
+ using arpg::combat::CombatEvent;
+ using arpg::combat::CombatSnapshot;
+ using arpg::combat::MovementInput;
+ using arpg::dungeon::DungeonEvent;
+ using arpg::dungeon::DungeonSession;
+ using arpg::dungeon::DungeonSnapshot;
++using arpg::dungeon::EncounterDirectorConfig;
+ using arpg::dungeon::ExitDirection;
+ using arpg::dungeon::RoomPhase;
++namespace checkpoint = arpg::dungeon::checkpoint;
+ 
+ constexpr std::array<ExitDirection, 4> kRoute{{
+     ExitDirection::up,
+     ExitDirection::right,
+     ExitDirection::down,
+     ExitDirection::left,
+ }};
+ 
+ struct StressSummary final {
+     std::uint32_t dungeon_events{};
+@@ -280,39 +283,58 @@ bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
+         }
+         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
+             arpg::test::force_defeat_current_wave(session);
+         }
+         session.tick({});
+         drain(session, summary);
+     }
+     return false;
+ }
+ 
++bool confirm_pending_save(DungeonSession& session) noexcept {
++    const auto pending = session.pending_transition();
++    if (!pending.has_value()) {
++        return false;
++    }
++    session.resolve_pending_transition({
++        arpg::dungeon::SaveDisposition::committed,
++        pending->expected_generation,
++        pending->next_state,
++    });
++    const DungeonSnapshot saved = session.snapshot();
++    return saved.phase == RoomPhase::transitioning
++        && !saved.has_pending_transition
++        && saved.commit_generation == pending->expected_generation
++        && saved.room_index == pending->next_state.current_room.index
++        && saved.room_seed == pending->next_state.current_room.seed
++        && !saved.has_active_room && !saved.combat.has_value();
++}
++
+ bool drive_exit(
+     DungeonSession& session,
+     ExitDirection direction,
+     StressSummary& summary,
+     bool verify_phases) noexcept {
+     for (int tick = 0; tick < 256; ++tick) {
+         const DungeonSnapshot state = session.snapshot();
+         const MovementInput movement = align_center(state, direction);
+         if (movement.x == 0 && movement.y == 0) {
+             break;
+         }
+         session.tick(movement);
+         drain(session, summary);
+     }
+     for (int tick = 0; tick < 256; ++tick) {
+         session.tick(outward(direction));
+         drain(session, summary);
+         if (session.snapshot().phase == RoomPhase::committing) {
+-            if (!arpg::test::commit_pending(session)) {
++            if (!confirm_pending_save(session)) {
+                 return false;
+             }
+             drain(session, summary);
+         }
+         if (session.snapshot().phase == RoomPhase::transitioning) {
+             break;
+         }
+     }
+     const DungeonSnapshot transition = session.snapshot();
+     if (transition.phase != RoomPhase::transitioning
+@@ -343,20 +365,45 @@ bool drive_rooms(
+     for (std::size_t index = 0; index < exits; ++index) {
+         if (!drive_clear(session, summary)
+                 || !drive_exit(session, kRoute[index % kRoute.size()], summary,
+                     verify_phases)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
++arpg::test::Failure ten_thousand_director_plans_are_legal_deterministic_and_allocation_free() noexcept {
++    const EncounterDirectorConfig config{};
++    const std::uint64_t allocations_before = arpg::test::allocation_count();
++    for (std::uint64_t index = 0; index < 10000U; ++index) {
++        const checkpoint::DungeonElement ecology =
++            static_cast<checkpoint::DungeonElement>(index % 4U);
++        const std::uint64_t seed = 0xD1EC70A000000000ULL + index * 7919U;
++        const std::uint64_t depth = 1U + index % 1000U;
++        const auto first = arpg::dungeon::build_encounter_plan(
++            seed, depth, ecology, config);
++        const auto second = arpg::dungeon::build_encounter_plan(
++            seed, depth, ecology, config);
++        ARPG_REQUIRE(first.fault == arpg::dungeon::DungeonFault::none);
++        ARPG_REQUIRE(second.fault == arpg::dungeon::DungeonFault::none);
++        ARPG_REQUIRE(arpg::test::same_encounter_plan(first.plan, second.plan));
++        ARPG_REQUIRE(arpg::dungeon::encounter_plan_legal(first.plan, config));
++        for (std::size_t wave = 0; wave < first.plan.wave_count; ++wave) {
++            ARPG_REQUIRE(first.plan.waves[wave].spawn_count
++                <= arpg::combat::kEncounterSpawnCapacity);
++        }
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
++    return {};
++}
++
+ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
+     arpg::dungeon::DungeonSessionConfig config;
+     config.root_seed = 0x1020304050607080ULL;
+     DungeonSession lhs{config};
+     DungeonSession rhs{config};
+     ARPG_REQUIRE(same_snapshot(lhs.snapshot(), rhs.snapshot()));
+ 
+     std::size_t exits = 0;
+     for (int tick = 0; tick < 100000 && exits < 4U; ++tick) {
+         const DungeonSnapshot state = lhs.snapshot();
+@@ -456,20 +503,22 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
+     ARPG_REQUIRE(summary.relay_overflow == 0U);
+     ARPG_REQUIRE(summary.combat_overflow == 0U);
+     ARPG_REQUIRE(summary.input_overflow == 0U);
+     ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
+     ARPG_REQUIRE(final.diagnostics.combat_relay_overflow_count == 0U);
+     ARPG_REQUIRE(final.combat->diagnostics.event_overflow_count == 0U);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
++    {"ten thousand director plans are legal deterministic and allocation free",
++     &ten_thousand_director_plans_are_legal_deterministic_and_allocation_free},
+     {"identical seed and route are field equal", &identical_seed_and_route_are_field_equal},
+     {"one changed direction changes only committed room", &one_changed_direction_changes_only_committed_room},
+     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},
+     {"measured thousand rooms allocate nothing and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_stress_suite() noexcept {
+     return arpg::test::make_suite("dungeon_stress", kCases);
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index ed4bde8..e42831f 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -16,12 +16,12 @@ int main() {
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_transaction_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 63, "stage 4 dungeon");
++    return arpg::test::run_suites(suites, 64, "stage 4 task 10 dungeon");
+ }

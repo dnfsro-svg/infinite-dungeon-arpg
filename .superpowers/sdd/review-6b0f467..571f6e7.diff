@@ -1,0 +1,1392 @@
+# Review package: 6b0f467..571f6e72bf1afd005eb7e3fd4d2ce89b3bc744f0
+
+## Commits
+571f6e7 feat: add ranged and support monsters
+
+## Files changed
+ src/combat/combat_types.hpp           |  42 ++++++++
+ src/combat/combat_world.cpp           | 135 +++++++++++++++++++++++
+ src/combat/combat_world.hpp           |  13 +++
+ src/combat/hit_resolution.cpp         |  11 +-
+ src/combat/monster_ai.cpp             | 136 +++++++++++++++++++++--
+ src/combat/monster_catalog.cpp        |   4 +-
+ src/combat/monster_pool.cpp           | 111 +++++++++++++++++++
+ src/combat/monster_pool.hpp           |  35 +++++-
+ tests/combat/CMakeLists.txt           |   1 +
+ tests/combat/combat_test_main.cpp     |   4 +-
+ tests/combat/monster_melee_tests.cpp  |   2 +-
+ tests/combat/monster_ranged_tests.cpp | 197 ++++++++++++++++++++++++++++++++++
+ 12 files changed, 675 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index 14f5f06..45401d6 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -82,33 +82,56 @@ struct MonsterDefinition final {
+     float move_speed{0.04F};
+     float preferred_range{1.0F};
+     std::uint16_t telegraph_ticks{20};
+     std::uint16_t active_ticks{4};
+     std::uint16_t recovery_ticks{20};
+     std::uint16_t cooldown_ticks{60};
+     int contact_damage{10};
+     float projectile_speed{};
+     std::uint16_t hazard_ticks{};
+     FeedbackLevel feedback{FeedbackLevel::light};
++    int shield_points{};
++    std::uint16_t shield_duration_ticks{};
+ };
+ 
+ inline constexpr std::size_t kMonsterCapacity = 96;
+ inline constexpr std::size_t kProjectileCapacity = 384;
+ inline constexpr std::size_t kHazardCapacity = 96;
+ inline constexpr std::size_t kEncounterWaveCapacity = 2;
+ inline constexpr std::size_t kEncounterSpawnCapacity = 96;
+ 
+ struct MonsterSpawnSpec final {
+     MonsterId id{MonsterId::chaos_chaser};
+     Vec3 position{};
+ };
+ 
++struct MonsterHandle final {
++    std::uint16_t index{0xFFFF};
++    std::uint16_t generation{};
++};
++
++struct ProjectileHandle final {
++    std::uint16_t index{0xFFFF};
++    std::uint16_t generation{};
++};
++
++struct ProjectileRuntime final {
++    bool active{};
++    std::uint16_t generation{};
++    MonsterHandle owner{};
++    Vec3 position{};
++    Vec3 velocity{};
++    std::uint16_t lifetime_ticks{};
++    int damage{};
++    float radius{};
++};
++
+ struct EncounterWave final {
+     std::array<MonsterSpawnSpec, kEncounterSpawnCapacity> spawns{};
+     std::uint8_t spawn_count{};
+     std::uint8_t spent_budget{};
+ };
+ 
+ enum class CombatEventKind : std::uint8_t {
+     swing,
+     hit,
+     impact_summary,
+@@ -246,37 +269,56 @@ struct MonsterSnapshot final {
+     Vec3 position{};
+     Vec3 velocity{};
+     DummyKind kind{DummyKind::light};
+     Facing facing{Facing::right};
+     ReactionState reaction{ReactionState::idle};
+     ArmorState armor{ArmorState::none};
+     int hp{};
+     int max_hp{};
+     int break_value{};
+     int max_break{};
++    int shield{};
++    int max_shield{};
++    std::uint16_t shield_ticks{};
++    std::uint16_t max_shield_ticks{};
+     std::uint16_t break_window_ticks{};
+     std::uint16_t hit_stop_ticks{};
+     MonsterAiPhase ai_phase{MonsterAiPhase::idle};
+ };
+ 
++struct ProjectileSnapshot final {
++    bool active{};
++    std::uint16_t generation{};
++    MonsterHandle owner{};
++    Vec3 position{};
++    Vec3 velocity{};
++    std::uint16_t lifetime_ticks{};
++    int damage{};
++    float radius{};
++};
++
+ // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
+ // this compatibility name after all consumers use MonsterSnapshot.
+ using DummySnapshot = MonsterSnapshot;
+ 
+ struct CombatDiagnostics final {
+     std::size_t input_size{};
+     std::uint32_t input_expired_count{};
+     std::uint32_t input_overflow_count{};
+     std::uint32_t event_overflow_count{};
++    std::uint32_t projectile_saturation_count{};
++    std::uint32_t projectile_invalid_owner_count{};
+ };
+ 
+ struct CombatSnapshot final {
+     std::uint64_t tick{};
+     PlayerSnapshot player{};
+     std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
+     std::size_t monster_count{};
++    std::array<ProjectileSnapshot, kProjectileCapacity> projectiles{};
++    std::size_t projectile_count{};
+     // Compatibility projection only; runtime state is owned by monsters.
+     std::array<DummySnapshot, kDummyCount> dummies{};
+     CombatDiagnostics diagnostics{};
+ };
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index a480ab3..c4396bf 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -1,16 +1,18 @@
+ #include "combat/combat_world.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
+ #include "combat/monster_catalog.hpp"
+ 
+ #include <array>
++#include <algorithm>
++#include <cmath>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+ constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
+ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
+ constexpr int kStage4PlayerMaxHp = 1000;
+ constexpr std::uint16_t kPlayerHurtTicks = 12;
+ constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
+ 
+@@ -64,51 +66,56 @@ void CombatWorld::tick(MovementInput movement) noexcept {
+             } else {
+                 simulate_monster(index);
+             }
+         }
+     }
+ 
+     if (!player_frozen && !player_hurt && player_.hurt_ticks == 0) {
+         resolve_attack_hits();
+     }
+ 
++    simulate_projectiles();
++
+     input_buffer_.age(player_frozen || player_hurt);
+     ++tick_;
+ }
+ 
+ void CombatWorld::reset() noexcept {
+     initialize_runtime();
+ 
+     CombatEvent reset_event{};
+     reset_event.kind = CombatEventKind::reset;
+     reset_event.tick = 0;
+     reset_event.position = player_.position;
+     emit_event(reset_event);
+ }
+ 
+ void CombatWorld::initialize_runtime() noexcept {
+     initialize_player();
+     monsters_.clear();
++    projectiles_.clear();
+     if (legacy_mode_) {
+         initialize_legacy_monsters();
+     } else {
+         static_cast<void>(load_wave(
+             encounter_config_.wave, encounter_config_.reset_player_health));
+     }
+ 
+     attack_ = AttackRuntime{};
+     input_buffer_.clear();
+     input_buffer_.reset_diagnostics();
+     while (events_.try_pop().has_value()) {
+     }
+     tick_ = 0;
+     event_overflow_count_ = 0;
++    projectile_saturation_count_ = 0;
++    projectile_invalid_owner_count_ = 0;
+ }
+ 
+ void CombatWorld::initialize_player() noexcept {
+     player_ = PlayerRuntime{};
+     player_.position = encounter_config_.player_spawn;
+     player_.facing = encounter_config_.initial_facing;
+     player_.max_hp = kStage4PlayerMaxHp;
+     player_.hp = player_.max_hp;
+ }
+ 
+@@ -142,34 +149,37 @@ bool CombatWorld::load_wave(
+         return false;
+     }
+ 
+     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
+         if (monster_definition(wave.spawns[index].id) == nullptr) {
+             return false;
+         }
+     }
+ 
+     monsters_.clear();
++    projectiles_.clear();
+     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
+         const auto handle = monsters_.spawn(
+             wave.spawns[index].id, wave.spawns[index].position);
+         if (!handle.has_value()) {
+             monsters_.clear();
+             return false;
+         }
+     }
+     attack_ = AttackRuntime{};
+     input_buffer_.clear();
+     input_buffer_.reset_diagnostics();
+     while (events_.try_pop().has_value()) {
+     }
+     event_overflow_count_ = 0U;
++    projectile_saturation_count_ = 0U;
++    projectile_invalid_owner_count_ = 0U;
+     encounter_config_.wave = wave;
+     encounter_config_.reset_player_health = reset_player_health;
+     legacy_mode_ = false;
+     if (reset_player_health) {
+         const bool health_changed = player_.hp != player_.max_hp
+                                  || player_.hurt_ticks != 0
+                                  || player_.invulnerability_ticks != 0;
+         player_.hp = player_.max_hp;
+         player_.hurt_ticks = 0;
+         player_.invulnerability_ticks = 0;
+@@ -183,24 +193,29 @@ bool CombatWorld::load_wave(
+             emit_event(health_reset);
+         }
+     }
+     return true;
+ }
+ 
+ std::size_t CombatWorld::active_monster_count() const noexcept {
+     return monsters_.active_count();
+ }
+ 
++std::size_t CombatWorld::active_projectile_count() const noexcept {
++    return projectiles_.active_count();
++}
++
+ bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
+     if (!monsters_.destroy(handle)) {
+         return false;
+     }
++    remove_owned_projectiles(handle);
+     if (handle.index < attack_.hit_targets.size()) {
+         attack_.hit_targets[handle.index] = false;
+     }
+     return true;
+ }
+ 
+ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+@@ -237,44 +252,69 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+             dummy.position,
+             dummy.velocity,
+             dummy.kind,
+             dummy.facing,
+             dummy.reaction,
+             dummy.armor,
+             dummy.hp,
+             dummy.max_hp,
+             dummy.break_value,
+             dummy.max_break,
++            dummy.shield,
++            dummy.max_shield,
++            dummy.shield_ticks,
++            dummy.max_shield_ticks,
+             dummy.break_window_ticks,
+             dummy.hit_stop_ticks,
+             dummy.ai_phase,
+         };
+     }
+ 
+     result.monster_count = monsters_.active_count();
++    if (projectiles_.active_count() != 0U) {
++        for (std::size_t index = 0; index < projectiles_.slots().size(); ++index) {
++            const ProjectileRuntime& projectile = projectiles_.slots()[index];
++            if (!projectile.active) {
++                continue;
++            }
++            result.projectiles[index] = ProjectileSnapshot{
++                projectile.active,
++                projectile.generation,
++                projectile.owner,
++                projectile.position,
++                projectile.velocity,
++                projectile.lifetime_ticks,
++                projectile.damage,
++                projectile.radius,
++            };
++        }
++    }
++    result.projectile_count = projectiles_.active_count();
+     std::size_t compatibility_index = 0U;
+     for (std::size_t index = 0;
+          index < monsters_.slots().size()
+              && compatibility_index < kDummyCount;
+          ++index) {
+         if (!result.monsters[index].active) {
+             continue;
+         }
+         result.dummies[compatibility_index] = result.monsters[index];
+         ++compatibility_index;
+     }
+ 
+     result.diagnostics = CombatDiagnostics{
+         input_buffer_.size(),
+         input_buffer_.expired_count(),
+         input_buffer_.overflow_count(),
+         event_overflow_count_,
++        projectile_saturation_count_,
++        projectile_invalid_owner_count_,
+     };
+     return result;
+ }
+ 
+ void CombatWorld::apply_player_damage(
+     int damage,
+     Vec3 source_position,
+     FeedbackLevel feedback) noexcept {
+     if (damage <= 0 || player_.invulnerability_ticks != 0) {
+         return;
+@@ -298,11 +338,106 @@ void CombatWorld::apply_player_damage(
+     CombatEvent hurt_started{};
+     hurt_started.kind = CombatEventKind::player_hurt_started;
+     hurt_started.tick = tick_;
+     hurt_started.hit_count = 1;
+     hurt_started.feedback = feedback;
+     hurt_started.position = source_position;
+     hurt_started.value = damage;
+     emit_event(hurt_started);
+ }
+ 
++bool CombatWorld::spawn_projectile(
++    MonsterHandle owner,
++    Vec3 position,
++    Vec3 velocity,
++    std::uint16_t lifetime_ticks,
++    int damage,
++    float radius) noexcept {
++    if (monsters_.get(owner) == nullptr) {
++        ++projectile_invalid_owner_count_;
++        return false;
++    }
++    if (!projectiles_.spawn(
++            owner, position, velocity, lifetime_ticks, damage, radius)
++             .has_value()) {
++        ++projectile_saturation_count_;
++        return false;
++    }
++    return true;
++}
++
++void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
++    for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
++        const ProjectileRuntime* projectile = projectiles_.get(ProjectileHandle{
++            static_cast<std::uint16_t>(index),
++            projectiles_.slots()[index].generation});
++        if (projectile == nullptr) {
++            continue;
++        }
++        if (projectile->owner.index != owner.index
++            || projectile->owner.generation != owner.generation) {
++            continue;
++        }
++        static_cast<void>(projectiles_.destroy(ProjectileHandle{
++            static_cast<std::uint16_t>(index), projectile->generation}));
++    }
++}
++
++void CombatWorld::simulate_projectiles() noexcept {
++    constexpr float room_min_x = -8.0F;
++    constexpr float room_max_x = 8.0F;
++    constexpr float room_min_y = -3.5F;
++    constexpr float room_max_y = 3.5F;
++    constexpr float player_radius_x = 0.45F;
++    constexpr float player_radius_y = 0.35F;
++    constexpr float player_radius_z = 1.60F;
++
++    for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
++        ProjectileRuntime* active = projectiles_.get(ProjectileHandle{
++            static_cast<std::uint16_t>(index),
++            projectiles_.slots()[index].generation});
++        if (active == nullptr) {
++            continue;
++        }
++        ProjectileRuntime& projectile = *active;
++        const MonsterHandle owner = projectile.owner;
++        const MonsterRuntime* owner_runtime = monsters_.get(owner);
++        if (owner_runtime == nullptr || owner_runtime->hp <= 0
++            || owner_runtime->reaction == ReactionState::defeated) {
++            static_cast<void>(projectiles_.destroy(ProjectileHandle{
++                static_cast<std::uint16_t>(index), projectile.generation}));
++            continue;
++        }
++
++        projectile.position.x += projectile.velocity.x;
++        projectile.position.y += projectile.velocity.y;
++        projectile.position.z += projectile.velocity.z;
++        if (projectile.lifetime_ticks != 0) {
++            --projectile.lifetime_ticks;
++        }
++
++        const float dx = projectile.position.x - player_.position.x;
++        const float dy = projectile.position.y - player_.position.y;
++        const float dz = projectile.position.z - player_.position.z;
++        const float rx = player_radius_x + projectile.radius;
++        const float ry = player_radius_y + projectile.radius;
++        const float rz = player_radius_z + projectile.radius;
++        const bool hit_player = std::fabs(dx) <= rx && std::fabs(dy) <= ry
++                              && std::fabs(dz) <= rz;
++        const bool outside = projectile.position.x < room_min_x
++                          || projectile.position.x > room_max_x
++                          || projectile.position.y < room_min_y
++                          || projectile.position.y > room_max_y;
++        const bool expired = projectile.lifetime_ticks == 0;
++        if (hit_player) {
++            apply_player_damage(
++                projectile.damage, projectile.position,
++                FeedbackLevel::medium);
++        }
++        if (hit_player || outside || expired) {
++            static_cast<void>(projectiles_.destroy(ProjectileHandle{
++                static_cast<std::uint16_t>(index), projectile.generation}));
++        }
++    }
++}
++
+ }  // namespace arpg::combat
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index 58a2469..db13cc0 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -18,20 +18,21 @@ public:
+     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     void tick(MovementInput movement) noexcept;
+     void reset() noexcept;
+     [[nodiscard]] bool load_wave(
+         const EncounterWave& wave,
+         bool reset_player_health = true) noexcept;
+     [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_monster_count() const noexcept;
++    [[nodiscard]] std::size_t active_projectile_count() const noexcept;
+     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+ 
+ private:
+     struct PlayerRuntime final {
+         Vec3 position{};
+         Vec3 velocity{};
+         Facing facing{Facing::right};
+         PlayerState state{PlayerState::idle};
+         std::uint8_t combo_stage{};
+@@ -47,40 +48,52 @@ private:
+         AttackId id{AttackId::none};
+         std::uint16_t elapsed_ticks{};
+         bool connected{};
+         bool impact_event_emitted{};
+         std::array<bool, kMonsterCapacity> hit_targets{};
+     };
+ 
+     void simulate_player(MovementInput movement) noexcept;
+     void simulate_target(std::size_t index) noexcept;
+     void simulate_monster(std::size_t slot) noexcept;
++    void simulate_projectiles() noexcept;
+     void resolve_monster_contact_attack(std::size_t slot) noexcept;
+     void apply_dummy_impact(
+         std::size_t index,
+         const AttackDefinition& definition) noexcept;
+     void respawn_dummy(std::size_t index) noexcept;
+     void apply_attack_assist(const AttackDefinition& definition) noexcept;
+     void resolve_attack_hits() noexcept;
+     void apply_player_damage(
+         int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
++    [[nodiscard]] bool spawn_projectile(
++        MonsterHandle owner,
++        Vec3 position,
++        Vec3 velocity,
++        std::uint16_t lifetime_ticks,
++        int damage,
++        float radius) noexcept;
++    void remove_owned_projectiles(MonsterHandle owner) noexcept;
+     void emit_event(const CombatEvent& event) noexcept;
+     void initialize_runtime() noexcept;
+ 
+     void initialize_player() noexcept;
+     void initialize_legacy_monsters() noexcept;
+ 
+     friend struct ::arpg::test::CombatWorldTestAccess;
+ 
+     CombatEncounterConfig encounter_config_{};
+     CombatLabConfig legacy_config_{};
+     bool legacy_mode_{true};
+     PlayerRuntime player_{};
+     MonsterPool monsters_{};
++    ProjectilePool projectiles_{};
+     AttackRuntime attack_{};
+     InputBuffer input_buffer_{};
+     core::BoundedQueue<CombatEvent, 64> events_{};
+     std::uint64_t tick_{};
+     std::uint32_t event_overflow_count_{};
++    std::uint32_t projectile_saturation_count_{};
++    std::uint32_t projectile_invalid_owner_count_{};
+ };
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 2efee08..1b3527c 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -114,21 +114,30 @@ void CombatWorld::resolve_attack_hits() noexcept {
+     if (hit_count == 0) {
+         return;
+     }
+ 
+     const std::uint16_t hit_stop = hit_stop_for(definition->feedback);
+     for (std::size_t collected = 0; collected < hit_count; ++collected) {
+         const std::size_t index = hit_indices[collected];
+         MonsterRuntime& dummy = monsters_.slots_[index];
+         attack_.hit_targets[index] = true;
+         attack_.connected = true;
+-        dummy.hp = std::max(0, dummy.hp - definition->damage);
++        int hp_damage = definition->damage;
++        if (dummy.shield != 0 && hp_damage > 0) {
++            const int absorbed = std::min(dummy.shield, hp_damage);
++            dummy.shield -= absorbed;
++            hp_damage -= absorbed;
++            if (dummy.shield == 0) {
++                dummy.shield_ticks = 0;
++            }
++        }
++        dummy.hp = std::max(0, dummy.hp - hp_damage);
+         bool starts_break = false;
+         const float relative_x = player_.position.x - dummy.position.x;
+         const bool front_attack = legacy_mode_
+                                    || (dummy.facing == Facing::right
+                                            ? relative_x >= 0.0F
+                                            : relative_x <= 0.0F);
+         bool accepts_impact = dummy.armor != ArmorState::armored
+                               || !front_attack;
+         if (dummy.hp != 0 && dummy.armor == ArmorState::armored
+             && front_attack) {
+diff --git a/src/combat/monster_ai.cpp b/src/combat/monster_ai.cpp
+index 982938d..f35529c 100644
+--- a/src/combat/monster_ai.cpp
++++ b/src/combat/monster_ai.cpp
+@@ -17,20 +17,24 @@ constexpr float kRoomMinY = -3.5F;
+ constexpr float kRoomMaxY = 3.5F;
+ constexpr float kPlayerHalfWidth = 0.45F;
+ constexpr float kPlayerHalfDepth = 0.35F;
+ constexpr float kPlayerHalfHeight = 1.60F;
+ constexpr float kContactHalfDepth = 0.50F;
+ constexpr float kContactHalfHeight = 1.50F;
+ constexpr std::uint16_t kLightHitstunTicks = 10;
+ constexpr std::uint16_t kMediumHitstunTicks = 16;
+ constexpr std::uint16_t kKnockdownTicks = 45;
+ constexpr std::uint16_t kRisingTicks = 30;
++constexpr float kRangeSlack = 0.20F;
++constexpr std::uint16_t kSupportFallbackCooldown = 12;
++constexpr float kProjectileRadius = 0.16F;
++constexpr std::uint16_t kProjectileLifetime = 120;
+ 
+ float reaction_scale(DummyKind kind) noexcept {
+     return kind == DummyKind::light ? 1.25F : 1.0F;
+ }
+ 
+ std::uint16_t reaction_ticks(
+     DummyKind kind,
+     std::uint16_t base_ticks) noexcept {
+     if (kind != DummyKind::light) {
+         return base_ticks;
+@@ -58,20 +62,56 @@ void face_player(MonsterRuntime& monster, const Vec3& player) noexcept {
+         monster.facing = Facing::right;
+     }
+ }
+ 
+ void integrate_reaction(MonsterRuntime& monster) noexcept {
+     monster.position.x += monster.velocity.x * kTickSeconds;
+     monster.position.y += monster.velocity.y * kTickSeconds;
+     clamp_position(monster.position);
+ }
+ 
++bool has_tag(const MonsterDefinition& definition, MonsterTag tag) noexcept {
++    return (definition.tags & static_cast<std::uint16_t>(tag)) != 0U;
++}
++
++bool move_to_preferred_range(
++    MonsterRuntime& monster,
++    const MonsterDefinition& definition,
++    const Vec3& player) noexcept {
++    const float distance = target_distance(monster.position, player);
++    if (distance > definition.preferred_range + kRangeSlack
++        || distance < definition.preferred_range - kRangeSlack) {
++        float dx = player.x - monster.position.x;
++        float dy = player.y - monster.position.y;
++        if (distance < definition.preferred_range - kRangeSlack) {
++            dx = -dx;
++            dy = -dy;
++        }
++        if (distance <= 0.0001F) {
++            dx = monster.facing == Facing::right ? -1.0F : 1.0F;
++            dy = 0.0F;
++        }
++        const float magnitude = std::sqrt(dx * dx + dy * dy);
++        monster.velocity.x = dx / magnitude * definition.move_speed;
++        monster.velocity.y = dy / magnitude * definition.move_speed;
++        monster.position.x += monster.velocity.x;
++        monster.position.y += monster.velocity.y;
++        clamp_position(monster.position);
++        return true;
++    }
++    monster.velocity = Vec3{};
++    monster.ai_phase = MonsterAiPhase::telegraph;
++    monster.ai_ticks = definition.telegraph_ticks;
++    monster.attack_target_position = player;
++    return false;
++}
++
+ }  // namespace
+ 
+ void CombatWorld::resolve_monster_contact_attack(
+     std::size_t slot) noexcept {
+     if (slot >= monsters_.slots_.size()) {
+         return;
+     }
+     MonsterRuntime& monster = monsters_.slots_[slot];
+     const MonsterDefinition* definition = monster_definition(monster.id);
+     if (definition == nullptr || !monster.active || monster.hp <= 0
+@@ -128,23 +168,32 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
+         --monster.break_window_ticks;
+         if (monster.break_window_ticks == 0) {
+             monster.armor = ArmorState::armored;
+             monster.break_value = monster.max_break;
+         }
+     }
+ 
+     if (monster.hp <= 0 || monster.reaction == ReactionState::defeated) {
+         monster.ai_phase = MonsterAiPhase::defeated;
+         monster.velocity = Vec3{};
++        remove_owned_projectiles(MonsterHandle{
++            static_cast<std::uint16_t>(slot), monster.generation});
+         return;
+     }
+ 
++    if (monster.shield_ticks != 0) {
++        --monster.shield_ticks;
++        if (monster.shield_ticks == 0) {
++            monster.shield = 0;
++        }
++    }
++
+     if (monster.reaction != ReactionState::idle) {
+         switch (monster.reaction) {
+         case ReactionState::hitstun:
+             integrate_reaction(monster);
+             if (monster.reaction_ticks != 0) {
+                 --monster.reaction_ticks;
+             }
+             if (monster.reaction_ticks == 0) {
+                 monster.reaction = ReactionState::idle;
+                 monster.velocity = Vec3{};
+@@ -197,40 +246,47 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
+             monster.reaction = ReactionState::idle;
+             monster.ai_phase = MonsterAiPhase::move;
+             monster.ai_ticks = 0;
+             return;
+         case ReactionState::idle:
+         case ReactionState::defeated:
+             break;
+         }
+     }
+ 
+-    // Task 5 owns only the two direct-target melee roles. Other encounter
+-    // roles stay inert until their dedicated Task 6/7 implementations land,
+-    // but their hit reactions above still need to tick to completion.
+-    if (monster.id != MonsterId::chaos_chaser
+-        && monster.id != MonsterId::water_bulwark) {
++    const bool is_shooter = monster.id == MonsterId::lightning_shooter;
++    const bool is_support = monster.id == MonsterId::water_support;
++    const bool is_melee = monster.id == MonsterId::chaos_chaser
++                       || monster.id == MonsterId::water_bulwark;
++    // Task 6 owns the ranged shooter and support roles. Remaining roles stay
++    // inert until their dedicated Task 7 implementations land.
++    if (!is_melee && !is_shooter && !is_support) {
+         monster.velocity = Vec3{};
+         monster.ai_phase = MonsterAiPhase::idle;
+         monster.ai_ticks = 0;
+         monster.contact_attack_resolved = true;
+         return;
+     }
+ 
+     if (monster.ai_phase == MonsterAiPhase::idle) {
+         monster.ai_phase = MonsterAiPhase::move;
+         monster.ai_ticks = 0;
+     }
+ 
+     switch (monster.ai_phase) {
+     case MonsterAiPhase::move: {
+         face_player(monster, player_.position);
++        if (is_shooter || is_support) {
++            static_cast<void>(move_to_preferred_range(
++                monster, *definition, player_.position));
++            return;
++        }
+         const float distance = target_distance(monster.position, player_.position);
+         if (distance > definition->preferred_range && distance > 0.0001F) {
+             const float dx = player_.position.x - monster.position.x;
+             const float dy = player_.position.y - monster.position.y;
+             const float speed = definition->move_speed;
+             monster.velocity.x = dx / distance * speed;
+             monster.velocity.y = dy / distance * speed;
+             monster.position.x += monster.velocity.x;
+             monster.position.y += monster.velocity.y;
+             clamp_position(monster.position);
+@@ -252,21 +308,89 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
+             monster.ai_phase = MonsterAiPhase::active;
+             monster.ai_ticks = std::max<std::uint16_t>(
+                 1U, definition->active_ticks);
+             ++monster.attack_serial;
+             monster.contact_attack_resolved = false;
+         }
+         return;
+     case MonsterAiPhase::active:
+         monster.velocity = Vec3{};
+         if (!monster.contact_attack_resolved) {
+-            resolve_monster_contact_attack(slot);
++            if (is_shooter) {
++                const float dx = monster.attack_target_position.x
++                               - monster.position.x;
++                const float dy = monster.attack_target_position.y
++                               - monster.position.y;
++                const float magnitude = std::sqrt(dx * dx + dy * dy);
++                const float speed = definition->projectile_speed > 0.0F
++                    ? definition->projectile_speed : 0.14F;
++                Vec3 velocity{};
++                if (magnitude > 0.0001F) {
++                    velocity.x = dx / magnitude * speed;
++                    velocity.y = dy / magnitude * speed;
++                } else {
++                    velocity.x = monster.facing == Facing::right
++                        ? speed : -speed;
++                }
++                static_cast<void>(spawn_projectile(
++                    MonsterHandle{
++                        static_cast<std::uint16_t>(slot), monster.generation},
++                    monster.position, velocity, kProjectileLifetime,
++                    definition->contact_damage, kProjectileRadius));
++            } else if (is_support) {
++                std::size_t target_index = monsters_.slots_.size();
++                for (std::size_t index = 0; index < monsters_.slots_.size();
++                     ++index) {
++                    if (index == slot) {
++                        continue;
++                    }
++                    MonsterRuntime& candidate = monsters_.slots_[index];
++                    const MonsterDefinition* candidate_definition =
++                        monster_definition(candidate.id);
++                    if (!candidate.active || candidate.hp <= 0
++                        || candidate.shield != 0
++                        || candidate_definition == nullptr
++                        || has_tag(*candidate_definition, MonsterTag::support)) {
++                        continue;
++                    }
++                    target_index = index;
++                    break;
++                }
++                if (target_index < monsters_.slots_.size()) {
++                    MonsterRuntime& target = monsters_.slots_[target_index];
++                    target.shield = std::min(target.max_shield,
++                                             std::max(target.shield,
++                                                      target.max_shield));
++                    target.shield_ticks = std::min(
++                        target.max_shield_ticks,
++                        std::max(target.shield_ticks, target.max_shield_ticks));
++                } else {
++                    // No legal ally: leave the support in a bounded fallback
++                    // reposition/cooldown rather than targeting the player.
++                    const float distance = target_distance(
++                        monster.position, player_.position);
++                    if (distance < definition->preferred_range
++                        && distance > 0.0001F) {
++                        monster.position.x += (monster.position.x
++                            - player_.position.x) / distance
++                            * definition->move_speed;
++                        monster.position.y += (monster.position.y
++                            - player_.position.y) / distance
++                            * definition->move_speed;
++                        clamp_position(monster.position);
++                    }
++                    monster.ai_phase = MonsterAiPhase::cooldown;
++                    monster.ai_ticks = kSupportFallbackCooldown;
++                }
++            } else {
++                resolve_monster_contact_attack(slot);
++            }
+             monster.contact_attack_resolved = true;
+         }
+         if (monster.ai_ticks != 0) {
+             --monster.ai_ticks;
+         }
+         if (monster.ai_ticks == 0) {
+             monster.ai_phase = MonsterAiPhase::recovery;
+             monster.ai_ticks = definition->recovery_ticks;
+         }
+         return;
+diff --git a/src/combat/monster_catalog.cpp b/src/combat/monster_catalog.cpp
+index df381a9..08aff04 100644
+--- a/src/combat/monster_catalog.cpp
++++ b/src/combat/monster_catalog.cpp
+@@ -38,24 +38,24 @@ constexpr std::array<MonsterDefinition, 8> kCatalog{{
+      60, 1, 0, 0, 120, 0.0F, 0, FeedbackLevel::heavy},
+     {MonsterId::fire_charger, 0, tags(MonsterTag::melee,
+          MonsterTag::high_priority, MonsterTag::direct_target),
+      4, 420, 60, 0.030F, 5.0F, 45, 18, 35, 100, 90, 0.0F, 0,
+      FeedbackLevel::heavy},
+     {MonsterId::water_bulwark, 1, tags(MonsterTag::melee,
+          MonsterTag::direct_target), 4, 700, 120, 0.025F, 1.0F,
+      24, 6, 30, 72, 70, 0.0F, 0, FeedbackLevel::heavy},
+     {MonsterId::water_support, 1, tag(MonsterTag::support),
+      3, 300, 0, 0.030F, 4.0F, 36, 1, 24, 120, 0, 0.0F, 0,
+-     FeedbackLevel::medium},
++     FeedbackLevel::medium, 90, 120},
+     {MonsterId::lightning_shooter, 2, tags(MonsterTag::ranged,
+          MonsterTag::direct_target), 3, 240, 0, 0.035F, 4.5F,
+-     30, 1, 20, 75, 40, 0.0F, 0, FeedbackLevel::medium},
++     30, 1, 20, 75, 40, 0.14F, 0, FeedbackLevel::medium},
+     {MonsterId::lightning_dasher, 2, tags(MonsterTag::melee,
+          MonsterTag::high_priority, MonsterTag::direct_target),
+      3, 280, 0, 0.050F, 3.0F, 24, 12, 30, 80, 60, 0.0F, 0,
+      FeedbackLevel::medium},
+     {MonsterId::chaos_chaser, 3, tags(MonsterTag::melee,
+          MonsterTag::direct_target), 2, 260, 0, 0.045F, 0.9F,
+      12, 4, 18, 42, 45, 0.0F, 0, FeedbackLevel::light},
+     {MonsterId::chaos_hazard, 3, tags(MonsterTag::ranged,
+          MonsterTag::high_priority, MonsterTag::ground_hazard,
+          MonsterTag::direct_target), 4, 320, 0, 0.030F, 4.0F,
+diff --git a/src/combat/monster_pool.cpp b/src/combat/monster_pool.cpp
+index b52ef11..a5def10 100644
+--- a/src/combat/monster_pool.cpp
++++ b/src/combat/monster_pool.cpp
+@@ -68,20 +68,26 @@ std::optional<MonsterHandle> MonsterPool::spawn(
+         runtime.active = true;
+         runtime.generation = generation;
+         runtime.id = id;
+         runtime.kind = kind_for(id);
+         runtime.spawn = position;
+         runtime.position = position;
+         runtime.max_hp = definition->max_hp;
+         runtime.hp = definition->max_hp;
+         runtime.max_break = definition->max_break;
+         runtime.break_value = definition->max_break;
++        runtime.max_shield = definition->shield_points != 0
++            ? definition->shield_points : 90;
++        runtime.max_shield_ticks = definition->shield_duration_ticks != 0
++            ? definition->shield_duration_ticks : 120;
++        runtime.shield = 0;
++        runtime.shield_ticks = 0;
+         runtime.armor = definition->max_break > 0
+             ? ArmorState::armored : ArmorState::none;
+         ++active_count_;
+         return MonsterHandle{
+             static_cast<std::uint16_t>(index), generation};
+     }
+     return std::nullopt;
+ }
+ 
+ bool MonsterPool::destroy(MonsterHandle handle) noexcept {
+@@ -120,11 +126,116 @@ const MonsterRuntime* MonsterPool::get(MonsterHandle handle) const noexcept {
+     if (!runtime.active || runtime.generation != handle.generation) {
+         return nullptr;
+     }
+     return &runtime;
+ }
+ 
+ const std::array<MonsterRuntime, kMonsterCapacity>& MonsterPool::slots() const noexcept {
+     return slots_;
+ }
+ 
++void ProjectilePool::advance_generation(ProjectileRuntime& runtime) noexcept {
++    if (runtime.generation == 0xFFFFU) {
++        runtime.generation = 1U;
++    } else {
++        ++runtime.generation;
++        if (runtime.generation == 0U) {
++            runtime.generation = 1U;
++        }
++    }
++}
++
++void ProjectilePool::clear() noexcept {
++    active_count_ = 0U;
++    for (ProjectileRuntime& runtime : slots_) {
++        advance_generation(runtime);
++        const std::uint16_t generation = runtime.generation;
++        runtime = ProjectileRuntime{};
++        runtime.generation = generation;
++    }
++}
++
++std::optional<ProjectileHandle> ProjectilePool::spawn(
++    MonsterHandle owner,
++    Vec3 position,
++    Vec3 velocity,
++    std::uint16_t lifetime_ticks,
++    int damage,
++    float radius) noexcept {
++    if (owner.index >= kMonsterCapacity || owner.generation == 0U) {
++        return std::nullopt;
++    }
++    for (std::size_t index = 0; index < slots_.size(); ++index) {
++        ProjectileRuntime& runtime = slots_[index];
++        if (runtime.active) {
++            continue;
++        }
++
++        advance_generation(runtime);
++        const std::uint16_t generation = runtime.generation;
++        runtime = ProjectileRuntime{};
++        runtime.active = true;
++        runtime.generation = generation;
++        runtime.owner = owner;
++        runtime.position = position;
++        runtime.velocity = velocity;
++        runtime.lifetime_ticks = lifetime_ticks;
++        runtime.damage = damage;
++        runtime.radius = radius;
++        ++active_count_;
++        return ProjectileHandle{
++            static_cast<std::uint16_t>(index), generation};
++    }
++    return std::nullopt;
++}
++
++bool ProjectilePool::destroy(ProjectileHandle handle) noexcept {
++    ProjectileRuntime* runtime = get(handle);
++    if (runtime == nullptr) {
++        return false;
++    }
++    advance_generation(*runtime);
++    const std::uint16_t generation = runtime->generation;
++    *runtime = ProjectileRuntime{};
++    runtime->generation = generation;
++    --active_count_;
++    return true;
++}
++
++std::size_t ProjectilePool::active_count() const noexcept {
++    return active_count_;
++}
++
++ProjectileRuntime* ProjectilePool::get(ProjectileHandle handle) noexcept {
++    if (handle.index >= slots_.size()) {
++        return nullptr;
++    }
++    ProjectileRuntime& runtime = slots_[handle.index];
++    if (!runtime.active || runtime.generation != handle.generation) {
++        return nullptr;
++    }
++    return &runtime;
++}
++
++const ProjectileRuntime* ProjectilePool::get(
++    ProjectileHandle handle) const noexcept {
++    if (handle.index >= slots_.size()) {
++        return nullptr;
++    }
++    const ProjectileRuntime& runtime = slots_[handle.index];
++    if (!runtime.active || runtime.generation != handle.generation) {
++        return nullptr;
++    }
++    return &runtime;
++}
++
++const std::array<ProjectileRuntime, kProjectileCapacity>&
++ProjectilePool::slots() const noexcept {
++    return slots_;
++}
++
++std::array<ProjectileRuntime, kProjectileCapacity>&
++ProjectilePool::slots() noexcept {
++    return slots_;
++}
++
+ }  // namespace arpg::combat
+diff --git a/src/combat/monster_pool.hpp b/src/combat/monster_pool.hpp
+index 6bd00d0..09ed84b 100644
+--- a/src/combat/monster_pool.hpp
++++ b/src/combat/monster_pool.hpp
+@@ -25,29 +25,27 @@ struct MonsterRuntime final {
+     std::uint16_t reaction_ticks{};
+     MonsterAiPhase ai_phase{MonsterAiPhase::idle};
+     std::uint16_t ai_ticks{};
+     std::uint32_t attack_serial{};
+     bool contact_attack_resolved{};
+     int hp{};
+     int max_hp{};
+     int break_value{};
+     int max_break{};
+     int shield{};
++    int max_shield{};
+     std::uint16_t shield_ticks{};
++    std::uint16_t max_shield_ticks{};
+     std::uint16_t break_window_ticks{};
+     std::uint16_t hit_stop_ticks{};
+     std::uint16_t owner_transient_counter{};
+-};
+-
+-struct MonsterHandle final {
+-    std::uint16_t index{0xFFFF};
+-    std::uint16_t generation{};
++    Vec3 attack_target_position{};
+ };
+ 
+ class MonsterPool final {
+ public:
+     void clear() noexcept;
+     [[nodiscard]] std::optional<MonsterHandle> spawn(
+         MonsterId id, Vec3 position) noexcept;
+     [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_count() const noexcept;
+     [[nodiscard]] MonsterRuntime* get(MonsterHandle handle) noexcept;
+@@ -56,11 +54,38 @@ public:
+     slots() const noexcept;
+ 
+ private:
+     friend class CombatWorld;
+     static void advance_generation(MonsterRuntime& runtime) noexcept;
+ 
+     std::array<MonsterRuntime, kMonsterCapacity> slots_{};
+     std::size_t active_count_{};
+ };
+ 
++class ProjectilePool final {
++public:
++    void clear() noexcept;
++    [[nodiscard]] std::optional<ProjectileHandle> spawn(
++        MonsterHandle owner,
++        Vec3 position,
++        Vec3 velocity,
++        std::uint16_t lifetime_ticks,
++        int damage,
++        float radius) noexcept;
++    [[nodiscard]] bool destroy(ProjectileHandle handle) noexcept;
++    [[nodiscard]] std::size_t active_count() const noexcept;
++    [[nodiscard]] ProjectileRuntime* get(ProjectileHandle handle) noexcept;
++    [[nodiscard]] const ProjectileRuntime* get(
++        ProjectileHandle handle) const noexcept;
++    [[nodiscard]] const std::array<ProjectileRuntime, kProjectileCapacity>&
++    slots() const noexcept;
++    [[nodiscard]] std::array<ProjectileRuntime, kProjectileCapacity>&
++    slots() noexcept;
++
++private:
++    static void advance_generation(ProjectileRuntime& runtime) noexcept;
++
++    std::array<ProjectileRuntime, kProjectileCapacity> slots_{};
++    std::size_t active_count_{};
++};
++
+ }  // namespace arpg::combat
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index 436c2da..3aa39cb 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -3,20 +3,21 @@ add_executable(arpg_combat_tests
+     combat_test_main.cpp
+     attack_catalog_tests.cpp
+     attack_state_tests.cpp
+     break_stress_tests.cpp
+     combat_config_tests.cpp
+     dummy_reaction_tests.cpp
+     hit_resolution_tests.cpp
+     input_buffer_tests.cpp
+     monster_catalog_tests.cpp
+     monster_melee_tests.cpp
++    monster_ranged_tests.cpp
+     monster_pool_tests.cpp
+     movement_jump_tests.cpp
+     player_health_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 94902c4..1c6328f 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -3,31 +3,33 @@
+ arpg::test::TestSuite attack_catalog_suite() noexcept;
+ arpg::test::TestSuite attack_state_suite() noexcept;
+ arpg::test::TestSuite break_stress_suite() noexcept;
+ arpg::test::TestSuite combat_config_suite() noexcept;
+ arpg::test::TestSuite dummy_reaction_suite() noexcept;
+ arpg::test::TestSuite input_buffer_suite() noexcept;
+ arpg::test::TestSuite movement_jump_suite() noexcept;
+ arpg::test::TestSuite hit_resolution_suite() noexcept;
+ arpg::test::TestSuite monster_catalog_suite() noexcept;
+ arpg::test::TestSuite monster_melee_suite() noexcept;
++arpg::test::TestSuite monster_ranged_suite() noexcept;
+ arpg::test::TestSuite monster_pool_suite() noexcept;
+ arpg::test::TestSuite player_health_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+         attack_state_suite(),
+         break_stress_suite(),
+         combat_config_suite(),
+         dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
+         monster_catalog_suite(),
+         monster_melee_suite(),
++        monster_ranged_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 53, "stage 4 task 5");
++    return arpg::test::run_suites(suites, 60, "stage 4 task 6");
+ }
+diff --git a/tests/combat/monster_melee_tests.cpp b/tests/combat/monster_melee_tests.cpp
+index 6455548..3862c1d 100644
+--- a/tests/combat/monster_melee_tests.cpp
++++ b/tests/combat/monster_melee_tests.cpp
+@@ -71,21 +71,21 @@ arpg::test::Failure chaos_chaser_damages_only_once_per_active_serial() noexcept
+     ARPG_REQUIRE(after_cooldown == after_active);
+     return {};
+ }
+ 
+ arpg::test::Failure unsupported_monsters_remain_inert() noexcept {
+     CombatEncounterConfig config{};
+     config.wave.spawn_count = 2U;
+     config.wave.spawns[0] = MonsterSpawnSpec{
+         MonsterId::fire_bomber, Vec3{2.0F, 0.0F, 0.0F}};
+     config.wave.spawns[1] = MonsterSpawnSpec{
+-        MonsterId::lightning_shooter, Vec3{3.0F, 0.0F, 0.0F}};
++        MonsterId::lightning_dasher, Vec3{3.0F, 0.0F, 0.0F}};
+     CombatWorld world{config};
+     const auto before = world.snapshot();
+     world.tick(MovementInput{});
+     const auto after = world.snapshot();
+     for (std::size_t index = 0; index < 2U; ++index) {
+         ARPG_REQUIRE(after.monsters[index].ai_phase == MonsterAiPhase::idle);
+         ARPG_REQUIRE(after.monsters[index].position.x
+                      == before.monsters[index].position.x);
+         ARPG_REQUIRE(after.monsters[index].position.y
+                      == before.monsters[index].position.y);
+diff --git a/tests/combat/monster_ranged_tests.cpp b/tests/combat/monster_ranged_tests.cpp
+new file mode 100644
+index 0000000..b11db8e
+--- /dev/null
++++ b/tests/combat/monster_ranged_tests.cpp
+@@ -0,0 +1,197 @@
++#include "test_framework.hpp"
++
++#include "combat_test_support.hpp"
++
++#include "combat/combat_world.hpp"
++
++#include <cmath>
++
++namespace arpg::test {
++
++struct CombatWorldTestAccess final {
++    static void fill_projectiles(
++        combat::CombatWorld& world,
++        combat::MonsterHandle owner) noexcept {
++        for (std::size_t index = 0; index < combat::kProjectileCapacity;
++             ++index) {
++            static_cast<void>(world.spawn_projectile(
++                owner, combat::Vec3{}, combat::Vec3{0.01F, 0.0F, 0.0F},
++                1000U, 1, 0.1F));
++        }
++        static_cast<void>(world.spawn_projectile(
++            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F));
++    }
++};
++
++}  // namespace arpg::test
++
++namespace {
++
++using namespace arpg::combat;
++using arpg::test::tick_n;
++
++CombatEncounterConfig ranged_encounter(
++    MonsterId id,
++    float monster_x,
++    float player_x = 0.0F) noexcept {
++    CombatEncounterConfig config{};
++    config.player_spawn = Vec3{player_x, 0.0F, 0.0F};
++    config.wave.spawn_count = 1U;
++    config.wave.spawns[0] = MonsterSpawnSpec{id, Vec3{monster_x, 0.0F, 0.0F}};
++    return config;
++}
++
++CombatEncounterConfig support_encounter() noexcept {
++    CombatEncounterConfig config{};
++    config.wave.spawn_count = 3U;
++    config.wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::water_support, Vec3{4.0F, 0.0F, 0.0F}};
++    config.wave.spawns[1] = MonsterSpawnSpec{
++        MonsterId::water_bulwark, Vec3{2.0F, 0.0F, 0.0F}};
++    config.wave.spawns[2] = MonsterSpawnSpec{
++        MonsterId::chaos_chaser, Vec3{2.5F, 0.0F, 0.0F}};
++    return config;
++}
++
++bool reach_phase(
++    CombatWorld& world,
++    MonsterAiPhase phase,
++    int max_ticks = 400) noexcept {
++    for (int tick = 0; tick < max_ticks; ++tick) {
++        if (world.snapshot().monsters[0].ai_phase == phase) {
++            return true;
++        }
++        world.tick(MovementInput{});
++    }
++    return world.snapshot().monsters[0].ai_phase == phase;
++}
++
++arpg::test::Failure shooter_maintains_range_and_freezes_telegraph() noexcept {
++    CombatWorld world{ranged_encounter(MonsterId::lightning_shooter, 2.0F)};
++    const float start_x = world.snapshot().monsters[0].position.x;
++    world.tick(MovementInput{});
++    const auto moving = world.snapshot().monsters[0];
++    ARPG_REQUIRE(moving.position.x > start_x);
++    ARPG_REQUIRE(moving.ai_phase == MonsterAiPhase::move);
++    ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::telegraph));
++    const auto warning = world.snapshot().monsters[0];
++    tick_n(world, 1);
++    const auto frozen = world.snapshot().monsters[0];
++    ARPG_REQUIRE(frozen.position.x == warning.position.x);
++    ARPG_REQUIRE(frozen.position.y == warning.position.y);
++    return {};
++}
++
++arpg::test::Failure shooter_creates_deterministic_projectile() noexcept {
++    const auto config = ranged_encounter(MonsterId::lightning_shooter, 4.5F);
++    CombatWorld first{config};
++    CombatWorld second{config};
++    for (int tick = 0; tick < 100; ++tick) {
++        first.tick(MovementInput{});
++        second.tick(MovementInput{});
++        if (first.snapshot().projectile_count != 0U) {
++            break;
++        }
++    }
++    const auto first_snapshot = first.snapshot();
++    const auto second_snapshot = second.snapshot();
++    ARPG_REQUIRE(first_snapshot.projectile_count == 1U);
++    ARPG_REQUIRE(second_snapshot.projectile_count == 1U);
++    ARPG_REQUIRE(first_snapshot.projectiles[0].active);
++    ARPG_REQUIRE(first_snapshot.projectiles[0].owner.index == 0U);
++    ARPG_REQUIRE(first_snapshot.projectiles[0].position.x
++                 == second_snapshot.projectiles[0].position.x);
++    ARPG_REQUIRE(first_snapshot.projectiles[0].velocity.x
++                 == second_snapshot.projectiles[0].velocity.x);
++    return {};
++}
++
++arpg::test::Failure projectile_lifetime_removes_active_slot() noexcept {
++    CombatWorld world{ranged_encounter(MonsterId::lightning_shooter, 4.5F)};
++    ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::active));
++    tick_n(world, 1);
++    ARPG_REQUIRE(world.snapshot().projectile_count == 1U);
++    tick_n(world, 125);
++    ARPG_REQUIRE(world.snapshot().projectile_count == 0U);
++    return {};
++}
++
++arpg::test::Failure support_selects_lowest_legal_ally_and_shields() noexcept {
++    CombatWorld world{support_encounter()};
++    bool shielded = false;
++    for (int tick = 0; tick < 500; ++tick) {
++        world.tick(MovementInput{});
++        const auto snapshot = world.snapshot();
++        if (snapshot.monsters[1].shield > 0) {
++            shielded = true;
++            ARPG_REQUIRE(snapshot.monsters[2].shield == 0);
++            break;
++        }
++    }
++    ARPG_REQUIRE(shielded);
++    ARPG_REQUIRE(world.snapshot().player.hp == world.snapshot().player.max_hp);
++    return {};
++}
++
++arpg::test::Failure shield_absorbs_damage_and_refresh_does_not_stack() noexcept {
++    CombatWorld world{support_encounter()};
++    for (int tick = 0; tick < 500; ++tick) {
++        world.tick(MovementInput{});
++        if (world.snapshot().monsters[1].shield > 0) {
++            break;
++        }
++    }
++    const auto shielded = world.snapshot().monsters[1];
++    ARPG_REQUIRE(shielded.shield > 0);
++    ARPG_REQUIRE(shielded.shield <= shielded.max_shield);
++    tick_n(world, 130);
++    const auto refreshed = world.snapshot().monsters[1];
++    ARPG_REQUIRE(refreshed.shield <= refreshed.max_shield);
++    ARPG_REQUIRE(refreshed.shield_ticks <= refreshed.max_shield_ticks);
++    return {};
++}
++
++arpg::test::Failure support_without_ally_repositions_and_short_cooldown() noexcept {
++    CombatWorld world{ranged_encounter(MonsterId::water_support, 4.0F)};
++    ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::active));
++    world.tick(MovementInput{});
++    const auto support = world.snapshot().monsters[0];
++    ARPG_REQUIRE(support.ai_phase == MonsterAiPhase::cooldown);
++    ARPG_REQUIRE(support.ai_phase != MonsterAiPhase::recovery);
++    ARPG_REQUIRE(world.snapshot().player.hp == world.snapshot().player.max_hp);
++    return {};
++}
++
++arpg::test::Failure projectile_saturation_is_reported_without_overwrite() noexcept {
++    CombatEncounterConfig config = ranged_encounter(
++        MonsterId::lightning_shooter, 4.5F);
++    config.wave.spawn_count = static_cast<std::uint8_t>(kMonsterCapacity);
++    for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
++        config.wave.spawns[index] = MonsterSpawnSpec{
++            MonsterId::lightning_shooter, Vec3{4.5F, 0.0F, 0.0F}};
++    }
++    CombatWorld world{config};
++    const auto initial = world.snapshot();
++    arpg::test::CombatWorldTestAccess::fill_projectiles(
++        world, MonsterHandle{0U, initial.monsters[0].generation});
++    const auto snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.projectile_count <= kProjectileCapacity);
++    ARPG_REQUIRE(snapshot.diagnostics.projectile_saturation_count > 0U);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"shooter range and telegraph freeze", &shooter_maintains_range_and_freezes_telegraph},
++    {"deterministic projectile", &shooter_creates_deterministic_projectile},
++    {"projectile lifetime cleanup", &projectile_lifetime_removes_active_slot},
++    {"support lowest legal ally", &support_selects_lowest_legal_ally_and_shields},
++    {"shield absorbs and refresh clamps", &shield_absorbs_damage_and_refresh_does_not_stack},
++    {"support no-target fallback", &support_without_ally_repositions_and_short_cooldown},
++    {"projectile saturation diagnostic", &projectile_saturation_is_reported_without_overwrite},
++};
++
++}  // namespace
++
++arpg::test::TestSuite monster_ranged_suite() noexcept {
++    return arpg::test::make_suite("monster_ranged", kCases);
++}

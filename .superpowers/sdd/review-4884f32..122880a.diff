@@ -1,0 +1,170 @@
+# Review package: 4884f32..122880a1d809cf8cec26665b4d740154fbe9375e
+
+## Commits
+122880a fix: make bulwark armor directional
+
+## Files changed
+ src/combat/hit_resolution.cpp        | 11 +++++++++--
+ tests/combat/combat_test_main.cpp    |  2 +-
+ tests/combat/monster_melee_tests.cpp | 38 ++++++++++++++++++++++++++++++++++--
+ 3 files changed, 46 insertions(+), 5 deletions(-)
+
+## Diff
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 14a7809..2efee08 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -116,22 +116,29 @@ void CombatWorld::resolve_attack_hits() noexcept {
+     }
+ 
+     const std::uint16_t hit_stop = hit_stop_for(definition->feedback);
+     for (std::size_t collected = 0; collected < hit_count; ++collected) {
+         const std::size_t index = hit_indices[collected];
+         MonsterRuntime& dummy = monsters_.slots_[index];
+         attack_.hit_targets[index] = true;
+         attack_.connected = true;
+         dummy.hp = std::max(0, dummy.hp - definition->damage);
+         bool starts_break = false;
+-        bool accepts_impact = dummy.armor != ArmorState::armored;
+-        if (dummy.hp != 0 && dummy.armor == ArmorState::armored) {
++        const float relative_x = player_.position.x - dummy.position.x;
++        const bool front_attack = legacy_mode_
++                                   || (dummy.facing == Facing::right
++                                           ? relative_x >= 0.0F
++                                           : relative_x <= 0.0F);
++        bool accepts_impact = dummy.armor != ArmorState::armored
++                              || !front_attack;
++        if (dummy.hp != 0 && dummy.armor == ArmorState::armored
++            && front_attack) {
+             dummy.break_value = std::max(
+                 0, dummy.break_value - definition->break_damage);
+             if (dummy.break_value == 0) {
+                 dummy.armor = ArmorState::broken;
+                 dummy.break_window_ticks = kBreakWindowTicks;
+                 starts_break = true;
+                 accepts_impact = true;
+             }
+         }
+         dummy.hit_stop_ticks = std::max(dummy.hit_stop_ticks, hit_stop);
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 6429500..ec137dc 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -22,12 +22,12 @@ int main() {
+         dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
+         monster_catalog_suite(),
+         monster_melee_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 50, "stage 4 task 5");
++    return arpg::test::run_suites(suites, 51, "stage 4 task 5");
+ }
+diff --git a/tests/combat/monster_melee_tests.cpp b/tests/combat/monster_melee_tests.cpp
+index 7abd7e6..7679bb2 100644
+--- a/tests/combat/monster_melee_tests.cpp
++++ b/tests/combat/monster_melee_tests.cpp
+@@ -8,23 +8,24 @@
+ #include <cmath>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::tick_n;
+ 
+ CombatEncounterConfig encounter_for(
+     MonsterId id,
+     float monster_x,
+-    float player_x = 0.0F) noexcept {
++    float player_x = 0.0F,
++    float player_y = 0.0F) noexcept {
+     CombatEncounterConfig config{};
+-    config.player_spawn = Vec3{player_x, 0.0F, 0.0F};
++    config.player_spawn = Vec3{player_x, player_y, 0.0F};
+     config.initial_facing = Facing::right;
+     config.wave.spawn_count = 1U;
+     config.wave.spawns[0] = MonsterSpawnSpec{
+         id, Vec3{monster_x, 0.0F, 0.0F}};
+     return config;
+ }
+ 
+ arpg::test::Failure chaos_chaser_moves_then_stops_for_telegraph() noexcept {
+     CombatWorld world{encounter_for(MonsterId::chaos_chaser, 2.0F)};
+     const float initial_x = world.snapshot().monsters[0].position.x;
+@@ -84,20 +85,52 @@ arpg::test::Failure water_bulwark_is_slow_and_has_front_armor() noexcept {
+ 
+     CombatWorld world{encounter_for(MonsterId::water_bulwark, 1.2F)};
+     const auto initial = world.snapshot().monsters[0];
+     ARPG_REQUIRE(initial.armor == ArmorState::armored);
+     ARPG_REQUIRE(initial.max_break == bulwark->max_break);
+     world.tick(MovementInput{});
+     ARPG_REQUIRE(world.snapshot().monsters[0].position.x < initial.position.x);
+     return {};
+ }
+ 
++arpg::test::Failure bulwark_back_hit_bypasses_front_armor() noexcept {
++    CombatWorld world{encounter_for(
++        MonsterId::water_bulwark, 1.20F, 0.0F, 2.1F)};
++    bool reached_active = false;
++    for (int tick = 0; tick < 120; ++tick) {
++        world.tick(MovementInput{});
++        if (world.snapshot().monsters[0].ai_phase == MonsterAiPhase::active) {
++            reached_active = true;
++            break;
++        }
++    }
++    ARPG_REQUIRE(reached_active);
++
++    // Cross to the monster's rear while active/recovery holds its facing.
++    tick_n(world, 4, MovementInput{1, 0});
++    tick_n(world, 13, MovementInput{1, -1});
++    world.tick(MovementInput{-1, 0});
++    const auto before = world.snapshot().monsters[0];
++    ARPG_REQUIRE(before.armor == ArmorState::armored);
++    const int before_break = before.break_value;
++    ARPG_REQUIRE(world.snapshot().player.position.x > before.position.x);
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    tick_n(world, 5);
++    const auto after = world.snapshot().monsters[0];
++    ARPG_REQUIRE(after.hp < before.hp);
++    ARPG_REQUIRE(after.reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(after.armor == ArmorState::armored);
++    ARPG_REQUIRE(after.break_value == before_break);
++    return {};
++}
++
+ arpg::test::Failure bulwark_accepts_normal_reaction_after_break() noexcept {
+     CombatEncounterConfig config = encounter_for(
+         MonsterId::water_bulwark, 0.90F);
+     CombatWorld world{config};
+     ARPG_REQUIRE(world.queue_action(Action::launcher));
+     world.tick(MovementInput{});
+     tick_n(world, 7);
+     const auto before = world.snapshot().monsters[0];
+     ARPG_REQUIRE(before.armor == ArmorState::armored);
+     ARPG_REQUIRE(before.reaction != ReactionState::hitstun);
+@@ -125,18 +158,19 @@ arpg::test::Failure bulwark_accepts_normal_reaction_after_break() noexcept {
+     world.tick(MovementInput{});
+     tick_n(world, 5);
+     ARPG_REQUIRE(world.snapshot().monsters[0].reaction == ReactionState::hitstun);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
+     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
+     {"bulwark slow armored profile", &water_bulwark_is_slow_and_has_front_armor},
++    {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
+     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite monster_melee_suite() noexcept {
+     return arpg::test::make_suite("monster_melee", kCases);
+ }

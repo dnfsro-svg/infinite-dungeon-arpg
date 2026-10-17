@@ -1,0 +1,1207 @@
+# Review package: 31644be..a494b202b6b9db5b613836b9c590d86661fa5749
+
+## Commits
+a494b20 feat: render stage 4 monster encounters
+
+## Files changed
+ src/platform/raylib/combat_audio.cpp      |   2 +
+ src/platform/raylib/combat_feedback.cpp   |   6 +-
+ src/platform/raylib/combat_feedback.hpp   |   2 +-
+ src/platform/raylib/combat_renderer.cpp   | 401 +++++++++++++++++++++++-------
+ src/platform/raylib/combat_view_math.cpp  | 105 ++++++++
+ src/platform/raylib/combat_view_math.hpp  |  54 ++++
+ src/platform/raylib/dungeon_view_math.cpp |   2 +
+ tests/platform/CMakeLists.txt             |   1 +
+ tests/platform/dungeon_runtime_tests.cpp  |  24 +-
+ tests/platform/monster_view_tests.cpp     | 149 +++++++++++
+ tests/platform/platform_test_main.cpp     |   4 +-
+ 11 files changed, 634 insertions(+), 116 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/combat_audio.cpp b/src/platform/raylib/combat_audio.cpp
+index 50c7b3a..c2bb9c7 100644
+--- a/src/platform/raylib/combat_audio.cpp
++++ b/src/platform/raylib/combat_audio.cpp
+@@ -29,20 +29,22 @@ bool has_cue(AudioCueMask mask, AudioCue cue) noexcept {
+ AudioCueMask route_audio_cues(const combat::CombatEvent& event) noexcept {
+     switch (event.kind) {
+     case combat::CombatEventKind::swing:
+         return audio_cue_mask(AudioCue::weapon);
+     case combat::CombatEventKind::hit:
+         return audio_cue_mask(AudioCue::material);
+     case combat::CombatEventKind::impact_summary:
+         return event.feedback == combat::FeedbackLevel::heavy
+             ? audio_cue_mask(AudioCue::low)
+             : 0;
++    case combat::CombatEventKind::player_hit:
++        return audio_cue_mask(AudioCue::low);
+     default:
+         return 0;
+     }
+ }
+ 
+ CombatAudio::~CombatAudio() noexcept {
+     shutdown();
+ }
+ 
+ bool CombatAudio::initialize() noexcept {
+diff --git a/src/platform/raylib/combat_feedback.cpp b/src/platform/raylib/combat_feedback.cpp
+index 01e33fc..ae0c4dc 100644
+--- a/src/platform/raylib/combat_feedback.cpp
++++ b/src/platform/raylib/combat_feedback.cpp
+@@ -44,25 +44,27 @@ void CombatFeedback::consume(const combat::CombatEvent& event) noexcept {
+     if (event.kind == combat::CombatEventKind::landing) {
+         VisualEffect dust{};
+         dust.active = true;
+         dust.kind = VisualEffectKind::dust;
+         dust.position = event.position;
+         dust.lifetime_seconds = 0.24F;
+         static_cast<void>(try_spawn(dust));
+         return;
+     }
+ 
+-    if (event.kind != combat::CombatEventKind::hit) {
++    if (event.kind != combat::CombatEventKind::hit
++        && event.kind != combat::CombatEventKind::player_hit) {
+         return;
+     }
+ 
+-    if (event.target_index < flash_seconds_.size()) {
++    if (event.kind == combat::CombatEventKind::hit
++        && event.target_index < flash_seconds_.size()) {
+         flash_seconds_[event.target_index] = 2.0F / 60.0F;
+     }
+ 
+     VisualEffect spark{};
+     spark.active = true;
+     spark.kind = VisualEffectKind::spark;
+     spark.position = event.position;
+     spark.lifetime_seconds = 0.18F;
+     spark.value = event.value;
+     static_cast<void>(try_spawn(spark));
+diff --git a/src/platform/raylib/combat_feedback.hpp b/src/platform/raylib/combat_feedback.hpp
+index 4195a43..e465acd 100644
+--- a/src/platform/raylib/combat_feedback.hpp
++++ b/src/platform/raylib/combat_feedback.hpp
+@@ -41,18 +41,18 @@ public:
+     [[nodiscard]] std::uint32_t dropped_count() const noexcept;
+     [[nodiscard]] float shake_amplitude() const noexcept;
+     [[nodiscard]] CameraOffset camera_offset() const noexcept;
+     [[nodiscard]] float target_flash_seconds(
+         std::size_t target_index) const noexcept;
+     [[nodiscard]] const std::array<VisualEffect, kCapacity>& effects()
+         const noexcept;
+ 
+ private:
+     std::array<VisualEffect, kCapacity> effects_{};
+-    std::array<float, combat::kDummyCount> flash_seconds_{};
++    std::array<float, combat::kMonsterCapacity> flash_seconds_{};
+     float shake_amplitude_{};
+     float shake_time_{};
+     float shake_phase_{};
+     std::uint32_t dropped_count_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 7fe5d4c..431921e 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -63,64 +63,101 @@ const char* player_state_name(PlayerState state) noexcept {
+     case PlayerState::attack_startup: return "Attack startup";
+     case PlayerState::attack_active: return "Attack active";
+     case PlayerState::attack_recovery: return "Attack recovery";
+     case PlayerState::jump_rise: return "Jump rise";
+     case PlayerState::jump_fall: return "Jump fall";
+     case PlayerState::landing: return "Landing";
+     }
+     return "?";
+ }
+ 
+-const char* reaction_name(ReactionState state) noexcept {
+-    switch (state) {
+-    case ReactionState::idle: return "Idle";
+-    case ReactionState::hitstun: return "Hitstun";
+-    case ReactionState::airborne: return "Airborne";
+-    case ReactionState::knockdown: return "Knockdown";
+-    case ReactionState::rising: return "Rising";
+-    case ReactionState::defeated: return "Defeated";
+-    case ReactionState::respawning: return "Respawning";
++const char* monster_phase_name(MonsterAiPhase phase) noexcept {
++    switch (phase) {
++    case MonsterAiPhase::idle: return "Idle";
++    case MonsterAiPhase::move: return "Move";
++    case MonsterAiPhase::telegraph: return "Telegraph";
++    case MonsterAiPhase::active: return "Active";
++    case MonsterAiPhase::recovery: return "Recovery";
++    case MonsterAiPhase::cooldown: return "Cooldown";
++    case MonsterAiPhase::defeated: return "Defeated";
+     }
+     return "?";
+ }
+ 
+ const char* event_name(CombatEventKind kind) noexcept {
+     switch (kind) {
+     case CombatEventKind::swing: return "Swing";
+     case CombatEventKind::hit: return "Hit";
+     case CombatEventKind::impact_summary: return "Impact";
+     case CombatEventKind::landing: return "Landing";
+     case CombatEventKind::break_started: return "Break";
+     case CombatEventKind::defeated: return "Defeated";
+     case CombatEventKind::respawned: return "Respawned";
+     case CombatEventKind::reset: return "Reset";
++    case CombatEventKind::player_hit: return "Player hit";
++    case CombatEventKind::player_hurt_started: return "Player hurt";
++    case CombatEventKind::player_health_reset: return "Player heal";
+     }
+     return "?";
+ }
+ 
+ const char* ecology_name(dungeon::DungeonElement element) noexcept {
+     switch (element) {
+     case dungeon::DungeonElement::fire: return "FIRE";
+     case dungeon::DungeonElement::water: return "WATER";
+     case dungeon::DungeonElement::lightning: return "LIGHTNING";
+     case dungeon::DungeonElement::chaos: return "CHAOS";
+     }
+     return "UNKNOWN";
+ }
+ 
+-Color dummy_color(DummyKind kind) noexcept {
+-    switch (kind) {
+-    case DummyKind::light: return Color{76, 205, 122, 255};
+-    case DummyKind::normal: return Color{232, 190, 75, 255};
+-    case DummyKind::heavy: return Color{218, 80, 76, 255};
++Color to_color(Rgba8 color) noexcept {
++    return {color.r, color.g, color.b, color.a};
++}
++
++struct RenderActor final {
++    Vec3 position{};
++    std::uint8_t monster_index{};
++    bool player{};
++};
++
++bool render_actor_precedes(
++    const RenderActor& lhs,
++    const RenderActor& rhs) noexcept {
++    if (lhs.position.y != rhs.position.y) {
++        return lhs.position.y < rhs.position.y;
++    }
++    if (lhs.position.z != rhs.position.z) {
++        return lhs.position.z < rhs.position.z;
++    }
++    if (lhs.position.x != rhs.position.x) {
++        return lhs.position.x < rhs.position.x;
++    }
++    if (lhs.player != rhs.player) {
++        return lhs.player;
++    }
++    return lhs.monster_index < rhs.monster_index;
++}
++
++void sort_render_actors(
++    std::array<RenderActor, kMonsterCapacity + 1>& actors,
++    std::size_t count) noexcept {
++    for (std::size_t index = 1; index < count; ++index) {
++        const RenderActor value = actors[index];
++        std::size_t insertion = index;
++        while (insertion > 0
++            && render_actor_precedes(value, actors[insertion - 1])) {
++            actors[insertion] = actors[insertion - 1];
++            --insertion;
++        }
++        actors[insertion] = value;
+     }
+-    return MAGENTA;
+ }
+ 
+ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const Vector2 back_left{width * 0.20F, height * 0.22F};
+     const Vector2 back_right{width * 0.80F, height * 0.22F};
+     const Vector2 floor_left{width * 0.04F, height * 0.92F};
+     const Vector2 floor_right{width * 0.96F, height * 0.92F};
+ 
+@@ -368,20 +405,204 @@ void draw_effects(
+                 static_cast<int>(projected.x + 8.0F),
+                 static_cast<int>(
+                     projected.y - 90.0F - progress * 32.0F),
+                 20,
+                 Fade(Color{255, 238, 156, 255}, opacity));
+             break;
+         }
+     }
+ }
+ 
++void draw_hazards(
++    const CombatSnapshot& snapshot,
++    float width,
++    float height) noexcept {
++    for (const HazardSnapshot& hazard : snapshot.hazards) {
++        const HazardVisualMode mode = hazard_visual_mode(hazard);
++        if (mode == HazardVisualMode::hidden) {
++            continue;
++        }
++        const ScreenProjection projected = project_hazard_center(
++            hazard, width, height);
++        const float radius = std::max(9.0F, hazard.radius * 58.0F)
++            * projected.scale;
++        const Color color = mode == HazardVisualMode::telegraph
++            ? Color{255, 190, 76, 230} : Color{190, 73, 229, 150};
++        if (mode == HazardVisualMode::active) {
++            DrawEllipse(static_cast<int>(projected.x),
++                static_cast<int>(projected.ground_y), radius, radius * 0.36F,
++                color);
++        }
++        DrawEllipseLines(static_cast<int>(projected.x),
++            static_cast<int>(projected.ground_y), radius, radius * 0.36F,
++            color);
++    }
++}
++
++void draw_projectiles(
++    const CombatSnapshot& snapshot,
++    float width,
++    float height,
++    dungeon::DungeonElement ecology) noexcept {
++    const Color color = to_color(monster_ecology_color(ecology));
++    for (const ProjectileSnapshot& projectile : snapshot.projectiles) {
++        if (!projectile.active) {
++            continue;
++        }
++        const ScreenProjection projected = project_projectile_position(
++            projectile, width, height);
++        const float radius = std::max(3.0F, projectile.radius * 22.0F)
++            * projected.scale;
++        DrawCircle(static_cast<int>(projected.x), static_cast<int>(projected.y),
++            radius, color);
++        DrawCircleLines(static_cast<int>(projected.x), static_cast<int>(projected.y),
++            radius + 2.0F, Color{244, 248, 255, 235});
++    }
++}
++
++void draw_monster_warning(
++    const MonsterSnapshot& monster,
++    Vec3 position,
++    dungeon::DungeonElement ecology,
++    float width,
++    float height) noexcept {
++    const MonsterVisual visual = monster_visual(
++        monster.id, monster.ai_phase, ecology);
++    if (visual.warning_mode == MonsterWarningMode::none) {
++        return;
++    }
++    const ScreenProjection projected = project_combat_position(
++        position, width, height);
++    const Color warning = to_color(visual.warning);
++    const float size = 34.0F * projected.scale;
++    if (visual.shape == MonsterShapeId::charger
++        || visual.shape == MonsterShapeId::dasher) {
++        const ScreenProjection target = project_combat_position(
++            monster.attack_target_position, width, height);
++        DrawLineEx({projected.x, projected.ground_y - 18.0F * projected.scale},
++            {target.x, target.ground_y - 18.0F * target.scale},
++            visual.warning_mode == MonsterWarningMode::active ? 5.0F : 2.0F,
++            warning);
++        return;
++    }
++    if (visual.shape == MonsterShapeId::hazard_caster) {
++        const ScreenProjection target = project_combat_position(
++            monster.attack_target_position, width, height);
++        DrawEllipseLines(static_cast<int>(target.x),
++            static_cast<int>(target.ground_y), size * 1.5F, size * 0.55F,
++            warning);
++        return;
++    }
++    DrawCircleLines(static_cast<int>(projected.x),
++        static_cast<int>(projected.ground_y - size), size, warning);
++}
++
++void draw_monster_silhouette(
++    const MonsterSnapshot& monster,
++    Vec3 position,
++    dungeon::DungeonElement ecology,
++    float width,
++    float height,
++    const CombatFeedback& feedback,
++    std::size_t monster_index) noexcept {
++    const ScreenProjection projected = project_combat_position(
++        position, width, height);
++    const MonsterVisual visual = monster_visual(
++        monster.id, monster.ai_phase, ecology);
++    Color body = to_color(visual.body);
++    if (feedback.target_flash_seconds(monster_index) > 0.0F) {
++        body = Color{255, 249, 220, 255};
++    }
++    const Color accent = to_color(visual.accent);
++    const float scale = projected.scale;
++    const float x = projected.x;
++    const float y = projected.ground_y;
++    switch (visual.shape) {
++    case MonsterShapeId::bomber:
++        DrawCircle(static_cast<int>(x), static_cast<int>(y - 43.0F * scale),
++            27.0F * scale, body);
++        DrawCircleLines(static_cast<int>(x), static_cast<int>(y - 43.0F * scale),
++            31.0F * scale, accent);
++        DrawLineEx({x - 14.0F * scale, y - 70.0F * scale},
++            {x + 16.0F * scale, y - 82.0F * scale}, 3.0F * scale, accent);
++        break;
++    case MonsterShapeId::charger:
++        DrawRectangleRounded({x - 22.0F * scale, y - 78.0F * scale,
++            44.0F * scale, 78.0F * scale}, 0.12F, 5, body);
++        DrawLineEx({x - 8.0F * scale, y - 54.0F * scale},
++            {x + 45.0F * scale, y - 76.0F * scale}, 6.0F * scale, accent);
++        break;
++    case MonsterShapeId::bulwark:
++        DrawRectangleRounded({x - 34.0F * scale, y - 86.0F * scale,
++            68.0F * scale, 86.0F * scale}, 0.12F, 5, body);
++        DrawRectangleLinesEx({x + 18.0F * scale, y - 66.0F * scale,
++            18.0F * scale, 52.0F * scale}, 3.0F * scale, accent);
++        break;
++    case MonsterShapeId::support:
++        DrawCircle(static_cast<int>(x), static_cast<int>(y - 44.0F * scale),
++            25.0F * scale, body);
++        DrawLineEx({x - 22.0F * scale, y - 44.0F * scale},
++            {x + 22.0F * scale, y - 44.0F * scale}, 5.0F * scale, accent);
++        DrawLineEx({x, y - 66.0F * scale}, {x, y - 22.0F * scale},
++            5.0F * scale, accent);
++        if (monster.shield > 0) {
++            DrawCircleLines(static_cast<int>(x),
++                static_cast<int>(y - 44.0F * scale), 33.0F * scale, accent);
++        }
++        break;
++    case MonsterShapeId::shooter:
++        DrawRectangleRounded({x - 21.0F * scale, y - 70.0F * scale,
++            42.0F * scale, 70.0F * scale}, 0.16F, 5, body);
++        DrawLineEx({x, y - 55.0F * scale}, {x + 38.0F * scale, y - 55.0F * scale},
++            6.0F * scale, accent);
++        break;
++    case MonsterShapeId::dasher:
++        DrawTriangle({x + 30.0F * scale, y - 39.0F * scale},
++            {x - 27.0F * scale, y - 72.0F * scale},
++            {x - 27.0F * scale, y - 8.0F * scale}, body);
++        DrawLineEx({x - 26.0F * scale, y - 39.0F * scale},
++            {x + 24.0F * scale, y - 39.0F * scale}, 4.0F * scale, accent);
++        break;
++    case MonsterShapeId::chaser:
++        DrawTriangle({x, y - 82.0F * scale}, {x - 27.0F * scale, y},
++            {x + 27.0F * scale, y}, body);
++        DrawLineEx({x - 25.0F * scale, y - 33.0F * scale},
++            {x - 43.0F * scale, y - 10.0F * scale}, 4.0F * scale, accent);
++        DrawLineEx({x + 25.0F * scale, y - 33.0F * scale},
++            {x + 43.0F * scale, y - 10.0F * scale}, 4.0F * scale, accent);
++        break;
++    case MonsterShapeId::hazard_caster:
++        DrawRectangleRounded({x - 20.0F * scale, y - 73.0F * scale,
++            40.0F * scale, 73.0F * scale}, 0.20F, 5, body);
++        DrawLineEx({x + 12.0F * scale, y - 15.0F * scale},
++            {x + 25.0F * scale, y - 84.0F * scale}, 4.0F * scale, accent);
++        DrawCircleLines(static_cast<int>(x + 25.0F * scale),
++            static_cast<int>(y - 88.0F * scale), 8.0F * scale, accent);
++        break;
++    }
++    const float bar_width = 54.0F * scale;
++    draw_bar(x - bar_width * 0.5F, y - 102.0F * scale, bar_width,
++        monster.max_hp <= 0 ? 0.0F
++            : static_cast<float>(monster.hp) / static_cast<float>(monster.max_hp),
++        Color{78, 219, 120, 255});
++    if (monster.max_shield > 0) {
++        draw_bar(x - bar_width * 0.5F, y - 95.0F * scale, bar_width,
++            static_cast<float>(monster.shield) / static_cast<float>(monster.max_shield),
++            accent);
++    }
++    DrawText(visual.role_label, static_cast<int>(x - bar_width * 0.5F),
++        static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
++    DrawText(monster_phase_name(monster.ai_phase),
++        static_cast<int>(x - bar_width * 0.5F), static_cast<int>(y + 19.0F),
++        10, Color{184, 196, 213, 220});
++}
++
+ void draw_debug_volumes(
+     const CombatSnapshot& snapshot,
+     float width,
+     float height) noexcept {
+     if (const AttackDefinition* definition =
+             find_attack_definition(snapshot.player.active_attack)) {
+         const Aabb attack_box = make_world_aabb(
+             definition->local_hitbox,
+             snapshot.player.position,
+             snapshot.player.facing);
+@@ -396,23 +617,26 @@ void draw_debug_volumes(
+             Color{90, 190, 255, 190},
+             "Assist");
+         draw_projected_aabb(
+             attack_box,
+             width,
+             height,
+             Color{255, 88, 184, 230},
+             "Attack");
+     }
+ 
+-    for (const DummySnapshot& dummy : snapshot.dummies) {
++    for (const MonsterSnapshot& monster : snapshot.monsters) {
++        if (!monster_visible(monster)) {
++            continue;
++        }
+         draw_projected_aabb(
+-            make_dummy_hurtbox(dummy.kind, dummy.position),
++            make_dummy_hurtbox(monster.kind, monster.position),
+             width,
+             height,
+             Color{94, 255, 173, 210},
+             "Hurt");
+     }
+ }
+ 
+ }  // namespace
+ 
+ DoorRenderDecision door_render_decision(
+@@ -471,151 +695,110 @@ void CombatRenderer::draw(
+     draw_doors(current, width, height);
+     draw_hole(current);
+ 
+     if (current.combat.has_value()) {
+         const CombatSnapshot& current_combat = *current.combat;
+         const CombatSnapshot& previous_combat =
+             can_interpolate_room(previous, current)
+             ? *previous.combat
+             : current_combat;
+ 
+-        std::array<Vec3, 4> positions{};
+-        positions[0] = interpolate(
+-            previous_combat.player.position,
+-            current_combat.player.position,
+-            alpha);
+-        for (std::size_t index = 0; index < kDummyCount; ++index) {
+-            positions[index + 1] = interpolate(
+-                previous_combat.dummies[index].position,
+-                current_combat.dummies[index].position,
+-                alpha);
++        std::array<RenderActor, kMonsterCapacity + 1> draw_items{};
++        std::size_t draw_count = 0;
++        draw_items[draw_count++] = {interpolate(
++            previous_combat.player.position, current_combat.player.position,
++            alpha), 0U, true};
++        for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
++            const MonsterSnapshot& monster = current_combat.monsters[index];
++            if (!monster_visible(monster)) {
++                continue;
++            }
++            Vec3 position = monster.position;
++            const MonsterSnapshot& previous_monster = previous_combat.monsters[index];
++            if (monster.id == previous_monster.id
++                && monster.generation == previous_monster.generation
++                && monster_visible(previous_monster)) {
++                position = interpolate(previous_monster.position, monster.position, alpha);
++            }
++            draw_items[draw_count++] = {position,
++                static_cast<std::uint8_t>(index), false};
++            draw_monster_warning(monster, position, current.ecology, width, height);
+         }
++        sort_render_actors(draw_items, draw_count);
+ 
+-        std::array<ActorDrawItem, 4> draw_items{{
+-            {positions[0], 0},
+-            {positions[1], 1},
+-            {positions[2], 2},
+-            {positions[3], 3},
+-        }};
+-        sort_actor_draw_items(draw_items);
+-
++        draw_hazards(current_combat, width, height);
+         draw_effects(feedback, width, height, false);
++        draw_projectiles(current_combat, width, height, current.ecology);
+ 
+-        for (const ActorDrawItem& item : draw_items) {
++        for (std::size_t index = 0; index < draw_count; ++index) {
++            const RenderActor& item = draw_items[index];
+             const Vec3 ground_position{item.position.x, item.position.y, 0.0F};
+             const ScreenProjection ground = project_combat_position(
+                 ground_position, width, height);
+-            const bool player = item.index == 0;
++            const bool player = item.player;
+             const float shadow_width = (player ? 48.0F : 54.0F) * ground.scale;
+             DrawEllipse(
+                 static_cast<int>(ground.x),
+                 static_cast<int>(ground.ground_y + 3.0F),
+                 shadow_width,
+                 10.0F * ground.scale,
+                 Color{3, 5, 8, 125});
+         }
+ 
+-        for (const ActorDrawItem& item : draw_items) {
++        for (std::size_t index = 0; index < draw_count; ++index) {
++            const RenderActor& item = draw_items[index];
+             const ScreenProjection projected = project_combat_position(
+                 item.position, width, height);
+-            if (item.index == 0) {
++            if (item.player) {
+                 const float body_width = 42.0F * projected.scale;
+                 const float body_height = 82.0F * projected.scale;
+                 DrawRectangleRounded(
+                     {projected.x - body_width * 0.5F,
+                      projected.y - body_height,
+                      body_width,
+                      body_height},
+                     0.20F,
+                     6,
+                     Color{65, 202, 223, 255});
+                 DrawTriangle(
+                     {projected.x,
+                      projected.y - body_height - 16.0F * projected.scale},
+                     {projected.x - 12.0F * projected.scale,
+                      projected.y - body_height + 5.0F * projected.scale},
+                     {projected.x + 12.0F * projected.scale,
+                      projected.y - body_height + 5.0F * projected.scale},
+                     Color{134, 237, 255, 255});
+                 continue;
+             }
+-
+-            const std::size_t dummy_index = item.index - 1;
+-            const DummySnapshot& dummy = current_combat.dummies[dummy_index];
+-            const float body_width = (dummy.kind == DummyKind::heavy ? 58.0F
+-                                     : dummy.kind == DummyKind::normal ? 48.0F
+-                                                                      : 40.0F)
+-                * projected.scale;
+-            const float body_height = (dummy.kind == DummyKind::heavy ? 96.0F
+-                                      : dummy.kind == DummyKind::normal ? 84.0F
+-                                                                       : 74.0F)
+-                * projected.scale;
+-            Color color = dummy_color(dummy.kind);
+-            if (feedback.target_flash_seconds(dummy_index) > 0.0F) {
+-                color = Color{255, 250, 220, 255};
+-            }
+-            DrawRectangleRounded(
+-                {projected.x - body_width * 0.5F,
+-                 projected.y - body_height,
+-                 body_width,
+-                 body_height},
+-                0.16F,
+-                6,
+-                color);
+-            const float bar_width = std::max(52.0F, body_width);
+-            draw_bar(
+-                projected.x - bar_width * 0.5F,
+-                projected.y - body_height - 13.0F,
+-                bar_width,
+-                dummy.max_hp == 0
+-                    ? 0.0F
+-                    : static_cast<float>(dummy.hp)
+-                        / static_cast<float>(dummy.max_hp),
+-                Color{70, 221, 113, 255});
+-            if (dummy.kind == DummyKind::heavy) {
+-                draw_bar(
+-                    projected.x - bar_width * 0.5F,
+-                    projected.y - body_height - 6.0F,
+-                    bar_width,
+-                    dummy.max_break == 0
+-                        ? 0.0F
+-                        : static_cast<float>(dummy.break_value)
+-                            / static_cast<float>(dummy.max_break),
+-                    dummy.armor == ArmorState::broken
+-                        ? Color{255, 105, 190, 255}
+-                        : Color{255, 167, 72, 255});
+-            }
+-            DrawText(
+-                reaction_name(dummy.reaction),
+-                static_cast<int>(projected.x - body_width * 0.5F),
+-                static_cast<int>(projected.y + 7.0F),
+-                12,
+-                Color{225, 230, 239, 230});
++            const std::size_t monster_index = item.monster_index;
++            draw_monster_silhouette(current_combat.monsters[monster_index],
++                item.position, current.ecology, width, height, feedback,
++                monster_index);
+         }
+ 
+         draw_effects(feedback, width, height, true);
+ 
+         if (draw_debug) {
+             draw_debug_volumes(current_combat, width, height);
+         }
+     }
+ 
+     EndMode2D();
+ 
+     const std::uint64_t room_ordinal = current.room_index
+             == (std::numeric_limits<std::uint64_t>::max)()
+         ? current.room_index
+         : current.room_index + 1U;
+     const bool doors_open = current.phase == dungeon::RoomPhase::cleared
+         || current.phase == dungeon::RoomPhase::awaiting_exit;
+     DrawRectangleRounded(
+-        {16.0F, 14.0F, 570.0F, draw_debug ? 470.0F : 210.0F},
++        {16.0F, 14.0F, 570.0F, draw_debug ? 600.0F : 330.0F},
+         0.06F,
+         6,
+         Color{7, 10, 17, 220});
+     const Color text{218, 226, 239, 255};
+     const Color accent{110, 207, 255, 255};
+     int y = 28;
+     DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend", 30, y, 16, accent);
+     y += 25;
+     DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit", 30, y, 16, accent);
+     y += 28;
+@@ -626,20 +809,54 @@ void CombatRenderer::draw(
+             static_cast<unsigned long long>(room_ordinal)),
+         30, y, 16, text);
+     y += 23;
+     DrawText(
+         TextFormat("Ecology %s  F/W/L/C bias %u/%u/%u/%u",
+             ecology_name(current.ecology),
+             current.biases[0], current.biases[1], current.biases[2],
+             current.biases[3]),
+         30, y, 16, text);
+     y += 23;
++    if (current.combat.has_value()) {
++        const CombatSnapshot& combat_state = *current.combat;
++        DrawText(TextFormat("HP %d/%d", combat_state.player.hp,
++            combat_state.player.max_hp), 30, y, 16, text);
++        draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
++            player_hp_ratio(combat_state.player), Color{77, 215, 127, 255});
++        y += 23;
++        const unsigned wave_current = current.wave_count == 0U ? 0U
++            : static_cast<unsigned>(current.wave_index) + 1U;
++        DrawText(TextFormat("Wave %u/%u  Budget %u/%u  Targets %u",
++            wave_current, static_cast<unsigned>(current.wave_count),
++            static_cast<unsigned>(current.encounter.current_wave_budget),
++            static_cast<unsigned>(current.encounter.total_budget),
++            static_cast<unsigned>(current.remaining_targets)),
++            30, y, 16, text);
++        y += 23;
++        DrawText(TextFormat("Active M/P/H %u/%u/%u",
++            static_cast<unsigned>(combat_state.monster_count),
++            static_cast<unsigned>(combat_state.projectile_count),
++            static_cast<unsigned>(combat_state.hazard_count)),
++            30, y, 16, text);
++        y += 23;
++        DrawText(TextFormat("Saturation P/H %u/%u  Invalid owner P/H %u/%u",
++            combat_state.diagnostics.projectile_saturation_count,
++            combat_state.diagnostics.hazard_saturation_count,
++            combat_state.diagnostics.projectile_invalid_owner_count,
++            combat_state.diagnostics.hazard_invalid_owner_count),
++            30, y, 16, text);
++        y += 23;
++    } else {
++        DrawText("HP / wave / encounter diagnostics unavailable", 30, y, 16,
++            Color{255, 151, 117, 255});
++        y += 23;
++    }
+     DrawText(TextFormat("ABYSS %s  Hole %s  Autosave %s",
+         current.is_abyss ? "YES" : "NO",
+         current.has_hole ? (current.phase == dungeon::RoomPhase::committing
+                 ? "SAVING" : doors_open ? "READY" : "SEALED") : "NONE",
+         save_indicator_label(runtime_status.indicator)), 30, y, 16,
+         runtime_status.indicator == SaveIndicator::error
+             ? Color{255, 120, 120, 255} : text);
+ 
+     if (draw_debug) {
+         y += 25;
+diff --git a/src/platform/raylib/combat_view_math.cpp b/src/platform/raylib/combat_view_math.cpp
+index aedcffc..6f54839 100644
+--- a/src/platform/raylib/combat_view_math.cpp
++++ b/src/platform/raylib/combat_view_math.cpp
+@@ -46,11 +46,116 @@ void sort_actor_draw_items(
+         std::size_t insertion = index;
+         while (insertion > 0
+                && actor_precedes(value, items[insertion - 1])) {
+             items[insertion] = items[insertion - 1];
+             --insertion;
+         }
+         items[insertion] = value;
+     }
+ }
+ 
++Rgba8 monster_ecology_color(dungeon::DungeonElement ecology) noexcept {
++    switch (ecology) {
++    case dungeon::DungeonElement::fire: return {236U, 92U, 54U, 255U};
++    case dungeon::DungeonElement::water: return {64U, 156U, 236U, 255U};
++    case dungeon::DungeonElement::lightning: return {236U, 218U, 72U, 255U};
++    case dungeon::DungeonElement::chaos: return {154U, 76U, 210U, 255U};
++    }
++    return {154U, 76U, 210U, 255U};
++}
++
++MonsterVisual monster_visual(
++    combat::MonsterId id,
++    combat::MonsterAiPhase phase,
++    dungeon::DungeonElement ecology) noexcept {
++    MonsterVisual visual{};
++    visual.accent = monster_ecology_color(ecology);
++    visual.warning = {255U, 106U, 92U, 255U};
++    switch (id) {
++    case combat::MonsterId::fire_bomber:
++        visual = {{195U, 65U, 54U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::bomber, "BOMBER", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::fire_charger:
++        visual = {{173U, 79U, 49U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::charger, "CHARGER", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::water_bulwark:
++        visual = {{54U, 117U, 173U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::bulwark, "BULWARK", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::water_support:
++        visual = {{72U, 142U, 190U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::support, "SUPPORT", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::lightning_shooter:
++        visual = {{191U, 171U, 58U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::shooter, "SHOOTER", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::lightning_dasher:
++        visual = {{209U, 188U, 65U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::dasher, "DASHER", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::chaos_chaser:
++        visual = {{121U, 67U, 173U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::chaser, "CHASER", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::chaos_hazard:
++        visual = {{145U, 70U, 183U, 255U}, visual.accent, visual.warning,
++            MonsterShapeId::hazard_caster, "HAZARD", MonsterWarningMode::none};
++        break;
++    case combat::MonsterId::count:
++        break;
++    }
++
++    const bool priority = id == combat::MonsterId::fire_bomber
++        || id == combat::MonsterId::fire_charger
++        || id == combat::MonsterId::lightning_dasher
++        || id == combat::MonsterId::chaos_hazard;
++    if (priority && phase == combat::MonsterAiPhase::telegraph) {
++        visual.warning_mode = MonsterWarningMode::telegraph;
++    } else if (priority && phase == combat::MonsterAiPhase::active) {
++        visual.warning_mode = MonsterWarningMode::active;
++    }
++    return visual;
++}
++
++bool monster_visible(const combat::MonsterSnapshot& monster) noexcept {
++    return monster.active
++        && monster.ai_phase != combat::MonsterAiPhase::defeated;
++}
++
++float player_hp_ratio(const combat::PlayerSnapshot& player) noexcept {
++    if (player.max_hp <= 0) {
++        return 0.0F;
++    }
++    return std::clamp(static_cast<float>(player.hp)
++            / static_cast<float>(player.max_hp),
++        0.0F, 1.0F);
++}
++
++HazardVisualMode hazard_visual_mode(
++    const combat::HazardSnapshot& hazard) noexcept {
++    if (!hazard.active) {
++        return HazardVisualMode::hidden;
++    }
++    return hazard.telegraph_ticks != 0U
++        ? HazardVisualMode::telegraph
++        : hazard.active_ticks != 0U
++            ? HazardVisualMode::active : HazardVisualMode::hidden;
++}
++
++ScreenProjection project_projectile_position(
++    const combat::ProjectileSnapshot& projectile,
++    float width,
++    float height) noexcept {
++    return project_combat_position(projectile.position, width, height);
++}
++
++ScreenProjection project_hazard_center(
++    const combat::HazardSnapshot& hazard,
++    float width,
++    float height) noexcept {
++    return project_combat_position(hazard.center, width, height);
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_view_math.hpp b/src/platform/raylib/combat_view_math.hpp
+index 2ba1449..307d176 100644
+--- a/src/platform/raylib/combat_view_math.hpp
++++ b/src/platform/raylib/combat_view_math.hpp
+@@ -1,30 +1,84 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
++#include "dungeon_view_math.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ struct ScreenProjection final {
+     float x{};
+     float y{};
+     float ground_y{};
+     float scale{};
+ };
+ 
+ struct ActorDrawItem final {
+     combat::Vec3 position{};
+     std::uint8_t index{};
+ };
+ 
++enum class MonsterShapeId : std::uint8_t {
++    bomber,
++    charger,
++    bulwark,
++    support,
++    shooter,
++    dasher,
++    chaser,
++    hazard_caster,
++};
++
++enum class MonsterWarningMode : std::uint8_t {
++    none,
++    telegraph,
++    active,
++};
++
++enum class HazardVisualMode : std::uint8_t {
++    hidden,
++    telegraph,
++    active,
++};
++
++struct MonsterVisual final {
++    Rgba8 body{};
++    Rgba8 accent{};
++    Rgba8 warning{};
++    MonsterShapeId shape{MonsterShapeId::chaser};
++    const char* role_label{"CHASER"};
++    MonsterWarningMode warning_mode{MonsterWarningMode::none};
++};
++
+ [[nodiscard]] ScreenProjection project_combat_position(
+     combat::Vec3 position,
+     float width,
+     float height) noexcept;
+ 
+ void sort_actor_draw_items(
+     std::array<ActorDrawItem, 4>& items) noexcept;
+ 
++[[nodiscard]] Rgba8 monster_ecology_color(
++    dungeon::DungeonElement ecology) noexcept;
++[[nodiscard]] MonsterVisual monster_visual(
++    combat::MonsterId id,
++    combat::MonsterAiPhase phase,
++    dungeon::DungeonElement ecology) noexcept;
++[[nodiscard]] bool monster_visible(
++    const combat::MonsterSnapshot& monster) noexcept;
++[[nodiscard]] float player_hp_ratio(
++    const combat::PlayerSnapshot& player) noexcept;
++[[nodiscard]] HazardVisualMode hazard_visual_mode(
++    const combat::HazardSnapshot& hazard) noexcept;
++[[nodiscard]] ScreenProjection project_projectile_position(
++    const combat::ProjectileSnapshot& projectile,
++    float width,
++    float height) noexcept;
++[[nodiscard]] ScreenProjection project_hazard_center(
++    const combat::HazardSnapshot& hazard,
++    float width,
++    float height) noexcept;
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/dungeon_view_math.cpp b/src/platform/raylib/dungeon_view_math.cpp
+index e095818..6c15d12 100644
+--- a/src/platform/raylib/dungeon_view_math.cpp
++++ b/src/platform/raylib/dungeon_view_math.cpp
+@@ -139,20 +139,22 @@ bool dungeon_event_clears_transients(
+     return kind == dungeon::DungeonEventKind::room_destroyed
+         || kind == dungeon::DungeonEventKind::room_reset;
+ }
+ 
+ const char* room_phase_label(dungeon::RoomPhase phase) noexcept {
+     switch (phase) {
+     case dungeon::RoomPhase::locked:
+         return "LOCKED";
+     case dungeon::RoomPhase::combat:
+         return "COMBAT";
++    case dungeon::RoomPhase::wave_delay:
++        return "WAVE DELAY";
+     case dungeon::RoomPhase::cleared:
+         return "CLEARED";
+     case dungeon::RoomPhase::awaiting_exit:
+         return "AWAITING EXIT";
+     case dungeon::RoomPhase::committing:
+         return "COMMITTING";
+     case dungeon::RoomPhase::transitioning:
+         return "TRANSITIONING";
+     case dungeon::RoomPhase::faulted:
+         return "FAULTED";
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 9974a09..a1be6d1 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,16 +1,17 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         platform_test_main.cpp
+         combat_key_bindings_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
++        monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
+         host_launch_options_tests.cpp
+         dungeon_runtime_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+     add_test(NAME platform.view_math COMMAND arpg_platform_tests)
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+index 18de5ba..cc7c390 100644
+--- a/tests/platform/dungeon_runtime_tests.cpp
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -1,12 +1,13 @@
+ #include "test_framework.hpp"
+ 
++#include "../dungeon/dungeon_test_support.hpp"
+ #include "dungeon_runtime.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ #include <filesystem>
+ #include <fstream>
+ #include <string>
+ 
+ namespace {
+ 
+@@ -71,41 +72,24 @@ bool clear_and_await(dungeon::DungeonSession& session) noexcept {
+     for (int tick = 0; tick < 4096; ++tick) {
+         const auto snapshot = session.snapshot();
+         if (snapshot.phase == dungeon::RoomPhase::awaiting_exit) {
+             return true;
+         }
+         if (snapshot.phase == dungeon::RoomPhase::cleared) {
+             session.tick({});
+             drain(session);
+             continue;
+         }
+-        combat::MovementInput movement{};
+-        if (snapshot.phase == dungeon::RoomPhase::combat
+-            && snapshot.combat.has_value()) {
+-            const auto& combat = *snapshot.combat;
+-            for (const auto& target : combat.dummies) {
+-                if (target.hp <= 0) {
+-                    continue;
+-                }
+-                const float dx = target.position.x - combat.player.position.x;
+-                const float dy = target.position.y - combat.player.position.y;
+-                movement.x = dx > 1.45F ? 1 : (dx < -1.45F ? -1 : 0);
+-                movement.y = dy > 0.30F ? 1 : (dy < -0.30F ? -1 : 0);
+-                if (dx <= 1.75F && dx >= -1.75F
+-                    && dy <= 0.60F && dy >= -0.60F
+-                    && combat.player.active_attack == combat::AttackId::none) {
+-                    static_cast<void>(session.queue_action(combat::Action::light));
+-                }
+-                break;
+-            }
++        if (snapshot.phase == dungeon::RoomPhase::combat) {
++            arpg::test::force_defeat_current_wave(session);
+         }
+-        session.tick(movement);
++        session.tick({});
+         drain(session);
+     }
+     return false;
+ }
+ 
+ bool drive_door_pending(dungeon::DungeonSession& session) noexcept {
+     if (!clear_and_await(session)) {
+         return false;
+     }
+     combat::MovementInput movement{1, 0};
+diff --git a/tests/platform/monster_view_tests.cpp b/tests/platform/monster_view_tests.cpp
+new file mode 100644
+index 0000000..86fc651
+--- /dev/null
++++ b/tests/platform/monster_view_tests.cpp
+@@ -0,0 +1,149 @@
++#include "test_framework.hpp"
++
++#include "combat_audio.hpp"
++#include "combat_view_math.hpp"
++#include "dungeon_view_math.hpp"
++
++#include <array>
++#include <cstring>
++
++namespace {
++
++using arpg::combat::HazardSnapshot;
++using arpg::combat::MonsterAiPhase;
++using arpg::combat::MonsterId;
++using arpg::combat::MonsterSnapshot;
++using arpg::combat::PlayerSnapshot;
++using arpg::combat::ProjectileSnapshot;
++using arpg::combat::Vec3;
++using arpg::dungeon::DungeonElement;
++using arpg::platform::HazardVisualMode;
++using arpg::platform::MonsterWarningMode;
++using arpg::platform::MonsterVisual;
++
++bool same_color(arpg::platform::Rgba8 lhs, arpg::platform::Rgba8 rhs) noexcept {
++    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a;
++}
++
++arpg::test::Failure all_monster_roles_have_unique_labels_and_ecology_accent() noexcept {
++    constexpr std::array<MonsterId, 8> kIds{{
++        MonsterId::fire_bomber,
++        MonsterId::fire_charger,
++        MonsterId::water_bulwark,
++        MonsterId::water_support,
++        MonsterId::lightning_shooter,
++        MonsterId::lightning_dasher,
++        MonsterId::chaos_chaser,
++        MonsterId::chaos_hazard,
++    }};
++    std::array<const char*, kIds.size()> labels{};
++    for (std::size_t index = 0; index < kIds.size(); ++index) {
++        const MonsterVisual visual = arpg::platform::monster_visual(
++            kIds[index], MonsterAiPhase::move, DungeonElement::lightning);
++        ARPG_REQUIRE(visual.role_label != nullptr);
++        ARPG_REQUIRE(same_color(visual.accent,
++            arpg::platform::monster_ecology_color(DungeonElement::lightning)));
++        labels[index] = visual.role_label;
++        for (std::size_t prior = 0; prior < index; ++prior) {
++            ARPG_REQUIRE(std::strcmp(labels[index], labels[prior]) != 0);
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure priority_phases_expose_warning_visuals() noexcept {
++    constexpr std::array<MonsterId, 4> kPriorityIds{{
++        MonsterId::fire_bomber,
++        MonsterId::fire_charger,
++        MonsterId::lightning_dasher,
++        MonsterId::chaos_hazard,
++    }};
++    for (const MonsterId id : kPriorityIds) {
++        ARPG_REQUIRE(arpg::platform::monster_visual(
++            id, MonsterAiPhase::telegraph, DungeonElement::fire).warning_mode
++            == MonsterWarningMode::telegraph);
++        ARPG_REQUIRE(arpg::platform::monster_visual(
++            id, MonsterAiPhase::active, DungeonElement::fire).warning_mode
++            == MonsterWarningMode::active);
++    }
++    ARPG_REQUIRE(arpg::platform::monster_visual(
++        MonsterId::water_bulwark, MonsterAiPhase::move,
++        DungeonElement::water).warning_mode == MonsterWarningMode::none);
++    return {};
++}
++
++arpg::test::Failure inactive_monsters_are_hidden_and_player_hp_is_clamped() noexcept {
++    MonsterSnapshot monster{};
++    ARPG_REQUIRE(!arpg::platform::monster_visible(monster));
++    monster.active = true;
++    ARPG_REQUIRE(arpg::platform::monster_visible(monster));
++    monster.ai_phase = MonsterAiPhase::defeated;
++    ARPG_REQUIRE(!arpg::platform::monster_visible(monster));
++
++    PlayerSnapshot player{};
++    player.max_hp = 100;
++    player.hp = -10;
++    ARPG_REQUIRE(arpg::test::near(arpg::platform::player_hp_ratio(player), 0.0, 1.0e-4));
++    player.hp = 250;
++    ARPG_REQUIRE(arpg::test::near(arpg::platform::player_hp_ratio(player), 1.0, 1.0e-4));
++    player.max_hp = 0;
++    ARPG_REQUIRE(arpg::test::near(arpg::platform::player_hp_ratio(player), 0.0, 1.0e-4));
++    return {};
++}
++
++arpg::test::Failure hazard_modes_and_projected_effects_are_explicit() noexcept {
++    HazardSnapshot hazard{};
++    ARPG_REQUIRE(arpg::platform::hazard_visual_mode(hazard)
++        == HazardVisualMode::hidden);
++    hazard.active = true;
++    hazard.center = Vec3{1.5F, -0.5F, 0.0F};
++    hazard.telegraph_ticks = 12;
++    ARPG_REQUIRE(arpg::platform::hazard_visual_mode(hazard)
++        == HazardVisualMode::telegraph);
++    hazard.telegraph_ticks = 0;
++    hazard.active_ticks = 18;
++    ARPG_REQUIRE(arpg::platform::hazard_visual_mode(hazard)
++        == HazardVisualMode::active);
++
++    ProjectileSnapshot projectile{};
++    projectile.position = Vec3{2.0F, 1.0F, 0.5F};
++    const auto projected_projectile = arpg::platform::project_projectile_position(
++        projectile, 1280.0F, 720.0F);
++    const auto direct = arpg::platform::project_combat_position(
++        projectile.position, 1280.0F, 720.0F);
++    ARPG_REQUIRE(arpg::test::near(projected_projectile.x, direct.x, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(projected_projectile.y, direct.y, 1.0e-4));
++    const auto projected_hazard = arpg::platform::project_hazard_center(
++        hazard, 1280.0F, 720.0F);
++    ARPG_REQUIRE(arpg::test::near(projected_hazard.x,
++        arpg::platform::project_combat_position(hazard.center, 1280.0F, 720.0F).x,
++        1.0e-4));
++    return {};
++}
++
++arpg::test::Failure monster_attack_audio_emits_one_low_layer() noexcept {
++    arpg::combat::CombatEvent event{};
++    event.kind = arpg::combat::CombatEventKind::player_hit;
++    ARPG_REQUIRE(arpg::platform::route_audio_cues(event)
++        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::low));
++    event.kind = arpg::combat::CombatEventKind::player_hurt_started;
++    ARPG_REQUIRE(arpg::platform::route_audio_cues(event) == 0);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"unique monster labels and ecology accent",
++     &all_monster_roles_have_unique_labels_and_ecology_accent},
++    {"priority monster warnings", &priority_phases_expose_warning_visuals},
++    {"inactive slots and player HP clamp",
++     &inactive_monsters_are_hidden_and_player_hp_is_clamped},
++    {"hazard modes and effect projection",
++     &hazard_modes_and_projected_effects_are_explicit},
++    {"monster attack audio aggregation", &monster_attack_audio_emits_one_low_layer},
++};
++
++}  // namespace
++
++arpg::test::TestSuite monster_view_suite() noexcept {
++    return arpg::test::make_suite("monster_view", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 00c48e2..e95a2d0 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -1,21 +1,23 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
++arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite combat_key_bindings_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
++        monster_view_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 33, "platform");
++    return arpg::test::run_suites(suites, 38, "platform");
+ }

@@ -1,0 +1,137 @@
+# Review package: 571f6e7..8e1478fdc189aae517e226a04a97a6bb9b39470d
+
+## Commits
+8e1478f fix: unify combat test access
+
+## Files changed
+ tests/combat/combat_test_support.hpp  | 25 +++++++++++++++++++++++++
+ tests/combat/monster_ranged_tests.cpp | 19 -------------------
+ tests/combat/player_health_tests.cpp  | 14 --------------
+ 3 files changed, 25 insertions(+), 33 deletions(-)
+
+## Diff
+diff --git a/tests/combat/combat_test_support.hpp b/tests/combat/combat_test_support.hpp
+index df606e9..d15a49e 100644
+--- a/tests/combat/combat_test_support.hpp
++++ b/tests/combat/combat_test_support.hpp
+@@ -1,16 +1,41 @@
+ #pragma once
+ 
+ #include "combat/combat_world.hpp"
+ 
++#include <cstddef>
++
+ namespace arpg::test {
+ 
++struct CombatWorldTestAccess final {
++    static void apply_damage(
++        combat::CombatWorld& world,
++        int damage,
++        combat::Vec3 source_position,
++        combat::FeedbackLevel feedback) noexcept {
++        world.apply_player_damage(damage, source_position, feedback);
++    }
++
++    static void fill_projectiles(
++        combat::CombatWorld& world,
++        combat::MonsterHandle owner) noexcept {
++        for (std::size_t index = 0; index < combat::kProjectileCapacity;
++             ++index) {
++            static_cast<void>(world.spawn_projectile(
++                owner, combat::Vec3{}, combat::Vec3{0.01F, 0.0F, 0.0F},
++                1000U, 1, 0.1F));
++        }
++        static_cast<void>(world.spawn_projectile(
++            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F));
++    }
++};
++
+ inline void tick_n(
+     combat::CombatWorld& world,
+     int count,
+     combat::MovementInput movement = {}) noexcept {
+     for (int tick = 0; tick < count; ++tick) {
+         world.tick(movement);
+     }
+ }
+ 
+ [[nodiscard]] inline bool finish_attack(
+diff --git a/tests/combat/monster_ranged_tests.cpp b/tests/combat/monster_ranged_tests.cpp
+index b11db8e..dadf77e 100644
+--- a/tests/combat/monster_ranged_tests.cpp
++++ b/tests/combat/monster_ranged_tests.cpp
+@@ -1,37 +1,18 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ 
+ #include <cmath>
+ 
+-namespace arpg::test {
+-
+-struct CombatWorldTestAccess final {
+-    static void fill_projectiles(
+-        combat::CombatWorld& world,
+-        combat::MonsterHandle owner) noexcept {
+-        for (std::size_t index = 0; index < combat::kProjectileCapacity;
+-             ++index) {
+-            static_cast<void>(world.spawn_projectile(
+-                owner, combat::Vec3{}, combat::Vec3{0.01F, 0.0F, 0.0F},
+-                1000U, 1, 0.1F));
+-        }
+-        static_cast<void>(world.spawn_projectile(
+-            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F));
+-    }
+-};
+-
+-}  // namespace arpg::test
+-
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::tick_n;
+ 
+ CombatEncounterConfig ranged_encounter(
+     MonsterId id,
+     float monster_x,
+     float player_x = 0.0F) noexcept {
+     CombatEncounterConfig config{};
+diff --git a/tests/combat/player_health_tests.cpp b/tests/combat/player_health_tests.cpp
+index fed4d41..91ea326 100644
+--- a/tests/combat/player_health_tests.cpp
++++ b/tests/combat/player_health_tests.cpp
+@@ -1,32 +1,18 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ 
+ #include <cstddef>
+ 
+-namespace arpg::test {
+-
+-struct CombatWorldTestAccess final {
+-    static void apply_damage(
+-        combat::CombatWorld& world,
+-        int damage,
+-        combat::Vec3 source_position,
+-        combat::FeedbackLevel feedback) noexcept {
+-        world.apply_player_damage(damage, source_position, feedback);
+-    }
+-};
+-
+-}  // namespace arpg::test
+-
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::tick_n;
+ 
+ CombatEncounterConfig single_chaser_encounter() noexcept {
+     CombatEncounterConfig config{};
+     config.player_spawn = Vec3{0.0F, 0.0F, 0.0F};
+     config.initial_facing = Facing::right;
+     config.wave.spawn_count = 1U;
