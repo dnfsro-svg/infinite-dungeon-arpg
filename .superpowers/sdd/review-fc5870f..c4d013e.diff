@@ -1,0 +1,628 @@
+# Review package: fc5870f..c4d013e
+
+## Commits
+c4d013e feat: add stage 4 player health
+
+## Files changed
+ src/combat/combat_types.hpp          |  11 +++
+ src/combat/combat_world.cpp          |  82 +++++++++++++++++++--
+ src/combat/combat_world.hpp          |  12 +++-
+ tests/combat/CMakeLists.txt          |   3 +-
+ tests/combat/combat_test_main.cpp    |   4 +-
+ tests/combat/player_health_tests.cpp | 136 +++++++++++++++++++++++++++++++++++
+ 6 files changed, 240 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index e70b1c7..a9e79c9 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -1,16 +1,20 @@
+ #pragma once
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
++namespace arpg::test {
++struct CombatWorldTestAccess;
++}
++
+ namespace arpg::combat {
+ 
+ struct Vec3 final {
+     float x{};
+     float y{};
+     float z{};
+ };
+ 
+ struct Aabb final {
+     Vec3 minimum{};
+@@ -106,20 +110,23 @@ struct EncounterWave final {
+ 
+ enum class CombatEventKind : std::uint8_t {
+     swing,
+     hit,
+     impact_summary,
+     landing,
+     break_started,
+     defeated,
+     respawned,
+     reset,
++    player_hit,
++    player_hurt_started,
++    player_health_reset,
+ };
+ 
+ struct CombatEvent final {
+     CombatEventKind kind{};
+     std::uint64_t tick{};
+     AttackId attack{AttackId::none};
+     std::uint8_t target_index{0xFF};
+     std::uint8_t hit_count{};
+     FeedbackLevel feedback{};
+     Vec3 position{};
+@@ -208,20 +215,24 @@ struct PlayerSnapshot final {
+     Vec3 position{};
+     Vec3 velocity{};
+     Facing facing{Facing::right};
+     PlayerState state{PlayerState::idle};
+     AttackId active_attack{AttackId::none};
+     AttackPhase attack_phase{AttackPhase::finished};
+     std::uint16_t attack_elapsed_ticks{};
+     std::uint8_t combo_stage{};
+     std::uint16_t hit_stop_ticks{};
+     bool air_attack_available{true};
++    int hp{};
++    int max_hp{};
++    std::uint16_t hurt_ticks{};
++    std::uint16_t invulnerability_ticks{};
+ };
+ 
+ struct MonsterSnapshot final {
+     bool active{};
+     std::uint16_t generation{};
+     MonsterId id{MonsterId::chaos_chaser};
+     Vec3 spawn{};
+     Vec3 position{};
+     Vec3 velocity{};
+     DummyKind kind{DummyKind::light};
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 5d7c598..f954540 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -3,20 +3,23 @@
+ #include "combat/attack_catalog.hpp"
+ #include "combat/monster_catalog.hpp"
+ 
+ #include <array>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+ constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
+ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
++constexpr int kStage4PlayerMaxHp = 1000;
++constexpr std::uint16_t kPlayerHurtTicks = 12;
++constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
+ 
+ }  // namespace
+ 
+ CombatWorld::CombatWorld(CombatLabConfig config) noexcept
+     : legacy_config_(config), legacy_mode_(true) {
+     encounter_config_.player_spawn = config.player_spawn;
+     encounter_config_.initial_facing = config.initial_facing;
+     initialize_runtime();
+ }
+ 
+@@ -24,80 +27,92 @@ CombatWorld::CombatWorld(CombatEncounterConfig config) noexcept
+     : encounter_config_(config), legacy_mode_(false) {
+     initialize_runtime();
+ }
+ 
+ bool CombatWorld::queue_action(Action action) noexcept {
+     return input_buffer_.push(action);
+ }
+ 
+ void CombatWorld::tick(MovementInput movement) noexcept {
+     const bool player_frozen = player_.hit_stop_ticks != 0;
++    const bool player_hurt = player_.hurt_ticks != 0;
+     if (player_frozen) {
+         --player_.hit_stop_ticks;
+-    } else {
++    }
++    if (player_hurt) {
++        --player_.hurt_ticks;
++    }
++    if (!player_frozen && !player_hurt) {
+         simulate_player(movement);
+     }
+ 
++    if (player_.invulnerability_ticks != 0) {
++        --player_.invulnerability_ticks;
++    }
++
+     for (MonsterRuntime& monster : monsters_.slots_) {
+         if (!monster.active) {
+             continue;
+         }
+         const bool dummy_frozen = monster.hit_stop_ticks != 0;
+         if (dummy_frozen) {
+             --monster.hit_stop_ticks;
+         } else {
+             const std::size_t index = static_cast<std::size_t>(
+                 &monster - monsters_.slots_.data());
+             simulate_target(index);
+         }
+     }
+ 
+-    if (!player_frozen) {
++    if (!player_frozen && !player_hurt && player_.hurt_ticks == 0) {
+         resolve_attack_hits();
+     }
+ 
+-    input_buffer_.age(player_frozen);
++    input_buffer_.age(player_frozen || player_hurt);
+     ++tick_;
+ }
+ 
+ void CombatWorld::reset() noexcept {
+     initialize_runtime();
+ 
+     CombatEvent reset_event{};
+     reset_event.kind = CombatEventKind::reset;
+     reset_event.tick = 0;
+     reset_event.position = player_.position;
+     emit_event(reset_event);
+ }
+ 
+ void CombatWorld::initialize_runtime() noexcept {
+     initialize_player();
+     monsters_.clear();
+     if (legacy_mode_) {
+         initialize_legacy_monsters();
+     } else {
+-        static_cast<void>(load_wave(encounter_config_.wave));
++        static_cast<void>(load_wave(
++            encounter_config_.wave, encounter_config_.reset_player_health));
+     }
+ 
+     attack_ = AttackRuntime{};
+     input_buffer_.clear();
+     input_buffer_.reset_diagnostics();
+     while (events_.try_pop().has_value()) {
+     }
+     tick_ = 0;
+     event_overflow_count_ = 0;
+ }
+ 
+ void CombatWorld::initialize_player() noexcept {
+     player_ = PlayerRuntime{};
+     player_.position = encounter_config_.player_spawn;
+     player_.facing = encounter_config_.initial_facing;
++    player_.max_hp = kStage4PlayerMaxHp;
++    player_.hp = player_.max_hp;
+ }
+ 
+ void CombatWorld::initialize_legacy_monsters() noexcept {
+     for (std::size_t index = 0; index < kDummyCount; ++index) {
+         const auto handle = monsters_.spawn(
+             index == 0U ? MonsterId::fire_bomber
+                         : index == 1U ? MonsterId::fire_charger
+                                       : MonsterId::water_bulwark,
+             legacy_config_.dummy_spawns[index]);
+         if (!handle.has_value()) {
+@@ -109,21 +124,23 @@ void CombatWorld::initialize_legacy_monsters() noexcept {
+         }
+         monster->kind = static_cast<DummyKind>(index);
+         monster->max_hp = kDummyHitPoints[index];
+         monster->hp = monster->max_hp;
+         monster->max_break = kDummyBreakValues[index];
+         monster->break_value = monster->max_break;
+         monster->armor = index == 2U ? ArmorState::armored : ArmorState::none;
+     }
+ }
+ 
+-bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
++bool CombatWorld::load_wave(
++    const EncounterWave& wave,
++    bool reset_player_health) noexcept {
+     if (wave.spawn_count > kEncounterSpawnCapacity) {
+         return false;
+     }
+ 
+     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
+         if (monster_definition(wave.spawns[index].id) == nullptr) {
+             return false;
+         }
+     }
+ 
+@@ -136,21 +153,39 @@ bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
+             return false;
+         }
+     }
+     attack_ = AttackRuntime{};
+     input_buffer_.clear();
+     input_buffer_.reset_diagnostics();
+     while (events_.try_pop().has_value()) {
+     }
+     event_overflow_count_ = 0U;
+     encounter_config_.wave = wave;
++    encounter_config_.reset_player_health = reset_player_health;
+     legacy_mode_ = false;
++    if (reset_player_health) {
++        const bool health_changed = player_.hp != player_.max_hp
++                                 || player_.hurt_ticks != 0
++                                 || player_.invulnerability_ticks != 0;
++        player_.hp = player_.max_hp;
++        player_.hurt_ticks = 0;
++        player_.invulnerability_ticks = 0;
++
++        if (health_changed) {
++            CombatEvent health_reset{};
++            health_reset.kind = CombatEventKind::player_health_reset;
++            health_reset.tick = tick_;
++            health_reset.position = player_.position;
++            health_reset.value = player_.max_hp;
++            emit_event(health_reset);
++        }
++    }
+     return true;
+ }
+ 
+ std::size_t CombatWorld::active_monster_count() const noexcept {
+     return monsters_.active_count();
+ }
+ 
+ bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
+     if (!monsters_.destroy(handle)) {
+         return false;
+@@ -175,20 +210,24 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+         player_.state,
+         attack_.id,
+         attack_.id == AttackId::none
+             ? AttackPhase::finished
+             : attack_phase_at(
+                   *find_attack_definition(attack_.id), attack_.elapsed_ticks),
+         attack_.elapsed_ticks,
+         player_.combo_stage,
+         player_.hit_stop_ticks,
+         player_.air_attack_available,
++        player_.hp,
++        player_.max_hp,
++        player_.hurt_ticks,
++        player_.invulnerability_ticks,
+     };
+ 
+     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
+         const MonsterRuntime& dummy = monsters_.slots()[index];
+         result.monsters[index] = MonsterSnapshot{
+             dummy.active,
+             dummy.generation,
+             dummy.id,
+             dummy.spawn,
+             dummy.position,
+@@ -221,11 +260,44 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+ 
+     result.diagnostics = CombatDiagnostics{
+         input_buffer_.size(),
+         input_buffer_.expired_count(),
+         input_buffer_.overflow_count(),
+         event_overflow_count_,
+     };
+     return result;
+ }
+ 
++void CombatWorld::apply_player_damage(
++    int damage,
++    Vec3 source_position,
++    FeedbackLevel feedback) noexcept {
++    if (damage <= 0 || player_.invulnerability_ticks != 0) {
++        return;
++    }
++
++    player_.hp = damage >= player_.hp ? 1 : player_.hp - damage;
++    player_.hurt_ticks = kPlayerHurtTicks;
++    player_.invulnerability_ticks = kPlayerInvulnerabilityTicks;
++    player_.velocity.x = 0.0F;
++    player_.velocity.y = 0.0F;
++
++    CombatEvent hit{};
++    hit.kind = CombatEventKind::player_hit;
++    hit.tick = tick_;
++    hit.hit_count = 1;
++    hit.feedback = feedback;
++    hit.position = source_position;
++    hit.value = damage;
++    emit_event(hit);
++
++    CombatEvent hurt_started{};
++    hurt_started.kind = CombatEventKind::player_hurt_started;
++    hurt_started.tick = tick_;
++    hurt_started.hit_count = 1;
++    hurt_started.feedback = feedback;
++    hurt_started.position = source_position;
++    hurt_started.value = damage;
++    emit_event(hurt_started);
++}
++
+ }  // namespace arpg::combat
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index 307765d..273db6a 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -13,59 +13,69 @@
+ namespace arpg::combat {
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     void tick(MovementInput movement) noexcept;
+     void reset() noexcept;
+-    [[nodiscard]] bool load_wave(const EncounterWave& wave) noexcept;
++    [[nodiscard]] bool load_wave(
++        const EncounterWave& wave,
++        bool reset_player_health = true) noexcept;
+     [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_monster_count() const noexcept;
+     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+ 
+ private:
+     struct PlayerRuntime final {
+         Vec3 position{};
+         Vec3 velocity{};
+         Facing facing{Facing::right};
+         PlayerState state{PlayerState::idle};
+         std::uint8_t combo_stage{};
+         std::uint16_t hit_stop_ticks{};
+         bool air_attack_available{true};
++        int hp{};
++        int max_hp{};
++        std::uint16_t hurt_ticks{};
++        std::uint16_t invulnerability_ticks{};
+     };
+ 
+     struct AttackRuntime final {
+         AttackId id{AttackId::none};
+         std::uint16_t elapsed_ticks{};
+         bool connected{};
+         bool impact_event_emitted{};
+         std::array<bool, kMonsterCapacity> hit_targets{};
+     };
+ 
+     void simulate_player(MovementInput movement) noexcept;
+     void simulate_target(std::size_t index) noexcept;
+     void apply_dummy_impact(
+         std::size_t index,
+         const AttackDefinition& definition) noexcept;
+     void respawn_dummy(std::size_t index) noexcept;
+     void apply_attack_assist(const AttackDefinition& definition) noexcept;
+     void resolve_attack_hits() noexcept;
++    void apply_player_damage(
++        int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
+     void emit_event(const CombatEvent& event) noexcept;
+     void initialize_runtime() noexcept;
+ 
+     void initialize_player() noexcept;
+     void initialize_legacy_monsters() noexcept;
+ 
++    friend struct ::arpg::test::CombatWorldTestAccess;
++
+     CombatEncounterConfig encounter_config_{};
+     CombatLabConfig legacy_config_{};
+     bool legacy_mode_{true};
+     PlayerRuntime player_{};
+     MonsterPool monsters_{};
+     AttackRuntime attack_{};
+     InputBuffer input_buffer_{};
+     core::BoundedQueue<CombatEvent, 64> events_{};
+     std::uint64_t tick_{};
+     std::uint32_t event_overflow_count_{};
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index 5486f8f..3621e64 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -3,20 +3,21 @@ add_executable(arpg_combat_tests
+     combat_test_main.cpp
+     attack_catalog_tests.cpp
+     attack_state_tests.cpp
+     break_stress_tests.cpp
+     combat_config_tests.cpp
+     dummy_reaction_tests.cpp
+     hit_resolution_tests.cpp
+     input_buffer_tests.cpp
+     monster_catalog_tests.cpp
+     monster_pool_tests.cpp
+-    movement_jump_tests.cpp)
++    movement_jump_tests.cpp
++    player_health_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+ add_test(NAME combat.units COMMAND arpg_combat_tests)
+ set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 0b02200..9147c62 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -3,27 +3,29 @@
+ arpg::test::TestSuite attack_catalog_suite() noexcept;
+ arpg::test::TestSuite attack_state_suite() noexcept;
+ arpg::test::TestSuite break_stress_suite() noexcept;
+ arpg::test::TestSuite combat_config_suite() noexcept;
+ arpg::test::TestSuite dummy_reaction_suite() noexcept;
+ arpg::test::TestSuite input_buffer_suite() noexcept;
+ arpg::test::TestSuite movement_jump_suite() noexcept;
+ arpg::test::TestSuite hit_resolution_suite() noexcept;
+ arpg::test::TestSuite monster_catalog_suite() noexcept;
+ arpg::test::TestSuite monster_pool_suite() noexcept;
++arpg::test::TestSuite player_health_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+         attack_state_suite(),
+         break_stress_suite(),
+         combat_config_suite(),
+         dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
+         monster_catalog_suite(),
+         monster_pool_suite(),
++        player_health_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 42, "stage 4 task 3");
++    return arpg::test::run_suites(suites, 46, "stage 4 task 4");
+ }
+diff --git a/tests/combat/player_health_tests.cpp b/tests/combat/player_health_tests.cpp
+new file mode 100644
+index 0000000..fed4d41
+--- /dev/null
++++ b/tests/combat/player_health_tests.cpp
+@@ -0,0 +1,136 @@
++#include "test_framework.hpp"
++
++#include "combat_test_support.hpp"
++
++#include "combat/combat_world.hpp"
++
++#include <cstddef>
++
++namespace arpg::test {
++
++struct CombatWorldTestAccess final {
++    static void apply_damage(
++        combat::CombatWorld& world,
++        int damage,
++        combat::Vec3 source_position,
++        combat::FeedbackLevel feedback) noexcept {
++        world.apply_player_damage(damage, source_position, feedback);
++    }
++};
++
++}  // namespace arpg::test
++
++namespace {
++
++using namespace arpg::combat;
++using arpg::test::tick_n;
++
++CombatEncounterConfig single_chaser_encounter() noexcept {
++    CombatEncounterConfig config{};
++    config.player_spawn = Vec3{0.0F, 0.0F, 0.0F};
++    config.initial_facing = Facing::right;
++    config.wave.spawn_count = 1U;
++    config.wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::chaos_chaser, Vec3{1.0F, 0.0F, 0.0F}};
++    config.reset_player_health = true;
++    return config;
++}
++
++void drain_events(CombatWorld& world) noexcept {
++    while (world.try_pop_event().has_value()) {
++    }
++}
++
++arpg::test::Failure player_damage_clamps_at_one_and_uses_protection() noexcept {
++    CombatWorld world{single_chaser_encounter()};
++    drain_events(world);
++    const int max_hp = world.snapshot().player.max_hp;
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 350, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::light);
++    const int after_first = world.snapshot().player.hp;
++    ARPG_REQUIRE(after_first == max_hp - 350);
++    ARPG_REQUIRE(world.snapshot().player.hurt_ticks == 12);
++    ARPG_REQUIRE(world.snapshot().player.invulnerability_ticks == 30);
++
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 350, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == after_first);
++
++    tick_n(world, 30);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, max_hp, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);
++    ARPG_REQUIRE(world.snapshot().player.hp == 1);
++    return {};
++}
++
++arpg::test::Failure accepted_hit_emits_payload_and_hurt_started() noexcept {
++    CombatWorld world{single_chaser_encounter()};
++    drain_events(world);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 125, Vec3{1.25F, -0.5F, 0.0F}, FeedbackLevel::medium);
++
++    const auto hit = world.try_pop_event();
++    const auto hurt = world.try_pop_event();
++    ARPG_REQUIRE(hit.has_value());
++    ARPG_REQUIRE(hurt.has_value());
++    ARPG_REQUIRE(hit->kind == CombatEventKind::player_hit);
++    ARPG_REQUIRE(hit->value == 125);
++    ARPG_REQUIRE(hit->feedback == FeedbackLevel::medium);
++    ARPG_REQUIRE(hit->position.x == 1.25F);
++    ARPG_REQUIRE(hit->position.y == -0.5F);
++    ARPG_REQUIRE(hurt->kind == CombatEventKind::player_hurt_started);
++    ARPG_REQUIRE(hurt->value == 125);
++    ARPG_REQUIRE(hurt->feedback == FeedbackLevel::medium);
++    ARPG_REQUIRE(!world.try_pop_event().has_value());
++    return {};
++}
++
++arpg::test::Failure hurt_ticks_lock_movement_until_expired() noexcept {
++    CombatWorld world{single_chaser_encounter()};
++    drain_events(world);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 1, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::light);
++    const float start_x = world.snapshot().player.position.x;
++    world.tick(MovementInput{-1, 0});
++    ARPG_REQUIRE(world.snapshot().player.position.x == start_x);
++    ARPG_REQUIRE(world.snapshot().player.hurt_ticks == 11);
++    tick_n(world, 11, MovementInput{-1, 0});
++    ARPG_REQUIRE(world.snapshot().player.hurt_ticks == 0);
++    world.tick(MovementInput{-1, 0});
++    ARPG_REQUIRE(world.snapshot().player.position.x < start_x);
++    return {};
++}
++
++arpg::test::Failure load_wave_reset_restores_full_health() noexcept {
++    CombatWorld world{single_chaser_encounter()};
++    drain_events(world);
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 400, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::light);
++    ARPG_REQUIRE(world.snapshot().player.hp == 600);
++    EncounterWave wave{};
++    wave.spawn_count = 1U;
++    wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::chaos_chaser, Vec3{3.0F, 0.0F, 0.0F}};
++    ARPG_REQUIRE(world.load_wave(wave, true));
++    ARPG_REQUIRE(world.snapshot().player.hp == world.snapshot().player.max_hp);
++    ARPG_REQUIRE(world.snapshot().player.hurt_ticks == 0);
++    ARPG_REQUIRE(world.snapshot().player.invulnerability_ticks == 0);
++    const auto reset = world.try_pop_event();
++    ARPG_REQUIRE(reset.has_value());
++    ARPG_REQUIRE(reset->kind == CombatEventKind::player_health_reset);
++    ARPG_REQUIRE(reset->value == world.snapshot().player.max_hp);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"damage clamp and protection", &player_damage_clamps_at_one_and_uses_protection},
++    {"accepted hit payload and hurt event", &accepted_hit_emits_payload_and_hurt_started},
++    {"hurt movement lock", &hurt_ticks_lock_movement_until_expired},
++    {"wave load restores full health", &load_wave_reset_restores_full_health},
++};
++
++}  // namespace
++
++arpg::test::TestSuite player_health_suite() noexcept {
++    return arpg::test::make_suite("player_health", kCases);
++}
