@@ -1,0 +1,36 @@
+<h2>Stage 7 星盘：选择操作布局</h2>
+<p class="subtitle">三种方案都只允许在清房、奖励结算后、尚未选择出口时打开；P 键开关，Esc 关闭。</p>
+
+<div class="cards">
+  <div class="card" data-choice="overlay" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#121821;padding:18px;min-height:230px;color:#e8edf7">
+      <div style="height:22px;border:1px solid #5f7393;padding:4px 10px;display:flex;justify-content:space-between"><span>星盘 · 已清房</span><span>点数 12</span></div>
+      <div style="margin-top:12px;height:165px;border:1px solid #5f7393;position:relative;background:radial-gradient(circle,#263750 0 15%,#17202d 16% 100%)">
+        <span style="position:absolute;left:45%;top:42%;color:#f8d675">● 起点</span>
+        <span style="position:absolute;left:12%;top:38%;color:#e27863">● 火</span>
+        <span style="position:absolute;right:12%;top:38%;color:#69c7ef">● 水</span>
+        <span style="position:absolute;left:35%;bottom:12%;color:#c782ee">● 混沌</span>
+        <span style="position:absolute;right:33%;bottom:12%;color:#f1df65">● 电</span>
+      </div>
+    </div>
+    <div class="card-body"><h3>A. 全屏聚焦覆盖层（推荐）</h3><p>暂停输入，仅展示可平移/缩放的星盘和节点详情；信息最清晰，适合 64 节点图。</p></div>
+  </div>
+
+  <div class="card" data-choice="split" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#121821;padding:18px;min-height:230px;color:#e8edf7;display:flex;gap:10px">
+      <div style="width:66%;border:1px solid #5f7393;position:relative;background:radial-gradient(circle,#263750 0 15%,#17202d 16% 100%)"><span style="position:absolute;left:38%;top:42%;color:#f8d675">● 起点</span><span style="position:absolute;left:8%;top:38%;color:#e27863">● 火</span><span style="position:absolute;right:8%;top:38%;color:#69c7ef">● 水</span></div>
+      <div style="flex:1;border:1px solid #5f7393;padding:10px"><strong>火焰专精</strong><hr><small>+8% 近战伤害<br><br>连接：起点 → 火焰<br><br>消耗：1 点</small><div style="margin-top:24px;border:1px solid #dfae53;text-align:center;padding:5px;color:#f8d675">分配</div></div>
+    </div>
+    <div class="card-body"><h3>B. 星盘 + 常驻详情侧栏</h3><p>节点描述、消耗和退点按钮始终可见；阅读好，但压缩星盘可视区域。</p></div>
+  </div>
+
+  <div class="card" data-choice="hud" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#121821;padding:18px;min-height:230px;color:#e8edf7">
+      <div style="height:22px;border:1px solid #5f7393;padding:4px 10px">地下城 · 房间已清理　　[P] 星盘　　点数 12</div>
+      <div style="display:flex;justify-content:center;align-items:center;height:165px"><div style="width:210px;height:112px;border:1px solid #dfae53;background:#1d2736;padding:12px"><strong>星盘快捷面板</strong><hr><small>火：5　水：3<br>电：0　混沌：2<br><br>按 Enter 打开完整星盘</small></div></div>
+    </div>
+    <div class="card-body"><h3>C. 小型快捷面板 + 二次打开</h3><p>保留更多地下城画面，但引入两层入口，操作路径更长。</p></div>
+  </div>
+</div>
+
+<p class="subtitle">点击你偏好的方案，然后在聊天中回复 A、B 或 C。</p>

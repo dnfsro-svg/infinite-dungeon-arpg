@@ -1,0 +1,90 @@
+<style>
+  .style-intro { max-width: 920px; margin-bottom: 22px; }
+  .style-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+  .style-card { border:1px solid var(--border); border-radius:16px; overflow:hidden; background:var(--surface); cursor:pointer; transition:.18s ease; }
+  .style-card:hover { transform:translateY(-3px); border-color:var(--accent); }
+  .style-card.selected { outline:3px solid var(--accent); border-color:transparent; }
+  .scene { aspect-ratio:16/10; background:#090c13; display:block; width:100%; }
+  .style-copy { padding:15px 16px 17px; }
+  .style-copy h3 { margin:0 0 7px; display:flex; gap:8px; align-items:center; }
+  .style-copy p { margin:0; line-height:1.45; color:var(--muted); }
+  .badge { font-size:11px; padding:3px 7px; border-radius:999px; background:#b88732; color:#100b05; font-weight:800; }
+  .letter-chip { width:25px; height:25px; display:inline-grid; place-items:center; border-radius:7px; background:var(--accent); color:#091019; font-weight:800; }
+  .decision-note { margin-top:20px; padding:13px 15px; border-left:3px solid var(--accent); background:var(--surface); border-radius:0 10px 10px 0; }
+  @media(max-width:900px){ .style-grid{grid-template-columns:1fr;} }
+</style>
+
+<div class="style-intro">
+  <div class="label">Stage 12 · 材质包视觉方向</div>
+  <h2>哪种地下城质感最适合这款 2.5D 动作 ARPG？</h2>
+  <p class="subtitle">三张图使用相同构图：石质房间、四向门、玩家、怪物、掉落与元素光。请主要比较材质密度、角色辨识度和长期扩展成本。</p>
+</div>
+
+<div class="style-grid cards">
+  <div class="style-card card" data-choice="a-dark-painted" onclick="toggleSelect(this)">
+    <svg class="scene" viewBox="0 0 480 300" role="img" aria-label="暗黑手绘材质地下城">
+      <defs>
+        <linearGradient id="a-bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#121726"/><stop offset="1" stop-color="#05070d"/></linearGradient>
+        <linearGradient id="a-floor" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#444858"/><stop offset=".55" stop-color="#292d3a"/><stop offset="1" stop-color="#191d28"/></linearGradient>
+        <radialGradient id="a-fire"><stop stop-color="#ffd68a"/><stop offset=".35" stop-color="#f07b32"/><stop offset="1" stop-color="#8d241e" stop-opacity="0"/></radialGradient>
+        <filter id="a-glow"><feGaussianBlur stdDeviation="7"/></filter>
+      </defs>
+      <rect width="480" height="300" fill="url(#a-bg)"/>
+      <path d="M45 74 L240 28 L435 74 L398 257 L82 257 Z" fill="#1a1e29" stroke="#596071" stroke-width="3"/>
+      <path d="M64 105 L240 62 L416 105 L382 245 L98 245 Z" fill="url(#a-floor)" stroke="#717787" stroke-width="2"/>
+      <g stroke="#686d7d" stroke-width="1" opacity=".5"><path d="M86 139L398 139M78 177L404 177M89 215L392 215"/><path d="M150 84L132 243M226 65L220 245M306 78L316 244M370 93L360 243"/></g>
+      <g fill="#0a0d14" stroke="#8f724b" stroke-width="4"><path d="M203 57v-29h74v29"/><path d="M68 139H39v57h37"/><path d="M404 139h37v57h-45"/></g>
+      <ellipse cx="116" cy="121" rx="66" ry="54" fill="url(#a-fire)" opacity=".78" filter="url(#a-glow)"/>
+      <circle cx="112" cy="119" r="8" fill="#ffb04d"/><path d="M112 128l-8 20h16z" fill="#b4412c"/>
+      <ellipse cx="242" cy="203" rx="24" ry="9" fill="#05070b" opacity=".75"/>
+      <path d="M224 200l5-52 16-15 18 17 4 50z" fill="#385b76" stroke="#a8c8d8" stroke-width="3"/><path d="M251 151l24 27" stroke="#d7d1be" stroke-width="5"/><circle cx="242" cy="132" r="11" fill="#d7b092"/>
+      <ellipse cx="324" cy="173" rx="30" ry="10" fill="#07080c" opacity=".7"/><path d="M300 169l8-44 20-14 22 16 7 42z" fill="#583744" stroke="#d66d6f" stroke-width="3"/><path d="M315 117l-7-17m29 18l8-17" stroke="#d66d6f" stroke-width="4"/>
+      <circle cx="184" cy="218" r="8" fill="#7fc6ff"/><circle cx="184" cy="218" r="18" fill="#4ba8ff" opacity=".18"/>
+      <path d="M49 272h382" stroke="#b88732" stroke-width="3" opacity=".65"/>
+    </svg>
+    <div class="style-copy">
+      <h3><span class="letter-chip">A</span>暗黑手绘 <span class="badge">推荐</span></h3>
+      <p>接近《流放之路 2》的冷暗石材与局部元素光，但保持轮廓简洁。质感强、适合装备与深渊扩展，也最符合当前系统设定。</p>
+    </div>
+  </div>
+
+  <div class="style-card card" data-choice="b-retro-pixel" onclick="toggleSelect(this)">
+    <svg class="scene" viewBox="0 0 480 300" role="img" aria-label="复古像素材质地下城" shape-rendering="crispEdges">
+      <rect width="480" height="300" fill="#101424"/>
+      <path d="M48 76L240 32L432 76L400 256H80Z" fill="#22283a" stroke="#7c8194" stroke-width="6"/>
+      <path d="M68 108L240 66L412 108L380 242H100Z" fill="#42485a"/>
+      <g fill="#34394b"><rect x="88" y="124" width="64" height="28"/><rect x="159" y="118" width="70" height="32"/><rect x="236" y="112" width="62" height="34"/><rect x="305" y="119" width="78" height="31"/><rect x="104" y="158" width="76" height="31"/><rect x="188" y="154" width="68" height="33"/><rect x="264" y="153" width="72" height="34"/><rect x="344" y="158" width="48" height="29"/><rect x="112" y="193" width="82" height="34"/><rect x="202" y="193" width="75" height="34"/><rect x="285" y="193" width="86" height="34"/></g>
+      <g fill="#080b13" stroke="#c18b48" stroke-width="6"><rect x="208" y="35" width="64" height="36"/><rect x="46" y="139" width="40" height="56"/><rect x="394" y="139" width="40" height="56"/></g>
+      <g transform="translate(220 132)"><rect x="0" y="16" width="40" height="58" fill="#2982ad"/><rect x="8" width="24" height="20" fill="#e1b391"/><rect x="-8" y="30" width="12" height="30" fill="#62c1d9"/><rect x="36" y="30" width="12" height="30" fill="#62c1d9"/><rect x="42" y="12" width="6" height="52" fill="#f5e3a4"/></g>
+      <g transform="translate(312 130)"><rect x="0" y="14" width="44" height="48" fill="#8c3951"/><rect x="8" width="28" height="20" fill="#be5c69"/><rect x="3" y="-8" width="8" height="12" fill="#e57a69"/><rect x="33" y="-8" width="8" height="12" fill="#e57a69"/></g>
+      <rect x="172" y="210" width="12" height="12" fill="#69d5ff"/><rect x="169" y="207" width="18" height="18" fill="none" stroke="#2c8bd4" stroke-width="3"/>
+      <g fill="#ff9d2d"><rect x="98" y="107" width="10" height="28"/><rect x="92" y="115" width="22" height="12"/><rect x="96" y="103" width="14" height="8" fill="#ffd76b"/></g>
+    </svg>
+    <div class="style-copy">
+      <h3><span class="letter-chip">B</span>复古像素</h3>
+      <p>强调 2008 年横版网游记忆，制作速度快、低资源友好。缺点是装备外观和复杂攻击动作需要大量逐帧像素动画。</p>
+    </div>
+  </div>
+
+  <div class="style-card card" data-choice="c-clean-comic" onclick="toggleSelect(this)">
+    <svg class="scene" viewBox="0 0 480 300" role="img" aria-label="清晰漫画化材质地下城">
+      <defs><linearGradient id="c-floor" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#596071"/><stop offset="1" stop-color="#303747"/></linearGradient></defs>
+      <rect width="480" height="300" fill="#131b2d"/>
+      <path d="M40 72L240 25L440 72L402 260H78Z" fill="#202a3f" stroke="#07101d" stroke-width="7"/>
+      <path d="M65 108L240 61L415 108L378 244H102Z" fill="url(#c-floor)" stroke="#9aa5b8" stroke-width="3"/>
+      <path d="M73 139h334M82 184h315M99 226h280" stroke="#252d3b" stroke-width="4"/>
+      <g fill="#08101b" stroke="#f0c15b" stroke-width="5"><path d="M204 60V29h72v31"/><path d="M77 137H42v62h47"/><path d="M399 137h39v62h-48"/></g>
+      <ellipse cx="238" cy="212" rx="29" ry="9" fill="#101624" opacity=".65"/>
+      <path d="M215 206l7-58 18-16 21 18 5 56z" fill="#32a9d3" stroke="#07101d" stroke-width="5"/><circle cx="241" cy="131" r="13" fill="#f0b88b" stroke="#07101d" stroke-width="4"/><path d="M255 151l30 31" stroke="#f5dd8b" stroke-width="8"/><path d="M255 151l30 31" stroke="#07101d" stroke-width="12" transform="translate(0 0)" opacity=".25"/>
+      <ellipse cx="328" cy="181" rx="32" ry="10" fill="#101624" opacity=".65"/><path d="M300 174l9-50 20-16 25 17 9 49z" fill="#d64764" stroke="#07101d" stroke-width="5"/><path d="M316 113l-8-18m34 19l10-19" stroke="#07101d" stroke-width="7"/>
+      <path d="M107 135l-12-26 14-20 16 22z" fill="#ff9c3c" stroke="#07101d" stroke-width="4"/><circle cx="176" cy="218" r="11" fill="#67d9ff" stroke="#07101d" stroke-width="4"/>
+      <path d="M43 270h394" stroke="#55d2e8" stroke-width="4"/>
+    </svg>
+    <div class="style-copy">
+      <h3><span class="letter-chip">C</span>清晰漫画化</h3>
+      <p>大色块、粗轮廓、高辨识度，动作反馈最清楚，也容易缩放。氛围更轻，和深渊、混沌与高压装备体系的沉重感稍弱。</p>
+    </div>
+  </div>
+</div>
+
+<div class="decision-note"><strong>选择方式：</strong>点击一张卡片，然后回到对话中回复 A、B、C，或描述想混合的部分。</div>

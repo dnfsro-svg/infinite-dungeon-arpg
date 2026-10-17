@@ -1,0 +1,14 @@
+Test project E:/game/.worktrees/stage9-monster-affixes/out/build/windows-msvc-release
+    Start 2: combat.units
+1/2 Test #2: combat.units .....................   Passed    0.44 sec
+    Start 3: dungeon.units
+2/2 Test #3: dungeon.units ....................   Passed   80.45 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+combat      =   0.44 sec*proc (1 test)
+dungeon     =  80.45 sec*proc (1 test)
+headless    =  80.89 sec*proc (2 tests)
+
+Total Test time (real) =  80.91 sec
