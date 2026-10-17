@@ -1,0 +1,214 @@
+# Review package: bd7ac82f79a0dce32e4306aec561211f03ee4883..bf5f697
+
+## Commits
+bf5f697 merge: guard final validation cleanup
+f9dbe9f test: guard temporary directory cleanup ownership
+
+## Files changed
+ tests/platform/host_launch_options_tests.cpp | 90 +++++++++++++++++++++-------
+ tests/platform/platform_test_main.cpp        |  2 +-
+ 2 files changed, 69 insertions(+), 23 deletions(-)
+
+## Diff
+diff --git a/tests/platform/host_launch_options_tests.cpp b/tests/platform/host_launch_options_tests.cpp
+index 9cc0182..dd17e93 100644
+--- a/tests/platform/host_launch_options_tests.cpp
++++ b/tests/platform/host_launch_options_tests.cpp
+@@ -1,14 +1,15 @@
+ #include "test_framework.hpp"
+ 
+ #include "host_launch_options.hpp"
+ 
++#include <cstdio>
+ #include <cstdint>
+ #include <cstring>
+ #include <filesystem>
+ #include <functional>
+ #include <string>
+ 
+ namespace {
+ 
+ using arpg::platform::HostArgumentError;
+ using arpg::platform::HostArgumentResult;
+@@ -32,36 +33,48 @@ struct CurrentDirectoryGuard final {
+             return;
+         }
+         std::error_code error;
+         std::filesystem::current_path(original, error);
+     }
+ };
+ 
+ struct TemporaryDirectory final {
+     std::filesystem::path path{};
+     bool valid{};
++    bool owns_path{};
+ 
+     TemporaryDirectory() noexcept {
+         std::error_code error;
+-        path = std::filesystem::temp_directory_path(error)
+-            / ("arpg_host_launch_options_tests_" + std::to_string(
+-                static_cast<unsigned long long>(
+-                    std::hash<std::string>{}(std::to_string(
+-                        reinterpret_cast<std::uintptr_t>(this))))));
++        const std::filesystem::path temporary_root =
++            std::filesystem::temp_directory_path(error);
+         if (error) {
+             return;
+         }
+-        std::filesystem::create_directories(path, error);
+-        valid = !error;
++        path = temporary_root / ("arpg_host_launch_options_tests_"
++            + std::to_string(static_cast<unsigned long long>(
++                std::hash<std::string>{}(std::to_string(
++                    reinterpret_cast<std::uintptr_t>(this))))));
++        owns_path = std::filesystem::create_directories(path, error);
++        valid = !error && owns_path;
++    }
++
++    explicit TemporaryDirectory(const std::filesystem::path& requested_path)
++        noexcept : path(requested_path) {
++        std::error_code error;
++        owns_path = std::filesystem::create_directories(path, error);
++        valid = !error && owns_path;
+     }
+ 
+     ~TemporaryDirectory() noexcept {
++        if (!owns_path) {
++            return;
++        }
+         std::error_code error;
+         std::filesystem::remove_all(path, error);
+     }
+ };
+ 
+ arpg::test::Failure no_arguments_leave_options_empty() noexcept {
+     const char* const argv[] = {"arpg"};
+     const HostArgumentResult result = parse(1, argv);
+     ARPG_REQUIRE(result.error == HostArgumentError::none);
+     ARPG_REQUIRE(!result.options.save_directory.has_value());
+@@ -77,39 +90,71 @@ arpg::test::Failure decimal_and_hex_seeds_parse_to_same_value() noexcept {
+     ARPG_REQUIRE(decimal.error == HostArgumentError::none);
+     ARPG_REQUIRE(hex.error == HostArgumentError::none);
+     ARPG_REQUIRE(decimal.options.new_run_seed.has_value());
+     ARPG_REQUIRE(hex.options.new_run_seed.has_value());
+     ARPG_REQUIRE(*decimal.options.new_run_seed == 8U);
+     ARPG_REQUIRE(*hex.options.new_run_seed == 8U);
+     return {};
+ }
+ 
+ arpg::test::Failure save_directory_with_spaces_is_frozen_absolute() noexcept {
+-    TemporaryDirectory alternate_directory;
+-    CurrentDirectoryGuard working_directory;
+-    ARPG_REQUIRE(working_directory.valid);
+-    ARPG_REQUIRE(alternate_directory.valid);
+-    const char* const argv[] = {"arpg", "--save-dir", "slot saves"};
+-    const HostArgumentResult result = parse(3, argv);
+-    ARPG_REQUIRE(result.error == HostArgumentError::none);
+-    ARPG_REQUIRE(result.options.save_directory.has_value());
+-    ARPG_REQUIRE(result.options.save_directory->is_absolute());
+-    ARPG_REQUIRE(result.options.save_directory->filename() == "slot saves");
+-    const auto frozen = *result.options.save_directory;
++    std::error_code error;
++    std::filesystem::path original_directory;
++    {
++        TemporaryDirectory alternate_directory;
++        CurrentDirectoryGuard working_directory;
++        ARPG_REQUIRE(working_directory.valid);
++        ARPG_REQUIRE(alternate_directory.valid);
++        original_directory = working_directory.original;
++        const char* const argv[] = {"arpg", "--save-dir", "slot saves"};
++        const HostArgumentResult result = parse(3, argv);
++        ARPG_REQUIRE(result.error == HostArgumentError::none);
++        ARPG_REQUIRE(result.options.save_directory.has_value());
++        ARPG_REQUIRE(result.options.save_directory->is_absolute());
++        ARPG_REQUIRE(result.options.save_directory->filename() == "slot saves");
++        const auto frozen = *result.options.save_directory;
++
++        std::filesystem::current_path(alternate_directory.path, error);
++        ARPG_REQUIRE(!error);
++        ARPG_REQUIRE(std::filesystem::current_path(error)
++            == alternate_directory.path);
++        ARPG_REQUIRE(!error);
++        ARPG_REQUIRE(frozen == *result.options.save_directory);
++        ARPG_REQUIRE(frozen == working_directory.original / "slot saves");
++    }
++    ARPG_REQUIRE(std::filesystem::current_path(error) == original_directory);
++    ARPG_REQUIRE(!error);
++    return {};
++}
+ 
++arpg::test::Failure failed_temporary_directory_never_removes_unowned_path()
++    noexcept {
++    TemporaryDirectory parent;
++    ARPG_REQUIRE(parent.valid);
++    const std::filesystem::path sentinel = parent.path / "unowned_sentinel";
++    const std::string sentinel_text = sentinel.string();
++    std::FILE* sentinel_file{};
++    ARPG_REQUIRE(::fopen_s(&sentinel_file, sentinel_text.c_str(), "wb") == 0);
++    ARPG_REQUIRE(sentinel_file != nullptr);
++    ARPG_REQUIRE(std::fputs("sentinel", sentinel_file) >= 0);
++    ARPG_REQUIRE(std::fclose(sentinel_file) == 0);
+     std::error_code error;
+-    std::filesystem::current_path(alternate_directory.path, error);
++    ARPG_REQUIRE(std::filesystem::is_regular_file(sentinel, error));
+     ARPG_REQUIRE(!error);
+-    ARPG_REQUIRE(std::filesystem::current_path(error) == alternate_directory.path);
++    {
++        TemporaryDirectory failed(sentinel);
++        ARPG_REQUIRE(!failed.valid);
++        ARPG_REQUIRE(std::filesystem::is_regular_file(sentinel, error));
++        ARPG_REQUIRE(!error);
++    }
++    ARPG_REQUIRE(std::filesystem::is_regular_file(sentinel, error));
+     ARPG_REQUIRE(!error);
+-    ARPG_REQUIRE(frozen == *result.options.save_directory);
+-    ARPG_REQUIRE(frozen == working_directory.original / "slot saves");
+     return {};
+ }
+ 
+ arpg::test::Failure duplicate_and_unknown_options_are_rejected() noexcept {
+     const char* const duplicate_seed[] = {
+         "arpg", "--seed", "1", "--seed", "2"};
+     const char* const duplicate_directory[] = {
+         "arpg", "--save-dir", "one", "--save-dir", "two"};
+     const char* const unknown[] = {"arpg", "--seed=8"};
+     ARPG_REQUIRE(parse(5, duplicate_seed).error
+@@ -134,19 +179,20 @@ arpg::test::Failure missing_and_invalid_seed_values_are_rejected() noexcept {
+     ARPG_REQUIRE(parse(3, negative).error == HostArgumentError::invalid_seed);
+     ARPG_REQUIRE(parse(3, overflow).error == HostArgumentError::invalid_seed);
+     ARPG_REQUIRE(parse(3, trailing).error == HostArgumentError::invalid_seed);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"no arguments", &no_arguments_leave_options_empty},
+     {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
+     {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
++    {"failed temporary directory cleanup", &failed_temporary_directory_never_removes_unowned_path},
+     {"duplicate and unknown options", &duplicate_and_unknown_options_are_rejected},
+     {"missing and invalid seed", &missing_and_invalid_seed_values_are_rejected},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite host_launch_options_suite() noexcept {
+     return arpg::test::make_suite("host_launch_options", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 7060469..00c48e2 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -10,12 +10,12 @@ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 32, "platform");
++    return arpg::test::run_suites(suites, 33, "platform");
+ }

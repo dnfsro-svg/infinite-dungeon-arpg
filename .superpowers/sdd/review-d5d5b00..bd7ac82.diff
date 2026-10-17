@@ -1,0 +1,394 @@
+# Review package: d5d5b00035224df3267ea2b164ae8dc76cac946e..bd7ac82
+
+## Commits
+bd7ac82 merge: fix final stage 3 recovery validation
+8fab634 fix: recover conflicting save slots
+
+## Files changed
+ src/persistence/save_store.cpp               | 18 +++++++--
+ tests/persistence/persistence_test_main.cpp  |  2 +-
+ tests/persistence/save_store_fault_tests.cpp | 56 +++++++++++++++++++++++++-
+ tests/persistence/save_store_tests.cpp       |  4 +-
+ tests/platform/host_launch_options_tests.cpp | 59 ++++++++++++++++++++++++++++
+ 5 files changed, 131 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/src/persistence/save_store.cpp b/src/persistence/save_store.cpp
+index f94d55a..5560b79 100644
+--- a/src/persistence/save_store.cpp
++++ b/src/persistence/save_store.cpp
+@@ -223,23 +223,23 @@ ArchiveResult archive_files(const SaveStoreConfig& config,
+     };
+     std::vector<MovedFile> moved;
+     try {
+         moved.reserve(files.size());
+         const auto stamp = archive_stamp(config);
+         std::size_t suffix = 0U;
+         for (const auto& source : files) {
+             std::filesystem::path destination;
+             do {
+                 destination = config.directory
+-                    / ("corrupt_" + std::to_string(stamp) + "_"
+-                        + source.filename().string()
+-                        + (suffix == 0U ? "" : "_" + std::to_string(suffix)));
++                    / (source.filename().string() + ".corrupt."
++                        + std::to_string(stamp)
++                        + (suffix == 0U ? "" : "." + std::to_string(suffix)));
+                 ++suffix;
+             } while (std::filesystem::exists(destination));
+             if (hook_failed(config, SaveFaultPoint::before_archive)) {
+                 std::error_code rollback_error;
+                 for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+                     std::filesystem::rename(it->destination, it->source,
+                         rollback_error);
+                 }
+                 return {false, SaveError::archive_failed};
+             }
+@@ -578,21 +578,31 @@ SaveLoadResult SaveStore::archive_invalid_and_create(
+         if (error) {
+             return {SaveLoadState::blocked, SaveError::directory_unavailable,
+                 SaveSlot::none, false, {}};
+         }
+         const auto scan = scan_directory(config_, false);
+         if (scan.directory_error) {
+             return {SaveLoadState::blocked, SaveError::directory_unavailable,
+                 SaveSlot::none, false, {}};
+         }
+         const auto files = invalid_files(config_, scan, true);
+-        const auto archive = archive_files(config_, files);
++        auto files_to_archive = files;
++        const bool conflicting_slots = scan.a.state == SlotFileState::valid
++            && scan.b.state == SlotFileState::valid
++            && scan.a.checkpoint.commit_generation
++                == scan.b.checkpoint.commit_generation
++            && !same_state(scan.a.checkpoint, scan.b.checkpoint);
++        if (conflicting_slots) {
++            files_to_archive.push_back(config_.directory / slot_name(SaveSlot::a));
++            files_to_archive.push_back(config_.directory / slot_name(SaveSlot::b));
++        }
++        const auto archive = archive_files(config_, files_to_archive);
+         if (!archive.ok) {
+             return {SaveLoadState::blocked, archive.error,
+                 SaveSlot::none, false, {}};
+         }
+         const auto commit_result = commit(initial);
+         if (commit_result.state == SaveCommitState::committed) {
+             SaveLoadResult result{};
+             result.state = SaveLoadState::ready;
+             result.active_slot = commit_result.active_slot;
+             result.checkpoint = commit_result.verified_state;
+diff --git a/tests/persistence/persistence_test_main.cpp b/tests/persistence/persistence_test_main.cpp
+index a5765e0..ed629f8 100644
+--- a/tests/persistence/persistence_test_main.cpp
++++ b/tests/persistence/persistence_test_main.cpp
+@@ -6,12 +6,12 @@ arpg::test::TestSuite save_store_fault_suite() noexcept;
+ arpg::test::TestSuite dungeon_save_integration_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         checkpoint_codec_suite(),
+         save_store_suite(),
+         save_store_fault_suite(),
+         dungeon_save_integration_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 27, "persistence");
++    return arpg::test::run_suites(suites, 28, "persistence");
+ }
+diff --git a/tests/persistence/save_store_fault_tests.cpp b/tests/persistence/save_store_fault_tests.cpp
+index 7da4de1..be33d07 100644
+--- a/tests/persistence/save_store_fault_tests.cpp
++++ b/tests/persistence/save_store_fault_tests.cpp
+@@ -82,20 +82,25 @@ void write_bytes(const std::filesystem::path& path,
+         static_cast<std::streamsize>(bytes.size()));
+ }
+ 
+ std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
+     std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
+     const auto ok = persistence::encode_checkpoint(state, bytes);
+     (void)ok;
+     return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
+ }
+ 
++bool is_corrupt_archive(const std::filesystem::path& path) noexcept {
++    const auto name = path.filename().string();
++    return name.find(".corrupt.") != std::string::npos;
++}
++
+ struct FaultContext final {
+     persistence::SaveFaultPoint point{};
+     bool persistent{};
+     bool triggered{};
+ };
+ 
+ struct CorruptAfterPublishContext final {
+     std::filesystem::path directory{};
+     bool corrupted{};
+ };
+@@ -271,30 +276,78 @@ arpg::test::Failure four_invalid_files_are_archived_before_new_generation() noex
+     auto store = make_store(directory.path);
+     ARPG_REQUIRE(store.load().state == persistence::SaveLoadState::recovery_required);
+ 
+     auto created = store.archive_invalid_and_create(make_state(1U, 8U));
+     ARPG_REQUIRE(created.state == persistence::SaveLoadState::ready);
+     ARPG_REQUIRE(created.active_slot == persistence::SaveSlot::a);
+     ARPG_REQUIRE(created.checkpoint.commit_generation == 1U);
+     std::size_t archive_count = 0U;
+     std::error_code error;
+     for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
+-        if (entry.path().filename().string().find("corrupt_") == 0U) {
++        if (is_corrupt_archive(entry.path())) {
+             ++archive_count;
+         }
+     }
+     ARPG_REQUIRE(archive_count == 4U);
+     ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_a.tmp"));
+     ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.tmp"));
+     return {};
+ }
+ 
++arpg::test::Failure conflicting_slots_are_archived_before_new_generation() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    ARPG_REQUIRE(store.commit(make_state(1U, 13U)).state
++        == persistence::SaveCommitState::committed);
++
++    std::error_code error;
++    std::filesystem::copy_file(directory.path / "run_a.sav",
++        directory.path / "run_b.sav",
++        std::filesystem::copy_options::overwrite_existing, error);
++    ARPG_REQUIRE(!error);
++    write_bytes(directory.path / "run_b.sav", encoded(make_state(1U, 14U)));
++    const auto blocked = store.load();
++    ARPG_REQUIRE(blocked.state == persistence::SaveLoadState::recovery_required);
++    ARPG_REQUIRE(blocked.error == persistence::SaveError::conflicting_slots);
++
++    const auto initial = make_state(1U, 15U);
++    const auto created = store.archive_invalid_and_create(initial);
++    ARPG_REQUIRE(created.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(created.active_slot == persistence::SaveSlot::a);
++    ARPG_REQUIRE(created.recovered);
++    ARPG_REQUIRE(same_state(created.checkpoint, initial));
++
++    const auto reloaded = store.load();
++    ARPG_REQUIRE(reloaded.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(reloaded.active_slot == persistence::SaveSlot::a);
++    ARPG_REQUIRE(same_state(reloaded.checkpoint, initial));
++    ARPG_REQUIRE(std::filesystem::exists(directory.path / "run_a.sav"));
++    ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.sav"));
++
++    std::size_t archive_count = 0U;
++    bool archived_a = false;
++    bool archived_b = false;
++    for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
++        const auto name = entry.path().filename().string();
++        if (is_corrupt_archive(entry.path())) {
++            ++archive_count;
++            archived_a = archived_a || name.find("run_a.sav.corrupt.") == 0U;
++            archived_b = archived_b || name.find("run_b.sav.corrupt.") == 0U;
++        }
++    }
++    ARPG_REQUIRE(!error);
++    ARPG_REQUIRE(archive_count == 2U);
++    ARPG_REQUIRE(archived_a);
++    ARPG_REQUIRE(archived_b);
++    return {};
++}
++
+ arpg::test::Failure archive_failure_blocks_and_preserves_corrupt_files() noexcept {
+     TempDirectory directory;
+     const std::vector<std::uint8_t> invalid_a{0x21U, 0x22U, 0x23U};
+     const std::vector<std::uint8_t> invalid_b{0x31U, 0x32U, 0x33U};
+     write_bytes(directory.path / "run_a.sav", invalid_a);
+     write_bytes(directory.path / "run_b.sav", invalid_b);
+     FaultContext fault{persistence::SaveFaultPoint::before_archive, true, false};
+     auto store = make_store(directory.path, &fault);
+     const auto result = store.archive_invalid_and_create(make_state(1U, 9U));
+     ARPG_REQUIRE(result.state == persistence::SaveLoadState::blocked);
+@@ -318,18 +371,19 @@ arpg::test::Failure archive_failure_blocks_and_preserves_corrupt_files() noexcep
+     ARPG_REQUIRE(read_bytes(midway_directory.path / "run_b.sav") == midway_b);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"before temp write is not committed and old bytes unchanged", &before_temp_write_is_not_committed_and_old_bytes_unchanged},
+     {"after temp validation before publish is not committed", &after_temp_validation_before_publish_is_not_committed},
+     {"publish final scan fault is indeterminate", &publish_final_scan_fault_is_indeterminate},
+     {"truncated temp without valid slot requires recovery", &truncated_temp_without_valid_slot_requires_recovery},
+     {"four invalid files are archived before new generation", &four_invalid_files_are_archived_before_new_generation},
++    {"conflicting slots are archived before new generation", &conflicting_slots_are_archived_before_new_generation},
+     {"archive failure blocks and preserves corrupt files", &archive_failure_blocks_and_preserves_corrupt_files},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite save_store_fault_suite() noexcept {
+     return arpg::test::make_suite("save_store_faults", kCases);
+ }
+diff --git a/tests/persistence/save_store_tests.cpp b/tests/persistence/save_store_tests.cpp
+index ad04774..a2dd918 100644
+--- a/tests/persistence/save_store_tests.cpp
++++ b/tests/persistence/save_store_tests.cpp
+@@ -103,21 +103,21 @@ std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
+ bool has_only_allowed_files(const std::filesystem::path& directory) noexcept {
+     std::error_code error;
+     for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+         if (error) {
+             return false;
+         }
+         const auto name = entry.path().filename().string();
+         if (name == "run_a.sav" || name == "run_b.sav") {
+             continue;
+         }
+-        if (name.find("corrupt_") == 0U) {
++        if (name.find(".corrupt.") != std::string::npos) {
+             continue;
+         }
+         if (name.find("run_a.tmp") == 0U || name.find("run_b.tmp") == 0U) {
+             return false;
+         }
+         return false;
+     }
+     return true;
+ }
+ 
+@@ -202,21 +202,21 @@ arpg::test::Failure damaged_slot_is_archived_before_two_saves() noexcept {
+     TempDirectory directory;
+     auto store = make_store(directory.path);
+     const auto first = make_state(1U, 9U);
+     ARPG_REQUIRE(store.commit(first).state == persistence::SaveCommitState::committed);
+     std::error_code error;
+     write_bytes(directory.path / "run_b.sav", {0x01U, 0x02U, 0x03U});
+     const auto loaded = store.load();
+     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+     bool archived = false;
+     for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
+-        if (entry.path().filename().string().find("corrupt_") == 0U) {
++        if (entry.path().filename().string().find(".corrupt.") != std::string::npos) {
+             archived = true;
+         }
+     }
+     ARPG_REQUIRE(archived);
+     ARPG_REQUIRE(store.commit(make_state(2U, 10U)).state == persistence::SaveCommitState::committed);
+     ARPG_REQUIRE(store.commit(make_state(3U, 11U)).state == persistence::SaveCommitState::committed);
+     ARPG_REQUIRE(has_only_allowed_files(directory.path));
+     return {};
+ }
+ 
+diff --git a/tests/platform/host_launch_options_tests.cpp b/tests/platform/host_launch_options_tests.cpp
+index d492e64..9cc0182 100644
+--- a/tests/platform/host_launch_options_tests.cpp
++++ b/tests/platform/host_launch_options_tests.cpp
+@@ -1,26 +1,72 @@
+ #include "test_framework.hpp"
+ 
+ #include "host_launch_options.hpp"
+ 
++#include <cstdint>
+ #include <cstring>
+ #include <filesystem>
++#include <functional>
++#include <string>
+ 
+ namespace {
+ 
+ using arpg::platform::HostArgumentError;
+ using arpg::platform::HostArgumentResult;
+ 
+ HostArgumentResult parse(int argc, const char* const* argv) noexcept {
+     return arpg::platform::parse_host_arguments(argc, argv);
+ }
+ 
++struct CurrentDirectoryGuard final {
++    std::filesystem::path original{};
++    bool valid{};
++
++    CurrentDirectoryGuard() noexcept {
++        std::error_code error;
++        original = std::filesystem::current_path(error);
++        valid = !error;
++    }
++
++    ~CurrentDirectoryGuard() noexcept {
++        if (!valid) {
++            return;
++        }
++        std::error_code error;
++        std::filesystem::current_path(original, error);
++    }
++};
++
++struct TemporaryDirectory final {
++    std::filesystem::path path{};
++    bool valid{};
++
++    TemporaryDirectory() noexcept {
++        std::error_code error;
++        path = std::filesystem::temp_directory_path(error)
++            / ("arpg_host_launch_options_tests_" + std::to_string(
++                static_cast<unsigned long long>(
++                    std::hash<std::string>{}(std::to_string(
++                        reinterpret_cast<std::uintptr_t>(this))))));
++        if (error) {
++            return;
++        }
++        std::filesystem::create_directories(path, error);
++        valid = !error;
++    }
++
++    ~TemporaryDirectory() noexcept {
++        std::error_code error;
++        std::filesystem::remove_all(path, error);
++    }
++};
++
+ arpg::test::Failure no_arguments_leave_options_empty() noexcept {
+     const char* const argv[] = {"arpg"};
+     const HostArgumentResult result = parse(1, argv);
+     ARPG_REQUIRE(result.error == HostArgumentError::none);
+     ARPG_REQUIRE(!result.options.save_directory.has_value());
+     ARPG_REQUIRE(!result.options.new_run_seed.has_value());
+     return {};
+ }
+ 
+ arpg::test::Failure decimal_and_hex_seeds_parse_to_same_value() noexcept {
+@@ -31,26 +77,39 @@ arpg::test::Failure decimal_and_hex_seeds_parse_to_same_value() noexcept {
+     ARPG_REQUIRE(decimal.error == HostArgumentError::none);
+     ARPG_REQUIRE(hex.error == HostArgumentError::none);
+     ARPG_REQUIRE(decimal.options.new_run_seed.has_value());
+     ARPG_REQUIRE(hex.options.new_run_seed.has_value());
+     ARPG_REQUIRE(*decimal.options.new_run_seed == 8U);
+     ARPG_REQUIRE(*hex.options.new_run_seed == 8U);
+     return {};
+ }
+ 
+ arpg::test::Failure save_directory_with_spaces_is_frozen_absolute() noexcept {
++    TemporaryDirectory alternate_directory;
++    CurrentDirectoryGuard working_directory;
++    ARPG_REQUIRE(working_directory.valid);
++    ARPG_REQUIRE(alternate_directory.valid);
+     const char* const argv[] = {"arpg", "--save-dir", "slot saves"};
+     const HostArgumentResult result = parse(3, argv);
+     ARPG_REQUIRE(result.error == HostArgumentError::none);
+     ARPG_REQUIRE(result.options.save_directory.has_value());
+     ARPG_REQUIRE(result.options.save_directory->is_absolute());
+     ARPG_REQUIRE(result.options.save_directory->filename() == "slot saves");
++    const auto frozen = *result.options.save_directory;
++
++    std::error_code error;
++    std::filesystem::current_path(alternate_directory.path, error);
++    ARPG_REQUIRE(!error);
++    ARPG_REQUIRE(std::filesystem::current_path(error) == alternate_directory.path);
++    ARPG_REQUIRE(!error);
++    ARPG_REQUIRE(frozen == *result.options.save_directory);
++    ARPG_REQUIRE(frozen == working_directory.original / "slot saves");
+     return {};
+ }
+ 
+ arpg::test::Failure duplicate_and_unknown_options_are_rejected() noexcept {
+     const char* const duplicate_seed[] = {
+         "arpg", "--seed", "1", "--seed", "2"};
+     const char* const duplicate_directory[] = {
+         "arpg", "--save-dir", "one", "--save-dir", "two"};
+     const char* const unknown[] = {"arpg", "--seed=8"};
+     ARPG_REQUIRE(parse(5, duplicate_seed).error
