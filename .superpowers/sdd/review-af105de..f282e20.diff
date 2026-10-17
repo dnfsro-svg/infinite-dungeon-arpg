@@ -1,0 +1,792 @@
+# Review package: af105de..f282e20
+
+## Commits
+f282e20 feat: add stage 3 dungeon presentation rules
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt           |   1 +
+ src/platform/raylib/dungeon_view_math.cpp    | 109 +++++++++++++++++++++-
+ src/platform/raylib/dungeon_view_math.hpp    |  46 +++++++++
+ src/platform/raylib/host_launch_options.cpp  | 102 ++++++++++++++++++++
+ src/platform/raylib/host_launch_options.hpp  |  31 +++++++
+ tests/platform/CMakeLists.txt                |   3 +-
+ tests/platform/dungeon_view_math_tests.cpp   | 134 +++++++++++++++++++++++++++
+ tests/platform/host_launch_options_tests.cpp |  93 +++++++++++++++++++
+ tests/platform/platform_test_main.cpp        |   4 +-
+ 9 files changed, 520 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index d1bd354..03054b0 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -1,16 +1,17 @@
+ add_library(arpg_raylib STATIC
+     combat_audio.cpp
+     combat_feedback.cpp
+     combat_renderer.cpp
+     combat_view_math.cpp
+     dungeon_view_math.cpp
++    host_launch_options.cpp
+     raylib_host.cpp)
+ 
+ target_include_directories(arpg_raylib
+     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+ target_compile_features(arpg_raylib PUBLIC cxx_std_17)
+ target_link_libraries(arpg_raylib
+     PUBLIC arpg_dungeon raylib
+     PRIVATE arpg_core)
+ 
+ arpg_enable_project_warnings(arpg_raylib)
+diff --git a/src/platform/raylib/dungeon_view_math.cpp b/src/platform/raylib/dungeon_view_math.cpp
+index e3e4fcf..e095818 100644
+--- a/src/platform/raylib/dungeon_view_math.cpp
++++ b/src/platform/raylib/dungeon_view_math.cpp
+@@ -1,34 +1,137 @@
+ #include "dungeon_view_math.hpp"
+ 
+ #include <algorithm>
++#include <cmath>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kTransitionSeconds = 0.12F;
++constexpr float kTwoPi = 6.28318530717958647692F;
++
++constexpr Rgba8 kFireFrame{236U, 92U, 54U, 255U};
++constexpr Rgba8 kWaterFrame{64U, 156U, 236U, 255U};
++constexpr Rgba8 kLightningFrame{236U, 218U, 72U, 255U};
++constexpr Rgba8 kChaosFrame{154U, 76U, 210U, 255U};
+ 
+ }  // namespace
+ 
+ DoorVisualMode door_visual_mode(
+     dungeon::RoomPhase phase,
+     bool has_active_room) noexcept {
+     if (!has_active_room || phase == dungeon::RoomPhase::transitioning) {
+         return DoorVisualMode::hidden;
+     }
+     if (phase == dungeon::RoomPhase::cleared
+-        || phase == dungeon::RoomPhase::awaiting_exit) {
++        || phase == dungeon::RoomPhase::awaiting_exit
++        || phase == dungeon::RoomPhase::committing) {
+         return DoorVisualMode::open;
+     }
+     return DoorVisualMode::closed;
+ }
+ 
++DoorTheme door_theme(dungeon::ExitDirection direction) noexcept {
++    switch (direction) {
++    case dungeon::ExitDirection::up:
++        return {dungeon::DungeonElement::fire, "FIRE", "\xE2\x86\x91", kFireFrame};
++    case dungeon::ExitDirection::down:
++        return {dungeon::DungeonElement::water, "WATER", "\xE2\x86\x93", kWaterFrame};
++    case dungeon::ExitDirection::left:
++        return {dungeon::DungeonElement::lightning, "LIGHTNING", "\xE2\x86\x90", kLightningFrame};
++    case dungeon::ExitDirection::right:
++        return {dungeon::DungeonElement::chaos, "CHAOS", "\xE2\x86\x92", kChaosFrame};
++    case dungeon::ExitDirection::none:
++        return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
++    }
++    return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
++}
++
++HoleVisualMode hole_visual_mode(
++    const dungeon::DungeonSnapshot& snapshot) noexcept {
++    if (!snapshot.has_active_room || !snapshot.has_hole) {
++        return HoleVisualMode::hidden;
++    }
++    switch (snapshot.phase) {
++    case dungeon::RoomPhase::locked:
++    case dungeon::RoomPhase::combat:
++        return HoleVisualMode::sealed;
++    case dungeon::RoomPhase::cleared:
++    case dungeon::RoomPhase::awaiting_exit:
++        return HoleVisualMode::ready;
++    case dungeon::RoomPhase::committing:
++        return HoleVisualMode::busy;
++    case dungeon::RoomPhase::faulted:
++        return HoleVisualMode::faulted;
++    case dungeon::RoomPhase::transitioning:
++        return HoleVisualMode::hidden;
++    }
++    return HoleVisualMode::hidden;
++}
++
++bool player_in_hole_range(
++    combat::Vec3 position,
++    combat::Vec3 center,
++    float radius) noexcept {
++    if (radius < 0.0F) {
++        return false;
++    }
++    const float x = position.x - center.x;
++    const float y = position.y - center.y;
++    return x * x + y * y <= radius * radius;
++}
++
++Rgba8 ecosystem_tint(dungeon::DungeonElement element) noexcept {
++    switch (element) {
++    case dungeon::DungeonElement::fire:
++        return {88U, 43U, 34U, 255U};
++    case dungeon::DungeonElement::water:
++        return {35U, 70U, 104U, 255U};
++    case dungeon::DungeonElement::lightning:
++        return {96U, 90U, 34U, 255U};
++    case dungeon::DungeonElement::chaos:
++        return {73U, 43U, 99U, 255U};
++    }
++    return {73U, 43U, 99U, 255U};
++}
++
++float abyss_pulse_alpha(float elapsed_seconds) noexcept {
++    if (!std::isfinite(elapsed_seconds)) {
++        return 0.5F;
++    }
++    const float phase = std::fmod(elapsed_seconds, 1.0F);
++    const float alpha = 0.5F + 0.5F * std::sin(kTwoPi * phase);
++    return std::clamp(alpha, 0.0F, 1.0F);
++}
++
++const char* save_indicator_label(SaveIndicator indicator) noexcept {
++    switch (indicator) {
++    case SaveIndicator::none:
++        return "";
++    case SaveIndicator::saving:
++        return "SAVING";
++    case SaveIndicator::saved:
++        return "SAVED";
++    case SaveIndicator::recovered:
++        return "RECOVERED";
++    case SaveIndicator::error:
++        return "SAVE ERROR";
++    }
++    return "";
++}
++
++bool recovery_requested(
++    bool runtime_recovery_required,
++    bool n_pressed) noexcept {
++    return runtime_recovery_required && n_pressed;
++}
++
+ bool can_interpolate_room(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current) noexcept {
+     return previous.has_active_room && current.has_active_room
+         && previous.combat.has_value() && current.combat.has_value()
+         && previous.room_index == current.room_index
+         && previous.room_seed == current.room_seed;
+ }
+ 
+ bool dungeon_event_clears_transients(
+@@ -40,22 +143,26 @@ bool dungeon_event_clears_transients(
+ const char* room_phase_label(dungeon::RoomPhase phase) noexcept {
+     switch (phase) {
+     case dungeon::RoomPhase::locked:
+         return "LOCKED";
+     case dungeon::RoomPhase::combat:
+         return "COMBAT";
+     case dungeon::RoomPhase::cleared:
+         return "CLEARED";
+     case dungeon::RoomPhase::awaiting_exit:
+         return "AWAITING EXIT";
++    case dungeon::RoomPhase::committing:
++        return "COMMITTING";
+     case dungeon::RoomPhase::transitioning:
+         return "TRANSITIONING";
++    case dungeon::RoomPhase::faulted:
++        return "FAULTED";
+     }
+     return "UNKNOWN";
+ }
+ 
+ const char* exit_direction_label(dungeon::ExitDirection direction) noexcept {
+     switch (direction) {
+     case dungeon::ExitDirection::up:
+         return "UP";
+     case dungeon::ExitDirection::down:
+         return "DOWN";
+diff --git a/src/platform/raylib/dungeon_view_math.hpp b/src/platform/raylib/dungeon_view_math.hpp
+index f0795c0..1b597a4 100644
+--- a/src/platform/raylib/dungeon_view_math.hpp
++++ b/src/platform/raylib/dungeon_view_math.hpp
+@@ -1,32 +1,78 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_types.hpp"
+ 
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
++struct Rgba8 final {
++    std::uint8_t r{};
++    std::uint8_t g{};
++    std::uint8_t b{};
++    std::uint8_t a{255};
++};
++
++struct DoorTheme final {
++    dungeon::DungeonElement element{};
++    const char* label{};
++    const char* arrow{};
++    Rgba8 frame{};
++};
++
++enum class HoleVisualMode : std::uint8_t {
++    hidden,
++    sealed,
++    ready,
++    busy,
++    faulted,
++};
++
++enum class SaveIndicator : std::uint8_t {
++    none,
++    saving,
++    saved,
++    recovered,
++    error,
++};
++
+ enum class DoorVisualMode : std::uint8_t {
+     closed,
+     open,
+     hidden,
+ };
+ 
+ struct TransitionVisualState final {
+     float seconds_left{};
+     bool transition_phase_seen{};
+ };
+ 
+ [[nodiscard]] DoorVisualMode door_visual_mode(
+     dungeon::RoomPhase phase,
+     bool has_active_room) noexcept;
++[[nodiscard]] DoorTheme door_theme(
++    dungeon::ExitDirection direction) noexcept;
++[[nodiscard]] HoleVisualMode hole_visual_mode(
++    const dungeon::DungeonSnapshot& snapshot) noexcept;
++[[nodiscard]] bool player_in_hole_range(
++    combat::Vec3 position,
++    combat::Vec3 center,
++    float radius) noexcept;
++[[nodiscard]] Rgba8 ecosystem_tint(
++    dungeon::DungeonElement element) noexcept;
++[[nodiscard]] float abyss_pulse_alpha(float elapsed_seconds) noexcept;
++[[nodiscard]] const char* save_indicator_label(
++    SaveIndicator indicator) noexcept;
++[[nodiscard]] bool recovery_requested(
++    bool runtime_recovery_required,
++    bool n_pressed) noexcept;
+ [[nodiscard]] bool can_interpolate_room(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current) noexcept;
+ [[nodiscard]] bool dungeon_event_clears_transients(
+     dungeon::DungeonEventKind kind) noexcept;
+ [[nodiscard]] const char* room_phase_label(
+     dungeon::RoomPhase phase) noexcept;
+ [[nodiscard]] const char* exit_direction_label(
+     dungeon::ExitDirection direction) noexcept;
+ [[nodiscard]] TransitionVisualState transition_after_dungeon_event(
+diff --git a/src/platform/raylib/host_launch_options.cpp b/src/platform/raylib/host_launch_options.cpp
+new file mode 100644
+index 0000000..7f10d64
+--- /dev/null
++++ b/src/platform/raylib/host_launch_options.cpp
+@@ -0,0 +1,102 @@
++#include "host_launch_options.hpp"
++
++#include <charconv>
++#include <cstring>
++#include <system_error>
++
++namespace arpg::platform {
++namespace {
++
++bool equals(const char* value, const char* expected) noexcept {
++    return value != nullptr && std::strcmp(value, expected) == 0;
++}
++
++bool is_option(const char* value) noexcept {
++    return value != nullptr && value[0] == '-' && value[1] == '-';
++}
++
++bool parse_seed(const char* value, std::uint64_t& seed) noexcept {
++    if (value == nullptr || value[0] == '\0' || value[0] == '-'
++        || value[0] == '+') {
++        return false;
++    }
++
++    int base = 10;
++    const char* first = value;
++    if (value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) {
++        base = 16;
++        first += 2;
++    }
++    if (*first == '\0') {
++        return false;
++    }
++
++    const char* const last = value + std::strlen(value);
++    const auto parsed = std::from_chars(first, last, seed, base);
++    return parsed.ec == std::errc{} && parsed.ptr == last;
++}
++
++HostArgumentResult error_result(HostArgumentError error) noexcept {
++    return HostArgumentResult{error, {}};
++}
++
++}  // namespace
++
++HostArgumentResult parse_host_arguments(
++    int argc,
++    const char* const* argv) noexcept {
++    if (argc <= 1) {
++        return {};
++    }
++    if (argv == nullptr) {
++        return error_result(HostArgumentError::missing_value);
++    }
++
++    HostArgumentResult result{};
++    bool seed_seen = false;
++    bool save_directory_seen = false;
++    for (int index = 1; index < argc; ++index) {
++        const char* const argument = argv[index];
++        if (equals(argument, "--seed")) {
++            if (seed_seen) {
++                return error_result(HostArgumentError::duplicate_option);
++            }
++            seed_seen = true;
++            if (index + 1 >= argc || argv[index + 1] == nullptr
++                || is_option(argv[index + 1])) {
++                return error_result(HostArgumentError::missing_value);
++            }
++            std::uint64_t seed{};
++            if (!parse_seed(argv[++index], seed)) {
++                return error_result(HostArgumentError::invalid_seed);
++            }
++            result.options.new_run_seed = seed;
++            continue;
++        }
++
++        if (equals(argument, "--save-dir")) {
++            if (save_directory_seen) {
++                return error_result(HostArgumentError::duplicate_option);
++            }
++            save_directory_seen = true;
++            if (index + 1 >= argc || argv[index + 1] == nullptr
++                || is_option(argv[index + 1])) {
++                return error_result(HostArgumentError::missing_value);
++            }
++            try {
++                result.options.save_directory = std::filesystem::absolute(
++                    std::filesystem::path{argv[++index]});
++            } catch (const std::filesystem::filesystem_error&) {
++                return error_result(HostArgumentError::invalid_seed);
++            } catch (...) {
++                return error_result(HostArgumentError::invalid_seed);
++            }
++            continue;
++        }
++
++        return error_result(HostArgumentError::unknown_option);
++    }
++    return result;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_launch_options.hpp b/src/platform/raylib/host_launch_options.hpp
+new file mode 100644
+index 0000000..fc2d5a8
+--- /dev/null
++++ b/src/platform/raylib/host_launch_options.hpp
+@@ -0,0 +1,31 @@
++#pragma once
++
++#include <cstdint>
++#include <filesystem>
++#include <optional>
++
++namespace arpg::platform {
++
++struct HostLaunchOptions final {
++    std::optional<std::filesystem::path> save_directory{};
++    std::optional<std::uint64_t> new_run_seed{};
++};
++
++enum class HostArgumentError : std::uint8_t {
++    none,
++    unknown_option,
++    missing_value,
++    invalid_seed,
++    duplicate_option,
++};
++
++struct HostArgumentResult final {
++    HostArgumentError error{HostArgumentError::none};
++    HostLaunchOptions options{};
++};
++
++[[nodiscard]] HostArgumentResult parse_host_arguments(
++    int argc,
++    const char* const* argv) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 934c6fd..b1ebc3d 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,17 +1,18 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         platform_test_main.cpp
+         combat_key_bindings_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+-        dungeon_view_math_tests.cpp)
++        dungeon_view_math_tests.cpp
++        host_launch_options_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+     add_test(NAME platform.view_math COMMAND arpg_platform_tests)
+     set_tests_properties(
+         platform.view_math PROPERTIES LABELS "headless;platform")
+ endif()
+diff --git a/tests/platform/dungeon_view_math_tests.cpp b/tests/platform/dungeon_view_math_tests.cpp
+index 21f7311..e5ccb93 100644
+--- a/tests/platform/dungeon_view_math_tests.cpp
++++ b/tests/platform/dungeon_view_math_tests.cpp
+@@ -3,21 +3,25 @@
+ #include "dungeon_view_math.hpp"
+ 
+ #include <cstring>
+ 
+ namespace {
+ 
+ using arpg::dungeon::DungeonEventKind;
+ using arpg::dungeon::DungeonSnapshot;
+ using arpg::dungeon::ExitDirection;
+ using arpg::dungeon::RoomPhase;
++using arpg::platform::DoorTheme;
+ using arpg::platform::DoorVisualMode;
++using arpg::platform::HoleVisualMode;
++using arpg::platform::Rgba8;
++using arpg::platform::SaveIndicator;
+ 
+ DungeonSnapshot active_snapshot(
+     std::uint64_t room_index,
+     std::uint64_t room_seed) noexcept {
+     DungeonSnapshot snapshot{};
+     snapshot.has_active_room = true;
+     snapshot.room_index = room_index;
+     snapshot.room_seed = room_seed;
+     snapshot.combat.emplace();
+     return snapshot;
+@@ -25,27 +29,150 @@ DungeonSnapshot active_snapshot(
+ 
+ arpg::test::Failure door_modes_follow_room_lifecycle() noexcept {
+     ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::locked, true)
+         == DoorVisualMode::closed);
+     ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, true)
+         == DoorVisualMode::closed);
+     ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::cleared, true)
+         == DoorVisualMode::open);
+     ARPG_REQUIRE(arpg::platform::door_visual_mode(
+         RoomPhase::awaiting_exit, true) == DoorVisualMode::open);
++    ARPG_REQUIRE(arpg::platform::door_visual_mode(
++        RoomPhase::committing, true) == DoorVisualMode::open);
++    ARPG_REQUIRE(arpg::platform::door_visual_mode(
++        RoomPhase::faulted, true) == DoorVisualMode::closed);
+     ARPG_REQUIRE(arpg::platform::door_visual_mode(
+         RoomPhase::transitioning, true) == DoorVisualMode::hidden);
+     ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, false)
+         == DoorVisualMode::hidden);
+     return {};
+ }
+ 
++bool rgba_equals(Rgba8 lhs, Rgba8 rhs) noexcept {
++    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
++        && lhs.a == rhs.a;
++}
++
++arpg::test::Failure door_themes_match_directional_elements() noexcept {
++    const DoorTheme up = arpg::platform::door_theme(ExitDirection::up);
++    const DoorTheme down = arpg::platform::door_theme(ExitDirection::down);
++    const DoorTheme left = arpg::platform::door_theme(ExitDirection::left);
++    const DoorTheme right = arpg::platform::door_theme(ExitDirection::right);
++    ARPG_REQUIRE(up.element == arpg::dungeon::DungeonElement::fire);
++    ARPG_REQUIRE(down.element == arpg::dungeon::DungeonElement::water);
++    ARPG_REQUIRE(left.element == arpg::dungeon::DungeonElement::lightning);
++    ARPG_REQUIRE(right.element == arpg::dungeon::DungeonElement::chaos);
++    ARPG_REQUIRE(std::strcmp(up.arrow, "\xE2\x86\x91") == 0);
++    ARPG_REQUIRE(std::strcmp(down.arrow, "\xE2\x86\x93") == 0);
++    ARPG_REQUIRE(std::strcmp(left.arrow, "\xE2\x86\x90") == 0);
++    ARPG_REQUIRE(std::strcmp(right.arrow, "\xE2\x86\x92") == 0);
++    ARPG_REQUIRE(rgba_equals(up.frame, {236U, 92U, 54U, 255U}));
++    ARPG_REQUIRE(rgba_equals(down.frame, {64U, 156U, 236U, 255U}));
++    ARPG_REQUIRE(rgba_equals(left.frame, {236U, 218U, 72U, 255U}));
++    ARPG_REQUIRE(rgba_equals(right.frame, {154U, 76U, 210U, 255U}));
++    return {};
++}
++
++arpg::test::Failure ecosystem_tints_are_stable() noexcept {
++    const Rgba8 fire = arpg::platform::ecosystem_tint(
++        arpg::dungeon::DungeonElement::fire);
++    const Rgba8 water = arpg::platform::ecosystem_tint(
++        arpg::dungeon::DungeonElement::water);
++    const Rgba8 lightning = arpg::platform::ecosystem_tint(
++        arpg::dungeon::DungeonElement::lightning);
++    const Rgba8 chaos = arpg::platform::ecosystem_tint(
++        arpg::dungeon::DungeonElement::chaos);
++    ARPG_REQUIRE(rgba_equals(fire, {88U, 43U, 34U, 255U}));
++    ARPG_REQUIRE(rgba_equals(water, {35U, 70U, 104U, 255U}));
++    ARPG_REQUIRE(rgba_equals(lightning, {96U, 90U, 34U, 255U}));
++    ARPG_REQUIRE(rgba_equals(chaos, {73U, 43U, 99U, 255U}));
++    return {};
++}
++
++arpg::test::Failure abyss_pulse_is_bounded_and_periodic() noexcept {
++    const float negative = arpg::platform::abyss_pulse_alpha(-0.25F);
++    const float at_start = arpg::platform::abyss_pulse_alpha(0.0F);
++    const float at_cycle = arpg::platform::abyss_pulse_alpha(1.0F);
++    const float huge = arpg::platform::abyss_pulse_alpha(100000000.0F);
++    ARPG_REQUIRE(negative >= 0.0F && negative <= 1.0F);
++    ARPG_REQUIRE(at_start >= 0.0F && at_start <= 1.0F);
++    ARPG_REQUIRE(at_cycle >= 0.0F && at_cycle <= 1.0F);
++    ARPG_REQUIRE(huge >= 0.0F && huge <= 1.0F);
++    ARPG_REQUIRE(arpg::test::near(at_start, at_cycle, 1.0e-6));
++    return {};
++}
++
++arpg::test::Failure hole_modes_follow_room_phase() noexcept {
++    DungeonSnapshot snapshot = active_snapshot(1U, 2U);
++    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
++        == HoleVisualMode::hidden);
++    snapshot.has_hole = true;
++    snapshot.phase = RoomPhase::locked;
++    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
++        == HoleVisualMode::sealed);
++    snapshot.phase = RoomPhase::combat;
++    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
++        == HoleVisualMode::sealed);
++    snapshot.phase = RoomPhase::cleared;
++    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
++        == HoleVisualMode::ready);
++    snapshot.phase = RoomPhase::awaiting_exit;
++    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
++        == HoleVisualMode::ready);
++    snapshot.phase = RoomPhase::committing;
++    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
++        == HoleVisualMode::busy);
++    snapshot.phase = RoomPhase::faulted;
++    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
++        == HoleVisualMode::faulted);
++    return {};
++}
++
++arpg::test::Failure player_hole_range_uses_xy_radius() noexcept {
++    using arpg::combat::Vec3;
++    const Vec3 center{4.0F, -2.0F, 5.0F};
++    ARPG_REQUIRE(arpg::platform::player_in_hole_range(center, center, 1.2F));
++    ARPG_REQUIRE(arpg::platform::player_in_hole_range(
++        Vec3{5.2F, -2.0F, -100.0F}, center, 1.2F));
++    ARPG_REQUIRE(!arpg::platform::player_in_hole_range(
++        Vec3{5.21F, -2.0F, 0.0F}, center, 1.2F));
++    ARPG_REQUIRE(!arpg::platform::player_in_hole_range(
++        center, center, -1.0F));
++    return {};
++}
++
++arpg::test::Failure indicators_and_phase_labels_are_stable() noexcept {
++    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
++        SaveIndicator::none), "") == 0);
++    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
++        SaveIndicator::saving), "SAVING") == 0);
++    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
++        SaveIndicator::saved), "SAVED") == 0);
++    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
++        SaveIndicator::recovered), "RECOVERED") == 0);
++    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
++        SaveIndicator::error), "SAVE ERROR") == 0);
++    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
++        RoomPhase::committing), "COMMITTING") == 0);
++    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
++        RoomPhase::faulted), "FAULTED") == 0);
++    return {};
++}
++
++arpg::test::Failure recovery_requires_fault_and_n_press() noexcept {
++    ARPG_REQUIRE(!arpg::platform::recovery_requested(false, false));
++    ARPG_REQUIRE(!arpg::platform::recovery_requested(false, true));
++    ARPG_REQUIRE(!arpg::platform::recovery_requested(true, false));
++    ARPG_REQUIRE(arpg::platform::recovery_requested(true, true));
++    return {};
++}
++
+ arpg::test::Failure same_room_snapshots_can_interpolate() noexcept {
+     const DungeonSnapshot previous = active_snapshot(7U, 0x1234U);
+     const DungeonSnapshot current = active_snapshot(7U, 0x1234U);
+     ARPG_REQUIRE(arpg::platform::can_interpolate_room(previous, current));
+     return {};
+ }
+ 
+ arpg::test::Failure cross_room_and_missing_room_reject_interpolation() noexcept {
+     const DungeonSnapshot room = active_snapshot(7U, 0x1234U);
+     ARPG_REQUIRE(!arpg::platform::can_interpolate_room(
+@@ -137,17 +264,24 @@ arpg::test::Failure fade_alpha_clamps_to_transition_window() noexcept {
+     ARPG_REQUIRE(!reset.transition_phase_seen);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"door lifecycle modes", &door_modes_follow_room_lifecycle},
+     {"same room interpolation", &same_room_snapshots_can_interpolate},
+     {"cross and missing room rejection", &cross_room_and_missing_room_reject_interpolation},
+     {"cleanup routing and labels", &cleanup_routing_and_labels_are_stable},
+     {"transition fade alpha", &fade_alpha_clamps_to_transition_window},
++    {"directional door themes", &door_themes_match_directional_elements},
++    {"ecosystem tints", &ecosystem_tints_are_stable},
++    {"abyss pulse bounds", &abyss_pulse_is_bounded_and_periodic},
++    {"hole visual modes", &hole_modes_follow_room_phase},
++    {"XY hole range", &player_hole_range_uses_xy_radius},
++    {"save indicators and labels", &indicators_and_phase_labels_are_stable},
++    {"recovery request gate", &recovery_requires_fault_and_n_press},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept {
+     return arpg::test::make_suite("dungeon_view_math", kCases);
+ }
+diff --git a/tests/platform/host_launch_options_tests.cpp b/tests/platform/host_launch_options_tests.cpp
+new file mode 100644
+index 0000000..d492e64
+--- /dev/null
++++ b/tests/platform/host_launch_options_tests.cpp
+@@ -0,0 +1,93 @@
++#include "test_framework.hpp"
++
++#include "host_launch_options.hpp"
++
++#include <cstring>
++#include <filesystem>
++
++namespace {
++
++using arpg::platform::HostArgumentError;
++using arpg::platform::HostArgumentResult;
++
++HostArgumentResult parse(int argc, const char* const* argv) noexcept {
++    return arpg::platform::parse_host_arguments(argc, argv);
++}
++
++arpg::test::Failure no_arguments_leave_options_empty() noexcept {
++    const char* const argv[] = {"arpg"};
++    const HostArgumentResult result = parse(1, argv);
++    ARPG_REQUIRE(result.error == HostArgumentError::none);
++    ARPG_REQUIRE(!result.options.save_directory.has_value());
++    ARPG_REQUIRE(!result.options.new_run_seed.has_value());
++    return {};
++}
++
++arpg::test::Failure decimal_and_hex_seeds_parse_to_same_value() noexcept {
++    const char* const decimal_argv[] = {"arpg", "--seed", "8"};
++    const char* const hex_argv[] = {"arpg", "--seed", "0x0000000000000008"};
++    const HostArgumentResult decimal = parse(3, decimal_argv);
++    const HostArgumentResult hex = parse(3, hex_argv);
++    ARPG_REQUIRE(decimal.error == HostArgumentError::none);
++    ARPG_REQUIRE(hex.error == HostArgumentError::none);
++    ARPG_REQUIRE(decimal.options.new_run_seed.has_value());
++    ARPG_REQUIRE(hex.options.new_run_seed.has_value());
++    ARPG_REQUIRE(*decimal.options.new_run_seed == 8U);
++    ARPG_REQUIRE(*hex.options.new_run_seed == 8U);
++    return {};
++}
++
++arpg::test::Failure save_directory_with_spaces_is_frozen_absolute() noexcept {
++    const char* const argv[] = {"arpg", "--save-dir", "slot saves"};
++    const HostArgumentResult result = parse(3, argv);
++    ARPG_REQUIRE(result.error == HostArgumentError::none);
++    ARPG_REQUIRE(result.options.save_directory.has_value());
++    ARPG_REQUIRE(result.options.save_directory->is_absolute());
++    ARPG_REQUIRE(result.options.save_directory->filename() == "slot saves");
++    return {};
++}
++
++arpg::test::Failure duplicate_and_unknown_options_are_rejected() noexcept {
++    const char* const duplicate_seed[] = {
++        "arpg", "--seed", "1", "--seed", "2"};
++    const char* const duplicate_directory[] = {
++        "arpg", "--save-dir", "one", "--save-dir", "two"};
++    const char* const unknown[] = {"arpg", "--seed=8"};
++    ARPG_REQUIRE(parse(5, duplicate_seed).error
++        == HostArgumentError::duplicate_option);
++    ARPG_REQUIRE(parse(5, duplicate_directory).error
++        == HostArgumentError::duplicate_option);
++    ARPG_REQUIRE(parse(2, unknown).error
++        == HostArgumentError::unknown_option);
++    return {};
++}
++
++arpg::test::Failure missing_and_invalid_seed_values_are_rejected() noexcept {
++    const char* const missing[] = {"arpg", "--seed"};
++    const char* const null_directory[] = {"arpg", "--save-dir", nullptr};
++    const char* const negative[] = {"arpg", "--seed", "-1"};
++    const char* const overflow[] = {
++        "arpg", "--seed", "18446744073709551616"};
++    const char* const trailing[] = {"arpg", "--seed", "8x"};
++    ARPG_REQUIRE(parse(2, missing).error == HostArgumentError::missing_value);
++    ARPG_REQUIRE(parse(3, null_directory).error
++        == HostArgumentError::missing_value);
++    ARPG_REQUIRE(parse(3, negative).error == HostArgumentError::invalid_seed);
++    ARPG_REQUIRE(parse(3, overflow).error == HostArgumentError::invalid_seed);
++    ARPG_REQUIRE(parse(3, trailing).error == HostArgumentError::invalid_seed);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"no arguments", &no_arguments_leave_options_empty},
++    {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
++    {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
++    {"duplicate and unknown options", &duplicate_and_unknown_options_are_rejected},
++    {"missing and invalid seed", &missing_and_invalid_seed_values_are_rejected},
++};
++
++}  // namespace
++
++arpg::test::TestSuite host_launch_options_suite() noexcept {
++    return arpg::test::make_suite("host_launch_options", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index a2283cb..35aaa41 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -1,17 +1,19 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite combat_key_bindings_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
++arpg::test::TestSuite host_launch_options_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
++        host_launch_options_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 12, "platform");
++    return arpg::test::run_suites(suites, 24, "platform");
+ }

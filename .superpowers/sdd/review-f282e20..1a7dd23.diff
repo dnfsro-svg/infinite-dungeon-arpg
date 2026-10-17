@@ -1,0 +1,1452 @@
+# Review package: f282e20..1a7dd23
+
+## Commits
+1a7dd23 fix: preserve stage 3 door visuals
+aac36a2 feat: present persistent stage 3 dungeon rules
+
+## Files changed
+ src/app/main.cpp                           |  16 +-
+ src/platform/raylib/CMakeLists.txt         |   3 +-
+ src/platform/raylib/combat_renderer.cpp    | 151 ++++++++++++---
+ src/platform/raylib/combat_renderer.hpp    |  16 ++
+ src/platform/raylib/dungeon_runtime.cpp    | 169 ++++++++++++++++
+ src/platform/raylib/dungeon_runtime.hpp    |  62 ++++++
+ src/platform/raylib/raylib_host.cpp        | 201 +++++++++++--------
+ src/platform/raylib/raylib_host.hpp        |  11 +-
+ tests/platform/CMakeLists.txt              |   3 +-
+ tests/platform/dungeon_runtime_tests.cpp   | 300 +++++++++++++++++++++++++++++
+ tests/platform/dungeon_view_math_tests.cpp |  12 ++
+ tests/platform/platform_test_main.cpp      |   4 +-
+ 12 files changed, 833 insertions(+), 115 deletions(-)
+
+## Diff
+diff --git a/src/app/main.cpp b/src/app/main.cpp
+index b28f075..c12641a 100644
+--- a/src/app/main.cpp
++++ b/src/app/main.cpp
+@@ -1,6 +1,18 @@
+ #include "raylib_host.hpp"
++#include "host_launch_options.hpp"
+ 
+-int main() {
+-    const arpg::platform::RaylibHostConfig config{};
++#include <cstdio>
++
++int main(int argc, char** argv) {
++    const auto arguments = arpg::platform::parse_host_arguments(
++        argc, const_cast<const char* const*>(argv));
++    if (arguments.error != arpg::platform::HostArgumentError::none) {
++        std::fprintf(stderr, "Invalid command line arguments (error %u)\n",
++            static_cast<unsigned>(arguments.error));
++        return static_cast<int>(arpg::platform::HostExitCode::invalid_arguments);
++    }
++    arpg::platform::RaylibHostConfig config{};
++    config.save_directory = arguments.options.save_directory;
++    config.new_run_seed = arguments.options.new_run_seed;
+     return static_cast<int>(arpg::platform::run_raylib_host(config));
+ }
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 03054b0..4b061b6 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -1,17 +1,18 @@
+ add_library(arpg_raylib STATIC
+     combat_audio.cpp
+     combat_feedback.cpp
+     combat_renderer.cpp
+     combat_view_math.cpp
+     dungeon_view_math.cpp
++    dungeon_runtime.cpp
+     host_launch_options.cpp
+     raylib_host.cpp)
+ 
+ target_include_directories(arpg_raylib
+     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+ target_compile_features(arpg_raylib PUBLIC cxx_std_17)
+ target_link_libraries(arpg_raylib
+-    PUBLIC arpg_dungeon raylib
++    PUBLIC arpg_dungeon arpg_persistence raylib
+     PRIVATE arpg_core)
+ 
+ arpg_enable_project_warnings(arpg_raylib)
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 22d1b37..7fe5d4c 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -1,16 +1,17 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
+ #include "combat/combat_collision.hpp"
+ #include "combat_view_math.hpp"
+ #include "dungeon_view_math.hpp"
++#include "dungeon_runtime.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::platform {
+@@ -89,30 +90,40 @@ const char* event_name(CombatEventKind kind) noexcept {
+     case CombatEventKind::impact_summary: return "Impact";
+     case CombatEventKind::landing: return "Landing";
+     case CombatEventKind::break_started: return "Break";
+     case CombatEventKind::defeated: return "Defeated";
+     case CombatEventKind::respawned: return "Respawned";
+     case CombatEventKind::reset: return "Reset";
+     }
+     return "?";
+ }
+ 
++const char* ecology_name(dungeon::DungeonElement element) noexcept {
++    switch (element) {
++    case dungeon::DungeonElement::fire: return "FIRE";
++    case dungeon::DungeonElement::water: return "WATER";
++    case dungeon::DungeonElement::lightning: return "LIGHTNING";
++    case dungeon::DungeonElement::chaos: return "CHAOS";
++    }
++    return "UNKNOWN";
++}
++
+ Color dummy_color(DummyKind kind) noexcept {
+     switch (kind) {
+     case DummyKind::light: return Color{76, 205, 122, 255};
+     case DummyKind::normal: return Color{232, 190, 75, 255};
+     case DummyKind::heavy: return Color{218, 80, 76, 255};
+     }
+     return MAGENTA;
+ }
+ 
+-void draw_graybox_room() noexcept {
++void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const Vector2 back_left{width * 0.20F, height * 0.22F};
+     const Vector2 back_right{width * 0.80F, height * 0.22F};
+     const Vector2 floor_left{width * 0.04F, height * 0.92F};
+     const Vector2 floor_right{width * 0.96F, height * 0.92F};
+ 
+     DrawRectangleGradientV(
+         0,
+         0,
+@@ -123,21 +134,22 @@ void draw_graybox_room() noexcept {
+     DrawRectangle(
+         static_cast<int>(back_left.x),
+         0,
+         static_cast<int>(back_right.x - back_left.x),
+         static_cast<int>(back_left.y),
+         Color{31, 37, 51, 255});
+     DrawTriangle({0.0F, 0.0F}, floor_left, back_left, Color{22, 27, 39, 255});
+     DrawTriangle({0.0F, 0.0F}, {0.0F, height}, floor_left, Color{22, 27, 39, 255});
+     DrawTriangle({width, 0.0F}, back_right, floor_right, Color{22, 27, 39, 255});
+     DrawTriangle({width, 0.0F}, floor_right, {width, height}, Color{22, 27, 39, 255});
+-    const Color floor{45, 51, 63, 255};
++    const Rgba8 tint = ecosystem_tint(ecology);
++    const Color floor{tint.r, tint.g, tint.b, 255};
+     DrawTriangle(back_left, floor_left, floor_right, floor);
+     DrawTriangle(back_left, floor_right, back_right, floor);
+ 
+     const Color grid{87, 99, 119, 110};
+     for (int column = 0; column <= 10; ++column) {
+         const float amount = static_cast<float>(column) / 10.0F;
+         DrawLineEx(
+             lerp(back_left, back_right, amount),
+             lerp(floor_left, floor_right, amount),
+             1.0F,
+@@ -147,73 +159,114 @@ void draw_graybox_room() noexcept {
+         const float linear = static_cast<float>(row) / 8.0F;
+         const float perspective = linear * linear;
+         DrawLineEx(
+             lerp(back_left, floor_left, perspective),
+             lerp(back_right, floor_right, perspective),
+             1.0F,
+             grid);
+     }
+ }
+ 
+-void draw_doors(
+-    DoorVisualMode mode,
++void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+     float width,
+     float height) noexcept {
++    const DoorVisualMode mode = door_visual_mode(
++        snapshot.phase, snapshot.has_active_room);
+     if (mode == DoorVisualMode::hidden) {
+         return;
+     }
+ 
+     constexpr std::array<Vec3, 4> kDoorCenters{{
+         {0.0F, -3.5F, 0.0F},
+         {0.0F, 3.5F, 0.0F},
+         {-8.0F, 0.0F, 0.0F},
+         {8.0F, 0.0F, 0.0F},
+     }};
+-    constexpr std::array<const char*, 4> kDoorArrows{{"^", "v", "<", ">"}};
+-    const bool open = mode == DoorVisualMode::open;
+-    const Color frame_color = open
+-        ? Color{211, 244, 248, 255}
+-        : Color{65, 70, 80, 255};
+-
++    constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
++        dungeon::ExitDirection::up, dungeon::ExitDirection::down,
++        dungeon::ExitDirection::left, dungeon::ExitDirection::right}};
+     for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
+         const ScreenProjection projected = project_combat_position(
+             kDoorCenters[index], width, height);
++        const DoorRenderDecision visual = door_render_decision(
++            mode, kDirections[index]);
++        const Color frame_color{visual.frame.r, visual.frame.g,
++            visual.frame.b, visual.frame.a};
++        const Color text_color{visual.text.r, visual.text.g, visual.text.b,
++            visual.text.a};
+         const float door_width = 82.0F * projected.scale;
+         const float door_height = 70.0F * projected.scale;
+         const Rectangle frame{
+             projected.x - door_width * 0.5F,
+             projected.ground_y - door_height,
+             door_width,
+             door_height,
+         };
+         DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
+-        if (!open) {
++        if (visual.draw_locked_interior) {
+             DrawRectangleRec(
+                 {frame.x + 7.0F * projected.scale,
+                  frame.y + 7.0F * projected.scale,
+                  frame.width - 14.0F * projected.scale,
+                  frame.height - 7.0F * projected.scale},
+-                Color{177, 31, 46, 235});
+-            continue;
++                Color{visual.locked_interior.r, visual.locked_interior.g,
++                    visual.locked_interior.b, visual.locked_interior.a});
+         }
+ 
+-        const int font_size = static_cast<int>(28.0F * projected.scale);
+-        const int arrow_width = MeasureText(kDoorArrows[index], font_size);
++        const int font_size = static_cast<int>(22.0F * projected.scale);
++        const int arrow_width = MeasureText(visual.arrow, font_size);
+         DrawText(
+-            kDoorArrows[index],
++            visual.arrow,
+             static_cast<int>(projected.x) - arrow_width / 2,
+             static_cast<int>(frame.y + 17.0F * projected.scale),
+             font_size,
+-            frame_color);
++            text_color);
++        DrawText(visual.label, static_cast<int>(frame.x),
++            static_cast<int>(frame.y - 15.0F * projected.scale),
++            static_cast<int>(11.0F * projected.scale), text_color);
+     }
+ }
+ 
++void draw_abyss(const dungeon::DungeonSnapshot& snapshot,
++    float elapsed_seconds) noexcept {
++    if (snapshot.is_abyss) {
++        const float pulse = abyss_pulse_alpha(elapsed_seconds);
++        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
++            Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));
++        DrawRectangleLinesEx({8.0F, 8.0F,
++            static_cast<float>(GetScreenWidth() - 16),
++            static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
++            Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
++    }
++}
++
++void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
++    const HoleVisualMode hole = hole_visual_mode(snapshot);
++    if (hole == HoleVisualMode::hidden) {
++        return;
++    }
++    const int x = GetScreenWidth() / 2;
++    const int y = static_cast<int>(GetScreenHeight() * 0.68F);
++    Color color{43, 25, 55, 255};
++    if (hole == HoleVisualMode::ready) {
++        color = Color{230, 79, 186, 255};
++    } else if (hole == HoleVisualMode::busy) {
++        color = Color{255, 194, 74, 255};
++    }
++    DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
++    DrawEllipseLines(x, y, 74.0F, 25.0F, color);
++    const char* label = hole == HoleVisualMode::sealed ? "SEALED"
++        : hole == HoleVisualMode::ready ? "READY"
++        : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
++    DrawText(label, x - MeasureText(label, 16) / 2, y - 8, 16, color);
++}
++
+ void draw_bar(
+     float x,
+     float y,
+     float width,
+     float ratio,
+     Color color) noexcept {
+     const float clamped = std::clamp(ratio, 0.0F, 1.0F);
+     DrawRectangleRec({x, y, width, 5.0F}, Color{20, 23, 31, 230});
+     DrawRectangleRec({x + 1.0F, y + 1.0F, (width - 2.0F) * clamped, 3.0F}, color);
+ }
+@@ -355,20 +408,34 @@ void draw_debug_volumes(
+             make_dummy_hurtbox(dummy.kind, dummy.position),
+             width,
+             height,
+             Color{94, 255, 173, 210},
+             "Hurt");
+     }
+ }
+ 
+ }  // namespace
+ 
++DoorRenderDecision door_render_decision(
++    DoorVisualMode mode,
++    dungeon::ExitDirection direction) noexcept {
++    const DoorTheme theme = door_theme(direction);
++    return {
++        theme.label,
++        theme.arrow,
++        theme.frame,
++        theme.frame,
++        {177U, 31U, 46U, 235U},
++        mode == DoorVisualMode::closed,
++    };
++}
++
+ void CombatRenderer::consume_event(const CombatEvent& event) noexcept {
+     last_event_ = event;
+     has_last_event_ = true;
+ }
+ 
+ void CombatRenderer::consume_dungeon_event(
+     const dungeon::DungeonEvent& event) noexcept {
+     transition_ = transition_after_dungeon_event(transition_, event.kind);
+ }
+ 
+@@ -377,36 +444,39 @@ void CombatRenderer::clear_combat_transients() noexcept {
+     has_last_event_ = false;
+ }
+ 
+ void CombatRenderer::update(float frame_seconds) noexcept {
+     transition_ = advance_transition(transition_, frame_seconds);
+ }
+ 
+ void CombatRenderer::draw(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
++    const DungeonRenderStatus& runtime_status,
+     float interpolation_alpha,
+     bool draw_debug,
+     const CombatFeedback& feedback,
+     bool audio_ready) noexcept {
+     transition_ = transition_after_room_phase(transition_, current.phase);
+ 
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
+     const CameraOffset camera_offset = feedback.camera_offset();
+     Camera2D world_camera{};
+     world_camera.offset = {camera_offset.x, camera_offset.y};
+     world_camera.zoom = 1.0F;
+     BeginMode2D(world_camera);
+-    draw_graybox_room();
+-    draw_doors(door_visual_mode(current.phase, current.has_active_room), width, height);
++    draw_graybox_room(current.ecology);
++    draw_abyss(current, static_cast<float>(GetTime()));
++    draw_doors(current, width, height);
++    draw_hole(current);
+ 
+     if (current.combat.has_value()) {
+         const CombatSnapshot& current_combat = *current.combat;
+         const CombatSnapshot& previous_combat =
+             can_interpolate_room(previous, current)
+             ? *previous.combat
+             : current_combat;
+ 
+         std::array<Vec3, 4> positions{};
+         positions[0] = interpolate(
+@@ -531,53 +601,70 @@ void CombatRenderer::draw(
+ 
+     EndMode2D();
+ 
+     const std::uint64_t room_ordinal = current.room_index
+             == (std::numeric_limits<std::uint64_t>::max)()
+         ? current.room_index
+         : current.room_index + 1U;
+     const bool doors_open = current.phase == dungeon::RoomPhase::cleared
+         || current.phase == dungeon::RoomPhase::awaiting_exit;
+     DrawRectangleRounded(
+-        {16.0F, 14.0F, 500.0F, draw_debug ? 378.0F : 150.0F},
++        {16.0F, 14.0F, 570.0F, draw_debug ? 470.0F : 210.0F},
+         0.06F,
+         6,
+         Color{7, 10, 17, 220});
+     const Color text{218, 226, 239, 255};
+     const Color accent{110, 207, 255, 255};
+     int y = 28;
+-    DrawText("WASD Move  J Light  K Jump  L Launcher", 30, y, 16, accent);
++    DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend", 30, y, 16, accent);
+     y += 25;
+     DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit", 30, y, 16, accent);
+     y += 28;
+     DrawText(
+-        TextFormat(
+-            "Room %llu  Phase %s  Remaining %u",
+-            static_cast<unsigned long long>(room_ordinal),
+-            room_phase_label(current.phase),
+-            static_cast<unsigned>(current.remaining_targets)),
++        TextFormat("Depth %llu  Floor Room %llu  Global Room %llu",
++            static_cast<unsigned long long>(current.depth),
++            static_cast<unsigned long long>(current.floor_room_index),
++            static_cast<unsigned long long>(room_ordinal)),
+         30, y, 16, text);
+     y += 23;
+     DrawText(
+-        TextFormat(
+-            "Doors: %s  Last exit: %s",
+-            doors_open ? "OPEN" : "LOCKED",
+-            exit_direction_label(current.last_exit)),
++        TextFormat("Ecology %s  F/W/L/C bias %u/%u/%u/%u",
++            ecology_name(current.ecology),
++            current.biases[0], current.biases[1], current.biases[2],
++            current.biases[3]),
+         30, y, 16, text);
++    y += 23;
++    DrawText(TextFormat("ABYSS %s  Hole %s  Autosave %s",
++        current.is_abyss ? "YES" : "NO",
++        current.has_hole ? (current.phase == dungeon::RoomPhase::committing
++                ? "SAVING" : doors_open ? "READY" : "SEALED") : "NONE",
++        save_indicator_label(runtime_status.indicator)), 30, y, 16,
++        runtime_status.indicator == SaveIndicator::error
++            ? Color{255, 120, 120, 255} : text);
+ 
+     if (draw_debug) {
+         y += 25;
+         DrawText(
+             TextFormat(
+-                "Seed %016llX  Session tick %llu",
++                "Root %016llX Room %016llX Generation %llu",
++                static_cast<unsigned long long>(current.root_seed),
+                 static_cast<unsigned long long>(current.room_seed),
+-                static_cast<unsigned long long>(current.session_tick)),
++                static_cast<unsigned long long>(current.commit_generation)),
++            30, y, 16, text);
++        y += 23;
++        DrawText(
++            TextFormat("Saved ecology %s hole %s abyss %s slot %u error %u fault %u",
++                ecology_name(current.ecology),
++                current.has_hole ? "YES" : "NO", current.is_abyss ? "YES" : "NO",
++                static_cast<unsigned>(runtime_status.active_slot),
++                static_cast<unsigned>(runtime_status.error),
++                static_cast<unsigned>(current.diagnostics.fault)),
+             30, y, 16, text);
+         y += 23;
+         DrawText(
+             TextFormat(
+                 "Dungeon event %u  relay %u  rejected %u  index fault %s",
+                 current.diagnostics.event_overflow_count,
+                 current.diagnostics.combat_relay_overflow_count,
+                 current.diagnostics.rejected_exit_count,
+                 current.diagnostics.room_index_overflow ? "YES" : "NO"),
+             30, y, 16, text);
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 0fe1b67..f97e5ca 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -1,26 +1,42 @@
+ #pragma once
+ 
+ #include "combat_feedback.hpp"
+ #include "dungeon_view_math.hpp"
+ 
+ namespace arpg::platform {
+ 
++struct DungeonRenderStatus;
++
++struct DoorRenderDecision final {
++    const char* label{};
++    const char* arrow{};
++    Rgba8 frame{};
++    Rgba8 text{};
++    Rgba8 locked_interior{};
++    bool draw_locked_interior{};
++};
++
++[[nodiscard]] DoorRenderDecision door_render_decision(
++    DoorVisualMode mode,
++    dungeon::ExitDirection direction) noexcept;
++
+ class CombatRenderer final {
+ public:
+     void consume_event(const combat::CombatEvent& event) noexcept;
+     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
+     void clear_combat_transients() noexcept;
+     void update(float frame_seconds) noexcept;
+     void draw(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
++        const DungeonRenderStatus& runtime_status,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback,
+         bool audio_ready) noexcept;
+ 
+ private:
+     combat::CombatEvent last_event_{};
+     bool has_last_event_{};
+     TransitionVisualState transition_{};
+ };
+diff --git a/src/platform/raylib/dungeon_runtime.cpp b/src/platform/raylib/dungeon_runtime.cpp
+new file mode 100644
+index 0000000..0caf999
+--- /dev/null
++++ b/src/platform/raylib/dungeon_runtime.cpp
+@@ -0,0 +1,169 @@
++#include "dungeon_runtime.hpp"
++
++#include "persistence/save_paths.hpp"
++
++#include <utility>
++
++namespace arpg::platform {
++
++DungeonRuntime::DungeonRuntime(DungeonRuntimeConfig config)
++    : config_(std::move(config)), store_(config_.save) {}
++
++std::optional<std::uint64_t> DungeonRuntime::select_new_run_seed() const noexcept {
++    if (config_.new_run_seed.has_value()) {
++        return config_.new_run_seed;
++    }
++    if (config_.seed_provider != nullptr) {
++        return config_.seed_provider(config_.seed_context);
++    }
++    return persistence::system_root_seed();
++}
++
++void DungeonRuntime::sync_load_status(
++    const persistence::SaveLoadResult& result) noexcept {
++    status_.active_slot = result.active_slot;
++    status_.error = result.error;
++    if (result.state == persistence::SaveLoadState::ready && result.recovered) {
++        status_.indicator = SaveIndicator::recovered;
++    } else if (result.state == persistence::SaveLoadState::ready) {
++        status_.indicator = SaveIndicator::none;
++    } else if (result.state == persistence::SaveLoadState::empty) {
++        status_.indicator = SaveIndicator::none;
++    } else {
++        status_.indicator = SaveIndicator::error;
++    }
++}
++
++void DungeonRuntime::sync_commit_status(
++    const persistence::SaveCommitResult& result) noexcept {
++    status_.active_slot = result.active_slot;
++    status_.error = result.error;
++    status_.indicator = result.state == persistence::SaveCommitState::committed
++        ? SaveIndicator::saved : SaveIndicator::error;
++}
++
++dungeon::TransitionSaveResult DungeonRuntime::to_session_result(
++    const persistence::SaveCommitResult& saved) noexcept {
++    dungeon::SaveDisposition disposition = dungeon::SaveDisposition::indeterminate;
++    if (saved.state == persistence::SaveCommitState::committed) {
++        disposition = dungeon::SaveDisposition::committed;
++    } else if (saved.state == persistence::SaveCommitState::not_committed) {
++        disposition = dungeon::SaveDisposition::not_committed;
++    }
++    return {disposition, saved.verified_state.commit_generation,
++        saved.verified_state};
++}
++
++bool DungeonRuntime::initialize() noexcept {
++    session_.reset();
++    status_ = {};
++    if (dungeon::validate_rules(config_.rules) != dungeon::DungeonFault::none) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++
++    const persistence::SaveLoadResult loaded = store_.load();
++    sync_load_status(loaded);
++    if (loaded.state == persistence::SaveLoadState::ready) {
++        session_.emplace(config_.rules, loaded.checkpoint);
++        state_ = DungeonRuntimeState::running;
++        return true;
++    }
++    if (loaded.state == persistence::SaveLoadState::recovery_required) {
++        state_ = DungeonRuntimeState::recovery_required;
++        return false;
++    }
++    if (loaded.state != persistence::SaveLoadState::empty) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++
++    const auto root_seed = select_new_run_seed();
++    if (!root_seed.has_value()) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++    const dungeon::RunStateBuildResult built =
++        dungeon::make_initial_run_state(*root_seed, config_.rules);
++    if (built.fault != dungeon::DungeonFault::none) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++    const persistence::SaveCommitResult committed = store_.commit(built.state);
++    sync_commit_status(committed);
++    if (committed.state != persistence::SaveCommitState::committed) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++    session_.emplace(config_.rules, committed.verified_state);
++    state_ = DungeonRuntimeState::running;
++    return true;
++}
++
++DungeonRuntimeState DungeonRuntime::state() const noexcept {
++    if (session_.has_value()
++        && session_->snapshot().phase == dungeon::RoomPhase::faulted) {
++        return DungeonRuntimeState::faulted;
++    }
++    return state_;
++}
++
++dungeon::DungeonSession* DungeonRuntime::session() noexcept {
++    return session_.has_value() ? &*session_ : nullptr;
++}
++
++const dungeon::DungeonSession* DungeonRuntime::session() const noexcept {
++    return session_.has_value() ? &*session_ : nullptr;
++}
++
++DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
++    return status_;
++}
++
++void DungeonRuntime::service_pending_transition() noexcept {
++    if (state() != DungeonRuntimeState::running || !session_.has_value()) {
++        return;
++    }
++    const auto pending = session_->pending_transition();
++    if (!pending.has_value()) {
++        return;
++    }
++    status_.indicator = SaveIndicator::saving;
++    const persistence::SaveCommitResult saved = store_.commit(pending->next_state);
++    sync_commit_status(saved);
++    session_->resolve_pending_transition(to_session_result(saved));
++    if (session_->snapshot().phase == dungeon::RoomPhase::faulted) {
++        state_ = DungeonRuntimeState::faulted;
++    }
++}
++
++bool DungeonRuntime::recover_with_new_run() noexcept {
++    if (state_ != DungeonRuntimeState::recovery_required) {
++        return false;
++    }
++    const auto root_seed = select_new_run_seed();
++    if (!root_seed.has_value()) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++    const dungeon::RunStateBuildResult built =
++        dungeon::make_initial_run_state(*root_seed, config_.rules);
++    if (built.fault != dungeon::DungeonFault::none) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++    const persistence::SaveLoadResult created =
++        store_.archive_invalid_and_create(built.state);
++    sync_load_status(created);
++    if (created.state != persistence::SaveLoadState::ready
++        || created.checkpoint.commit_generation != 1U) {
++        state_ = DungeonRuntimeState::faulted;
++        return false;
++    }
++    session_.emplace(config_.rules, created.checkpoint);
++    status_.indicator = SaveIndicator::saved;
++    state_ = DungeonRuntimeState::running;
++    return true;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/dungeon_runtime.hpp b/src/platform/raylib/dungeon_runtime.hpp
+new file mode 100644
+index 0000000..d8acc53
+--- /dev/null
++++ b/src/platform/raylib/dungeon_runtime.hpp
+@@ -0,0 +1,62 @@
++#pragma once
++
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/dungeon_session.hpp"
++#include "dungeon_view_math.hpp"
++#include "persistence/save_store.hpp"
++
++#include <cstdint>
++#include <optional>
++
++namespace arpg::platform {
++
++enum class DungeonRuntimeState : std::uint8_t {
++    uninitialized,
++    running,
++    recovery_required,
++    faulted,
++};
++
++using RootSeedProvider = std::optional<std::uint64_t> (*)(void* context) noexcept;
++
++struct DungeonRuntimeConfig final {
++    dungeon::DungeonRules rules{};
++    persistence::SaveStoreConfig save{};
++    std::optional<std::uint64_t> new_run_seed{};
++    RootSeedProvider seed_provider{};
++    void* seed_context{};
++};
++
++struct DungeonRenderStatus final {
++    SaveIndicator indicator{SaveIndicator::none};
++    persistence::SaveSlot active_slot{persistence::SaveSlot::none};
++    persistence::SaveError error{persistence::SaveError::none};
++};
++
++class DungeonRuntime final {
++public:
++    explicit DungeonRuntime(DungeonRuntimeConfig config);
++
++    [[nodiscard]] bool initialize() noexcept;
++    [[nodiscard]] DungeonRuntimeState state() const noexcept;
++    [[nodiscard]] dungeon::DungeonSession* session() noexcept;
++    [[nodiscard]] const dungeon::DungeonSession* session() const noexcept;
++    [[nodiscard]] DungeonRenderStatus render_status() const noexcept;
++    void service_pending_transition() noexcept;
++    [[nodiscard]] bool recover_with_new_run() noexcept;
++
++private:
++    [[nodiscard]] std::optional<std::uint64_t> select_new_run_seed() const noexcept;
++    void sync_load_status(const persistence::SaveLoadResult& result) noexcept;
++    void sync_commit_status(const persistence::SaveCommitResult& result) noexcept;
++    [[nodiscard]] static dungeon::TransitionSaveResult to_session_result(
++        const persistence::SaveCommitResult& saved) noexcept;
++
++    DungeonRuntimeConfig config_{};
++    persistence::SaveStore store_;
++    std::optional<dungeon::DungeonSession> session_{};
++    DungeonRuntimeState state_{DungeonRuntimeState::uninitialized};
++    DungeonRenderStatus status_{};
++};
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 264cc90..57b7034 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -1,27 +1,27 @@
+ #include "raylib_host.hpp"
+ 
+ #include "combat_audio.hpp"
+ #include "combat_feedback.hpp"
+ #include "combat_key_bindings.hpp"
+ #include "combat_renderer.hpp"
+ #include "core/fixed_step.hpp"
+-#include "dungeon/dungeon_session.hpp"
++#include "dungeon_runtime.hpp"
+ #include "dungeon_view_math.hpp"
++#include "persistence/save_paths.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <cstdint>
+ 
+-#if !defined(RAYLIB_VERSION_MAJOR) || \
+-    !defined(RAYLIB_VERSION_MINOR) || \
+-    !defined(RAYLIB_VERSION_PATCH)
++#if !defined(RAYLIB_VERSION_MAJOR) || !defined(RAYLIB_VERSION_MINOR) \
++    || !defined(RAYLIB_VERSION_PATCH)
+ #error "raylib version macros are unavailable"
+ #endif
+ 
+ static_assert(RAYLIB_VERSION_MAJOR == 6, "raylib 6.0.0 is required");
+ static_assert(RAYLIB_VERSION_MINOR == 0, "raylib 6.0.0 is required");
+ static_assert(RAYLIB_VERSION_PATCH == 0, "raylib 6.0.0 is required");
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+@@ -32,110 +32,161 @@ std::int8_t key_direction(int negative_key, int positive_key) noexcept {
+ }
+ 
+ void submit_frame_actions(dungeon::DungeonSession& session) noexcept {
+     for (const CombatKeyBinding& binding : kCombatKeyBindings) {
+         if (IsKeyPressed(binding.key)) {
+             static_cast<void>(session.queue_action(binding.action));
+         }
+     }
+ }
+ 
+-void drain_events(
+-    dungeon::DungeonSession& session,
+-    CombatRenderer& renderer,
+-    CombatFeedback& feedback,
+-    CombatAudio& audio) noexcept {
++void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
++    CombatFeedback& feedback, CombatAudio& audio) noexcept {
+     while (const auto event = session.try_pop_combat_event()) {
+         renderer.consume_event(*event);
+         feedback.consume(*event);
+         audio.consume_event(*event);
+     }
+     while (const auto event = session.try_pop_event()) {
+         renderer.consume_dungeon_event(*event);
+         if (dungeon_event_clears_transients(event->kind)) {
+             renderer.clear_combat_transients();
+             feedback.clear();
+             audio.stop_all();
+         }
+     }
+ }
+ 
++void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
++    BeginDrawing();
++    ClearBackground(Color{21, 11, 27, 255});
++    DrawText("SAVE RECOVERY REQUIRED", 48, 70, 32, Color{255, 169, 194, 255});
++    DrawText("Both save slots are invalid. Press N to archive them and create a new run.",
++        48, 122, 18, RAYWHITE);
++    DrawText(TextFormat("Save error %u", static_cast<unsigned>(status.error)),
++        48, 156, 16, Color{255, 202, 126, 255});
++    EndDrawing();
++}
++
+ }  // namespace
+ 
+ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+-    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
+-    InitWindow(config.window_width, config.window_height, config.window_title);
+-    if (!IsWindowReady()) {
+-        TraceLog(LOG_ERROR, "raylib window initialization failed");
+-        return HostExitCode::window_initialization_failed;
+-    }
+-    if (!ChangeDirectory(GetApplicationDirectory())) {
+-        TraceLog(LOG_WARNING, "failed to use application directory");
+-    }
+-
+-    SetWindowMinSize(800, 450);
+-    SetExitKey(KEY_ESCAPE);
+-    SetTargetFPS(60);
+-
+-    core::FixedStepRunner fixed_step;
+-    dungeon::DungeonSession session{
+-        dungeon::DungeonSessionConfig{config.root_seed, 0}};
+-    dungeon::DungeonSnapshot current = session.snapshot();
+-    dungeon::DungeonSnapshot previous = current;
+-    CombatRenderer renderer;
+-    CombatFeedback feedback;
+-    CombatAudio audio;
+-    const bool audio_ready = audio.initialize();
+-    bool draw_debug = false;
+-
+-    while (!WindowShouldClose()) {
+-        const bool take_screenshot = IsKeyPressed(KEY_F12);
+-        if (IsKeyPressed(KEY_F1)) {
+-            draw_debug = !draw_debug;
++    bool window_ready = false;
++    try {
++        const auto save_directory = config.save_directory.has_value()
++            ? config.save_directory : persistence::default_save_directory();
++        if (!save_directory.has_value()) {
++            return HostExitCode::save_initialization_failed;
+         }
+-
+-        if (IsKeyPressed(KEY_R)) {
+-            session.reset_current_room();
+-            current = session.snapshot();
+-            previous = current;
+-            drain_events(session, renderer, feedback, audio);
++        DungeonRuntimeConfig runtime_config{};
++        runtime_config.save.directory = *save_directory;
++        runtime_config.new_run_seed = config.new_run_seed;
++        DungeonRuntime runtime(runtime_config);
++        const bool initialized = runtime.initialize();
++        if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
++            return HostExitCode::save_initialization_failed;
+         }
+ 
+-        submit_frame_actions(session);
+-        const combat::MovementInput movement{
+-            key_direction(KEY_A, KEY_D),
+-            key_direction(KEY_W, KEY_S),
+-        };
+-        const float frame_seconds = GetFrameTime();
+-        feedback.update(frame_seconds);
+-        renderer.update(frame_seconds);
+-        const core::FixedStepFrame frame = fixed_step.advance(
+-            static_cast<double>(frame_seconds));
+-
+-        for (std::uint32_t step = 0; step < frame.steps; ++step) {
++        SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
++        InitWindow(config.window_width, config.window_height, config.window_title);
++        window_ready = IsWindowReady();
++        if (!window_ready) {
++            TraceLog(LOG_ERROR, "raylib window initialization failed");
++            return HostExitCode::window_initialization_failed;
++        }
++        if (!ChangeDirectory(GetApplicationDirectory())) {
++            TraceLog(LOG_WARNING, "failed to use application directory");
++        }
++        SetWindowMinSize(800, 450);
++        SetExitKey(KEY_ESCAPE);
++        SetTargetFPS(60);
++
++        core::FixedStepRunner fixed_step;
++        CombatRenderer renderer;
++        CombatFeedback feedback;
++        CombatAudio audio;
++        const bool audio_ready = audio.initialize();
++        bool draw_debug = false;
++        dungeon::DungeonSnapshot current{};
++        dungeon::DungeonSnapshot previous{};
++        if (runtime.session() != nullptr) {
++            current = runtime.session()->snapshot();
+             previous = current;
+-            session.tick(movement);
+-            current = session.snapshot();
+-            drain_events(session, renderer, feedback, audio);
++            drain_events(*runtime.session(), renderer, feedback, audio);
+         }
+ 
+-        BeginDrawing();
+-        ClearBackground(Color{13, 17, 27, 255});
+-        renderer.draw(
+-            previous,
+-            current,
+-            static_cast<float>(frame.interpolation_alpha),
+-            draw_debug,
+-            feedback,
+-            audio_ready);
+-        EndDrawing();
+-        if (take_screenshot) {
+-            TakeScreenshot("room-loop.png");
++        while (!WindowShouldClose()) {
++            const bool take_screenshot = IsKeyPressed(KEY_F12);
++            if (IsKeyPressed(KEY_F1)) {
++                draw_debug = !draw_debug;
++            }
++            if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
++                    IsKeyPressed(KEY_N))) {
++                if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
++                    current = runtime.session()->snapshot();
++                    previous = current;
++                    drain_events(*runtime.session(), renderer, feedback, audio);
++                }
++            }
++            if (runtime.state() == DungeonRuntimeState::recovery_required) {
++                draw_recovery_screen(runtime.render_status());
++                if (take_screenshot) {
++                    TakeScreenshot("stage3-dungeon-rules.png");
++                }
++                continue;
++            }
++            dungeon::DungeonSession* const session = runtime.session();
++            if (session == nullptr) {
++                break;
++            }
++            if (IsKeyPressed(KEY_R)) {
++                session->reset_current_room();
++                current = session->snapshot();
++                previous = current;
++                drain_events(*session, renderer, feedback, audio);
++            }
++            submit_frame_actions(*session);
++            if (IsKeyPressed(KEY_E)) {
++                const auto snapshot = session->snapshot();
++                const bool in_range = snapshot.combat.has_value()
++                    && player_in_hole_range(snapshot.combat->player.position,
++                        {0.0F, 2.0F, 0.0F}, 1.20F);
++                static_cast<void>(session->request_descent(in_range));
++            }
++
++            const combat::MovementInput movement{key_direction(KEY_A, KEY_D),
++                key_direction(KEY_W, KEY_S)};
++            const float frame_seconds = GetFrameTime();
++            feedback.update(frame_seconds);
++            renderer.update(frame_seconds);
++            const core::FixedStepFrame frame = fixed_step.advance(
++                static_cast<double>(frame_seconds));
++            for (std::uint32_t step = 0; step < frame.steps; ++step) {
++                previous = current;
++                session->tick(movement);
++                runtime.service_pending_transition();
++                current = session->snapshot();
++                drain_events(*session, renderer, feedback, audio);
++            }
++
++            BeginDrawing();
++            ClearBackground(Color{13, 17, 27, 255});
++            renderer.draw(previous, current, runtime.render_status(),
++                static_cast<float>(frame.interpolation_alpha), draw_debug,
++                feedback, audio_ready);
++            EndDrawing();
++            if (take_screenshot) {
++                TakeScreenshot("stage3-dungeon-rules.png");
++            }
+         }
++        audio.shutdown();
++        CloseWindow();
++        return HostExitCode::success;
++    } catch (...) {
++        if (window_ready) {
++            CloseWindow();
++        }
++        return HostExitCode::save_initialization_failed;
+     }
+-
+-    audio.shutdown();
+-    CloseWindow();
+-    return HostExitCode::success;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index 439a912..ef8e8e7 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -1,22 +1,27 @@
+ #pragma once
+ 
+ #include <cstdint>
++#include <filesystem>
++#include <optional>
+ 
+ namespace arpg::platform {
+ 
+ struct RaylibHostConfig final {
+     int window_width{1280};
+     int window_height{720};
+-    const char* window_title{"Infinite Dungeon - Stage 2 Room Loop"};
+-    std::uint64_t root_seed{0x6D30305F5241594CULL};
++    const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
++    std::optional<std::filesystem::path> save_directory{};
++    std::optional<std::uint64_t> new_run_seed{};
+ };
+ 
+ enum class HostExitCode : int {
+     success = 0,
+-    window_initialization_failed = 1
++    window_initialization_failed = 1,
++    invalid_arguments = 2,
++    save_initialization_failed = 3,
+ };
+ 
+ [[nodiscard]] HostExitCode run_raylib_host(
+     const RaylibHostConfig& config) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index b1ebc3d..9974a09 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,18 +1,19 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         platform_test_main.cpp
+         combat_key_bindings_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         dungeon_view_math_tests.cpp
+-        host_launch_options_tests.cpp)
++        host_launch_options_tests.cpp
++        dungeon_runtime_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+     add_test(NAME platform.view_math COMMAND arpg_platform_tests)
+     set_tests_properties(
+         platform.view_math PROPERTIES LABELS "headless;platform")
+ endif()
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+new file mode 100644
+index 0000000..18de5ba
+--- /dev/null
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -0,0 +1,300 @@
++#include "test_framework.hpp"
++
++#include "dungeon_runtime.hpp"
++
++#include <array>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <string>
++
++namespace {
++
++namespace dungeon = arpg::dungeon;
++namespace persistence = arpg::persistence;
++namespace platform = arpg::platform;
++namespace combat = arpg::combat;
++
++struct TempDirectory final {
++    std::filesystem::path path{};
++
++    TempDirectory() noexcept {
++        std::error_code error;
++        path = std::filesystem::temp_directory_path(error)
++            / "arpg_task10_dungeon_runtime";
++        path /= std::to_string(static_cast<unsigned long long>(
++            std::hash<std::string>{}(path.string() + std::to_string(
++                reinterpret_cast<std::uintptr_t>(this)))));
++        std::filesystem::remove_all(path, error);
++        std::filesystem::create_directories(path, error);
++    }
++
++    ~TempDirectory() noexcept {
++        std::error_code error;
++        std::filesystem::remove_all(path, error);
++    }
++};
++
++struct FaultContext final {
++    persistence::SaveFaultPoint point{};
++    bool enabled{};
++};
++
++bool fail_when_enabled(persistence::SaveFaultPoint point,
++    void* opaque) noexcept {
++    const auto* const context = static_cast<const FaultContext*>(opaque);
++    return context != nullptr && context->enabled && context->point == point;
++}
++
++std::optional<std::uint64_t> provider_seed(void* context) noexcept {
++    return context == nullptr ? std::nullopt
++                              : std::optional<std::uint64_t>{
++                                    *static_cast<std::uint64_t*>(context)};
++}
++
++platform::DungeonRuntimeConfig config_for(const TempDirectory& directory,
++    std::uint64_t seed = 8U) noexcept {
++    platform::DungeonRuntimeConfig config{};
++    config.save.directory = directory.path;
++    config.new_run_seed = seed;
++    return config;
++}
++
++void drain(dungeon::DungeonSession& session) noexcept {
++    while (session.try_pop_event().has_value()) {
++    }
++    while (session.try_pop_combat_event().has_value()) {
++    }
++}
++
++bool clear_and_await(dungeon::DungeonSession& session) noexcept {
++    for (int tick = 0; tick < 4096; ++tick) {
++        const auto snapshot = session.snapshot();
++        if (snapshot.phase == dungeon::RoomPhase::awaiting_exit) {
++            return true;
++        }
++        if (snapshot.phase == dungeon::RoomPhase::cleared) {
++            session.tick({});
++            drain(session);
++            continue;
++        }
++        combat::MovementInput movement{};
++        if (snapshot.phase == dungeon::RoomPhase::combat
++            && snapshot.combat.has_value()) {
++            const auto& combat = *snapshot.combat;
++            for (const auto& target : combat.dummies) {
++                if (target.hp <= 0) {
++                    continue;
++                }
++                const float dx = target.position.x - combat.player.position.x;
++                const float dy = target.position.y - combat.player.position.y;
++                movement.x = dx > 1.45F ? 1 : (dx < -1.45F ? -1 : 0);
++                movement.y = dy > 0.30F ? 1 : (dy < -0.30F ? -1 : 0);
++                if (dx <= 1.75F && dx >= -1.75F
++                    && dy <= 0.60F && dy >= -0.60F
++                    && combat.player.active_attack == combat::AttackId::none) {
++                    static_cast<void>(session.queue_action(combat::Action::light));
++                }
++                break;
++            }
++        }
++        session.tick(movement);
++        drain(session);
++    }
++    return false;
++}
++
++bool drive_door_pending(dungeon::DungeonSession& session) noexcept {
++    if (!clear_and_await(session)) {
++        return false;
++    }
++    combat::MovementInput movement{1, 0};
++    for (int tick = 0; tick < 512; ++tick) {
++        const auto snapshot = session.snapshot();
++        if (snapshot.phase == dungeon::RoomPhase::committing) {
++            return session.pending_transition().has_value();
++        }
++        if (!snapshot.combat.has_value()) {
++            return false;
++        }
++        movement.y = snapshot.combat->player.position.y > 0.1F ? -1
++            : (snapshot.combat->player.position.y < -0.1F ? 1 : 0);
++        session.tick(movement);
++        drain(session);
++    }
++    return false;
++}
++
++arpg::test::Failure empty_directory_commits_seeded_generation_one_before_running() noexcept {
++    TempDirectory directory;
++    auto config = config_for(directory);
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
++    ARPG_REQUIRE(runtime.session() != nullptr);
++    ARPG_REQUIRE(runtime.session()->snapshot().root_seed == 8U);
++    ARPG_REQUIRE(runtime.session()->snapshot().commit_generation == 1U);
++    ARPG_REQUIRE(runtime.session()->snapshot().depth == 1U);
++    ARPG_REQUIRE(runtime.session()->snapshot().floor_room_index == 1U);
++    ARPG_REQUIRE(runtime.session()->snapshot().ecology
++        == dungeon::DungeonElement::water);
++    ARPG_REQUIRE((runtime.session()->snapshot().biases
++        == std::array<std::uint32_t, 4>{{0U, 0U, 0U, 0U}}));
++    ARPG_REQUIRE((runtime.session()->snapshot().exits_open
++        == std::array<bool, 4>{{false, false, false, false}}));
++    persistence::SaveStore store(config.save);
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(loaded.checkpoint.root_seed == 8U);
++    ARPG_REQUIRE(loaded.checkpoint.commit_generation == 1U);
++    return {};
++}
++
++arpg::test::Failure valid_save_ignores_new_run_seed_override() noexcept {
++    TempDirectory directory;
++    auto first = config_for(directory, 8U);
++    platform::DungeonRuntime original(first);
++    ARPG_REQUIRE(original.initialize());
++    const auto original_seed = original.session()->snapshot().root_seed;
++    auto second = config_for(directory, 999U);
++    platform::DungeonRuntime resumed(second);
++    ARPG_REQUIRE(resumed.initialize());
++    ARPG_REQUIRE(resumed.session() != nullptr);
++    ARPG_REQUIRE(resumed.session()->snapshot().root_seed == original_seed);
++    return {};
++}
++
++arpg::test::Failure committed_pending_transition_maps_verified_state_and_saved_indicator() noexcept {
++    TempDirectory directory;
++    platform::DungeonRuntime runtime(config_for(directory));
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
++    const auto expected = runtime.session()->pending_transition();
++    ARPG_REQUIRE(expected.has_value());
++    runtime.service_pending_transition();
++    const auto snapshot = runtime.session()->snapshot();
++    ARPG_REQUIRE(snapshot.phase == dungeon::RoomPhase::transitioning);
++    ARPG_REQUIRE(snapshot.commit_generation == expected->next_state.commit_generation);
++    ARPG_REQUIRE(snapshot.room_seed == expected->next_state.current_room.seed);
++    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::saved);
++    return {};
++}
++
++arpg::test::Failure pre_publish_not_committed_maps_to_retryable_error() noexcept {
++    TempDirectory directory;
++    FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
++    auto config = config_for(directory);
++    config.save.fault_hook = &fail_when_enabled;
++    config.save.fault_context = &fault;
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
++    fault.enabled = true;
++    runtime.service_pending_transition();
++    ARPG_REQUIRE(runtime.session()->snapshot().phase
++        == dungeon::RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
++    fault.enabled = false;
++    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
++    runtime.service_pending_transition();
++    ARPG_REQUIRE(runtime.session()->snapshot().phase
++        == dungeon::RoomPhase::transitioning);
++    return {};
++}
++
++arpg::test::Failure indeterminate_maps_to_faulted_runtime_and_blocks_selection() noexcept {
++    TempDirectory directory;
++    FaultContext fault{persistence::SaveFaultPoint::after_publish, false};
++    auto config = config_for(directory);
++    config.save.fault_hook = &fail_when_enabled;
++    config.save.fault_context = &fault;
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
++    fault.enabled = true;
++    runtime.service_pending_transition();
++    ARPG_REQUIRE(runtime.session()->snapshot().phase == dungeon::RoomPhase::faulted);
++    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
++    ARPG_REQUIRE(!runtime.session()->request_descent(true));
++    return {};
++}
++
++arpg::test::Failure dual_slot_corruption_requires_recovery_then_archives_new_run() noexcept {
++    TempDirectory directory;
++    const char invalid[] = "bad";
++    std::ofstream(directory.path / "run_a.sav", std::ios::binary).write(invalid, 3);
++    std::ofstream(directory.path / "run_b.sav", std::ios::binary).write(invalid, 3);
++    platform::DungeonRuntime runtime(config_for(directory));
++    ARPG_REQUIRE(!runtime.initialize());
++    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::recovery_required);
++    ARPG_REQUIRE(runtime.session() == nullptr);
++    ARPG_REQUIRE(runtime.recover_with_new_run());
++    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
++    ARPG_REQUIRE(runtime.session() != nullptr);
++    ARPG_REQUIRE(runtime.session()->snapshot().commit_generation == 1U);
++    return {};
++}
++
++arpg::test::Failure single_slot_corruption_recovers_and_subsequent_saves_alternate() noexcept {
++    TempDirectory directory;
++    auto config = config_for(directory);
++    persistence::SaveStore store(config.save);
++    const auto initial = dungeon::make_initial_run_state(8U, config.rules).state;
++    ARPG_REQUIRE(store.commit(initial).state == persistence::SaveCommitState::committed);
++    const auto active = store.load().active_slot;
++    const auto bad_slot = active == persistence::SaveSlot::a ? "run_b.sav" : "run_a.sav";
++    const char invalid[] = "bad";
++    std::ofstream(directory.path / bad_slot, std::ios::binary).write(invalid, 3);
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::recovered);
++    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
++    runtime.service_pending_transition();
++    const auto first_slot = runtime.render_status().active_slot;
++    runtime.session()->tick({});
++    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
++    runtime.service_pending_transition();
++    ARPG_REQUIRE(runtime.render_status().active_slot != first_slot);
++    return {};
++}
++
++arpg::test::Failure invalid_rules_fault_without_creating_save_or_session() noexcept {
++    for (const int variant : {0, 1, 2}) {
++        TempDirectory directory;
++        auto config = config_for(directory);
++        if (variant == 0) {
++            config.rules.rules_version = 2U;
++        } else if (variant == 1) {
++            config.rules.hole_threshold = 10001U;
++        } else {
++            config.rules.base_weights[0] = 0U;
++        }
++        std::uint64_t provided = 17U;
++        config.seed_provider = &provider_seed;
++        config.seed_context = &provided;
++        platform::DungeonRuntime runtime(config);
++        ARPG_REQUIRE(!runtime.initialize());
++        ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
++        ARPG_REQUIRE(runtime.session() == nullptr);
++        ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_a.sav"));
++        ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.sav"));
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"empty directory commits seeded generation one before running", &empty_directory_commits_seeded_generation_one_before_running},
++    {"valid save ignores new run seed override", &valid_save_ignores_new_run_seed_override},
++    {"committed pending transition maps verified state and saved indicator", &committed_pending_transition_maps_verified_state_and_saved_indicator},
++    {"pre publish not committed maps to retryable error", &pre_publish_not_committed_maps_to_retryable_error},
++    {"indeterminate maps to faulted runtime and blocks selection", &indeterminate_maps_to_faulted_runtime_and_blocks_selection},
++    {"dual slot corruption requires recovery then archives new run", &dual_slot_corruption_requires_recovery_then_archives_new_run},
++    {"single slot corruption recovers and subsequent saves alternate", &single_slot_corruption_recovers_and_subsequent_saves_alternate},
++    {"invalid rules fault without creating save or session", &invalid_rules_fault_without_creating_save_or_session},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_runtime_suite() noexcept {
++    return arpg::test::make_suite("dungeon_runtime", kCases);
++}
+diff --git a/tests/platform/dungeon_view_math_tests.cpp b/tests/platform/dungeon_view_math_tests.cpp
+index e5ccb93..245c0e7 100644
+--- a/tests/platform/dungeon_view_math_tests.cpp
++++ b/tests/platform/dungeon_view_math_tests.cpp
+@@ -1,12 +1,13 @@
+ #include "test_framework.hpp"
+ 
++#include "combat_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ 
+ #include <cstring>
+ 
+ namespace {
+ 
+ using arpg::dungeon::DungeonEventKind;
+ using arpg::dungeon::DungeonSnapshot;
+ using arpg::dungeon::ExitDirection;
+ using arpg::dungeon::RoomPhase;
+@@ -62,20 +63,31 @@ arpg::test::Failure door_themes_match_directional_elements() noexcept {
+     ARPG_REQUIRE(left.element == arpg::dungeon::DungeonElement::lightning);
+     ARPG_REQUIRE(right.element == arpg::dungeon::DungeonElement::chaos);
+     ARPG_REQUIRE(std::strcmp(up.arrow, "\xE2\x86\x91") == 0);
+     ARPG_REQUIRE(std::strcmp(down.arrow, "\xE2\x86\x93") == 0);
+     ARPG_REQUIRE(std::strcmp(left.arrow, "\xE2\x86\x90") == 0);
+     ARPG_REQUIRE(std::strcmp(right.arrow, "\xE2\x86\x92") == 0);
+     ARPG_REQUIRE(rgba_equals(up.frame, {236U, 92U, 54U, 255U}));
+     ARPG_REQUIRE(rgba_equals(down.frame, {64U, 156U, 236U, 255U}));
+     ARPG_REQUIRE(rgba_equals(left.frame, {236U, 218U, 72U, 255U}));
+     ARPG_REQUIRE(rgba_equals(right.frame, {154U, 76U, 210U, 255U}));
++
++    for (const ExitDirection direction : {ExitDirection::up,
++             ExitDirection::down, ExitDirection::left, ExitDirection::right}) {
++        const DoorTheme theme = arpg::platform::door_theme(direction);
++        const auto locked = arpg::platform::door_render_decision(
++            DoorVisualMode::closed, direction);
++        ARPG_REQUIRE(locked.draw_locked_interior);
++        ARPG_REQUIRE(std::strcmp(locked.label, theme.label) == 0);
++        ARPG_REQUIRE(std::strcmp(locked.arrow, theme.arrow) == 0);
++        ARPG_REQUIRE(rgba_equals(locked.frame, theme.frame));
++    }
+     return {};
+ }
+ 
+ arpg::test::Failure ecosystem_tints_are_stable() noexcept {
+     const Rgba8 fire = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::fire);
+     const Rgba8 water = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::water);
+     const Rgba8 lightning = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::lightning);
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 35aaa41..7060469 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -1,19 +1,21 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite combat_key_bindings_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
++arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         host_launch_options_suite(),
++        dungeon_runtime_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 24, "platform");
++    return arpg::test::run_suites(suites, 32, "platform");
+ }
