@@ -1,0 +1,916 @@
+# Review package: 3c86be8..HEAD
+
+## Commits
+73083a0 fix: harden world-space room rendering
+
+## Files changed
+ .../task-9-report.md                               | 10 +++
+ src/dungeon/room_environment.cpp                   | 29 ++++++--
+ src/platform/raylib/environment_prop_layout.cpp    |  5 +-
+ src/platform/raylib/material_asset_types.hpp       |  7 ++
+ src/platform/raylib/material_pack.cpp              | 85 +++++++++++++++++++++-
+ src/platform/raylib/material_pack.hpp              |  6 ++
+ .../raylib/room_background_render_plan.cpp         | 33 ++++++---
+ .../raylib/room_background_render_plan.hpp         |  2 +-
+ src/platform/raylib/room_renderer.cpp              |  2 +-
+ tests/dungeon/room_environment_tests.cpp           | 19 +++++
+ tests/platform/material_asset_validation_tests.cpp | 29 +++++++-
+ .../platform/room_background_render_plan_tests.cpp | 60 +++++++++++----
+ .../platform/stage12_environment_render_tests.cpp  | 66 ++++++++++++-----
+ 13 files changed, 296 insertions(+), 57 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-9-report.md b/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-9-report.md
+index f653d87..d25acb5 100644
+--- a/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-9-report.md
++++ b/.superpowers/sdd/2026-07-26-square-hundredfold-room/task-9-report.md
+@@ -39,10 +39,20 @@ Task 9 已实现确定性的世界空间房间渲染：背景按相机可见范
+ - `ARPG_STAGE10_ABYSS_REWARD_ONLY=1 arpg_dungeon_tests.exe`：`32/32`。
+ - `arpg_dungeon_tests.exe`：`359/359`，`0` 失败。
+ - `arpg_platform_tests.exe`：`574/574`，`0` 失败。
+ - `git diff --check`：通过；仅报告仓库既有的 Windows 行尾提示。
+ 
+ ## 资源与边界
+ 
+ - 构建与测试始终串行 `-j1`；一次 detached 基线编译的单个 `cl.exe` 私有内存达到约 `12.9 GB`，已立即终止，系统可用内存从 `0.56 GB` 恢复到约 `5.7 GB`，未再次运行该高成本基线。
+ - 本任务未修改玩法规则、掉落 bucket 容量模型、V9 wire 格式或 main 工作树的用户未提交内容。
+ - 自动测试证明数据与渲染计划契约；最终全屏画面与操作手感仍需 Windows 游戏窗口验收。
++
++## 独立审查修复
++
++首轮独立审查报告 `P0=0 / P1=3 / P2=0`，三项均已按 RED/GREEN 闭环：
++
++- visible query 现在校验当前 span 与前一 span 连续、首 offset、record home cell 与 ordinal；任何损坏都发布 canonical empty `environment_capacity` hard fault，不再静默漏记录。
++- 背景块不再把透视四角包成相互重叠的轴对齐矩形；相邻块共享同一组投影顶点，通过 `MaterialScreenQuad` 进入原材质 shader。
++- `quarter_turns` 保持为密封的世界布局/碰撞朝向；直立 2.5D billboard 不再执行屏幕平面 90/180/270 度旋转。
++
++修复前定向测试稳定复现 `19` 项中 `1` 失败、`57` 项中 `2` 失败；修复后为 dungeon `19/19`、platform `57/57`。
+diff --git a/src/dungeon/room_environment.cpp b/src/dungeon/room_environment.cpp
+index 96a8409..9d76f92 100644
+--- a/src/dungeon/room_environment.cpp
++++ b/src/dungeon/room_environment.cpp
+@@ -668,37 +668,56 @@ VisibleEnvironmentQueryResult query_visible_environment_bounded(
+             DungeonFault::environment_capacity};
+     }
+ 
+     for (std::size_t row = first_row; row <= last_row; ++row) {
+         for (std::size_t column = first_column;
+                 column <= last_column; ++column) {
+             const std::size_t cell = row * combat::room_spatial::columns
+                 + column;
+             const std::size_t begin = blueprint.cell_offsets[cell];
+             const std::size_t count = blueprint.cell_counts[cell];
++            if (count > 3U || begin > blueprint.record_count
++                    || count > blueprint.record_count - begin) {
++                output = {};
++                return {VisibleEnvironmentQueryStatus::hard_fault,
++                    DungeonFault::environment_capacity};
++            }
+             const std::size_t end = begin + count;
+-            if (count > 3U || begin > end || end > blueprint.record_count
++            bool broken_previous_span = begin != 0U;
++            if (cell != 0U) {
++                const std::size_t previous_begin =
++                    blueprint.cell_offsets[cell - 1U];
++                const std::size_t previous_count =
++                    blueprint.cell_counts[cell - 1U];
++                broken_previous_span = previous_count > 3U
++                    || previous_begin > blueprint.record_count
++                    || previous_count
++                        > blueprint.record_count - previous_begin
++                    || previous_begin + previous_count != begin;
++            }
++            if (broken_previous_span
+                     || blueprint.cell_offsets[cell + 1U] != end
+                     || output.candidates_examined + count
+                         > kEnvironmentQueryCandidateCapacity) {
+                 output = {};
+                 return {VisibleEnvironmentQueryStatus::hard_fault,
+                     DungeonFault::environment_capacity};
+             }
+             for (std::size_t index = begin; index < end; ++index) {
+                 const RoomEnvironmentRecord& record = blueprint.records[index];
+                 ++output.candidates_examined;
+-                if (record.home_cell != cell
+-                        || !environment_record_visible(
+-                            world_bounds, record)) {
+-                    continue;
++                if (record.home_cell != cell || record.ordinal != index) {
++                    output = {};
++                    return {VisibleEnvironmentQueryStatus::hard_fault,
++                        DungeonFault::environment_capacity};
+                 }
++                if (!environment_record_visible(world_bounds, record)) continue;
+                 if (output.count >= output_capacity) {
+                     output = {};
+                     return {VisibleEnvironmentQueryStatus::hard_fault,
+                         DungeonFault::environment_capacity};
+                 }
+                 output.records[output.count++] = record;
+             }
+         }
+     }
+     for (std::size_t index = 1U; index < output.count; ++index) {
+diff --git a/src/platform/raylib/environment_prop_layout.cpp b/src/platform/raylib/environment_prop_layout.cpp
+index fd8c6d6..7018545 100644
+--- a/src/platform/raylib/environment_prop_layout.cpp
++++ b/src/platform/raylib/environment_prop_layout.cpp
+@@ -141,22 +141,23 @@ bool append_environment_prop(EnvironmentPropLayout& layout,
+         visual_state,
+     };
+     return true;
+ }
+ 
+ }  // namespace
+ 
+ EnvironmentPropDrawStyle environment_prop_draw_style(
+     const EnvironmentPropPlacement& placement) noexcept {
+     EnvironmentPropDrawStyle style{};
+-    style.rotation_degrees = static_cast<float>(
+-        placement.quarter_turns % 4U) * 90.0F;
++    // quarter_turns is a sealed world-space orientation used by placement and
++    // collision. Environment art is authored as an upright 2.5D billboard, so
++    // rotating the screen quad would lay torches, banners, and obelisks flat.
+     if (placement.visual_state
+             == EnvironmentPropVisualState::broken_obstacle) {
+         style.tint = Color{113U, 97U, 83U, 211U};
+         style.draw_break_marker = true;
+     }
+     return style;
+ }
+ 
+ const EnvironmentPropDefinition* environment_prop_definition(
+     MaterialSpriteId sprite) noexcept {
+diff --git a/src/platform/raylib/material_asset_types.hpp b/src/platform/raylib/material_asset_types.hpp
+index 480ea9a..63daddb 100644
+--- a/src/platform/raylib/material_asset_types.hpp
++++ b/src/platform/raylib/material_asset_types.hpp
+@@ -1,19 +1,26 @@
+ #pragma once
+ 
+ #include <raylib.h>
+ 
+ #include <cstdint>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
++struct MaterialScreenQuad final {
++    Vector2 top_left{};
++    Vector2 bottom_left{};
++    Vector2 bottom_right{};
++    Vector2 top_right{};
++};
++
+ enum class MaterialAtlasId : std::uint8_t {
+     environment,
+     actors,
+     effects_ui,
+     player_locomotion,
+     player_combo_a,
+     player_combo_b,
+     player_reaction,
+     player_air,
+     fire_environment,
+diff --git a/src/platform/raylib/material_pack.cpp b/src/platform/raylib/material_pack.cpp
+index 9431635..7161b2a 100644
+--- a/src/platform/raylib/material_pack.cpp
++++ b/src/platform/raylib/material_pack.cpp
+@@ -1,15 +1,16 @@
+ #include "material_pack.hpp"
+ 
+ #include "material_asset_validation.hpp"
+ 
+ #include <raylib.h>
++#include <rlgl.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstdio>
+ #include <limits>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+@@ -253,24 +254,22 @@ bool initialize_material_pipeline() noexcept {
+         g_material_shader = {};
+     }
+     return g_material_shader.ready;
+ }
+ 
+ void shutdown_material_pipeline() noexcept {
+     if (g_material_shader.ready) UnloadShader(g_material_shader.shader);
+     g_material_shader = {};
+ }
+ 
+-void draw_material(Texture2D color, Texture2D material, Rectangle source,
+-    Rectangle destination, Vector2 origin, float rotation, Color tint,
++void begin_material_composite(Texture2D material,
+     MaterialCompositeParameters parameters) noexcept {
+-    if (!g_material_shader.ready) return;
+     const float channel_strengths[3]{parameters.roughness_strength,
+         parameters.emissive_strength, parameters.metalness_strength};
+     const float channel_map[3]{
+         static_cast<float>(parameters.roughness_channel),
+         static_cast<float>(parameters.emissive_channel),
+         static_cast<float>(parameters.metalness_channel)};
+     const float emissive_tint[3]{
+         static_cast<float>(parameters.emissive_tint.r) / 255.0F,
+         static_cast<float>(parameters.emissive_tint.g) / 255.0F,
+         static_cast<float>(parameters.emissive_tint.b) / 255.0F};
+@@ -279,28 +278,64 @@ void draw_material(Texture2D color, Texture2D material, Rectangle source,
+         g_material_shader.material_map_location, material);
+     SetShaderValue(g_material_shader.shader,
+         g_material_shader.channel_map_location, channel_map,
+         SHADER_UNIFORM_VEC3);
+     SetShaderValue(g_material_shader.shader,
+         g_material_shader.channel_strengths_location, channel_strengths,
+         SHADER_UNIFORM_VEC3);
+     SetShaderValue(g_material_shader.shader,
+         g_material_shader.emissive_tint_location, emissive_tint,
+         SHADER_UNIFORM_VEC3);
++}
++
++void draw_material(Texture2D color, Texture2D material, Rectangle source,
++    Rectangle destination, Vector2 origin, float rotation, Color tint,
++    MaterialCompositeParameters parameters) noexcept {
++    if (!g_material_shader.ready) return;
++    begin_material_composite(material, parameters);
+     DrawTexturePro(color, source, destination, origin, rotation, tint);
+     EndShaderMode();
+ }
+ 
++void draw_material_quad(Texture2D color, Texture2D material, Rectangle source,
++    MaterialScreenQuad destination, Color tint,
++    MaterialCompositeParameters parameters) noexcept {
++    if (!g_material_shader.ready || color.id == 0U
++            || color.width <= 0 || color.height <= 0) return;
++    const float texture_width = static_cast<float>(color.width);
++    const float texture_height = static_cast<float>(color.height);
++    const float left = source.x / texture_width;
++    const float right = (source.x + source.width) / texture_width;
++    const float top = source.y / texture_height;
++    const float bottom = (source.y + source.height) / texture_height;
++    begin_material_composite(material, parameters);
++    rlSetTexture(color.id);
++    rlBegin(RL_QUADS);
++    rlColor4ub(tint.r, tint.g, tint.b, tint.a);
++    rlNormal3f(0.0F, 0.0F, 1.0F);
++    rlTexCoord2f(left, top);
++    rlVertex2f(destination.top_left.x, destination.top_left.y);
++    rlTexCoord2f(left, bottom);
++    rlVertex2f(destination.bottom_left.x, destination.bottom_left.y);
++    rlTexCoord2f(right, bottom);
++    rlVertex2f(destination.bottom_right.x, destination.bottom_right.y);
++    rlTexCoord2f(right, top);
++    rlVertex2f(destination.top_right.x, destination.top_right.y);
++    rlEnd();
++    rlSetTexture(0U);
++    EndShaderMode();
++}
++
+ [[nodiscard]] MaterialTextureApi default_material_texture_api() noexcept {
+     return {&LoadTexture, &IsTextureValid, &UnloadTexture,
+         &initialize_material_pipeline, &shutdown_material_pipeline,
+-        &draw_material};
++        &draw_material, &draw_material_quad};
+ }
+ 
+ [[nodiscard]] constexpr bool ecology_is_valid(
+     MaterialEcology ecology) noexcept {
+     return ecology < MaterialEcology::count;
+ }
+ 
+ [[nodiscard]] constexpr bool atlas_required(
+     const MaterialAtlasDefinition& atlas, MaterialEcology ecology) noexcept {
+     return atlas.ecology == MaterialEcology::common
+@@ -915,11 +950,53 @@ bool MaterialPack::draw_frame_to(MaterialAtlasId atlas,
+                 > static_cast<float>(material_texture.width)
+             || source.y + source.height
+                 > static_cast<float>(material_texture.height)) {
+         return false;
+     }
+     texture_api_.draw_material(color_texture, material_texture, source,
+         destination, {0.0F, 0.0F}, 0.0F, tint, {});
+     return true;
+ }
+ 
++bool MaterialPack::draw_frame_quad(MaterialAtlasId atlas,
++    Rectangle source, MaterialScreenQuad destination, Color tint) const noexcept {
++    const auto finite_point = [](Vector2 point) noexcept {
++        return std::isfinite(point.x) && std::isfinite(point.y);
++    };
++    if (!is_known_atlas(atlas) || !state_.available(atlas)
++            || !valid_texture_api(texture_api_)
++            || texture_api_.draw_material_quad == nullptr
++            || !std::isfinite(source.x) || !std::isfinite(source.y)
++            || !std::isfinite(source.width) || !std::isfinite(source.height)
++            || source.x < 0.0F || source.y < 0.0F
++            || source.width <= 0.0F || source.height <= 0.0F
++            || !finite_point(destination.top_left)
++            || !finite_point(destination.bottom_left)
++            || !finite_point(destination.bottom_right)
++            || !finite_point(destination.top_right)
++            || destination.top_right.x <= destination.top_left.x
++            || destination.bottom_right.x <= destination.bottom_left.x
++            || destination.bottom_left.y <= destination.top_left.y
++            || destination.bottom_right.y <= destination.top_right.y) {
++        return false;
++    }
++    const std::size_t index = atlas_index(atlas);
++    const Texture2D& color_texture = color_textures_[index];
++    const Texture2D& material_texture = material_textures_[index];
++    if (!texture_api_.valid(color_texture)
++            || !texture_api_.valid(material_texture)
++            || source.x + source.width
++                > static_cast<float>(color_texture.width)
++            || source.y + source.height
++                > static_cast<float>(color_texture.height)
++            || source.x + source.width
++                > static_cast<float>(material_texture.width)
++            || source.y + source.height
++                > static_cast<float>(material_texture.height)) {
++        return false;
++    }
++    texture_api_.draw_material_quad(color_texture, material_texture, source,
++        destination, tint, {});
++    return true;
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.hpp b/src/platform/raylib/material_pack.hpp
+index a9a5901..ab22c94 100644
+--- a/src/platform/raylib/material_pack.hpp
++++ b/src/platform/raylib/material_pack.hpp
+@@ -21,20 +21,23 @@ struct MaterialCompositeParameters final {
+ 
+ struct MaterialTextureApi final {
+     Texture2D (*load)(const char* path){};
+     bool (*valid)(Texture2D texture){};
+     void (*unload)(Texture2D texture){};
+     bool (*initialize_material_pipeline)(){};
+     void (*shutdown_material_pipeline)(){};
+     void (*draw_material)(Texture2D color, Texture2D material,
+         Rectangle source, Rectangle destination, Vector2 origin,
+         float rotation, Color tint, MaterialCompositeParameters parameters){};
++    void (*draw_material_quad)(Texture2D color, Texture2D material,
++        Rectangle source, MaterialScreenQuad destination, Color tint,
++        MaterialCompositeParameters parameters){};
+ };
+ 
+ class MaterialPackState final {
+ public:
+     void set_available(MaterialAtlasId id, bool available) noexcept;
+     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
+     [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
+     [[nodiscard]] bool any_available() const noexcept;
+     void reset() noexcept;
+ 
+@@ -86,20 +89,23 @@ public:
+     [[nodiscard]] bool draw_region_fit(MaterialSpriteId id,
+         Rectangle source_within_frame, Rectangle destination_bounds,
+         Color tint = WHITE) const noexcept;
+     [[nodiscard]] bool draw_frame(
+         MaterialAtlasId atlas, Rectangle source, Vector2 foot_anchor,
+         Vector2 foot_position, bool flip_x, float scale = 1.0F,
+         Color tint = WHITE) const noexcept;
+     [[nodiscard]] bool draw_frame_to(
+         MaterialAtlasId atlas, Rectangle source, Rectangle destination,
+         Color tint = WHITE) const noexcept;
++    [[nodiscard]] bool draw_frame_quad(
++        MaterialAtlasId atlas, Rectangle source,
++        MaterialScreenQuad destination, Color tint = WHITE) const noexcept;
+ 
+ private:
+     MaterialTextureApi texture_api_{};
+     MaterialPackState state_{};
+     std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
+         color_textures_{};
+     std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
+         material_textures_{};
+     std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
+         warnings_emitted_{};
+diff --git a/src/platform/raylib/room_background_render_plan.cpp b/src/platform/raylib/room_background_render_plan.cpp
+index 564518f..ee7946f 100644
+--- a/src/platform/raylib/room_background_render_plan.cpp
++++ b/src/platform/raylib/room_background_render_plan.cpp
+@@ -116,28 +116,39 @@ ProjectedRoomBackgroundWorldTile project_room_background_world_tile(
+         camera, viewport_width, viewport_height);
+     const RenderProjection back_right = project_render_world(
+         bounds.maximum.x, bounds.minimum.y, 0.0F,
+         camera, viewport_width, viewport_height);
+     const RenderProjection front_left = project_render_world(
+         bounds.minimum.x, bounds.maximum.y, 0.0F,
+         camera, viewport_width, viewport_height);
+     const RenderProjection front_right = project_render_world(
+         bounds.maximum.x, bounds.maximum.y, 0.0F,
+         camera, viewport_width, viewport_height);
+-    const float left = (std::min)({back_left.x, back_right.x,
+-        front_left.x, front_right.x});
+-    const float right = (std::max)({back_left.x, back_right.x,
+-        front_left.x, front_right.x});
+-    const float top = (std::min)(back_left.ground_y, front_left.ground_y);
+-    const float tile_height = std::fabs(
+-        front_left.ground_y - back_left.ground_y);
+-    if (!std::isfinite(left) || !std::isfinite(right)
+-            || !std::isfinite(top) || !std::isfinite(tile_height)
+-            || right <= left || tile_height <= 0.0F) {
++    const auto finite_point = [](Vector2 point) noexcept {
++        return std::isfinite(point.x) && std::isfinite(point.y);
++    };
++    result.destination = {
++        {back_left.x, back_left.ground_y},
++        {front_left.x, front_left.ground_y},
++        {front_right.x, front_right.ground_y},
++        {back_right.x, back_right.ground_y},
++    };
++    if (!finite_point(result.destination.top_left)
++            || !finite_point(result.destination.bottom_left)
++            || !finite_point(result.destination.bottom_right)
++            || !finite_point(result.destination.top_right)
++            || result.destination.top_right.x
++                <= result.destination.top_left.x
++            || result.destination.bottom_right.x
++                <= result.destination.bottom_left.x
++            || result.destination.bottom_left.y
++                <= result.destination.top_left.y
++            || result.destination.bottom_right.y
++                <= result.destination.top_right.y) {
++        result.destination = {};
+         return result;
+     }
+-    result.destination = {left, top, right - left, tile_height};
+     result.valid = true;
+     return result;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/room_background_render_plan.hpp b/src/platform/raylib/room_background_render_plan.hpp
+index cb90db9..c8f39ec 100644
+--- a/src/platform/raylib/room_background_render_plan.hpp
++++ b/src/platform/raylib/room_background_render_plan.hpp
+@@ -35,21 +35,21 @@ struct RoomBackgroundWorldTile final {
+ 
+ struct RoomBackgroundWorldTilePlan final {
+     MaterialAtlasId atlas{MaterialAtlasId::fire_room_background};
+     std::array<RoomBackgroundWorldTile,
+         kRoomBackgroundWorldTileCapacity> tiles{};
+     std::size_t count{};
+     bool valid{};
+ };
+ 
+ struct ProjectedRoomBackgroundWorldTile final {
+-    Rectangle destination{};
++    MaterialScreenQuad destination{};
+     bool valid{};
+ };
+ 
+ [[nodiscard]] RoomBackgroundWorldTilePlan room_background_world_tile_plan(
+     dungeon::DungeonElement ecology,
+     const CombatCameraView& camera) noexcept;
+ [[nodiscard]] ProjectedRoomBackgroundWorldTile
+ project_room_background_world_tile(
+     const RoomBackgroundWorldTile& tile,
+     const CombatCameraView& camera,
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index d8ff670..dc92f89 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -78,21 +78,21 @@ bool draw_environment_room(const MaterialPack& material_pack,
+     if (!plan.valid || plan.count == 0U
+             || !material_pack.available(plan.atlas)) return false;
+     std::array<ProjectedRoomBackgroundWorldTile,
+         kRoomBackgroundWorldTileCapacity> projected_tiles{};
+     for (std::size_t index{}; index < plan.count; ++index) {
+         projected_tiles[index] = project_room_background_world_tile(
+             plan.tiles[index], camera, width, height);
+         if (!projected_tiles[index].valid) return false;
+     }
+     for (std::size_t index{}; index < plan.count; ++index) {
+-        if (!material_pack.draw_frame_to(plan.atlas,
++        if (!material_pack.draw_frame_quad(plan.atlas,
+                 plan.tiles[index].source,
+                 projected_tiles[index].destination)) return false;
+     }
+     return true;
+ }
+ 
+ void draw_environment_room_props(const MaterialPack& material_pack,
+     const dungeon::DungeonRenderSnapshot& world,
+     const CombatCameraView& camera,
+     float width, float height) noexcept {
+diff --git a/tests/dungeon/room_environment_tests.cpp b/tests/dungeon/room_environment_tests.cpp
+index 00de819..fd1658c 100644
+--- a/tests/dungeon/room_environment_tests.cpp
++++ b/tests/dungeon/room_environment_tests.cpp
+@@ -772,20 +772,39 @@ arpg::test::Failure capacity_proof_breaks_publish_hard_fault_and_empty_output()
+     const auto offset_failure = require_hard_fault(*invalid_offset);
+     if (offset_failure.expression != nullptr) return offset_failure;
+ 
+     auto invalid_count = std::make_unique<RoomEnvironmentBlueprint>();
+     std::memcpy(invalid_count.get(), base.get(), sizeof(*base));
+     invalid_count->cell_counts[0U] = 4U;
+     invalid_count->cell_offsets[1U] = 4U;
+     const auto count_failure = require_hard_fault(*invalid_count);
+     if (count_failure.expression != nullptr) return count_failure;
+ 
++    auto in_bounds_gap = std::make_unique<RoomEnvironmentBlueprint>();
++    std::memcpy(in_bounds_gap.get(), base.get(), sizeof(*base));
++    in_bounds_gap->cell_offsets[0U] = 1U;
++    in_bounds_gap->cell_counts[0U] = 2U;
++    const auto gap_failure = require_hard_fault(*in_bounds_gap);
++    if (gap_failure.expression != nullptr) return gap_failure;
++
++    auto wrong_home_cell = std::make_unique<RoomEnvironmentBlueprint>();
++    std::memcpy(wrong_home_cell.get(), base.get(), sizeof(*base));
++    wrong_home_cell->records[1U].home_cell = 1U;
++    const auto home_cell_failure = require_hard_fault(*wrong_home_cell);
++    if (home_cell_failure.expression != nullptr) return home_cell_failure;
++
++    auto wrong_ordinal = std::make_unique<RoomEnvironmentBlueprint>();
++    std::memcpy(wrong_ordinal.get(), base.get(), sizeof(*base));
++    wrong_ordinal->records[1U].ordinal = 9U;
++    const auto ordinal_failure = require_hard_fault(*wrong_ordinal);
++    if (ordinal_failure.expression != nullptr) return ordinal_failure;
++
+     arpg::dungeon::VisibleEnvironmentSet span_output{};
+     const Aabb over_span{{arpg::combat::room_bounds::min_x,
+                              arpg::combat::room_bounds::min_y, -1.0F},
+         {arpg::combat::room_bounds::max_x,
+             arpg::combat::room_bounds::max_y, 1.0F}};
+     const auto span_result = arpg::dungeon::query_visible_environment(
+         *base, over_span, span_output);
+     ARPG_REQUIRE(span_result.status
+         == arpg::dungeon::VisibleEnvironmentQueryStatus::hard_fault);
+     ARPG_REQUIRE(span_result.fault == DungeonFault::environment_capacity);
+diff --git a/tests/platform/material_asset_validation_tests.cpp b/tests/platform/material_asset_validation_tests.cpp
+index 0432078..cbecf78 100644
+--- a/tests/platform/material_asset_validation_tests.cpp
++++ b/tests/platform/material_asset_validation_tests.cpp
+@@ -40,20 +40,22 @@ struct FakeMaterialTextures final {
+         CallKind kind{};
+     };
+     std::array<Texture2D, kTextureCapacity> loaded{};
+     std::array<std::array<char, 512>, kCallHistoryCapacity> loaded_paths{};
+     std::array<unsigned int, kCallHistoryCapacity> unloaded_ids{};
+     std::array<Call, kCallHistoryCapacity> calls{};
+     std::array<unsigned int, kDrawCapacity> drawn_color_ids{};
+     std::array<unsigned int, kDrawCapacity> drawn_material_ids{};
+     std::array<Rectangle, kDrawCapacity> drawn_sources{};
+     std::array<Rectangle, kDrawCapacity> drawn_destinations{};
++    std::array<arpg::platform::MaterialScreenQuad,
++        kDrawCapacity> drawn_quads{};
+     std::array<float, kDrawCapacity> drawn_rotations{};
+     std::array<Color, kDrawCapacity> drawn_tints{};
+     std::array<MaterialCompositeParameters, kDrawCapacity> composites{};
+     std::size_t load_count{};
+     std::size_t unload_count{};
+     std::size_t call_count{};
+     std::size_t draw_count{};
+     std::size_t pipeline_initialize_count{};
+     std::size_t pipeline_shutdown_count{};
+     bool pipeline_initialize_succeeds{true};
+@@ -131,24 +133,39 @@ void fake_draw_material(Texture2D color, Texture2D material,
+     const std::size_t index = g_fake_material_textures->draw_count++;
+     g_fake_material_textures->drawn_color_ids[index] = color.id;
+     g_fake_material_textures->drawn_material_ids[index] = material.id;
+     g_fake_material_textures->drawn_sources[index] = source;
+     g_fake_material_textures->drawn_destinations[index] = destination;
+     g_fake_material_textures->drawn_rotations[index] = rotation;
+     g_fake_material_textures->drawn_tints[index] = tint;
+     g_fake_material_textures->composites[index] = parameters;
+ }
+ 
++void fake_draw_material_quad(Texture2D color, Texture2D material,
++    Rectangle source, arpg::platform::MaterialScreenQuad destination,
++    Color tint, MaterialCompositeParameters parameters) noexcept {
++    if (g_fake_material_textures == nullptr
++        || g_fake_material_textures->draw_count
++            >= g_fake_material_textures->drawn_color_ids.size()) return;
++    const std::size_t index = g_fake_material_textures->draw_count++;
++    g_fake_material_textures->drawn_color_ids[index] = color.id;
++    g_fake_material_textures->drawn_material_ids[index] = material.id;
++    g_fake_material_textures->drawn_sources[index] = source;
++    g_fake_material_textures->drawn_quads[index] = destination;
++    g_fake_material_textures->drawn_tints[index] = tint;
++    g_fake_material_textures->composites[index] = parameters;
++}
++
+ arpg::platform::MaterialTextureApi fake_material_texture_api() noexcept {
+     return {&fake_load_texture, &fake_texture_valid, &fake_unload_texture,
+         &fake_initialize_material_pipeline, &fake_shutdown_material_pipeline,
+-        &fake_draw_material};
++        &fake_draw_material, &fake_draw_material_quad};
+ }
+ 
+ std::size_t atlas_count_for_ecology(MaterialEcology ecology) noexcept {
+     const auto manifest = arpg::platform::default_material_manifest();
+     std::size_t count{};
+     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+         if (manifest.atlases[index].ecology == MaterialEcology::common
+             || manifest.atlases[index].ecology == ecology) ++count;
+     }
+     return count;
+@@ -380,20 +397,30 @@ arpg::test::Failure atlas_region_draw_forwards_exact_destination() noexcept {
+     ARPG_REQUIRE(pack.load(MaterialEcology::water));
+     const Rectangle source{512.0F, 288.0F, 256.0F, 144.0F};
+     const Rectangle destination{-25.0F, 31.0F, 640.0F, 360.0F};
+     ARPG_REQUIRE(pack.draw_frame_to(
+         MaterialAtlasId::water_room_background, source, destination));
+     ARPG_REQUIRE(fake.draw_count == 1U);
+     ARPG_REQUIRE(std::memcmp(&fake.drawn_sources[0U],
+         &source, sizeof(Rectangle)) == 0);
+     ARPG_REQUIRE(std::memcmp(&fake.drawn_destinations[0U],
+         &destination, sizeof(Rectangle)) == 0);
++    const arpg::platform::MaterialScreenQuad quad{
++        {-25.0F, 31.0F}, {-40.0F, 391.0F},
++        {640.0F, 391.0F}, {615.0F, 31.0F}};
++    ARPG_REQUIRE(pack.draw_frame_quad(
++        MaterialAtlasId::water_room_background, source, quad));
++    ARPG_REQUIRE(fake.draw_count == 2U);
++    ARPG_REQUIRE(std::memcmp(&fake.drawn_sources[1U],
++        &source, sizeof(Rectangle)) == 0);
++    ARPG_REQUIRE(std::memcmp(&fake.drawn_quads[1U],
++        &quad, sizeof(quad)) == 0);
+     pack.unload();
+     g_fake_material_textures = nullptr;
+     return {};
+ }
+ 
+ arpg::test::Failure material_pack_nine_slice_preserves_panel_corners() noexcept {
+     FakeMaterialTextures fake{};
+     const MaterialManifestDefinition manifest =
+         arpg::platform::default_material_manifest();
+     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+diff --git a/tests/platform/room_background_render_plan_tests.cpp b/tests/platform/room_background_render_plan_tests.cpp
+index 3417fbd..8357d3b 100644
+--- a/tests/platform/room_background_render_plan_tests.cpp
++++ b/tests/platform/room_background_render_plan_tests.cpp
+@@ -263,55 +263,87 @@ arpg::test::Failure world_tile_projection_uses_the_shared_camera_geometry()
+     noexcept {
+     const arpg::platform::CombatCameraView camera =
+         arpg::platform::make_combat_camera_view(
+             {-32.0F, -12.0F, 0.0F}, 1920.0F, 1080.0F);
+     const auto plan = arpg::platform::room_background_world_tile_plan(
+         DungeonElement::chaos, camera);
+     ARPG_REQUIRE(plan.valid && plan.count != 0U);
+     const auto projected = arpg::platform::project_room_background_world_tile(
+         plan.tiles[0U], camera, 1920.0F, 1080.0F);
+     ARPG_REQUIRE(projected.valid);
+-    ARPG_REQUIRE(projected.destination.width > 0.0F);
+-    ARPG_REQUIRE(projected.destination.height > 0.0F);
++    ARPG_REQUIRE(projected.destination.top_right.x
++        > projected.destination.top_left.x);
++    ARPG_REQUIRE(projected.destination.bottom_right.x
++        > projected.destination.bottom_left.x);
++    ARPG_REQUIRE(projected.destination.bottom_left.y
++        > projected.destination.top_left.y);
++
++    bool compared_adjacent_tiles = false;
++    for (std::size_t index = 1U; index < plan.count; ++index) {
++        if (plan.tiles[index].row != plan.tiles[index - 1U].row) continue;
++        compared_adjacent_tiles = true;
++        const auto left = arpg::platform::project_room_background_world_tile(
++            plan.tiles[index - 1U], camera, 1920.0F, 1080.0F);
++        const auto right = arpg::platform::project_room_background_world_tile(
++            plan.tiles[index], camera, 1920.0F, 1080.0F);
++        ARPG_REQUIRE(left.valid && right.valid);
++        ARPG_REQUIRE(plan.tiles[index].column
++            == plan.tiles[index - 1U].column + 1U);
++        ARPG_REQUIRE(arpg::test::near(left.destination.top_right.x,
++            right.destination.top_left.x));
++        ARPG_REQUIRE(arpg::test::near(left.destination.top_right.y,
++            right.destination.top_left.y));
++        ARPG_REQUIRE(arpg::test::near(left.destination.bottom_right.x,
++            right.destination.bottom_left.x));
++        ARPG_REQUIRE(arpg::test::near(left.destination.bottom_right.y,
++            right.destination.bottom_left.y));
++    }
++    ARPG_REQUIRE(compared_adjacent_tiles);
+ 
+     const auto& bounds = plan.tiles[0U].world_bounds;
+     const auto back_left = arpg::platform::project_render_world(
+         bounds.minimum.x, bounds.minimum.y, 0.0F,
+         camera, 1920.0F, 1080.0F);
+     const auto back_right = arpg::platform::project_render_world(
+         bounds.maximum.x, bounds.minimum.y, 0.0F,
+         camera, 1920.0F, 1080.0F);
+     const auto front_left = arpg::platform::project_render_world(
+         bounds.minimum.x, bounds.maximum.y, 0.0F,
+         camera, 1920.0F, 1080.0F);
+     const auto front_right = arpg::platform::project_render_world(
+         bounds.maximum.x, bounds.maximum.y, 0.0F,
+         camera, 1920.0F, 1080.0F);
+-    const float expected_left = (std::min)({back_left.x, back_right.x,
+-        front_left.x, front_right.x});
+-    const float expected_right = (std::max)({back_left.x, back_right.x,
+-        front_left.x, front_right.x});
+-    ARPG_REQUIRE(arpg::test::near(projected.destination.x, expected_left));
+-    ARPG_REQUIRE(arpg::test::near(projected.destination.width,
+-        expected_right - expected_left));
+-    ARPG_REQUIRE(arpg::test::near(projected.destination.y,
+-        (std::min)(back_left.ground_y, front_left.ground_y)));
+-    ARPG_REQUIRE(arpg::test::near(projected.destination.height,
+-        std::fabs(front_left.ground_y - back_left.ground_y)));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.top_left.x, back_left.x));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.top_left.y, back_left.ground_y));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.top_right.x, back_right.x));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.top_right.y, back_right.ground_y));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.bottom_left.x, front_left.x));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.bottom_left.y, front_left.ground_y));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.bottom_right.x, front_right.x));
++    ARPG_REQUIRE(arpg::test::near(
++        projected.destination.bottom_right.y, front_right.ground_y));
+ 
+     arpg::platform::CombatCameraView moved = camera;
+     moved.center.x += 16.0F;
+     const auto moved_projection =
+         arpg::platform::project_room_background_world_tile(
+             plan.tiles[0U], moved, 1920.0F, 1080.0F);
+     ARPG_REQUIRE(moved_projection.valid);
+-    ARPG_REQUIRE(moved_projection.destination.x != projected.destination.x);
++    ARPG_REQUIRE(moved_projection.destination.top_left.x
++        != projected.destination.top_left.x);
+     ARPG_REQUIRE(same_tile(plan.tiles[0U],
+         plan.tiles[0U].row, plan.tiles[0U].column));
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"preserves old IDs and adds four background pairs",
+         &background_manifest_preserves_old_ids_and_adds_four_pairs},
+     {"maps every ecology to its dedicated background atlas",
+         &background_plan_maps_every_ecology_to_its_dedicated_atlas},
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index ba06cde..fc84936 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -376,21 +376,21 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
+     const std::size_t draw_environment = renderer.find(
+         "bool draw_environment_room");
+     ARPG_REQUIRE(draw_environment != std::string::npos);
+     const std::string draw_environment_block = braced_block_after(
+         renderer, draw_environment);
+     ARPG_REQUIRE(draw_environment_block.find(
+         "room_background_world_tile_plan(ecology, camera)")
+         != std::string::npos);
+     ARPG_REQUIRE(draw_environment_block.find(
+         "project_room_background_world_tile") != std::string::npos);
+-    ARPG_REQUIRE(draw_environment_block.find("draw_frame_to(")
++    ARPG_REQUIRE(draw_environment_block.find("draw_frame_quad(")
+         != std::string::npos);
+     ARPG_REQUIRE(draw_environment_block.find("plan.source")
+         == std::string::npos);
+     for (const char* legacy_atlas : {"MaterialAtlasId::environment",
+              "MaterialAtlasId::fire_environment",
+              "MaterialAtlasId::water_environment",
+              "MaterialAtlasId::lightning_environment",
+              "MaterialAtlasId::chaos_environment"}) {
+         ARPG_REQUIRE(draw_environment_block.find(legacy_atlas)
+             == std::string::npos);
+@@ -674,22 +674,27 @@ arpg::test::Failure obstacle_layout_preserves_world_aabb_and_broken_identity()
+         == arpg::platform::EnvironmentPropLayoutStatus::ok);
+     ARPG_REQUIRE(intact.count == 2U);
+     ARPG_REQUIRE(std::memcmp(&intact.props[0U].world_obstacle_bounds,
+         &solid.obstacle.bounds, sizeof(arpg::combat::Aabb)) == 0);
+     ARPG_REQUIRE(std::memcmp(&intact.props[1U].world_obstacle_bounds,
+         &breakable.obstacle.bounds, sizeof(arpg::combat::Aabb)) == 0);
+     ARPG_REQUIRE(intact.props[0U].visual_state
+         == arpg::platform::EnvironmentPropVisualState::intact_obstacle);
+     ARPG_REQUIRE(intact.props[1U].visual_state
+         == arpg::platform::EnvironmentPropVisualState::intact_obstacle);
+-    ARPG_REQUIRE(arpg::platform::environment_prop_draw_style(
+-        intact.props[0U]).rotation_degrees == 90.0F);
++    for (std::uint8_t quarter_turns = 0U; quarter_turns < 4U;
++            ++quarter_turns) {
++        auto billboard = intact.props[0U];
++        billboard.quarter_turns = quarter_turns;
++        ARPG_REQUIRE(arpg::platform::environment_prop_draw_style(
++            billboard).rotation_degrees == 0.0F);
++    }
+ 
+     world.environment_obstacles[1U].hp = 0U;
+     world.environment_obstacles[1U].broken_tick = 91U;
+     world.environment_obstacles[1U].intact = false;
+     const auto broken = arpg::platform::environment_prop_layout(world);
+     ARPG_REQUIRE(broken.status
+         == arpg::platform::EnvironmentPropLayoutStatus::ok);
+     ARPG_REQUIRE(broken.count == intact.count);
+     ARPG_REQUIRE(broken.props[1U].ordinal == intact.props[1U].ordinal);
+     ARPG_REQUIRE(broken.props[1U].obstacle_kind
+@@ -698,21 +703,21 @@ arpg::test::Failure obstacle_layout_preserves_world_aabb_and_broken_identity()
+         &intact.props[1U].world_obstacle_bounds,
+         sizeof(arpg::combat::Aabb)) == 0);
+     ARPG_REQUIRE(broken.props[1U].world_foot_position.x
+         == intact.props[1U].world_foot_position.x);
+     ARPG_REQUIRE(broken.props[1U].world_foot_position.y
+         == intact.props[1U].world_foot_position.y);
+     ARPG_REQUIRE(broken.props[1U].visual_state
+         == arpg::platform::EnvironmentPropVisualState::broken_obstacle);
+     const auto broken_style = arpg::platform::environment_prop_draw_style(
+         broken.props[1U]);
+-    ARPG_REQUIRE(broken_style.rotation_degrees == 270.0F);
++    ARPG_REQUIRE(broken_style.rotation_degrees == 0.0F);
+     ARPG_REQUIRE(broken_style.draw_break_marker);
+     ARPG_REQUIRE(broken_style.tint.r != 255U
+         || broken_style.tint.g != 255U
+         || broken_style.tint.b != 255U);
+     return {};
+ }
+ 
+ arpg::test::Failure invalid_visible_capacity_and_obstacle_state_fail_empty()
+     noexcept {
+     arpg::dungeon::VisibleEnvironmentSet overflow{};
+@@ -935,45 +940,70 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
+     ARPG_REQUIRE(occurrence_count(stage10_11,
+         "request_active_skill_slot")
+         == occurrence_count(stage10_input_block,
+             "request_active_skill_slot"));
+ 
+     ARPG_REQUIRE(platform_cmake.find(
+         "target_link_options(arpg_stage12_material_formal PRIVATE /STACK:2097152)")
+         != std::string::npos);
+     ARPG_REQUIRE(occurrence_count(platform_cmake, "/STACK:2097152") == 1U);
+ 
+-    const std::size_t material_draw = material_pack.find(
+-        "void draw_material(");
+-    ARPG_REQUIRE(material_draw != std::string::npos);
+-    const std::string material_draw_block = braced_block_after(
+-        material_pack, material_draw);
+-    const std::size_t begin_shader = material_draw_block.find(
++    const std::size_t material_composite = material_pack.find(
++        "void begin_material_composite(");
++    ARPG_REQUIRE(material_composite != std::string::npos);
++    const std::string material_composite_block = braced_block_after(
++        material_pack, material_composite);
++    const std::size_t begin_shader = material_composite_block.find(
+         "BeginShaderMode(");
+-    const std::size_t set_texture = material_draw_block.find(
++    const std::size_t set_texture = material_composite_block.find(
+         "SetShaderValueTexture(");
+-    const std::size_t set_value_1 = material_draw_block.find(
++    const std::size_t set_value_1 = material_composite_block.find(
+         "SetShaderValue(", set_texture);
+-    const std::size_t set_value_2 = material_draw_block.find(
++    const std::size_t set_value_2 = material_composite_block.find(
+         "SetShaderValue(", set_value_1 + 1U);
+-    const std::size_t set_value_3 = material_draw_block.find(
++    const std::size_t set_value_3 = material_composite_block.find(
+         "SetShaderValue(", set_value_2 + 1U);
+-    const std::size_t draw_texture = material_draw_block.find(
+-        "DrawTexturePro(");
+-    const std::size_t end_shader = material_draw_block.find("EndShaderMode(");
+     ARPG_REQUIRE(begin_shader < set_texture);
+     ARPG_REQUIRE(set_texture < set_value_1);
+     ARPG_REQUIRE(set_value_1 < set_value_2);
+     ARPG_REQUIRE(set_value_2 < set_value_3);
+-    ARPG_REQUIRE(set_value_3 < draw_texture);
++
++    const std::size_t material_draw = material_pack.find(
++        "void draw_material(");
++    ARPG_REQUIRE(material_draw != std::string::npos);
++    const std::string material_draw_block = braced_block_after(
++        material_pack, material_draw);
++    const std::size_t begin_composite = material_draw_block.find(
++        "begin_material_composite(");
++    const std::size_t draw_texture = material_draw_block.find(
++        "DrawTexturePro(");
++    const std::size_t end_shader = material_draw_block.find("EndShaderMode(");
++    ARPG_REQUIRE(begin_composite < draw_texture);
+     ARPG_REQUIRE(draw_texture < end_shader);
+ 
++    const std::size_t material_quad = material_pack.find(
++        "void draw_material_quad(");
++    ARPG_REQUIRE(material_quad != std::string::npos);
++    const std::string material_quad_block = braced_block_after(
++        material_pack, material_quad);
++    const std::size_t quad_begin_composite = material_quad_block.find(
++        "begin_material_composite(");
++    const std::size_t quad_texture = material_quad_block.find("rlSetTexture(");
++    const std::size_t quad_begin = material_quad_block.find("rlBegin(");
++    const std::size_t quad_end = material_quad_block.find("rlEnd(");
++    const std::size_t quad_end_shader = material_quad_block.find(
++        "EndShaderMode(");
++    ARPG_REQUIRE(quad_begin_composite < quad_texture);
++    ARPG_REQUIRE(quad_texture < quad_begin);
++    ARPG_REQUIRE(quad_begin < quad_end);
++    ARPG_REQUIRE(quad_end < quad_end_shader);
++
+     ARPG_REQUIRE(host_header.find(
+         "bool stage12_material_background_only{};") != std::string::npos);
+     ARPG_REQUIRE(host_header.find(
+         "bool stage12_material_icons_only{};") != std::string::npos);
+     ARPG_REQUIRE(host_header.find(
+         "bool stage12_material_showcase_hide_items{};") != std::string::npos);
+     for (const char* field : {"hud_ecology", "room_background_ecology",
+              "room_background_atlas", "room_background_resident",
+              "room_background_drawn", "room_background_source_width",
+              "room_background_source_height", "room_background_scale"}) {

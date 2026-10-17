@@ -1,0 +1,766 @@
+# Review package: 50dc8d7..HEAD
+
+## Commits
+595137a fix: disambiguate legacy v9 drops and cover hud glyphs
+
+## Files changed
+ src/persistence/room_progress_codec.cpp            | 178 ++++++++++++++++-
+ src/platform/raylib/hud_font.cpp                   |   2 +
+ tests/persistence/checkpoint_v9_tests.cpp          | 218 ++++++++++++++++++++-
+ .../checkpoint_v9_wire_baseline_test.cmake         |  12 +-
+ tests/persistence/persistence_test_main.cpp        |   2 +-
+ tests/platform/hud_font_tests.cpp                  |  29 +++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ 7 files changed, 422 insertions(+), 21 deletions(-)
+
+## Diff
+diff --git a/src/persistence/room_progress_codec.cpp b/src/persistence/room_progress_codec.cpp
+index 835ce13..165f1fc 100644
+--- a/src/persistence/room_progress_codec.cpp
++++ b/src/persistence/room_progress_codec.cpp
+@@ -893,20 +893,130 @@ bool read_room_progress(Reader& reader,
+     std::uint32_t value = crc32_update(0U, bytes + 8U, 20U);
+     return crc32_update(value, bytes + kHeaderSize, payload_size);
+ }
+ 
+ template <std::size_t Size>
+ void set_bit(std::array<std::uint64_t, Size>& bits,
+     const std::uint16_t ordinal) noexcept {
+     bits[ordinal / 64U] |= std::uint64_t{1U} << (ordinal % 64U);
+ }
+ 
++template <std::size_t Size>
++[[nodiscard]] bool bit_is_set(
++    const std::array<std::uint64_t, Size>& bits,
++    const std::uint16_t ordinal) noexcept {
++    return ordinal < bits.size() * 64U
++        && (bits[ordinal / 64U]
++            & (std::uint64_t{1U} << (ordinal % 64U))) != 0U;
++}
++
++[[nodiscard]] bool same_checkpoint_position(
++    const checkpoint::CheckpointVec3& left,
++    const checkpoint::CheckpointVec3& right) noexcept {
++    std::array<std::uint32_t, 3U> left_bits{};
++    std::array<std::uint32_t, 3U> right_bits{};
++    static_assert(sizeof(left_bits) == sizeof(left));
++    std::memcpy(left_bits.data(), &left, sizeof(left));
++    std::memcpy(right_bits.data(), &right, sizeof(right));
++    return left_bits == right_bits;
++}
++
++enum class SecondaryOrdinalSemantics : std::uint8_t {
++    unknown,
++    task5,
++    canonical,
++};
++
++[[nodiscard]] bool add_secondary_ordinal_evidence(
++    SecondaryOrdinalSemantics& semantics,
++    const SecondaryOrdinalSemantics evidence) noexcept {
++    if (evidence == SecondaryOrdinalSemantics::unknown) return true;
++    if (semantics == SecondaryOrdinalSemantics::unknown) {
++        semantics = evidence;
++        return true;
++    }
++    return semantics == evidence;
++}
++
++[[nodiscard]] bool spawn_has_exact_drop_position(
++    const checkpoint::RoomProgressCheckpoint& room,
++    const std::uint16_t spawn,
++    const checkpoint::CheckpointVec3& position,
++    const SecondaryOrdinalSemantics semantics) noexcept {
++    if (spawn >= room.generated_monsters) return false;
++    for (std::uint16_t index = 0U;
++            index < room.combat.monster_count; ++index) {
++        const auto& monster = room.combat.monsters[index];
++        if (monster.ordinal == spawn
++                && same_checkpoint_position(monster.position, position)) {
++            return true;
++        }
++    }
++    for (std::uint16_t index = 0U;
++            index < room.equipment_ground_count; ++index) {
++        const auto& equipment = room.equipment_ground[index];
++        if (equipment.source == 0U && equipment.ordinal == spawn
++                && same_checkpoint_position(equipment.position, position)) {
++            return true;
++        }
++    }
++    const std::uint16_t potion_ordinal =
++        checkpoint::health_potion_claim_ordinal(spawn);
++    const std::uint16_t coupon_ordinal =
++        semantics == SecondaryOrdinalSemantics::task5
++        ? static_cast<std::uint16_t>(potion_ordinal * 2U)
++        : potion_ordinal;
++    for (std::uint16_t index = 0U;
++            index < room.secondary_ground_count; ++index) {
++        const auto& secondary = room.secondary_ground[index];
++        if (same_checkpoint_position(secondary.position, position)
++                && ((secondary.tag
++                        == checkpoint::SecondaryGroundTag::health_potion
++                        && secondary.ordinal == potion_ordinal)
++                    || (secondary.tag
++                        == checkpoint::SecondaryGroundTag::material
++                        && secondary.source == 1U
++                        && secondary.ordinal == coupon_ordinal))) {
++            return true;
++        }
++    }
++    return false;
++}
++
++[[nodiscard]] SecondaryOrdinalSemantics
++ambiguous_common_ordinal_position_evidence(
++    const checkpoint::RoomProgressCheckpoint& room,
++    const checkpoint::SecondaryGroundCheckpoint& ground) noexcept {
++    const std::uint16_t task5_spawn = static_cast<std::uint16_t>(
++        ground.ordinal / 4U);
++    const std::uint16_t canonical_spawn = static_cast<std::uint16_t>(
++        ground.ordinal / 2U);
++    const bool task5_position = spawn_has_exact_drop_position(
++        room, task5_spawn, ground.position,
++        SecondaryOrdinalSemantics::task5);
++    const bool canonical_position = spawn_has_exact_drop_position(
++        room, canonical_spawn, ground.position,
++        SecondaryOrdinalSemantics::canonical);
++    if (task5_position != canonical_position) {
++        return task5_position ? SecondaryOrdinalSemantics::task5
++                              : SecondaryOrdinalSemantics::canonical;
++    }
++    const bool task5_defeated = bit_is_set(room.defeat_bits, task5_spawn);
++    const bool canonical_defeated =
++        bit_is_set(room.defeat_bits, canonical_spawn);
++    if (task5_defeated != canonical_defeated) {
++        return task5_defeated ? SecondaryOrdinalSemantics::task5
++                              : SecondaryOrdinalSemantics::canonical;
++    }
++    return SecondaryOrdinalSemantics::unknown;
++}
++
+ [[nodiscard]] bool migrate_task5_secondary_ordinals(
+     checkpoint::SaveCheckpointSlot& slot) noexcept {
+     auto& room = slot.room_progress;
+     std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>
+         expected_task5_claims{};
+     std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>
+         canonical_claims{};
+     const auto& durable_claims =
+         slot.state.item_ownership.material_claimed_drop_bits;
+     for (std::uint16_t ordinal = 0U;
+@@ -919,38 +1029,86 @@ void set_bit(std::array<std::uint64_t, Size>& bits,
+             checkpoint::checkpoint_material_ordinal(ordinal);
+         set_bit(expected_task5_claims, task5_ordinal);
+         if ((ordinal & 1U) != 0U
+                 && ordinal < checkpoint::kHealthPotionGroundCapacity * 2U) {
+             set_bit(expected_task5_claims, ordinal);
+         }
+         set_bit(canonical_claims,
+             ordinal >= checkpoint::kAbyssMaterialOrdinalBegin
+                 ? task5_ordinal : ordinal);
+     }
+-    if (room.secondary_claim_bits != expected_task5_claims) return false;
++    const bool claims_match_task5 =
++        room.secondary_claim_bits == expected_task5_claims;
++    const bool claims_match_canonical =
++        room.secondary_claim_bits == canonical_claims;
++    if (!claims_match_task5 && !claims_match_canonical) return false;
+ 
++    SecondaryOrdinalSemantics semantics = SecondaryOrdinalSemantics::unknown;
++    if (claims_match_task5 != claims_match_canonical
++            && !add_secondary_ordinal_evidence(semantics,
++                claims_match_task5 ? SecondaryOrdinalSemantics::task5
++                                   : SecondaryOrdinalSemantics::canonical)) {
++        return false;
++    }
++
++    bool has_semantic_sensitive_ground = false;
+     for (std::uint16_t index = 0U;
+             index < room.secondary_ground_count; ++index) {
+-        auto& ground = room.secondary_ground[index];
++        const auto& ground = room.secondary_ground[index];
+         if (ground.tag != checkpoint::SecondaryGroundTag::material) continue;
+-        if (ground.source <= 1U) {
+-            if (ground.ordinal >= checkpoint::kOrdinarySecondaryOrdinalEnd
+-                    || (ground.ordinal & 1U) != 0U) {
++        if (ground.source == 2U) continue;
++        if (ground.source > 1U) return false;
++
++        const std::uint32_t ordinary_end = room.generated_monsters * 2U;
++        const bool canonical_possible = ground.ordinal < ordinary_end
++            && ((ground.source == 0U && (ground.ordinal & 1U) == 0U)
++                || (ground.source == 1U && (ground.ordinal & 1U) != 0U));
++        const std::uint16_t task5_canonical =
++            static_cast<std::uint16_t>(ground.ordinal / 2U);
++        const bool task5_possible =
++            ground.ordinal < checkpoint::kOrdinarySecondaryOrdinalEnd
++            && task5_canonical < ordinary_end
++            && ((ground.source == 0U && (task5_canonical & 1U) == 0U)
++                || (ground.source == 1U
++                    && (task5_canonical & 1U) != 0U));
++        if (!canonical_possible && !task5_possible) return false;
++        if (canonical_possible != task5_possible) {
++            if (!add_secondary_ordinal_evidence(semantics,
++                    canonical_possible
++                        ? SecondaryOrdinalSemantics::canonical
++                        : SecondaryOrdinalSemantics::task5)) {
+                 return false;
+             }
+-            const std::uint16_t canonical = static_cast<std::uint16_t>(
+-                ground.ordinal / 2U);
+-            if ((ground.source == 0U && (canonical & 1U) != 0U)
+-                    || (ground.source == 1U && (canonical & 1U) == 0U)) {
++            continue;
++        }
++        if (ground.ordinal != 0U) {
++            has_semantic_sensitive_ground = true;
++            if (!add_secondary_ordinal_evidence(semantics,
++                    ambiguous_common_ordinal_position_evidence(
++                        room, ground))) {
+                 return false;
+             }
+-            ground.ordinal = canonical;
++        }
++    }
++
++    if (semantics == SecondaryOrdinalSemantics::unknown) {
++        if (has_semantic_sensitive_ground) return false;
++        semantics = SecondaryOrdinalSemantics::canonical;
++    }
++    if (semantics == SecondaryOrdinalSemantics::canonical) return true;
++
++    for (std::uint16_t index = 0U;
++            index < room.secondary_ground_count; ++index) {
++        auto& ground = room.secondary_ground[index];
++        if (ground.tag == checkpoint::SecondaryGroundTag::material
++                && ground.source <= 1U) {
++            ground.ordinal = static_cast<std::uint16_t>(ground.ordinal / 2U);
+         }
+     }
+     std::sort(room.secondary_ground.begin(),
+         room.secondary_ground.begin() + room.secondary_ground_count,
+         [](const checkpoint::SecondaryGroundCheckpoint& left,
+             const checkpoint::SecondaryGroundCheckpoint& right) noexcept {
+             return left.ordinal < right.ordinal;
+         });
+     for (std::uint16_t index = 1U;
+             index < room.secondary_ground_count; ++index) {
+diff --git a/src/platform/raylib/hud_font.cpp b/src/platform/raylib/hud_font.cpp
+index 89d2a9a..613223b 100644
+--- a/src/platform/raylib/hud_font.cpp
++++ b/src/platform/raylib/hud_font.cpp
+@@ -42,20 +42,21 @@ void add_active_skill_codepoints(DeathOverlayFontPlan& plan) noexcept {
+ }
+ 
+ void add_large_room_hud_codepoints(DeathOverlayFontPlan& plan) noexcept {
+     constexpr int kCodepoints[] = {
+         0x602A, 0x7FA4, 0x89C4, 0x6A21, 0xFF1A,
+         0x62E5, 0x6324, 0x5BC6, 0x96C6, 0x517D, 0x6F6E,
+         0x6D88, 0x706D, 0x603B, 0x8BA1, 0xFF08, 0xFF09,
+         0x5C1A, 0x5F00, 0x653E, 0xFF0C, 0x6218, 0x6597,
+         0x4ECD, 0x53EF, 0x7EE7, 0x7EED, 0x79BB, 0x5C06,
+         0x5F03, 0x5269, 0x4F59, 0x5956, 0x52B1,
++        0x89C1, 0x6389, 0x843D,
+     };
+     for (const int codepoint : kCodepoints) {
+         add_hud_codepoint(plan, codepoint);
+     }
+ }
+ 
+ }  // namespace
+ 
+ HudFontPlan hud_font_plan() noexcept {
+     HudFontPlan plan{};
+@@ -77,20 +78,21 @@ HudFontPlan hud_font_plan() noexcept {
+         u8"普通魔法稀有已拾取未知装备",
+         u8"装备 / 材料", u8"技能石", u8"主动技能石槽",
+         u8"空主技能槽", u8"辅助技能石（只读）", u8"未装备技能石",
+         u8"无", u8"取出", u8"正在保存",
+         u8"技能石背包关闭",
+         u8"拔刀斩", u8"极·鬼剑术（暴风式）",
+         u8"怪群规模：拥挤密集兽潮",
+         u8"消灭（总计）剩余",
+         u8"出口尚未开放，战斗仍可继续",
+         u8"离开将放弃剩余奖励",
++        u8"可见：怪 105/105 环境 73/105 掉落 53/331",
+     };
+     plan.covers_required_text = true;
+     for (const char* text : kRequiredText) {
+         if (!death_overlay_font_covers_text(plan.shared, text)) {
+             plan.covers_required_text = false;
+             break;
+         }
+     }
+     return plan;
+ }
+diff --git a/tests/persistence/checkpoint_v9_tests.cpp b/tests/persistence/checkpoint_v9_tests.cpp
+index 133cfac..0530a6e 100644
+--- a/tests/persistence/checkpoint_v9_tests.cpp
++++ b/tests/persistence/checkpoint_v9_tests.cpp
+@@ -600,23 +600,25 @@ test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
+         | (std::uint64_t{1U} << 20U)
+         | (std::uint64_t{1U} << 26U);
+     state.item_ownership.material_claimed_drop_bits = {};
+     state.item_ownership.material_claimed_drop_bits[0U] =
+         (std::uint64_t{1U} << 10U) | (std::uint64_t{1U} << 13U);
+ 
+     room.secondary_ground_count = 2U;
+     room.secondary_ground[0U] = {};
+     room.secondary_ground[0U].tag =
+         checkpoint::SecondaryGroundTag::material;
+-    room.secondary_ground[0U].ordinal = 8U;
++    ARPG_REQUIRE(room.combat.monster_count >= 3U);
++    ARPG_REQUIRE(room.combat.monsters[1U].ordinal == 1U);
++    room.secondary_ground[0U].ordinal = 4U;
+     room.secondary_ground[0U].source = 0U;
+-    room.secondary_ground[0U].position = {12.25F, -7.5F, 0.0F};
++    room.secondary_ground[0U].position = room.combat.monsters[1U].position;
+     room.secondary_ground[0U].material =
+         items::MaterialId::reinforcement_stone;
+     room.secondary_ground[1U] = {};
+     room.secondary_ground[1U].tag =
+         checkpoint::SecondaryGroundTag::material;
+     room.secondary_ground[1U].ordinal = 14U;
+     room.secondary_ground[1U].source = 0U;
+     room.secondary_ground[1U].position = {-19.75F, 6.125F, 0.0F};
+     room.secondary_ground[1U].material = items::MaterialId::coupon_6;
+     ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+@@ -635,37 +637,239 @@ test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
+     }
+     refresh_v9_envelope(bytes.get(), written);
+ 
+     bool migrated = false;
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), written, *decoded, migrated)
+         == persistence::CodecError::none);
+     ARPG_REQUIRE(migrated);
+     const auto& restored = decoded->room_progress;
+     ARPG_REQUIRE(restored.secondary_ground_count == 2U);
+-    ARPG_REQUIRE(restored.secondary_ground[0U].ordinal == 4U);
++    ARPG_REQUIRE(restored.secondary_ground[0U].ordinal == 2U);
+     ARPG_REQUIRE(restored.secondary_ground[0U].source == 0U);
+     ARPG_REQUIRE(restored.secondary_ground[1U].ordinal == 7U);
+     ARPG_REQUIRE(restored.secondary_ground[1U].source == 1U);
+     ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+         & (std::uint64_t{1U} << 10U)) != 0U);
+     ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+         & (std::uint64_t{1U} << 13U)) != 0U);
+     ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+         & (std::uint64_t{1U} << 20U)) == 0U);
+     ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+         & (std::uint64_t{1U} << 26U)) == 0U);
+     ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+         restored, decoded->state));
+     return {};
+ }
+ 
++test::Failure unmarked_task5_common_ordinal_uses_spawn_position() noexcept {
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<std::uint8_t[]> bytes{
++        new (std::nothrow) std::uint8_t[
++            persistence::kMaximumEncodedCheckpointBytes]};
++    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
++    ARPG_REQUIRE(make_fixture(*source));
++    clear_secondary_progress(*source);
++
++    auto& room = source->room_progress;
++    ARPG_REQUIRE(room.combat.monster_count >= 3U);
++    ARPG_REQUIRE(room.combat.monsters[1U].ordinal == 1U);
++    room.secondary_ground_count = 1U;
++    room.secondary_ground[0U] = {};
++    room.secondary_ground[0U].tag =
++        checkpoint::SecondaryGroundTag::material;
++    room.secondary_ground[0U].ordinal = 4U;
++    room.secondary_ground[0U].source = 0U;
++    room.secondary_ground[0U].position = room.combat.monsters[1U].position;
++    room.secondary_ground[0U].material =
++        items::MaterialId::reinforcement_stone;
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        room, source->state));
++
++    std::size_t written{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
++        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(bytes[written - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
++    --written;
++    refresh_v9_envelope(bytes.get(), written);
++
++    bool migrated = false;
++    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
++        bytes.get(), written, *decoded, migrated)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(migrated);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count == 1U);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].ordinal == 2U);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].source == 0U);
++    return {};
++}
++
++test::Failure unmarked_canonical_v9_common_ordinal_uses_spawn_position()
++    noexcept {
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<std::uint8_t[]> bytes{
++        new (std::nothrow) std::uint8_t[
++            persistence::kMaximumEncodedCheckpointBytes]};
++    std::unique_ptr<std::uint8_t[]> rewritten{
++        new (std::nothrow) std::uint8_t[
++            persistence::kMaximumEncodedCheckpointBytes]};
++    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr
++        && rewritten != nullptr);
++    ARPG_REQUIRE(make_fixture(*source));
++    clear_secondary_progress(*source);
++
++    auto& room = source->room_progress;
++    ARPG_REQUIRE(room.combat.monster_count >= 3U);
++    ARPG_REQUIRE(room.combat.monsters[2U].ordinal == 2U);
++    room.secondary_ground_count = 1U;
++    room.secondary_ground[0U] = {};
++    room.secondary_ground[0U].tag =
++        checkpoint::SecondaryGroundTag::material;
++    room.secondary_ground[0U].ordinal = 4U;
++    room.secondary_ground[0U].source = 0U;
++    room.secondary_ground[0U].position = room.combat.monsters[2U].position;
++    room.secondary_ground[0U].material =
++        items::MaterialId::reinforcement_stone;
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        room, source->state));
++
++    std::size_t written{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
++        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(bytes[written - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
++    --written;
++    refresh_v9_envelope(bytes.get(), written);
++
++    bool migrated = false;
++    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
++        bytes.get(), written, *decoded, migrated)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(migrated);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count == 1U);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].ordinal == 4U);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].source == 0U);
++
++    std::size_t rewritten_size{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*decoded,
++        rewritten.get(), persistence::kMaximumEncodedCheckpointBytes,
++        rewritten_size) == persistence::CodecError::none);
++    ARPG_REQUIRE(rewritten[rewritten_size - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
++    return {};
++}
++
++test::Failure unmarked_v9_rejects_ambiguous_common_ordinal_position()
++    noexcept {
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<std::uint8_t[]> bytes{
++        new (std::nothrow) std::uint8_t[
++            persistence::kMaximumEncodedCheckpointBytes]};
++    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
++    ARPG_REQUIRE(make_fixture(*source));
++    clear_secondary_progress(*source);
++
++    auto& room = source->room_progress;
++    ARPG_REQUIRE(room.combat.monster_count >= 3U);
++    room.combat.monsters[2U].position = room.combat.monsters[1U].position;
++    room.secondary_ground_count = 1U;
++    room.secondary_ground[0U] = {};
++    room.secondary_ground[0U].tag =
++        checkpoint::SecondaryGroundTag::material;
++    room.secondary_ground[0U].ordinal = 4U;
++    room.secondary_ground[0U].source = 0U;
++    room.secondary_ground[0U].position = room.combat.monsters[1U].position;
++    room.secondary_ground[0U].material =
++        items::MaterialId::reinforcement_stone;
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        room, source->state));
++
++    std::size_t written{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
++        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(bytes[written - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
++    --written;
++    refresh_v9_envelope(bytes.get(), written);
++
++    bool migrated = false;
++    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
++        bytes.get(), written, *decoded, migrated)
++        == persistence::CodecError::invalid_state);
++    return {};
++}
++
++test::Failure unmarked_v9_rejects_mixed_secondary_ordinal_semantics()
++    noexcept {
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<std::uint8_t[]> bytes{
++        new (std::nothrow) std::uint8_t[
++            persistence::kMaximumEncodedCheckpointBytes]};
++    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
++    ARPG_REQUIRE(make_fixture(*source));
++    clear_secondary_progress(*source);
++
++    auto& room = source->room_progress;
++    ARPG_REQUIRE(room.combat.monster_count >= 3U);
++    room.secondary_ground_count = 2U;
++    room.secondary_ground[0U] = {};
++    room.secondary_ground[0U].tag =
++        checkpoint::SecondaryGroundTag::material;
++    room.secondary_ground[0U].ordinal = 4U;
++    room.secondary_ground[0U].source = 0U;
++    room.secondary_ground[0U].position = room.combat.monsters[2U].position;
++    room.secondary_ground[0U].material =
++        items::MaterialId::reinforcement_stone;
++    room.secondary_ground[1U] = {};
++    room.secondary_ground[1U].tag =
++        checkpoint::SecondaryGroundTag::material;
++    room.secondary_ground[1U].ordinal = 5U;
++    room.secondary_ground[1U].source = 1U;
++    room.secondary_ground[1U].position = room.combat.monsters[1U].position;
++    room.secondary_ground[1U].material = items::MaterialId::coupon_6;
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        room, source->state));
++
++    std::size_t written{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
++        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(rewrite_coupon_record_as_task5_wire(
++        bytes.get(), written, room.secondary_ground[1U], 6U));
++    ARPG_REQUIRE(bytes[written - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
++    --written;
++    refresh_v9_envelope(bytes.get(), written);
++
++    bool migrated = false;
++    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
++        bytes.get(), written, *decoded, migrated)
++        == persistence::CodecError::invalid_state);
++    return {};
++}
++
+ test::Failure maximum_legal_v9_ground_and_claim_payloads_round_trip() noexcept {
+     constexpr std::uint16_t kMaximumEquipmentRecords = 1152U;
+     constexpr std::uint16_t kMaximumSecondaryRecords = 2304U;
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<std::uint8_t[]> bytes{
+         new (std::nothrow) std::uint8_t[
+             persistence::kMaximumEncodedCheckpointBytes]};
+@@ -1650,20 +1854,28 @@ test::Failure structural_validation_rejects_identity_and_order_faults() noexcept
+         std::uint64_t{1U} << (2305U % 64U);
+     ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+         reserve_room, reserve_state));
+     return {};
+ }
+ 
+ constexpr test::TestCase kCases[] = {
+     {"v9 maximum room round trip", &v9_round_trip_preserves_large_room_fields},
+     {"task5 v9 secondary ordinal migration",
+         &task5_v9_secondary_ordinals_migrate_to_canonical_once},
++    {"unmarked task5 common ordinal uses spawn position",
++        &unmarked_task5_common_ordinal_uses_spawn_position},
++    {"unmarked canonical v9 common ordinal uses spawn position",
++        &unmarked_canonical_v9_common_ordinal_uses_spawn_position},
++    {"unmarked v9 rejects ambiguous common ordinal position",
++        &unmarked_v9_rejects_ambiguous_common_ordinal_position},
++    {"unmarked v9 rejects mixed secondary ordinal semantics",
++        &unmarked_v9_rejects_mixed_secondary_ordinal_semantics},
+     {"maximum legal v9 ground and claim payload round trip",
+         &maximum_legal_v9_ground_and_claim_payloads_round_trip},
+     {"high ordinal session v9 round trip and exact claims",
+         &high_ordinal_session_v9_round_trip_and_claims_are_exact},
+     {"v8 load starts fresh room drop authority",
+         &v8_load_starts_fresh_room_drop_authority},
+     {"v9 corruption", &v9_rejects_crc_and_length_corruption},
+     {"v9 structural validation", &structural_validation_rejects_identity_and_order_faults},
+ };
+ 
+diff --git a/tests/persistence/checkpoint_v9_wire_baseline_test.cmake b/tests/persistence/checkpoint_v9_wire_baseline_test.cmake
+index 1393af1..8c8ab6f 100644
+--- a/tests/persistence/checkpoint_v9_wire_baseline_test.cmake
++++ b/tests/persistence/checkpoint_v9_wire_baseline_test.cmake
+@@ -7,31 +7,31 @@ endif()
+ 
+ file(MAKE_DIRECTORY "${OUTPUT_DIR}")
+ 
+ set(SCENARIOS
+     canonical_none
+     active_normal
+     started_abyss
+     death_pending
+     cleared_abyss_rewards)
+ 
+-# Frozen from the pre-refactor V9 encoder at commit 5ba484f.
++# Frozen after the canonical secondary-ordinal marker became part of V9.
+ set(EXPECTED_canonical_none
+-    "13822|f3b1558d2808508b2a9ec044a39809b2ba98eae42adb209a14a947bfaebcc1a6")
++    "13823|bdba4164210dad98123380edee8484ace2d1e48ee73d48613607a0a2305f8227")
+ set(EXPECTED_active_normal
+-    "16825|5551d2b0bd82b76bb87031f5281389f557acd010ab3200bc94426df78aab177e")
++    "16826|2304bcb1264f5ab1ffdf5e546096da82cdedf112dff326b1b3b1992b7f7a0615")
+ set(EXPECTED_started_abyss
+-    "16825|6ef9aa75b25c0db2a35d3ffd7a9e41a2d12f10e4511a2496826100f16931d62d")
++    "16826|c62b3f2ca64869200d8bec6ecbf2a4a376c84eb783c0c7d229daf147cce76395")
+ set(EXPECTED_death_pending
+-    "16868|b40b01a2a57e8755f80bd374d631e0a4280bc0bc26c4e4ed08d49e28aab4b934")
++    "16869|62d396810971eb2ad30bffd92a4c5ed0612e1be9ecc759bf844b56e376d45ca7")
+ set(EXPECTED_cleared_abyss_rewards
+-    "13902|3c70cf7631087f983f6e7ff82a62781ed6f7ab64131477e28f71111ef4e21ef3")
++    "13903|275f3f016084cfada53247ccc610666646b4d7dd7d188ceda34fe79bb6d3efa4")
+ 
+ set(FAILURES "")
+ foreach(SCENARIO IN LISTS SCENARIOS)
+     set(OUTPUT "${OUTPUT_DIR}/${SCENARIO}.v9.bin")
+     file(REMOVE "${OUTPUT}")
+     execute_process(
+         COMMAND "${PROBE}" "${SCENARIO}" "${OUTPUT}"
+         RESULT_VARIABLE RESULT
+         OUTPUT_VARIABLE STDOUT
+         ERROR_VARIABLE STDERR)
+diff --git a/tests/persistence/persistence_test_main.cpp b/tests/persistence/persistence_test_main.cpp
+index 365972f..70896e3 100644
+--- a/tests/persistence/persistence_test_main.cpp
++++ b/tests/persistence/persistence_test_main.cpp
+@@ -32,12 +32,12 @@ int main() {
+         death_checkpoint_codec_suite(),
+         passive_tree_checkpoint_suite(),
+         save_store_suite(),
+         save_store_fault_suite(),
+         save_commit_worker_suite(),
+         dungeon_save_integration_suite(),
+         checkpoint_v9_suite(),
+         checkpoint_v9_unlock_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 111, "checkpoint v9 persistence");
++    return arpg::test::run_suites(suites, 115, "checkpoint v9 persistence");
+ }
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index 3a83160..abd920c 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -1,13 +1,14 @@
+ #include "test_framework.hpp"
+ 
+ #include "death_overlay_font.hpp"
++#include "dungeon/dungeon_render_snapshot.hpp"
+ #include "hud_font.hpp"
+ #include "hud_palette.hpp"
+ #include "hud_renderer.hpp"
+ #include "hud_view_model.hpp"
+ #include "ui_text_contrast.hpp"
+ #include "ui_typography.hpp"
+ 
+ #include <cstddef>
+ #include <cstring>
+ #include <cstdio>
+@@ -92,20 +93,46 @@ arpg::test::Failure production_view_model_texts_and_player_labels_are_covered()
+         u8"生命 HP 1/1", u8"护盾 1/1", "XP MAX",
+         u8"减速", u8"腐蚀", u8"无敌",
+     };
+     for (const char* text : kRendererLabels) {
+         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+     }
+     ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+     return {};
+ }
+ 
++arpg::test::Failure visible_set_model_text_is_covered_by_shared_font_plan()
++    noexcept {
++    arpg::dungeon::DungeonSnapshot snapshot{};
++    arpg::dungeon::DungeonRenderSnapshot presented{};
++    presented.query.camera_version = 701U;
++    presented.has_combat = true;
++    presented.combat.monster_count = 105U;
++    presented.environment.count = 73U;
++    presented.environment.candidates_examined = 105U;
++    presented.equipment_count = 19U;
++    presented.material_count = 23U;
++    presented.health_potion_count = 11U;
++    presented.drop_candidates_examined = 331U;
++
++    platform::HudViewModelProjector projector{};
++    platform::HudViewModel model{};
++    projector.build(model, snapshot, {}, {}, &presented);
++    ARPG_REQUIRE(std::strcmp(model.room.visible_set.text.bytes.data(),
++        u8"可见：怪 105/105 环境 73/105 掉落 53/331") == 0);
++
++    const platform::HudFontPlan plan = platform::hud_font_plan();
++    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
++        plan.shared, model.room.visible_set.text.bytes.data()));
++    return {};
++}
++
+ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept {
+     const platform::HudFontPlan plan = platform::hud_font_plan();
+     constexpr const char* kRequiredText[] = {
+         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
+         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
+         u8"减速", u8"腐蚀", u8"无敌", u8"拔刀斩",
+         u8"极·鬼剑术（暴风式）",
+     };
+ 
+     ARPG_REQUIRE(plan.covers_required_text);
+@@ -265,20 +292,22 @@ arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noex
+     ARPG_REQUIRE(arpg::test::near(full_hd.spacing, 1.0F));
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
+     {"ground loot Chinese coverage",
+         &ground_loot_labels_are_covered_by_the_hud_owned_font},
+     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
+     {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
++    {"visible-set ViewModel shared font coverage",
++        &visible_set_model_text_is_covered_by_shared_font_plan},
+     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},
+     {"bundled Noto Sans SC runtime font",
+         &bundled_noto_sans_sc_is_the_required_runtime_font},
+     {"bounded high-resolution glyph atlas",
+         &bundled_font_uses_bounded_high_resolution_glyph_atlas},
+     {"single solid text foreground",
+         &ui_text_uses_one_solid_foreground_without_fake_bold},
+     {"full-HD physical typography scaling",
+         &ui_typography_scales_to_physical_full_hd_pixels},
+     {"opaque distinct HUD palette", &hud_palette_key_colors_are_opaque_and_distinct},
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 48d4723..8b6f8f5 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -110,13 +110,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 564,
++    return arpg::test::run_suites(suites, 565,
+         "host settings runtime contract");
+ }

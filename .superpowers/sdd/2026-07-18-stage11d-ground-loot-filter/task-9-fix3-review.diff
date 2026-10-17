@@ -1,0 +1,482 @@
+# Review package: 5cc16d0d0f0a0e87aaa3ae41f40ee0890853cb34..3abec71f07ed8dabd56670d04b22f420ca776263
+
+## Commits
+3abec71 On codex/finish-unfinished-branches-20260801: sdd-task9-fix3-review-snapshot
+07564ae index on codex/finish-unfinished-branches-20260801: 289ef6e fix: close large-room validation gaps
+
+## Files changed
+ .../stage11d_loot_evidence_guard_self_test.cmake   | 100 +++++++-
+ tests/platform/stage11d_loot_formal_validator.ps1  |  30 +--
+ .../platform/stage11d_loot_validator_ast_guard.ps1 | 257 +++++++++++++++++++++
+ 3 files changed, 369 insertions(+), 18 deletions(-)
+
+## Diff
+diff --git a/tests/platform/stage11d_loot_evidence_guard_self_test.cmake b/tests/platform/stage11d_loot_evidence_guard_self_test.cmake
+index 60c1952..71c5069 100644
+--- a/tests/platform/stage11d_loot_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11d_loot_evidence_guard_self_test.cmake
+@@ -64,15 +64,29 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
+         if(_targeted_index EQUAL -1)
+             return()
+         endif()
++    elseif(DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY)
++        set(_targeted_names
++            "tuple comparisons cannot move into comments"
++            "pickup predicate cannot move into a comment"
++            "tuple assignment cannot move after its Require"
++            "pickup derivation cannot move after its Require")
++        list(FIND _targeted_names "${NAME}" _targeted_index)
++        if(_targeted_index EQUAL -1)
++            return()
++        endif()
+     elseif(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
+         set(_targeted_names
+             "second render plan"
+             "draw-external render plan"
+             "diagnostic monster damage cannot be required"
+             "tuple assignment cannot move into a here string"
++            "tuple comparisons cannot move into comments"
+             "tuple assertion cannot move into an uncalled function"
++            "tuple assignment cannot move after its Require"
+             "pickup derivation cannot move into a here string"
++            "pickup predicate cannot move into a comment"
+             "pickup conservation cannot move into a false branch"
++            "pickup derivation cannot move after its Require"
+             "fixture prefix length cannot become a required kill count"
+             "player damage observation cannot be removed"
+             "per-rarity tuple check cannot be weakened"
+@@ -803,8 +817,10 @@ if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
+ endif()
+ 
+ function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
+-    if(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY
++    if((DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY) OR
++        (DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY
+             AND NOT NAME STREQUAL "Stage11D renderer harmless definition decoy")
++    )
+         return()
+     endif()
+     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+@@ -817,7 +833,8 @@ function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
+ endfunction()
+ 
+ function(expect_sequence_rejected NAME PATH EXPECTED_REASON)
+-    if(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
++    if((DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY) OR
++        (DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY))
+         return()
+     endif()
+     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+@@ -1567,6 +1584,40 @@ file(WRITE "${_path}" "${_task9_monster_damage_required}")
+ expect_rejected("diagnostic monster damage cannot be required" VALIDATOR "${_path}"
+     "forbids diagnostic monster damage as a formal requirement")
+ 
++set(_task9_tuple_assignment [=[
++$ordinaryTupleChecks = @(
++    ($show.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($show.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($show.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($magic.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($magic.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($magic.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($rare.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($rare.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($rare.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($preview.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($preview.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($preview.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($pickup.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($pickup.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($pickup.observed_rare -eq $manifest.ordinary_rare_tuple)
++)
++]=])
++set(_task9_tuple_comment_assignment [=[
++$ordinaryTupleChecks = @(
++    $true # $show.observed_normal -eq $manifest.ordinary_normal_tuple, $show.observed_magic -eq $manifest.ordinary_magic_tuple, $show.observed_rare -eq $manifest.ordinary_rare_tuple, $magic.observed_normal -eq $manifest.ordinary_normal_tuple, $magic.observed_magic -eq $manifest.ordinary_magic_tuple, $magic.observed_rare -eq $manifest.ordinary_rare_tuple, $rare.observed_normal -eq $manifest.ordinary_normal_tuple, $rare.observed_magic -eq $manifest.ordinary_magic_tuple, $rare.observed_rare -eq $manifest.ordinary_rare_tuple, $preview.observed_normal -eq $manifest.ordinary_normal_tuple, $preview.observed_magic -eq $manifest.ordinary_magic_tuple, $preview.observed_rare -eq $manifest.ordinary_rare_tuple, $pickup.observed_normal -eq $manifest.ordinary_normal_tuple, $pickup.observed_magic -eq $manifest.ordinary_magic_tuple, $pickup.observed_rare -eq $manifest.ordinary_rare_tuple
++)
++]=])
++string(REPLACE "${_task9_tuple_assignment}" "${_task9_tuple_comment_assignment}"
++    _task9_tuple_comments "${_validator_text}")
++if(_task9_tuple_comments STREQUAL _validator_text)
++    message(FATAL_ERROR "tuple comment mutation anchor disappeared")
++endif()
++set(_path "${GUARD_TEST_ROOT}/tuple-comparisons-in-comments.ps1")
++file(WRITE "${_path}" "${_task9_tuple_comments}")
++expect_rejected("tuple comparisons cannot move into comments" VALIDATOR "${_path}"
++    "requires real top-level per-rarity tuple assignment")
++
+ set(_task9_tuple_assignment_start "$ordinaryTupleChecks = @(")
+ set(_task9_tuple_assignment_end
+     ")\nRequire (-not ($ordinaryTupleChecks -contains $false))")
+@@ -1586,6 +1637,18 @@ expect_rejected("tuple assignment cannot move into a here string" VALIDATOR "${_
+ 
+ set(_task9_tuple_top_level
+     "Require (-not ($ordinaryTupleChecks -contains $false)) 'production rarity tuples drifted'")
++set(_task9_tuple_reorder_site
++    "${_task9_tuple_assignment}${_task9_tuple_top_level}")
++string(REPLACE "${_task9_tuple_reorder_site}"
++    "${_task9_tuple_top_level}\n${_task9_tuple_assignment}"
++    _task9_tuple_reordered "${_validator_text}")
++if(_task9_tuple_reordered STREQUAL _validator_text)
++    message(FATAL_ERROR "tuple assignment reorder mutation anchor disappeared")
++endif()
++set(_path "${GUARD_TEST_ROOT}/tuple-assignment-reordered.ps1")
++file(WRITE "${_path}" "${_task9_tuple_reordered}")
++expect_rejected("tuple assignment cannot move after its Require" VALIDATOR "${_path}"
++    "requires per-rarity tuple assignment immediately before its Require")
+ set(_task9_tuple_function
+     "function Test-Stage11DTupleRelocation {\n    ${_task9_tuple_top_level}\n}")
+ string(REPLACE "${_task9_tuple_top_level}" "${_task9_tuple_function}"
+@@ -1611,8 +1674,39 @@ file(WRITE "${_path}" "${_task9_pickup_here_string}")
+ expect_rejected("pickup derivation cannot move into a here string" VALIDATOR "${_path}"
+     "requires real top-level pickup conservation derivation")
+ 
++set(_task9_pickup_predicate "Where-Object { $_ -ne $pickup.pickup_item_id }")
++string(REPLACE "${_task9_pickup_predicate}"
++    "Where-Object { $true # $_ -ne $pickup.pickup_item_id\n}"
++    _task9_pickup_predicate_comment "${_validator_text}")
++if(_task9_pickup_predicate_comment STREQUAL _validator_text)
++    message(FATAL_ERROR "pickup predicate comment mutation anchor disappeared")
++endif()
++set(_path "${GUARD_TEST_ROOT}/pickup-predicate-in-comment.ps1")
++file(WRITE "${_path}" "${_task9_pickup_predicate_comment}")
++expect_rejected("pickup predicate cannot move into a comment" VALIDATOR "${_path}"
++    "requires real top-level pickup conservation derivation")
++
+ set(_task9_pickup_top_level
+     "Require -Condition ((Compare-Object $expectedPickupSnapshot $pickupSnapshot).Count -eq 0) -Message 'pickup remaining ground IDs do not conserve the exact original set'")
++set(_task9_pickup_reorder_site
++    "${_task9_pickup_derivation}\n${_task9_pickup_top_level}")
++string(REPLACE "${_task9_pickup_reorder_site}"
++    "${_task9_pickup_top_level}\n${_task9_pickup_derivation}"
++    _task9_pickup_reordered "${_validator_text}")
++if(_task9_pickup_reordered STREQUAL _validator_text)
++    message(FATAL_ERROR "pickup derivation reorder mutation anchor disappeared")
++endif()
++set(_path "${GUARD_TEST_ROOT}/pickup-derivation-reordered.ps1")
++file(WRITE "${_path}" "${_task9_pickup_reordered}")
++expect_rejected("pickup derivation cannot move after its Require" VALIDATOR "${_path}"
++    "requires pickup conservation derivation immediately before its Require")
++
++if(DEFINED ROUND3_TARGETED_ONLY AND ROUND3_TARGETED_ONLY)
++    message(STATUS
++        "Stage11D Task9 round3 targeted evidence guard passed: bad_mutations=4")
++    return()
++endif()
++
+ set(_task9_pickup_false_branch
+     "if ($false) {\n    ${_task9_pickup_top_level}\n}")
+ string(REPLACE "${_task9_pickup_top_level}" "${_task9_pickup_false_branch}"
+@@ -1679,7 +1773,7 @@ expect_rejected("pickup conservation cannot be reduced to a count" VALIDATOR "${
+ 
+ if(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
+     message(STATUS
+-        "Stage11D Task9 targeted evidence guard passed: bad_mutations=11")
++        "Stage11D Task9 targeted evidence guard passed: bad_mutations=15")
+     return()
+ endif()
+ 
+diff --git a/tests/platform/stage11d_loot_formal_validator.ps1 b/tests/platform/stage11d_loot_formal_validator.ps1
+index 7b9aecd..a23a9ec 100644
+--- a/tests/platform/stage11d_loot_formal_validator.ps1
++++ b/tests/platform/stage11d_loot_formal_validator.ps1
+@@ -257,21 +257,21 @@ foreach ($name in @('show-all','magic-plus','rare-only','preview-cancel','pickup
+         [int]$values.progress_hp -le [int]$values.progress_max_hp) "ordinary combat did not prove live player damage and survival: $name"
+ }
+ $ordinaryTupleChecks = @(
+-    $show.observed_normal -eq $manifest.ordinary_normal_tuple,
+-    $show.observed_magic -eq $manifest.ordinary_magic_tuple,
+-    $show.observed_rare -eq $manifest.ordinary_rare_tuple,
+-    $magic.observed_normal -eq $manifest.ordinary_normal_tuple,
+-    $magic.observed_magic -eq $manifest.ordinary_magic_tuple,
+-    $magic.observed_rare -eq $manifest.ordinary_rare_tuple,
+-    $rare.observed_normal -eq $manifest.ordinary_normal_tuple,
+-    $rare.observed_magic -eq $manifest.ordinary_magic_tuple,
+-    $rare.observed_rare -eq $manifest.ordinary_rare_tuple,
+-    $preview.observed_normal -eq $manifest.ordinary_normal_tuple,
+-    $preview.observed_magic -eq $manifest.ordinary_magic_tuple,
+-    $preview.observed_rare -eq $manifest.ordinary_rare_tuple,
+-    $pickup.observed_normal -eq $manifest.ordinary_normal_tuple,
+-    $pickup.observed_magic -eq $manifest.ordinary_magic_tuple,
+-    $pickup.observed_rare -eq $manifest.ordinary_rare_tuple
++    ($show.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($show.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($show.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($magic.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($magic.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($magic.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($rare.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($rare.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($rare.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($preview.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($preview.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($preview.observed_rare -eq $manifest.ordinary_rare_tuple),
++    ($pickup.observed_normal -eq $manifest.ordinary_normal_tuple),
++    ($pickup.observed_magic -eq $manifest.ordinary_magic_tuple),
++    ($pickup.observed_rare -eq $manifest.ordinary_rare_tuple)
+ )
+ Require (-not ($ordinaryTupleChecks -contains $false)) 'production rarity tuples drifted'
+ Require ($show.committed_mode -eq '0' -and
+diff --git a/tests/platform/stage11d_loot_validator_ast_guard.ps1 b/tests/platform/stage11d_loot_validator_ast_guard.ps1
+new file mode 100644
+index 0000000..edaf111
+--- /dev/null
++++ b/tests/platform/stage11d_loot_validator_ast_guard.ps1
+@@ -0,0 +1,257 @@
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$ValidatorPath
++)
++
++Set-StrictMode -Version Latest
++$ErrorActionPreference = 'Stop'
++
++function Fail([string]$Message) {
++    Write-Error $Message
++    exit 1
++}
++
++function Normalized([string]$Text) {
++    return ($Text -replace '[ \t\r\n]+', '')
++}
++
++function TopLevelAssignment($ScriptAst, [string]$VariableName, [string]$Reason) {
++    $assignments = @($ScriptAst.EndBlock.Statements | Where-Object {
++        $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and
++        $_.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
++        $_.Left.VariablePath.UserPath -eq $VariableName
++    })
++    if ($assignments.Count -ne 1) {
++        Fail $Reason
++    }
++    $assignment = $assignments[0]
++    if ($assignment.Operator -ne
++        [System.Management.Automation.Language.TokenKind]::Equals) {
++        Fail $Reason
++    }
++    if ($assignment.Right -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
++        $assignment.Right -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
++        Fail $Reason
++    }
++    return $assignment
++}
++
++function TopLevelRequire($ScriptAst, [string]$NormalizedCommand, [string]$Reason) {
++    $commands = @($ScriptAst.EndBlock.Statements | ForEach-Object {
++        if ($_ -is [System.Management.Automation.Language.PipelineAst] -and
++            $_.PipelineElements.Count -eq 1 -and
++            $_.PipelineElements[0] -is [System.Management.Automation.Language.CommandAst] -and
++            $_.PipelineElements[0].GetCommandName() -eq 'Require' -and
++            (Normalized $_.Extent.Text) -eq $NormalizedCommand) {
++            $_
++        }
++    })
++    if ($commands.Count -ne 1) {
++        Fail $Reason
++    }
++    return $commands[0]
++}
++
++function RequireImmediatelyAfter($ScriptAst, $Assignment, $Require, [string]$Reason) {
++    $statements = @($ScriptAst.EndBlock.Statements)
++    $assignmentIndex = [array]::IndexOf($statements, $Assignment)
++    $requireIndex = [array]::IndexOf($statements, $Require)
++    if ($assignmentIndex -lt 0 -or $requireIndex -ne ($assignmentIndex + 1)) {
++        Fail $Reason
++    }
++}
++
++function RequireNoStringExpression($Ast, [string]$Reason) {
++    $strings = @($Ast.FindAll({
++        param($node)
++        ($node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
++            $node.StringConstantType -ne
++                [System.Management.Automation.Language.StringConstantType]::BareWord) -or
++        $node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
++    }, $true))
++    if ($strings.Count -ne 0) {
++        Fail $Reason
++    }
++}
++
++function OptionalAstTruthy($Node, [string]$Name) {
++    [object[]]$properties = @($Node.PSObject.Properties | Where-Object {
++        $_.Name -eq $Name
++    })
++    return $properties.Length -eq 1 -and [bool]($properties[0].Value)
++}
++
++function DirectArrayPipeline($Assignment, [string]$Reason) {
++    if ($Assignment.Right -isnot
++        [System.Management.Automation.Language.CommandExpressionAst] -or
++        $Assignment.Right.Expression -isnot
++            [System.Management.Automation.Language.ArrayExpressionAst]) {
++        Fail $Reason
++    }
++    $statements = @($Assignment.Right.Expression.SubExpression.Statements)
++    if ($statements.Count -ne 1 -or
++        $statements[0] -isnot [System.Management.Automation.Language.PipelineAst]) {
++        Fail $Reason
++    }
++    if (OptionalAstTruthy $statements[0] 'Background') {
++        Fail $Reason
++    }
++    return $statements[0]
++}
++
++function MemberBinding($Node) {
++    if ($Node -isnot [System.Management.Automation.Language.MemberExpressionAst] -or
++        $Node.Static -or
++        (OptionalAstTruthy $Node 'NullConditional') -or
++        $Node.Expression -isnot
++            [System.Management.Automation.Language.VariableExpressionAst] -or
++        $Node.Expression.Splatted -or
++        $Node.Member -isnot
++            [System.Management.Automation.Language.StringConstantExpressionAst] -or
++        $Node.Member.StringConstantType -ne
++            [System.Management.Automation.Language.StringConstantType]::BareWord) {
++        return $null
++    }
++    return ('${0}.{1}' -f $Node.Expression.VariablePath.UserPath,
++        $Node.Member.Value)
++}
++
++function TupleComparison($Element, [string]$Reason) {
++    if ($Element -isnot [System.Management.Automation.Language.ParenExpressionAst] -or
++        $Element.Pipeline.PipelineElements.Count -ne 1 -or
++        $Element.Pipeline.PipelineElements[0] -isnot
++            [System.Management.Automation.Language.CommandExpressionAst]) {
++        Fail $Reason
++    }
++    $comparison = $Element.Pipeline.PipelineElements[0].Expression
++    if ($comparison -isnot [System.Management.Automation.Language.BinaryExpressionAst] -or
++        $comparison.Operator -ne
++            [System.Management.Automation.Language.TokenKind]::Ieq -or
++        $comparison.Left -isnot [System.Management.Automation.Language.MemberExpressionAst] -or
++        $comparison.Right -isnot [System.Management.Automation.Language.MemberExpressionAst]) {
++        Fail $Reason
++    }
++    return $comparison
++}
++
++if (-not (Test-Path -LiteralPath $ValidatorPath -PathType Leaf)) {
++    Fail 'Stage11D loot evidence guard AST validator input is missing'
++}
++
++$tokens = $null
++$parseErrors = $null
++$ast = [System.Management.Automation.Language.Parser]::ParseFile(
++    (Resolve-Path -LiteralPath $ValidatorPath), [ref]$tokens, [ref]$parseErrors)
++if ($parseErrors.Count -ne 0) {
++    Fail 'Stage11D loot evidence guard validator AST parse failed'
++}
++
++$tupleAssignmentReason =
++    'Stage11D loot evidence guard requires real top-level per-rarity tuple assignment'
++$tupleAssignment = TopLevelAssignment $ast 'ordinaryTupleChecks' $tupleAssignmentReason
++$tuplePipeline = DirectArrayPipeline $tupleAssignment $tupleAssignmentReason
++if ($tuplePipeline.PipelineElements.Count -ne 1 -or
++    $tuplePipeline.PipelineElements[0] -isnot
++        [System.Management.Automation.Language.CommandExpressionAst] -or
++    $tuplePipeline.PipelineElements[0].Expression -isnot
++        [System.Management.Automation.Language.ArrayLiteralAst]) {
++    Fail $tupleAssignmentReason
++}
++$tupleElements = @($tuplePipeline.PipelineElements[0].Expression.Elements)
++if ($tupleElements.Count -ne 15) {
++    Fail $tupleAssignmentReason
++}
++$expectedTupleBindings = [System.Collections.Generic.HashSet[string]]::new(
++    [System.StringComparer]::Ordinal)
++foreach ($scenario in 'show', 'magic', 'rare', 'preview', 'pickup') {
++    foreach ($rarity in 'normal', 'magic', 'rare') {
++        [void]$expectedTupleBindings.Add(
++            ('${0}.observed_{1}|$manifest.ordinary_{1}_tuple' -f
++                $scenario, $rarity))
++    }
++}
++$actualTupleBindings = [System.Collections.Generic.HashSet[string]]::new(
++    [System.StringComparer]::Ordinal)
++foreach ($element in $tupleElements) {
++    $comparison = TupleComparison $element $tupleAssignmentReason
++    $binding = '{0}|{1}' -f (MemberBinding $comparison.Left),
++        (MemberBinding $comparison.Right)
++    if (-not $expectedTupleBindings.Contains($binding) -or
++        -not $actualTupleBindings.Add($binding)) {
++        Fail $tupleAssignmentReason
++    }
++}
++if ($actualTupleBindings.Count -ne $expectedTupleBindings.Count) {
++    Fail $tupleAssignmentReason
++}
++
++$tupleRequire = TopLevelRequire $ast "Require(-not(`$ordinaryTupleChecks-contains`$false))'productionraritytuplesdrifted'" 'Stage11D loot evidence guard requires exact per-rarity tuples in a top-level executable Require command'
++RequireImmediatelyAfter $ast $tupleAssignment $tupleRequire 'Stage11D loot evidence guard requires per-rarity tuple assignment immediately before its Require'
++
++$pickupDerivationReason =
++    'Stage11D loot evidence guard requires real top-level pickup conservation derivation'
++$pickupAssignment = TopLevelAssignment $ast 'expectedPickupSnapshot' $pickupDerivationReason
++$pickupPipeline = DirectArrayPipeline $pickupAssignment $pickupDerivationReason
++if ($pickupPipeline.PipelineElements.Count -ne 2 -or
++    $pickupPipeline.PipelineElements[0] -isnot
++        [System.Management.Automation.Language.CommandExpressionAst] -or
++    $pickupPipeline.PipelineElements[0].Expression -isnot
++        [System.Management.Automation.Language.VariableExpressionAst] -or
++    $pickupPipeline.PipelineElements[0].Expression.Splatted -or
++    $pickupPipeline.PipelineElements[0].Expression.VariablePath.UserPath -ne
++        'ordinaryIds' -or
++    $pickupPipeline.PipelineElements[1] -isnot
++        [System.Management.Automation.Language.CommandAst]) {
++    Fail $pickupDerivationReason
++}
++$whereCommand = $pickupPipeline.PipelineElements[1]
++if ($whereCommand.GetCommandName() -ne 'Where-Object' -or
++    $whereCommand.InvocationOperator -ne
++        [System.Management.Automation.Language.TokenKind]::Unknown -or
++    @($whereCommand.Redirections).Count -ne 0 -or
++    $whereCommand.CommandElements.Count -ne 2 -or
++    $whereCommand.CommandElements[1] -isnot
++        [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
++    Fail $pickupDerivationReason
++}
++$predicateScriptBlock = $whereCommand.CommandElements[1].ScriptBlock
++if ($predicateScriptBlock.ParamBlock -ne $null -or
++    $predicateScriptBlock.DynamicParamBlock -ne $null -or
++    $predicateScriptBlock.BeginBlock -ne $null -or
++    $predicateScriptBlock.ProcessBlock -ne $null -or
++    (OptionalAstTruthy $predicateScriptBlock 'CleanBlock') -or
++    (OptionalAstTruthy $predicateScriptBlock 'Attributes') -or
++    (OptionalAstTruthy $predicateScriptBlock 'UsingStatements') -or
++    @($predicateScriptBlock.EndBlock.Traps | Where-Object {
++        $null -ne $_
++    }).Count -ne 0) {
++    Fail $pickupDerivationReason
++}
++$predicateStatements = @($predicateScriptBlock.EndBlock.Statements)
++if ($predicateStatements.Count -ne 1 -or
++    $predicateStatements[0] -isnot [System.Management.Automation.Language.PipelineAst] -or
++    $predicateStatements[0].PipelineElements.Count -ne 1 -or
++    $predicateStatements[0].PipelineElements[0] -isnot
++        [System.Management.Automation.Language.CommandExpressionAst] -or
++    $predicateStatements[0].PipelineElements[0].Expression -isnot
++        [System.Management.Automation.Language.BinaryExpressionAst]) {
++    Fail $pickupDerivationReason
++}
++if (OptionalAstTruthy $predicateStatements[0] 'Background') {
++    Fail $pickupDerivationReason
++}
++$pickupPredicate = $predicateStatements[0].PipelineElements[0].Expression
++if ($pickupPredicate.Operator -ne
++        [System.Management.Automation.Language.TokenKind]::Ine -or
++    $pickupPredicate.Left -isnot
++        [System.Management.Automation.Language.VariableExpressionAst] -or
++    $pickupPredicate.Left.Splatted -or
++    $pickupPredicate.Left.VariablePath.UserPath -ne '_' -or
++    (MemberBinding $pickupPredicate.Right) -ne '$pickup.pickup_item_id') {
++    Fail $pickupDerivationReason
++}
++
++$pickupRequire = TopLevelRequire $ast "Require-Condition((Compare-Object`$expectedPickupSnapshot`$pickupSnapshot).Count-eq0)-Message'pickupremaininggroundIDsdonotconservetheexactoriginalset'" 'Stage11D loot evidence guard requires exact pickup conservation in a top-level executable Require command'
++RequireImmediatelyAfter $ast $pickupAssignment $pickupRequire 'Stage11D loot evidence guard requires pickup conservation derivation immediately before its Require'
++
++Write-Output 'Stage11D loot validator AST guard passed'

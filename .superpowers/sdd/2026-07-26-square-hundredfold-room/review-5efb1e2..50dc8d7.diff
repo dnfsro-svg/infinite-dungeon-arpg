@@ -1,0 +1,1756 @@
+# Review package: 5efb1e2..HEAD
+
+## Commits
+50dc8d7 fix: preserve v9 drop compatibility and hud diagnostics
+
+## Files changed
+ src/persistence/room_progress_codec.cpp            | 105 +++++++-
+ src/persistence/room_progress_codec.hpp            |   3 +-
+ src/platform/raylib/combat_renderer.cpp            |  12 +-
+ src/platform/raylib/combat_renderer.hpp            |   8 +-
+ src/platform/raylib/hud_layout.cpp                 |   8 +-
+ src/platform/raylib/hud_layout.hpp                 |   1 +
+ src/platform/raylib/hud_renderer.cpp               |   6 +
+ src/platform/raylib/hud_renderer.hpp               |   1 +
+ src/platform/raylib/hud_view_model.cpp             |  32 ++-
+ src/platform/raylib/hud_view_model.hpp             |  20 +-
+ src/platform/raylib/raylib_host.cpp                |  23 +-
+ tests/persistence/checkpoint_v9_tests.cpp          | 281 ++++++++++++++++++++-
+ tests/persistence/persistence_test_main.cpp        |   2 +-
+ tests/platform/hud_layout_tests.cpp                |   7 +-
+ tests/platform/hud_render_plan_tests.cpp           |  14 +-
+ tests/platform/hud_view_model_tests.cpp            |  49 ++++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ .../platform/stage12_environment_render_tests.cpp  |  18 ++
+ 18 files changed, 537 insertions(+), 55 deletions(-)
+
+## Diff
+diff --git a/src/persistence/room_progress_codec.cpp b/src/persistence/room_progress_codec.cpp
+index 36a96ae..835ce13 100644
+--- a/src/persistence/room_progress_codec.cpp
++++ b/src/persistence/room_progress_codec.cpp
+@@ -887,20 +887,89 @@ bool read_room_progress(Reader& reader,
+     }
+     return true;
+ }
+ 
+ [[nodiscard]] std::uint32_t crc(
+     const std::uint8_t* bytes, std::size_t payload_size) noexcept {
+     std::uint32_t value = crc32_update(0U, bytes + 8U, 20U);
+     return crc32_update(value, bytes + kHeaderSize, payload_size);
+ }
+ 
++template <std::size_t Size>
++void set_bit(std::array<std::uint64_t, Size>& bits,
++    const std::uint16_t ordinal) noexcept {
++    bits[ordinal / 64U] |= std::uint64_t{1U} << (ordinal % 64U);
++}
++
++[[nodiscard]] bool migrate_task5_secondary_ordinals(
++    checkpoint::SaveCheckpointSlot& slot) noexcept {
++    auto& room = slot.room_progress;
++    std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>
++        expected_task5_claims{};
++    std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>
++        canonical_claims{};
++    const auto& durable_claims =
++        slot.state.item_ownership.material_claimed_drop_bits;
++    for (std::uint16_t ordinal = 0U;
++            ordinal < durable_claims.size() * 64U; ++ordinal) {
++        if ((durable_claims[ordinal / 64U]
++                & (std::uint64_t{1U} << (ordinal % 64U))) == 0U) {
++            continue;
++        }
++        const std::uint16_t task5_ordinal =
++            checkpoint::checkpoint_material_ordinal(ordinal);
++        set_bit(expected_task5_claims, task5_ordinal);
++        if ((ordinal & 1U) != 0U
++                && ordinal < checkpoint::kHealthPotionGroundCapacity * 2U) {
++            set_bit(expected_task5_claims, ordinal);
++        }
++        set_bit(canonical_claims,
++            ordinal >= checkpoint::kAbyssMaterialOrdinalBegin
++                ? task5_ordinal : ordinal);
++    }
++    if (room.secondary_claim_bits != expected_task5_claims) return false;
++
++    for (std::uint16_t index = 0U;
++            index < room.secondary_ground_count; ++index) {
++        auto& ground = room.secondary_ground[index];
++        if (ground.tag != checkpoint::SecondaryGroundTag::material) continue;
++        if (ground.source <= 1U) {
++            if (ground.ordinal >= checkpoint::kOrdinarySecondaryOrdinalEnd
++                    || (ground.ordinal & 1U) != 0U) {
++                return false;
++            }
++            const std::uint16_t canonical = static_cast<std::uint16_t>(
++                ground.ordinal / 2U);
++            if ((ground.source == 0U && (canonical & 1U) != 0U)
++                    || (ground.source == 1U && (canonical & 1U) == 0U)) {
++                return false;
++            }
++            ground.ordinal = canonical;
++        }
++    }
++    std::sort(room.secondary_ground.begin(),
++        room.secondary_ground.begin() + room.secondary_ground_count,
++        [](const checkpoint::SecondaryGroundCheckpoint& left,
++            const checkpoint::SecondaryGroundCheckpoint& right) noexcept {
++            return left.ordinal < right.ordinal;
++        });
++    for (std::uint16_t index = 1U;
++            index < room.secondary_ground_count; ++index) {
++        if (room.secondary_ground[index - 1U].ordinal
++                == room.secondary_ground[index].ordinal) {
++            return false;
++        }
++    }
++    room.secondary_claim_bits = canonical_claims;
++    return true;
++}
++
+ [[nodiscard]] bool valid_resolution_lifecycle_extension(
+     const checkpoint::LastAbyssResolution& value) noexcept {
+     if (value.lifecycle == abyss::AbyssLifecycle::none) return true;
+     return value.lifecycle == abyss::AbyssLifecycle::failed
+         && value.valid && value.generated == 0U && value.claimed == 0U
+         && value.abandoned == value.total;
+ }
+ 
+ [[nodiscard]] bool legacy_v9_abyss_death_requires_failed_resolution(
+     const checkpoint::DungeonRunState& state) noexcept {
+@@ -996,21 +1065,22 @@ CodecError encode_checkpoint_v9_into(
+     if (!payload.u32(0U)) return CodecError::wrong_size;
+     std::size_t durable_size{};
+     const CodecError durable_error = encode_checkpoint_v9_durable_into(
+         source.state,
+         payload.current(), capacity - payload.offset(), durable_size);
+     if (durable_error != CodecError::none) return durable_error;
+     if (durable_size > (std::numeric_limits<std::uint32_t>::max)()
+             || !payload.skip(durable_size)
+             || !write_room_progress(payload, source.room_progress)
+             || !payload.u8(static_cast<std::uint8_t>(
+-                source.state.last_abyss_resolution.lifecycle))) {
++                source.state.last_abyss_resolution.lifecycle))
++            || !payload.u8(kV9CanonicalSecondaryOrdinalMarker)) {
+         return CodecError::wrong_size;
+     }
+     Writer durable_length{bytes, capacity, kHeaderSize};
+     if (!durable_length.u32(static_cast<std::uint32_t>(durable_size))) {
+         return CodecError::wrong_size;
+     }
+     const std::size_t payload_size = payload.offset() - kHeaderSize;
+     if (payload_size > (std::numeric_limits<std::uint32_t>::max)()
+             || payload.offset() > kMaximumEncodedCheckpointBytes) {
+         return CodecError::bad_payload_length;
+@@ -1083,48 +1153,65 @@ CodecError decode_checkpoint_v9_into_scratch(
+         destination.state = durable.state;
+     } catch (...) {
+         return CodecError::allocation_failure;
+     }
+     destination.persistence_revision = revision;
+     if (!payload.skip(durable_size)
+             || !read_room_progress(payload, destination.room_progress)) {
+         return CodecError::bad_payload_length;
+     }
+     const std::size_t extension_size = size - payload.offset();
+-    if (extension_size > 1U) return CodecError::bad_payload_length;
++    if (extension_size > 2U) return CodecError::bad_payload_length;
++    bool canonical_secondary_ordinals = false;
+     if (extension_size == 0U
+             && legacy_v9_abyss_death_requires_failed_resolution(
+                 destination.state)) {
+         destination.state.last_abyss_resolution.lifecycle =
+             abyss::AbyssLifecycle::failed;
+-    } else if (extension_size == 1U) {
++    } else if (extension_size >= 1U) {
+         std::uint8_t resolution_lifecycle{};
+         if (!payload.u8(resolution_lifecycle)) {
+             return CodecError::bad_payload_length;
+         }
+         if (resolution_lifecycle
+                     != static_cast<std::uint8_t>(
+                         abyss::AbyssLifecycle::none)
+                 && resolution_lifecycle
+                     != static_cast<std::uint8_t>(
+                         abyss::AbyssLifecycle::failed)) {
+             return CodecError::invalid_enum;
+         }
+         destination.state.last_abyss_resolution.lifecycle =
+             static_cast<abyss::AbyssLifecycle>(resolution_lifecycle);
++        if (extension_size == 2U) {
++            std::uint8_t secondary_marker{};
++            if (!payload.u8(secondary_marker)) {
++                return CodecError::bad_payload_length;
++            }
++            if (secondary_marker != kV9CanonicalSecondaryOrdinalMarker) {
++                return CodecError::invalid_enum;
++            }
++            canonical_secondary_ordinals = true;
++        }
+     }
+     if (!valid_resolution_lifecycle_extension(
+             destination.state.last_abyss_resolution)) {
+         return CodecError::invalid_state;
+     }
+-      if (!checkpoint::valid_room_progress_checkpoint_structural(
+-              destination.room_progress, destination.state)) {
++    if (!canonical_secondary_ordinals) {
++        if (!migrate_task5_secondary_ordinals(destination)) {
++            return CodecError::invalid_state;
++        }
++        migrated = true;
++    }
++    if (!checkpoint::valid_room_progress_checkpoint_structural(
++            destination.room_progress, destination.state)) {
+         return CodecError::invalid_state;
+     }
+     return CodecError::none;
+ }
+ 
+ namespace {
+ 
+ void publish_room_combat_checkpoint(
+     checkpoint::RoomCombatCheckpoint& destination,
+     const checkpoint::RoomCombatCheckpoint& source) noexcept {
+@@ -1280,29 +1367,25 @@ CodecError verify_checkpoint_v9_readback(
+         return CodecError::invalid_state;
+     }
+     if (!payload.skip(durable_size) || payload.offset() >= size) {
+         return CodecError::bad_payload_length;
+     }
+     ComparingReader room_fields{bytes, size, payload.offset()};
+     if (!write_room_progress(room_fields, expected.room_progress)) {
+         return CodecError::invalid_state;
+     }
+     const std::size_t extension_size = size - room_fields.offset();
+-    if (extension_size == 0U) {
+-        if (expected.state.last_abyss_resolution.lifecycle
+-                != abyss::AbyssLifecycle::none) {
+-            return CodecError::invalid_state;
+-        }
+-    } else if (extension_size == 1U) {
++    if (extension_size == 2U) {
+         ComparingReader extension{bytes, size, room_fields.offset()};
+         if (!extension.u8(static_cast<std::uint8_t>(
+                 expected.state.last_abyss_resolution.lifecycle))
++                || !extension.u8(kV9CanonicalSecondaryOrdinalMarker)
+                 || extension.offset() != size) {
+             return CodecError::invalid_state;
+         }
+     } else {
+         return CodecError::bad_payload_length;
+     }
+     return CodecError::none;
+ }
+ 
+ }  // namespace arpg::persistence
+diff --git a/src/persistence/room_progress_codec.hpp b/src/persistence/room_progress_codec.hpp
+index 02f70d7..1a9e358 100644
+--- a/src/persistence/room_progress_codec.hpp
++++ b/src/persistence/room_progress_codec.hpp
+@@ -4,20 +4,21 @@
+ #include "persistence/checkpoint_codec.hpp"
+ 
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace arpg::persistence {
+ 
+ inline constexpr std::size_t kMaximumEncodedCheckpointBytes =
+     8U * 1024U * 1024U;
+ inline constexpr std::uint32_t kCheckpointFormatVersionV9 = 9U;
++inline constexpr std::uint8_t kV9CanonicalSecondaryOrdinalMarker = 0xC9U;
+ 
+ // Exact worst-case size derived from the field-wise V9 schema. Counted records
+ // use their declared fixed capacities; the embedded durable image uses the V8
+ // maximum inventory cardinality.
+ inline constexpr std::size_t kV9VecBytes = 3U * sizeof(std::uint32_t);
+ inline constexpr std::size_t kV9SourceBytes = 1U + 1U + 2U;
+ inline constexpr std::size_t kV9ModifierBytes =
+     4U + 2U + 1U + 8U + 8U + 8U + 8U + 2U + 2U;
+ inline constexpr std::size_t kV9ActiveEffectBytes =
+     4U + 4U + 1U + 1U + 1U + 8U + kV9ModifierBytes
+@@ -72,21 +73,21 @@ inline constexpr std::size_t kV9SecondaryGroundBytes =
+     1U + 2U + 1U + kV9VecBytes + 1U;
+ inline constexpr std::size_t kV9MaximumRoomProgressBytes =
+     kV9RoomPrefixBytes + kV9CombatBytes + 2U
+         + limits::kRoomMonsterCapacity * kV9EquipmentGroundBytes + 2U
+         + checkpoint::kRoomSecondaryGroundCapacity
+             * kV9SecondaryGroundBytes;
+ inline constexpr std::size_t kV8MaximumEncodedBytes =
+     kV8BaseEncodedCheckpointSize
+         + kMaximumCheckpointItemCount * kV7ItemRecordSize;
+ inline constexpr std::size_t kV9MaximumEncodedBytes =
+-    32U + 4U + kV8MaximumEncodedBytes + kV9MaximumRoomProgressBytes + 1U;
++    32U + 4U + kV8MaximumEncodedBytes + kV9MaximumRoomProgressBytes + 2U;
+ static_assert(kV9MaximumEncodedBytes <= kMaximumEncodedCheckpointBytes);
+ 
+ [[nodiscard]] CodecError encode_checkpoint_v9_into(
+     const checkpoint::SaveCheckpointSlot& source,
+     std::uint8_t* bytes,
+     std::size_t capacity,
+     std::size_t& written) noexcept;
+ 
+ [[nodiscard]] CodecError decode_checkpoint_v9_into(
+     const std::uint8_t* bytes,
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 5608880..645d225 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -335,39 +335,41 @@ void CombatRenderer::set_loot_filter_mode(
+ void CombatRenderer::update(float frame_seconds) noexcept {
+     transition_ = advance_transition(transition_, frame_seconds);
+ }
+ 
+ void CombatRenderer::observe_hud(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& control_hints,
+     float frame_seconds,
+-    bool paused) noexcept {
++    bool paused,
++    const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
+     const LootPickupFeedback pickup_feedback =
+         loot_pickup_feedback_.observe(runtime_status);
+     if (pickup_feedback.ready) {
+         hud_notices_.publish_loot_pickup(
+             pickup_feedback.text, pickup_feedback.abyss);
+     }
+     material_pickup_feedback_.update(frame_seconds, paused);
+     const MaterialPickupFeedback material_feedback =
+         material_pickup_feedback_.observe(current);
+     if (material_feedback.ready) {
+         hud_notices_.publish_loot_pickup(
+             material_feedback.text, material_feedback.emphasized);
+     }
+     hud_notices_.observe(previous, current, runtime_status, control_hints,
+         runtime_status.recovery_required);
+     hud_notices_.update(frame_seconds, paused);
+     HudViewModel model{};
+-    hud_projector_.build(model, current, runtime_status, control_hints);
++    hud_projector_.build(
++        model, current, runtime_status, control_hints, presented_world);
+     attach_notice_view(model, hud_notices_.view());
+     hud_model_ = model;
+     const std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns =
+         current.combat.has_value()
+         ? current.combat->skill_cooldowns
+         : std::array<std::uint16_t, skills::kActiveSkillCount>{};
+     active_skill_hud_model_ = make_active_skill_hud_model(
+         current.skill_loadout, cooldowns);
+     hud_layout_ = IsWindowReady()
+         ? make_hud_layout(GetScreenWidth(), GetScreenHeight(), false)
+@@ -376,24 +378,26 @@ void CombatRenderer::observe_hud(
+     ++hud_observation_count_;
+ }
+ 
+ void CombatRenderer::observe_presented_hud_frame(
+     HudPresentedFrame frame,
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& control_hints,
+     float frame_seconds,
+-    bool paused) noexcept {
++    bool paused,
++    const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
+     const auto index = hud_presented_frame_index(frame);
+     if (!index.has_value()) return;
+-    observe_hud(previous, current, runtime_status, control_hints, frame_seconds, paused);
++    observe_hud(previous, current, runtime_status, control_hints, frame_seconds,
++        paused, presented_world);
+     ++hud_presented_frame_counts_[*index];
+ }
+ 
+ const HudViewModel& CombatRenderer::hud_model() const noexcept {
+     return hud_model_;
+ }
+ 
+ HudNoticeView CombatRenderer::hud_notice_view() const noexcept {
+     return hud_notices_.view();
+ }
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index e293d97..65d1795 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -120,29 +120,33 @@ public:
+     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
+     void clear_combat_transients() noexcept;
+     void set_loot_filter_mode(settings::LootFilterMode mode) noexcept;
+     void update(float frame_seconds) noexcept;
+     void observe_hud(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         const ControlHints& control_hints,
+         float frame_seconds,
+-        bool paused) noexcept;
++        bool paused,
++        const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
++        noexcept;
+     void observe_presented_hud_frame(
+         HudPresentedFrame,
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         const ControlHints& control_hints,
+         float frame_seconds,
+-        bool paused) noexcept;
++        bool paused,
++        const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
++        noexcept;
+     [[nodiscard]] const HudViewModel& hud_model() const noexcept;
+     [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
+     [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;
+     [[nodiscard]] std::uint64_t hud_observation_count() const noexcept;
+     [[nodiscard]] HudStaticFormattingDiagnostics
+         hud_static_formatting_diagnostics() const noexcept;
+     [[nodiscard]] std::uint64_t hud_presented_frame_count(
+         HudPresentedFrame) const noexcept;
+     [[nodiscard]] const ActiveSkillHudModel& active_skill_hud_model()
+         const noexcept;
+diff --git a/src/platform/raylib/hud_layout.cpp b/src/platform/raylib/hud_layout.cpp
+index 41e74db..3c9b955 100644
+--- a/src/platform/raylib/hud_layout.cpp
++++ b/src/platform/raylib/hud_layout.cpp
+@@ -6,35 +6,35 @@ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kLogicalWidth = 1280.0F;
+ constexpr float kLogicalHeight = 720.0F;
+ constexpr float kMinimumScale = 0.625F;
+ constexpr float kMaximumScale = 1.5F;
+ constexpr float kLogicalMargin = 16.0F;
+ constexpr float kPlayerWidth = 420.0F;
+ constexpr float kPlayerHeight = 144.0F;
+ constexpr float kObjectiveWidth = 704.0F;
+-constexpr float kObjectiveHeight = 142.0F;
++constexpr float kObjectiveHeight = 164.0F;
+ constexpr float kNavigationWidth = 270.0F;
+ constexpr float kNavigationHeight = 160.0F;
+ constexpr float kPrimaryNoticeWidth = 600.0F;
+ constexpr float kPrimaryNoticeHeight = 36.0F;
+ constexpr float kSecondaryNoticeHeight = 28.0F;
+ constexpr float kNoticeGap = 6.0F;
+ constexpr float kAbyssConfirmationHeight = 56.0F;
+ constexpr float kAbyssConfirmationGap = 8.0F;
+ constexpr float kCombatExclusionX = 360.0F;
+-constexpr float kCombatExclusionY = 164.0F;
++constexpr float kCombatExclusionY = 186.0F;
+ constexpr float kCombatExclusionWidth = 560.0F;
+ constexpr float kCombatExclusionHeight = 310.0F;
+ constexpr float kDebugWidth = 300.0F;
+-constexpr float kDebugY = 172.0F;
++constexpr float kDebugY = 186.0F;
+ constexpr float kDebugHeight = 228.0F;
+ 
+ [[nodiscard]] HudRect scaled_rect(float origin_x,
+     float origin_y,
+     float width,
+     float height,
+     float scale) noexcept {
+     return {origin_x, origin_y, width * scale, height * scale};
+ }
+ 
+@@ -125,20 +125,22 @@ HudTextSafeLayout make_hud_text_safe_layout(
+         layout.player_panel.y + 99.0F * scale,
+         layout.player_panel.width - 24.0F * scale, 24.0F * scale};
+     text.objective_title = inset(layout.objective_panel, 18.0F, 3.0F, 26.0F);
+     text.objective_hint = inset(layout.objective_panel, 18.0F, 30.0F, 21.0F);
+     text.objective_movement = inset(
+         layout.objective_panel, 18.0F, 52.0F, 21.0F);
+     for (std::size_t index{}; index < text.objective_controls.size(); ++index) {
+         text.objective_controls[index] = inset(layout.objective_panel, 18.0F,
+             74.0F + static_cast<float>(index) * 22.0F, 21.0F);
+     }
++    text.objective_diagnostics = inset(
++        layout.objective_panel, 18.0F, 140.0F, 21.0F);
+     text.navigation_title = inset(layout.navigation_panel, 18.0F, 7.0F, 28.0F);
+     text.navigation_ecology = inset(
+         layout.navigation_panel, 18.0F, 36.0F, 26.0F);
+     return text;
+ }
+ 
+ bool hud_rects_overlap(HudRect lhs, HudRect rhs) noexcept {
+     if (!has_area(lhs) || !has_area(rhs)) return false;
+     return lhs.x < rhs.x + rhs.width && rhs.x < lhs.x + lhs.width
+         && lhs.y < rhs.y + rhs.height && rhs.y < lhs.y + lhs.height;
+diff --git a/src/platform/raylib/hud_layout.hpp b/src/platform/raylib/hud_layout.hpp
+index 223562e..e6beba4 100644
+--- a/src/platform/raylib/hud_layout.hpp
++++ b/src/platform/raylib/hud_layout.hpp
+@@ -23,20 +23,21 @@ struct HudLayout final {
+     float scale{1.0F};
+ };
+ 
+ struct HudTextSafeLayout final {
+     std::array<HudRect, 3U> player_bar_labels{};
+     HudRect player_progression{};
+     HudRect objective_title{};
+     HudRect objective_hint{};
+     HudRect objective_movement{};
+     std::array<HudRect, 3U> objective_controls{};
++    HudRect objective_diagnostics{};
+     HudRect navigation_title{};
+     HudRect navigation_ecology{};
+ };
+ 
+ [[nodiscard]] HudLayout make_hud_layout(
+     int screen_width, int screen_height, bool debug_visible) noexcept;
+ [[nodiscard]] HudTextSafeLayout make_hud_text_safe_layout(
+     const HudLayout& layout) noexcept;
+ [[nodiscard]] bool hud_rects_overlap(HudRect lhs, HudRect rhs) noexcept;
+ [[nodiscard]] bool hud_rect_inside(HudRect inner, HudRect outer) noexcept;
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index 63e3075..603d154 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -188,20 +188,21 @@ ObjectivePanelPlan make_objective_panel_plan(const RoomHudModel& room,
+         || room.objective.bytes[0] == '\0') {
+         return plan;
+     }
+     plan.visible = true;
+     plan.abyss = room.abyss;
+     plan.bounds = layout.objective_panel;
+     plan.primary = room.objective;
+     plan.secondary = room.secondary;
+     plan.movement = room.movement;
+     plan.controls = room.controls;
++    plan.diagnostics = room.visible_set.text;
+     return plan;
+ }
+ 
+ NavigationPanelPlan make_navigation_panel_plan(const NavigationHudModel& navigation,
+     const HudLayout& layout) noexcept {
+     NavigationPanelPlan plan{};
+     if (layout.navigation_panel.width <= 0.0F
+         || layout.navigation_panel.height <= 0.0F
+         || navigation.primary.bytes[0] == '\0') {
+         return plan;
+@@ -737,20 +738,25 @@ void HudRenderer::draw(const HudViewModel& view,
+             style.objective_secondary_font_size * layout.scale,
+             ui_text_contrast_style().primary,
+             UiTextAuditRole::hud_objective, layout.scale);
+         for (std::size_t index{}; index < objective.controls.size(); ++index) {
+             draw_panel_text(draw_font, text_layout.objective_controls[index],
+                 objective.controls[index],
+                 style.objective_secondary_font_size * layout.scale,
+                 ui_text_contrast_style().primary,
+                 UiTextAuditRole::hud_objective, layout.scale);
+         }
++        draw_panel_text(draw_font, text_layout.objective_diagnostics,
++            objective.diagnostics,
++            style.objective_secondary_font_size * layout.scale,
++            ui_text_contrast_style().secondary,
++            UiTextAuditRole::hud_objective, layout.scale);
+     }
+     if (navigation.visible) {
+         const Rectangle bounds{navigation.bounds.x, navigation.bounds.y,
+             navigation.bounds.width, navigation.bounds.height};
+         if (!assets.draw_nine_slice(ui_material_sprite(
+                 UiMaterialElement::hud_navigation_panel), bounds)) {
+             DrawRectangleRounded(bounds, 0.12F, 6, Color{7, 10, 17, 220});
+         }
+         draw_panel_text(draw_font, text_layout.navigation_title,
+             navigation.primary,
+diff --git a/src/platform/raylib/hud_renderer.hpp b/src/platform/raylib/hud_renderer.hpp
+index ff43209..0c7e565 100644
+--- a/src/platform/raylib/hud_renderer.hpp
++++ b/src/platform/raylib/hud_renderer.hpp
+@@ -48,20 +48,21 @@ struct MonsterBarVisualPlan final {
+ };
+ 
+ struct ObjectivePanelPlan final {
+     bool visible{};
+     bool abyss{};
+     HudRect bounds{};
+     HudText96 primary{};
+     HudText96 secondary{};
+     HudText96 movement{};
+     std::array<HudText96, 3U> controls{};
++    HudText96 diagnostics{};
+ };
+ 
+ struct NavigationPanelPlan final {
+     bool visible{};
+     HudRect bounds{};
+     HudText96 primary{};
+     HudText96 ecology{};
+     std::array<NavigationHudModel::Element, 4> elements{};
+     std::uint8_t element_count{};
+ };
+diff --git a/src/platform/raylib/hud_view_model.cpp b/src/platform/raylib/hud_view_model.cpp
+index 463128d..7a92a75 100644
+--- a/src/platform/raylib/hud_view_model.cpp
++++ b/src/platform/raylib/hud_view_model.cpp
+@@ -1,12 +1,15 @@
+ #include "hud_view_model.hpp"
+ 
++#include "combat/room_spatial_grid.hpp"
++#include "dungeon/dungeon_render_snapshot.hpp"
++#include "dungeon/room_drop_spatial_index.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "hud_notice_state.hpp"
+ #include "progression/progression_rules.hpp"
+ 
+ #include <algorithm>
+ #include <cstdio>
+ #include <cstring>
+ #include <limits>
+ 
+ namespace arpg::platform {
+@@ -319,21 +322,22 @@ void increment_saturating(std::uint64_t& value) noexcept {
+     if (value != (std::numeric_limits<std::uint64_t>::max)()) {
+         ++value;
+     }
+ }
+ 
+ }  // namespace
+ 
+ void HudViewModelProjector::build(HudViewModel& output,
+     const dungeon::DungeonSnapshot& snapshot,
+     const DungeonRenderStatus& runtime_status,
+-    const ControlHints& hints) noexcept {
++    const ControlHints& hints,
++    const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
+     output = {};
+ 
+     const ObjectiveKey objective_key{
+         snapshot.is_abyss,
+         snapshot.phase,
+         snapshot.room_seed,
+         snapshot.wave_index,
+         snapshot.wave_count,
+         snapshot.initial_monster_count,
+         snapshot.defeated_monster_count,
+@@ -386,20 +390,46 @@ void HudViewModelProjector::build(HudViewModel& output,
+             hints.secondary);
+         cached_control_hint_truncations_ = diagnostics.truncated_texts;
+         control_hints_revision_ = hints.revision;
+         control_hints_ready_ = true;
+         increment_saturating(
+             static_formatting_diagnostics_.control_hint_rebuilds);
+     }
+     output.diagnostics.truncated_texts += cached_control_hint_truncations_;
+     output.room.movement = cached_movement_hint_;
+     output.room.controls = cached_control_hint_lines_;
++    if (presented_world != nullptr) {
++        output.room.visible_set.available = true;
++        output.room.visible_set.camera_version =
++            presented_world->query.camera_version;
++        output.room.visible_set.residents = presented_world->has_combat
++            ? presented_world->combat.monster_count : 0U;
++        output.room.visible_set.environment = presented_world->environment.count;
++        output.room.visible_set.environment_candidates_examined =
++            presented_world->environment.candidates_examined;
++        output.room.visible_set.drops = static_cast<std::uint16_t>(
++            presented_world->equipment_count + presented_world->material_count
++            + presented_world->health_potion_count);
++        output.room.visible_set.drop_candidates_examined =
++            presented_world->drop_candidates_examined;
++        format_text(output.room.visible_set.text, output.diagnostics,
++            u8"可见：怪 %u/%u 环境 %u/%u 掉落 %u/%u",
++            static_cast<unsigned int>(output.room.visible_set.residents),
++            static_cast<unsigned int>(
++                combat::room_spatial::maximum_streaming_monsters),
++            static_cast<unsigned int>(output.room.visible_set.environment),
++            static_cast<unsigned int>(
++                dungeon::kEnvironmentQueryCandidateCapacity),
++            static_cast<unsigned int>(output.room.visible_set.drops),
++            static_cast<unsigned int>(
++                dungeon::kRoomDropQueryCandidateCapacity));
++    }
+     if (!output.room.abyss) {
+         format_text(output.room.secondary, output.diagnostics,
+             u8"待结算经验 +%llu",
+             static_cast<unsigned long long>(snapshot.pending_room_experience));
+     }
+ 
+     const NavigationKey navigation_key{
+         snapshot.depth,
+         snapshot.floor_room_index,
+         snapshot.ecology,
+diff --git a/src/platform/raylib/hud_view_model.hpp b/src/platform/raylib/hud_view_model.hpp
+index 5334cb7..d5a8d5b 100644
+--- a/src/platform/raylib/hud_view_model.hpp
++++ b/src/platform/raylib/hud_view_model.hpp
+@@ -2,20 +2,24 @@
+ 
+ #include "control_hints.hpp"
+ #include "dungeon/room_affix.hpp"
+ #include "dungeon/dungeon_types.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "hud_color.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ 
++namespace arpg::dungeon {
++struct DungeonRenderSnapshot;
++}
++
+ namespace arpg::platform {
+ 
+ enum class HudStatusTagKind : std::uint8_t { slow, corrosion, invulnerable };
+ 
+ // Kept here because both the view model and the fixed notice queue own this
+ // stable player-visible vocabulary.  The queue remains the sole owner of
+ // priority and lifetime policy.
+ enum class HudNoticeKind : std::uint8_t {
+     none, save_error, recovery_required, abyss_abandon,
+     hole_interact, exit_ready, room_clear, reward, level_up,
+@@ -39,29 +43,41 @@ struct PlayerHudModel final {
+     float barrier_ratio{};
+     std::uint8_t level{};
+     std::uint64_t experience{};
+     std::uint64_t required_experience{};
+     float experience_ratio{};
+     std::uint8_t unspent_passive_points{};
+     std::array<HudStatusTagKind, 3> status_tags{};
+     std::uint8_t status_tag_count{};
+ };
+ 
++struct HudVisibleSetModel final {
++    HudText96 text{};
++    std::uint64_t camera_version{};
++    std::uint16_t residents{};
++    std::uint16_t environment{};
++    std::uint16_t drops{};
++    std::uint16_t environment_candidates_examined{};
++    std::uint16_t drop_candidates_examined{};
++    bool available{};
++};
++
+ struct RoomHudModel final {
+     HudText96 objective{};
+     HudText96 secondary{};
+     HudText96 density_text{};
+     HudText96 progress_text{};
+     HudText96 remaining_text{};
+     HudText96 exit_text{};
+     HudText96 movement{};
+     std::array<HudText96, 3U> controls{};
++    HudVisibleSetModel visible_set{};
+     bool abyss{};
+     dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+     dungeon::RoomDensityAffix density_affix{
+         dungeon::RoomDensityAffix::crowded};
+     std::uint32_t initial_monster_count{};
+     std::uint32_t defeated_monster_count{};
+     std::uint32_t required_kills{};
+     std::uint32_t remaining_targets{};
+     bool exits_unlocked{};
+ };
+@@ -116,21 +132,23 @@ struct HudStaticFormattingDiagnostics final {
+     return lhs.objective_rebuilds == rhs.objective_rebuilds
+         && lhs.navigation_rebuilds == rhs.navigation_rebuilds
+         && lhs.control_hint_rebuilds == rhs.control_hint_rebuilds;
+ }
+ 
+ class HudViewModelProjector final {
+ public:
+     void build(HudViewModel& output,
+         const dungeon::DungeonSnapshot& snapshot,
+         const DungeonRenderStatus& runtime_status,
+-        const ControlHints& hints) noexcept;
++        const ControlHints& hints,
++        const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
++        noexcept;
+     [[nodiscard]] HudStaticFormattingDiagnostics
+         static_formatting_diagnostics() const noexcept;
+ 
+ private:
+     struct ObjectiveKey final {
+         bool is_abyss{};
+         dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+         std::uint64_t room_seed{};
+         std::uint8_t wave_index{};
+         std::uint8_t wave_count{};
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index c1fc53d..6bdf22b 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -980,31 +980,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     config.stage12_material_showcase_ecology,
+                     config.stage12_material_showcase_hide_monsters,
+                     config.stage12_material_showcase_hide_items
+                         || stage12_item_baseline_frame);
+             }
+             const dungeon::DungeonSnapshot& presented_hud_previous =
+                 config.stage12_material_showcase ? presented_snapshot : previous;
+             const dungeon::DungeonSnapshot& presented_hud_current =
+                 config.stage12_material_showcase ? presented_snapshot : current;
+ 
+-            // Observe after all possible fixed-step changes and before every
+-            // presented frame, including death/recovery-owned overlay frames.
+-            const HudPresentedFrame hud_presented_frame = current.death.has_value()
+-                ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
+-            renderer.observe_presented_hud_frame(hud_presented_frame,
+-                presented_hud_previous, presented_hud_current,
+-                runtime.render_status(), control_hints,
+-                frame_seconds, pause_blocks_gameplay);
+-            validation_runtime->observe_hud(
+-                current, renderer.hud_model(), renderer.hud_notice_view(),
+-                draw_debug, GetScreenWidth(), GetScreenHeight());
+             const settings::LootFilterMode presented_loot_filter =
+                 renderer_loot_filter_mode(
+                     pause_menu.screen, live_settings, pause_menu.draft);
+             renderer.set_loot_filter_mode(presented_loot_filter);
+             const float screen_width = static_cast<float>(GetScreenWidth());
+             const float screen_height = static_cast<float>(GetScreenHeight());
+             const bool interpolate_camera = can_interpolate_room(
+                 previous, current);
+             combat::Vec3 current_player{};
+             if (current.combat.has_value()) {
+@@ -1027,20 +1016,32 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 audio.shutdown();
+                 renderer.shutdown_resources();
+                 pause_menu_renderer.shutdown();
+                 window.close();
+                 return HostExitCode::save_initialization_failed;
+             }
+             if (config.stage12_material_showcase) {
+                 apply_stage12_material_showcase_world(
+                     presented_snapshot, *render_world);
+             }
++            // The presented HUD consumes this exact bounded world snapshot;
++            // publish it after all fixed-step and showcase transformations,
++            // and before the frame is drawn.
++            const HudPresentedFrame hud_presented_frame = current.death.has_value()
++                ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
++            renderer.observe_presented_hud_frame(hud_presented_frame,
++                presented_hud_previous, presented_hud_current,
++                runtime.render_status(), control_hints,
++                frame_seconds, pause_blocks_gameplay, render_world);
++            validation_runtime->observe_hud(
++                current, renderer.hud_model(), renderer.hud_notice_view(),
++                draw_debug, GetScreenWidth(), GetScreenHeight());
+             BeginDrawing();
+             ClearBackground(Color{13, 17, 27, 255});
+             reset_ui_text_bounds_audit();
+             const GroundLootView ground_loot_view = [&]() noexcept {
+                 if (config.stage12_material_background_only) {
+                     static_cast<void>(renderer.draw_room_background_only(
+                         presented_snapshot.ecology));
+                     return GroundLootView{};
+                 }
+                 if (config.stage12_material_icons_only) {
+diff --git a/tests/persistence/checkpoint_v9_tests.cpp b/tests/persistence/checkpoint_v9_tests.cpp
+index d87d611..133cfac 100644
+--- a/tests/persistence/checkpoint_v9_tests.cpp
++++ b/tests/persistence/checkpoint_v9_tests.cpp
+@@ -9,20 +9,21 @@
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/room_generation.hpp"
+ #include "dungeon/room_affix.hpp"
+ #include "dungeon/dungeon_session.hpp"
+ #include "persistence/room_progress_codec.hpp"
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cstdint>
+ #include <cstring>
++#include <limits>
+ #include <memory>
+ #include <type_traits>
+ 
+ namespace {
+ 
+ using namespace arpg;
+ 
+ static_assert(!std::is_copy_constructible_v<
+     checkpoint::SaveCheckpointSlot>);
+ static_assert(!std::is_move_constructible_v<
+@@ -162,40 +163,65 @@ std::uint32_t v9_authority_hash(const std::uint8_t* bytes) noexcept {
+ }
+ 
+ std::uint32_t read_u32(const std::uint8_t* bytes,
+     const std::size_t offset) noexcept {
+     return static_cast<std::uint32_t>(bytes[offset])
+         | (static_cast<std::uint32_t>(bytes[offset + 1U]) << 8U)
+         | (static_cast<std::uint32_t>(bytes[offset + 2U]) << 16U)
+         | (static_cast<std::uint32_t>(bytes[offset + 3U]) << 24U);
+ }
+ 
++void write_u16(std::uint8_t* bytes, const std::size_t offset,
++    const std::uint16_t value) noexcept {
++    bytes[offset] = static_cast<std::uint8_t>(value);
++    bytes[offset + 1U] = static_cast<std::uint8_t>(value >> 8U);
++}
++
+ void write_u32(std::uint8_t* bytes, const std::size_t offset,
+     const std::uint32_t value) noexcept {
+     for (std::size_t index = 0U; index < sizeof(value); ++index) {
+         bytes[offset + index] = static_cast<std::uint8_t>(
+             value >> (index * 8U));
+     }
+ }
+ 
+ void refresh_v9_envelope(std::uint8_t* bytes,
+     const std::size_t size) noexcept {
+     const auto payload_size = static_cast<std::uint32_t>(
+         size - persistence::kCheckpointHeaderSize);
+     write_u32(bytes, 24U, payload_size);
+     auto checksum = persistence::crc32_update(
+         0U, bytes + 8U, 20U);
+     checksum = persistence::crc32_update(checksum,
+         bytes + persistence::kCheckpointHeaderSize, payload_size);
+     write_u32(bytes, 28U, checksum);
+ }
+ 
++bool rewrite_coupon_record_as_task5_wire(std::uint8_t* const bytes,
++    const std::size_t size,
++    const checkpoint::SecondaryGroundCheckpoint& record,
++    const std::uint16_t task5_ordinal) noexcept {
++    std::array<std::uint8_t, persistence::kV9SecondaryGroundBytes> needle{};
++    needle[0U] = static_cast<std::uint8_t>(record.tag);
++    write_u16(needle.data(), 1U, record.ordinal);
++    needle[3U] = record.source;
++    std::memcpy(needle.data() + 4U, &record.position,
++        sizeof(record.position));
++    needle.back() = static_cast<std::uint8_t>(record.material);
++    const auto found = std::search(bytes + persistence::kCheckpointHeaderSize,
++        bytes + size, needle.begin(), needle.end());
++    if (found == bytes + size) return false;
++    write_u16(found, 1U, task5_ordinal);
++    found[3U] = 1U;
++    return true;
++}
++
+ bool ten_thousand_tick_reload_trace_matches() noexcept {
+     constexpr std::uint64_t kRootSeed = 0x51A7E10ADULL;
+     constexpr std::uint64_t kFollowingTicks = 10000U;
+     dungeon::DungeonRules rules{};
+     const auto initial = dungeon::make_initial_run_state(kRootSeed, rules);
+     if (initial.fault != dungeon::DungeonFault::none) return false;
+     auto uninterrupted = std::make_unique<dungeon::DungeonSession>(
+         rules, initial.state);
+     if (uninterrupted == nullptr
+             || uninterrupted->phase() != dungeon::RoomPhase::locked) {
+@@ -328,20 +354,26 @@ bool make_fixture(checkpoint::SaveCheckpointSlot& slot) noexcept {
+         items::MaterialId::reinforcement_stone;
+     room.secondary_ground[2U].tag =
+         checkpoint::SecondaryGroundTag::material;
+     room.secondary_ground[2U].ordinal = 2249U;
+     room.secondary_ground[2U].source = 1U;
+     room.secondary_ground[2U].material =
+         items::MaterialId::reinforcement_stone;
+     return true;
+ }
+ 
++void clear_secondary_progress(checkpoint::SaveCheckpointSlot& slot) noexcept {
++    slot.state.item_ownership.material_claimed_drop_bits = {};
++    slot.room_progress.secondary_claim_bits = {};
++    slot.room_progress.secondary_ground_count = 0U;
++}
++
+ bool make_cleared_abyss_fixture(
+     checkpoint::SaveCheckpointSlot& slot) noexcept {
+     if (!make_fixture(slot)) return false;
+     auto& state = slot.state;
+     auto& room = slot.room_progress;
+     state.current_room.is_abyss = true;
+     state.abyss.lifecycle = abyss::AbyssLifecycle::cleared;
+     state.abyss.rule = abyss::AbyssRuleId::swift_pursuit;
+     state.abyss.reward_total = 2U;
+     room.generated_monsters = 3U;
+@@ -459,26 +491,28 @@ bool make_pending_death_fixture(
+ }
+ 
+ bool encode_legacy_v9_without_lifecycle(
+     const checkpoint::SaveCheckpointSlot& source,
+     std::uint8_t* const bytes,
+     const std::size_t capacity,
+     std::size_t& written) noexcept {
+     if (persistence::encode_checkpoint_v9_into(
+             source, bytes, capacity, written)
+             != persistence::CodecError::none
+-            || written <= persistence::kCheckpointHeaderSize
+-            || bytes[written - 1U] != static_cast<std::uint8_t>(
+-                source.state.last_abyss_resolution.lifecycle)) {
++            || written <= persistence::kCheckpointHeaderSize + 1U
++            || bytes[written - 2U] != static_cast<std::uint8_t>(
++                source.state.last_abyss_resolution.lifecycle)
++            || bytes[written - 1U]
++                != persistence::kV9CanonicalSecondaryOrdinalMarker) {
+         return false;
+     }
+-    --written;
++    written -= 2U;
+     refresh_v9_envelope(bytes, written);
+     return true;
+ }
+ 
+ test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<std::uint8_t[]> bytes{
+@@ -540,20 +574,225 @@ test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
+     ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+         source->room_progress, source->state));
+     ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+         bytes.get(), written, *source, bytes.get(), written)
+         == persistence::CodecError::invalid_state);
+     source->room_progress.combat.player.position.x -= 0.25F;
+     ARPG_REQUIRE(ten_thousand_tick_reload_trace_matches());
+     return {};
+ }
+ 
++test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<std::uint8_t[]> bytes{
++        new (std::nothrow) std::uint8_t[
++            persistence::kMaximumEncodedCheckpointBytes]};
++    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
++    ARPG_REQUIRE(make_fixture(*source));
++    clear_secondary_progress(*source);
++
++    auto& state = source->state;
++    auto& room = source->room_progress;
++    room.secondary_claim_bits = {};
++    room.secondary_claim_bits[0U] = (std::uint64_t{1U} << 13U)
++        | (std::uint64_t{1U} << 20U)
++        | (std::uint64_t{1U} << 26U);
++    state.item_ownership.material_claimed_drop_bits = {};
++    state.item_ownership.material_claimed_drop_bits[0U] =
++        (std::uint64_t{1U} << 10U) | (std::uint64_t{1U} << 13U);
++
++    room.secondary_ground_count = 2U;
++    room.secondary_ground[0U] = {};
++    room.secondary_ground[0U].tag =
++        checkpoint::SecondaryGroundTag::material;
++    room.secondary_ground[0U].ordinal = 8U;
++    room.secondary_ground[0U].source = 0U;
++    room.secondary_ground[0U].position = {12.25F, -7.5F, 0.0F};
++    room.secondary_ground[0U].material =
++        items::MaterialId::reinforcement_stone;
++    room.secondary_ground[1U] = {};
++    room.secondary_ground[1U].tag =
++        checkpoint::SecondaryGroundTag::material;
++    room.secondary_ground[1U].ordinal = 14U;
++    room.secondary_ground[1U].source = 0U;
++    room.secondary_ground[1U].position = {-19.75F, 6.125F, 0.0F};
++    room.secondary_ground[1U].material = items::MaterialId::coupon_6;
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        room, state));
++
++    std::size_t written{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
++        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
++        == persistence::CodecError::none);
++    const auto coupon_record = room.secondary_ground[1U];
++    ARPG_REQUIRE(rewrite_coupon_record_as_task5_wire(
++        bytes.get(), written, coupon_record, 14U));
++    if (bytes[written - 1U]
++            == persistence::kV9CanonicalSecondaryOrdinalMarker) {
++        --written;
++    }
++    refresh_v9_envelope(bytes.get(), written);
++
++    bool migrated = false;
++    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
++        bytes.get(), written, *decoded, migrated)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(migrated);
++    const auto& restored = decoded->room_progress;
++    ARPG_REQUIRE(restored.secondary_ground_count == 2U);
++    ARPG_REQUIRE(restored.secondary_ground[0U].ordinal == 4U);
++    ARPG_REQUIRE(restored.secondary_ground[0U].source == 0U);
++    ARPG_REQUIRE(restored.secondary_ground[1U].ordinal == 7U);
++    ARPG_REQUIRE(restored.secondary_ground[1U].source == 1U);
++    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
++        & (std::uint64_t{1U} << 10U)) != 0U);
++    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
++        & (std::uint64_t{1U} << 13U)) != 0U);
++    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
++        & (std::uint64_t{1U} << 20U)) == 0U);
++    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
++        & (std::uint64_t{1U} << 26U)) == 0U);
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        restored, decoded->state));
++    return {};
++}
++
++test::Failure maximum_legal_v9_ground_and_claim_payloads_round_trip() noexcept {
++    constexpr std::uint16_t kMaximumEquipmentRecords = 1152U;
++    constexpr std::uint16_t kMaximumSecondaryRecords = 2304U;
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
++        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
++    std::unique_ptr<std::uint8_t[]> bytes{
++        new (std::nothrow) std::uint8_t[
++            persistence::kMaximumEncodedCheckpointBytes]};
++    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
++    ARPG_REQUIRE(make_fixture(*source));
++    auto& room = source->room_progress;
++    room.equipment_claim_bits = {};
++    room.secondary_claim_bits = {};
++    source->state.item_ownership.claimed_drop_bits = {};
++    source->state.item_ownership.material_claimed_drop_bits = {};
++
++    room.equipment_ground_count = kMaximumEquipmentRecords;
++    for (std::uint16_t ordinal = 0U;
++            ordinal < kMaximumEquipmentRecords; ++ordinal) {
++        auto& ground = room.equipment_ground[ordinal];
++        ground = {};
++        ground.ordinal = ordinal;
++        ground.source = 0U;
++        ground.reward_ordinal = 0xFFU;
++        ground.position = {
++            static_cast<float>(static_cast<int>(ordinal % 161U) - 80),
++            static_cast<float>(static_cast<int>((ordinal / 7U) % 161U) - 80),
++            0.0F};
++        ground.item = normal_item(0x100000U + ordinal);
++    }
++    room.secondary_ground_count = kMaximumSecondaryRecords;
++    for (std::uint16_t ordinal = 0U;
++            ordinal < kMaximumSecondaryRecords; ++ordinal) {
++        auto& ground = room.secondary_ground[ordinal];
++        ground = {};
++        ground.ordinal = ordinal;
++        ground.position = {
++            static_cast<float>(static_cast<int>(ordinal % 161U) - 80),
++            static_cast<float>(static_cast<int>((ordinal / 11U) % 161U) - 80),
++            0.0F};
++        if ((ordinal & 1U) == 0U) {
++            ground.tag = checkpoint::SecondaryGroundTag::material;
++            ground.source = 0U;
++            ground.material = items::MaterialId::reinforcement_stone;
++        } else if ((ordinal & 2U) == 0U) {
++            ground.tag = checkpoint::SecondaryGroundTag::material;
++            ground.source = 1U;
++            ground.material = items::MaterialId::coupon_6;
++        } else {
++            ground.tag = checkpoint::SecondaryGroundTag::health_potion;
++            ground.source = 0U;
++            ground.material = items::MaterialId::count;
++        }
++    }
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        room, source->state));
++
++    std::size_t maximum_record_bytes{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
++        bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
++        maximum_record_bytes) == persistence::CodecError::none);
++    ARPG_REQUIRE(maximum_record_bytes
++        < persistence::kMaximumEncodedCheckpointBytes);
++    ARPG_REQUIRE(maximum_record_bytes <= persistence::kV9MaximumEncodedBytes);
++    bool migrated = true;
++    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.get(),
++        maximum_record_bytes, *decoded, migrated)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(!migrated);
++    ARPG_REQUIRE(checkpoint::same_room_progress_checkpoint(
++        room, decoded->room_progress));
++    ARPG_REQUIRE(decoded->room_progress.equipment_ground_count
++        == kMaximumEquipmentRecords);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count
++        == kMaximumSecondaryRecords);
++    for (std::uint16_t ordinal = 0U;
++            ordinal < kMaximumEquipmentRecords; ++ordinal) {
++        const auto& expected = room.equipment_ground[ordinal];
++        const auto& actual = decoded->room_progress.equipment_ground[ordinal];
++        ARPG_REQUIRE(actual.ordinal == expected.ordinal);
++        ARPG_REQUIRE(actual.source == expected.source);
++        ARPG_REQUIRE(actual.reward_ordinal == expected.reward_ordinal);
++        ARPG_REQUIRE(same_vec(actual.position, expected.position));
++        ARPG_REQUIRE(actual.item.id == expected.item.id);
++        ARPG_REQUIRE(actual.item.base_id == expected.item.base_id);
++        ARPG_REQUIRE(actual.item.rarity == expected.item.rarity);
++        ARPG_REQUIRE(actual.item.item_level == expected.item.item_level);
++        ARPG_REQUIRE(actual.item.required_level == expected.item.required_level);
++    }
++    for (std::uint16_t ordinal = 0U;
++            ordinal < kMaximumSecondaryRecords; ++ordinal) {
++        const auto& expected = room.secondary_ground[ordinal];
++        const auto& actual = decoded->room_progress.secondary_ground[ordinal];
++        ARPG_REQUIRE(actual.tag == expected.tag);
++        ARPG_REQUIRE(actual.ordinal == expected.ordinal);
++        ARPG_REQUIRE(actual.source == expected.source);
++        ARPG_REQUIRE(same_vec(actual.position, expected.position));
++        ARPG_REQUIRE(actual.material == expected.material);
++    }
++
++    room.equipment_ground_count = 0U;
++    room.secondary_ground_count = 0U;
++    room.equipment_claim_bits.fill((std::numeric_limits<std::uint64_t>::max)());
++    room.secondary_claim_bits.fill((std::numeric_limits<std::uint64_t>::max)());
++    room.secondary_claim_bits.back() = 0U;
++    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
++        room, source->state));
++    std::size_t maximum_claim_bytes{};
++    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
++        bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
++        maximum_claim_bytes) == persistence::CodecError::none);
++    migrated = true;
++    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.get(),
++        maximum_claim_bytes, *decoded, migrated)
++        == persistence::CodecError::none);
++    ARPG_REQUIRE(!migrated);
++    ARPG_REQUIRE(decoded->room_progress.equipment_claim_bits
++        == room.equipment_claim_bits);
++    ARPG_REQUIRE(decoded->room_progress.secondary_claim_bits
++        == room.secondary_claim_bits);
++    ARPG_REQUIRE(decoded->room_progress.equipment_ground_count == 0U);
++    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count == 0U);
++    return {};
++}
++
+ test::Failure v9_rejects_crc_and_length_corruption() noexcept {
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<std::uint8_t[]> bytes{
+         new (std::nothrow) std::uint8_t[
+             persistence::kMaximumEncodedCheckpointBytes]};
+     ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+     ARPG_REQUIRE(make_fixture(*source));
+@@ -891,45 +1130,48 @@ test::Failure v8_load_starts_fresh_room_drop_authority() noexcept {
+ test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<std::uint8_t[]> bytes{
+         new (std::nothrow) std::uint8_t[
+             persistence::kMaximumEncodedCheckpointBytes]};
+     ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+     ARPG_REQUIRE(make_fixture(*source));
++    clear_secondary_progress(*source);
+ 
+     std::size_t written{};
+     const auto encode = [&]() noexcept {
+         return persistence::encode_checkpoint_v9_into(*source, bytes.get(),
+             persistence::kMaximumEncodedCheckpointBytes, written);
+     };
+     ARPG_REQUIRE(encode() == persistence::CodecError::none);
+-    ARPG_REQUIRE(bytes[written - 1U]
++    ARPG_REQUIRE(bytes[written - 2U]
+         == static_cast<std::uint8_t>(abyss::AbyssLifecycle::none));
++    ARPG_REQUIRE(bytes[written - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+ 
+     const std::size_t old_v9_size = written - 1U;
+     refresh_v9_envelope(bytes.get(), old_v9_size);
+     bool migrated = true;
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), old_v9_size, *decoded, migrated)
+         == persistence::CodecError::none);
+-    ARPG_REQUIRE(!migrated);
++    ARPG_REQUIRE(migrated);
+     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+         == abyss::AbyssLifecycle::none);
+     ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+         bytes.get(), old_v9_size, *source, bytes.get(), old_v9_size)
+-        == persistence::CodecError::none);
++        == persistence::CodecError::bad_payload_length);
+ 
+     ARPG_REQUIRE(encode() == persistence::CodecError::none);
+-    const std::size_t truncated_size = written - 2U;
++    const std::size_t truncated_size = written - 3U;
+     refresh_v9_envelope(bytes.get(), truncated_size);
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), truncated_size, *decoded, migrated)
+         == persistence::CodecError::bad_payload_length);
+ 
+     ARPG_REQUIRE(encode() == persistence::CodecError::none);
+     bytes[written] = 0U;
+     refresh_v9_envelope(bytes.get(), written + 1U);
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), written + 1U, *decoded, migrated)
+@@ -947,80 +1189,85 @@ test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
+ test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+     std::unique_ptr<std::uint8_t[]> bytes{
+         new (std::nothrow) std::uint8_t[
+             persistence::kMaximumEncodedCheckpointBytes]};
+     ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+     ARPG_REQUIRE(make_pending_death_fixture(*source, true));
++    clear_secondary_progress(*source);
+ 
+     const auto historical_resolution = source->state.last_abyss_resolution;
+     std::size_t old_v9_size{};
+     ARPG_REQUIRE(encode_legacy_v9_without_lifecycle(
+         *source, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+         old_v9_size));
+     bool migrated = true;
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), old_v9_size, *decoded, migrated)
+         == persistence::CodecError::none);
+-    ARPG_REQUIRE(!migrated);
++    ARPG_REQUIRE(migrated);
+     dungeon::DungeonSession restored{dungeon::DungeonRules{}, decoded->state};
+     const auto restored_snapshot = restored.snapshot();
+     if (decoded->state.last_abyss_resolution.lifecycle
+                 == abyss::AbyssLifecycle::none
+             && restored_snapshot.phase == dungeon::RoomPhase::faulted
+             && restored_snapshot.diagnostics.fault
+                 == dungeon::DungeonFault::death_sequence_mismatch) {
+         return {"legacy V9 abyss death kept lifecycle none and restore faulted",
+             __FILE__, __LINE__};
+     }
+     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+         == abyss::AbyssLifecycle::failed);
+     ARPG_REQUIRE(restored_snapshot.phase == dungeon::RoomPhase::death_pending);
+     ARPG_REQUIRE(restored_snapshot.diagnostics.fault
+         == dungeon::DungeonFault::none);
+ 
+     std::size_t rewritten_size{};
+     ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(
+         *decoded, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+         rewritten_size) == persistence::CodecError::none);
+-    ARPG_REQUIRE(rewritten_size == old_v9_size + 1U);
+-    ARPG_REQUIRE(bytes[rewritten_size - 1U] == static_cast<std::uint8_t>(
++    ARPG_REQUIRE(rewritten_size == old_v9_size + 2U);
++    ARPG_REQUIRE(bytes[rewritten_size - 2U] == static_cast<std::uint8_t>(
+         abyss::AbyssLifecycle::failed));
++    ARPG_REQUIRE(bytes[rewritten_size - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+ 
+     checkpoint::clear_save_checkpoint_slot(*source);
+     ARPG_REQUIRE(make_fixture(*source));
++    clear_secondary_progress(*source);
+     source->state.last_abyss_resolution = historical_resolution;
+     source->state.last_abyss_resolution.lifecycle =
+         abyss::AbyssLifecycle::none;
+     ARPG_REQUIRE(encode_legacy_v9_without_lifecycle(
+         *source, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+         old_v9_size));
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), old_v9_size, *decoded, migrated)
+         == persistence::CodecError::none);
+-    ARPG_REQUIRE(!migrated);
++    ARPG_REQUIRE(migrated);
+     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+         == abyss::AbyssLifecycle::none);
+ 
+     ARPG_REQUIRE(make_pending_death_fixture(*source, false, true));
++    clear_secondary_progress(*source);
+     ARPG_REQUIRE(source->state.last_abyss_resolution.lifecycle
+         == abyss::AbyssLifecycle::none);
+     ARPG_REQUIRE(encode_legacy_v9_without_lifecycle(
+         *source, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+         old_v9_size));
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), old_v9_size, *decoded, migrated)
+         == persistence::CodecError::none);
+-    ARPG_REQUIRE(!migrated);
++    ARPG_REQUIRE(migrated);
+     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+         == abyss::AbyssLifecycle::none);
+     dungeon::DungeonSession ordinary_restored{
+         dungeon::DungeonRules{}, decoded->state};
+     ARPG_REQUIRE(ordinary_restored.snapshot().phase
+         == dungeon::RoomPhase::death_pending);
+     return {};
+ }
+ 
+ test::Failure v9_started_abyss_early_exit_round_trip(
+@@ -1112,22 +1359,24 @@ test::Failure v9_started_abyss_early_exit_round_trip(
+         == persistence::CodecError::none);
+     const std::uint32_t durable_size = read_u32(bytes.get(), 32U);
+     const std::uint8_t* const durable = bytes.get() + 36U;
+     ARPG_REQUIRE(durable_size > 150U);
+     ARPG_REQUIRE(durable[150U] == 0U);
+     const auto public_v8 = persistence::decode_checkpoint(
+         durable, durable_size);
+     ARPG_REQUIRE(public_v8.error == persistence::CodecError::none);
+     ARPG_REQUIRE(public_v8.state.last_abyss_resolution.lifecycle
+         == abyss::AbyssLifecycle::none);
+-    ARPG_REQUIRE(bytes[written - 1U]
++    ARPG_REQUIRE(bytes[written - 2U]
+         == static_cast<std::uint8_t>(abyss::AbyssLifecycle::failed));
++    ARPG_REQUIRE(bytes[written - 1U]
++        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+     ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+         bytes.get(), written, *saved, bytes.get(), written)
+         == persistence::CodecError::none);
+     bool migrated = true;
+     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+         bytes.get(), written, *decoded, migrated)
+         == persistence::CodecError::none);
+     ARPG_REQUIRE(!migrated);
+     ARPG_REQUIRE(decoded->state.current_room.is_abyss == expect_next_abyss);
+     ARPG_REQUIRE(decoded->state.abyss.lifecycle
+@@ -1399,20 +1648,24 @@ test::Failure structural_validation_rejects_identity_and_order_faults() noexcept
+         reserve_room, reserve_state));
+     reserve_room.secondary_claim_bits[2305U / 64U] |=
+         std::uint64_t{1U} << (2305U % 64U);
+     ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+         reserve_room, reserve_state));
+     return {};
+ }
+ 
+ constexpr test::TestCase kCases[] = {
+     {"v9 maximum room round trip", &v9_round_trip_preserves_large_room_fields},
++    {"task5 v9 secondary ordinal migration",
++        &task5_v9_secondary_ordinals_migrate_to_canonical_once},
++    {"maximum legal v9 ground and claim payload round trip",
++        &maximum_legal_v9_ground_and_claim_payloads_round_trip},
+     {"high ordinal session v9 round trip and exact claims",
+         &high_ordinal_session_v9_round_trip_and_claims_are_exact},
+     {"v8 load starts fresh room drop authority",
+         &v8_load_starts_fresh_room_drop_authority},
+     {"v9 corruption", &v9_rejects_crc_and_length_corruption},
+     {"v9 structural validation", &structural_validation_rejects_identity_and_order_faults},
+ };
+ 
+ constexpr test::TestCase kUnlockCases[] = {
+     {"v9 partial unlock round trip restores combat",
+diff --git a/tests/persistence/persistence_test_main.cpp b/tests/persistence/persistence_test_main.cpp
+index dc80e88..365972f 100644
+--- a/tests/persistence/persistence_test_main.cpp
++++ b/tests/persistence/persistence_test_main.cpp
+@@ -32,12 +32,12 @@ int main() {
+         death_checkpoint_codec_suite(),
+         passive_tree_checkpoint_suite(),
+         save_store_suite(),
+         save_store_fault_suite(),
+         save_commit_worker_suite(),
+         dungeon_save_integration_suite(),
+         checkpoint_v9_suite(),
+         checkpoint_v9_unlock_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 109, "checkpoint v9 persistence");
++    return arpg::test::run_suites(suites, 111, "checkpoint v9 persistence");
+ }
+diff --git a/tests/platform/hud_layout_tests.cpp b/tests/platform/hud_layout_tests.cpp
+index 5bd974c..2c10ed5 100644
+--- a/tests/platform/hud_layout_tests.cpp
++++ b/tests/platform/hud_layout_tests.cpp
+@@ -172,37 +172,40 @@ arpg::test::Failure hud_text_safe_boxes_do_not_intersect_or_cross_panels() noexc
+         ARPG_REQUIRE(platform::hud_rect_inside(
+             text.objective_title, layout.objective_panel));
+         ARPG_REQUIRE(platform::hud_rect_inside(
+             text.objective_hint, layout.objective_panel));
+         ARPG_REQUIRE(platform::hud_rect_inside(
+             text.objective_movement, layout.objective_panel));
+         for (const platform::HudRect control : text.objective_controls) {
+             ARPG_REQUIRE(platform::hud_rect_inside(
+                 control, layout.objective_panel));
+         }
+-        const std::array<platform::HudRect, 6U> objective_rows{{
++        ARPG_REQUIRE(platform::hud_rect_inside(
++            text.objective_diagnostics, layout.objective_panel));
++        const std::array<platform::HudRect, 7U> objective_rows{{
+             text.objective_title,
+             text.objective_hint,
+             text.objective_movement,
+             text.objective_controls[0],
+             text.objective_controls[1],
+             text.objective_controls[2],
++            text.objective_diagnostics,
+         }};
+         for (std::size_t first{}; first < objective_rows.size(); ++first) {
+             for (std::size_t second = first + 1U;
+                  second < objective_rows.size(); ++second) {
+                 ARPG_REQUIRE(!platform::hud_rects_overlap(
+                     objective_rows[first], objective_rows[second]));
+             }
+         }
+         ARPG_REQUIRE(layout.objective_panel.width >= 620.0F * layout.scale);
+-        ARPG_REQUIRE(layout.objective_panel.height <= 142.0F * layout.scale);
++        ARPG_REQUIRE(layout.objective_panel.height <= 164.0F * layout.scale);
+         ARPG_REQUIRE(platform::hud_rect_inside(
+             text.navigation_title, layout.navigation_panel));
+         ARPG_REQUIRE(platform::hud_rect_inside(
+             text.navigation_ecology, layout.navigation_panel));
+         ARPG_REQUIRE(!platform::hud_rects_overlap(
+             text.navigation_title, text.navigation_ecology));
+         for (const platform::HudRect bounds : objective_rows) {
+             ARPG_REQUIRE(platform::hud_rect_inside(bounds, screen));
+         }
+         ARPG_REQUIRE(platform::hud_rect_inside(text.navigation_title, screen));
+diff --git a/tests/platform/hud_render_plan_tests.cpp b/tests/platform/hud_render_plan_tests.cpp
+index 31285c0..967b7e6 100644
+--- a/tests/platform/hud_render_plan_tests.cpp
++++ b/tests/platform/hud_render_plan_tests.cpp
+@@ -247,20 +247,23 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
+     static_cast<void>(std::snprintf(room.movement.bytes.data(), room.movement.bytes.size(),
+         "W Move Up  S Move Down  A Move Left  D Move Right"));
+     static_cast<void>(std::snprintf(room.controls[0].bytes.data(),
+         room.controls[0].bytes.size(), "J Light Attack  K Jump  L Launcher"));
+     static_cast<void>(std::snprintf(room.controls[1].bytes.data(),
+         room.controls[1].bytes.size(),
+         "E Interact  I Inventory  P Passive Tree"));
+     static_cast<void>(std::snprintf(room.controls[2].bytes.data(),
+         room.controls[2].bytes.size(),
+         "F1 Debug  F12 Screenshot  Esc Pause"));
++    static_cast<void>(std::snprintf(room.visible_set.text.bytes.data(),
++        room.visible_set.text.bytes.size(),
++        u8"可见：怪 105/105 环境 73/105 掉落 53/331"));
+     platform::NavigationHudModel navigation{};
+     static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
+         u8"深度 1 · 层房间 2"));
+     platform::ContextHudModel context{};
+     context.primary_kind = platform::HudNoticeKind::exit_ready;
+     context.primary_abyss = true;
+     static_cast<void>(std::snprintf(context.primary.bytes.data(), context.primary.bytes.size(),
+         "E to enter exit"));
+ 
+     const platform::ObjectivePanelPlan objective =
+@@ -270,39 +273,43 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
+     const platform::ContextPanelPlan context_plan =
+         platform::make_context_panel_plan(context, layout);
+ 
+     ARPG_REQUIRE(objective.visible);
+     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
+     ARPG_REQUIRE(objective.secondary.bytes == room.secondary.bytes);
+     ARPG_REQUIRE(objective.movement.bytes == room.movement.bytes);
+     ARPG_REQUIRE(objective.controls[0].bytes == room.controls[0].bytes);
+     ARPG_REQUIRE(objective.controls[1].bytes == room.controls[1].bytes);
+     ARPG_REQUIRE(objective.controls[2].bytes == room.controls[2].bytes);
++    ARPG_REQUIRE(objective.diagnostics.bytes
++        == room.visible_set.text.bytes);
+     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
+ 
+     const platform::HudTextSafeLayout safe =
+         platform::make_hud_text_safe_layout(layout);
+     const platform::HudReadabilityStyle style =
+         platform::hud_readability_style();
+-    const std::array<platform::HudText96, 5U> complete_secondary_lines{{
++    const std::array<platform::HudText96, 6U> complete_secondary_lines{{
+         objective.secondary,
+         objective.movement,
+         objective.controls[0],
+         objective.controls[1],
+         objective.controls[2],
++        objective.diagnostics,
+     }};
+-    const std::array<platform::HudRect, 5U> complete_secondary_bounds{{
++    const std::array<platform::HudRect, 6U> complete_secondary_bounds{{
+         safe.objective_hint,
+         safe.objective_movement,
+         safe.objective_controls[0],
+         safe.objective_controls[1],
+         safe.objective_controls[2],
++        safe.objective_diagnostics,
+     }};
+     const float preferred = style.objective_secondary_font_size * layout.scale;
+     for (std::size_t index{}; index < complete_secondary_lines.size(); ++index) {
+         const platform::HudTextDrawPlan text = platform::make_hud_text_draw_plan(
+             complete_secondary_lines[index],
+             complete_secondary_bounds[index].width - 20.0F * layout.scale,
+             preferred, style.panel_minimum_font_size * layout.scale,
+             &monospace_measure, nullptr);
+         ARPG_REQUIRE(text.visible);
+         ARPG_REQUIRE(!text.truncated);
+@@ -417,27 +424,28 @@ arpg::test::Failure large_room_hud_rows_are_opaque_and_non_overlapping_at_suppor
+     ARPG_REQUIRE(contrast.secondary.a == 255U);
+     ARPG_REQUIRE(contrast.warning.a == 255U);
+     ARPG_REQUIRE(palette.text.a == 255U);
+     ARPG_REQUIRE(palette.chaos.a == 255U);
+ 
+     for (const auto viewport : kViewports) {
+         const platform::HudLayout layout = platform::make_hud_layout(
+             viewport[0], viewport[1], false);
+         const platform::HudTextSafeLayout safe =
+             platform::make_hud_text_safe_layout(layout);
+-        const std::array<platform::HudRect, 6U> rows{{
++        const std::array<platform::HudRect, 7U> rows{{
+             safe.objective_title,
+             safe.objective_hint,
+             safe.objective_movement,
+             safe.objective_controls[0],
+             safe.objective_controls[1],
+             safe.objective_controls[2],
++            safe.objective_diagnostics,
+         }};
+         ARPG_REQUIRE(layout.objective_panel.width >= 704.0F * layout.scale);
+         for (std::size_t first{}; first < rows.size(); ++first) {
+             ARPG_REQUIRE(rect_inside(rows[first], layout.objective_panel));
+             for (std::size_t second = first + 1U; second < rows.size(); ++second) {
+                 ARPG_REQUIRE(!platform::hud_rects_overlap(
+                     rows[first], rows[second]));
+             }
+         }
+     }
+diff --git a/tests/platform/hud_view_model_tests.cpp b/tests/platform/hud_view_model_tests.cpp
+index 1ec165d..64ed688 100644
+--- a/tests/platform/hud_view_model_tests.cpp
++++ b/tests/platform/hud_view_model_tests.cpp
+@@ -1,12 +1,14 @@
+ #include "test_framework.hpp"
+ 
++#include "allocation_probe.hpp"
++#include "dungeon/dungeon_render_snapshot.hpp"
+ #include "hud_view_model.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_palette.hpp"
+ #include "dungeon/room_affix.hpp"
+ 
+ #include <cstring>
+ #include <limits>
+ 
+ namespace {
+ 
+@@ -185,20 +187,65 @@ arpg::test::Failure large_room_progression_uses_explicit_chinese_fields() noexce
+         u8"剩余 844") == 0);
+     ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+         u8"出口尚未开放") == 0);
+     ARPG_REQUIRE(output.room.density_affix
+         == dungeon::RoomDensityAffix::horde);
+     ARPG_REQUIRE(output.room.required_kills == 282U);
+     ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+     return {};
+ }
+ 
++arpg::test::Failure visible_set_diagnostics_use_the_same_presented_frame()
++    noexcept {
++    dungeon::DungeonSnapshot snapshot = normal_snapshot();
++    dungeon::DungeonRenderSnapshot first{};
++    first.query.camera_version = 700U;
++    first.has_combat = true;
++    first.combat.monster_count = 3U;
++    first.environment.count = 4U;
++    first.environment.candidates_examined = 5U;
++    first.equipment_count = 6U;
++    first.material_count = 7U;
++    first.health_potion_count = 8U;
++    first.drop_candidates_examined = 9U;
++
++    dungeon::DungeonRenderSnapshot presented{};
++    presented.query.camera_version = 701U;
++    presented.has_combat = true;
++    presented.combat.monster_count = 105U;
++    presented.environment.count = 73U;
++    presented.environment.candidates_examined = 105U;
++    presented.equipment_count = 19U;
++    presented.material_count = 23U;
++    presented.health_potion_count = 11U;
++    presented.drop_candidates_examined = 331U;
++
++    platform::HudViewModelProjector projector{};
++    platform::HudViewModel output{};
++    projector.build(output, snapshot, {}, default_hints(), &first);
++    const std::uint64_t allocations_before = arpg::test::allocation_count();
++    projector.build(output, snapshot, {}, default_hints(), &presented);
++    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
++    ARPG_REQUIRE(output.room.visible_set.available);
++    ARPG_REQUIRE(output.room.visible_set.camera_version == 701U);
++    ARPG_REQUIRE(output.room.visible_set.residents == 105U);
++    ARPG_REQUIRE(output.room.visible_set.environment == 73U);
++    ARPG_REQUIRE(output.room.visible_set.drops == 53U);
++    ARPG_REQUIRE(output.room.visible_set.environment_candidates_examined
++        == 105U);
++    ARPG_REQUIRE(output.room.visible_set.drop_candidates_examined == 331U);
++    ARPG_REQUIRE(std::strcmp(output.room.visible_set.text.bytes.data(),
++        u8"可见：怪 105/105 环境 73/105 掉落 53/331") == 0);
++    ARPG_REQUIRE(!output.room.visible_set.text.truncated);
++    return {};
++}
++
+ arpg::test::Failure exit_copy_distinguishes_threshold_full_clear_and_abyss_warning() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.phase = dungeon::RoomPhase::combat;
+     snapshot.initial_monster_count = 1125U;
+     snapshot.defeated_monster_count = 282U;
+     snapshot.remaining_targets = 843U;
+     snapshot.exits_unlocked = true;
+     platform::HudViewModel output{};
+ 
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+@@ -478,20 +525,22 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"normal combat projection", &normal_combat_projects_snapshot_values},
+     {"missing combat snapshot", &absent_combat_snapshot_is_reported},
+     {"resource clamping is non-mutating", &resource_ranges_clamp_without_mutating_snapshot},
+     {"level 100 threshold", &maximum_level_has_no_pending_threshold},
+     {"pending experience text", &pending_experience_is_shown_in_secondary_text},
+     {"status tag capacity", &active_statuses_project_in_fixed_priority_order},
+     {"uint32 navigation biases", &navigation_preserves_all_uint32_biases},
+     {"Chinese objective text", &objective_uses_chinese_target_text},
+     {"large room explicit progression text",
+         &large_room_progression_uses_explicit_chinese_fields},
++    {"same-frame visible set diagnostics",
++        &visible_set_diagnostics_use_the_same_presented_frame},
+     {"large room exit copy",
+         &exit_copy_distinguishes_threshold_full_clear_and_abyss_warning},
+     {"complete movement objective hint",
+         &objective_preserves_the_complete_movement_hint},
+     {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},
+     {"truncated secondary text", &truncated_secondary_text_remains_nul_terminated},
+     {"room objective states", &objective_describes_every_player_visible_room_state},
+     {"navigation extremes and elements", &navigation_formats_extremes_and_four_shared_element_visuals},
+     {"abyss context attachment", &context_attaches_notice_priority_without_changing_abyss_values},
+     {"rebound context hints", &rebound_context_hints_use_committed_e_i_and_p_labels},
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index a670ca7..48d4723 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -110,13 +110,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 563,
++    return arpg::test::run_suites(suites, 564,
+         "host settings runtime contract");
+ }
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index a906057..4ceb569 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -972,25 +972,43 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
+         ARPG_REQUIRE(validator_self_test.find(mutation) != std::string::npos);
+     }
+ 
+     const std::size_t normal_hud_observe = host.find(
+         "renderer.observe_presented_hud_frame(hud_presented_frame,");
+     const std::size_t showcase_snapshot = host.rfind(
+         "presented_snapshot = current;", normal_hud_observe);
+     const std::size_t showcase_transform = host.rfind(
+         "apply_stage12_material_showcase(presented_snapshot,",
+         normal_hud_observe);
++    const std::size_t bounded_world_publish = host.rfind(
++        "session->write_render_snapshot(world_query, *render_world)",
++        normal_hud_observe);
++    const std::size_t showcase_world_transform = host.rfind(
++        "apply_stage12_material_showcase_world(", normal_hud_observe);
++    const std::size_t same_world_argument = host.find(
++        "frame_seconds, pause_blocks_gameplay, render_world);",
++        normal_hud_observe);
++    const std::size_t begin_drawing = host.find(
++        "BeginDrawing();", normal_hud_observe);
+     ARPG_REQUIRE(normal_hud_observe != std::string::npos);
+     ARPG_REQUIRE(showcase_snapshot != std::string::npos);
+     ARPG_REQUIRE(showcase_transform != std::string::npos);
+     ARPG_REQUIRE(showcase_snapshot < showcase_transform);
+     ARPG_REQUIRE(showcase_transform < normal_hud_observe);
++    ARPG_REQUIRE(bounded_world_publish != std::string::npos);
++    ARPG_REQUIRE(showcase_world_transform != std::string::npos);
++    ARPG_REQUIRE(same_world_argument != std::string::npos);
++    ARPG_REQUIRE(begin_drawing != std::string::npos);
++    ARPG_REQUIRE(bounded_world_publish < showcase_world_transform);
++    ARPG_REQUIRE(showcase_world_transform < normal_hud_observe);
++    ARPG_REQUIRE(normal_hud_observe < same_world_argument);
++    ARPG_REQUIRE(same_world_argument < begin_drawing);
+     ARPG_REQUIRE(host.find(
+         "material_status.hud_ecology = "
+         "renderer.hud_model().navigation.ecology;") != std::string::npos);
+ 
+     for (const char* guarded_draw : {"draw_passive_tree_overlay(",
+              "inventory.draw(", "pause_menu_renderer.draw(",
+              "draw_stage12_ui_material_gallery("}) {
+         const std::size_t draw = host.find(guarded_draw, host_gate);
+         ARPG_REQUIRE(draw != std::string::npos);
+         const std::size_t guard = host.rfind(

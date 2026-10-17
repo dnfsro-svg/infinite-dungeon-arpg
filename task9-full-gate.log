@@ -1,0 +1,275 @@
+-- Testing if -Werror=pointer-arith can be used -- Failed
+-- Testing if -Werror=implicit-function-declaration can be used -- Failed
+-- Testing if -fno-strict-aliasing can be used -- Failed
+-- Using raylib's GLFW
+-- Including Win32 support
+-- Audio Backend: miniaudio
+-- Building raylib static library
+-- Generated build type: Debug
+-- Compiling with the flags:
+--   PLATFORM=PLATFORM_DESKTOP
+--   GRAPHICS=GRAPHICS_API_OPENGL_33
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_KEY_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_KEY_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_KEY_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_KEY_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_MOUSE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_MOUSE_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_MOUSE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_MOUSE_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_FOCUS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_FOCUS_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_FOCUS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_FOCUS_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_PLATFORM_WRAPPER_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_PLATFORM_WRAPPER_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_PLATFORM_WRAPPER_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_PLATFORM_WRAPPER_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_ADDRESS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_ADDRESS_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ADDRESS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ADDRESS_COMPILES - Failed
+-- Configuring done (9.2s)
+-- Generating done (0.2s)
+-- Build files have been written to: E:/game/.worktrees/finish-unfinished-branches-20260801/out/build/windows-msvc-debug
+[1/16] Linking CXX executable bin\arpg_game.exe; Copying bundled Noto Sans SC font and OFL license; Copying Stage 12 material-pack assets; Copying player base-animation material atlases; Copying active-skill frame atlases; Copying Stage 14 combat audio assets; Copying Stage 15 music, ambience, and UI audio assets
+[2/16] Linking CXX executable bin\arpg_stage8_validation_game.exe
+[3/16] Linking CXX executable bin\arpg_stage9_validation_game.exe
+[4/16] Linking CXX executable bin\arpg_stage9_formal_game_validation.exe
+[5/16] Linking CXX executable bin\arpg_stage10_validation_game.exe
+[6/16] Linking CXX executable bin\arpg_stage11_death_formal_game_validation.exe
+[7/16] Linking CXX executable bin\arpg_stage16_loot_reinforcement_game_validation.exe; Copying item material atlases for Stage 16 validation; Copying bundled UI font for Stage 16 validation
+[8/16] Linking CXX executable bin\arpg_stage17_skill_stones_game_validation.exe; Copying active-skill frame atlases for Stage 17 validation; Copying item material atlases for Stage 17 validation; Copying bundled UI font for Stage 17 validation
+[9/16] Linking CXX executable bin\arpg_stage12_material_formal.exe; Copying bundled Noto Sans SC font for Stage 12 validation
+[10/16] Linking CXX executable bin\arpg_stage14_audio_formal.exe
+[11/16] Linking CXX executable bin\arpg_stage15_audio_formal.exe
+[12/16] Linking CXX executable bin\arpg_stage11c_hud_stress.exe
+[13/16] Linking CXX executable bin\arpg_stage11b_settings_formal.exe
+[14/16] Linking CXX executable bin\arpg_stage11c_hud_formal.exe
+[15/16] Linking CXX executable bin\arpg_stage11d_loot_formal.exe
+[16/16] Linking CXX executable bin\arpg_settings_stress_tests.exe
+Test project E:/game/.worktrees/finish-unfinished-branches-20260801/out/build/windows-msvc-debug
+        Start   1: core.units
+  1/128 Test   #1: core.units ..............................................   Passed    0.03 sec
+        Start   2: abyss.units
+  2/128 Test   #2: abyss.units .............................................   Passed    0.50 sec
+        Start   3: skills.units
+  3/128 Test   #3: skills.units ............................................   Passed    0.05 sec
+        Start   4: checkpoint.units
+  4/128 Test   #4: checkpoint.units ........................................   Passed    0.04 sec
+        Start   5: architecture.checkpoint_no_runtime_headers
+  5/128 Test   #5: architecture.checkpoint_no_runtime_headers ..............   Passed    0.24 sec
+        Start   6: combat.units
+  6/128 Test   #6: combat.units ............................................   Passed    1.22 sec
+        Start   7: dungeon.units
+  7/128 Test   #7: dungeon.units ...........................................   Passed  251.81 sec
+        Start   8: stage16.material_loot.units
+  8/128 Test   #8: stage16.material_loot.units .............................   Passed    0.10 sec
+        Start   9: stage16.crafting_transaction.units
+  9/128 Test   #9: stage16.crafting_transaction.units ......................   Passed    0.09 sec
+        Start  10: stage16.loot_reinforcement.simulation
+ 10/128 Test  #10: stage16.loot_reinforcement.simulation ...................   Passed    1.24 sec
+        Start  11: stage11.death_stress.determinism_zero_alloc
+ 11/128 Test  #11: stage11.death_stress.determinism_zero_alloc .............   Passed  107.48 sec
+        Start  12: stage9.validation_fixture.real_v4_reward_reload
+ 12/128 Test  #12: stage9.validation_fixture.real_v4_reward_reload .........   Passed    0.06 sec
+        Start  13: stage10.validation_fixture.real_abyss_transactions
+ 13/128 Test  #13: stage10.validation_fixture.real_abyss_transactions ......   Passed   19.96 sec
+        Start  14: stage9.evidence.no_injected_defeat_trace
+ 14/128 Test  #14: stage9.evidence.no_injected_defeat_trace ................   Passed    0.03 sec
+        Start  15: stage9.validation_game.capture_after_present
+ 15/128 Test  #15: stage9.validation_game.capture_after_present ............   Passed    2.61 sec
+        Start  16: stage9.formal_game.capture_after_present
+ 16/128 Test  #16: stage9.formal_game.capture_after_present ................   Passed    3.94 sec
+        Start  17: stage9.formal_game.capture_validator_self_test
+ 17/128 Test  #17: stage9.formal_game.capture_validator_self_test ..........   Passed    7.90 sec
+        Start  18: stage10.validation_game.capture_after_present
+ 18/128 Test  #18: stage10.validation_game.capture_after_present ...........   Passed    5.06 sec
+        Start  19: stage10.formal_game.capture_after_present
+ 19/128 Test  #19: stage10.formal_game.capture_after_present ...............   Passed  125.88 sec
+        Start  20: stage10.formal_game.capture_content_validator
+ 20/128 Test  #20: stage10.formal_game.capture_content_validator ...........   Passed    0.77 sec
+        Start  21: stage10.abyss_stress.determinism_and_zero_alloc
+ 21/128 Test  #21: stage10.abyss_stress.determinism_and_zero_alloc .........   Passed    0.18 sec
+        Start  22: stage10.evidence.no_private_injection
+ 22/128 Test  #22: stage10.evidence.no_private_injection ...................   Passed   16.91 sec
+        Start  23: stage10.evidence.rejects_private_injection
+ 23/128 Test  #23: stage10.evidence.rejects_private_injection ..............   Passed   14.31 sec
+        Start  24: stage10.evidence.rejects_pre_present_capture
+ 24/128 Test  #24: stage10.evidence.rejects_pre_present_capture ............   Passed   16.00 sec
+        Start  25: stage10.evidence.rejects_pre_capture_with_post_dummy
+ 25/128 Test  #25: stage10.evidence.rejects_pre_capture_with_post_dummy ....   Passed   15.89 sec
+        Start  26: stage10.evidence.mutation_self_test
+ 26/128 Test  #26: stage10.evidence.mutation_self_test .....................   Passed  813.74 sec
+        Start  27: stage11.death_fixture.transactions
+ 27/128 Test  #27: stage11.death_fixture.transactions ......................***Exception: SegFault  2.27 sec
+
+
+96% tests passed, 1 tests failed out of 27
+
+Label Time Summary:
+abyss           =   0.50 sec*proc (1 test)
+architecture    =   0.24 sec*proc (1 test)
+assets          =   0.00 sec*proc (0 test)
+checkpoint      =   0.28 sec*proc (2 tests)
+combat          =   1.22 sec*proc (1 test)
+core            =   0.03 sec*proc (1 test)
+deployment      =   0.00 sec*proc (0 test)
+dungeon         = 1260.05 sec*proc (15 tests)
+evidence        = 877.64 sec*proc (7 tests)
+formal-game     = 138.50 sec*proc (4 tests)
+graphics        = 145.40 sec*proc (5 tests)
+headless        = 1262.90 sec*proc (22 tests)
+interactive     =   0.00 sec*proc (0 test)
+items           =   0.00 sec*proc (0 test)
+launcher        =   0.00 sec*proc (0 test)
+modifiers       =   0.00 sec*proc (0 test)
+negative        =  54.09 sec*proc (4 tests)
+passives        =   0.00 sec*proc (0 test)
+persistence     =   0.00 sec*proc (0 test)
+platform        =   0.00 sec*proc (0 test)
+progression     =   0.00 sec*proc (0 test)
+raylib          =   0.00 sec*proc (0 test)
+settings        =   0.00 sec*proc (0 test)
+skills          =   0.05 sec*proc (1 test)
+stage10         = 1028.69 sec*proc (10 tests)
+stage11         = 109.75 sec*proc (2 tests)
+stage11b        =   0.00 sec*proc (0 test)
+stage11c        =   0.00 sec*proc (0 test)
+stage11d        =   0.00 sec*proc (0 test)
+stage12         =   0.00 sec*proc (0 test)
+stage14         =   0.00 sec*proc (0 test)
+stage15         =   0.00 sec*proc (0 test)
+stage16         =   1.43 sec*proc (3 tests)
+stage17         =   0.00 sec*proc (0 test)
+stage9          =  14.54 sec*proc (5 tests)
+stress          = 107.66 sec*proc (2 tests)
+task8b          =   0.00 sec*proc (0 test)
+ui              =   0.00 sec*proc (0 test)
+validation      = 169.69 sec*proc (10 tests)
+windows-ui      =   0.00 sec*proc (0 test)
+wire            =   0.00 sec*proc (0 test)
+
+Total Test time (real) = 1408.54 sec
+
+The following tests FAILED:
+	 27 - stage11.death_fixture.transactions (SEGFAULT)     dungeon headless stage11 validation
+Errors while running CTest
+-- Testing if -Werror=pointer-arith can be used -- Failed
+-- Testing if -Werror=implicit-function-declaration can be used -- Failed
+-- Testing if -fno-strict-aliasing can be used -- Failed
+-- Using raylib's GLFW
+-- Including Win32 support
+-- Audio Backend: miniaudio
+-- Building raylib static library
+-- Generated build type: Debug
+-- Compiling with the flags:
+--   PLATFORM=PLATFORM_DESKTOP
+--   GRAPHICS=GRAPHICS_API_OPENGL_33
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_KEY_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_KEY_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_KEY_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_KEY_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_MOUSE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_MOUSE_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_MOUSE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_MOUSE_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_FOCUS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_FOCUS_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_FOCUS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_FOCUS_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_PLATFORM_WRAPPER_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_PLATFORM_WRAPPER_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_PLATFORM_WRAPPER_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_PLATFORM_WRAPPER_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_ADDRESS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_ADDRESS_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ADDRESS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ADDRESS_COMPILES - Failed
+-- Configuring done (9.2s)
+-- Generating done (0.2s)
+-- Build files have been written to: E:/game/.worktrees/finish-unfinished-branches-20260801/out/build/windows-msvc-debug
+ninja: no work to do.
+Test project E:/game/.worktrees/finish-unfinished-branches-20260801/out/build/windows-msvc-debug
+        Start   1: core.units
+  1/128 Test   #1: core.units ..............................................   Passed    0.02 sec
+        Start   2: abyss.units
+  2/128 Test   #2: abyss.units .............................................   Passed    0.49 sec
+        Start   3: skills.units
+  3/128 Test   #3: skills.units ............................................   Passed    0.02 sec
+        Start   4: checkpoint.units
+  4/128 Test   #4: checkpoint.units ........................................   Passed    0.03 sec
+        Start   5: architecture.checkpoint_no_runtime_headers
+  5/128 Test   #5: architecture.checkpoint_no_runtime_headers ..............   Passed    0.24 sec
+        Start   6: combat.units
+  6/128 Test   #6: combat.units ............................................   Passed    1.17 sec
+        Start   7: dungeon.units
+  7/128 Test   #7: dungeon.units ...........................................***Failed  103.24 sec
+[real-input] seed=5928216280406315093 initial-room=0 population=300/17/300
+[real-input] room0-launcher room=0 cleared=1 initial-player=0.00,0.00 initial-target=-1.54,-7.42 hp=125 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=1/1 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=-0.63,-3.53 final-target=-0.51,-2.94
+[real-input] roomN-launcher room=1 cleared=1 initial-player=0.00,80.49 initial-target=-3.86,78.39 hp=315 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=-1.71,78.90 final-target=-3.08,78.65
+[real-input] roomN-launcher room=2 cleared=1 initial-player=-79.74,0.00 initial-target=-74.55,-2.06 hp=120 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=-77.46,-1.53 final-target=-76.26,-1.70
+[real-input] roomN-launcher room=3 cleared=1 initial-player=0.00,-80.49 initial-target=-2.95,-75.10 hp=315 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=-1.84,-76.70 final-target=-2.43,-76.18
+[real-input] roomN-launcher room=4 cleared=1 initial-player=79.74,0.00 initial-target=74.86,-3.12 hp=315 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=77.27,-2.35 final-target=75.88,-2.68
+[real-input] roomN-launcher room=5 cleared=1 initial-player=0.00,80.49 initial-target=3.58,77.39 hp=315 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=2.16,78.45 final-target=2.95,77.88
+[real-input] roomN-launcher room=6 cleared=1 initial-player=-79.74,0.00 initial-target=-76.05,-5.78 hp=120 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=0/0 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=-77.58,-3.39 final-target=-77.05,-3.98
+[real-input] roomN-launcher room=7 cleared=1 initial-player=0.00,-80.49 initial-target=-0.80,-76.10 hp=110 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=1/1 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=-0.18,-76.65 final-target=-0.80,-76.10
+[real-input] roomN-launcher room=8 cleared=1 initial-player=79.74,0.00 initial-target=76.85,-5.98 hp=190 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=1/1 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=78.14,-1.54 final-target=78.79,-0.95
+[real-input] roomN-launcher room=9 cleared=1 initial-player=0.00,80.49 initial-target=3.65,74.88 hp=190 queues=1/1 rejected=0 swings=1 active=3 hits=1 defeated=0 player-hit/hurt=1/1 first-whiff=0 whiff-tick=0 dx=0.00 dy=0.00 facing=1 ai/reaction=0/0 final-player=1.79,78.94 final-target=0.95,79.54
+[real-input] launcher-1000 rooms=1000 allocation-delta=19526 save-boundaries=3001 save-alloc=15737 room-loads=1000 room-load-alloc=3789 inventory-validation-alloc=789 unexpected=0 overflow=0/0/0/0
+
+
+86% tests passed, 1 tests failed out of 7
+
+Label Time Summary:
+abyss           =   0.49 sec*proc (1 test)
+architecture    =   0.24 sec*proc (1 test)
+assets          =   0.00 sec*proc (0 test)
+checkpoint      =   0.27 sec*proc (2 tests)
+combat          =   1.17 sec*proc (1 test)
+core            =   0.02 sec*proc (1 test)
+deployment      =   0.00 sec*proc (0 test)
+dungeon         = 103.24 sec*proc (1 test)
+evidence        =   0.00 sec*proc (0 test)
+formal-game     =   0.00 sec*proc (0 test)
+graphics        =   0.00 sec*proc (0 test)
+headless        = 105.20 sec*proc (7 tests)
+interactive     =   0.00 sec*proc (0 test)
+items           =   0.00 sec*proc (0 test)
+launcher        =   0.00 sec*proc (0 test)
+modifiers       =   0.00 sec*proc (0 test)
+negative        =   0.00 sec*proc (0 test)
+passives        =   0.00 sec*proc (0 test)
+persistence     =   0.00 sec*proc (0 test)
+platform        =   0.00 sec*proc (0 test)
+progression     =   0.00 sec*proc (0 test)
+raylib          =   0.00 sec*proc (0 test)
+settings        =   0.00 sec*proc (0 test)
+skills          =   0.02 sec*proc (1 test)
+stage10         =   0.00 sec*proc (0 test)
+stage11         =   0.00 sec*proc (0 test)
+stage11b        =   0.00 sec*proc (0 test)
+stage11c        =   0.00 sec*proc (0 test)
+stage11d        =   0.00 sec*proc (0 test)
+stage12         =   0.00 sec*proc (0 test)
+stage14         =   0.00 sec*proc (0 test)
+stage15         =   0.00 sec*proc (0 test)
+stage16         =   0.00 sec*proc (0 test)
+stage17         =   0.00 sec*proc (0 test)
+stage9          =   0.00 sec*proc (0 test)
+stress          =   0.00 sec*proc (0 test)
+task8b          =   0.00 sec*proc (0 test)
+ui              =   0.00 sec*proc (0 test)
+validation      =   0.00 sec*proc (0 test)
+windows-ui      =   0.00 sec*proc (0 test)
+wire            =   0.00 sec*proc (0 test)
+
+Total Test time (real) = 105.31 sec
+
+The following tests FAILED:
+	  7 - dungeon.units (Failed)                            dungeon headless
+Errors while running CTest

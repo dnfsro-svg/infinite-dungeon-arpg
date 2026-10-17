@@ -1,0 +1,227 @@
+-- Testing if -Werror=pointer-arith can be used -- Failed
+-- Testing if -Werror=implicit-function-declaration can be used -- Failed
+-- Testing if -fno-strict-aliasing can be used -- Failed
+-- Using raylib's GLFW
+-- Including Win32 support
+-- Audio Backend: miniaudio
+-- Building raylib static library
+-- Generated build type: Debug
+-- Compiling with the flags:
+--   PLATFORM=PLATFORM_DESKTOP
+--   GRAPHICS=GRAPHICS_API_OPENGL_33
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_KEY_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_KEY_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_KEY_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_KEY_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_MOUSE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_MOUSE_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_MOUSE_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_MOUSE_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_FOCUS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_FOCUS_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_FOCUS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_FOCUS_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_PLATFORM_WRAPPER_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_PLATFORM_WRAPPER_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_PLATFORM_WRAPPER_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_PLATFORM_WRAPPER_COMPILES - Failed
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_ADDRESS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_CONTROL_ADDRESS_COMPILES - Success
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ADDRESS_COMPILES
+-- Performing Test ARPG_DIRECT_INPUT_POISON_ADDRESS_COMPILES - Failed
+-- Configuring done (8.8s)
+-- Generating done (0.2s)
+-- Build files have been written to: E:/game/.worktrees/finish-unfinished-branches-20260801/out/build/windows-msvc-debug
+ninja: no work to do.
+Test project E:/game/.worktrees/finish-unfinished-branches-20260801/out/build/windows-msvc-debug
+        Start   1: core.units
+  1/128 Test   #1: core.units ..............................................   Passed    0.02 sec
+        Start   2: abyss.units
+  2/128 Test   #2: abyss.units .............................................   Passed    0.49 sec
+        Start   3: skills.units
+  3/128 Test   #3: skills.units ............................................   Passed    0.02 sec
+        Start   4: checkpoint.units
+  4/128 Test   #4: checkpoint.units ........................................   Passed    0.03 sec
+        Start   5: architecture.checkpoint_no_runtime_headers
+  5/128 Test   #5: architecture.checkpoint_no_runtime_headers ..............   Passed    0.21 sec
+        Start   6: combat.units
+  6/128 Test   #6: combat.units ............................................   Passed    1.30 sec
+        Start   7: dungeon.units
+  7/128 Test   #7: dungeon.units ...........................................   Passed  254.05 sec
+        Start   8: stage16.material_loot.units
+  8/128 Test   #8: stage16.material_loot.units .............................   Passed    0.10 sec
+        Start   9: stage16.crafting_transaction.units
+  9/128 Test   #9: stage16.crafting_transaction.units ......................   Passed    0.08 sec
+        Start  10: stage16.loot_reinforcement.simulation
+ 10/128 Test  #10: stage16.loot_reinforcement.simulation ...................   Passed    1.17 sec
+        Start  11: stage11.death_stress.determinism_zero_alloc
+ 11/128 Test  #11: stage11.death_stress.determinism_zero_alloc .............   Passed  107.61 sec
+        Start  12: stage9.validation_fixture.real_v4_reward_reload
+ 12/128 Test  #12: stage9.validation_fixture.real_v4_reward_reload .........   Passed    0.04 sec
+        Start  13: stage10.validation_fixture.real_abyss_transactions
+ 13/128 Test  #13: stage10.validation_fixture.real_abyss_transactions ......   Passed   19.86 sec
+        Start  14: stage9.evidence.no_injected_defeat_trace
+ 14/128 Test  #14: stage9.evidence.no_injected_defeat_trace ................   Passed    0.03 sec
+        Start  15: stage9.validation_game.capture_after_present
+ 15/128 Test  #15: stage9.validation_game.capture_after_present ............   Passed    1.67 sec
+        Start  16: stage9.formal_game.capture_after_present
+ 16/128 Test  #16: stage9.formal_game.capture_after_present ................   Passed    3.93 sec
+        Start  17: stage9.formal_game.capture_validator_self_test
+ 17/128 Test  #17: stage9.formal_game.capture_validator_self_test ..........   Passed    8.48 sec
+        Start  18: stage10.validation_game.capture_after_present
+ 18/128 Test  #18: stage10.validation_game.capture_after_present ...........   Passed    4.75 sec
+        Start  19: stage10.formal_game.capture_after_present
+ 19/128 Test  #19: stage10.formal_game.capture_after_present ...............   Passed  121.67 sec
+        Start  20: stage10.formal_game.capture_content_validator
+ 20/128 Test  #20: stage10.formal_game.capture_content_validator ...........   Passed    0.87 sec
+        Start  21: stage10.abyss_stress.determinism_and_zero_alloc
+ 21/128 Test  #21: stage10.abyss_stress.determinism_and_zero_alloc .........   Passed    0.18 sec
+        Start  22: stage10.evidence.no_private_injection
+ 22/128 Test  #22: stage10.evidence.no_private_injection ...................   Passed   16.63 sec
+        Start  23: stage10.evidence.rejects_private_injection
+ 23/128 Test  #23: stage10.evidence.rejects_private_injection ..............   Passed   15.08 sec
+        Start  24: stage10.evidence.rejects_pre_present_capture
+ 24/128 Test  #24: stage10.evidence.rejects_pre_present_capture ............   Passed   15.04 sec
+        Start  25: stage10.evidence.rejects_pre_capture_with_post_dummy
+ 25/128 Test  #25: stage10.evidence.rejects_pre_capture_with_post_dummy ....   Passed   15.30 sec
+        Start  26: stage10.evidence.mutation_self_test
+ 26/128 Test  #26: stage10.evidence.mutation_self_test .....................   Passed  805.43 sec
+        Start  27: stage11.death_fixture.transactions
+ 27/128 Test  #27: stage11.death_fixture.transactions ......................   Passed    0.86 sec
+        Start  28: stage11.death_formal.five_paths
+ 28/128 Test  #28: stage11.death_formal.five_paths .........................   Passed   24.02 sec
+        Start  29: stage11.death_evidence.production_paths
+ 29/128 Test  #29: stage11.death_evidence.production_paths .................   Passed   27.61 sec
+        Start  30: stage11.death_evidence.rejects_private_injection
+ 30/128 Test  #30: stage11.death_evidence.rejects_private_injection ........   Passed   18.66 sec
+        Start  31: stage11.death_evidence.rejects_pre_present_capture
+ 31/128 Test  #31: stage11.death_evidence.rejects_pre_present_capture ......   Passed   15.55 sec
+        Start  32: stage11.death_evidence.rejects_public_death_injection
+ 32/128 Test  #32: stage11.death_evidence.rejects_public_death_injection ...   Passed   17.58 sec
+        Start  33: stage11.death_evidence.mutation_self_test
+ 33/128 Test  #33: stage11.death_evidence.mutation_self_test ...............   Passed  140.61 sec
+        Start  34: persistence.units
+ 34/128 Test  #34: persistence.units .......................................   Passed   79.83 sec
+        Start  35: persistence.link_isolation
+ 35/128 Test  #35: persistence.link_isolation ..............................   Passed    0.05 sec
+        Start  36: persistence.save_commit_stack_guard
+ 36/128 Test  #36: persistence.save_commit_stack_guard .....................   Passed    8.43 sec
+        Start  37: persistence.v9_wire_baseline
+ 37/128 Test  #37: persistence.v9_wire_baseline ............................   Passed    0.18 sec
+        Start  38: platform.units
+ 38/128 Test  #38: platform.units ..........................................   Passed   14.48 sec
+        Start  39: platform.ui_dpi_manifest
+ 39/128 Test  #39: platform.ui_dpi_manifest ................................   Passed    0.03 sec
+        Start  40: stage17.active_skill_material_asset_pipeline
+ 40/128 Test  #40: stage17.active_skill_material_asset_pipeline ............   Passed    4.28 sec
+        Start  41: stage12.environment_prop_asset_pipeline
+ 41/128 Test  #41: stage12.environment_prop_asset_pipeline .................   Passed   18.59 sec
+        Start  42: stage12.lightning_asset_pipeline
+ 42/128 Test  #42: stage12.lightning_asset_pipeline ........................   Passed    0.76 sec
+        Start  43: stage12.chaos_asset_pipeline
+ 43/128 Test  #43: stage12.chaos_asset_pipeline ............................   Passed    0.74 sec
+        Start  44: stage12.item_material_asset_pipeline
+ 44/128 Test  #44: stage12.item_material_asset_pipeline ....................   Passed    0.53 sec
+        Start  45: stage12.ui_material_asset_pipeline
+ 45/128 Test  #45: stage12.ui_material_asset_pipeline ......................   Passed    0.58 sec
+        Start  46: stage12.native_room_background_asset_pipeline
+ 46/128 Test  #46: stage12.native_room_background_asset_pipeline ...........   Passed   32.63 sec
+        Start  47: stage16.loot_reinforcement.real_raylib
+ 47/128 Test  #47: stage16.loot_reinforcement.real_raylib ..................***Failed    0.81 sec
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1920 x 1080
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 244
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel
+INFO:     > Renderer: Intel(R) UHD Graphics
+INFO:     > Version:  3.3.0 - Build 31.0.101.4146
+INFO:     > GLSL:     3.30 - Build 31.0.101.4146
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Win32): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\finish-unfinished-branches-20260801\out\build\windows-msvc-debug\bin
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+
+
+98% tests passed, 1 tests failed out of 47
+
+Label Time Summary:
+abyss           =   0.49 sec*proc (1 test)
+architecture    =   0.26 sec*proc (2 tests)
+assets          =  56.61 sec*proc (5 tests)
+checkpoint      =   0.42 sec*proc (3 tests)
+combat          =   1.30 sec*proc (1 test)
+core            =   0.02 sec*proc (1 test)
+deployment      =   0.00 sec*proc (0 test)
+dungeon         = 1471.46 sec*proc (20 tests)
+evidence        = 1112.40 sec*proc (13 tests)
+formal-game     = 158.98 sec*proc (5 tests)
+graphics        = 164.52 sec*proc (6 tests)
+headless        = 1635.53 sec*proc (40 tests)
+interactive     =   0.00 sec*proc (0 test)
+items           =   0.00 sec*proc (0 test)
+launcher        =   0.00 sec*proc (0 test)
+modifiers       =   0.00 sec*proc (0 test)
+negative        = 105.69 sec*proc (7 tests)
+passives        =   0.00 sec*proc (0 test)
+persistence     =  88.50 sec*proc (4 tests)
+platform        =  73.43 sec*proc (10 tests)
+progression     =   0.00 sec*proc (0 test)
+raylib          =   0.81 sec*proc (1 test)
+settings        =   0.00 sec*proc (0 test)
+skills          =   0.02 sec*proc (1 test)
+stage10         = 1014.82 sec*proc (10 tests)
+stage11         = 352.48 sec*proc (8 tests)
+stage11b        =   0.00 sec*proc (0 test)
+stage11c        =   0.00 sec*proc (0 test)
+stage11d        =   0.00 sec*proc (0 test)
+stage12         =  53.83 sec*proc (6 tests)
+stage14         =   0.00 sec*proc (0 test)
+stage15         =   0.00 sec*proc (0 test)
+stage16         =   2.16 sec*proc (4 tests)
+stage17         =   4.28 sec*proc (1 test)
+stage9          =  14.14 sec*proc (5 tests)
+stress          = 107.79 sec*proc (2 tests)
+task8b          =   0.00 sec*proc (0 test)
+ui              =   0.03 sec*proc (1 test)
+validation      = 188.13 sec*proc (12 tests)
+windows-ui      =   0.00 sec*proc (0 test)
+wire            =   0.18 sec*proc (1 test)
+
+Total Test time (real) = 1800.95 sec
+
+The following tests FAILED:
+	 47 - stage16.loot_reinforcement.real_raylib (Failed)   platform raylib stage16 validation
+Errors while running CTest
