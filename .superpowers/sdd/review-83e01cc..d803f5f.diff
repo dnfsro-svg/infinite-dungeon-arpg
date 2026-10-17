@@ -1,0 +1,544 @@
+# Review package: 83e01cc3366b52e27c8b29bc5a3d396e2d5228ff..d803f5f
+
+## Commits
+d803f5f feat: add fixed player damage history
+
+## Files changed
+ src/combat/CMakeLists.txt                    |   1 +
+ src/combat/combat_types.hpp                  |   8 ++
+ src/combat/combat_world.cpp                  |  77 ++++++------
+ src/combat/player_damage_history.cpp         |  57 +++++++++
+ src/combat/player_damage_history.hpp         |  27 +++++
+ tests/combat/CMakeLists.txt                  |   1 +
+ tests/combat/combat_test_main.cpp            |   4 +-
+ tests/combat/player_damage_history_tests.cpp | 168 +++++++++++++++++++++++++++
+ 8 files changed, 306 insertions(+), 37 deletions(-)
+
+## Diff
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+index 7f521ae..9fe7323 100644
+--- a/src/combat/CMakeLists.txt
++++ b/src/combat/CMakeLists.txt
+@@ -9,20 +9,21 @@ add_library(arpg_combat STATIC
+     input_buffer.cpp
+     monster_ai.cpp
+     monster_ai_melee.cpp
+     monster_ai_ranged.cpp
+     monster_ai_special.cpp
+     monster_affix_catalog.cpp
+     monster_affix_generation.cpp
+     monster_affix_runtime.cpp
+     monster_catalog.cpp
+     monster_pool.cpp
++    player_damage_history.cpp
+     player_simulation.cpp
+     target_simulation.cpp)
+ 
+ target_include_directories(arpg_combat
+     PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_combat PUBLIC cxx_std_17)
+ target_link_libraries(arpg_combat
+     PUBLIC arpg_abyss
+     PRIVATE arpg_core arpg_modifiers)
+ 
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index 8154751..b9519b5 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -83,22 +83,30 @@ struct PlayerStatusRuntime final {
+     std::uint16_t corrosion_ticks{};
+     std::uint8_t corrosion_tick_phase{};
+ };
+ 
+ struct PlayerCombatBuild final {
+     modifiers::PlayerModifierValues values{};
+     std::int64_t weapon_physical{};
+     std::int32_t local_attack_speed_bp{};
+ };
+ 
++struct ResolvedPlayerDamage final {
++    std::array<std::uint64_t, modifiers::kDamageTypeCount> by_type{};
++    std::uint64_t total{};
++};
++
+ [[nodiscard]] std::optional<DamagePacket> build_player_hit_packet(
+     int base_physical, const PlayerCombatBuild& build) noexcept;
++[[nodiscard]] std::optional<ResolvedPlayerDamage>
++resolve_player_damage_packet(
++    DamagePacket packet, const PlayerCombatBuild& build) noexcept;
+ [[nodiscard]] std::optional<int> resolve_player_damage(
+     DamagePacket packet, const PlayerCombatBuild& build) noexcept;
+ [[nodiscard]] std::uint16_t scaled_phase_ticks(
+     std::uint16_t base, std::int64_t attack_speed) noexcept;
+ 
+ enum class ImpactKind : std::uint8_t {
+     light_hitstun,
+     medium_hitstun,
+     knockdown,
+     launch,
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index d66907f..f212eb3 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -147,80 +147,85 @@ std::optional<DamagePacket> build_player_hit_packet_checked_unvalidated(
+ }
+ 
+ }  // namespace
+ 
+ std::optional<DamagePacket> build_player_hit_packet(
+     int base_physical, const PlayerCombatBuild& build) noexcept {
+     if (!valid_player_build(build)) return std::nullopt;
+     return build_player_hit_packet_checked_unvalidated(base_physical, build);
+ }
+ 
+-std::optional<int> resolve_player_damage(
++std::optional<ResolvedPlayerDamage> resolve_player_damage_packet(
+     DamagePacket packet, const PlayerCombatBuild& build) noexcept {
+     if (!valid_player_build(build)) return std::nullopt;
+ 
+-    const auto checked_add = [](std::int64_t left, std::int64_t right,
+-                                std::int64_t& result) noexcept {
+-        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+-        if (right > 0 && left > maximum - right) return false;
+-        result = left + right;
+-        return true;
++    const auto saturating_add = [](
++        std::uint64_t left, std::uint64_t right) noexcept {
++        const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
++        return left > maximum - right ? maximum : left + right;
+     };
+-    const auto checked_multiply = [](std::int64_t left, std::int64_t right,
+-                                     std::int64_t& result) noexcept {
+-        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+-        if (left != 0 && right > maximum / left) return false;
+-        result = left * right;
+-        return true;
+-    };
+-    const auto reduced_component = [&checked_multiply](
+-        int raw, std::int32_t reduction) noexcept -> std::optional<std::int64_t> {
++    const auto resolved_component = [&build](
++        int raw, std::int32_t reduction) noexcept -> std::optional<std::uint64_t> {
+         if (raw <= 0) return std::int64_t{0};
+         const std::int64_t multiplier = modifiers::kFixedOne - reduction;
+-        std::int64_t product{};
+-        if (!checked_multiply(raw, multiplier, product)) return std::nullopt;
+-        return product / modifiers::kFixedOne
+-            + (product % modifiers::kFixedOne != 0 ? 1 : 0);
++        std::int64_t reduced_product{};
++        if (!checked_multiply(raw, multiplier, reduced_product)) {
++            return std::nullopt;
++        }
++        const std::int64_t reduced = reduced_product / modifiers::kFixedOne
++            + (reduced_product % modifiers::kFixedOne != 0 ? 1 : 0);
++        std::int64_t final_product{};
++        if (!checked_multiply(
++                reduced, build.values.damage_taken, final_product)) {
++            return std::nullopt;
++        }
++        return static_cast<std::uint64_t>(
++            final_product / modifiers::kFixedOne);
+     };
+ 
+-    std::int64_t total = 0;
+-    const auto physical = reduced_component(
++    ResolvedPlayerDamage result{};
++    const auto physical = resolved_component(
+         packet.amount[modifiers::damage_index(modifiers::DamageType::physical)],
+         modifiers::rating_to_basis_points(build.values.armor));
+-    if (!physical.has_value() || !checked_add(total, *physical, total)) {
+-        return std::nullopt;
+-    }
++    if (!physical.has_value()) return std::nullopt;
++    result.by_type[modifiers::damage_index(modifiers::DamageType::physical)] =
++        *physical;
+     for (std::size_t element = 0; element < modifiers::kElementCount; ++element) {
+         if (build.values.damage_reduction_cap_bonus[element] < 0) {
+             return std::nullopt;
+         }
+         const std::int64_t uncapped = std::int64_t{7500}
+             + build.values.damage_reduction_cap_bonus[element];
+         const auto cap = static_cast<std::int32_t>(
+             std::min<std::int64_t>(9500, uncapped));
+         const auto reduction = std::clamp(
+             build.values.damage_reduction[element], std::int32_t{-6000}, cap);
+-        const auto component = reduced_component(
++        const auto component = resolved_component(
+             packet.amount[element + 1U], reduction);
+-        if (!component.has_value()
+-            || !checked_add(total, *component, total)) {
+-            return std::nullopt;
+-        }
++        if (!component.has_value()) return std::nullopt;
++        result.by_type[element + 1U] = *component;
+     }
+-    if (build.values.damage_taken < 0) return std::nullopt;
+-    std::int64_t scaled{};
+-    if (!checked_multiply(total, build.values.damage_taken, scaled)) {
++    for (const std::uint64_t component : result.by_type) {
++        result.total = saturating_add(result.total, component);
++    }
++    return result;
++}
++
++std::optional<int> resolve_player_damage(
++    DamagePacket packet, const PlayerCombatBuild& build) noexcept {
++    const auto resolved = resolve_player_damage_packet(packet, build);
++    if (!resolved.has_value()
++        || resolved->total > static_cast<std::uint64_t>(
++            (std::numeric_limits<int>::max)())) {
+         return std::nullopt;
+     }
+-    scaled /= modifiers::kFixedOne;
+-    if (scaled > (std::numeric_limits<int>::max)()) return std::nullopt;
+-    return static_cast<int>(scaled);
++    return static_cast<int>(resolved->total);
+ }
+ 
+ std::uint16_t scaled_phase_ticks(
+     std::uint16_t base, std::int64_t attack_speed) noexcept {
+     if (base == 0U) return 1U;
+     const auto speed = std::max<std::int64_t>(1, attack_speed);
+     const auto scaled = static_cast<std::int64_t>(base)
+         * modifiers::kFixedOne / speed;
+     return static_cast<std::uint16_t>(std::max<std::int64_t>(1, scaled));
+ }
+diff --git a/src/combat/player_damage_history.cpp b/src/combat/player_damage_history.cpp
+new file mode 100644
+index 0000000..e8c212e
+--- /dev/null
++++ b/src/combat/player_damage_history.cpp
+@@ -0,0 +1,57 @@
++#include "combat/player_damage_history.hpp"
++
++#include <limits>
++
++namespace arpg::combat {
++
++namespace {
++
++std::uint64_t saturating_add_u64(
++    std::uint64_t left, std::uint64_t right) noexcept {
++    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
++    return left > maximum - right ? maximum : left + right;
++}
++
++}  // namespace
++
++void PlayerDamageHistory::begin_tick(std::uint64_t tick) noexcept {
++    if (!initialized_) {
++        initialized_ = true;
++        active_tick_ = tick;
++        buckets_[tick % kPlayerDamageHistoryTicks].fill(0U);
++        return;
++    }
++    if (tick == active_tick_) return;
++    if (tick < active_tick_ || tick - active_tick_ >= kPlayerDamageHistoryTicks) {
++        for (auto& bucket : buckets_) bucket.fill(0U);
++        active_tick_ = tick;
++        return;
++    }
++
++    const std::uint64_t elapsed = tick - active_tick_;
++    for (std::uint64_t offset = 1U; offset <= elapsed; ++offset) {
++        buckets_[(active_tick_ + offset) % kPlayerDamageHistoryTicks].fill(0U);
++    }
++    active_tick_ = tick;
++}
++
++void PlayerDamageHistory::record(const ResolvedPlayerDamage& damage) noexcept {
++    if (!initialized_) begin_tick(0U);
++    auto& bucket = buckets_[active_tick_ % kPlayerDamageHistoryTicks];
++    for (std::size_t index = 0; index < bucket.size(); ++index) {
++        bucket[index] = saturating_add_u64(bucket[index], damage.by_type[index]);
++    }
++}
++
++std::array<std::uint64_t, modifiers::kDamageTypeCount>
++PlayerDamageHistory::totals() const noexcept {
++    std::array<std::uint64_t, modifiers::kDamageTypeCount> result{};
++    for (const auto& bucket : buckets_) {
++        for (std::size_t index = 0; index < bucket.size(); ++index) {
++            result[index] = saturating_add_u64(result[index], bucket[index]);
++        }
++    }
++    return result;
++}
++
++}  // namespace arpg::combat
+diff --git a/src/combat/player_damage_history.hpp b/src/combat/player_damage_history.hpp
+new file mode 100644
+index 0000000..f6ede6a
+--- /dev/null
++++ b/src/combat/player_damage_history.hpp
+@@ -0,0 +1,27 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::combat {
++
++inline constexpr std::size_t kPlayerDamageHistoryTicks = 300U;
++
++class PlayerDamageHistory final {
++public:
++    void begin_tick(std::uint64_t tick) noexcept;
++    void record(const ResolvedPlayerDamage& damage) noexcept;
++    [[nodiscard]] std::array<std::uint64_t,
++        modifiers::kDamageTypeCount> totals() const noexcept;
++
++private:
++    std::array<std::array<std::uint64_t, modifiers::kDamageTypeCount>,
++        kPlayerDamageHistoryTicks> buckets_{};
++    std::uint64_t active_tick_{};
++    bool initialized_{};
++};
++
++}  // namespace arpg::combat
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index 563f513..39b48a8 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -14,20 +14,21 @@ add_executable(arpg_combat_tests
+     monster_affix_runtime_tests.cpp
+     monster_affix_trigger_tests.cpp
+     monster_catalog_tests.cpp
+     monster_melee_tests.cpp
+     monster_ranged_tests.cpp
+     monster_special_tests.cpp
+     monster_pool_tests.cpp
+     movement_jump_tests.cpp
+     player_health_tests.cpp
+     player_build_tests.cpp
++    player_damage_history_tests.cpp
+     player_defense_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+ add_test(NAME combat.units COMMAND arpg_combat_tests)
+ set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 0231304..574f047 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -13,20 +13,21 @@ arpg::test::TestSuite monster_catalog_suite() noexcept;
+ arpg::test::TestSuite monster_affix_catalog_suite() noexcept;
+ arpg::test::TestSuite monster_affix_generation_suite() noexcept;
+ arpg::test::TestSuite monster_affix_runtime_suite() noexcept;
+ arpg::test::TestSuite monster_affix_trigger_suite() noexcept;
+ arpg::test::TestSuite monster_melee_suite() noexcept;
+ arpg::test::TestSuite monster_ranged_suite() noexcept;
+ arpg::test::TestSuite monster_special_suite() noexcept;
+ arpg::test::TestSuite monster_pool_suite() noexcept;
+ arpg::test::TestSuite player_health_suite() noexcept;
+ arpg::test::TestSuite player_build_suite() noexcept;
++arpg::test::TestSuite player_damage_history_suite() noexcept;
+ arpg::test::TestSuite player_defense_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+         abyss_environment_suite(),
+         attack_state_suite(),
+         break_stress_suite(),
+         combat_config_suite(),
+         dummy_reaction_suite(),
+@@ -37,15 +38,16 @@ int main() {
+         monster_affix_catalog_suite(),
+         monster_affix_generation_suite(),
+         monster_affix_runtime_suite(),
+         monster_affix_trigger_suite(),
+         monster_melee_suite(),
+         monster_ranged_suite(),
+         monster_special_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+         player_build_suite(),
++        player_damage_history_suite(),
+         player_defense_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 168, "stage 10 task 7 abyss environment");
++    return arpg::test::run_suites(suites, 177, "stage 11-a task 1 player damage history");
+ }
+diff --git a/tests/combat/player_damage_history_tests.cpp b/tests/combat/player_damage_history_tests.cpp
+new file mode 100644
+index 0000000..5a98460
+--- /dev/null
++++ b/tests/combat/player_damage_history_tests.cpp
+@@ -0,0 +1,168 @@
++#include "test_framework.hpp"
++
++#include "allocation_probe.hpp"
++#include "combat/player_damage_history.hpp"
++#include "modifiers/damage_types.hpp"
++
++#include <cstdint>
++#include <limits>
++
++namespace {
++
++using namespace arpg::combat;
++using namespace arpg::modifiers;
++
++constexpr std::size_t kPhysical = damage_index(DamageType::physical);
++constexpr std::size_t kFire = damage_index(DamageType::fire);
++constexpr std::size_t kWater = damage_index(DamageType::water);
++constexpr std::size_t kLightning = damage_index(DamageType::lightning);
++constexpr std::size_t kChaos = damage_index(DamageType::chaos);
++
++arpg::test::Failure packet_resolution_preserves_final_damage_by_type() noexcept {
++    PlayerCombatBuild build{};
++    build.values.armor = 100;
++    build.values.damage_reduction[element_index(DamageType::fire)] = 5000;
++    build.values.damage_reduction[element_index(DamageType::water)] = -6000;
++    build.values.damage_reduction[element_index(DamageType::lightning)] = 7500;
++    build.values.damage_reduction[element_index(DamageType::chaos)] = 9500;
++    build.values.damage_reduction_cap_bonus[element_index(DamageType::chaos)] =
++        2000;
++    build.values.damage_taken = 20000;
++
++    const auto resolved = resolve_player_damage_packet(
++        DamagePacket{{10, 10, 10, 1, 100}}, build);
++    ARPG_REQUIRE(resolved.has_value());
++    ARPG_REQUIRE(resolved->by_type[kPhysical] == 16U);
++    ARPG_REQUIRE(resolved->by_type[kFire] == 10U);
++    ARPG_REQUIRE(resolved->by_type[kWater] == 32U);
++    ARPG_REQUIRE(resolved->by_type[kLightning] == 2U);
++    ARPG_REQUIRE(resolved->by_type[kChaos] == 10U);
++    ARPG_REQUIRE(resolved->total == 70U);
++    ARPG_REQUIRE(resolve_player_damage(
++        DamagePacket{{10, 10, 10, 1, 100}}, build) == 70);
++    return {};
++}
++
++arpg::test::Failure packet_resolution_handles_int_max_without_wrapping() noexcept {
++    constexpr int maximum = (std::numeric_limits<int>::max)();
++    const auto resolved = resolve_player_damage_packet(
++        DamagePacket{{maximum, maximum, maximum, maximum, maximum}},
++        PlayerCombatBuild{});
++    ARPG_REQUIRE(resolved.has_value());
++    for (const std::uint64_t component : resolved->by_type) {
++        ARPG_REQUIRE(component == static_cast<std::uint64_t>(maximum));
++    }
++    ARPG_REQUIRE(resolved->total
++        == static_cast<std::uint64_t>(maximum) * kDamageTypeCount);
++    ARPG_REQUIRE(!resolve_player_damage(
++        DamagePacket{{maximum, maximum, maximum, maximum, maximum}},
++        PlayerCombatBuild{}).has_value());
++    return {};
++}
++
++arpg::test::Failure history_records_only_the_already_clipped_damage() noexcept {
++    PlayerDamageHistory history{};
++    history.begin_tick(42U);
++    ResolvedPlayerDamage actual_damage{};
++    actual_damage.by_type = {{40U, 30U, 20U, 10U, 0U}};
++    actual_damage.total = 100U;
++    history.record(actual_damage);
++
++    const auto totals = history.totals();
++    ARPG_REQUIRE(totals == actual_damage.by_type);
++    return {};
++}
++
++arpg::test::Failure same_tick_records_accumulate_by_type() noexcept {
++    PlayerDamageHistory history{};
++    history.begin_tick(7U);
++    history.record(ResolvedPlayerDamage{{{1U, 2U, 3U, 4U, 5U}}, 15U});
++    history.begin_tick(7U);
++    history.record(ResolvedPlayerDamage{{{5U, 4U, 3U, 2U, 1U}}, 15U});
++
++    const auto totals = history.totals();
++    for (const std::uint64_t component : totals) {
++        ARPG_REQUIRE(component == 6U);
++    }
++    return {};
++}
++
++arpg::test::Failure history_keeps_300_ticks_and_evicts_on_tick_301() noexcept {
++    PlayerDamageHistory history{};
++    history.begin_tick(1U);
++    history.record(ResolvedPlayerDamage{{{9U, 0U, 0U, 0U, 0U}}, 9U});
++    history.begin_tick(300U);
++    ARPG_REQUIRE(history.totals()[kPhysical] == 9U);
++
++    history.begin_tick(301U);
++    ARPG_REQUIRE(history.totals()[kPhysical] == 0U);
++    return {};
++}
++
++arpg::test::Failure backward_tick_resets_the_entire_history() noexcept {
++    PlayerDamageHistory history{};
++    history.begin_tick(50U);
++    history.record(ResolvedPlayerDamage{{{3U, 0U, 0U, 0U, 0U}}, 3U});
++    history.begin_tick(49U);
++
++    ARPG_REQUIRE(history.totals()[kPhysical] == 0U);
++    return {};
++}
++
++arpg::test::Failure jump_of_300_ticks_resets_the_entire_history() noexcept {
++    PlayerDamageHistory history{};
++    history.begin_tick(10U);
++    history.record(ResolvedPlayerDamage{{{0U, 4U, 0U, 0U, 0U}}, 4U});
++    history.begin_tick(310U);
++
++    ARPG_REQUIRE(history.totals()[kFire] == 0U);
++    return {};
++}
++
++arpg::test::Failure history_accumulation_saturates_instead_of_wrapping() noexcept {
++    constexpr std::uint64_t maximum =
++        (std::numeric_limits<std::uint64_t>::max)();
++    PlayerDamageHistory history{};
++    history.begin_tick(1U);
++    history.record(ResolvedPlayerDamage{{{maximum, 0U, 0U, 0U, 0U}}, maximum});
++    history.record(ResolvedPlayerDamage{{{1U, 0U, 0U, 0U, 0U}}, 1U});
++    history.begin_tick(2U);
++    history.record(ResolvedPlayerDamage{{{1U, 0U, 0U, 0U, 0U}}, 1U});
++
++    ARPG_REQUIRE(history.totals()[kPhysical] == maximum);
++    return {};
++}
++
++arpg::test::Failure history_hot_path_performs_no_heap_allocations() noexcept {
++    const std::uint64_t before = arpg::test::allocation_count();
++    PlayerDamageHistory history{};
++    for (std::uint64_t tick = 1U; tick <= 600U; ++tick) {
++        history.begin_tick(tick);
++        history.record(ResolvedPlayerDamage{{{tick, 2U, 3U, 4U, 5U}},
++                                             tick + 14U});
++    }
++    const auto totals = history.totals();
++    const std::uint64_t after = arpg::test::allocation_count();
++
++    ARPG_REQUIRE(totals[kPhysical] != 0U);
++    ARPG_REQUIRE(after == before);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"packet resolution preserves types", &packet_resolution_preserves_final_damage_by_type},
++    {"packet resolution handles int max", &packet_resolution_handles_int_max_without_wrapping},
++    {"history records clipped damage", &history_records_only_the_already_clipped_damage},
++    {"same tick records accumulate", &same_tick_records_accumulate_by_type},
++    {"300 tick inclusive window", &history_keeps_300_ticks_and_evicts_on_tick_301},
++    {"backward tick resets history", &backward_tick_resets_the_entire_history},
++    {"300 tick jump resets history", &jump_of_300_ticks_resets_the_entire_history},
++    {"history saturates", &history_accumulation_saturates_instead_of_wrapping},
++    {"history allocates nothing", &history_hot_path_performs_no_heap_allocations},
++};
++
++}  // namespace
++
++arpg::test::TestSuite player_damage_history_suite() noexcept {
++    return arpg::test::make_suite("player_damage_history", kCases);
++}

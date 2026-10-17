@@ -1,0 +1,1407 @@
+# Review package: 79e2649280147f0934ec8d7b1e3a4f261ea28aaa..cfc0746
+
+## Commits
+cfc0746 feat: add deterministic death checkpoints
+
+## Files changed
+ src/dungeon/CMakeLists.txt                  |   1 +
+ src/dungeon/death_checkpoint.cpp            | 136 ++++++++++
+ src/dungeon/death_checkpoint.hpp            |  23 ++
+ src/dungeon/dungeon_checkpoint.hpp          | 207 +++++++++++++++
+ src/dungeon/dungeon_progression.cpp         |  46 ++++
+ src/dungeon/dungeon_rules.hpp               |  36 +++
+ src/dungeon/room_generation.cpp             |  38 +++
+ src/dungeon/room_generation.hpp             |  10 +
+ tests/dungeon/CMakeLists.txt                |   4 +
+ tests/dungeon/death_checkpoint_tests.cpp    | 377 ++++++++++++++++++++++++++++
+ tests/dungeon/dungeon_progression_tests.cpp |  87 +++++++
+ tests/dungeon/dungeon_test_main.cpp         |   4 +-
+ 12 files changed, 968 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/dungeon/CMakeLists.txt b/src/dungeon/CMakeLists.txt
+index 179b2cb..37ddb7a 100644
+--- a/src/dungeon/CMakeLists.txt
++++ b/src/dungeon/CMakeLists.txt
+@@ -1,19 +1,20 @@
+ add_library(arpg_dungeon STATIC
+     abyss_reward.cpp
+     abyss_checkpoint_migration.cpp
+     dungeon_rules.cpp
+     encounter_director.cpp
+     encounter_budget.cpp
+     dungeon_session.cpp
+     dungeon_transition.cpp
+     dungeon_snapshot.cpp
++    death_checkpoint.cpp
+     dungeon_progression.cpp
+     room_generation.cpp
+     room_combat_template.cpp
+     room_navigation.cpp)
+ 
+ target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_dungeon PUBLIC cxx_std_17)
+ target_link_libraries(arpg_dungeon PUBLIC arpg_combat arpg_progression arpg_passives arpg_items PRIVATE arpg_core arpg_abyss)
+ arpg_enable_project_warnings(arpg_dungeon)
+ if(MSVC)
+diff --git a/src/dungeon/death_checkpoint.cpp b/src/dungeon/death_checkpoint.cpp
+new file mode 100644
+index 0000000..c747b1c
+--- /dev/null
++++ b/src/dungeon/death_checkpoint.cpp
+@@ -0,0 +1,136 @@
++#include "dungeon/death_checkpoint.hpp"
++
++#include "combat/monster_affix_types.hpp"
++#include "dungeon/room_generation.hpp"
++
++#include <cstdint>
++
++namespace arpg::dungeon {
++namespace {
++
++checkpoint::DeathSourceKind stable_source_kind(
++    combat::PlayerDamageSourceKind kind) noexcept {
++    switch (kind) {
++    case combat::PlayerDamageSourceKind::monster_attack:
++        return checkpoint::DeathSourceKind::monster_attack;
++    case combat::PlayerDamageSourceKind::projectile:
++        return checkpoint::DeathSourceKind::projectile;
++    case combat::PlayerDamageSourceKind::ground_hazard:
++        return checkpoint::DeathSourceKind::ground_hazard;
++    case combat::PlayerDamageSourceKind::monster_affix:
++        return checkpoint::DeathSourceKind::monster_affix;
++    case combat::PlayerDamageSourceKind::abyss_environment:
++        return checkpoint::DeathSourceKind::abyss_environment;
++    case combat::PlayerDamageSourceKind::unknown:
++        return checkpoint::DeathSourceKind::unknown;
++    }
++    return checkpoint::DeathSourceKind::unknown;
++}
++
++bool valid_source_catalog(
++    const checkpoint::DeathCheckpoint& death) noexcept {
++    const bool valid_monster = death.source_monster_id
++        < static_cast<std::uint8_t>(combat::MonsterId::count);
++    switch (death.source_kind) {
++    case checkpoint::DeathSourceKind::monster_attack:
++    case checkpoint::DeathSourceKind::projectile:
++        return valid_monster && death.source_detail_id == 0U;
++    case checkpoint::DeathSourceKind::ground_hazard:
++        return valid_monster && death.source_detail_id
++            <= static_cast<std::uint16_t>(combat::HazardKind::chaos_expansion);
++    case checkpoint::DeathSourceKind::monster_affix:
++        return valid_monster && death.source_detail_id
++            < static_cast<std::uint16_t>(combat::MonsterAffixId::count);
++    case checkpoint::DeathSourceKind::abyss_environment:
++        return death.source_monster_id == 0xFFU
++            && death.source_detail_id <= static_cast<std::uint16_t>(
++                abyss::AbyssRuleId::life_sacrifice);
++    case checkpoint::DeathSourceKind::unknown:
++        return death.source_monster_id == 0xFFU
++            && death.source_detail_id == 0U;
++    }
++    return false;
++}
++
++bool same_room(
++    const checkpoint::RoomDescriptor& lhs,
++    const checkpoint::RoomDescriptor& rhs) noexcept {
++    return lhs.index == rhs.index
++        && lhs.seed == rhs.seed
++        && lhs.depth == rhs.depth
++        && lhs.floor_room_index == rhs.floor_room_index
++        && lhs.entry == rhs.entry
++        && lhs.ecology == rhs.ecology
++        && lhs.has_hole == rhs.has_hole
++        && lhs.is_abyss == rhs.is_abyss;
++}
++
++}  // namespace
++
++checkpoint::DeathCheckpoint make_death_checkpoint(
++    const combat::CombatDeathSnapshot& combat_death,
++    const checkpoint::RoomDescriptor& death_room,
++    const checkpoint::RoomDescriptor& target_room) noexcept {
++    checkpoint::DeathCheckpoint result{};
++    result.lifecycle = checkpoint::DeathLifecycle::pending_continue;
++    result.data_version = checkpoint::kDeathCheckpointDataVersion;
++    result.death_depth = death_room.depth;
++    result.death_floor_room_index = death_room.floor_room_index;
++    result.death_ecology = death_room.ecology;
++    result.death_was_abyss = death_room.is_abyss;
++    result.source_kind = stable_source_kind(combat_death.source.kind);
++    const bool has_monster = result.source_kind
++            != checkpoint::DeathSourceKind::abyss_environment
++        && result.source_kind != checkpoint::DeathSourceKind::unknown;
++    result.source_monster_id = has_monster
++        ? static_cast<std::uint8_t>(combat_death.source.monster)
++        : 0xFFU;
++    result.source_detail_id = combat_death.source.detail_id;
++    result.damage_type = static_cast<checkpoint::DeathDamageType>(
++        combat_death.primary_type);
++    result.raw_damage = combat_death.raw_damage;
++    result.barrier_loss = combat_death.barrier_loss;
++    result.health_loss = combat_death.health_loss;
++    result.final_damage = combat_death.final_damage;
++    result.recent_damage = combat_death.recent_damage;
++    result.hp = combat_death.defense.hp;
++    result.max_hp = combat_death.defense.max_hp;
++    result.barrier = combat_death.defense.barrier;
++    result.max_barrier = combat_death.defense.max_barrier;
++    result.armor = combat_death.defense.armor;
++    result.evasion = combat_death.defense.evasion;
++    result.armor_reduction_bp = combat_death.defense.armor_reduction_bp;
++    result.evasion_rate_bp = combat_death.defense.evasion_rate_bp;
++    result.damage_reduction = combat_death.defense.damage_reduction;
++    result.damage_reduction_cap = combat_death.defense.damage_reduction_cap;
++    result.target_room = target_room;
++    return result;
++}
++
++bool valid_death_checkpoint_dungeon(
++    const checkpoint::DeathCheckpoint& death,
++    const checkpoint::RoomDescriptor& death_room,
++    std::uint64_t commit_generation,
++    std::uint64_t next_death_sequence,
++    const DungeonRules& rules) noexcept {
++    if (!checkpoint::valid_death_checkpoint_structural(death)
++        || death.lifecycle != checkpoint::DeathLifecycle::pending_continue
++        || !valid_source_catalog(death)
++        || death.death_depth != death_room.depth
++        || death.death_floor_room_index != death_room.floor_room_index
++        || death.death_ecology != death_room.ecology
++        || death.death_was_abyss != death_room.is_abyss
++        || next_death_sequence == 0U) {
++        return false;
++    }
++    checkpoint::DungeonRunState input{};
++    input.commit_generation = commit_generation;
++    input.current_room = death_room;
++    input.death_sequence = next_death_sequence - 1U;
++    const DeathRetreatTargetResult regenerated = make_death_retreat_target(
++        input, next_death_sequence, rules);
++    return regenerated.fault == DungeonFault::none
++        && same_room(regenerated.room, death.target_room);
++}
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/death_checkpoint.hpp b/src/dungeon/death_checkpoint.hpp
+new file mode 100644
+index 0000000..211c476
+--- /dev/null
++++ b/src/dungeon/death_checkpoint.hpp
+@@ -0,0 +1,23 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++#include "dungeon/dungeon_checkpoint.hpp"
++#include "dungeon/dungeon_rules.hpp"
++
++#include <cstdint>
++
++namespace arpg::dungeon {
++
++[[nodiscard]] checkpoint::DeathCheckpoint make_death_checkpoint(
++    const combat::CombatDeathSnapshot& combat_death,
++    const checkpoint::RoomDescriptor& death_room,
++    const checkpoint::RoomDescriptor& target_room) noexcept;
++
++[[nodiscard]] bool valid_death_checkpoint_dungeon(
++    const checkpoint::DeathCheckpoint& death,
++    const checkpoint::RoomDescriptor& death_room,
++    std::uint64_t commit_generation,
++    std::uint64_t next_death_sequence,
++    const DungeonRules& rules) noexcept;
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_checkpoint.hpp b/src/dungeon/dungeon_checkpoint.hpp
+index 078684c..5caf665 100644
+--- a/src/dungeon/dungeon_checkpoint.hpp
++++ b/src/dungeon/dungeon_checkpoint.hpp
+@@ -1,19 +1,20 @@
+ #pragma once
+ 
+ #include "abyss/abyss_types.hpp"
+ #include "passives/passive_tree_types.hpp"
+ #include "progression/progression_types.hpp"
+ #include "items/item_types.hpp"
+ 
+ #include <array>
+ #include <cstdint>
++#include <limits>
+ 
+ namespace arpg::dungeon::checkpoint {
+ 
+ enum class ExitDirection : std::uint8_t {
+     up = 0,
+     down = 1,
+     left = 2,
+     right = 3,
+     none = 0xFF,
+ };
+@@ -43,20 +44,224 @@ struct RoomDescriptor final {
+     std::uint64_t index{};
+     std::uint64_t seed{};
+     std::uint64_t depth{1};
+     std::uint64_t floor_room_index{1};
+     EntrySide entry{EntrySide::initial};
+     DungeonElement ecology{DungeonElement::fire};
+     bool has_hole{};
+     bool is_abyss{};
+ };
+ 
++enum class DeathLifecycle : std::uint8_t {
++    none = 0,
++    pending_continue = 1,
++};
++
++enum class DeathSourceKind : std::uint8_t {
++    monster_attack = 0,
++    projectile = 1,
++    ground_hazard = 2,
++    monster_affix = 3,
++    abyss_environment = 4,
++    unknown = 5,
++};
++
++enum class DeathDamageType : std::uint8_t {
++    physical = 0,
++    fire = 1,
++    water = 2,
++    lightning = 3,
++    chaos = 4,
++};
++
++inline constexpr std::uint8_t kDeathCheckpointDataVersion = 1U;
++
++struct DeathCheckpoint final {
++    DeathLifecycle lifecycle{DeathLifecycle::none};
++    std::uint8_t data_version{};
++    std::uint64_t death_depth{};
++    std::uint64_t death_floor_room_index{};
++    DungeonElement death_ecology{DungeonElement::fire};
++    bool death_was_abyss{};
++    DeathSourceKind source_kind{DeathSourceKind::unknown};
++    std::uint8_t source_monster_id{0xFFU};
++    std::uint16_t source_detail_id{};
++    DeathDamageType damage_type{DeathDamageType::physical};
++    std::uint64_t raw_damage{};
++    std::uint64_t barrier_loss{};
++    std::uint64_t health_loss{};
++    std::uint64_t final_damage{};
++    std::array<std::uint64_t, 5> recent_damage{};
++    std::int32_t hp{};
++    std::int32_t max_hp{};
++    std::int32_t barrier{};
++    std::int32_t max_barrier{};
++    std::int64_t armor{};
++    std::int64_t evasion{};
++    std::int32_t armor_reduction_bp{};
++    std::int32_t evasion_rate_bp{};
++    std::array<std::int32_t, 4> damage_reduction{};
++    std::array<std::int32_t, 4> damage_reduction_cap{};
++    RoomDescriptor target_room{0U, 0U, 0U, 0U,
++        EntrySide::initial, DungeonElement::fire, false, false};
++};
++
++namespace detail {
++
++[[nodiscard]] constexpr bool valid_death_element(
++    DungeonElement value) noexcept {
++    return value >= DungeonElement::fire && value <= DungeonElement::chaos;
++}
++
++[[nodiscard]] constexpr bool valid_death_source_kind(
++    DeathSourceKind value) noexcept {
++    return value >= DeathSourceKind::monster_attack
++        && value <= DeathSourceKind::unknown;
++}
++
++[[nodiscard]] constexpr bool valid_death_damage_type(
++    DeathDamageType value) noexcept {
++    return value >= DeathDamageType::physical
++        && value <= DeathDamageType::chaos;
++}
++
++[[nodiscard]] constexpr bool zero_u64_array(
++    const std::array<std::uint64_t, 5>& values) noexcept {
++    for (const std::uint64_t value : values) {
++        if (value != 0U) return false;
++    }
++    return true;
++}
++
++[[nodiscard]] constexpr bool zero_i32_array(
++    const std::array<std::int32_t, 4>& values) noexcept {
++    for (const std::int32_t value : values) {
++        if (value != 0) return false;
++    }
++    return true;
++}
++
++[[nodiscard]] constexpr bool canonical_none(
++    const DeathCheckpoint& death) noexcept {
++    return death.data_version == 0U
++        && death.death_depth == 0U
++        && death.death_floor_room_index == 0U
++        && death.death_ecology == DungeonElement::fire
++        && !death.death_was_abyss
++        && death.source_kind == DeathSourceKind::unknown
++        && death.source_monster_id == 0xFFU
++        && death.source_detail_id == 0U
++        && death.damage_type == DeathDamageType::physical
++        && death.raw_damage == 0U
++        && death.barrier_loss == 0U
++        && death.health_loss == 0U
++        && death.final_damage == 0U
++        && zero_u64_array(death.recent_damage)
++        && death.hp == 0
++        && death.max_hp == 0
++        && death.barrier == 0
++        && death.max_barrier == 0
++        && death.armor == 0
++        && death.evasion == 0
++        && death.armor_reduction_bp == 0
++        && death.evasion_rate_bp == 0
++        && zero_i32_array(death.damage_reduction)
++        && zero_i32_array(death.damage_reduction_cap)
++        && death.target_room.index == 0U
++        && death.target_room.seed == 0U
++        && death.target_room.depth == 0U
++        && death.target_room.floor_room_index == 0U
++        && death.target_room.entry == EntrySide::initial
++        && death.target_room.ecology == DungeonElement::fire
++        && !death.target_room.has_hole
++        && !death.target_room.is_abyss;
++}
++
++}  // namespace detail
++
++[[nodiscard]] constexpr bool valid_death_checkpoint_structural(
++    const DeathCheckpoint& death) noexcept {
++    if (death.lifecycle == DeathLifecycle::none) {
++        return detail::canonical_none(death);
++    }
++    if (death.lifecycle != DeathLifecycle::pending_continue
++        || death.data_version != kDeathCheckpointDataVersion
++        || death.death_depth == 0U
++        || death.death_floor_room_index == 0U
++        || !detail::valid_death_element(death.death_ecology)
++        || !detail::valid_death_source_kind(death.source_kind)
++        || !detail::valid_death_damage_type(death.damage_type)) {
++        return false;
++    }
++
++    switch (death.source_kind) {
++    case DeathSourceKind::monster_attack:
++    case DeathSourceKind::projectile:
++        if (death.source_monster_id == 0xFFU
++            || death.source_detail_id != 0U) return false;
++        break;
++    case DeathSourceKind::ground_hazard:
++    case DeathSourceKind::monster_affix:
++        if (death.source_monster_id == 0xFFU) return false;
++        break;
++    case DeathSourceKind::abyss_environment:
++        if (death.source_monster_id != 0xFFU) return false;
++        break;
++    case DeathSourceKind::unknown:
++        if (death.source_monster_id != 0xFFU
++            || death.source_detail_id != 0U) return false;
++        break;
++    }
++
++    if (death.raw_damage == 0U || death.health_loss == 0U
++        || death.barrier_loss
++            > (std::numeric_limits<std::uint64_t>::max)()
++                - death.health_loss
++        || death.final_damage != death.barrier_loss + death.health_loss) {
++        return false;
++    }
++    std::uint64_t recent_total = 0U;
++    for (const std::uint64_t value : death.recent_damage) {
++        if (recent_total
++            > (std::numeric_limits<std::uint64_t>::max)() - value) {
++            return false;
++        }
++        recent_total += value;
++    }
++    if (recent_total < death.final_damage
++        || death.hp != 0 || death.max_hp <= 0
++        || death.barrier != 0 || death.max_barrier < 0
++        || death.armor_reduction_bp < 0
++        || death.armor_reduction_bp > 10000
++        || death.evasion_rate_bp < 0
++        || death.evasion_rate_bp > 10000) {
++        return false;
++    }
++    for (std::size_t index = 0U;
++         index < death.damage_reduction.size(); ++index) {
++        if (death.damage_reduction_cap[index] < 7500
++            || death.damage_reduction_cap[index] > 9500
++            || death.damage_reduction[index] < -6000
++            || death.damage_reduction[index]
++                > death.damage_reduction_cap[index]) {
++            return false;
++        }
++    }
++    return death.target_room.index != 0U
++        && death.target_room.seed != 0U
++        && death.target_room.depth != 0U
++        && death.target_room.floor_room_index == 0U
++        && death.target_room.entry == EntrySide::initial
++        && detail::valid_death_element(death.target_room.ecology)
++        && !death.target_room.is_abyss;
++}
++
+ struct AbyssCheckpoint final {
+     abyss::AbyssLifecycle lifecycle{abyss::AbyssLifecycle::none};
+     abyss::AbyssDanger danger{abyss::AbyssDanger::low};
+     abyss::AbyssRuleId rule{abyss::AbyssRuleId::none};
+     std::uint32_t rules_version{};
+     std::uint8_t reward_total{};
+     std::uint8_t generated_mask{};
+     std::uint8_t claimed_mask{};
+     std::uint8_t abandoned_mask{};
+     std::uint32_t reward_revision{};
+@@ -77,20 +282,22 @@ struct DungeonRunState final {
+     std::uint64_t commit_generation{1};
+     std::array<std::uint32_t, 4> biases{};
+     RoomDescriptor current_room{};
+     AbyssCheckpoint abyss{};
+     LastAbyssResolution last_abyss_resolution{};
+     TransitionKind last_transition{TransitionKind::none};
+     ExitDirection last_direction{ExitDirection::none};
+     progression::ProgressionState progression{};
+     passives::PassiveTreeState passive_tree{};
+     items::ItemOwnershipState item_ownership{};
++    std::uint64_t death_sequence{};
++    DeathCheckpoint death{};
+ };
+ 
+ [[nodiscard]] constexpr bool valid_abyss_door_origin(
+     const DungeonRunState& state,
+     bool rolled) noexcept {
+     if (!rolled || !state.current_room.is_abyss
+             || state.last_transition != TransitionKind::door) {
+         return false;
+     }
+     switch (state.last_direction) {
+diff --git a/src/dungeon/dungeon_progression.cpp b/src/dungeon/dungeon_progression.cpp
+index 976d34e..67e5ffe 100644
+--- a/src/dungeon/dungeon_progression.cpp
++++ b/src/dungeon/dungeon_progression.cpp
+@@ -59,20 +59,64 @@ namespace {
+             || lhs.claimed_drop_bits != rhs.claimed_drop_bits
+             || lhs.next_item_sequence != rhs.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+         if (!same_item(lhs.items[index], rhs.items[index])) return false;
+     }
+     return true;
+ }
+ 
++[[nodiscard]] bool same_room(
++    const checkpoint::RoomDescriptor& lhs,
++    const checkpoint::RoomDescriptor& rhs) noexcept {
++    return lhs.index == rhs.index
++        && lhs.seed == rhs.seed
++        && lhs.depth == rhs.depth
++        && lhs.floor_room_index == rhs.floor_room_index
++        && lhs.entry == rhs.entry
++        && lhs.ecology == rhs.ecology
++        && lhs.has_hole == rhs.has_hole
++        && lhs.is_abyss == rhs.is_abyss;
++}
++
++[[nodiscard]] bool same_death_checkpoint(
++    const checkpoint::DeathCheckpoint& lhs,
++    const checkpoint::DeathCheckpoint& rhs) noexcept {
++    return lhs.lifecycle == rhs.lifecycle
++        && lhs.data_version == rhs.data_version
++        && lhs.death_depth == rhs.death_depth
++        && lhs.death_floor_room_index == rhs.death_floor_room_index
++        && lhs.death_ecology == rhs.death_ecology
++        && lhs.death_was_abyss == rhs.death_was_abyss
++        && lhs.source_kind == rhs.source_kind
++        && lhs.source_monster_id == rhs.source_monster_id
++        && lhs.source_detail_id == rhs.source_detail_id
++        && lhs.damage_type == rhs.damage_type
++        && lhs.raw_damage == rhs.raw_damage
++        && lhs.barrier_loss == rhs.barrier_loss
++        && lhs.health_loss == rhs.health_loss
++        && lhs.final_damage == rhs.final_damage
++        && lhs.recent_damage == rhs.recent_damage
++        && lhs.hp == rhs.hp
++        && lhs.max_hp == rhs.max_hp
++        && lhs.barrier == rhs.barrier
++        && lhs.max_barrier == rhs.max_barrier
++        && lhs.armor == rhs.armor
++        && lhs.evasion == rhs.evasion
++        && lhs.armor_reduction_bp == rhs.armor_reduction_bp
++        && lhs.evasion_rate_bp == rhs.evasion_rate_bp
++        && lhs.damage_reduction == rhs.damage_reduction
++        && lhs.damage_reduction_cap == rhs.damage_reduction_cap
++        && same_room(lhs.target_room, rhs.target_room);
++}
++
+ [[nodiscard]] bool checked_increment(
+     std::uint32_t value,
+     std::uint32_t& next) noexcept {
+     if (value == (std::numeric_limits<std::uint32_t>::max)()) {
+         return false;
+     }
+     next = value + 1U;
+     return true;
+ }
+ 
+@@ -254,15 +298,17 @@ bool same_run_state(
+         && lhs.last_abyss_resolution.abandoned
+             == rhs.last_abyss_resolution.abandoned
+         && lhs.progression.level == rhs.progression.level
+         && lhs.progression.experience == rhs.progression.experience
+         && lhs.progression.earned_passive_points
+             == rhs.progression.earned_passive_points
+         && lhs.progression.unspent_passive_points
+             == rhs.progression.unspent_passive_points
+         && lhs.passive_tree.allocated_bits == rhs.passive_tree.allocated_bits
+         && same_item_ownership(lhs.item_ownership, rhs.item_ownership)
++        && lhs.death_sequence == rhs.death_sequence
++        && same_death_checkpoint(lhs.death, rhs.death)
+         && lhs.last_transition == rhs.last_transition
+         && lhs.last_direction == rhs.last_direction;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_rules.hpp b/src/dungeon/dungeon_rules.hpp
+index 8c21dfc..358b838 100644
+--- a/src/dungeon/dungeon_rules.hpp
++++ b/src/dungeon/dungeon_rules.hpp
+@@ -1,17 +1,18 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_checkpoint.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ #include <optional>
++#include <string_view>
+ 
+ namespace arpg::dungeon {
+ 
+ inline constexpr std::uint32_t kProbabilityScale = 10000U;
+ 
+ enum class DungeonFault : std::uint8_t {
+     none,
+     invalid_rules,
+     invalid_direction,
+     commit_generation_overflow,
+@@ -24,22 +25,57 @@ enum class DungeonFault : std::uint8_t {
+     combat_relay_overflow,
+     save_commit_indeterminate,
+     save_receipt_mismatch,
+     item_id_collision,
+     item_sequence_overflow,
+     invalid_item_state,
+     invalid_abyss_state,
+     abyss_generation_failed,
+     abyss_reward_collision,
+     abyss_reward_revision_overflow,
++    death_sequence_overflow,
+ };
+ 
++[[nodiscard]] constexpr std::string_view dungeon_fault_name(
++    DungeonFault fault) noexcept {
++    switch (fault) {
++    case DungeonFault::none: return "none";
++    case DungeonFault::invalid_rules: return "invalid_rules";
++    case DungeonFault::invalid_direction: return "invalid_direction";
++    case DungeonFault::commit_generation_overflow:
++        return "commit_generation_overflow";
++    case DungeonFault::room_index_overflow: return "room_index_overflow";
++    case DungeonFault::depth_overflow: return "depth_overflow";
++    case DungeonFault::floor_room_overflow: return "floor_room_overflow";
++    case DungeonFault::bias_overflow: return "bias_overflow";
++    case DungeonFault::weight_overflow: return "weight_overflow";
++    case DungeonFault::event_overflow: return "event_overflow";
++    case DungeonFault::combat_relay_overflow: return "combat_relay_overflow";
++    case DungeonFault::save_commit_indeterminate:
++        return "save_commit_indeterminate";
++    case DungeonFault::save_receipt_mismatch: return "save_receipt_mismatch";
++    case DungeonFault::item_id_collision: return "item_id_collision";
++    case DungeonFault::item_sequence_overflow: return "item_sequence_overflow";
++    case DungeonFault::invalid_item_state: return "invalid_item_state";
++    case DungeonFault::invalid_abyss_state: return "invalid_abyss_state";
++    case DungeonFault::abyss_generation_failed:
++        return "abyss_generation_failed";
++    case DungeonFault::abyss_reward_collision:
++        return "abyss_reward_collision";
++    case DungeonFault::abyss_reward_revision_overflow:
++        return "abyss_reward_revision_overflow";
++    case DungeonFault::death_sequence_overflow:
++        return "death_sequence_overflow";
++    }
++    return "unknown_dungeon_fault";
++}
++
+ // Gray-box encounter tuning is intentionally centralized here so later
+ // balancing changes do not alter the director's algorithm or RNG contract.
+ struct EncounterDirectorConfig final {
+     std::uint8_t base_budget{8};
+     std::uint8_t depth_step{5};
+     std::uint8_t budget_per_step{1};
+     std::uint8_t max_budget{24};
+     std::uint8_t two_wave_threshold{12};
+     std::uint8_t matching_ecology_weight{4};
+     std::uint8_t off_ecology_weight{1};
+diff --git a/src/dungeon/room_generation.cpp b/src/dungeon/room_generation.cpp
+index d2d067e..2c66760 100644
+--- a/src/dungeon/room_generation.cpp
++++ b/src/dungeon/room_generation.cpp
+@@ -16,20 +16,22 @@ constexpr std::uint64_t kInitialRoomDomain =
+ constexpr std::uint64_t kDoorRoomDomain =
+     0x524F4F4D5F4E4558ULL;
+ constexpr std::uint64_t kDescentRoomDomain =
+     0x44455343454E5431ULL;
+ constexpr std::uint64_t kEcologyDomain =
+     0x45434F4C4F475931ULL;
+ constexpr std::uint64_t kHoleDomain =
+     0x484F4C455F563031ULL;
+ constexpr std::uint64_t kAbyssDomain =
+     0x41425953535F3031ULL;
++constexpr std::uint64_t kDeathRetreatDomain =
++    0x44454154485F5254ULL;
+ 
+ [[nodiscard]] std::uint64_t first(
+     std::uint64_t seed,
+     std::uint64_t domain) noexcept {
+     auto stream = core::DeterministicRng::derive_stream(seed, domain);
+     return stream.next_u64();
+ }
+ 
+ }  // namespace
+ 
+@@ -145,20 +147,56 @@ RoomGenerationResult generate_room_descriptor(
+     room.has_hole = hole_value.value() < rules.hole_threshold;
+     room.is_abyss = false;
+ 
+     RoomRandomSamples samples;
+     samples.ecology = ecology_value.value();
+     samples.hole = static_cast<std::uint32_t>(hole_value.value());
+     samples.abyss = static_cast<std::uint32_t>(abyss_value.value());
+     return {DungeonFault::none, room, samples};
+ }
+ 
++DeathRetreatTargetResult make_death_retreat_target(
++    const checkpoint::DungeonRunState& current,
++    std::uint64_t next_death_sequence,
++    const DungeonRules& rules) noexcept {
++    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
++    if (current.current_room.index == maximum) {
++        return {DungeonFault::room_index_overflow, {}};
++    }
++    if (current.commit_generation == maximum) {
++        return {DungeonFault::commit_generation_overflow, {}};
++    }
++    if (current.death_sequence == maximum) {
++        return {DungeonFault::death_sequence_overflow, {}};
++    }
++
++    const std::uint64_t target_depth = current.current_room.depth > 1U
++        ? current.current_room.depth - 1U : 1U;
++    std::uint64_t seed = first(
++        current.current_room.seed, kDeathRetreatDomain);
++    seed = first(seed, current.commit_generation);
++    seed = first(seed, next_death_sequence);
++    seed = first(seed, target_depth);
++    if (seed == 0U) seed = 0xD34D5EEDULL;
++
++    const auto generated = generate_room_descriptor(
++        seed, current.current_room.index + 1U, target_depth, 0U,
++        checkpoint::EntrySide::initial,
++        std::array<std::uint32_t, 4>{}, rules);
++    if (generated.fault != DungeonFault::none) {
++        return {generated.fault, {}};
++    }
++    checkpoint::RoomDescriptor room = generated.room;
++    room.is_abyss = false;
++    return {DungeonFault::none, room};
++}
++
+ std::uint64_t derive_next_room_seed(
+     std::uint64_t current_seed,
+     std::uint64_t next_index,
+     ExitDirection exit) noexcept {
+     return derive_door_room_seed(current_seed, next_index, exit);
+ }
+ 
+ RoomDescriptor make_initial_room(const DungeonSessionConfig& config) noexcept {
+     RoomDescriptor room;
+     room.index = config.initial_room_index;
+diff --git a/src/dungeon/room_generation.hpp b/src/dungeon/room_generation.hpp
+index 2d46856..d265ac0 100644
+--- a/src/dungeon/room_generation.hpp
++++ b/src/dungeon/room_generation.hpp
+@@ -32,20 +32,30 @@ struct RoomRandomSamples final {
+     std::uint32_t hole{};
+     std::uint32_t abyss{};
+ };
+ 
+ struct RoomGenerationResult final {
+     DungeonFault fault{DungeonFault::none};
+     checkpoint::RoomDescriptor room{};
+     RoomRandomSamples samples{};
+ };
+ 
++struct DeathRetreatTargetResult final {
++    DungeonFault fault{DungeonFault::none};
++    checkpoint::RoomDescriptor room{};
++};
++
++[[nodiscard]] DeathRetreatTargetResult make_death_retreat_target(
++    const checkpoint::DungeonRunState& current,
++    std::uint64_t next_death_sequence,
++    const DungeonRules& rules) noexcept;
++
+ [[nodiscard]] RoomGenerationResult generate_room_descriptor(
+     std::uint64_t seed,
+     std::uint64_t global_index,
+     std::uint64_t depth,
+     std::uint64_t floor_room_index,
+     checkpoint::EntrySide entry,
+     const std::array<std::uint32_t, 4>& biases,
+     const DungeonRules& rules) noexcept;
+ 
+ [[nodiscard]] std::uint64_t derive_next_room_seed(
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index b48a8ae..5a7c117 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -1,13 +1,14 @@
+ add_executable(arpg_dungeon_tests
+     ../core/allocation_probe.cpp
+     dungeon_test_main.cpp
++    death_checkpoint_tests.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+@@ -21,20 +22,23 @@ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_affix_reward_tests.cpp
+     dungeon_affix_stress_tests.cpp)
+ 
+ target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_dungeon_tests
+     PRIVATE
+         "${PROJECT_SOURCE_DIR}/tests/core"
+         "${PROJECT_SOURCE_DIR}/tests/combat")
+ target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
+ arpg_enable_project_warnings(arpg_dungeon_tests)
++if(MSVC)
++    target_link_options(arpg_dungeon_tests PRIVATE /STACK:4194304)
++endif()
+ 
+ add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+ 
+ add_executable(arpg_stage8_validation_fixture
+     stage8_validation_fixture.cpp)
+ target_compile_features(arpg_stage8_validation_fixture PRIVATE cxx_std_17)
+ target_link_libraries(arpg_stage8_validation_fixture
+     PRIVATE arpg_dungeon arpg_persistence)
+ arpg_enable_project_warnings(arpg_stage8_validation_fixture)
+ 
+diff --git a/tests/dungeon/death_checkpoint_tests.cpp b/tests/dungeon/death_checkpoint_tests.cpp
+new file mode 100644
+index 0000000..f24ac55
+--- /dev/null
++++ b/tests/dungeon/death_checkpoint_tests.cpp
+@@ -0,0 +1,377 @@
++#include "test_framework.hpp"
++
++#include "combat/combat_types.hpp"
++#include "combat/monster_affix_types.hpp"
++#include "core/deterministic_rng.hpp"
++#include "dungeon/death_checkpoint.hpp"
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/room_generation.hpp"
++#include "modifiers/damage_types.hpp"
++
++#include <array>
++#include <cstdint>
++#include <limits>
++#include <string_view>
++
++namespace {
++
++namespace checkpoint = arpg::dungeon::checkpoint;
++namespace combat = arpg::combat;
++namespace dungeon = arpg::dungeon;
++
++using checkpoint::DeathCheckpoint;
++using checkpoint::DeathDamageType;
++using checkpoint::DeathLifecycle;
++using checkpoint::DeathSourceKind;
++using checkpoint::DungeonElement;
++using checkpoint::EntrySide;
++using dungeon::DungeonFault;
++using dungeon::DungeonRules;
++
++bool same_room(
++    const checkpoint::RoomDescriptor& lhs,
++    const checkpoint::RoomDescriptor& rhs) noexcept {
++    return lhs.index == rhs.index
++        && lhs.seed == rhs.seed
++        && lhs.depth == rhs.depth
++        && lhs.floor_room_index == rhs.floor_room_index
++        && lhs.entry == rhs.entry
++        && lhs.ecology == rhs.ecology
++        && lhs.has_hole == rhs.has_hole
++        && lhs.is_abyss == rhs.is_abyss;
++}
++
++std::uint64_t first(std::uint64_t seed, std::uint64_t domain) noexcept {
++    auto stream = arpg::core::DeterministicRng::derive_stream(seed, domain);
++    return stream.next_u64();
++}
++
++std::uint64_t expected_retreat_seed(
++    const checkpoint::DungeonRunState& current,
++    std::uint64_t next_death_sequence,
++    std::uint64_t target_depth) noexcept {
++    constexpr std::uint64_t kDeathRetreatDomain = 0x44454154485F5254ULL;
++    std::uint64_t seed = first(current.current_room.seed, kDeathRetreatDomain);
++    seed = first(seed, current.commit_generation);
++    seed = first(seed, next_death_sequence);
++    seed = first(seed, target_depth);
++    return seed == 0U ? 0xD34D5EEDULL : seed;
++}
++
++DeathCheckpoint valid_pending() noexcept {
++    DeathCheckpoint death{};
++    death.lifecycle = DeathLifecycle::pending_continue;
++    death.data_version = checkpoint::kDeathCheckpointDataVersion;
++    death.death_depth = 3U;
++    death.death_floor_room_index = 7U;
++    death.death_ecology = DungeonElement::lightning;
++    death.death_was_abyss = false;
++    death.source_kind = DeathSourceKind::monster_affix;
++    death.source_monster_id = static_cast<std::uint8_t>(
++        combat::MonsterId::fire_charger);
++    death.source_detail_id = static_cast<std::uint16_t>(
++        combat::MonsterAffixId::burning_ground);
++    death.damage_type = DeathDamageType::fire;
++    death.raw_damage = 50U;
++    death.barrier_loss = 10U;
++    death.health_loss = 20U;
++    death.final_damage = 30U;
++    death.recent_damage = {{0U, 30U, 0U, 0U, 0U}};
++    death.hp = 0;
++    death.max_hp = 100;
++    death.barrier = 0;
++    death.max_barrier = 50;
++    death.armor = 100;
++    death.evasion = 200;
++    death.armor_reduction_bp = 1000;
++    death.evasion_rate_bp = 2000;
++    death.damage_reduction = {{100, -200, 300, 400}};
++    death.damage_reduction_cap = {{7500, 7600, 7700, 7800}};
++    death.target_room = {8U, 9U, 2U, 0U,
++        EntrySide::initial, DungeonElement::water, true, false};
++    return death;
++}
++
++arpg::test::Failure canonical_none_is_header_only_and_zeroed() noexcept {
++    constexpr DeathCheckpoint death{};
++    static_assert(checkpoint::valid_death_checkpoint_structural(death));
++    ARPG_REQUIRE(death.lifecycle == DeathLifecycle::none);
++    ARPG_REQUIRE(death.source_kind == DeathSourceKind::unknown);
++    ARPG_REQUIRE(death.source_monster_id == 0xFFU);
++    ARPG_REQUIRE(death.damage_type == DeathDamageType::physical);
++    ARPG_REQUIRE(death.death_ecology == DungeonElement::fire);
++    ARPG_REQUIRE(death.target_room.index == 0U);
++    ARPG_REQUIRE(death.target_room.seed == 0U);
++    ARPG_REQUIRE(death.target_room.depth == 0U);
++    ARPG_REQUIRE(death.target_room.floor_room_index == 0U);
++    ARPG_REQUIRE(death.target_room.entry == EntrySide::initial);
++    ARPG_REQUIRE(death.target_room.ecology == DungeonElement::fire);
++    ARPG_REQUIRE(!death.target_room.has_hole);
++    ARPG_REQUIRE(!death.target_room.is_abyss);
++    return {};
++}
++
++arpg::test::Failure structural_validation_rejects_noncanonical_none() noexcept {
++    DeathCheckpoint death{};
++    death.target_room.depth = 1U;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(death));
++    death = {};
++    death.data_version = 1U;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(death));
++    death = {};
++    death.source_monster_id = 0U;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(death));
++    return {};
++}
++
++arpg::test::Failure structural_validation_checks_pending_payload() noexcept {
++    const DeathCheckpoint valid = valid_pending();
++    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(valid));
++
++    DeathCheckpoint changed = valid;
++    changed.lifecycle = static_cast<DeathLifecycle>(0xFFU);
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.source_kind = static_cast<DeathSourceKind>(0xFFU);
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.damage_type = static_cast<DeathDamageType>(0xFFU);
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.final_damage = 29U;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.recent_damage[4] =
++        (std::numeric_limits<std::uint64_t>::max)();
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.hp = 1;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.barrier = 1;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.armor_reduction_bp = 10001;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.damage_reduction[1] = -6001;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    changed = valid;
++    changed.target_room.entry = EntrySide::left;
++    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
++    return {};
++}
++
++arpg::test::Failure combat_snapshot_converts_without_combat_types_leaking() noexcept {
++    combat::CombatDeathSnapshot snapshot{};
++    snapshot.source = {combat::PlayerDamageSourceKind::monster_affix,
++        combat::MonsterId::fire_charger,
++        static_cast<std::uint16_t>(combat::MonsterAffixId::burning_ground)};
++    snapshot.primary_type = arpg::modifiers::DamageType::fire;
++    snapshot.raw_damage = 50U;
++    snapshot.barrier_loss = 10U;
++    snapshot.health_loss = 20U;
++    snapshot.final_damage = 30U;
++    snapshot.recent_damage = {{0U, 30U, 0U, 0U, 0U}};
++    snapshot.defense = {0, 100, 0, 50, 100, 200, 1000, 2000,
++        {{100, -200, 300, 400}}, {{7500, 7600, 7700, 7800}}};
++    const checkpoint::RoomDescriptor death_room{
++        7U, 77U, 3U, 7U, EntrySide::left,
++        DungeonElement::lightning, false, true};
++    const checkpoint::RoomDescriptor target{
++        8U, 88U, 2U, 0U, EntrySide::initial,
++        DungeonElement::water, true, false};
++
++    const DeathCheckpoint converted = dungeon::make_death_checkpoint(
++        snapshot, death_room, target);
++    ARPG_REQUIRE(converted.lifecycle == DeathLifecycle::pending_continue);
++    ARPG_REQUIRE(converted.data_version
++        == checkpoint::kDeathCheckpointDataVersion);
++    ARPG_REQUIRE(converted.death_depth == death_room.depth);
++    ARPG_REQUIRE(converted.death_floor_room_index
++        == death_room.floor_room_index);
++    ARPG_REQUIRE(converted.death_ecology == death_room.ecology);
++    ARPG_REQUIRE(converted.death_was_abyss);
++    ARPG_REQUIRE(converted.source_kind == DeathSourceKind::monster_affix);
++    ARPG_REQUIRE(converted.source_monster_id
++        == static_cast<std::uint8_t>(combat::MonsterId::fire_charger));
++    ARPG_REQUIRE(converted.source_detail_id
++        == static_cast<std::uint16_t>(combat::MonsterAffixId::burning_ground));
++    ARPG_REQUIRE(converted.damage_type == DeathDamageType::fire);
++    ARPG_REQUIRE(converted.recent_damage == snapshot.recent_damage);
++    ARPG_REQUIRE(converted.hp == snapshot.defense.hp);
++    ARPG_REQUIRE(converted.damage_reduction
++        == snapshot.defense.damage_reduction);
++    ARPG_REQUIRE(same_room(converted.target_room, target));
++    return {};
++}
++
++arpg::test::Failure retreat_target_clamps_depth_and_uses_named_stream() noexcept {
++    auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
++    current.current_room.index = 41U;
++    current.current_room.seed = 0x123456789ABCDEF0ULL;
++    current.current_room.depth = 1U;
++    current.commit_generation = 9U;
++    current.death_sequence = 3U;
++
++    const auto depth_one = dungeon::make_death_retreat_target(
++        current, 4U, DungeonRules{});
++    ARPG_REQUIRE(depth_one.fault == DungeonFault::none);
++    ARPG_REQUIRE(depth_one.room.index == 42U);
++    ARPG_REQUIRE(depth_one.room.seed == expected_retreat_seed(current, 4U, 1U));
++    ARPG_REQUIRE(depth_one.room.seed != 0U);
++    ARPG_REQUIRE(depth_one.room.depth == 1U);
++    ARPG_REQUIRE(depth_one.room.floor_room_index == 0U);
++    ARPG_REQUIRE(depth_one.room.entry == EntrySide::initial);
++    ARPG_REQUIRE(!depth_one.room.is_abyss);
++
++    current.current_room.depth = 8U;
++    const auto depth_eight = dungeon::make_death_retreat_target(
++        current, 4U, DungeonRules{});
++    ARPG_REQUIRE(depth_eight.fault == DungeonFault::none);
++    ARPG_REQUIRE(depth_eight.room.depth == 7U);
++    ARPG_REQUIRE(depth_eight.room.seed
++        == expected_retreat_seed(current, 4U, 7U));
++    return {};
++}
++
++arpg::test::Failure retreat_target_is_replayable_and_preserves_ordinary_streams() noexcept {
++    auto current = dungeon::make_initial_run_state(123U, DungeonRules{}).state;
++    current.current_room.index = 5U;
++    current.current_room.seed = 456U;
++    current.current_room.depth = 4U;
++    current.commit_generation = 7U;
++    current.death_sequence = 10U;
++    current.biases = {{9U, 8U, 7U, 6U}};
++    const auto first_target = dungeon::make_death_retreat_target(
++        current, 11U, DungeonRules{});
++    const auto repeated = dungeon::make_death_retreat_target(
++        current, 11U, DungeonRules{});
++    ARPG_REQUIRE(first_target.fault == DungeonFault::none);
++    ARPG_REQUIRE(repeated.fault == DungeonFault::none);
++    ARPG_REQUIRE(same_room(first_target.room, repeated.room));
++
++    const auto ordinary = dungeon::generate_room_descriptor(
++        first_target.room.seed, 6U, 3U, 0U, EntrySide::initial,
++        std::array<std::uint32_t, 4>{}, DungeonRules{});
++    ARPG_REQUIRE(ordinary.fault == DungeonFault::none);
++    ARPG_REQUIRE(first_target.room.ecology == ordinary.room.ecology);
++    ARPG_REQUIRE(first_target.room.has_hole == ordinary.room.has_hole);
++    ARPG_REQUIRE(!first_target.room.is_abyss);
++    return {};
++}
++
++arpg::test::Failure each_retreat_input_changes_the_named_stream() noexcept {
++    auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
++    current.current_room.index = 10U;
++    current.current_room.seed = 20U;
++    current.current_room.depth = 5U;
++    current.commit_generation = 30U;
++    current.death_sequence = 40U;
++    const auto base = dungeon::make_death_retreat_target(
++        current, 41U, DungeonRules{});
++    ARPG_REQUIRE(base.fault == DungeonFault::none);
++
++    auto changed = current;
++    ++changed.current_room.seed;
++    ARPG_REQUIRE(dungeon::make_death_retreat_target(
++        changed, 41U, DungeonRules{}).room.seed != base.room.seed);
++    changed = current;
++    ++changed.commit_generation;
++    ARPG_REQUIRE(dungeon::make_death_retreat_target(
++        changed, 41U, DungeonRules{}).room.seed != base.room.seed);
++    ARPG_REQUIRE(dungeon::make_death_retreat_target(
++        current, 42U, DungeonRules{}).room.seed != base.room.seed);
++    changed = current;
++    ++changed.current_room.depth;
++    ARPG_REQUIRE(dungeon::make_death_retreat_target(
++        changed, 41U, DungeonRules{}).room.seed != base.room.seed);
++    return {};
++}
++
++arpg::test::Failure retreat_overflows_are_explicit_and_readable() noexcept {
++    auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
++    current.death_sequence = 5U;
++    current.current_room.index =
++        (std::numeric_limits<std::uint64_t>::max)();
++    ARPG_REQUIRE(dungeon::make_death_retreat_target(
++        current, 6U, DungeonRules{}).fault
++        == DungeonFault::room_index_overflow);
++    current.current_room.index = 0U;
++    current.commit_generation =
++        (std::numeric_limits<std::uint64_t>::max)();
++    ARPG_REQUIRE(dungeon::make_death_retreat_target(
++        current, 6U, DungeonRules{}).fault
++        == DungeonFault::commit_generation_overflow);
++    current.commit_generation = 1U;
++    current.death_sequence =
++        (std::numeric_limits<std::uint64_t>::max)();
++    ARPG_REQUIRE(dungeon::make_death_retreat_target(
++        current, (std::numeric_limits<std::uint64_t>::max)(), DungeonRules{}).fault
++        == DungeonFault::death_sequence_overflow);
++    ARPG_REQUIRE(dungeon::dungeon_fault_name(
++        DungeonFault::death_sequence_overflow)
++        == std::string_view{"death_sequence_overflow"});
++    return {};
++}
++
++arpg::test::Failure dungeon_semantics_validate_catalogs_and_regeneration() noexcept {
++    auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
++    current.current_room.index = 10U;
++    current.current_room.seed = 20U;
++    current.current_room.depth = 5U;
++    current.current_room.floor_room_index = 3U;
++    current.commit_generation = 30U;
++    current.death_sequence = 40U;
++    const auto target = dungeon::make_death_retreat_target(
++        current, 41U, DungeonRules{});
++    ARPG_REQUIRE(target.fault == DungeonFault::none);
++
++    combat::CombatDeathSnapshot snapshot{};
++    snapshot.source = {combat::PlayerDamageSourceKind::monster_affix,
++        combat::MonsterId::fire_charger,
++        static_cast<std::uint16_t>(combat::MonsterAffixId::burning_ground)};
++    snapshot.primary_type = arpg::modifiers::DamageType::fire;
++    snapshot.raw_damage = 50U;
++    snapshot.health_loss = 30U;
++    snapshot.final_damage = 30U;
++    snapshot.recent_damage = {{0U, 30U, 0U, 0U, 0U}};
++    snapshot.defense.max_hp = 100;
++    snapshot.defense.max_barrier = 50;
++    snapshot.defense.damage_reduction_cap = {{7500, 7500, 7500, 7500}};
++    DeathCheckpoint death = dungeon::make_death_checkpoint(
++        snapshot, current.current_room, target.room);
++    ARPG_REQUIRE(dungeon::valid_death_checkpoint_dungeon(
++        death, current.current_room, current.commit_generation,
++        41U, DungeonRules{}));
++
++    death.source_detail_id = 0xFFFFU;
++    ARPG_REQUIRE(!dungeon::valid_death_checkpoint_dungeon(
++        death, current.current_room, current.commit_generation,
++        41U, DungeonRules{}));
++    death = dungeon::make_death_checkpoint(
++        snapshot, current.current_room, target.room);
++    ++death.target_room.seed;
++    ARPG_REQUIRE(!dungeon::valid_death_checkpoint_dungeon(
++        death, current.current_room, current.commit_generation,
++        41U, DungeonRules{}));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"canonical none is header only and zeroed", &canonical_none_is_header_only_and_zeroed},
++    {"structural rejects noncanonical none", &structural_validation_rejects_noncanonical_none},
++    {"structural checks pending payload", &structural_validation_checks_pending_payload},
++    {"combat snapshot converts to stable checkpoint", &combat_snapshot_converts_without_combat_types_leaking},
++    {"retreat clamps depth and uses named stream", &retreat_target_clamps_depth_and_uses_named_stream},
++    {"retreat replay and ordinary streams", &retreat_target_is_replayable_and_preserves_ordinary_streams},
++    {"each retreat input changes stream", &each_retreat_input_changes_the_named_stream},
++    {"retreat overflow faults are explicit", &retreat_overflows_are_explicit_and_readable},
++    {"dungeon semantics validate catalogs and target", &dungeon_semantics_validate_catalogs_and_regeneration},
++};
++
++}  // namespace
++
++arpg::test::TestSuite death_checkpoint_suite() noexcept {
++    return arpg::test::make_suite("death_checkpoint", kCases);
++}
+diff --git a/tests/dungeon/dungeon_progression_tests.cpp b/tests/dungeon/dungeon_progression_tests.cpp
+index de0ea9b..b11531e 100644
+--- a/tests/dungeon/dungeon_progression_tests.cpp
++++ b/tests/dungeon/dungeon_progression_tests.cpp
+@@ -30,20 +30,25 @@ bool same_room(
+         && lhs.has_hole == rhs.has_hole
+         && lhs.is_abyss == rhs.is_abyss;
+ }
+ 
+ arpg::test::Failure initial_state_is_one_commit_and_three_samples() noexcept {
+     const auto result = dungeon::make_initial_run_state(
+         0x0123456789ABCDEFULL, DungeonRules{});
+     ARPG_REQUIRE(result.fault == DungeonFault::none);
+     ARPG_REQUIRE(result.state.root_seed == 0x0123456789ABCDEFULL);
+     ARPG_REQUIRE(result.state.commit_generation == 1U);
++    ARPG_REQUIRE(result.state.death_sequence == 0U);
++    ARPG_REQUIRE(result.state.death.lifecycle
++        == checkpoint::DeathLifecycle::none);
++    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(
++        result.state.death));
+     ARPG_REQUIRE((result.state.biases == std::array<std::uint32_t, 4>{}));
+     ARPG_REQUIRE(result.state.current_room.index == 0U);
+     ARPG_REQUIRE(result.state.current_room.seed == 0xCA5A07A71C3153C4ULL);
+     ARPG_REQUIRE(result.state.current_room.depth == 1U);
+     ARPG_REQUIRE(result.state.current_room.floor_room_index == 1U);
+     ARPG_REQUIRE(result.state.current_room.entry == EntrySide::initial);
+     ARPG_REQUIRE(result.state.last_transition == TransitionKind::none);
+     ARPG_REQUIRE(result.state.last_direction == ExitDirection::none);
+     ARPG_REQUIRE(result.samples.ecology == 96U);
+     ARPG_REQUIRE(result.samples.hole == 6033U);
+@@ -324,28 +329,110 @@ arpg::test::Failure same_run_state_compares_all_abyss_fields() noexcept {
+     ARPG_REQUIRE(dungeon::same_run_state(original, original));
+     for (const Case& entry : cases) {
+         static_cast<void>(entry.name);
+         State changed = original;
+         entry.mutate(changed);
+         ARPG_REQUIRE(!dungeon::same_run_state(original, changed));
+     }
+     return {};
+ }
+ 
++arpg::test::Failure same_run_state_compares_every_death_field() noexcept {
++    using State = checkpoint::DungeonRunState;
++    using Mutation = void (*)(State&) noexcept;
++    State original = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
++    original.death_sequence = 2U;
++    auto& death = original.death;
++    death.lifecycle = checkpoint::DeathLifecycle::pending_continue;
++    death.data_version = checkpoint::kDeathCheckpointDataVersion;
++    death.death_depth = 3U;
++    death.death_floor_room_index = 4U;
++    death.death_ecology = DungeonElement::water;
++    death.death_was_abyss = true;
++    death.source_kind = checkpoint::DeathSourceKind::monster_affix;
++    death.source_monster_id = 1U;
++    death.source_detail_id = 2U;
++    death.damage_type = checkpoint::DeathDamageType::fire;
++    death.raw_damage = 30U;
++    death.barrier_loss = 10U;
++    death.health_loss = 20U;
++    death.final_damage = 30U;
++    death.recent_damage = {{1U, 2U, 3U, 4U, 20U}};
++    death.hp = 0;
++    death.max_hp = 100;
++    death.barrier = 0;
++    death.max_barrier = 50;
++    death.armor = 10;
++    death.evasion = 20;
++    death.armor_reduction_bp = 30;
++    death.evasion_rate_bp = 40;
++    death.damage_reduction = {{1, 2, 3, 4}};
++    death.damage_reduction_cap = {{7500, 7501, 7502, 7503}};
++    death.target_room = {8U, 9U, 2U, 0U, EntrySide::initial,
++        DungeonElement::chaos, true, false};
++
++    constexpr std::array<Mutation, 33U> mutations{{
++        [](State& s) noexcept { ++s.death_sequence; },
++        [](State& s) noexcept { s.death.lifecycle = checkpoint::DeathLifecycle::none; },
++        [](State& s) noexcept { ++s.death.data_version; },
++        [](State& s) noexcept { ++s.death.death_depth; },
++        [](State& s) noexcept { ++s.death.death_floor_room_index; },
++        [](State& s) noexcept { s.death.death_ecology = DungeonElement::fire; },
++        [](State& s) noexcept { s.death.death_was_abyss = false; },
++        [](State& s) noexcept { s.death.source_kind = checkpoint::DeathSourceKind::unknown; },
++        [](State& s) noexcept { ++s.death.source_monster_id; },
++        [](State& s) noexcept { ++s.death.source_detail_id; },
++        [](State& s) noexcept { s.death.damage_type = checkpoint::DeathDamageType::chaos; },
++        [](State& s) noexcept { ++s.death.raw_damage; },
++        [](State& s) noexcept { ++s.death.barrier_loss; },
++        [](State& s) noexcept { ++s.death.health_loss; },
++        [](State& s) noexcept { ++s.death.final_damage; },
++        [](State& s) noexcept { ++s.death.recent_damage[4]; },
++        [](State& s) noexcept { ++s.death.hp; },
++        [](State& s) noexcept { ++s.death.max_hp; },
++        [](State& s) noexcept { ++s.death.barrier; },
++        [](State& s) noexcept { ++s.death.max_barrier; },
++        [](State& s) noexcept { ++s.death.armor; },
++        [](State& s) noexcept { ++s.death.evasion; },
++        [](State& s) noexcept { ++s.death.armor_reduction_bp; },
++        [](State& s) noexcept { ++s.death.evasion_rate_bp; },
++        [](State& s) noexcept { ++s.death.damage_reduction[3]; },
++        [](State& s) noexcept { ++s.death.damage_reduction_cap[3]; },
++        [](State& s) noexcept { ++s.death.target_room.index; },
++        [](State& s) noexcept { ++s.death.target_room.seed; },
++        [](State& s) noexcept { ++s.death.target_room.depth; },
++        [](State& s) noexcept { ++s.death.target_room.floor_room_index; },
++        [](State& s) noexcept { s.death.target_room.entry = EntrySide::left; },
++        [](State& s) noexcept { s.death.target_room.ecology = DungeonElement::fire; },
++        [](State& s) noexcept { s.death.target_room.has_hole = false; },
++    }};
++    ARPG_REQUIRE(dungeon::same_run_state(original, original));
++    for (const Mutation mutation : mutations) {
++        State changed = original;
++        mutation(changed);
++        ARPG_REQUIRE(!dungeon::same_run_state(original, changed));
++    }
++    State abyss_changed = original;
++    abyss_changed.death.target_room.is_abyss = true;
++    ARPG_REQUIRE(!dungeon::same_run_state(original, abyss_changed));
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"initial state is one commit and three samples", &initial_state_is_one_commit_and_three_samples},
+     {"each door advances counters and bias", &each_door_advances_counters_and_bias},
+     {"door bias is applied before room generation", &door_bias_is_applied_before_room_generation},
+     {"descent resets floor bias and entry", &descent_resets_floor_bias_and_entry},
+     {"checked limits preserve input state", &checked_limits_preserve_input_state},
+     {"same root and route are replayable", &same_root_and_route_are_replayable},
+     {"uncalled door domains do not change selected samples", &uncalled_door_domains_do_not_change_selected_samples},
+     {"ordinary door builder clears previous abyss checkpoint", &ordinary_door_builder_clears_previous_abyss_checkpoint},
+     {"abyss door builder produces complete selection", &abyss_door_builder_produces_complete_selection},
+     {"same run state compares all abyss fields", &same_run_state_compares_all_abyss_fields},
++    {"same run state compares every death field", &same_run_state_compares_every_death_field},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_progression_suite() noexcept {
+     return arpg::test::make_suite("dungeon_progression", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index d73f7ff..025b8b7 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -1,20 +1,21 @@
+ #include "test_framework.hpp"
+ 
+ #include <cstdlib>
+ 
+ #if defined(_WIN32) && defined(_DEBUG)
+ #include <crtdbg.h>
+ #include <cstdlib>
+ #endif
+ 
+ arpg::test::TestSuite room_generation_suite() noexcept;
++arpg::test::TestSuite death_checkpoint_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+@@ -65,20 +66,21 @@ int main() {
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+ #endif
+     const arpg::test::TestSuite suites[] = {
+         room_generation_suite(),
++        death_checkpoint_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_transaction_suite(),
+@@ -109,13 +111,13 @@ int main() {
+ 
+ 
+     if (stage10_abyss_stress_only()) {
+         const arpg::test::TestSuite stress_only[] = {
+             dungeon_abyss_stress_suite(),
+         };
+         return arpg::test::run_suites(stress_only, 2,
+             "stage 10 task 12 abyss stress");
+     }
+ 
+-    return arpg::test::run_suites(suites, 203,
++    return arpg::test::run_suites(suites, 213,
+         "stage 10 task 12 abyss stress validation");
+ }

@@ -1,0 +1,11 @@
+Test project E:/game/.worktrees/stage11a-death-continue/out/build/windows-msvc-debug
+    Start 4: dungeon.units
+1/1 Test #4: dungeon.units ....................   Passed  242.17 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+dungeon     = 242.17 sec*proc (1 test)
+headless    = 242.17 sec*proc (1 test)
+
+Total Test time (real) = 242.18 sec

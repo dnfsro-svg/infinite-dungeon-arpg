@@ -1,0 +1,1361 @@
+# Review package: 20403a76181817c4c7f7407fbea043fce8a20233..02eda97
+
+## Commits
+02eda97 feat: commit atomic death retreats
+
+## Files changed
+ src/dungeon/dungeon_session.cpp                 | 177 ++++++++++++++++++-
+ src/dungeon/dungeon_session.hpp                 |   3 +
+ src/dungeon/dungeon_transition.cpp              |  26 +++
+ src/dungeon/dungeon_types.hpp                   |   5 +
+ src/persistence/save_slot.cpp                   |  39 ++++
+ src/platform/raylib/dungeon_runtime.cpp         |   4 +-
+ tests/dungeon/dungeon_death_lifecycle_tests.cpp | 225 ++++++++++++++++++++++++
+ tests/dungeon/dungeon_lifecycle_tests.cpp       |  16 +-
+ tests/dungeon/dungeon_test_main.cpp             |   4 +-
+ tests/dungeon/dungeon_test_support.hpp          |  19 ++
+ tests/persistence/persistence_test_main.cpp     |   2 +-
+ tests/persistence/save_store_tests.cpp          |  52 ++++++
+ tests/platform/dungeon_runtime_tests.cpp        |  34 +++-
+ tests/platform/platform_test_main.cpp           |   2 +-
+ 14 files changed, 590 insertions(+), 18 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 0ee8eb1..2070b3a 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -128,20 +128,56 @@ void saturating_add(std::uint64_t& value, std::uint64_t addition) noexcept {
+         return false;
+     }
+     const auto selection = abyss::select_abyss_rule(
+         state.current_room.seed, state.current_room.depth);
+     return selection.has_value()
+         && state.abyss.danger == selection->danger
+         && state.abyss.rule == selection->rule
+         && state.abyss.rules_version == selection->rules_version;
+ }
+ 
++[[nodiscard]] bool same_combat_death_snapshot(
++    const combat::CombatDeathSnapshot& lhs,
++    const combat::CombatDeathSnapshot& rhs) noexcept {
++    return lhs.tick == rhs.tick
++        && lhs.source.kind == rhs.source.kind
++        && lhs.source.monster == rhs.source.monster
++        && lhs.source.detail_id == rhs.source.detail_id
++        && lhs.primary_type == rhs.primary_type
++        && lhs.raw_damage == rhs.raw_damage
++        && lhs.barrier_loss == rhs.barrier_loss
++        && lhs.health_loss == rhs.health_loss
++        && lhs.final_damage == rhs.final_damage
++        && lhs.recent_damage == rhs.recent_damage
++        && lhs.defense.hp == rhs.defense.hp
++        && lhs.defense.max_hp == rhs.defense.max_hp
++        && lhs.defense.barrier == rhs.defense.barrier
++        && lhs.defense.max_barrier == rhs.defense.max_barrier
++        && lhs.defense.armor == rhs.defense.armor
++        && lhs.defense.evasion == rhs.defense.evasion
++        && lhs.defense.armor_reduction_bp == rhs.defense.armor_reduction_bp
++        && lhs.defense.evasion_rate_bp == rhs.defense.evasion_rate_bp
++        && lhs.defense.damage_reduction == rhs.defense.damage_reduction
++        && lhs.defense.damage_reduction_cap
++            == rhs.defense.damage_reduction_cap;
++}
++
++[[nodiscard]] bool same_death_checkpoint(
++    const checkpoint::DeathCheckpoint& lhs,
++    const checkpoint::DeathCheckpoint& rhs) noexcept {
++    checkpoint::DungeonRunState left{};
++    checkpoint::DungeonRunState right{};
++    left.death = lhs;
++    right.death = rhs;
++    return same_run_state(left, right);
++}
++
+ }  // namespace
+ 
+ std::uint16_t affix_drop_chance_bp(std::uint16_t score) noexcept {
+     const std::uint32_t chance = 100U
+         + static_cast<std::uint32_t>(score) * 150U;
+     return static_cast<std::uint16_t>(chance > 5000U ? 5000U : chance);
+ }
+ 
+ std::uint8_t affix_item_level(
+     std::uint64_t depth, std::uint16_t score) noexcept {
+@@ -465,20 +501,21 @@ void DungeonSession::clear_transient_room_state() noexcept {
+     wave_delay_ticks_ = 0U;
+     pending_save_.reset();
+     pending_item_build_.reset();
+     pending_abyss_combat_.reset();
+     pending_abyss_reward_.reset();
+     clear_abyss_exit_confirmation();
+     room_progression_ = stable_state_.progression;
+     pending_room_experience_ = 0U;
+     last_room_experience_ = 0U;
+     last_levels_gained_ = 0U;
++    death_detected_emitted_ = false;
+     last_passive_tree_error_ = passives::PassiveTreeError::none;
+ }
+ 
+ void DungeonSession::construct_cleared_abyss_room() noexcept {
+     if (!checkpoint::valid_abyss_door_origin(stable_state_,
+             abyss::is_abyss_roll(stable_state_.current_room.seed))
+             || stable_state_.abyss.rules_version != abyss::kAbyssRulesVersion) {
+         enter_fault(DungeonFault::invalid_abyss_state);
+         return;
+     }
+@@ -964,22 +1001,160 @@ void DungeonSession::relay_combat_events() noexcept {
+ void DungeonSession::handle_player_defeat() noexcept {
+     if (phase_ == RoomPhase::faulted || !combat_.has_value()
+             || !combat_->player_defeated()) {
+         return;
+     }
+     if (stable_state_.current_room.is_abyss
+             && stable_state_.abyss.lifecycle
+                 == abyss::AbyssLifecycle::started) {
+         static_cast<void>(prepare_abyss_failure());
+     } else {
+-        reset_to_normal_room(false);
++        static_cast<void>(prepare_death_retreat());
++    }
++}
++
++bool DungeonSession::prepare_death_retreat() noexcept {
++    if (phase_ != RoomPhase::combat || pending_save_.has_value()
++            || !combat_.has_value()
++            || !combat_->death_snapshot().has_value()
++            || stable_state_.current_room.is_abyss
++            || stable_state_.death.lifecycle
++                != checkpoint::DeathLifecycle::none
++            || !checkpoint::valid_death_checkpoint_structural(
++                stable_state_.death)) {
++        enter_fault(DungeonFault::death_sequence_mismatch);
++        return false;
++    }
++    if (stable_state_.commit_generation
++            == (std::numeric_limits<std::uint64_t>::max)()) {
++        enter_fault(DungeonFault::commit_generation_overflow);
++        return false;
++    }
++    if (stable_state_.death_sequence
++            == (std::numeric_limits<std::uint64_t>::max)()) {
++        enter_fault(DungeonFault::death_sequence_overflow);
++        return false;
++    }
++    if (stable_state_.current_room.index
++            == (std::numeric_limits<std::uint64_t>::max)()) {
++        diagnostics_.room_index_overflow = true;
++        enter_fault(DungeonFault::room_index_overflow);
++        return false;
++    }
++    if (!death_detected_emitted_ && !can_emit(1U)) {
++        enter_fault(DungeonFault::event_overflow);
++        return false;
++    }
++
++    const combat::CombatDeathSnapshot frozen = *combat_->death_snapshot();
++    const std::uint64_t next_sequence = stable_state_.death_sequence + 1U;
++    const DeathRetreatTargetResult target = make_death_retreat_target(
++        stable_state_, next_sequence, rules_);
++    if (target.fault != DungeonFault::none) {
++        enter_fault(target.fault);
++        return false;
++    }
++
++    DungeonRunState next{};
++    try {
++        next = stable_state_;
++    } catch (...) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return false;
++    }
++    ++next.commit_generation;
++    next.death_sequence = next_sequence;
++    next.biases = {};
++    next.current_room.is_abyss = false;
++    next.last_transition = TransitionKind::death_retreat;
++    next.last_direction = ExitDirection::none;
++    next.death = make_death_checkpoint(
++        frozen, stable_state_.current_room, target.room);
++    if (!valid_death_checkpoint_dungeon(
++            next.death, stable_state_.current_room,
++            stable_state_.commit_generation, next_sequence, rules_)) {
++        enter_fault(DungeonFault::death_sequence_mismatch);
++        return false;
++    }
++
++    try {
++        pending_save_.emplace(PendingSave{
++            PendingSaveKind::death_retreat,
++            next.commit_generation,
++            std::move(next),
++            TransitionKind::death_retreat,
++            ExitDirection::none,
++            RoomPhase::combat,
++            0xFFFFU,
++            frozen,
++        });
++    } catch (...) {
++        enter_fault(DungeonFault::invalid_item_state);
++        return false;
++    }
++    phase_ = RoomPhase::committing;
++    if (!death_detected_emitted_) {
++        if (!emit(DungeonEventKind::death_detected,
++                &stable_state_, &pending_save_->next_state,
++                TransitionKind::death_retreat, ExitDirection::none)) {
++            pending_save_.reset();
++            return false;
++        }
++        death_detected_emitted_ = true;
++    }
++    return true;
++}
++
++bool DungeonSession::pending_death_cache_consistent() const noexcept {
++    const bool death_pending = pending_save_.has_value()
++        && pending_save_->kind == PendingSaveKind::death_retreat;
++    if (death_pending != (pending_save_.has_value()
++            && pending_save_->death_snapshot.has_value())) {
++        return false;
++    }
++    if (!death_pending) {
++        return !pending_save_.has_value()
++            || !pending_save_->death_snapshot.has_value();
++    }
++    if (!combat_.has_value() || !combat_->death_snapshot().has_value()
++            || !same_combat_death_snapshot(
++                *pending_save_->death_snapshot, *combat_->death_snapshot())) {
++        return false;
++    }
++    const auto& next = pending_save_->next_state;
++    const checkpoint::DeathCheckpoint expected = make_death_checkpoint(
++        *pending_save_->death_snapshot, stable_state_.current_room,
++        next.death.target_room);
++    if (!same_death_checkpoint(expected, next.death)
++            || stable_state_.death_sequence
++                == (std::numeric_limits<std::uint64_t>::max)()
++            || stable_state_.commit_generation
++                == (std::numeric_limits<std::uint64_t>::max)()) {
++        return false;
++    }
++    DungeonRunState exact{};
++    try {
++        exact = stable_state_;
++    } catch (...) {
++        return false;
+     }
++    ++exact.commit_generation;
++    ++exact.death_sequence;
++    exact.biases = {};
++    exact.current_room.is_abyss = false;
++    exact.last_transition = TransitionKind::death_retreat;
++    exact.last_direction = ExitDirection::none;
++    exact.death = expected;
++    return same_run_state(next, exact)
++        && valid_death_checkpoint_dungeon(
++            next.death, stable_state_.current_room,
++            stable_state_.commit_generation, next.death_sequence, rules_);
+ }
+ 
+ bool DungeonSession::claim_defeat_reward(
+     const combat::CombatEvent& event) noexcept {
+     const std::uint16_t ordinal = event.spawn_ordinal;
+     if (ordinal >= kGroundDropCapacity
+             || bit_is_set(stable_state_.item_ownership.claimed_drop_bits, ordinal)
+             || bit_is_set(rolled_drop_bits_, ordinal)) {
+         return false;
+     }
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index def2723..f531131 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -95,20 +95,21 @@ private:
+     void construct_cleared_abyss_room() noexcept;
+     void rebuild_committed_abyss_rewards() noexcept;
+     void attempt_abyss_reward_materialization() noexcept;
+     void construct_normal_room() noexcept;
+     void reset_to_normal_room(bool clear_queues) noexcept;
+     [[nodiscard]] bool prepare_abyss_start() noexcept;
+     [[nodiscard]] RequestResult prepare_abyss_failure() noexcept;
+     void start_next_wave() noexcept;
+     void relay_combat_events() noexcept;
+     void handle_player_defeat() noexcept;
++    [[nodiscard]] bool prepare_death_retreat() noexcept;
+     [[nodiscard]] bool claim_defeat_reward(
+         const combat::CombatEvent& event) noexcept;
+     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
+     void prepare_room_clear() noexcept;
+     void publish_room_clear() noexcept;
+     void settle_room_experience() noexcept;
+     [[nodiscard]] bool can_emit(std::size_t count) const noexcept;
+     void attempt_exit(ExitDirection direction) noexcept;
+     [[nodiscard]] bool prepare_transition(
+         TransitionKind kind,
+@@ -129,20 +130,21 @@ private:
+         DungeonRunState&& next,
+         PendingSaveKind kind,
+         RoomPhase resume_phase) noexcept;
+     [[nodiscard]] PlayerBuildResult build_for(
+         const checkpoint::DungeonRunState& state,
+         const items::EquipmentState* equipment_override = nullptr) const noexcept;
+     [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_abyss_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_abyss_reward_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_abyss_claim_cache_consistent() const noexcept;
++    [[nodiscard]] bool pending_death_cache_consistent() const noexcept;
+     void commit_pending_save(const PendingSaveResult& result) noexcept;
+     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
+     void enter_fault(DungeonFault fault) noexcept;
+     void emit_committed(
+         const checkpoint::RoomDescriptor& previous_room,
+         const DungeonRunState& current) noexcept;
+     bool emit(
+         DungeonEventKind kind,
+         const DungeonRunState* subject = nullptr,
+         const DungeonRunState* destination = nullptr,
+@@ -169,15 +171,16 @@ private:
+     RoomPhase phase_{RoomPhase::locked};
+     ExitDirection last_exit_{ExitDirection::none};
+     std::uint64_t session_tick_{};
+     DungeonDiagnostics diagnostics_{};
+     progression::ProgressionRules progression_rules_{
+         progression::default_progression_rules()};
+     progression::ProgressionState room_progression_{};
+     std::uint64_t pending_room_experience_{};
+     std::uint64_t last_room_experience_{};
+     std::uint8_t last_levels_gained_{};
++    bool death_detected_emitted_{};
+     passives::PassiveTreeError last_passive_tree_error_{
+         passives::PassiveTreeError::none};
+ };
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index 580c627..caa35e7 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -924,20 +924,31 @@ void DungeonSession::commit_pending_save(
+         return;
+     }
+     if (!pending_abyss_reward_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+     if (!pending_abyss_claim_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
++    if (!pending_death_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return;
++    }
++    const bool death_pending = pending_save_->kind
++        == PendingSaveKind::death_retreat;
++    if (death_pending && (!result.kind.has_value()
++            || *result.kind != PendingSaveKind::death_retreat)) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return;
++    }
+     if (result.disposition == SaveDisposition::indeterminate) {
+         enter_fault(DungeonFault::save_commit_indeterminate);
+         return;
+     }
+     const bool abyss_commit = pending_save_->kind == PendingSaveKind::abyss_start
+         || pending_save_->kind == PendingSaveKind::abyss_fail
+         || pending_save_->kind == PendingSaveKind::abyss_clear
+         || pending_save_->kind
+             == PendingSaveKind::abyss_reward_materialized;
+     const bool claim_pending = pending_save_->kind
+@@ -977,20 +988,21 @@ void DungeonSession::commit_pending_save(
+     const PendingSaveKind kind = pending_save_->kind;
+     const bool item_commit = kind == PendingSaveKind::equipment
+         || kind == PendingSaveKind::recipe;
+     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+     const bool claim_commit = kind == PendingSaveKind::abyss_reward_claim;
+     const bool start_commit = kind == PendingSaveKind::abyss_start;
+     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
+     const bool clear_commit = kind == PendingSaveKind::abyss_clear;
+     const bool reward_commit = kind
+         == PendingSaveKind::abyss_reward_materialized;
++    const bool death_commit = kind == PendingSaveKind::death_retreat;
+     const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
+     if (pickup_commit) {
+         if (pickup_ordinal >= ground_items_.size()) {
+             enter_fault(DungeonFault::save_receipt_mismatch);
+             return;
+         }
+         const GroundItem& ground = ground_items_[pickup_ordinal];
+         const items::ItemInstance* published = find_item(
+             pending_save_->next_state.item_ownership, ground.item.id);
+         if (!ground.active || ground.drop_ordinal != pickup_ordinal
+@@ -1006,36 +1018,50 @@ void DungeonSession::commit_pending_save(
+     combat::PlayerCombatBuild published_build{};
+     if (item_commit) {
+         if (!combat_.has_value()) {
+             enter_fault(DungeonFault::invalid_item_state);
+             return;
+         }
+         published_build = *pending_item_build_;
+     }
+     PendingAbyssReward published_reward{};
+     if (reward_commit) published_reward = *pending_abyss_reward_;
++    if (death_commit && !can_emit(1U)) {
++        enter_fault(DungeonFault::event_overflow);
++        return;
++    }
+ 
+     const checkpoint::RoomDescriptor previous_room =
+         stable_state_.current_room;
+     stable_state_ = std::move(pending_save_->next_state);
+     const RoomPhase resume_phase = pending_save_->resume_phase;
+     pending_save_.reset();
+     pending_item_build_.reset();
+     pending_abyss_reward_.reset();
+     if (start_commit) {
+         combat_.emplace(*pending_abyss_combat_);
+         pending_abyss_combat_.reset();
+         room_progression_ = stable_state_.progression;
+         phase_ = RoomPhase::locked;
+         return;
+     }
+     pending_abyss_combat_.reset();
++    if (death_commit) {
++        clear_transient_room_state();
++        phase_ = RoomPhase::death_pending;
++        static_cast<void>(emit(
++            DungeonEventKind::death_retreat_committed,
++            &stable_state_, nullptr,
++            TransitionKind::death_retreat,
++            ExitDirection::none));
++        return;
++    }
+     if (fail_commit) {
+         reset_to_normal_room(false);
+         return;
+     }
+     if (clear_commit) {
+         settle_room_experience();
+         room_progression_ = stable_state_.progression;
+         combat_->clear_abyss_rule_preserving_resources();
+         // prepare_room_clear reserved both publication slots. While committing,
+         // tick() is frozen and no other dungeon-event producer can consume them.
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index ac48289..003ebf3 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -50,20 +50,22 @@ enum class DungeonEventKind : std::uint8_t {
+     exits_opened,
+     abyss_exit_warning,
+     transition_requested,
+     transition_committed,
+     save_failed,
+     // Kept as a source-compatible name for pre-transaction consumers.
+     exit_committed,
+     room_destroyed,
+     room_reset,
+     faulted,
++    death_detected,
++    death_retreat_committed,
+ };
+ 
+ struct DungeonEvent final {
+     DungeonEventKind kind{};
+     std::uint64_t session_tick{};
+     std::uint64_t room_index{};
+     std::uint64_t room_seed{};
+     std::uint64_t destination_room_index{};
+     std::uint64_t destination_room_seed{};
+     TransitionKind transition{TransitionKind::none};
+@@ -204,31 +206,34 @@ enum class PendingSaveKind : std::uint8_t {
+     passive_tree,
+     loot_pickup,
+     equipment,
+     recipe,
+     abyss_start,
+     abyss_fail,
+     abyss_clear,
+     abyss_reward_materialized,
+     abyss_reward_claim,
+     abyss_abandon,
++    death_retreat,
+ };
+ 
+ struct PendingSave final {
+     PendingSaveKind kind{PendingSaveKind::transition};
+     std::uint64_t expected_generation{};
+     DungeonRunState next_state{};
+     TransitionKind transition{TransitionKind::none};
+     ExitDirection direction{ExitDirection::none};
+     RoomPhase resume_phase{RoomPhase::awaiting_exit};
+     std::uint16_t pickup_ordinal{0xFFFFU};
++    std::optional<combat::CombatDeathSnapshot> death_snapshot{};
+ };
+ 
+ struct PendingSaveResult final {
+     SaveDisposition disposition{SaveDisposition::indeterminate};
+     std::uint64_t generation{};
+     DungeonRunState verified_state{};
++    std::optional<PendingSaveKind> kind{};
+ };
+ 
+ using TransitionSaveResult = PendingSaveResult;
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/persistence/save_slot.cpp b/src/persistence/save_slot.cpp
+index b6f17f2..38ec3cc 100644
+--- a/src/persistence/save_slot.cpp
++++ b/src/persistence/save_slot.cpp
+@@ -38,20 +38,57 @@ bool same_ownership(const items::ItemOwnershipState& lhs,
+         || lhs.next_item_sequence != rhs.next_item_sequence) {
+         return false;
+     }
+     for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+         if (!same_item(lhs.items[index], rhs.items[index]))
+             return false;
+     }
+     return true;
+ }
+ 
++bool same_room(const checkpoint::RoomDescriptor& lhs,
++    const checkpoint::RoomDescriptor& rhs) noexcept {
++    return lhs.index == rhs.index && lhs.seed == rhs.seed
++        && lhs.depth == rhs.depth
++        && lhs.floor_room_index == rhs.floor_room_index
++        && lhs.entry == rhs.entry && lhs.ecology == rhs.ecology
++        && lhs.has_hole == rhs.has_hole && lhs.is_abyss == rhs.is_abyss;
++}
++
++bool same_death(const checkpoint::DeathCheckpoint& lhs,
++    const checkpoint::DeathCheckpoint& rhs) noexcept {
++    return lhs.lifecycle == rhs.lifecycle
++        && lhs.data_version == rhs.data_version
++        && lhs.death_depth == rhs.death_depth
++        && lhs.death_floor_room_index == rhs.death_floor_room_index
++        && lhs.death_ecology == rhs.death_ecology
++        && lhs.death_was_abyss == rhs.death_was_abyss
++        && lhs.source_kind == rhs.source_kind
++        && lhs.source_monster_id == rhs.source_monster_id
++        && lhs.source_detail_id == rhs.source_detail_id
++        && lhs.damage_type == rhs.damage_type
++        && lhs.raw_damage == rhs.raw_damage
++        && lhs.barrier_loss == rhs.barrier_loss
++        && lhs.health_loss == rhs.health_loss
++        && lhs.final_damage == rhs.final_damage
++        && lhs.recent_damage == rhs.recent_damage
++        && lhs.hp == rhs.hp && lhs.max_hp == rhs.max_hp
++        && lhs.barrier == rhs.barrier
++        && lhs.max_barrier == rhs.max_barrier
++        && lhs.armor == rhs.armor && lhs.evasion == rhs.evasion
++        && lhs.armor_reduction_bp == rhs.armor_reduction_bp
++        && lhs.evasion_rate_bp == rhs.evasion_rate_bp
++        && lhs.damage_reduction == rhs.damage_reduction
++        && lhs.damage_reduction_cap == rhs.damage_reduction_cap
++        && same_room(lhs.target_room, rhs.target_room);
++}
++
+ }  // namespace
+ 
+ const std::filesystem::path& slot_name(SaveSlot slot) {
+     static const std::filesystem::path a{"run_a.sav"};
+     static const std::filesystem::path b{"run_b.sav"};
+     return slot == SaveSlot::a ? a : b;
+ }
+ 
+ const std::filesystem::path& temp_name(SaveSlot slot) {
+     static const std::filesystem::path a{"run_a.tmp"};
+@@ -85,20 +122,22 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
+         && lhs.last_abyss_resolution.room_seed
+             == rhs.last_abyss_resolution.room_seed
+         && lhs.last_abyss_resolution.rule == rhs.last_abyss_resolution.rule
+         && lhs.last_abyss_resolution.total == rhs.last_abyss_resolution.total
+         && lhs.last_abyss_resolution.generated
+             == rhs.last_abyss_resolution.generated
+         && lhs.last_abyss_resolution.claimed
+             == rhs.last_abyss_resolution.claimed
+         && lhs.last_abyss_resolution.abandoned
+             == rhs.last_abyss_resolution.abandoned
++        && lhs.death_sequence == rhs.death_sequence
++        && same_death(lhs.death, rhs.death)
+         && lhs.progression.level == rhs.progression.level
+         && lhs.progression.experience == rhs.progression.experience
+         && lhs.progression.earned_passive_points
+             == rhs.progression.earned_passive_points
+         && lhs.progression.unspent_passive_points
+             == rhs.progression.unspent_passive_points
+         && lhs.passive_tree.allocated_bits == rhs.passive_tree.allocated_bits
+         && lhs.last_transition == rhs.last_transition
+         && lhs.last_direction == rhs.last_direction
+         && same_ownership(lhs.item_ownership, rhs.item_ownership);
+diff --git a/src/platform/raylib/dungeon_runtime.cpp b/src/platform/raylib/dungeon_runtime.cpp
+index 4efd86e..37c1857 100644
+--- a/src/platform/raylib/dungeon_runtime.cpp
++++ b/src/platform/raylib/dungeon_runtime.cpp
+@@ -46,21 +46,21 @@ void DungeonRuntime::sync_commit_status(
+ 
+ dungeon::PendingSaveResult DungeonRuntime::to_session_result(
+     persistence::SaveCommitResult&& saved) noexcept {
+     dungeon::SaveDisposition disposition = dungeon::SaveDisposition::indeterminate;
+     if (saved.state == persistence::SaveCommitState::committed) {
+         disposition = dungeon::SaveDisposition::committed;
+     } else if (saved.state == persistence::SaveCommitState::not_committed) {
+         disposition = dungeon::SaveDisposition::not_committed;
+     }
+     return {disposition, saved.verified_state.commit_generation,
+-        std::move(saved.verified_state)};
++        std::move(saved.verified_state), std::nullopt};
+ }
+ 
+ bool DungeonRuntime::initialize() noexcept {
+     session_.reset();
+     status_ = {};
+     if (dungeon::validate_rules(config_.rules) != dungeon::DungeonFault::none) {
+         state_ = DungeonRuntimeState::faulted;
+         return false;
+     }
+ 
+@@ -208,24 +208,26 @@ DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
+ }
+ 
+ void DungeonRuntime::service_pending_save() noexcept {
+     if (state() != DungeonRuntimeState::running || !session_.has_value()) {
+         return;
+     }
+     const dungeon::PendingSave* const pending = session_->pending_save_view();
+     if (pending == nullptr) {
+         return;
+     }
++    const dungeon::PendingSaveKind pending_kind = pending->kind;
+     status_.indicator = SaveIndicator::saving;
+     persistence::SaveCommitResult saved = store_.commit(pending->next_state);
+     sync_commit_status(saved);
+     dungeon::PendingSaveResult result = to_session_result(std::move(saved));
++    result.kind = pending_kind;
+     session_->resolve_pending_save(result);
+     if (session_->snapshot().phase == dungeon::RoomPhase::faulted) {
+         state_ = DungeonRuntimeState::faulted;
+     }
+ }
+ 
+ void DungeonRuntime::service_pending_transition() noexcept {
+     service_pending_save();
+ }
+ 
+diff --git a/tests/dungeon/dungeon_death_lifecycle_tests.cpp b/tests/dungeon/dungeon_death_lifecycle_tests.cpp
+index 598f0eb..5b386bb 100644
+--- a/tests/dungeon/dungeon_death_lifecycle_tests.cpp
++++ b/tests/dungeon/dungeon_death_lifecycle_tests.cpp
+@@ -1,38 +1,42 @@
+ #include "test_framework.hpp"
+ 
+ #include "abyss/abyss_rewards.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "combat/monster_affix_types.hpp"
+ #include "dungeon/death_checkpoint.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/dungeon_session.hpp"
+ #include "dungeon/room_generation.hpp"
++#include "../dungeon/dungeon_test_support.hpp"
+ 
+ #include <array>
+ #include <cstdint>
++#include <limits>
+ #include <utility>
+ 
+ namespace {
+ 
+ namespace abyss = arpg::abyss;
+ namespace checkpoint = arpg::dungeon::checkpoint;
+ namespace combat = arpg::combat;
+ namespace dungeon = arpg::dungeon;
+ 
+ using checkpoint::DeathLifecycle;
+ using checkpoint::DeathSourceKind;
+ using dungeon::DungeonRules;
+ using dungeon::DungeonSession;
+ using dungeon::DungeonSnapshot;
+ using dungeon::RequestResult;
+ using dungeon::RoomPhase;
++using dungeon::PendingSaveKind;
++using dungeon::SaveDisposition;
+ 
+ combat::CombatDeathSnapshot combat_death(
+     DeathSourceKind source = DeathSourceKind::monster_affix) noexcept {
+     combat::CombatDeathSnapshot result{};
+     result.source.monster = combat::MonsterId::fire_charger;
+     switch (source) {
+     case DeathSourceKind::monster_attack:
+         result.source.kind = combat::PlayerDamageSourceKind::monster_attack;
+         break;
+     case DeathSourceKind::projectile:
+@@ -386,28 +390,249 @@ arpg::test::Failure death_pending_rejects_every_gameplay_request() noexcept {
+     ARPG_REQUIRE(after.commit_generation == before.commit_generation);
+     ARPG_REQUIRE(after.death.has_value());
+     ARPG_REQUIRE(death_equals(after.death->checkpoint, expected.death));
+     ARPG_REQUIRE(!after.pending_save_kind.has_value());
+     ARPG_REQUIRE(!after.has_pending_transition);
+     ARPG_REQUIRE(after.ground_item_count == 0U);
+     ARPG_REQUIRE(!after.combat.has_value());
+     return {};
+ }
+ 
++bool drive_ordinary_death(DungeonSession& session) noexcept {
++    session.tick({});
++    if (!arpg::test::kill_current_player_through_combat(session)) return false;
++    session.tick({});
++    return session.snapshot().phase == RoomPhase::committing;
++}
++
++arpg::test::Failure ordinary_death_prepares_atomic_retreat() noexcept {
++    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
++        0xD34D6U, DungeonRules{}).state};
++    const auto stable_before = arpg::test::stable_state(session);
++    ARPG_REQUIRE(drive_ordinary_death(session));
++    const auto* pending = session.pending_save_view();
++    ARPG_REQUIRE(pending != nullptr);
++    ARPG_REQUIRE(pending->kind == PendingSaveKind::death_retreat);
++    ARPG_REQUIRE(pending->death_snapshot.has_value());
++    ARPG_REQUIRE(pending->expected_generation
++        == stable_before.commit_generation + 1U);
++    ARPG_REQUIRE(pending->next_state.death_sequence
++        == stable_before.death_sequence + 1U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).death_sequence
++        == stable_before.death_sequence);
++    ARPG_REQUIRE(pending->next_state.death.lifecycle
++        == DeathLifecycle::pending_continue);
++    ARPG_REQUIRE(pending->next_state.current_room.index
++        == stable_before.current_room.index);
++    ARPG_REQUIRE(!pending->next_state.current_room.is_abyss);
++    ARPG_REQUIRE((pending->next_state.biases
++        == std::array<std::uint32_t, 4>{}));
++    ARPG_REQUIRE(pending->next_state.last_transition
++        == checkpoint::TransitionKind::death_retreat);
++    ARPG_REQUIRE(pending->next_state.last_direction
++        == checkpoint::ExitDirection::none);
++    const auto snapshot = session.snapshot();
++    ARPG_REQUIRE(snapshot.death.has_value());
++    ARPG_REQUIRE(snapshot.death->saving);
++    ARPG_REQUIRE(!snapshot.death->can_continue);
++    ARPG_REQUIRE(snapshot.combat.has_value());
++    return {};
++}
++
++arpg::test::Failure ordinary_death_receipts_are_bound_to_kind() noexcept {
++    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
++        0xD34D7U, DungeonRules{}).state};
++    ARPG_REQUIRE(drive_ordinary_death(session));
++    const auto pending = *session.pending_save();
++    session.resolve_pending_save({SaveDisposition::committed,
++        pending.expected_generation, pending.next_state,
++        PendingSaveKind::transition});
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == dungeon::DungeonFault::save_receipt_mismatch);
++    return {};
++}
++
++arpg::test::Failure ordinary_death_commits_then_duplicate_faults() noexcept {
++    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
++        0xD34D8U, DungeonRules{}).state};
++    ARPG_REQUIRE(drive_ordinary_death(session));
++    const auto pending = *session.pending_save();
++    const dungeon::PendingSaveResult receipt{SaveDisposition::committed,
++        pending.expected_generation, pending.next_state,
++        PendingSaveKind::death_retreat};
++    session.resolve_pending_save(receipt);
++    auto snapshot = session.snapshot();
++    ARPG_REQUIRE(snapshot.phase == RoomPhase::death_pending);
++    ARPG_REQUIRE(snapshot.death.has_value());
++    ARPG_REQUIRE(!snapshot.death->saving);
++    ARPG_REQUIRE(snapshot.death->can_continue);
++    ARPG_REQUIRE(!snapshot.combat.has_value());
++    ARPG_REQUIRE(snapshot.ground_item_count == 0U);
++    session.resolve_pending_save(receipt);
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
++    return {};
++}
++
++arpg::test::Failure ordinary_death_not_committed_retries_identically() noexcept {
++    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
++        0xD34D9U, DungeonRules{}).state};
++    ARPG_REQUIRE(drive_ordinary_death(session));
++    const auto first = *session.pending_save();
++    std::uint32_t detected = 0U;
++    while (const auto event = session.try_pop_event()) {
++        if (event->kind == dungeon::DungeonEventKind::death_detected) ++detected;
++    }
++    ARPG_REQUIRE(detected == 1U);
++    session.resolve_pending_save({SaveDisposition::not_committed, 0U, {},
++        PendingSaveKind::death_retreat});
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
++    ARPG_REQUIRE(session.snapshot().combat.has_value());
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    session.tick({});
++    const auto second = *session.pending_save();
++    ARPG_REQUIRE(second.kind == first.kind);
++    ARPG_REQUIRE(second.expected_generation == first.expected_generation);
++    ARPG_REQUIRE(dungeon::same_run_state(second.next_state, first.next_state));
++    ARPG_REQUIRE(second.death_snapshot.has_value());
++    ARPG_REQUIRE(second.death_snapshot->recent_damage
++        == first.death_snapshot->recent_damage);
++    while (const auto event = session.try_pop_event()) {
++        if (event->kind == dungeon::DungeonEventKind::death_detected) ++detected;
++    }
++    ARPG_REQUIRE(detected == 1U);
++    return {};
++}
++
++arpg::test::Failure ordinary_death_receipt_fault_matrix() noexcept {
++    for (std::uint8_t mutation = 0U; mutation < 4U; ++mutation) {
++        DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
++            0xD34DA0U + mutation, DungeonRules{}).state};
++        ARPG_REQUIRE(drive_ordinary_death(session));
++        const auto pending = *session.pending_save();
++        dungeon::PendingSaveResult receipt{SaveDisposition::committed,
++            pending.expected_generation, pending.next_state,
++            PendingSaveKind::death_retreat};
++        switch (mutation) {
++        case 0U:
++            receipt.disposition = SaveDisposition::indeterminate;
++            break;
++        case 1U: receipt.kind.reset(); break;
++        case 2U: ++receipt.generation; break;
++        case 3U: ++receipt.verified_state.death.raw_damage; break;
++        }
++        session.resolve_pending_save(receipt);
++        ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
++        ARPG_REQUIRE(session.snapshot().diagnostics.fault
++            == (mutation == 0U
++                ? dungeon::DungeonFault::save_commit_indeterminate
++                : dungeon::DungeonFault::save_receipt_mismatch));
++    }
++    return {};
++}
++
++arpg::test::Failure death_overflows_fault_before_pending_publication() noexcept {
++    for (std::uint8_t mutation = 0U; mutation < 3U; ++mutation) {
++        auto state = dungeon::make_initial_run_state(
++            0xD34DB0U + mutation, DungeonRules{}).state;
++        if (mutation == 0U) {
++            state.commit_generation =
++                (std::numeric_limits<std::uint64_t>::max)();
++        } else if (mutation == 1U) {
++            state.death_sequence =
++                (std::numeric_limits<std::uint64_t>::max)();
++        } else {
++            state.current_room.index =
++                (std::numeric_limits<std::uint64_t>::max)();
++        }
++        DungeonSession session{DungeonRules{}, std::move(state)};
++        session.tick({});
++        ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(session));
++        session.tick({});
++        ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
++        ARPG_REQUIRE(!session.pending_save().has_value());
++        ARPG_REQUIRE(arpg::test::stable_state(session).death.lifecycle
++            == DeathLifecycle::none);
++    }
++    return {};
++}
++
++arpg::test::Failure death_wins_same_tick_and_events_are_exactly_once() noexcept {
++    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
++        0xD34DC0U, DungeonRules{}).state};
++    session.tick({});
++    arpg::test::EventSummary ignored{};
++    arpg::test::drain_all_events(session, ignored);
++    arpg::test::force_defeat_current_wave(session);
++    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(session));
++    session.tick({});
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
++    ARPG_REQUIRE(session.snapshot().progression.experience == 0U);
++    std::uint32_t detected = 0U;
++    std::uint32_t cleared = 0U;
++    while (const auto event = session.try_pop_event()) {
++        if (event->kind == dungeon::DungeonEventKind::death_detected) ++detected;
++        if (event->kind == dungeon::DungeonEventKind::room_cleared) ++cleared;
++    }
++    ARPG_REQUIRE(detected == 1U);
++    ARPG_REQUIRE(cleared == 0U);
++    const auto pending = *session.pending_save();
++    session.resolve_pending_save({SaveDisposition::committed,
++        pending.expected_generation, pending.next_state,
++        PendingSaveKind::death_retreat});
++    std::uint32_t committed = 0U;
++    while (const auto event = session.try_pop_event()) {
++        if (event->kind
++            == dungeon::DungeonEventKind::death_retreat_committed) ++committed;
++    }
++    ARPG_REQUIRE(committed == 1U);
++    ARPG_REQUIRE(session.snapshot().pending_room_experience == 0U);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++    return {};
++}
++
++arpg::test::Failure death_event_overflow_publishes_no_pending_save() noexcept {
++    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
++        0xD34DD0U, DungeonRules{}).state};
++    session.tick({});
++    arpg::test::EventSummary ignored{};
++    arpg::test::drain_all_events(session, ignored);
++    ARPG_REQUIRE(arpg::test::fill_dungeon_events(
++        session, DungeonSession::kDungeonEventCapacity)
++        == DungeonSession::kDungeonEventCapacity);
++    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(session));
++    session.tick({});
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == dungeon::DungeonFault::event_overflow);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(arpg::test::stable_state(session).death.lifecycle
++        == DeathLifecycle::none);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"ordinary pending load is read only", &ordinary_pending_load_is_read_only},
+     {"depth one and abyss pending loads are valid", &depth_one_and_abyss_pending_loads_are_valid},
+     {"none lifecycle constructs existing room", &none_lifecycle_constructs_the_existing_room},
+     {"target regeneration mutations fail closed", &target_regeneration_mutations_fail_closed},
+     {"sequence generation and anchor mutations fail closed", &sequence_generation_and_anchor_mutations_fail_closed},
+     {"first generation cannot claim committed death", &first_generation_cannot_claim_a_committed_death},
+     {"source catalog accepts canonical ids", &source_catalog_accepts_only_canonical_ids},
+     {"abyss failure relationships are defended", &abyss_failure_relationships_are_defended},
+     {"ordinary death preserves historical resolution", &ordinary_death_preserves_valid_historical_resolution},
+     {"death pending rejects gameplay requests", &death_pending_rejects_every_gameplay_request},
++    {"ordinary death prepares atomic retreat", &ordinary_death_prepares_atomic_retreat},
++    {"ordinary death receipts bind kind", &ordinary_death_receipts_are_bound_to_kind},
++    {"ordinary death commits and duplicate faults", &ordinary_death_commits_then_duplicate_faults},
++    {"ordinary death not committed retries identically", &ordinary_death_not_committed_retries_identically},
++    {"ordinary death receipt fault matrix", &ordinary_death_receipt_fault_matrix},
++    {"death overflows fault before pending", &death_overflows_fault_before_pending_publication},
++    {"death wins same tick and events exactly once", &death_wins_same_tick_and_events_are_exactly_once},
++    {"death event overflow publishes no pending", &death_event_overflow_publishes_no_pending_save},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept {
+     return arpg::test::make_suite("dungeon_death_lifecycle", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_lifecycle_tests.cpp b/tests/dungeon/dungeon_lifecycle_tests.cpp
+index a36d4a5..86d005a 100644
+--- a/tests/dungeon/dungeon_lifecycle_tests.cpp
++++ b/tests/dungeon/dungeon_lifecycle_tests.cpp
+@@ -412,34 +412,34 @@ arpg::test::Failure abyss_fail_commit_rebuilds_same_normal_room() noexcept {
+ }
+ 
+ arpg::test::Failure ordinary_reset_returns_accepted() noexcept {
+     arpg::dungeon::DungeonSession session;
+     ARPG_REQUIRE(session.reset_current_room()
+         == arpg::dungeon::RequestResult::accepted);
+     ARPG_REQUIRE(session.snapshot().phase == arpg::dungeon::RoomPhase::locked);
+     return {};
+ }
+ 
+-arpg::test::Failure ordinary_player_defeat_uses_normal_reset() noexcept {
++arpg::test::Failure ordinary_player_defeat_queues_death_retreat() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSession session;
+     session.tick({});
+     while (session.try_pop_event().has_value()) {
+     }
+-    test::DungeonSessionTestAccess::damage_current_player(
+-        session, session.snapshot().combat->player.max_hp);
++    ARPG_REQUIRE(test::kill_current_player_through_combat(session));
+     session.tick({});
+-    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::locked);
+-    ARPG_REQUIRE(session.snapshot().combat->player.hp
+-        == session.snapshot().combat->player.max_hp);
++    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
++    ARPG_REQUIRE(session.snapshot().combat->player.hp == 0);
+     ARPG_REQUIRE(!session.snapshot().is_abyss);
+-    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(session.pending_save()->kind
++        == dungeon::PendingSaveKind::death_retreat);
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_player_defeat_queues_one_fail() noexcept {
+     using namespace arpg;
+     dungeon::DungeonSession session{{}, lifecycle_available_state()};
+     ARPG_REQUIRE(commit_abyss_start(session));
+     session.tick({});
+     while (session.try_pop_event().has_value()) {
+     }
+@@ -769,21 +769,21 @@ arpg::test::Failure combat_events_relay_in_source_order() noexcept {
+ constexpr arpg::test::TestCase kCases[] = {
+     {"abyss clear requires two reserved event slots", &abyss_clear_requires_two_reserved_event_slots},
+     {"abyss clear exactly two slots publish both events", &abyss_clear_exactly_two_slots_publish_both_events},
+     {"abyss clear is atomic and restores life resources", &abyss_clear_is_atomic_and_restores_life_resources},
+     {"abyss clear removes environment hazard after commit", &abyss_clear_removes_environment_hazard_after_commit},
+     {"abyss reset queues fail and rejects reentry", &abyss_reset_queues_fail_and_rejects_reentry},
+     {"abyss fail not committed faults", &abyss_fail_not_committed_faults},
+     {"abyss fail receipt mismatch faults", &abyss_fail_receipt_mismatch_faults},
+     {"abyss fail commit rebuilds same normal room", &abyss_fail_commit_rebuilds_same_normal_room},
+     {"ordinary reset returns accepted", &ordinary_reset_returns_accepted},
+-    {"ordinary player defeat uses normal reset", &ordinary_player_defeat_uses_normal_reset},
++    {"ordinary player defeat queues death retreat", &ordinary_player_defeat_queues_death_retreat},
+     {"abyss player defeat queues one fail", &abyss_player_defeat_queues_one_fail},
+     {"abyss defeat does not depend on event delivery", &abyss_player_defeat_does_not_depend_on_event_delivery},
+     {"relay overflow fault precedes durable defeat", &relay_overflow_fault_precedes_durable_defeat},
+     {"invalid available checkpoint faults", &invalid_available_checkpoint_faults},
+     {"impossible available origin faults", &impossible_available_abyss_origin_faults_before_start},
+     {"deep abyss snapshot expanded legality", &deep_abyss_snapshot_uses_expanded_budget_legality},
+     {"construction and first tick are staged", &construction_and_first_tick_are_staged},
+     {"closed doors ignore pre-clear contact", &closed_doors_ignore_pre_clear_contact},
+     {"real combat clears once without respawn", &real_combat_clears_once_without_respawn},
+     {"reset reconstructs same room and clears queues", &reset_reconstructs_same_room_and_clears_queues},
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 3c2a5e2..fd2ee84 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -113,13 +113,13 @@ int main() {
+ 
+ 
+     if (stage10_abyss_stress_only()) {
+         const arpg::test::TestSuite stress_only[] = {
+             dungeon_abyss_stress_suite(),
+         };
+         return arpg::test::run_suites(stress_only, 2,
+             "stage 10 task 12 abyss stress");
+     }
+ 
+-    return arpg::test::run_suites(suites, 233,
+-        "stage 10 task 12 abyss stress validation");
++    return arpg::test::run_suites(suites, 241,
++        "stage 11a task 6 death retreat validation");
+ }
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index a5b261c..3824c57 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -30,20 +30,33 @@ struct DungeonSessionTestAccess final {
+         dungeon::ExitDirection direction) noexcept {
+         session.attempt_exit(direction);
+     }
+     static void damage_current_player(
+         dungeon::DungeonSession& session, int damage) noexcept {
+         if (session.combat_.has_value()) {
+             session.combat_->apply_player_damage(
+                 damage, combat::Vec3{}, combat::FeedbackLevel::light);
+         }
+     }
++    static bool kill_current_player_through_combat(
++        dungeon::DungeonSession& session) noexcept {
++        if (!session.combat_.has_value()) return false;
++        const combat::PlayerDamageSource source{
++            combat::PlayerDamageSourceKind::ground_hazard,
++            combat::MonsterId::fire_bomber,
++            static_cast<std::uint16_t>(combat::HazardKind::burning),
++        };
++        return session.combat_->apply_player_damage(
++            combat::DamagePacket{1000000},
++            combat::DamageDelivery::ground_or_environment,
++            source, combat::Vec3{}, combat::FeedbackLevel::heavy);
++    }
+     static const abyss::AbyssCombatConfig* pending_abyss_config(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.pending_abyss_combat_.has_value()
+             ? &session.pending_abyss_combat_->abyss
+             : nullptr;
+     }
+     static const abyss::AbyssCombatConfig* active_abyss_config(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.combat_.has_value()
+             ? &session.combat_->encounter_config_.abyss
+@@ -256,20 +269,26 @@ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept
+ 
+ inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::defeat_next_live_monster(session);
+ }
+ 
+ inline void damage_current_player(
+     dungeon::DungeonSession& session, int damage) noexcept {
+     DungeonSessionTestAccess::damage_current_player(session, damage);
+ }
+ 
++inline bool kill_current_player_through_combat(
++    dungeon::DungeonSession& session) noexcept {
++    return DungeonSessionTestAccess::kill_current_player_through_combat(
++        session);
++}
++
+ inline std::size_t fill_dungeon_events(
+     dungeon::DungeonSession& session, std::size_t count) noexcept {
+     return DungeonSessionTestAccess::fill_dungeon_events(session, count);
+ }
+ 
+ inline const dungeon::RoomEncounterPlan& encounter_plan(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::encounter_plan(session);
+ }
+ 
+diff --git a/tests/persistence/persistence_test_main.cpp b/tests/persistence/persistence_test_main.cpp
+index dd41b0c..e31d314 100644
+--- a/tests/persistence/persistence_test_main.cpp
++++ b/tests/persistence/persistence_test_main.cpp
+@@ -24,12 +24,12 @@ int main() {
+ #endif
+     const arpg::test::TestSuite suites[] = {
+         checkpoint_codec_suite(),
+         death_checkpoint_codec_suite(),
+         passive_tree_checkpoint_suite(),
+         save_store_suite(),
+         save_store_fault_suite(),
+         dungeon_save_integration_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 79, "stage 11a task 5 persistence");
++    return arpg::test::run_suites(suites, 80, "stage 11a task 6 persistence");
+ }
+diff --git a/tests/persistence/save_store_tests.cpp b/tests/persistence/save_store_tests.cpp
+index be15d25..d944567 100644
+--- a/tests/persistence/save_store_tests.cpp
++++ b/tests/persistence/save_store_tests.cpp
+@@ -58,20 +58,49 @@ checkpoint::DungeonRunState make_state(std::uint64_t generation,
+     state.current_room.seed = 20U + marker;
+     state.current_room.depth = 1U + marker;
+     state.current_room.floor_room_index = 1U;
+     state.current_room.entry = checkpoint::EntrySide::initial;
+     state.current_room.ecology = checkpoint::DungeonElement::fire;
+     state.last_transition = checkpoint::TransitionKind::none;
+     state.last_direction = checkpoint::ExitDirection::none;
+     return state;
+ }
+ 
++checkpoint::DungeonRunState with_pending_death(
++    checkpoint::DungeonRunState state) noexcept {
++    state.death_sequence = 1U;
++    state.biases = {};
++    state.current_room.is_abyss = false;
++    state.last_transition = checkpoint::TransitionKind::death_retreat;
++    state.last_direction = checkpoint::ExitDirection::none;
++    auto& death = state.death;
++    death.lifecycle = checkpoint::DeathLifecycle::pending_continue;
++    death.data_version = checkpoint::kDeathCheckpointDataVersion;
++    death.death_depth = state.current_room.depth;
++    death.death_floor_room_index = state.current_room.floor_room_index;
++    death.death_ecology = state.current_room.ecology;
++    death.source_kind = checkpoint::DeathSourceKind::unknown;
++    death.source_monster_id = 0xFFU;
++    death.damage_type = checkpoint::DeathDamageType::physical;
++    death.raw_damage = 10U;
++    death.health_loss = 10U;
++    death.final_damage = 10U;
++    death.recent_damage[0] = 10U;
++    death.max_hp = 10;
++    death.damage_reduction_cap = {{7500, 7500, 7500, 7500}};
++    death.target_room = {state.current_room.index + 1U, 0xD34DULL,
++        state.current_room.depth > 1U ? state.current_room.depth - 1U : 1U,
++        0U, checkpoint::EntrySide::initial,
++        checkpoint::DungeonElement::water, false, false};
++    return state;
++}
++
+ items::ItemInstance normal_item(std::uint64_t id,
+     std::uint8_t base_id = 1U) noexcept {
+     items::ItemInstance item{};
+     item.id = id;
+     item.base_id = base_id;
+     item.rarity = items::ItemRarity::normal;
+     item.item_level = 1U;
+     item.required_level = 1U;
+     return item;
+ }
+@@ -354,34 +383,56 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
+     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+     rhs = lhs;
+     ++rhs.item_ownership.next_item_sequence;
+     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+     rhs = lhs;
+     ++rhs.abyss.reward_revision;
+     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+     rhs = lhs;
+     rhs.last_abyss_resolution.room_seed = 1U;
+     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
++    rhs = lhs;
++    ++rhs.death_sequence;
++    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
++    lhs = with_pending_death(lhs);
++    rhs = lhs;
++    ++rhs.death.raw_damage;
++    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+ 
+     TempDirectory directory;
+     write_bytes(directory.path / "run_a.sav", encoded(lhs));
+     rhs = lhs;
+     rhs.item_ownership.items[0].id = 99U;
+     rhs.item_ownership.next_item_sequence = 100U;
+     write_bytes(directory.path / "run_b.sav", encoded(rhs));
+     auto store = make_store(directory.path);
+     const auto loaded = store.load();
+     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+     ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+     return {};
+ }
+ 
++arpg::test::Failure equal_generation_death_difference_conflicts() noexcept {
++    TempDirectory directory;
++    const auto lhs = with_pending_death(make_state(7U, 77U));
++    auto rhs = lhs;
++    ++rhs.death.raw_damage;
++    ++rhs.death.recent_damage[0];
++    write_bytes(directory.path / "run_a.sav", encoded(lhs));
++    write_bytes(directory.path / "run_b.sav", encoded(rhs));
++    auto store = make_store(directory.path);
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
++    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
++    return {};
++}
++
+ arpg::test::Failure migrated_flag_follows_the_selected_ab_slot() noexcept {
+     TempDirectory directory;
+     write_bytes(directory.path / "run_a.sav", encoded_v4(make_state(1U, 40U)));
+     write_bytes(directory.path / "run_b.sav", encoded(make_state(2U, 41U)));
+     auto store = make_store(directory.path);
+     auto loaded = store.load();
+     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+     ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::b);
+     ARPG_REQUIRE(!loaded.migrated);
+ 
+@@ -410,19 +461,20 @@ arpg::test::Failure migrated_flag_survives_invalid_slot_recovery() noexcept {
+ constexpr arpg::test::TestCase kCases[] = {
+     {"empty commit and reload", &empty_commit_and_reload},
+     {"highest generation wins and alternates", &highest_generation_wins_and_alternates},
+     {"equal generation same payload prefers a then writes b", &equal_generation_same_payload_prefers_a_then_writes_b},
+     {"missing slot is created", &missing_slot_is_created},
+     {"damaged slot is archived before two saves", &damaged_slot_is_archived_before_two_saves},
+     {"conflicting equal generation requires recovery", &conflicting_equal_generation_requires_recovery},
+     {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
+     {"variable length slots rotate large then small", &variable_length_slots_rotate_large_then_small},
+     {"same state includes ownership bytes and order", &same_state_includes_all_ownership_bytes_and_order},
++    {"equal generation death difference conflicts", &equal_generation_death_difference_conflicts},
+     {"migrated flag follows selected ab slot", &migrated_flag_follows_the_selected_ab_slot},
+     {"migrated flag survives invalid slot recovery", &migrated_flag_survives_invalid_slot_recovery},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite save_store_suite() noexcept {
+     return arpg::test::make_suite("save_store", kCases);
+ }
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+index 782c268..6c9ed5d 100644
+--- a/tests/platform/dungeon_runtime_tests.cpp
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -111,24 +111,28 @@ void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
+     for (std::size_t index = 0U; index < 4U; ++index)
+         bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8U));
+ }
+ 
+ std::vector<std::uint8_t> encode_v4(
+     const dungeon::DungeonRunState& state) {
+     auto encodable = state;
+     encodable.current_room.is_abyss = false;
+     encodable.abyss = {};
+     const auto encoded = persistence::encode_checkpoint(encodable);
+-    if (!encoded.has_value() || encoded->size() < 152U) return {};
+-    std::vector<std::uint8_t> v4(encoded->size() - 32U, 0U);
+-    std::copy_n(encoded->begin(), 120U, v4.begin());
+-    std::copy(encoded->begin() + 152U, encoded->end(), v4.begin() + 120U);
++    if (!encoded.has_value() || encoded->size() < 460U) return {};
++    auto v5 = *encoded;
++    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
++    v5[0U] = 'I'; v5[1U] = 'A'; v5[2U] = 'R'; v5[3U] = 'P';
++    v5[4U] = 'G'; v5[5U] = 'S'; v5[6U] = '0'; v5[7U] = '6';
++    std::vector<std::uint8_t> v4(v5.size() - 32U, 0U);
++    std::copy_n(v5.begin(), 120U, v4.begin());
++    std::copy(v5.begin() + 152U, v5.end(), v4.begin() + 120U);
+     v4[7U] = '5';
+     v4[88U] = static_cast<std::uint8_t>(state.current_room.entry);
+     v4[91U] = state.current_room.is_abyss ? 1U : 0U;
+     v4[92U] = static_cast<std::uint8_t>(state.last_transition);
+     v4[93U] = static_cast<std::uint8_t>(state.last_direction);
+     write_u32(v4, 8U, 4U);
+     write_u32(v4, 24U, static_cast<std::uint32_t>(v4.size() - 32U));
+     auto checksum = persistence::crc32_update(0U, v4.data() + 8U, 20U);
+     checksum = persistence::crc32_update(
+         checksum, v4.data() + 32U, v4.size() - 32U);
+@@ -830,20 +834,41 @@ arpg::test::Failure generic_service_adds_no_large_state_copies() noexcept {
+             "runtime save allocations=%llu allowed=%llu direct=%llu\n",
+             static_cast<unsigned long long>(runtime_allocations),
+             static_cast<unsigned long long>(allowed_allocations),
+             static_cast<unsigned long long>(direct_allocations));
+     }
+     ARPG_REQUIRE(runtime_allocations <= allowed_allocations);
+     ARPG_REQUIRE(same_ownership(*runtime.item_state(), expected.item_ownership));
+     return {};
+ }
+ 
++arpg::test::Failure runtime_echoes_death_pending_kind() noexcept {
++    TempDirectory directory;
++    auto config = config_for(directory, 0xD34D10U);
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    auto* const session = runtime.session();
++    ARPG_REQUIRE(session != nullptr);
++    session->tick({});
++    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(*session));
++    session->tick({});
++    ARPG_REQUIRE(session->pending_save_view() != nullptr);
++    ARPG_REQUIRE(session->pending_save_view()->kind
++        == dungeon::PendingSaveKind::death_retreat);
++    runtime.service_pending_save();
++    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
++    ARPG_REQUIRE(session->snapshot().phase == dungeon::RoomPhase::death_pending);
++    ARPG_REQUIRE(session->snapshot().death.has_value());
++    ARPG_REQUIRE(session->snapshot().death->can_continue);
++    return {};
++}
++
+ arpg::test::Failure item_request_fault_matrix_is_atomic_and_restart_consistent() noexcept {
+     constexpr std::array<ItemRequestKind, 4> kKinds{{
+         ItemRequestKind::pickup,
+         ItemRequestKind::equip,
+         ItemRequestKind::unequip,
+         ItemRequestKind::recipe,
+     }};
+     constexpr std::array<persistence::SaveCommitState, 3> kDispositions{{
+         persistence::SaveCommitState::committed,
+         persistence::SaveCommitState::not_committed,
+@@ -979,18 +1004,19 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"indeterminate passive save faults runtime", &indeterminate_passive_save_faults_runtime},
+     {"passive pending rejects door and descent requests", &passive_pending_rejects_door_and_descent_requests},
+     {"pre publish not committed maps to retryable error", &pre_publish_not_committed_maps_to_retryable_error},
+     {"indeterminate maps to faulted runtime and blocks selection", &indeterminate_maps_to_faulted_runtime_and_blocks_selection},
+     {"dual slot corruption requires recovery then archives new run", &dual_slot_corruption_requires_recovery_then_archives_new_run},
+     {"single slot corruption recovers and subsequent saves alternate", &single_slot_corruption_recovers_and_subsequent_saves_alternate},
+     {"invalid rules fault without creating save or session", &invalid_rules_fault_without_creating_save_or_session},
+     {"runtime exposes narrow item requests and stable item view", &runtime_exposes_narrow_item_requests_and_stable_item_view},
+     {"large inventory snapshot and views do not allocate", &large_inventory_snapshot_and_views_do_not_allocate},
+     {"generic service adds no large state copies", &generic_service_adds_no_large_state_copies},
++    {"runtime echoes death pending kind", &runtime_echoes_death_pending_kind},
+     {"item request fault matrix is atomic and restart consistent", &item_request_fault_matrix_is_atomic_and_restart_consistent},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept {
+     return arpg::test::make_suite("dungeon_runtime", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 64cab12..c609b2c 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -30,12 +30,12 @@ int main() {
+         monster_view_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         inventory_view_math_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 85, "stage 10 task 11 abyss visuals");
++    return arpg::test::run_suites(suites, 86, "stage 11a task 6 runtime");
+ }
