@@ -1,0 +1,883 @@
+# Review package: 89928b72db93435998f32954cd16539b557aa8dc..2358e54eb2ff75c45b6c84847aef3d6dd4665c96
+
+## Commits
+2358e54 refactor: guard raylib window lifetime
+
+## Files changed
+ docs/validation/raylib-host-refactor-baseline.md   |  20 +++
+ src/platform/raylib/CMakeLists.txt                 |   1 +
+ src/platform/raylib/host_window_lifetime.cpp       |  41 ++++++
+ src/platform/raylib/host_window_lifetime.hpp       |  40 ++++++
+ src/platform/raylib/raylib_host.cpp                |  17 +--
+ tests/platform/CMakeLists.txt                      |   1 +
+ .../host_validation_sequence_guard_test.cmake      |   2 +-
+ tests/platform/host_validation_source_test.cmake   | 124 ++++++++++++++++-
+ tests/platform/host_window_lifetime_tests.cpp      | 153 +++++++++++++++++++++
+ tests/platform/platform_test_main.cpp              |   4 +-
+ .../stage11d_loot_evidence_guard_test.cmake        |   2 +-
+ .../platform/stage12_environment_render_tests.cpp  |   3 +-
+ 12 files changed, 389 insertions(+), 19 deletions(-)
+
+## Diff
+diff --git a/docs/validation/raylib-host-refactor-baseline.md b/docs/validation/raylib-host-refactor-baseline.md
+index db0bc34..a982ca0 100644
+--- a/docs/validation/raylib-host-refactor-baseline.md
++++ b/docs/validation/raylib-host-refactor-baseline.md
+@@ -82,10 +82,30 @@ exclude whitespace-only lines.
+ The six-file surface comprises `host_validation.hpp`,
+ `host_validation_state.hpp`, `host_validation_runtime.cpp`,
+ `host_validation_stage11d.hpp`, `host_validation_stage11d_report.cpp`, and
+ `raylib_host.cpp`. The facade/runtime row comprises `host_validation.hpp` and
+ `host_validation_runtime.cpp`.
+ 
+ The final Host has zero occurrences of `HostValidationStateAccess`, all six
+ private Stage validation-state type names, direct `inject_stage*` or
+ `observe_stage*` calls, and direct Stage validation-summary writers. Its only
+ validation include is the public `host_validation.hpp` facade.
++
++## Task 8C window lifetime boundary
++
++Task 8C adds `HostWindowLifetime`, with a replaceable `HostWindowBackend`, as
++the only owner of the `SetConfigFlags` → `InitWindow` → `IsWindowReady`
++transaction and of `CloseWindow`.  `run_raylib_host` creates one lifetime
++object before its `try` block, explicitly closes it only after audio, combat
++renderer, and pause renderer shutdown, and relies on the destructor for all
++exceptional or early-return paths.  Its post-ready `ChangeDirectory`,
++`SetWindowMinSize`, `SetExitKey`, and validation foreground policy remain in
++the Host immediately after successful initialization.
++
++The Host remains above the 1,200-line target after this focused extraction.
++That remaining surface is intentional coordination rather than a mechanical
++split: startup owns save/settings/runtime and validation-facade construction;
++the main loop retains its frozen input, fixed-step, persistence, event-drain,
++and clean-exit transaction; and the presentation section retains draw order,
++capture ownership, evidence observation, and audio behavior.  These blocks
++cross the public runtime and renderer contracts, so moving them merely to
++reduce the line count would violate the structural-refactor behavior freeze.
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index c0432d7..1163d2f 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -18,20 +18,21 @@ add_library(arpg_raylib STATIC
+     debug_renderer.cpp
+     debug_overlay_renderer.cpp
+     fire_room_material_slice.cpp
+     dungeon_view_math.cpp
+     dungeon_runtime.cpp
+     environment_prop_layout.cpp
+     game_audio.cpp
+     ground_loot_view.cpp
+     host_frame_gate.cpp
+     host_settings_runtime.cpp
++    host_window_lifetime.cpp
+     host_input.cpp
+     host_launch_options.cpp
+     host_validation_input.cpp
+     host_validation_navigation.cpp
+     host_validation_runtime.cpp
+     host_validation_stage10_11.cpp
+     host_validation_stage11b.cpp
+     host_validation_stage11c.cpp
+     host_validation_stage11d_report.cpp
+     host_validation_stage11d_runtime.cpp
+diff --git a/src/platform/raylib/host_window_lifetime.cpp b/src/platform/raylib/host_window_lifetime.cpp
+new file mode 100644
+index 0000000..0446680
+--- /dev/null
++++ b/src/platform/raylib/host_window_lifetime.cpp
+@@ -0,0 +1,41 @@
++#include "host_window_lifetime.hpp"
++
++#include "raylib_host.hpp"
++#include "window_settings.hpp"
++
++#include <raylib.h>
++
++namespace arpg::platform {
++
++HostWindowLifetime::HostWindowLifetime(HostWindowBackend backend) noexcept
++    : backend_(backend) {}
++
++bool HostWindowLifetime::initialize(
++    const RaylibHostConfig& config,
++    const settings::SettingsData& settings) noexcept {
++    backend_.set_config_flags(initial_window_flags(settings));
++    backend_.init_window(config.window_width, config.window_height,
++        config.window_title);
++    ready_ = backend_.is_window_ready();
++    return ready_;
++}
++
++void HostWindowLifetime::close() noexcept {
++    if (!ready_) return;
++    ready_ = false;
++    backend_.close_window();
++}
++
++bool HostWindowLifetime::ready() const noexcept {
++    return ready_;
++}
++
++HostWindowLifetime::~HostWindowLifetime() {
++    close();
++}
++
++HostWindowBackend raylib_host_window_backend() noexcept {
++    return {&SetConfigFlags, &InitWindow, &IsWindowReady, &CloseWindow};
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_window_lifetime.hpp b/src/platform/raylib/host_window_lifetime.hpp
+new file mode 100644
+index 0000000..24df77a
+--- /dev/null
++++ b/src/platform/raylib/host_window_lifetime.hpp
+@@ -0,0 +1,40 @@
++#pragma once
++
++namespace arpg::settings {
++struct SettingsData;
++}
++
++namespace arpg::platform {
++
++struct RaylibHostConfig;
++
++struct HostWindowBackend final {
++    void (*set_config_flags)(unsigned int){};
++    void (*init_window)(int, int, const char*){};
++    bool (*is_window_ready)(){};
++    void (*close_window)(){};
++};
++
++class HostWindowLifetime final {
++public:
++    explicit HostWindowLifetime(HostWindowBackend backend) noexcept;
++
++    [[nodiscard]] bool initialize(
++        const RaylibHostConfig& config,
++        const settings::SettingsData& settings) noexcept;
++    void close() noexcept;
++    [[nodiscard]] bool ready() const noexcept;
++
++    ~HostWindowLifetime();
++
++    HostWindowLifetime(const HostWindowLifetime&) = delete;
++    HostWindowLifetime& operator=(const HostWindowLifetime&) = delete;
++
++private:
++    HostWindowBackend backend_{};
++    bool ready_{};
++};
++
++[[nodiscard]] HostWindowBackend raylib_host_window_backend() noexcept;
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 4527147..274adcc 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -8,20 +8,21 @@
+ #include "control_hints.hpp"
+ #include "death_overlay_font.hpp"
+ #include "core/fixed_step.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "game_audio.hpp"
+ #include "host_input.hpp"
+ #include "host_launch_options.hpp"
+ #include "host_settings_runtime.hpp"
+ #include "host_validation.hpp"
++#include "host_window_lifetime.hpp"
+ #include "inventory_renderer.hpp"
+ #include "passive_tree_renderer.hpp"
+ #include "passive_tree_view_math.hpp"
+ #include "pause_menu_renderer.hpp"
+ #include "pause_menu_state.hpp"
+ #include "pause_menu_view.hpp"
+ #include "ui_material.hpp"
+ #include "ui_text_bounds_audit.hpp"
+ #include "persistence/save_paths.hpp"
+ #include "platform/settings/settings_store.hpp"
+@@ -341,21 +342,21 @@ RaylibHostConfig make_production_host_config(HostLaunchOptions options) {
+     RaylibHostConfig config{};
+     config.save_directory = std::move(options.save_directory);
+     config.settings_directory = std::move(options.settings_directory);
+     config.screenshot_directory = std::move(options.screenshot_directory);
+     config.new_run_seed = options.new_run_seed;
+     config.continue_pending_death_on_launch = true;
+     return config;
+ }
+ 
+ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+-    bool window_ready = false;
++    HostWindowLifetime window{raylib_host_window_backend()};
+     try {
+         const auto save_directory = config.save_directory.has_value()
+             ? config.save_directory : persistence::default_save_directory();
+         if (!save_directory.has_value()) {
+             return HostExitCode::save_initialization_failed;
+         }
+         const auto settings_directory = config.settings_directory.has_value()
+             ? config.settings_directory : save_directory;
+         if (!settings_directory.has_value()) {
+             return HostExitCode::save_initialization_failed;
+@@ -387,25 +388,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             TraceLog(LOG_ERROR,
+                 "Stage 12 background-only capture refused a recovery save");
+             return HostExitCode::save_initialization_failed;
+         }
+ 
+         const auto validation_runtime =
+             HostValidationRuntime::create(config, loaded.status);
+         if (validation_runtime == nullptr) {
+             return HostExitCode::save_initialization_failed;
+         }
+-        SetConfigFlags(initial_window_flags(committed_settings));
+-        InitWindow(config.window_width, config.window_height,
+-            config.window_title);
+-        window_ready = IsWindowReady();
+-        if (!window_ready) {
++        if (!window.initialize(config, committed_settings)) {
+             TraceLog(LOG_ERROR, "raylib window initialization failed");
+             return HostExitCode::window_initialization_failed;
+         }
+         const bool directory_changed = config.validation_capture
+             ? ChangeDirectory(save_directory->string().c_str())
+             : ChangeDirectory(GetApplicationDirectory());
+         if (!directory_changed) {
+             TraceLog(LOG_WARNING, "failed to use screenshot working directory");
+         }
+         SetWindowMinSize(800, 450);
+@@ -1222,28 +1219,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     && (!config.validation_capture_file.has_value()
+                         || effective_generic_complete)) {
+                 begin_clean_exit();
+             }
+         }
+         validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         audio.shutdown();
+         renderer.shutdown_resources();
+         pause_menu_renderer.shutdown();
+-        CloseWindow();
++        window.close();
+         return HostExitCode::success;
+     } catch (const std::exception& exception) {
+         TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+-        if (window_ready) {
+-            CloseWindow();
+-        }
+         return HostExitCode::save_initialization_failed;
+     } catch (...) {
+         TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
+-        if (window_ready) {
+-            CloseWindow();
+-        }
+         return HostExitCode::save_initialization_failed;
+     }
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 44afadb..645077c 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -15,20 +15,21 @@ if(TARGET arpg_raylib)
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
+         task6_exit_unlock_view_tests.cpp
+         passive_tree_view_tests.cpp
+         host_launch_options_tests.cpp
+         dungeon_runtime_tests.cpp
+         pause_host_gate_tests.cpp
+         host_settings_runtime_tests.cpp
++        host_window_lifetime_tests.cpp
+         pause_menu_state_tests.cpp
+         pause_menu_view_tests.cpp
+         window_settings_tests.cpp
+         control_hints_tests.cpp
+         hud_view_model_tests.cpp
+         hud_notice_state_tests.cpp
+         loot_pickup_feedback_tests.cpp
+         hud_layout_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 0f892f5..3236859 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -1904,21 +1904,21 @@ function(task7c_assert_sequence_contract)
+         "validation_runtime->write_summaries("
+         _task7c_host_summary_position)
+     cpp_token_brace_depth("${_host_runtime}"
+         ${_task7c_host_summary_position} _task7c_host_summary_depth)
+     string(FIND "${_host_runtime}" "audio.shutdown();"
+         _task7c_audio_shutdown_position)
+     string(FIND "${_host_runtime}" "renderer.shutdown_resources();"
+         _task7c_renderer_shutdown_position)
+     string(FIND "${_host_runtime}" "pause_menu_renderer.shutdown();"
+         _task7c_pause_shutdown_position)
+-    string(FIND "${_host_runtime}" "CloseWindow();"
++    string(FIND "${_host_runtime}" "window.close();"
+         _task7c_window_shutdown_position)
+     if(NOT _task7c_host_summary_depth EQUAL 2
+             OR NOT _loop_end LESS _task7c_host_summary_position
+             OR NOT _task7c_host_summary_position LESS
+                 _task7c_audio_shutdown_position
+             OR NOT _task7c_audio_shutdown_position LESS
+                 _task7c_renderer_shutdown_position
+             OR NOT _task7c_renderer_shutdown_position LESS
+                 _task7c_pause_shutdown_position
+             OR NOT _task7c_pause_shutdown_position LESS
+diff --git a/tests/platform/host_validation_source_test.cmake b/tests/platform/host_validation_source_test.cmake
+index 4e43807..8500e24 100644
+--- a/tests/platform/host_validation_source_test.cmake
++++ b/tests/platform/host_validation_source_test.cmake
+@@ -12,20 +12,24 @@ set(_host_validation_state
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_state.hpp")
+ set(_host_validation_runtime
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+ set(_host_header_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
+ set(_host_frame_gate
+     "${SOURCE_ROOT}/src/platform/raylib/host_frame_gate.cpp")
+ set(_host_settings_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.hpp")
+ set(_host_settings_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.cpp")
++set(_host_window_lifetime_header
++    "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.hpp")
++set(_host_window_lifetime_source
++    "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.cpp")
+ 
+ foreach(_target IN ITEMS
+         "${_host_validation_header}"
+         "${_host_validation_state}"
+         "${_host_validation_runtime}")
+     if(NOT EXISTS "${_target}")
+         message(FATAL_ERROR
+             "Host validation runtime target is missing: ${_target}")
+     endif()
+ endforeach()
+@@ -33,37 +37,47 @@ endforeach()
+ if(NOT EXISTS "${_host_frame_gate}")
+     message(FATAL_ERROR
+         "T8A: Host frame gate source is missing: ${_host_frame_gate}")
+ endif()
+ foreach(_target IN ITEMS "${_host_settings_header}" "${_host_settings_source}")
+     if(NOT EXISTS "${_target}")
+         message(FATAL_ERROR
+             "T8B: Host settings runtime target is missing: ${_target}")
+     endif()
+ endforeach()
++foreach(_target IN ITEMS
++        "${_host_window_lifetime_header}"
++        "${_host_window_lifetime_source}")
++    if(NOT EXISTS "${_target}")
++        message(FATAL_ERROR
++            "T8C: Host window lifetime target is missing: ${_target}")
++    endif()
++endforeach()
+ 
+ set(_host_source "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+ foreach(_target IN ITEMS "${_host_header_path}" "${_host_source}" "${_raylib_cmake}")
+     if(NOT EXISTS "${_target}")
+         message(FATAL_ERROR
+             "Host validation integration target is missing: ${_target}")
+     endif()
+ endforeach()
+ 
+ file(READ "${_host_validation_header}" _facade_text)
+ file(READ "${_host_validation_state}" _state_text)
+ file(READ "${_host_validation_runtime}" _runtime_text)
+ file(READ "${_host_header_path}" _host_header_text)
+ file(READ "${_host_frame_gate}" _host_frame_gate_text)
+ file(READ "${_host_settings_header}" _host_settings_header_text)
+ file(READ "${_host_settings_source}" _host_settings_source_text)
++file(READ "${_host_window_lifetime_header}" _host_window_lifetime_header_text)
++file(READ "${_host_window_lifetime_source}" _host_window_lifetime_source_text)
+ file(READ "${_host_source}" _host_text)
+ file(READ "${_raylib_cmake}" _raylib_cmake_text)
+ 
+ # Translation-phase splices are folded by the shared lexer. Mask every
+ # conditional region after lexing so #if 0, #ifdef and spliced directives can
+ # never lend active ownership evidence to this architecture guard.
+ function(host_validation_unconditional_cpp_surface SOURCE OUT_SURFACE)
+     arpg_sanitize_cpp_source("${SOURCE}" _logical_source)
+     if(ARGC GREATER 2)
+         set("${ARGV2}" "${_logical_source}" PARENT_SCOPE)
+@@ -680,20 +694,26 @@ host_validation_unconditional_cpp_surface(
+ host_validation_unconditional_cpp_surface(
+     "${_host_header_text}" _host_header _host_header_lexical)
+ arpg_sanitize_cpp_source(
+     "${_host_frame_gate_text}" _host_frame_gate_lexical)
+ host_validation_unconditional_cpp_surface(
+     "${_host_settings_header_text}"
+     _host_settings_header _host_settings_header_lexical)
+ host_validation_unconditional_cpp_surface(
+     "${_host_settings_source_text}"
+     _host_settings_source_active _host_settings_source_lexical)
++host_validation_unconditional_cpp_surface(
++    "${_host_window_lifetime_header_text}"
++    _host_window_lifetime_header_active _host_window_lifetime_header_lexical)
++host_validation_unconditional_cpp_surface(
++    "${_host_window_lifetime_source_text}"
++    _host_window_lifetime_source_active _host_window_lifetime_source_lexical)
+ host_validation_unconditional_cpp_surface(
+     "${_host_text}" _host _host_lexical)
+ 
+ function(host_validation_expect_dead_control_hidden LABEL PREFIX SUFFIX)
+     set(_decision_anchor [=[decision.validation_complete = stage10_reached || stage11_reached
+         || stage11b_reached || stage11c_reached
+         || stage11d_reached || stage17_reached;]=])
+     host_validation_extract_sanitized_block("${_runtime}"
+         "PresentationDecision HostValidationRuntime::observe_presented_frame("
+         _decision_owner)
+@@ -2199,22 +2219,120 @@ host_validation_require_count("Task 8B Host direct settle method"
+     "${_run_host_direct}" "settings_runtime.settle(" 1)
+ host_validation_require_count("Task 8B Host legacy notice call removed"
+     "${_run_host_direct}" "consume_host_settings_notice(" 0)
+ host_validation_require_count("Task 8B Host legacy settle call removed"
+     "${_run_host_direct}" "settle_host_pause_command(" 0)
+ host_validation_require_canonical_order("Task 8B Host settings order"
+     "${_run_host_direct}"
+     "const PauseCommand pause_command = update_pause_menu("
+     "settings_runtime.consume_notice(pause_screen_before);"
+     "const std::uint64_t input_revision_before = input_settings.revision;"
+-    "settings_runtime.settle("
++        "settings_runtime.settle("
+     "if (input_settings.revision != input_revision_before)")
++
++# Task 8C centralizes only the raylib window's lifetime.  The Host retains
++# post-ready policy calls, while the dedicated owner preserves the exact
++# flags -> create -> readiness boundary and provides the sole CloseWindow call.
++foreach(_task8c_interface_member IN ITEMS
++        "struct HostWindowBackend final {"
++        "void (*set_config_flags)(unsigned int){}"
++        "void (*init_window)(int, int, const char*){}"
++        "bool (*is_window_ready)(){}"
++        "void (*close_window)(){}"
++        "class HostWindowLifetime final {"
++        "explicit HostWindowLifetime(HostWindowBackend backend) noexcept"
++        "[[nodiscard]] bool initialize("
++        "const RaylibHostConfig& config,"
++        "const settings::SettingsData& settings) noexcept"
++        "void close() noexcept"
++        "[[nodiscard]] bool ready() const noexcept"
++        "~HostWindowLifetime()"
++        "HostWindowLifetime(const HostWindowLifetime&) = delete"
++        "HostWindowLifetime& operator=(const HostWindowLifetime&) = delete"
++        "[[nodiscard]] HostWindowBackend raylib_host_window_backend() noexcept")
++    host_validation_require_count("Task 8C public interface member"
++        "${_host_window_lifetime_header_text}"
++        "${_task8c_interface_member}" 1)
++endforeach()
++foreach(_task8c_forbidden_owner IN ITEMS
++        "std::unique_ptr" "std::shared_ptr" "std::vector" "std::string")
++    host_validation_require_count("Task 8C lifetime heap ownership"
++        "${_host_window_lifetime_header_lexical}"
++        "${_task8c_forbidden_owner}" 0)
++endforeach()
++host_validation_extract_sanitized_block(
++    "${_host_window_lifetime_source_active}"
++    "bool HostWindowLifetime::initialize("
++    _task8c_initialize)
++set(_task8c_initialize_contract [=[
++bool HostWindowLifetime::initialize(
++    const RaylibHostConfig& config,
++    const settings::SettingsData& settings) noexcept {
++    backend_.set_config_flags(initial_window_flags(settings));
++    backend_.init_window(config.window_width, config.window_height,
++        config.window_title);
++    ready_ = backend_.is_window_ready();
++    return ready_;
++}
++]=])
++host_validation_require_exact_surface("Task 8C initialization order"
++    "${_task8c_initialize}" "${_task8c_initialize_contract}")
++host_validation_extract_sanitized_block(
++    "${_host_window_lifetime_source_active}"
++    "void HostWindowLifetime::close("
++    _task8c_close)
++set(_task8c_close_contract [=[
++void HostWindowLifetime::close() noexcept {
++    if (!ready_) return;
++    ready_ = false;
++    backend_.close_window();
++}
++]=])
++host_validation_require_exact_surface("Task 8C idempotent close"
++    "${_task8c_close}" "${_task8c_close_contract}")
++host_validation_extract_sanitized_block(
++    "${_host_window_lifetime_source_active}"
++    "HostWindowLifetime::~HostWindowLifetime("
++    _task8c_destructor)
++set(_task8c_destructor_contract [=[
++HostWindowLifetime::~HostWindowLifetime() {
++    close();
++}
++]=])
++host_validation_require_exact_surface("Task 8C destructor fallback"
++    "${_task8c_destructor}" "${_task8c_destructor_contract}")
++host_validation_require_canonical_count("Task 8C real raylib backend"
++    "${_host_window_lifetime_source_active}"
++    "return {&SetConfigFlags, &InitWindow, &IsWindowReady, &CloseWindow};" 1)
++host_validation_require_canonical_count("Task 8C Host owns one lifetime"
++    "${_run_host_direct}"
++    "HostWindowLifetime window{raylib_host_window_backend()};" 1)
++host_validation_require_canonical_count("Task 8C Host initializes one lifetime"
++    "${_run_host_direct}"
++    "if (!window.initialize(config, committed_settings))" 1)
++host_validation_require_canonical_count("Task 8C Host explicit close"
++    "${_run_host_direct}" "window.close();" 1)
++foreach(_task8c_removed_host_call IN ITEMS
++        "SetConfigFlags(" "InitWindow(" "IsWindowReady(" "CloseWindow(")
++    host_validation_require_count("Task 8C removed direct Host lifecycle"
++        "${_run_host_direct}" "${_task8c_removed_host_call}" 0)
++endforeach()
++host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
++    "${_run_host_direct}"
++    "window.initialize(config, committed_settings)"
++    "ChangeDirectory("
++    "SetWindowMinSize(800, 450);"
++    "SetExitKey(KEY_NULL);"
++    "audio.shutdown();"
++    "renderer.shutdown_resources();"
++    "pause_menu_renderer.shutdown();"
++    "window.close();")
+ set(_task8b_coordinator_declaration [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+             &live_settings, &input_settings, &settings_store,
+             settings_backend};]=])
+ set(_task8b_second_coordinator_mutation [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+             &live_settings, &input_settings, &settings_store,
+             settings_backend};
+         HostSettingsRuntime task8b_shadow_runtime{nullptr, &pause_menu,
+             &pause_menu.draft, &input_settings, &settings_store,
+             settings_backend};
+         static_cast<void>(task8b_shadow_runtime.settle(
+@@ -2495,21 +2613,21 @@ host_validation_require_canonical_order("Task 7C Host lifecycle"
+     "const bool selected_validation_capture_succeeded ="
+     "validation_runtime->observe_capture_result("
+     "const bool effective_generic_complete ="
+     "validation_runtime->write_summaries("
+     "audio.shutdown();")
+ 
+ host_validation_require_order("Host initialization" "${_run_host}"
+     "HostValidationRuntime::create(config, loaded.status)"
+     "if (validation_runtime == nullptr)"
+     "return HostExitCode::save_initialization_failed;"
+-    "InitWindow("
++    "window.initialize(config, committed_settings)"
+     "renderer.initialize_resources()"
+     "validation_runtime->set_render_readiness("
+     "hud_resources_ready, renderer.active_skill_assets_ready()")
+ host_validation_require_count("Host runtime creation" "${_run_host}"
+     "HostValidationRuntime::create(" 1)
+ host_validation_require_count("Host render readiness" "${_run_host}"
+     "validation_runtime->set_render_readiness(" 1)
+ 
+ host_validation_require_order("Host physical input split" "${_run_host}"
+     "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+@@ -2689,20 +2807,22 @@ foreach(_module IN ITEMS core combat dungeon persistence)
+         endif()
+     endforeach()
+ endforeach()
+ 
+ host_validation_assert_top_level_registration(
+     "${_raylib_cmake_text}" "host_validation_runtime.cpp")
+ host_validation_assert_top_level_registration(
+     "${_raylib_cmake_text}" "host_frame_gate.cpp")
+ host_validation_assert_top_level_registration(
+     "${_raylib_cmake_text}" "host_settings_runtime.cpp")
++host_validation_assert_top_level_registration(
++    "${_raylib_cmake_text}" "host_window_lifetime.cpp")
+ 
+ # Pressure-test both views: conditional code cannot lend positive evidence,
+ # while forbidden dependencies in any conditional branch remain visible to
+ # negative scans after comments and ordinary literals are removed.
+ set(_lexical_fixture [=[
+ // host_validation_hidden_comment
+ const char* text = "host_validation_hidden_string";
+ const char* raw = R"tag(host_validation_hidden_raw)tag";
+ #if 0
+ host_validation_hidden_inactive;
+diff --git a/tests/platform/host_window_lifetime_tests.cpp b/tests/platform/host_window_lifetime_tests.cpp
+new file mode 100644
+index 0000000..43e2487
+--- /dev/null
++++ b/tests/platform/host_window_lifetime_tests.cpp
+@@ -0,0 +1,153 @@
++#include "test_framework.hpp"
++
++#include "host_window_lifetime.hpp"
++#include "raylib_host.hpp"
++
++#include "platform/settings/settings_types.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace {
++
++namespace platform = arpg::platform;
++namespace settings = arpg::settings;
++
++enum class BackendEvent : unsigned char {
++    set_flags,
++    init_window,
++    query_ready,
++    close_window,
++};
++
++struct CountingBackend final {
++    bool is_ready{};
++    unsigned int flags{};
++    int width{};
++    int height{};
++    const char* title{};
++    std::array<BackendEvent, 4U> events{};
++    std::size_t event_count{};
++    std::size_t close_count{};
++};
++
++CountingBackend* active_backend{};
++
++void record(BackendEvent event) noexcept {
++    active_backend->events[active_backend->event_count++] = event;
++}
++
++void set_config_flags(unsigned int flags) noexcept {
++    active_backend->flags = flags;
++    record(BackendEvent::set_flags);
++}
++
++void init_window(int width, int height, const char* title) noexcept {
++    active_backend->width = width;
++    active_backend->height = height;
++    active_backend->title = title;
++    record(BackendEvent::init_window);
++}
++
++bool is_window_ready() noexcept {
++    record(BackendEvent::query_ready);
++    return active_backend->is_ready;
++}
++
++void close_window() noexcept {
++    ++active_backend->close_count;
++    record(BackendEvent::close_window);
++}
++
++[[nodiscard]] platform::HostWindowBackend backend_for(
++    CountingBackend& backend) noexcept {
++    active_backend = &backend;
++    return {&set_config_flags, &init_window, &is_window_ready, &close_window};
++}
++
++[[nodiscard]] platform::RaylibHostConfig configured_host() noexcept {
++    platform::RaylibHostConfig config{};
++    config.window_width = 960;
++    config.window_height = 540;
++    config.window_title = "lifetime test";
++    return config;
++}
++
++arpg::test::Failure failed_initialization_leaves_window_unowned() noexcept {
++    CountingBackend backend{};
++    const settings::SettingsData settings = settings::default_settings();
++    platform::HostWindowLifetime lifetime{backend_for(backend)};
++
++    ARPG_REQUIRE(!lifetime.initialize(configured_host(), settings));
++    ARPG_REQUIRE(!lifetime.ready());
++    ARPG_REQUIRE(backend.event_count == 3U);
++    ARPG_REQUIRE(backend.events[0] == BackendEvent::set_flags);
++    ARPG_REQUIRE(backend.events[1] == BackendEvent::init_window);
++    ARPG_REQUIRE(backend.events[2] == BackendEvent::query_ready);
++    ARPG_REQUIRE(backend.close_count == 0U);
++    return {};
++}
++
++arpg::test::Failure explicit_close_is_idempotent_after_ready_initialization()
++    noexcept {
++    CountingBackend backend{true};
++    const settings::SettingsData settings = settings::default_settings();
++    platform::HostWindowLifetime lifetime{backend_for(backend)};
++
++    ARPG_REQUIRE(lifetime.initialize(configured_host(), settings));
++    ARPG_REQUIRE(lifetime.ready());
++    ARPG_REQUIRE(backend.width == 960);
++    ARPG_REQUIRE(backend.height == 540);
++    ARPG_REQUIRE(backend.title == configured_host().window_title);
++    lifetime.close();
++    lifetime.close();
++    ARPG_REQUIRE(!lifetime.ready());
++    ARPG_REQUIRE(backend.close_count == 1U);
++    ARPG_REQUIRE(backend.event_count == 4U);
++    ARPG_REQUIRE(backend.events[3] == BackendEvent::close_window);
++    return {};
++}
++
++void initialize_then_return(CountingBackend& backend) noexcept {
++    const settings::SettingsData settings = settings::default_settings();
++    platform::HostWindowLifetime lifetime{backend_for(backend)};
++    static_cast<void>(lifetime.initialize(configured_host(), settings));
++}
++
++void initialize_then_throw(CountingBackend& backend) {
++    const settings::SettingsData settings = settings::default_settings();
++    platform::HostWindowLifetime lifetime{backend_for(backend)};
++    if (!lifetime.initialize(configured_host(), settings)) throw 1;
++    throw 2;
++}
++
++arpg::test::Failure destructor_closes_ready_window_on_early_return_and_exception()
++    noexcept {
++    CountingBackend early_return_backend{true};
++    initialize_then_return(early_return_backend);
++    ARPG_REQUIRE(early_return_backend.close_count == 1U);
++
++    CountingBackend exception_backend{true};
++    try {
++        initialize_then_throw(exception_backend);
++    } catch (int error) {
++        ARPG_REQUIRE(error == 2);
++    }
++    ARPG_REQUIRE(exception_backend.close_count == 1U);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"failed initialization leaves window unowned",
++        &failed_initialization_leaves_window_unowned},
++    {"explicit close is idempotent after ready initialization",
++        &explicit_close_is_idempotent_after_ready_initialization},
++    {"destructor closes ready window on early return and exception",
++        &destructor_closes_ready_window_on_early_return_and_exception},
++};
++
++}  // namespace
++
++arpg::test::TestSuite host_window_lifetime_suite() noexcept {
++    return arpg::test::make_suite("host_window_lifetime", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index c38b935..0b5cabb 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -24,20 +24,21 @@ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+ arpg::test::TestSuite window_settings_suite() noexcept;
+ arpg::test::TestSuite pause_host_gate_suite() noexcept;
+ arpg::test::TestSuite host_settings_runtime_suite() noexcept;
++arpg::test::TestSuite host_window_lifetime_suite() noexcept;
+ arpg::test::TestSuite control_hints_suite() noexcept;
+ arpg::test::TestSuite hud_view_model_suite() noexcept;
+ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
+ arpg::test::TestSuite ground_loot_view_suite() noexcept;
+ arpg::test::TestSuite material_loot_view_suite() noexcept;
+@@ -77,20 +78,21 @@ int main() {
+         active_skill_view_suite(),
+         active_skill_asset_suite(),
+         active_skill_loadout_view_suite(),
+         dungeon_view_math_suite(),
+         task6_exit_unlock_view_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         pause_host_gate_suite(),
+         host_settings_runtime_suite(),
++        host_window_lifetime_suite(),
+         inventory_view_math_suite(),
+         death_input_gate_suite(),
+         death_overlay_view_suite(),
+         pause_menu_state_suite(),
+         pause_menu_view_suite(),
+         window_settings_suite(),
+         control_hints_suite(),
+         hud_view_model_suite(),
+         hud_notice_state_suite(),
+         loot_pickup_feedback_suite(),
+@@ -106,13 +108,13 @@ int main() {
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 510,
++    return arpg::test::run_suites(suites, 513,
+         "host settings runtime contract");
+ }
+diff --git a/tests/platform/stage11d_loot_evidence_guard_test.cmake b/tests/platform/stage11d_loot_evidence_guard_test.cmake
+index 6825724..3a7adb1 100644
+--- a/tests/platform/stage11d_loot_evidence_guard_test.cmake
++++ b/tests/platform/stage11d_loot_evidence_guard_test.cmake
+@@ -1115,21 +1115,21 @@ if(NOT _task7c_main_loop_count EQUAL 1
+         "T7C-M25: Stage11D loot evidence guard cannot bind the Host main loop")
+ endif()
+ stage11d_matching_brace_position("${_stage11d_host_direct}"
+     ${_task7c_main_loop_open} _task7c_main_loop_close)
+ math(EXPR _task7c_post_loop_begin "${_task7c_main_loop_close} + 1")
+ string(SUBSTRING "${_stage11d_host_direct}" ${_task7c_post_loop_begin}
+     -1 _task7c_post_loop_surface)
+ string(REGEX REPLACE "[ \t\r\n]+" "" _task7c_post_loop_normalized
+     "${_task7c_post_loop_surface}")
+ set(_task7c_unconditional_summary_tail
+-    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();CloseWindow();returnHostExitCode::success;")
++    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();window.close();returnHostExitCode::success;")
+ string(FIND "${_task7c_post_loop_normalized}"
+     "${_task7c_unconditional_summary_tail}" _task7c_summary_tail_position)
+ if(NOT _task7c_summary_tail_position EQUAL 0)
+     message(FATAL_ERROR
+         "T7C-M25: Stage11D loot evidence guard rejected the unconditional Host summary tail")
+ endif()
+ 
+ set(_task7c_decision_begin "const PresentationDecision decision =")
+ set(_task7c_summary_begin "validation_runtime->write_summaries(")
+ foreach(_task7c_boundary IN ITEMS
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index f476efd..e75d09f 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -795,21 +795,22 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
+         const std::size_t draw = host.find(guarded_draw, host_gate);
+         ARPG_REQUIRE(draw != std::string::npos);
+         const std::size_t guard = host.rfind(
+             "if (!config.stage12_material_background_only", draw);
+         ARPG_REQUIRE(guard != std::string::npos);
+         ARPG_REQUIRE(draw - guard < 500U);
+     }
+ 
+     const std::size_t init_background_recovery = host.find(
+         "if ((config.stage12_material_background_only");
+-    const std::size_t init_window = host.find("InitWindow(");
++    const std::size_t init_window = host.find(
++        "window.initialize(config, committed_settings)");
+     ARPG_REQUIRE(init_background_recovery != std::string::npos);
+     ARPG_REQUIRE(init_window != std::string::npos);
+     ARPG_REQUIRE(init_background_recovery < init_window);
+     const std::size_t init_recovery_state = host.find(
+         "DungeonRuntimeState::recovery_required", init_background_recovery);
+     const std::size_t init_recovery_open = host.find(
+         '{', init_background_recovery);
+     ARPG_REQUIRE(init_recovery_state != std::string::npos);
+     ARPG_REQUIRE(init_recovery_open != std::string::npos);
+     ARPG_REQUIRE(init_recovery_state < init_recovery_open);

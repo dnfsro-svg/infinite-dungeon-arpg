@@ -1,0 +1,8 @@
+CMake Error at tests/platform/stage11d_loot_evidence_guard_self_test.cmake:72 (message):
+  Stage11D loot evidence guard accepted mutation: task7c M24 exit-flag
+  reference alias
+Call Stack (most recent call first):
+  tests/platform/stage11d_loot_evidence_guard_self_test.cmake:111 (expect_rejected)
+  tests/platform/stage11d_loot_evidence_guard_self_test.cmake:329 (task7c_run_m24_m25_cases)
+
+

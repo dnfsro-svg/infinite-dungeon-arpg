@@ -1,0 +1,538 @@
+# Review package: 9f2764e..9f0758c
+
+## Commits
+9f0758c chore: record task 3 round 2 commit
+7e2297b test: secure host validation lexical scan
+
+## Files changed
+ .../progress.md                                    |   8 +
+ .../task-3-report.md                               |  30 ++++
+ tests/dungeon/evidence_source_scan.cmake           | 172 ++++++++++++++++++++-
+ .../host_validation_sequence_guard_self_test.cmake | 139 ++++++++++++++++-
+ .../host_validation_sequence_guard_test.cmake      |   3 +-
+ 5 files changed, 345 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+index b71c801..79af875 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+@@ -27,10 +27,18 @@ same pause-resume predicate: BASE comparable runs observed 1 -> 4 and 1 -> 5,
+ while HEAD observed 1 -> 5. Record this as same failing predicate with
+ variable observed tick count; dependent validator not run, and fingerprints
+ were noncausal after the short circuit.
+ Task 3: review findings (round 1 required) — formal Step 4 failed and report reversed the short-circuit cause; Stage/source and host/sequence guards permit comment or cross-scope decoys; Stage11B private header missing from dependency scan; unused host include remains
+ Task 3: fix round 1/5 (all review findings addressed) — corrected formal
+ causality with comparable BASE evidence; Stage function isolation and
+ splice-safe decoys; host loop/function brace-depth scope checks including
+ lambda/out-of-loop full-call decoys; Stage11B header dependency mutation;
+ removed unused include. Serial build passed; focused selector lists exactly
+ six and passed 6/6 (581.18s). Fix commit: 94ac373.
++Task 3: scoped re-review findings (round 2 required) — raw run_raylib_host pre-crop loses earlier comment/string lexical state; splice mutation retains only the short call rather than the guard's full sampled-keys declaration
++Task 3: fix round 2/5 (all review findings addressed) — code-state lexer proves
++the raw crop candidate before function isolation; one-pass cropped sanitizer;
++block and valid escaped-multiline string pre-open decoys; complete-declaration
++splice decoy; LF/CRLF lexical equivalence checks and splice block-close fix in
++shared scanner. Task2 Stage10/11 scanner tests 4/4; serial build passed;
++focused exact-six selector 6/6 (416.28s). No formal Step4 rerun. Fix commit:
++7e2297b.
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md
+index 8692ed0..315dfb7 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md
+@@ -87,10 +87,40 @@ as minimal direct dependencies before the successful target links.
+   call placed in a lambda. It also rejects a spliced comment decoy.
+ - The Stage11B private header now participates in the forbidden-dependency
+   scan; its self-test injects a real `persistence/save_store.hpp` include.
+   The unused `stable_key_raylib.hpp` include was removed from the host.
+ - Final verification: serial MSVC build of `arpg_game`,
+   `arpg_platform_tests`, and `arpg_stage11b_settings_formal` passed in
+   187.2 seconds. The focused six-test CTest selector listed exactly six tests
+   and passed 6/6 in 581.18 seconds. Direct/self guard timings: evidence
+   7.19/102.21 seconds, architecture including its mutation checks 34.43
+   seconds, and sequence 74.43/339.27 seconds.
++
++## Review Fix Round 2
++
++- RED: a copied real host with the actual complete sampled-keys declaration
++  renamed, plus a block comment opened before the real function and containing
++  a complete decoy `run_raylib_host`, was incorrectly accepted by the raw
++  pre-crop guard (46.47 seconds). This proved that cropping before determining
++  lexical state discarded the comment opener.
++- GREEN: the guard now uses a delimiter-driven lexical state walk to locate
++  `run_raylib_host` only while in code, then performs the existing crop. The
++  crop is consequently safe and the function extractor sanitizes its crop
++  once rather than twice. The same block fixture is rejected with the sole
++  missing sampled-keys token diagnosis in 50.00 seconds. A valid ordinary
++  escaped-multiline string fixture, whose opener likewise precedes the fake
++  signature and whose every payload newline is a backslash splice, is also
++  covered by the sequence self-test. Raw strings are not claimed or parsed.
++- The continuation-comment mutation now puts the guard's complete sampled
++  declaration on the next physical line, not merely its short call. It is
++  rejected with the same single missing input-injection-token diagnosis
++  (48.40 seconds).
++- The shared scanner now preserves a block-comment close formed across a
++  splice. Small LF/CRLF equivalence fixtures cover line-comment splices,
++  escaped ordinary strings/chars, and block-close splices against the existing
++  sanitizer; Task2 Stage10/11 production and mutation scanner tests passed
++  4/4 in 92.67 seconds.
++- No formal Step 4 rerun was made; its BASE evidence and scope remain
++  unchanged. Final round-2 verification: direct sequence/evidence/
++  architecture guards passed in 51.38/2.85/12.88 seconds; serial MSVC target
++  build passed in 188.1 seconds; the exact six-test selector passed 6/6 in
++  416.28 seconds (sequence self-test 295.93 seconds).
+diff --git a/tests/dungeon/evidence_source_scan.cmake b/tests/dungeon/evidence_source_scan.cmake
+index 7a24a10..dc51b1c 100644
+--- a/tests/dungeon/evidence_source_scan.cmake
++++ b/tests/dungeon/evidence_source_scan.cmake
+@@ -129,28 +129,40 @@ function(evidence_sanitize_cpp_for_scan source output)
+         elseif(scan_state STREQUAL "block_comment")
+             if(character STREQUAL "*" AND next_found AND next_character STREQUAL "/")
+                 set(scan_state block_comment_close_pending)
+             endif()
+             if(character STREQUAL "${newline}" OR character STREQUAL "${carriage_return}")
+                 string(APPEND sanitized "${character}")
+             else()
+                 string(APPEND sanitized " ")
+             endif()
+         elseif(scan_state STREQUAL "block_comment_close_pending")
+-            if(character STREQUAL "/")
++            evidence_is_cpp_splice("${source}" ${character_index} is_splice)
++            if(character STREQUAL "${backslash}" AND is_splice)
++                set(scan_state block_comment_close_splice)
++            elseif(character STREQUAL "/")
+                 set(scan_state code)
+             endif()
+             if(character STREQUAL "${newline}" OR character STREQUAL "${carriage_return}")
+                 string(APPEND sanitized "${character}")
+             else()
+                 string(APPEND sanitized " ")
+             endif()
++        elseif(scan_state STREQUAL "block_comment_close_splice")
++            if(character STREQUAL "${newline}")
++                set(scan_state block_comment_close_pending)
++                string(APPEND sanitized "${character}")
++            elseif(character STREQUAL "${carriage_return}")
++                string(APPEND sanitized "${character}")
++            else()
++                message(FATAL_ERROR "Evidence scanner expected a block-comment splice terminator")
++            endif()
+         elseif(scan_state STREQUAL "string_literal"
+                 OR scan_state STREQUAL "character_literal")
+             evidence_is_cpp_splice("${source}" ${character_index} is_splice)
+             if(character STREQUAL "${backslash}" AND is_splice)
+                 set(splice_return_state "${scan_state}")
+                 set(scan_state literal_splice)
+             elseif(escaped)
+                 set(escaped FALSE)
+             elseif(character STREQUAL "${backslash}")
+                 set(escaped TRUE)
+@@ -170,22 +182,21 @@ function(evidence_sanitize_cpp_for_scan source output)
+             elseif(character STREQUAL "${carriage_return}")
+                 string(APPEND sanitized "${character}")
+             else()
+                 message(FATAL_ERROR "Evidence scanner expected a literal splice terminator")
+             endif()
+         endif()
+     endforeach()
+     set(${output} "${sanitized}" PARENT_SCOPE)
+ endfunction()
+ 
+-function(evidence_find_cpp_function_bounds source signature output_begin output_open output_end)
+-    evidence_sanitize_cpp_for_scan("${source}" sanitized_source)
++function(evidence_find_cpp_function_bounds_in_sanitized sanitized_source signature output_begin output_open output_end)
+     string(FIND "${sanitized_source}" "${signature}" function_begin)
+     if(function_begin EQUAL -1)
+         message(FATAL_ERROR "Evidence validation function is missing: ${signature}")
+     endif()
+     string(SUBSTRING "${sanitized_source}" ${function_begin} -1 function_tail)
+     string(FIND "${function_tail}" "{" brace_relative)
+     if(brace_relative EQUAL -1)
+         message(FATAL_ERROR "Evidence validation function has no opening brace: ${signature}")
+     endif()
+     math(EXPR brace_open "${function_begin} + ${brace_relative}")
+@@ -206,19 +217,170 @@ function(evidence_find_cpp_function_bounds source signature output_begin output_
+         endif()
+     endforeach()
+     if(function_end EQUAL -1)
+         message(FATAL_ERROR "Evidence validation function has unbalanced braces: ${signature}")
+     endif()
+     set(${output_begin} ${function_begin} PARENT_SCOPE)
+     set(${output_open} ${brace_open} PARENT_SCOPE)
+     set(${output_end} ${function_end} PARENT_SCOPE)
+ endfunction()
+ 
+-function(evidence_extract_cpp_function_block source signature output)
+-    evidence_find_cpp_function_bounds("${source}" "${signature}"
++function(evidence_find_cpp_function_bounds source signature output_begin output_open output_end)
++    evidence_sanitize_cpp_for_scan("${source}" sanitized_source)
++    evidence_find_cpp_function_bounds_in_sanitized("${sanitized_source}" "${signature}"
+         function_begin function_open function_end)
++    set(${output_begin} ${function_begin} PARENT_SCOPE)
++    set(${output_open} ${function_open} PARENT_SCOPE)
++    set(${output_end} ${function_end} PARENT_SCOPE)
++endfunction()
++
++function(evidence_extract_cpp_function_block source signature output)
+     evidence_sanitize_cpp_for_scan("${source}" sanitized_source)
++    evidence_find_cpp_function_bounds_in_sanitized("${sanitized_source}" "${signature}"
++        function_begin function_open function_end)
+     math(EXPR function_length "${function_end} - ${function_begin} + 1")
+     string(SUBSTRING "${sanitized_source}" ${function_begin} ${function_length}
+         function_block)
+     set(${output} "${function_block}" PARENT_SCOPE)
+ endfunction()
++
++# Finds a token only when it begins in C++ code. This is intentionally a
++# lexical state walk rather than regex comment stripping. It visits delimiters
++# instead of every source character so a caller can prove a raw crop starts in
++# code without paying for a full sanitized copy of a large translation unit.
++function(evidence_find_cpp_from_offset source start token output)
++    string(SUBSTRING "${source}" ${start} -1 source_tail)
++    string(FIND "${source_tail}" "${token}" relative_position)
++    if(relative_position EQUAL -1)
++        set(${output} -1 PARENT_SCOPE)
++    else()
++        math(EXPR absolute_position "${start} + ${relative_position}")
++        set(${output} ${absolute_position} PARENT_SCOPE)
++    endif()
++endfunction()
++
++function(evidence_find_cpp_code_token source token output)
++    string(ASCII 10 newline)
++    string(ASCII 13 carriage_return)
++    string(ASCII 34 double_quote)
++    string(ASCII 39 single_quote)
++    string(ASCII 92 backslash)
++    string(LENGTH "${source}" source_length)
++    set(scan 0)
++    set(scan_state code)
++    set(token_position -1)
++    while(scan LESS source_length)
++        evidence_find_cpp_from_offset("${source}" ${scan} "${token}" candidate)
++        if(scan_state STREQUAL "code")
++            set(next_marker -1)
++            foreach(marker IN ITEMS "/" "${double_quote}" "${single_quote}")
++                evidence_find_cpp_from_offset("${source}" ${scan} "${marker}" marker_position)
++                if(NOT marker_position EQUAL -1
++                        AND (next_marker EQUAL -1 OR marker_position LESS next_marker))
++                    set(next_marker ${marker_position})
++                endif()
++            endforeach()
++            if(NOT candidate EQUAL -1
++                    AND (next_marker EQUAL -1 OR candidate LESS next_marker))
++                set(token_position ${candidate})
++                break()
++            endif()
++            if(next_marker EQUAL -1)
++                break()
++            endif()
++            string(SUBSTRING "${source}" ${next_marker} 1 marker_character)
++            if(marker_character STREQUAL "/")
++                math(EXPR after_slash "${next_marker} + 1")
++                evidence_cpp_logical_next_character("${source}" ${after_slash}
++                    next_character next_found)
++                if(next_found AND next_character STREQUAL "/")
++                    set(scan_state line_comment)
++                elseif(next_found AND next_character STREQUAL "*")
++                    set(scan_state block_comment)
++                endif()
++            elseif(marker_character STREQUAL "${double_quote}")
++                set(scan_state string_literal)
++            else()
++                set(scan_state character_literal)
++            endif()
++            math(EXPR scan "${next_marker} + 1")
++        elseif(scan_state STREQUAL "line_comment")
++            set(next_marker -1)
++            foreach(marker IN ITEMS "${backslash}" "${newline}" "${carriage_return}")
++                evidence_find_cpp_from_offset("${source}" ${scan} "${marker}" marker_position)
++                if(NOT marker_position EQUAL -1
++                        AND (next_marker EQUAL -1 OR marker_position LESS next_marker))
++                    set(next_marker ${marker_position})
++                endif()
++            endforeach()
++            if(next_marker EQUAL -1)
++                break()
++            endif()
++            string(SUBSTRING "${source}" ${next_marker} 1 marker_character)
++            if(marker_character STREQUAL "${backslash}")
++                evidence_is_cpp_splice("${source}" ${next_marker} is_splice)
++                if(is_splice)
++                    math(EXPR after_backslash "${next_marker} + 1")
++                    string(SUBSTRING "${source}" ${after_backslash} 1 splice_character)
++                    if(splice_character STREQUAL "${carriage_return}")
++                        math(EXPR scan "${next_marker} + 3")
++                    else()
++                        math(EXPR scan "${next_marker} + 2")
++                    endif()
++                    continue()
++                endif()
++            elseif(marker_character STREQUAL "${newline}"
++                    OR marker_character STREQUAL "${carriage_return}")
++                set(scan_state code)
++            endif()
++            math(EXPR scan "${next_marker} + 1")
++        elseif(scan_state STREQUAL "block_comment")
++            evidence_find_cpp_from_offset("${source}" ${scan} "*" next_marker)
++            if(next_marker EQUAL -1)
++                break()
++            endif()
++            math(EXPR after_star "${next_marker} + 1")
++            evidence_cpp_logical_next_character("${source}" ${after_star}
++                next_character next_found)
++            if(next_found AND next_character STREQUAL "/")
++                set(scan_state code)
++            endif()
++            math(EXPR scan "${next_marker} + 1")
++        else()
++            if(scan_state STREQUAL "string_literal")
++                set(quote_character "${double_quote}")
++            else()
++                set(quote_character "${single_quote}")
++            endif()
++            set(next_marker -1)
++            foreach(marker IN ITEMS "${backslash}" "${quote_character}")
++                evidence_find_cpp_from_offset("${source}" ${scan} "${marker}" marker_position)
++                if(NOT marker_position EQUAL -1
++                        AND (next_marker EQUAL -1 OR marker_position LESS next_marker))
++                    set(next_marker ${marker_position})
++                endif()
++            endforeach()
++            if(next_marker EQUAL -1)
++                break()
++            endif()
++            string(SUBSTRING "${source}" ${next_marker} 1 marker_character)
++            if(marker_character STREQUAL "${backslash}")
++                evidence_is_cpp_splice("${source}" ${next_marker} is_splice)
++                if(is_splice)
++                    math(EXPR after_backslash "${next_marker} + 1")
++                    string(SUBSTRING "${source}" ${after_backslash} 1 splice_character)
++                    if(splice_character STREQUAL "${carriage_return}")
++                        math(EXPR scan "${next_marker} + 3")
++                    else()
++                        math(EXPR scan "${next_marker} + 2")
++                    endif()
++                else()
++                    math(EXPR scan "${next_marker} + 2")
++                endif()
++            else()
++                set(scan_state code)
++                math(EXPR scan "${next_marker} + 1")
++            endif()
++        endif()
++    endwhile()
++    set(${output} ${token_position} PARENT_SCOPE)
++endfunction()
+diff --git a/tests/platform/host_validation_sequence_guard_self_test.cmake b/tests/platform/host_validation_sequence_guard_self_test.cmake
+index 83b255f..5d1b1ee 100644
+--- a/tests/platform/host_validation_sequence_guard_self_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_self_test.cmake
+@@ -1,17 +1,60 @@
+ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
+ endif()
+ 
++include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
++
+ set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
+ file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
+ 
++function(arpg_assert_lexical_token_equivalence LABEL SOURCE TOKEN EXPECTED_CODE)
++    evidence_sanitize_cpp_for_scan("${SOURCE}" _sanitized_fixture)
++    string(FIND "${_sanitized_fixture}" "${TOKEN}" _sanitized_position)
++    evidence_find_cpp_code_token("${SOURCE}" "${TOKEN}" _fast_position)
++    if(EXPECTED_CODE)
++        if(_sanitized_position EQUAL -1 OR _fast_position EQUAL -1
++                OR NOT _sanitized_position EQUAL _fast_position)
++            message(FATAL_ERROR "lexical scanner mismatch for ${LABEL}: ${_sanitized_position}/${_fast_position}")
++        endif()
++    elseif(NOT _sanitized_position EQUAL -1 OR NOT _fast_position EQUAL -1)
++        message(FATAL_ERROR "lexical scanner exposed hidden token for ${LABEL}: ${_sanitized_position}/${_fast_position}")
++    endif()
++endfunction()
++
++set(_lexical_lf_fixture [=[
++// lexical_line_hidden \
++lexical_line_hidden
++lexical_line_visible;
++const char* escaped = "lexical_string_hidden \" still hidden";
++const char escaped_quote = '\'';
++/* lexical_block_hidden *\
++/ lexical_block_visible;
++]=])
++string(ASCII 10 _lexical_lf)
++string(ASCII 13 _lexical_cr)
++string(REPLACE "${_lexical_lf}" "${_lexical_cr}${_lexical_lf}"
++    _lexical_crlf_fixture "${_lexical_lf_fixture}")
++foreach(_fixture_name IN ITEMS lf crlf)
++    set(_fixture_source "${_lexical_${_fixture_name}_fixture}")
++    arpg_assert_lexical_token_equivalence("${_fixture_name} line splice"
++        "${_fixture_source}" "lexical_line_hidden" FALSE)
++    arpg_assert_lexical_token_equivalence("${_fixture_name} visible code"
++        "${_fixture_source}" "lexical_line_visible" TRUE)
++    arpg_assert_lexical_token_equivalence("${_fixture_name} escaped string"
++        "${_fixture_source}" "lexical_string_hidden" FALSE)
++    arpg_assert_lexical_token_equivalence("${_fixture_name} block close splice"
++        "${_fixture_source}" "lexical_block_hidden" FALSE)
++    arpg_assert_lexical_token_equivalence("${_fixture_name} block close visible"
++        "${_fixture_source}" "lexical_block_visible" TRUE)
++endforeach()
++
+ set(_split_fixed_step "${GUARD_TEST_ROOT}/split-fixed-step-conditions.cpp")
+ file(WRITE "${_split_fixed_step}" [=[
+ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+ while (!exit_requested) {
+     const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+     inject_stage11b_physical_edges();
+     inject_stage11c_physical_edges();
+     inject_stage11d_physical_edges();
+     inject_stage17_physical_edges();
+     map_host_frame_input();
+@@ -41,23 +84,117 @@ execute_process(
+     RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+ if(_result EQUAL 0)
+     message(FATAL_ERROR "Host validation sequence guard accepted split fixed-step conditions")
+ endif()
+ if(NOT "${_stdout}${_stderr}" MATCHES
+         "rejected fixed-step movement priority[ \t\r\n]+structure")
+     message(FATAL_ERROR "split fixed-step conditions failed for wrong reason: ${_stdout}${_stderr}")
+ endif()
+ 
+ file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" _host_source)
++
++# The raw pre-crop used by the guard must not treat a signature inside a
++# comment that began before the candidate as executable code.
++string(REPLACE
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();"
++    _precrop_comment_host "${_host_source}")
++string(FIND "${_precrop_comment_host}" "HostExitCode run_raylib_host("
++    _actual_runtime_begin)
++set(_precrop_comment_decoy [=[/*
++HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
++    try {
++        while (!exit_requested) {
++            const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
++            inject_stage11b_physical_edges();
++            inject_stage11c_physical_edges();
++            inject_stage11d_physical_edges();
++            inject_stage17_physical_edges();
++            map_host_frame_input();
++            if (!step_death) {
++                if (config.stage11_validation != Stage11ValidationScenario::none) {
++                    step_movement = host_validation::stage11_validation_input(config, stage11_validation_state);
++                } else if (config.stage10_validation != Stage10ValidationScenario::none) {
++                    step_movement = host_validation::stage10_validation_input(config, stage10_validation_state);
++                } else {
++                    step_movement = movement;
++                }
++            }
++            runtime.fixed_tick(step_movement,
++                loot_pickup_policy(live_settings.loot_filter_mode));
++        }
++        host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,
++            pause_menu);
++        write_stage11c_hud_validation_summary(config, stage11c_validation_state);
++        write_stage11d_loot_validation_summary(config, stage11d_validation_state, pause_menu);
++        write_stage17_validation_summary(config, *stage17_validation_state);
++        audio.shutdown();
++    } catch (...) {
++    }
++}
++*/
++]=])
++string(SUBSTRING "${_precrop_comment_host}" 0 ${_actual_runtime_begin}
++    _precrop_prefix)
++string(SUBSTRING "${_precrop_comment_host}" ${_actual_runtime_begin} -1
++    _precrop_suffix)
++set(_precrop_comment_host
++    "${_precrop_prefix}${_precrop_comment_decoy}${_precrop_suffix}")
++set(_precrop_comment "${GUARD_TEST_ROOT}/precrop-comment-decoy.cpp")
++file(WRITE "${_precrop_comment}" "${_precrop_comment_host}")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_precrop_comment}" -P "${_guard}"
++    RESULT_VARIABLE _precrop_comment_result
++    OUTPUT_VARIABLE _precrop_comment_stdout ERROR_VARIABLE _precrop_comment_stderr)
++if(_precrop_comment_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted pre-crop comment decoy")
++endif()
++if(NOT "${_precrop_comment_stdout}${_precrop_comment_stderr}" MATCHES
++        "missing input injection chain token")
++    message(FATAL_ERROR "pre-crop comment decoy failed for wrong reason: ${_precrop_comment_stdout}${_precrop_comment_stderr}")
++endif()
++
++string(SUBSTRING "${_precrop_comment_decoy}" 2 -1 _precrop_string_payload)
++string(ASCII 10 _string_newline)
++string(ASCII 92 _string_backslash)
++string(REPLACE "${_string_newline}" "${_string_backslash}${_string_newline}"
++    _precrop_string_payload "${_precrop_string_payload}")
++set(_precrop_string_decoy
++    "const char* ignored_runtime_signature = \"${_precrop_string_payload}\";")
++string(REPLACE "${_string_backslash}${_string_newline}" ""
++    _precrop_string_without_splices "${_precrop_string_decoy}")
++string(FIND "${_precrop_string_without_splices}" "${_string_newline}"
++    _precrop_unspliced_newline)
++if(NOT _precrop_unspliced_newline EQUAL -1)
++    message(FATAL_ERROR "pre-crop string fixture has a payload newline without a splice")
++endif()
++set(_precrop_string_host
++    "${_precrop_prefix}${_precrop_string_decoy}${_string_newline}${_precrop_suffix}")
++set(_precrop_string "${GUARD_TEST_ROOT}/precrop-string-decoy.cpp")
++file(WRITE "${_precrop_string}" "${_precrop_string_host}")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_precrop_string}" -P "${_guard}"
++    RESULT_VARIABLE _precrop_string_result
++    OUTPUT_VARIABLE _precrop_string_stdout ERROR_VARIABLE _precrop_string_stderr)
++if(_precrop_string_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted pre-crop string decoy")
++endif()
++if(NOT "${_precrop_string_stdout}${_precrop_string_stderr}" MATCHES
++        "missing input injection chain token")
++    message(FATAL_ERROR "pre-crop string decoy failed for wrong reason: ${_precrop_string_stdout}${_precrop_string_stderr}")
++endif()
++
+ string(REPLACE
+     "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+-    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();\n            // decoy continues \\\nsample_physical_keys()"
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();\n            // decoy continues \\\nconst PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+     _spliced_input_host "${_host_source}")
+ set(_spliced_input "${GUARD_TEST_ROOT}/spliced-input-decoy.cpp")
+ file(WRITE "${_spliced_input}" "${_spliced_input_host}")
+ execute_process(
+     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+         "-DHOST_OVERRIDE=${_spliced_input}" -P "${_guard}"
+     RESULT_VARIABLE _spliced_result OUTPUT_VARIABLE _spliced_stdout ERROR_VARIABLE _spliced_stderr)
+ if(_spliced_result EQUAL 0)
+     message(FATAL_ERROR "Host validation sequence guard accepted spliced input decoy")
+ endif()
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 9d5afc0..fd62638 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -6,21 +6,22 @@ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+ 
+ set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ if(DEFINED HOST_OVERRIDE)
+     set(_host "${HOST_OVERRIDE}")
+ endif()
+ if(NOT EXISTS "${_host}")
+     message(FATAL_ERROR "Host validation sequence target is missing: ${_host}")
+ endif()
+ 
+ file(READ "${_host}" _host_text)
+-string(FIND "${_host_text}" "HostExitCode run_raylib_host(" _runtime_candidate)
++evidence_find_cpp_code_token("${_host_text}" "HostExitCode run_raylib_host("
++    _runtime_candidate)
+ if(_runtime_candidate EQUAL -1)
+     message(FATAL_ERROR "Host validation sequence guard missing run_raylib_host candidate")
+ endif()
+ string(SUBSTRING "${_host_text}" ${_runtime_candidate} -1 _host_runtime_candidate)
+ evidence_extract_cpp_function_block("${_host_runtime_candidate}"
+     "HostExitCode run_raylib_host(" _host_runtime)
+ evidence_sanitize_cpp_for_scan("${_host_runtime}" _sanitized)
+ 
+ set(_input_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.hpp")

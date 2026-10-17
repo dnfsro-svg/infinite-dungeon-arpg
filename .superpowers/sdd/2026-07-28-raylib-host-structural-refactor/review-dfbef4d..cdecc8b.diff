@@ -1,0 +1,96 @@
+# Review package: dfbef4d2177af68aad785e7dac3c5a455f30375a..cdecc8bf686f7a3c7c61ff29cbe9f577d974c02b
+
+## Commits
+cdecc8b test: cover shared validation input evidence
+
+## Files changed
+ tests/platform/stage11c_hud_evidence_guard_self_test.cmake | 10 +++++++++-
+ tests/platform/stage11c_hud_evidence_guard_test.cmake      |  9 ++++++---
+ 2 files changed, 15 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+index 9393117..d6a8913 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+@@ -148,24 +148,32 @@ function(stage11c_expect_input_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
+             "-DINPUT_OVERRIDE=${_mutation}" -P "${_guard}"
+         RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+     if(_result EQUAL 0)
+         message(FATAL_ERROR "Stage11C evidence guard accepted named input mutation: ${LABEL}")
+     endif()
+     if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+         message(FATAL_ERROR "named input mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+     endif()
+ endfunction()
+ 
++stage11c_expect_input_rejection(input_test_access
++    "snapshot.down[index] = true;"
++    "snapshot.down[index] = true;\n    TestAccess stage11c_test_access{};"
++    "non-physical shared input")
++stage11c_expect_input_rejection(input_direct_viewmodel
++    "snapshot.down[index] = true;"
++    "snapshot.down[index] = true;\n    HudViewModel direct_model{};"
++    "non-physical shared input")
+ stage11c_expect_input_rejection(input_direct_logical_action
+     "snapshot.down[index] = true;"
+     "snapshot.down[index] = true;\n    session.queue_action(combat::Action::light);"
+-    "logical action queue")
++    "non-physical shared input")
+ stage11c_expect_input_rejection(input_skip_stable_binding
+     "settings::binding_for(settings_data, action)"
+     "static_cast<settings::StableKey>(action)"
+     "skipped stable binding")
+ 
+ set(_runtime_font "stage11c_validation_state.cjk_font_ready = hud_resources_ready;")
+ stage11c_expect_host_text_rejection(host_runtime_model_and_hash_overwrite
+     "${_runtime_font}"
+     "${_runtime_font}\n        stage11c_validation_state.model = {};\n        stage11c_validation_state.production_snapshot_hash = 1U;"
+     "direct model overwrite")
+diff --git a/tests/platform/stage11c_hud_evidence_guard_test.cmake b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+index 8de11b9..fcaa414 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+@@ -80,36 +80,39 @@ foreach(_required_input IN ITEMS
+         "void inject_validation_movement("
+         "settings::binding_for(settings_data, action)"
+         "snapshot.down[index] = true;"
+         "if (pressed) snapshot.pressed[index] = true;")
+     string(FIND "${_input_source_text}" "${_required_input}" _found)
+     if(_found EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11C evidence guard rejected skipped stable binding: ${_required_input}")
+     endif()
+ endforeach()
+-foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive_")
++set(_physical_input_forbidden
++    ".queue_action(" "request_descent(" "request_passive_"
++    "TestAccess" "HudViewModel direct_model")
++foreach(_forbidden IN LISTS _physical_input_forbidden)
+     string(FIND "${_input_source_text}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR
+-            "Stage11C evidence guard rejected logical action queue: ${_forbidden}")
++            "Stage11C evidence guard rejected non-physical shared input: ${_forbidden}")
+     endif()
+ endforeach()
+ 
+ string(FIND "${_host_text}" "[[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges" _stage11c_begin)
+ string(FIND "${_host_text}" "combat::MovementInput stage10_validation_input" _stage11c_end)
+ if(_stage11c_begin EQUAL -1 OR _stage11c_end EQUAL -1 OR NOT _stage11c_begin LESS _stage11c_end)
+     message(FATAL_ERROR "Stage11C evidence guard cannot isolate physical scenario driver")
+ endif()
+ math(EXPR _stage11c_length "${_stage11c_end} - ${_stage11c_begin}")
+ string(SUBSTRING "${_host_text}" ${_stage11c_begin} ${_stage11c_length} _stage11c_driver)
+-foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive_" "TestAccess" "HudViewModel direct_model")
++foreach(_forbidden IN LISTS _physical_input_forbidden)
+     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR "Stage11C evidence guard rejected non-physical scenario driver: ${_forbidden}")
+     endif()
+ endforeach()
+ 
+ set(_stage11c_runtime_alias
+     "Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
+ string(REGEX MATCHALL
+     "Stage11CHudValidationState&[ \t\r\n]+stage11c_validation_state[ \t\r\n]*="

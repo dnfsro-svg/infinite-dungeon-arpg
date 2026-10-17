@@ -1,0 +1,40 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+    Start 96: platform.host_validation_sequence_self_test
+1/1 Test #96: platform.host_validation_sequence_self_test ...***Failed  759.77 sec
+CMake Error at E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_self_test.cmake:479 (message):
+  Task 7C mutation m12_fabricated failed for wrong reason; expected 'T7C-M12
+  live active-skill draw-status binding', got:
+
+  CMake Error at
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_test.cmake:1579
+  (message):
+
+    Host validation sequence guard expected one T7C-M12 live active-skill
+    draw-status binding match, found 0
+
+  Call Stack (most recent call first):
+
+    E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_test.cmake:1747 (assert_one_normalized_match)
+    E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_test.cmake:2571 (task7c_assert_sequence_contract)
+
+
+
+
+
+Call Stack (most recent call first):
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_self_test.cmake:489 (arpg_expect_task7c_sequence_rejection)
+
+
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+architecture    = 759.77 sec*proc (1 test)
+headless        = 759.77 sec*proc (1 test)
+platform        = 759.77 sec*proc (1 test)
+
+Total Test time (real) = 759.79 sec
+
+The following tests FAILED:
+	 96 - platform.host_validation_sequence_self_test (Failed) architecture headless platform

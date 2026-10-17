@@ -1,0 +1,328 @@
+# Review package: 6c173ee2c43ce6a51a3a971f79fd0cc2520001d6..0197327e2938a766d74490b63ba9978603ae78b9
+
+## Commits
+0197327 test: harden raylib host baseline guards
+
+## Files changed
+ tests/platform/CMakeLists.txt                      | 10 +++++
+ .../host_validation_sequence_guard_self_test.cmake | 46 ++++++++++++++++++++++
+ .../host_validation_sequence_guard_test.cmake      | 42 ++++++++++++++++++--
+ .../stage11c_hud_evidence_guard_self_test.cmake    | 36 ++++++++++++++++-
+ .../stage11c_hud_evidence_guard_test.cmake         | 22 +++++++----
+ 5 files changed, 144 insertions(+), 12 deletions(-)
+
+## Diff
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 7ba7962..b26a212 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1634,20 +1634,30 @@ set_tests_properties(
+ 
+ add_test(
+     NAME platform.host_validation_sequence
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/host_validation_sequence_guard_test.cmake")
+ set_tests_properties(
+     platform.host_validation_sequence
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
++add_test(
++    NAME platform.host_validation_sequence_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/host-validation-sequence-mutations"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/host_validation_sequence_guard_self_test.cmake")
++set_tests_properties(
++    platform.host_validation_sequence_self_test
++    PROPERTIES LABELS "headless;platform;architecture")
++
+ # Task 11 deliberately registers the real-host evidence gate before the
+ # harness exists.  This keeps the first execution red instead of silently
+ # accepting an unvalidated settings path.
+ add_test(
+     NAME stage11b.settings_evidence_guard
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+         "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-evidence-guard"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_test.cmake")
+ set_tests_properties(
+diff --git a/tests/platform/host_validation_sequence_guard_self_test.cmake b/tests/platform/host_validation_sequence_guard_self_test.cmake
+new file mode 100644
+index 0000000..86f551a
+--- /dev/null
++++ b/tests/platform/host_validation_sequence_guard_self_test.cmake
+@@ -0,0 +1,46 @@
++if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
++    message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
++endif()
++
++set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
++file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
++
++set(_split_fixed_step "${GUARD_TEST_ROOT}/split-fixed-step-conditions.cpp")
++file(WRITE "${_split_fixed_step}" [=[
++while (!exit_requested) {
++    sample_physical_keys();
++    inject_stage11b_physical_edges();
++    inject_stage11c_physical_edges();
++    inject_stage11d_physical_edges();
++    inject_stage17_physical_edges();
++    map_host_frame_input();
++    if (!step_death) {
++        if (config.stage11_validation != Stage11ValidationScenario::none) {
++            stage11_validation_input();
++        }
++        if (config.stage10_validation != Stage10ValidationScenario::none) {
++            stage10_validation_input();
++        }
++        step_movement = movement;
++    }
++    runtime.fixed_tick(step_movement,
++        loot_pickup_policy(live_settings.loot_filter_mode));
++    write_stage11b_validation_summary();
++    write_stage11c_hud_validation_summary();
++    write_stage11d_loot_validation_summary();
++    write_stage17_validation_summary();
++}
++audio.shutdown();
++]=])
++
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_split_fixed_step}" -P "${_guard}"
++    RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
++if(_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted split fixed-step conditions")
++endif()
++if(NOT "${_stdout}${_stderr}" MATCHES
++        "rejected fixed-step movement priority[ \t\r\n]+structure")
++    message(FATAL_ERROR "split fixed-step conditions failed for wrong reason: ${_stdout}${_stderr}")
++endif()
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 0d73072..83cfda0 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -45,20 +45,54 @@ function(assert_unique_ordered_host_tokens LABEL)
+ endfunction()
+ 
+ assert_unique_ordered_host_tokens("input injection chain"
+     "sample_physical_keys()"
+     "inject_stage11b_physical_edges("
+     "inject_stage11c_physical_edges("
+     "inject_stage11d_physical_edges("
+     "inject_stage17_physical_edges("
+     "map_host_frame_input(")
+ 
+-assert_unique_ordered_host_tokens("fixed-step movement priority"
+-    "stage11_validation_input("
+-    "stage10_validation_input("
+-    "step_movement = movement;")
++string(FIND "${_host_loop}" "if (!step_death) {" _fixed_step_begin)
++string(FIND "${_host_loop}" "runtime.fixed_tick(step_movement,"
++    _fixed_step_end)
++if(_fixed_step_begin EQUAL -1 OR _fixed_step_end EQUAL -1
++        OR NOT _fixed_step_begin LESS _fixed_step_end)
++    message(FATAL_ERROR "Host validation sequence guard cannot isolate fixed-step movement branch")
++endif()
++math(EXPR _fixed_step_length "${_fixed_step_end} - ${_fixed_step_begin}")
++string(SUBSTRING "${_host_loop}" ${_fixed_step_begin} ${_fixed_step_length}
++    _fixed_step_branch)
++string(REGEX REPLACE "[ \t\r\n]+" " " _fixed_step_normalized
++    "${_fixed_step_branch}")
++string(REGEX MATCH
++    "if \\(!step_death\\) \\{ if \\(config\\.stage11_validation != Stage11ValidationScenario::none\\) \\{ step_movement = stage11_validation_input\\(.*\\); \\} else if \\(config\\.stage10_validation != Stage10ValidationScenario::none\\) \\{ step_movement = stage10_validation_input\\(.*\\); \\} else \\{ step_movement = movement; \\} \\}"
++    _fixed_step_priority_structure "${_fixed_step_normalized}")
++if(NOT _fixed_step_priority_structure)
++    message(FATAL_ERROR "Host validation sequence guard rejected fixed-step movement priority structure")
++endif()
++
++function(assert_unique_fixed_step_token TOKEN)
++    string(FIND "${_fixed_step_branch}" "${TOKEN}" _position)
++    if(_position EQUAL -1)
++        message(FATAL_ERROR "Host validation sequence guard missing fixed-step movement token: ${TOKEN}")
++    endif()
++    math(EXPR _after "${_position} + 1")
++    string(SUBSTRING "${_fixed_step_branch}" ${_after} -1 _remainder)
++    string(FIND "${_remainder}" "${TOKEN}" _duplicate)
++    if(NOT _duplicate EQUAL -1)
++        message(FATAL_ERROR "Host validation sequence guard found duplicate fixed-step movement token: ${TOKEN}")
++    endif()
++endfunction()
++
++foreach(_fixed_step_token IN ITEMS
++        "stage11_validation_input("
++        "stage10_validation_input("
++        "step_movement = movement;")
++    assert_unique_fixed_step_token("${_fixed_step_token}")
++endforeach()
+ 
+ assert_unique_ordered_host_tokens("validation summary write"
+     "write_stage11b_validation_summary("
+     "write_stage11c_hud_validation_summary("
+     "write_stage11d_loot_validation_summary("
+     "write_stage17_validation_summary(")
+diff --git a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+index 78a78e3..93a762e 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+@@ -97,20 +97,49 @@ function(stage11c_expect_host_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
+             "-DHOST_OVERRIDE=${_mutation}" -P "${_guard}"
+         RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+     if(_result EQUAL 0)
+         message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: ${LABEL}")
+     endif()
+     if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+         message(FATAL_ERROR "named host mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+     endif()
+ endfunction()
+ 
++function(stage11c_expect_host_text_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
++    string(FIND "${_host_source}" "${NEEDLE}" _needle_found)
++    if(_needle_found EQUAL -1)
++        message(FATAL_ERROR "host mutation ${LABEL} cannot find production replacement site")
++    endif()
++    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_host_source}")
++    if(_mutated STREQUAL _host_source)
++        message(FATAL_ERROR "host mutation ${LABEL} did not change production source")
++    endif()
++    set(_mutation "${GUARD_TEST_ROOT}/host-${LABEL}.cpp")
++    file(WRITE "${_mutation}" "${_mutated}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++            "-DHOST_OVERRIDE=${_mutation}" -P "${_guard}"
++        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
++    if(_result EQUAL 0)
++        message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: ${LABEL}")
++    endif()
++    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
++        message(FATAL_ERROR "named host mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
++    endif()
++endfunction()
++
++set(_runtime_font "stage11c_validation_state.cjk_font_ready = hud_resources_ready;")
++stage11c_expect_host_text_rejection(host_runtime_model_and_hash_overwrite
++    "${_runtime_font}"
++    "${_runtime_font}\n        stage11c_validation_state.model = {};\n        stage11c_validation_state.production_snapshot_hash = 1U;"
++    "direct model overwrite")
++
+ set(_model_copy "stage11c_validation_state.model = renderer.hud_model();")
+ stage11c_expect_host_rejection(host_direct_model_overwrite
+     "${_model_copy}"
+     "${_model_copy}\n                stage11c_validation_state.model = {};"
+     "direct model overwrite")
+ 
+ set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);")
+ stage11c_expect_host_rejection(host_fake_snapshot_hash
+     "${_hash_copy}"
+     "${_hash_copy}\n                stage11c_validation_state.production_snapshot_hash = 1U;"
+@@ -140,13 +169,18 @@ file(WRITE "${_independent_state}" "${_independent_state_source}")
+ execute_process(
+     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+         "-DHOST_OVERRIDE=${_independent_state}" -P "${_guard}"
+     RESULT_VARIABLE _independent_state_result
+     OUTPUT_VARIABLE _independent_state_stdout
+     ERROR_VARIABLE _independent_state_stderr)
+ if(_independent_state_result EQUAL 0)
+     message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: independent_stage11c_state")
+ endif()
+ if(NOT "${_independent_state_stdout}${_independent_state_stderr}" MATCHES
+-        "cannot bind complete host capture surface")
++        "cannot bind actual Stage11C runtime alias")
+     message(FATAL_ERROR "named host mutation independent_stage11c_state failed for wrong reason: ${_independent_state_stdout}${_independent_state_stderr}")
+ endif()
++
++stage11c_expect_host_text_rejection(host_decoy_stage11c_alias
++    "${_state_alias}"
++    "Stage11CHudValidationState& stage11c_validation_state =\n            stage11c_decoy;"
++    "cannot bind actual Stage11C runtime alias")
+diff --git a/tests/platform/stage11c_hud_evidence_guard_test.cmake b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+index 422bb2d..506eb04 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+@@ -73,29 +73,37 @@ if(_stage11c_begin EQUAL -1 OR _stage11c_end EQUAL -1 OR NOT _stage11c_begin LES
+ endif()
+ math(EXPR _stage11c_length "${_stage11c_end} - ${_stage11c_begin}")
+ string(SUBSTRING "${_host_text}" ${_stage11c_begin} ${_stage11c_length} _stage11c_driver)
+ foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive_" "TestAccess" "HudViewModel direct_model")
+     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR "Stage11C evidence guard rejected non-physical scenario driver: ${_forbidden}")
+     endif()
+ endforeach()
+ 
+-string(FIND "${_host_text}"
+-    "Stage11CHudValidationState& stage11c_validation_state ="
++set(_stage11c_runtime_alias
++    "Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
++string(REGEX MATCHALL
++    "Stage11CHudValidationState&[ \t\r\n]+stage11c_validation_state[ \t\r\n]*="
++    _stage11c_runtime_aliases "${_host_text}")
++list(LENGTH _stage11c_runtime_aliases _stage11c_runtime_alias_count)
++if(NOT _stage11c_runtime_alias_count EQUAL 1)
++    message(FATAL_ERROR "Stage11C evidence guard cannot bind actual Stage11C runtime alias")
++endif()
++string(FIND "${_host_text}" "${_stage11c_runtime_alias}"
+     _stage11c_runtime_begin)
+ string(FIND "${_host_text}"
+     "while (!exit_requested) {"
+     _stage11c_runtime_end)
+ if(_stage11c_runtime_begin EQUAL -1 OR _stage11c_runtime_end EQUAL -1
+         OR NOT _stage11c_runtime_begin LESS _stage11c_runtime_end)
+-    message(FATAL_ERROR "Stage11C evidence guard cannot bind complete host capture surface")
++    message(FATAL_ERROR "Stage11C evidence guard cannot bind actual Stage11C runtime alias")
+ endif()
+ math(EXPR _stage11c_runtime_length
+     "${_stage11c_runtime_end} - ${_stage11c_runtime_begin}")
+ string(SUBSTRING "${_host_text}" ${_stage11c_runtime_begin}
+     ${_stage11c_runtime_length} _stage11c_runtime)
+ 
+ string(FIND "${_host_text}"
+     "const bool stage11c_target_visible = stage11c_hud_validation_reached("
+     _stage11c_capture_begin)
+ string(FIND "${_host_text}"
+@@ -127,40 +135,40 @@ string(FIND "${_stage11c_summary}"
+     _stage11c_summary_write)
+ if(_stage11c_summary_write EQUAL -1)
+     message(FATAL_ERROR "Stage11C evidence guard missing HUD validation summary write")
+ endif()
+ 
+ set(_stage11c_host_surface
+     "${_stage11c_driver}\n${_stage11c_runtime}\n${_stage11c_capture}\n${_stage11c_summary}")
+ 
+ string(REGEX MATCHALL
+     "stage11c_validation_state\\.model[ \t\r\n]*="
+-    _stage11c_model_assignments "${_stage11c_capture}")
++    _stage11c_model_assignments "${_stage11c_host_surface}")
+ list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
+ if(NOT _stage11c_model_assignment_count EQUAL 1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+ endif()
+ string(REGEX MATCH
+     "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
+-    _stage11c_model_member_overwrite "${_stage11c_capture}")
++    _stage11c_model_member_overwrite "${_stage11c_host_surface}")
+ if(_stage11c_model_member_overwrite)
+     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+ endif()
+ 
+ string(REGEX MATCHALL
+     "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
+-    _stage11c_hash_assignments "${_stage11c_capture}")
++    _stage11c_hash_assignments "${_stage11c_host_surface}")
+ list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
+ if(NOT _stage11c_hash_assignment_count EQUAL 1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+ endif()
+-string(FIND "${_stage11c_capture}"
++string(FIND "${_stage11c_host_surface}"
+     "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);"
+     _stage11c_real_hash)
+ if(_stage11c_real_hash EQUAL -1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+ endif()
+ 
+ string(FIND "${_stage11c_driver}"
+     "const bool stage11c_validation_result = state.captured\n            && state.cjk_font_ready && state.production_snapshot_hash != 0U;"
+     _stage11c_summary_gate)
+ if(_stage11c_summary_gate EQUAL -1)

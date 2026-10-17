@@ -1,0 +1,22 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+    Start 96: platform.host_validation_sequence_self_test
+1/1 Test #96: platform.host_validation_sequence_self_test ...***Failed  992.42 sec
+CMake Error at E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_self_test.cmake:462 (message):
+  Task 7C sequence mutation anchor is missing: m16_manual_loses_stage17
+Call Stack (most recent call first):
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_self_test.cmake:501 (arpg_expect_task7c_sequence_rejection)
+
+
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+architecture    = 992.42 sec*proc (1 test)
+headless        = 992.42 sec*proc (1 test)
+platform        = 992.42 sec*proc (1 test)
+
+Total Test time (real) = 992.43 sec
+
+The following tests FAILED:
+	 96 - platform.host_validation_sequence_self_test (Failed) architecture headless platform

@@ -1,0 +1,3 @@
+20260729-194113
+.superpowers\sdd\2026-07-28-raylib-host-structural-refactor\task7c-sequence-self-20260729-194113.out.log
+.superpowers\sdd\2026-07-28-raylib-host-structural-refactor\task7c-sequence-self-20260729-194113.err.log

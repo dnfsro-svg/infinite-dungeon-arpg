@@ -1,0 +1,463 @@
+# Review package: 894f3e622dd04ea4c7d010dbb9fafaa2aac46acb..7defd1cf0939e0dc21e22ba3f6809107ff9d9de3
+
+## Commits
+7defd1c test: handle spliced comments in evidence scanner
+
+## Files changed
+ .../progress.md                                    |   2 +
+ .../task-2-report.md                               |  24 ++++
+ tests/dungeon/evidence_source_scan.cmake           | 125 ++++++++++++++++++---
+ .../dungeon/stage10_evidence_guard_self_test.cmake |  36 ++++--
+ .../stage11_death_evidence_guard_self_test.cmake   |  36 ++++--
+ 5 files changed, 193 insertions(+), 30 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+index ce68c17..d38469e 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+@@ -10,10 +10,12 @@ Task 0: fix round 1/5 (3 addressed, 0 open — complete-surface model/hash scan;
+ Task 0: complete (commits 3b3ac0a..0197327, review clean)
+ Task 1: review findings (round 1 required) — Stage11C input-source forbidden scan narrowed; final Head not rebuilt/full-selector rerun
+ Task 1: fix round 1/5 (2 addressed, 0 open — complete input forbidden scan; final Head build/selector evidence; commits dfbef4d..cdecc8b)
+ Task 1: deferred baseline — architecture.persistence_checkpoint_only fails on unchanged room_progress_codec.cpp -> dungeon/health_potion_loot.hpp dependency
+ Task 1: deferred build noise — Ninja reported recoverable premature end of file warning; both targets linked, exit 0
+ Task 1: complete (commits 0197327..cdecc8b, review clean)
+ Task 2: review findings (round 1 required) — focused CTest selector matched no stage10/stage11 tests and capture-order mutations failed for the wrong prerequisite; shared Stage10/11 source token scans allowed cross-function substitution
+ Task 2: fix round 1/5 (2 addressed, 0 open — corrected selector/mutation fixtures; per-function Session-route guards; scoped re-review required; FIX_BASE 67b1574)
+ Task 2: scoped re-review findings (round 2 required) — Stage10 capture mutations still fail additional non-order gates; brace parser counts comment braces and can again span into Stage11
+ Task 2: fix round 2/5 (2 addressed, 0 open — single-target capture mutations; shared comment/string-safe function isolation with adversarial mutations; scoped re-review required; FIX_BASE 0ef2305)
++Task 2: scoped re-review finding (round 3 required) — C++ backslash-newline splicing can continue or form line comments, letting commented route decoys satisfy the scanner
++Task 2: fix round 3/5 (2 addressed, 0 open — splice-aware comment scanning and Stage10/11 continuation-decoy mutations; scoped re-review required; FIX_BASE 894f3e6)
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
+index c0422e2..5bfabea 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
+@@ -165,10 +165,34 @@ the corrected full-selector runtime/formal failures are recorded below.
+   self-tests passed. The requested literal quick-selector expression matched
+   only `platform.host_validation_sequence` because its two prefix alternatives
+   omitted `.*`; that one test passed. The corrected prefix expression then ran
+   all intended quick tests: 11/11 passed, including both production guards,
+   all Stage10/11 negative evidence cases, both mutation self-tests, and the
+   platform sequence guard. The corrected full-selector `ctest -N` still lists
+   22 tests. `git diff --check` passed.
+ - This round did not rerun the full 22-test execution; the Round 1 recorded
+   result remains 16 passed and 6 failed as described above. No production,
+   gameplay, dungeon, or persistence source was changed in this round.
++
++## Fix Round 3 Evidence
++
++- FIX_BASE: `894f3e622dd04ea4c7d010dbb9fafaa2aac46acb`.
++- The shared scanner now models C++ phase-2 backslash-newline splicing while
++  preserving the original source length and line-ending positions. Logical
++  lookahead crosses `\\\n` and `\\\r\n` for line-comment starts,
++  block-comment starts, and block-comment ends. A line comment stays active
++  over a spliced line ending; string and character literal splice states retain
++  their escape state without exposing literal contents as code.
++- Each stage mutation self-test now deletes its real descent or queue route and
++  adds two separate comment decoys: a `// decoy follows` continuation whose
++  next physical line contains the deleted token, and `/\\` newline `/ token`,
++  which becomes a line comment only after splicing. The CMake fixtures construct
++  the trailing backslash via ASCII 92. All eight new Stage10/11 decoys reject
++  with their owning stage's missing-route diagnostic.
++- Direct Stage10 and Stage11 production guards passed. Stage10 mutation
++  self-test passed in 38.12 seconds; Stage11 mutation self-test passed in
++  94.53 seconds. The corrected quick selector ran 11/11 tests successfully in
++  156.80 seconds; the corrected full selector `ctest -N` still listed 22.
++  `git diff --check` passed.
++- This round intentionally did not rerun the full 22-test execution. The
++  Round 1 16-passed/6-failed record remains unchanged, and no production,
++  gameplay, dungeon, or persistence source changed in this round.
+diff --git a/tests/dungeon/evidence_source_scan.cmake b/tests/dungeon/evidence_source_scan.cmake
+index f5e90e1..7a24a10 100644
+--- a/tests/dungeon/evidence_source_scan.cmake
++++ b/tests/dungeon/evidence_source_scan.cmake
+@@ -1,91 +1,184 @@
+ # Shared source scanner for evidence guards. Non-code characters become spaces
+-# while newlines and source length remain unchanged, so brace offsets stay valid.
++# while line endings and source length remain unchanged, so brace offsets stay valid.
++function(evidence_is_cpp_splice source index output)
++    string(ASCII 10 newline)
++    string(ASCII 13 carriage_return)
++    string(ASCII 92 backslash)
++    string(LENGTH "${source}" source_length)
++    if(index GREATER_EQUAL source_length)
++        set(${output} FALSE PARENT_SCOPE)
++        return()
++    endif()
++    string(SUBSTRING "${source}" ${index} 1 character)
++    if(NOT character STREQUAL "${backslash}")
++        set(${output} FALSE PARENT_SCOPE)
++        return()
++    endif()
++    math(EXPR next_index "${index} + 1")
++    if(next_index GREATER_EQUAL source_length)
++        set(${output} FALSE PARENT_SCOPE)
++        return()
++    endif()
++    string(SUBSTRING "${source}" ${next_index} 1 next_character)
++    if(next_character STREQUAL "${newline}")
++        set(${output} TRUE PARENT_SCOPE)
++        return()
++    endif()
++    math(EXPR after_next_index "${index} + 2")
++    if(next_character STREQUAL "${carriage_return}"
++            AND after_next_index LESS source_length)
++        string(SUBSTRING "${source}" ${after_next_index} 1 after_next_character)
++        if(after_next_character STREQUAL "${newline}")
++            set(${output} TRUE PARENT_SCOPE)
++            return()
++        endif()
++    endif()
++    set(${output} FALSE PARENT_SCOPE)
++endfunction()
++
++function(evidence_cpp_logical_next_character source start output_character output_found)
++    string(ASCII 10 newline)
++    string(ASCII 13 carriage_return)
++    string(LENGTH "${source}" source_length)
++    set(probe ${start})
++    while(probe LESS source_length)
++        evidence_is_cpp_splice("${source}" ${probe} is_splice)
++        if(is_splice)
++            math(EXPR newline_index "${probe} + 1")
++            string(SUBSTRING "${source}" ${newline_index} 1 splice_newline)
++            if(splice_newline STREQUAL "${carriage_return}")
++                math(EXPR probe "${probe} + 3")
++            else()
++                math(EXPR probe "${probe} + 2")
++            endif()
++        else()
++            string(SUBSTRING "${source}" ${probe} 1 logical_character)
++            set(${output_character} "${logical_character}" PARENT_SCOPE)
++            set(${output_found} TRUE PARENT_SCOPE)
++            return()
++        endif()
++    endwhile()
++    set(${output_character} "" PARENT_SCOPE)
++    set(${output_found} FALSE PARENT_SCOPE)
++endfunction()
++
+ function(evidence_sanitize_cpp_for_scan source output)
+     string(ASCII 10 newline)
++    string(ASCII 13 carriage_return)
+     string(ASCII 34 double_quote)
+     string(ASCII 39 single_quote)
+     string(ASCII 92 backslash)
+     string(LENGTH "${source}" source_length)
+     if(source_length EQUAL 0)
+         set(${output} "" PARENT_SCOPE)
+         return()
+     endif()
+ 
+     math(EXPR source_last "${source_length} - 1")
+     set(sanitized "")
+     set(scan_state code)
+     set(escaped FALSE)
+-    set(block_previous_star FALSE)
+     foreach(character_index RANGE 0 ${source_last})
+         string(SUBSTRING "${source}" ${character_index} 1 character)
+         set(next_character "")
++        set(next_found FALSE)
+         if(character_index LESS source_last)
+             math(EXPR next_character_index "${character_index} + 1")
+-            string(SUBSTRING "${source}" ${next_character_index} 1 next_character)
++            evidence_cpp_logical_next_character("${source}" ${next_character_index}
++                next_character next_found)
+         endif()
+ 
+         if(scan_state STREQUAL "code")
+-            if(character STREQUAL "/" AND next_character STREQUAL "/")
++            if(next_found AND character STREQUAL "/" AND next_character STREQUAL "/")
+                 set(scan_state line_comment)
+                 string(APPEND sanitized " ")
+-            elseif(character STREQUAL "/" AND next_character STREQUAL "*")
++            elseif(next_found AND character STREQUAL "/" AND next_character STREQUAL "*")
+                 set(scan_state block_comment)
+-                set(block_previous_star FALSE)
+                 string(APPEND sanitized " ")
+             elseif(character STREQUAL "${double_quote}")
+                 set(scan_state string_literal)
+                 set(escaped FALSE)
+                 string(APPEND sanitized " ")
+             elseif(character STREQUAL "${single_quote}")
+                 set(scan_state character_literal)
+                 set(escaped FALSE)
+                 string(APPEND sanitized " ")
+             else()
+                 string(APPEND sanitized "${character}")
+             endif()
+         elseif(scan_state STREQUAL "line_comment")
+-            if(character STREQUAL "${newline}")
++            evidence_is_cpp_splice("${source}" ${character_index} is_splice)
++            if(character STREQUAL "${backslash}" AND is_splice)
++                set(scan_state line_comment_splice)
++                string(APPEND sanitized " ")
++            elseif(character STREQUAL "${newline}" OR character STREQUAL "${carriage_return}")
+                 set(scan_state code)
+                 string(APPEND sanitized "${character}")
+             else()
+                 string(APPEND sanitized " ")
+             endif()
++        elseif(scan_state STREQUAL "line_comment_splice")
++            if(character STREQUAL "${newline}")
++                set(scan_state line_comment)
++                string(APPEND sanitized "${character}")
++            elseif(character STREQUAL "${carriage_return}")
++                string(APPEND sanitized "${character}")
++            else()
++                message(FATAL_ERROR "Evidence scanner expected a line splice terminator")
++            endif()
+         elseif(scan_state STREQUAL "block_comment")
+-            if(block_previous_star AND character STREQUAL "/")
+-                set(scan_state code)
+-                set(block_previous_star FALSE)
+-            elseif(character STREQUAL "*")
+-                set(block_previous_star TRUE)
++            if(character STREQUAL "*" AND next_found AND next_character STREQUAL "/")
++                set(scan_state block_comment_close_pending)
++            endif()
++            if(character STREQUAL "${newline}" OR character STREQUAL "${carriage_return}")
++                string(APPEND sanitized "${character}")
+             else()
+-                set(block_previous_star FALSE)
++                string(APPEND sanitized " ")
+             endif()
+-            if(character STREQUAL "${newline}")
++        elseif(scan_state STREQUAL "block_comment_close_pending")
++            if(character STREQUAL "/")
++                set(scan_state code)
++            endif()
++            if(character STREQUAL "${newline}" OR character STREQUAL "${carriage_return}")
+                 string(APPEND sanitized "${character}")
+             else()
+                 string(APPEND sanitized " ")
+             endif()
+         elseif(scan_state STREQUAL "string_literal"
+                 OR scan_state STREQUAL "character_literal")
+-            if(escaped)
++            evidence_is_cpp_splice("${source}" ${character_index} is_splice)
++            if(character STREQUAL "${backslash}" AND is_splice)
++                set(splice_return_state "${scan_state}")
++                set(scan_state literal_splice)
++            elseif(escaped)
+                 set(escaped FALSE)
+             elseif(character STREQUAL "${backslash}")
+                 set(escaped TRUE)
+             elseif((scan_state STREQUAL "string_literal" AND character STREQUAL "${double_quote}")
+                     OR (scan_state STREQUAL "character_literal" AND character STREQUAL "${single_quote}"))
+                 set(scan_state code)
+             endif()
+-            if(character STREQUAL "${newline}")
++            if(character STREQUAL "${newline}" OR character STREQUAL "${carriage_return}")
+                 string(APPEND sanitized "${character}")
+             else()
+                 string(APPEND sanitized " ")
+             endif()
++        elseif(scan_state STREQUAL "literal_splice")
++            if(character STREQUAL "${newline}")
++                set(scan_state "${splice_return_state}")
++                string(APPEND sanitized "${character}")
++            elseif(character STREQUAL "${carriage_return}")
++                string(APPEND sanitized "${character}")
++            else()
++                message(FATAL_ERROR "Evidence scanner expected a literal splice terminator")
++            endif()
+         endif()
+     endforeach()
+     set(${output} "${sanitized}" PARENT_SCOPE)
+ endfunction()
+ 
+ function(evidence_find_cpp_function_bounds source signature output_begin output_open output_end)
+     evidence_sanitize_cpp_for_scan("${source}" sanitized_source)
+     string(FIND "${sanitized_source}" "${signature}" function_begin)
+     if(function_begin EQUAL -1)
+         message(FATAL_ERROR "Evidence validation function is missing: ${signature}")
+diff --git a/tests/dungeon/stage10_evidence_guard_self_test.cmake b/tests/dungeon/stage10_evidence_guard_self_test.cmake
+index 4023fb8..114c3f8 100644
+--- a/tests/dungeon/stage10_evidence_guard_self_test.cmake
++++ b/tests/dungeon/stage10_evidence_guard_self_test.cmake
+@@ -51,40 +51,54 @@ function(assert_unique_anchor source anchor name)
+         math(EXPR match_count "${match_count} + 1")
+         math(EXPR next_index "${anchor_index} + ${anchor_length}")
+         string(SUBSTRING "${remaining}" ${next_index} -1 remaining)
+     endwhile()
+     if(NOT match_count EQUAL 1)
+         message(FATAL_ERROR
+             "${name}: expected one replacement anchor, found ${match_count}")
+     endif()
+ endfunction()
+ 
+-function(expect_stage_route_rejection name token inject_brace_noise)
++function(expect_stage_route_rejection name token inject_brace_noise decoy_kind)
+     file(READ "${VALID_STAGE_SOURCE}" stage_source)
+     evidence_find_cpp_function_bounds("${stage_source}"
+         "combat::MovementInput stage10_validation_input("
+         stage10_begin stage10_open stage10_end)
+     math(EXPR stage10_input_length "${stage10_end} - ${stage10_begin} + 1")
+     string(SUBSTRING "${stage_source}" ${stage10_begin} ${stage10_input_length}
+         stage10_input)
+     string(REPLACE "${token}" "" mutated_input "${stage10_input}")
+     if(mutated_input STREQUAL stage10_input)
+         message(FATAL_ERROR "${name}: mutation token was not found")
+     endif()
++    set(injected_noise "")
+     if(inject_brace_noise)
++        string(APPEND injected_noise
++            "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
++    endif()
++    string(ASCII 92 splice_backslash)
++    if(decoy_kind STREQUAL "continued_line")
++        string(APPEND injected_noise
++            "\n    // decoy follows ${splice_backslash}\n    ${token};\n")
++    elseif(decoy_kind STREQUAL "spliced_slashes")
++        string(APPEND injected_noise
++            "\n    /${splice_backslash}\n/ ${token};\n")
++    elseif(NOT decoy_kind STREQUAL "none")
++        message(FATAL_ERROR "${name}: unknown decoy kind ${decoy_kind}")
++    endif()
++    if(NOT injected_noise STREQUAL "")
+         math(EXPR stage10_open_after "${stage10_open} - ${stage10_begin} + 1")
+         string(SUBSTRING "${mutated_input}" 0 ${stage10_open_after}
+             input_prefix)
+         string(SUBSTRING "${mutated_input}" ${stage10_open_after} -1
+             input_suffix)
+-        set(brace_noise "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
+-        set(mutated_input "${input_prefix}${brace_noise}${input_suffix}")
++        set(mutated_input "${input_prefix}${injected_noise}${input_suffix}")
+     endif()
+     string(REPLACE "${stage10_input}" "${mutated_input}" mutated_source
+         "${stage_source}")
+     set(mutation_file "${CMAKE_CURRENT_BINARY_DIR}/stage10_${name}.cpp")
+     file(WRITE "${mutation_file}" "${mutated_source}")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}"
+             -DFIXTURE_SOURCE=${VALID_FIXTURE}
+             -DVALIDATION_GAME_SOURCE=${VALIDATION_GAME_SOURCE}
+             -DFORMAL_SOURCE=${FORMAL_SOURCE}
+@@ -144,19 +158,27 @@ string(REPLACE "${capture_call_anchor}"
+     duplicate_capture_source "${valid_host_source}")
+ if(duplicate_capture_source STREQUAL valid_host_source)
+     message(FATAL_ERROR "capture_duplicate_before_present: replacement did not occur")
+ endif()
+ set(duplicate_capture_file
+     "${CMAKE_CURRENT_BINARY_DIR}/stage10_capture_duplicate_before_present.cpp")
+ file(WRITE "${duplicate_capture_file}" "${duplicate_capture_source}")
+ expect_guard_rejection(capture_duplicate_before_present "${duplicate_capture_file}"
+     "Stage 10 capture/order must contain exactly one EndDrawing")
+ file(REMOVE "${duplicate_capture_file}")
+-expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE)
++expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE none)
+ expect_stage_route_rejection(missing_queue_action
+-    "session.queue_action(combat::Action::light)" FALSE)
++    "session.queue_action(combat::Action::light)" FALSE none)
+ expect_stage_route_rejection(missing_descent_with_brace_noise
+-    "session.request_descent(true)" TRUE)
++    "session.request_descent(true)" TRUE none)
+ expect_stage_route_rejection(missing_queue_action_with_brace_noise
+-    "session.queue_action(combat::Action::light)" TRUE)
++    "session.queue_action(combat::Action::light)" TRUE none)
++expect_stage_route_rejection(missing_descent_with_continued_line_comment
++    "session.request_descent(true)" FALSE continued_line)
++expect_stage_route_rejection(missing_queue_with_continued_line_comment
++    "session.queue_action(combat::Action::light)" FALSE continued_line)
++expect_stage_route_rejection(missing_descent_with_spliced_slashes
++    "session.request_descent(true)" FALSE spliced_slashes)
++expect_stage_route_rejection(missing_queue_with_spliced_slashes
++    "session.queue_action(combat::Action::light)" FALSE spliced_slashes)
+ 
+ message(STATUS "Stage 10 guard mutation self-test passed")
+diff --git a/tests/dungeon/stage11_death_evidence_guard_self_test.cmake b/tests/dungeon/stage11_death_evidence_guard_self_test.cmake
+index 5ddce2d..232e07e 100644
+--- a/tests/dungeon/stage11_death_evidence_guard_self_test.cmake
++++ b/tests/dungeon/stage11_death_evidence_guard_self_test.cmake
+@@ -144,40 +144,54 @@ if(validation_scope_mutation_source STREQUAL valid_host_source)
+     message(FATAL_ERROR
+         "validation scope mutation did not find the request result condition")
+ endif()
+ file(WRITE "${validation_scope_mutation_file}"
+     "${validation_scope_mutation_source}")
+ expect_guard_rejection(validation_continue_in_gate_scope "${VALID_FIXTURE}"
+     "${validation_scope_mutation_file}"
+     "Formal validation_continue must remain outside the death input gate scope")
+ file(REMOVE "${validation_scope_mutation_file}")
+ 
+-function(expect_stage_route_rejection name token inject_brace_noise)
++function(expect_stage_route_rejection name token inject_brace_noise decoy_kind)
+     file(READ "${VALID_STAGE_SOURCE}" stage_source)
+     evidence_find_cpp_function_bounds("${stage_source}"
+         "combat::MovementInput stage11_validation_input("
+         stage11_begin stage11_open stage11_end)
+     math(EXPR stage11_input_length "${stage11_end} - ${stage11_begin} + 1")
+     string(SUBSTRING "${stage_source}" ${stage11_begin} ${stage11_input_length}
+         stage11_input)
+     string(REPLACE "${token}" "" mutated_input "${stage11_input}")
+     if(mutated_input STREQUAL stage11_input)
+         message(FATAL_ERROR "${name}: mutation token was not found")
+     endif()
++    set(injected_noise "")
+     if(inject_brace_noise)
++        string(APPEND injected_noise
++            "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
++    endif()
++    string(ASCII 92 splice_backslash)
++    if(decoy_kind STREQUAL "continued_line")
++        string(APPEND injected_noise
++            "\n    // decoy follows ${splice_backslash}\n    ${token};\n")
++    elseif(decoy_kind STREQUAL "spliced_slashes")
++        string(APPEND injected_noise
++            "\n    /${splice_backslash}\n/ ${token};\n")
++    elseif(NOT decoy_kind STREQUAL "none")
++        message(FATAL_ERROR "${name}: unknown decoy kind ${decoy_kind}")
++    endif()
++    if(NOT injected_noise STREQUAL "")
+         math(EXPR stage11_open_after "${stage11_open} - ${stage11_begin} + 1")
+         string(SUBSTRING "${mutated_input}" 0 ${stage11_open_after}
+             input_prefix)
+         string(SUBSTRING "${mutated_input}" ${stage11_open_after} -1
+             input_suffix)
+-        set(brace_noise "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
+-        set(mutated_input "${input_prefix}${brace_noise}${input_suffix}")
++        set(mutated_input "${input_prefix}${injected_noise}${input_suffix}")
+     endif()
+     string(REPLACE "${stage11_input}" "${mutated_input}" mutated_source
+         "${stage_source}")
+     set(mutation_file "${CMAKE_CURRENT_BINARY_DIR}/stage11_${name}.cpp")
+     file(WRITE "${mutation_file}" "${mutated_source}")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}"
+             -DFIXTURE_SOURCE=${VALID_FIXTURE}
+             -DFORMAL_SOURCE=${VALID_FORMAL}
+             -DCAPTURE_SCRIPT=${VALID_CAPTURE}
+@@ -197,19 +211,27 @@ function(expect_stage_route_rejection name token inject_brace_noise)
+         message(FATAL_ERROR
+             "${name}: missing Stage 11 route rejection, got: ${combined}")
+     endif()
+     string(FIND "${combined}" "${token}" token_index)
+     if(token_index EQUAL -1)
+         message(FATAL_ERROR
+             "${name}: missing rejected route token '${token}', got: ${combined}")
+     endif()
+ endfunction()
+ 
+-expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE)
++expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE none)
+ expect_stage_route_rejection(missing_queue_action
+-    "session.queue_action(combat::Action::light)" FALSE)
++    "session.queue_action(combat::Action::light)" FALSE none)
+ expect_stage_route_rejection(missing_descent_with_brace_noise
+-    "session.request_descent(true)" TRUE)
++    "session.request_descent(true)" TRUE none)
+ expect_stage_route_rejection(missing_queue_action_with_brace_noise
+-    "session.queue_action(combat::Action::light)" TRUE)
++    "session.queue_action(combat::Action::light)" TRUE none)
++expect_stage_route_rejection(missing_descent_with_continued_line_comment
++    "session.request_descent(true)" FALSE continued_line)
++expect_stage_route_rejection(missing_queue_with_continued_line_comment
++    "session.queue_action(combat::Action::light)" FALSE continued_line)
++expect_stage_route_rejection(missing_descent_with_spliced_slashes
++    "session.request_descent(true)" FALSE spliced_slashes)
++expect_stage_route_rejection(missing_queue_with_spliced_slashes
++    "session.queue_action(combat::Action::light)" FALSE spliced_slashes)
+ 
+ message(STATUS "Stage 11 guard mutation self-test passed")

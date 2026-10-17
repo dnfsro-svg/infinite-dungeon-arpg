@@ -1,0 +1,31 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+    Start  34: platform.units
+1/7 Test  #34: platform.units ....................................   Passed   17.64 sec
+    Start  74: stage11d.architecture.loot_boundaries
+2/7 Test  #74: stage11d.architecture.loot_boundaries .............   Passed  117.57 sec
+    Start  75: stage11d.architecture.loot_boundaries_self_test
+3/7 Test  #75: stage11d.architecture.loot_boundaries_self_test ...***Timeout 300.04 sec
+
+    Start  94: platform.host_validation_sequence
+4/7 Test  #94: platform.host_validation_sequence .................   Passed   43.80 sec
+    Start  95: platform.host_validation_sequence_self_test
+5/7 Test  #95: platform.host_validation_sequence_self_test .......   Passed  851.22 sec
+    Start 102: stage11d.loot_evidence_guard
+6/7 Test #102: stage11d.loot_evidence_guard ......................   Passed   12.74 sec
+    Start 103: stage11d.loot_evidence_guard_self_test
+7/7 Test #103: stage11d.loot_evidence_guard_self_test ............***Timeout 300.03 sec
+
+
+71% tests passed, 2 tests failed out of 7
+
+Label Time Summary:
+architecture    = 1625.40 sec*proc (6 tests)
+headless        = 1643.04 sec*proc (7 tests)
+platform        = 1643.04 sec*proc (7 tests)
+stage11d        = 730.38 sec*proc (4 tests)
+
+Total Test time (real) = 1643.14 sec
+
+The following tests FAILED:
+	 75 - stage11d.architecture.loot_boundaries_self_test (Timeout) architecture headless platform stage11d
+	103 - stage11d.loot_evidence_guard_self_test (Timeout)  architecture headless platform stage11d

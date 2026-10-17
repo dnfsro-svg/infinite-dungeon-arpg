@@ -1,0 +1,1924 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+      Start  36: stage17.active_skill_material_asset_pipeline
+ 1/14 Test  #36: stage17.active_skill_material_asset_pipeline ........   Passed    3.82 sec
+      Start  44: stage17.skill_stones.real_raylib
+ 2/14 Test  #44: stage17.skill_stones.real_raylib ....................   Passed   20.95 sec
+      Start  45: stage17.skill_stones.evidence_validator
+ 3/14 Test  #45: stage17.skill_stones.evidence_validator .............   Passed    0.48 sec
+      Start  46: stage17.skill_stones.evidence_validator_self_test
+ 4/14 Test  #46: stage17.skill_stones.evidence_validator_self_test ...   Passed    0.95 sec
+      Start  58: stage11c.hud_stress.zero_alloc_100k
+ 5/14 Test  #58: stage11c.hud_stress.zero_alloc_100k .................   Passed    0.30 sec
+      Start  61: stage11c.hud_formal
+ 6/14 Test  #61: stage11c.hud_formal .................................***Failed  157.80 sec
+STAGE11C HUD START combat
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Trying to enable VSYNC
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1920 x 1080
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 244
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel
+INFO:     > Renderer: Intel(R) UHD Graphics
+INFO:     > Version:  3.3.0 - Build 31.0.101.4146
+INFO:     > GLSL:     3.30 - Build 31.0.101.4146
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Win32): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 3] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: DEATH OVERLAY: Loaded font assets/fonts/NotoSansCJKsc-Medium.otf (325 glyphs)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 4] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 347 glyphs)
+INFO: HUD: Loaded Chinese font assets/fonts/NotoSansCJKsc-Medium.otf (347 glyphs)
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 5] Program shader loaded successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 27] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | WASAPI
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit IEEE Floating Point
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   48000 -> 48000
+INFO:     > Periods size:  1440
+INFO: FILEIO: [assets/stage14/audio/swing-light-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-light-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-finisher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-launcher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-3.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-low.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/player-hurt.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/landing.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/enemy-defeat.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-blink.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-chain.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-death.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-explore.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6940080
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-combat.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6513231
+INFO: STREAM: Initialized successfully (48000 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-room.ogg] Music file loaded successfully
+INFO:     > Sample rate:   48000 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  4526868
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-abyss.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6010565
+INFO: FILEIO: [assets/stage15/audio/ui-navigate.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-confirm.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-cancel.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-open.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-close.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-reward.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 34] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 35] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 36] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 37] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 38] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 39] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 40] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 41] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 42] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 43] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 44] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform\stage11c hud evidence\combat.png] File saved successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform\stage11c hud evidence\combat.png] Image exported successfully
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: AUDIO: Device closed successfully
+INFO: TEXTURE: [ID 5] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 6] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 7] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 8] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 9] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 10] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 11] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 12] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 13] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 14] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 15] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 16] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 17] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 18] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 19] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 20] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 28] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 29] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 30] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 31] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 32] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 33] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 34] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 35] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 36] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 37] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 38] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 39] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 40] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 41] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 21] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 22] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 23] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 24] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 42] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 43] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 25] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 26] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 44] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 45] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 46] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 47] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 5] Unloaded shader program data from VRAM (GPU)
+INFO: TEXTURE: [ID 4] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 3] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 27] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+STAGE11C HUD PASS combat
+STAGE11C HUD START low-health
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Trying to enable VSYNC
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1920 x 1080
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 244
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel
+INFO:     > Renderer: Intel(R) UHD Graphics
+INFO:     > Version:  3.3.0 - Build 31.0.101.4146
+INFO:     > GLSL:     3.30 - Build 31.0.101.4146
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Win32): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 3] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: DEATH OVERLAY: Loaded font assets/fonts/NotoSansCJKsc-Medium.otf (325 glyphs)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 4] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 347 glyphs)
+INFO: HUD: Loaded Chinese font assets/fonts/NotoSansCJKsc-Medium.otf (347 glyphs)
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 5] Program shader loaded successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 27] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | WASAPI
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit IEEE Floating Point
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   48000 -> 48000
+INFO:     > Periods size:  1440
+INFO: FILEIO: [assets/stage14/audio/swing-light-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-light-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-finisher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-launcher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-3.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-low.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/player-hurt.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/landing.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/enemy-defeat.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-blink.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-chain.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-death.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-explore.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6940080
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-combat.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6513231
+INFO: STREAM: Initialized successfully (48000 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-room.ogg] Music file loaded successfully
+INFO:     > Sample rate:   48000 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  4526868
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-abyss.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6010565
+INFO: FILEIO: [assets/stage15/audio/ui-navigate.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-confirm.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-cancel.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-open.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-close.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-reward.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 34] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 35] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 36] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 37] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 38] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 39] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 40] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 41] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 42] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 43] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 44] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform\stage11c hud evidence\low-health.png] File saved successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform\stage11c hud evidence\low-health.png] Image exported successfully
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: AUDIO: Device closed successfully
+INFO: TEXTURE: [ID 5] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 6] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 7] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 8] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 9] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 10] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 11] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 12] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 13] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 14] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 15] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 16] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 17] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 18] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 19] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 20] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 28] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 29] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 30] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 31] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 32] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 33] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 34] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 35] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 36] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 37] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 38] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 39] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 40] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 41] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 21] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 22] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 23] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 24] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 42] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 43] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 25] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 26] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 44] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 45] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 46] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 47] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 5] Unloaded shader program data from VRAM (GPU)
+INFO: TEXTURE: [ID 4] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 3] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 27] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+STAGE11C HUD PASS low-health
+STAGE11C HUD START cleared
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Trying to enable VSYNC
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1920 x 1080
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 244
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel
+INFO:     > Renderer: Intel(R) UHD Graphics
+INFO:     > Version:  3.3.0 - Build 31.0.101.4146
+INFO:     > GLSL:     3.30 - Build 31.0.101.4146
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Win32): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 3] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: DEATH OVERLAY: Loaded font assets/fonts/NotoSansCJKsc-Medium.otf (325 glyphs)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 4] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 347 glyphs)
+INFO: HUD: Loaded Chinese font assets/fonts/NotoSansCJKsc-Medium.otf (347 glyphs)
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 5] Program shader loaded successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 27] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | WASAPI
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit IEEE Floating Point
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   48000 -> 48000
+INFO:     > Periods size:  1440
+INFO: FILEIO: [assets/stage14/audio/swing-light-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-light-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-finisher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-launcher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-3.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-low.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/player-hurt.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/landing.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/enemy-defeat.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-blink.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-chain.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-death.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-explore.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6940080
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-combat.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6513231
+INFO: STREAM: Initialized successfully (48000 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-room.ogg] Music file loaded successfully
+INFO:     > Sample rate:   48000 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  4526868
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-abyss.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6010565
+INFO: FILEIO: [assets/stage15/audio/ui-navigate.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-confirm.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-cancel.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-open.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-close.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-reward.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 34] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 35] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 36] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 37] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 38] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 39] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 40] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 41] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 42] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 43] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 44] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: AUDIO: Device closed successfully
+INFO: TEXTURE: [ID 5] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 6] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 7] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 8] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 9] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 10] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 11] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 12] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 13] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 14] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 15] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 16] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 17] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 18] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 19] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 20] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 28] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 29] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 30] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 31] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 32] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 33] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 34] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 35] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 36] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 37] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 38] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 39] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 40] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 41] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 21] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 22] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 23] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 24] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 42] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 43] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 25] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 26] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 44] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 45] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 46] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 47] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 5] Unloaded shader program data from VRAM (GPU)
+INFO: TEXTURE: [ID 4] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 3] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 27] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+STAGE11C HUD FAIL cleared
+STAGE11C HUD START abyss-warning
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Trying to enable VSYNC
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1920 x 1080
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 244
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel
+INFO:     > Renderer: Intel(R) UHD Graphics
+INFO:     > Version:  3.3.0 - Build 31.0.101.4146
+INFO:     > GLSL:     3.30 - Build 31.0.101.4146
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Win32): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 3] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: DEATH OVERLAY: Loaded font assets/fonts/NotoSansCJKsc-Medium.otf (325 glyphs)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 4] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 347 glyphs)
+INFO: HUD: Loaded Chinese font assets/fonts/NotoSansCJKsc-Medium.otf (347 glyphs)
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 5] Program shader loaded successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 27] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | WASAPI
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit IEEE Floating Point
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   48000 -> 48000
+INFO:     > Periods size:  1440
+INFO: FILEIO: [assets/stage14/audio/swing-light-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-light-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-finisher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-launcher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-3.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-low.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/player-hurt.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/landing.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/enemy-defeat.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-blink.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-chain.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-death.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-explore.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6940080
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-combat.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6513231
+INFO: STREAM: Initialized successfully (48000 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-room.ogg] Music file loaded successfully
+INFO:     > Sample rate:   48000 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  4526868
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-abyss.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6010565
+INFO: FILEIO: [assets/stage15/audio/ui-navigate.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-confirm.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-cancel.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-open.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-close.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-reward.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 34] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 35] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 36] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 37] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 38] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 39] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 40] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 41] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 42] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 43] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 44] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: AUDIO: Device closed successfully
+INFO: TEXTURE: [ID 5] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 6] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 7] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 8] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 9] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 10] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 11] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 12] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 13] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 14] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 15] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 16] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 17] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 18] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 19] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 20] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 28] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 29] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 30] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 31] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 32] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 33] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 34] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 35] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 36] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 37] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 38] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 39] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 40] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 41] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 21] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 22] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 23] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 24] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 42] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 43] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 25] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 26] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 44] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 45] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 46] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 47] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 5] Unloaded shader program data from VRAM (GPU)
+INFO: TEXTURE: [ID 4] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 3] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 27] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+STAGE11C HUD FAIL abyss-warning
+STAGE11C HUD START level-up
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Trying to enable VSYNC
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1920 x 1080
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 244
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel
+INFO:     > Renderer: Intel(R) UHD Graphics
+INFO:     > Version:  3.3.0 - Build 31.0.101.4146
+INFO:     > GLSL:     3.30 - Build 31.0.101.4146
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Win32): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 3] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: DEATH OVERLAY: Loaded font assets/fonts/NotoSansCJKsc-Medium.otf (325 glyphs)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 4] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 347 glyphs)
+INFO: HUD: Loaded Chinese font assets/fonts/NotoSansCJKsc-Medium.otf (347 glyphs)
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 5] Program shader loaded successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 27] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | WASAPI
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit IEEE Floating Point
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   48000 -> 48000
+INFO:     > Periods size:  1440
+INFO: FILEIO: [assets/stage14/audio/swing-light-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-light-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-finisher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-launcher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-3.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-low.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/player-hurt.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/landing.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/enemy-defeat.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-blink.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-chain.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-death.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-explore.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6940080
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-combat.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6513231
+INFO: STREAM: Initialized successfully (48000 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-room.ogg] Music file loaded successfully
+INFO:     > Sample rate:   48000 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  4526868
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-abyss.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6010565
+INFO: FILEIO: [assets/stage15/audio/ui-navigate.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-confirm.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-cancel.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-open.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-close.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-reward.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 34] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 35] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 36] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 37] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 38] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 39] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 40] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 41] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 42] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 43] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 44] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: AUDIO: Device closed successfully
+INFO: TEXTURE: [ID 5] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 6] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 7] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 8] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 9] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 10] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 11] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 12] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 13] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 14] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 15] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 16] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 17] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 18] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 19] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 20] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 28] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 29] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 30] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 31] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 32] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 33] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 34] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 35] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 36] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 37] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 38] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 39] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 40] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 41] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 21] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 22] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 23] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 24] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 42] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 43] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 25] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 26] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 44] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 45] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 46] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 47] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 5] Unloaded shader program data from VRAM (GPU)
+INFO: TEXTURE: [ID 4] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 3] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 27] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+STAGE11C HUD FAIL level-up
+STAGE11C HUD START debug
+INFO: Initializing raylib 6.0
+INFO: Platform backend: DESKTOP (GLFW)
+INFO: Supported raylib modules:
+INFO:     > rcore:..... loaded (mandatory)
+INFO:     > rlgl:...... loaded (mandatory)
+INFO:     > rshapes:... loaded (optional)
+INFO:     > rtextures:. loaded (optional)
+INFO:     > rtext:..... loaded (optional)
+INFO:     > rmodels:... loaded (optional)
+INFO:     > raudio:.... loaded (optional)
+INFO: DISPLAY: Trying to enable VSYNC
+INFO: DISPLAY: Device initialized successfully 
+INFO:     > Display size: 1920 x 1080
+INFO:     > Screen size:  1280 x 720
+INFO:     > Render size:  1280 x 720
+INFO:     > Viewport offsets: 0, 0
+INFO: GLAD: OpenGL extensions loaded successfully
+INFO: GL: Supported extensions count: 244
+INFO: GL: OpenGL device information:
+INFO:     > Vendor:   Intel
+INFO:     > Renderer: Intel(R) UHD Graphics
+INFO:     > Version:  3.3.0 - Build 31.0.101.4146
+INFO:     > GLSL:     3.30 - Build 31.0.101.4146
+INFO: GL: VAO extension detected, VAO functions loaded successfully
+INFO: GL: NPOT textures extension detected, full NPOT textures supported
+INFO: GL: DXT compressed textures supported
+INFO: GL: ETC2/EAC compressed textures supported
+INFO: PLATFORM: DESKTOP (GLFW - Win32): Initialized successfully
+INFO: TEXTURE: [ID 1] Texture loaded successfully (1x1 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 1] Default texture loaded successfully
+INFO: SHADER: [ID 1] Vertex shader compiled successfully
+INFO: SHADER: [ID 2] Fragment shader compiled successfully
+INFO: SHADER: [ID 3] Program shader loaded successfully
+INFO: SHADER: [ID 3] Default shader loaded successfully
+INFO: RLGL: Render batch vertex buffers loaded successfully in RAM (CPU)
+INFO: RLGL: Render batch vertex buffers loaded successfully in VRAM (GPU)
+INFO: RLGL: Default OpenGL state initialized successfully
+INFO: TEXTURE: [ID 2] Texture loaded successfully (128x128 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Default font loaded successfully (224 glyphs)
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform
+INFO: SYSTEM: Working Directory: E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 3] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: DEATH OVERLAY: Loaded font assets/fonts/NotoSansCJKsc-Medium.otf (325 glyphs)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 4] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 347 glyphs)
+INFO: HUD: Loaded Chinese font assets/fonts/NotoSansCJKsc-Medium.otf (347 glyphs)
+INFO: SHADER: [ID 4] Fragment shader compiled successfully
+INFO: SHADER: [ID 5] Program shader loaded successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 5] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 6] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 7] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/actors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 8] Texture loaded successfully (2048x2048 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 9] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/effects_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 10] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 11] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_locomotion_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 12] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 13] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_a_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 14] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 15] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_combo_b_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 16] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 17] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_reaction_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 18] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 19] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/player/player_air_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 20] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 21] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/items_ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 22] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 23] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/ui_material_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 24] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 25] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/element_doors_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 26] Texture loaded successfully (1024x256 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [assets/fonts/NotoSansCJKsc-Medium.otf] File loaded successfully
+INFO: TEXTURE: [ID 27] Texture loaded successfully (2048x2048 | GRAY_ALPHA | 1 mipmaps)
+INFO: FONT: Data loaded successfully (96 pixel size | 325 glyphs)
+INFO: AUDIO: Device initialized successfully
+INFO:     > Backend:       miniaudio | WASAPI
+INFO:     > Format:        32-bit IEEE Floating Point -> 32-bit IEEE Floating Point
+INFO:     > Channels:      2 -> 2
+INFO:     > Sample rate:   48000 -> 48000
+INFO:     > Periods size:  1440
+INFO: FILEIO: [assets/stage14/audio/swing-light-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-light-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-finisher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/swing-launcher.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-1.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-2.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-3.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/impact-low.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/player-hurt.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/landing.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/enemy-defeat.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-blink.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-chain.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage14/audio/warning-death.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-explore.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6940080
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/music-combat.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6513231
+INFO: STREAM: Initialized successfully (48000 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-room.ogg] Music file loaded successfully
+INFO:     > Sample rate:   48000 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  4526868
+INFO: STREAM: Initialized successfully (44100 Hz, 16 bit, Stereo)
+INFO: FILEIO: [assets/stage15/audio/ambience-abyss.ogg] Music file loaded successfully
+INFO:     > Sample rate:   44100 Hz
+INFO:     > Sample size:   16 bits
+INFO:     > Channels:      2 (Stereo)
+INFO:     > Total frames:  6010565
+INFO: FILEIO: [assets/stage15/audio/ui-navigate.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-confirm.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-cancel.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-open.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-close.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [assets/stage15/audio/ui-reward.wav] File loaded successfully
+INFO: WAVE: Data loaded successfully (44100 Hz, 16 bit, 1 channels)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 28] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/fire_charger_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 29] Texture loaded successfully (1024x1024 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 30] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/water_bulwark_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 31] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 32] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_shooter_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 33] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 34] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/lightning_dasher_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 35] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 36] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_environment_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 37] Texture loaded successfully (768x768 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 38] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_chaser_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 39] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 40] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_hazard_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 41] Texture loaded successfully (864x864 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 42] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/stage12/chaos_room_background_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 43] Texture loaded successfully (2560x1440 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 44] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/draw_slash_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 45] Texture loaded successfully (1254x1254 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 46] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\bin\assets/skills/storm_swords_atlas_material.png] File loaded successfully
+INFO: IMAGE: Data loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: TEXTURE: [ID 47] Texture loaded successfully (1024x1536 | R8G8B8A8 | 1 mipmaps)
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform\stage11c hud evidence\debug.png] File saved successfully
+INFO: FILEIO: [E:\game\.worktrees\whole-game-refactor-2026-07\out\build\windows-msvc-debug\tests\platform\stage11c hud evidence\debug.png] Image exported successfully
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: STREAM: Unloaded audio stream data from RAM
+INFO: AUDIO: Device closed successfully
+INFO: TEXTURE: [ID 5] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 6] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 7] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 8] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 9] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 10] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 11] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 12] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 13] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 14] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 15] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 16] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 17] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 18] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 19] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 20] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 28] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 29] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 30] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 31] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 32] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 33] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 34] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 35] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 36] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 37] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 38] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 39] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 40] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 41] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 21] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 22] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 23] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 24] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 42] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 43] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 25] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 26] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 44] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 45] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 46] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 47] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 5] Unloaded shader program data from VRAM (GPU)
+INFO: TEXTURE: [ID 4] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 3] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 27] Unloaded texture data from VRAM (GPU)
+INFO: TEXTURE: [ID 2] Unloaded texture data from VRAM (GPU)
+INFO: SHADER: [ID 3] Default shader unloaded successfully
+INFO: TEXTURE: [ID 1] Default texture unloaded successfully
+INFO: Window closed successfully
+STAGE11C HUD PASS debug
+
+      Start  62: stage11c.hud_evidence_validator
+Failed test dependencies: stage11c.hud_formal
+ 7/14 Test  #62: stage11c.hud_evidence_validator .....................***Not Run   0.00 sec
+      Start  63: stage11c.hud_evidence_validator_self_test
+Failed test dependencies: stage11c.hud_formal
+ 8/14 Test  #63: stage11c.hud_evidence_validator_self_test ...........***Not Run   0.00 sec
+      Start  72: stage11c.architecture.hud_boundaries
+ 9/14 Test  #72: stage11c.architecture.hud_boundaries ................   Passed    3.07 sec
+      Start  73: stage11c.architecture.hud_boundaries_self_test
+10/14 Test  #73: stage11c.architecture.hud_boundaries_self_test ......   Passed   26.14 sec
+      Start  92: platform.input_latency_source
+11/14 Test  #92: platform.input_latency_source .......................   Passed   67.63 sec
+      Start  93: platform.host_input_source
+12/14 Test  #93: platform.host_input_source ..........................   Passed  119.19 sec
+      Start  99: stage11c.hud_evidence_guard
+13/14 Test  #99: stage11c.hud_evidence_guard .........................***Failed    3.80 sec
+CMake Error at E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/stage11c_hud_evidence_guard_test.cmake:720 (message):
+  Stage11C evidence guard cannot bind actual Stage11C runtime alias
+
+
+
+      Start 100: stage11c.hud_evidence_guard_self_test
+14/14 Test #100: stage11c.hud_evidence_guard_self_test ...............***Failed    5.87 sec
+CMake Error at E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/stage11c_hud_evidence_guard_self_test.cmake:71 (message):
+  named mutation pre_present_capture failed for wrong reason: CMake Error at
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/stage11c_hud_evidence_guard_test.cmake:720
+  (message):
+
+    Stage11C evidence guard cannot bind actual Stage11C runtime alias
+
+
+
+
+
+
+
+
+
+64% tests passed, 5 tests failed out of 14
+
+Label Time Summary:
+architecture    = 225.70 sec*proc (6 tests)
+assets          =   3.82 sec*proc (1 test)
+formal-game     =  22.38 sec*proc (3 tests)
+graphics        =  22.38 sec*proc (3 tests)
+headless        = 229.82 sec*proc (8 tests)
+negative        =   0.95 sec*proc (1 test)
+platform        = 410.00 sec*proc (14 tests)
+raylib          = 180.18 sec*proc (6 tests)
+stage11c        = 196.99 sec*proc (8 tests)
+stage17         =  26.19 sec*proc (4 tests)
+stress          =   0.30 sec*proc (1 test)
+validation      =  22.38 sec*proc (3 tests)
+
+Total Test time (real) = 410.17 sec
+
+The following tests FAILED:
+	 61 - stage11c.hud_formal (Failed)                      platform raylib stage11c
+	 62 - stage11c.hud_evidence_validator (Not Run)         platform raylib stage11c
+	 63 - stage11c.hud_evidence_validator_self_test (Not Run) platform raylib stage11c
+	 99 - stage11c.hud_evidence_guard (Failed)              architecture headless platform stage11c
+	100 - stage11c.hud_evidence_guard_self_test (Failed)    architecture headless platform stage11c

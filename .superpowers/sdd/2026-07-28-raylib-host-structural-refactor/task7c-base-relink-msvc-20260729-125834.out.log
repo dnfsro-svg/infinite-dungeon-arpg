@@ -1,0 +1,7 @@
+[1/7] Building CXX object tests\platform\CMakeFiles\arpg_stage17_skill_stones_game_validation.dir\stage17_skill_stones_game_validation.cpp.obj
+[2/7] Building CXX object tests\platform\CMakeFiles\arpg_stage11c_hud_stress.dir\__\core\allocation_probe.cpp.obj
+[3/7] Building CXX object tests\platform\CMakeFiles\arpg_stage11c_hud_stress.dir\hud_stress_tests.cpp.obj
+[4/7] Building CXX object tests\platform\CMakeFiles\arpg_stage11c_hud_formal.dir\stage11c_hud_formal_game_validation.cpp.obj
+[5/7] Linking CXX executable bin\arpg_stage17_skill_stones_game_validation.exe; Copying active-skill frame atlases for Stage 17 validation; Copying item material atlases for Stage 17 validation; Copying bundled UI font for Stage 17 validation
+[6/7] Linking CXX executable bin\arpg_stage11c_hud_stress.exe
+[7/7] Linking CXX executable bin\arpg_stage11c_hud_formal.exe

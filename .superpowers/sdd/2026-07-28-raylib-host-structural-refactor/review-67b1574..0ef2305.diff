@@ -1,0 +1,865 @@
+# Review package: 67b1574a75bf578b0e463e7910adb13cda68b444..0ef23055995e8e77338a684dbfea7949f6311944
+
+## Commits
+0ef2305 test: harden stage10 and stage11 extraction guards
+
+## Files changed
+ .../progress.md                                    |  17 +++
+ .../task-2-brief.md                                |  68 ++++++++++++
+ .../task-2-report.md                               |  51 ++++++++-
+ .../2026-07-28-raylib-host-structural-refactor.md  |   2 +-
+ tests/dungeon/CMakeLists.txt                       |  17 +++
+ .../dungeon/stage10_evidence_bad_capture_order.txt |  27 ++++-
+ ...stage10_evidence_bad_pre_capture_with_dummy.txt |  37 +++++--
+ .../dungeon/stage10_evidence_guard_self_test.cmake | 121 +++++++++++++++++++++
+ tests/dungeon/stage10_evidence_guard_test.cmake    |  72 ++++++++++--
+ .../stage11_death_evidence_guard_self_test.cmake   |  79 ++++++++++++++
+ .../stage11_death_evidence_guard_test.cmake        |  68 ++++++++++--
+ .../dungeon/stage11_evidence_bad_capture_order.txt |  17 ++-
+ 12 files changed, 539 insertions(+), 37 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+new file mode 100644
+index 0000000..bf63e3e
+--- /dev/null
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+@@ -0,0 +1,17 @@
++# SDD ledger — plan: docs/superpowers/plans/2026-07-28-raylib-host-structural-refactor.md
++
++Branch: codex/whole-game-refactor-2026-07
++Plan commit: 05c3834
++Plan correction: 3b3ac0a (fixed-step production-input guard anchor)
++Merge baseline: f132f276e5ac8339acb9573146a260193961eeb6
++Task 0: pending
++Task 0: review findings (round 1 required) — Stage11C model/hash scan narrowed; alias RHS not proven; fixed-step branch structure not proven
++Task 0: fix round 1/5 (3 addressed, 0 open — complete-surface model/hash scan; exact alias RHS; fixed-step branch structure; commits 6c173ee..0197327)
++Task 0: complete (commits 3b3ac0a..0197327, review clean)
++Task 1: review findings (round 1 required) — Stage11C input-source forbidden scan narrowed; final Head not rebuilt/full-selector rerun
++Task 1: fix round 1/5 (2 addressed, 0 open — complete input forbidden scan; final Head build/selector evidence; commits dfbef4d..cdecc8b)
++Task 1: deferred baseline — architecture.persistence_checkpoint_only fails on unchanged room_progress_codec.cpp -> dungeon/health_potion_loot.hpp dependency
++Task 1: deferred build noise — Ninja reported recoverable premature end of file warning; both targets linked, exit 0
++Task 1: complete (commits 0197327..cdecc8b, review clean)
++Task 2: review findings (round 1 required) — focused CTest selector matched no stage10/stage11 tests and capture-order mutations failed for the wrong prerequisite; shared Stage10/11 source token scans allowed cross-function substitution
++Task 2: fix round 1/5 (2 addressed, 0 open — corrected selector/mutation fixtures; per-function Session-route guards; scoped re-review required; FIX_BASE 67b1574)
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-brief.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-brief.md
+new file mode 100644
+index 0000000..e4bfa03
+--- /dev/null
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-brief.md
+@@ -0,0 +1,68 @@
++### Task 2: 抽取 Stage10 与 Stage11 状态、路线和完成判定
++
++**Files:**
++- Create: `src/platform/raylib/host_validation_stage10_11.hpp`
++- Create: `src/platform/raylib/host_validation_stage10_11.cpp`
++- Modify: `src/platform/raylib/raylib_host.cpp`
++- Modify: `src/platform/raylib/CMakeLists.txt`
++- Modify: `tests/dungeon/stage10_evidence_guard_test.cmake`
++- Modify: `tests/dungeon/stage11_death_evidence_guard_test.cmake`
++- Modify: `tests/platform/host_validation_sequence_guard_test.cmake`
++
++**Interfaces:**
++
++```cpp
++struct Stage10ValidationState final {
++    bool entered_abyss{};
++    bool reset_requested{};
++    bool descent_warning_seen{};
++    std::uint32_t chaos_presented_frames{};
++};
++struct Stage11ValidationState final {
++    bool entered_abyss{};
++    bool saw_depth_two{};
++    bool continue_requested{};
++    std::uint32_t target_presented_frames{};
++};
++combat::MovementInput stage10_validation_input(
++    dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
++    const RaylibHostConfig&, Stage10ValidationState&) noexcept;
++combat::MovementInput stage11_validation_input(
++    dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
++    const RaylibHostConfig&, Stage11ValidationState&) noexcept;
++bool stage10_validation_reached(
++    const dungeon::DungeonSnapshot&, const RaylibHostConfig&,
++    const Stage10ValidationState&) noexcept;
++bool stage11_validation_reached(
++    const dungeon::DungeonSnapshot&, const RaylibHostConfig&,
++    const Stage11ValidationState&) noexcept;
++```
++
++- [ ] **Step 1: 先更新证据守卫的目标源并确认 RED**
++
++  Stage10/11 守卫分别扫描 `raylib_host.cpp` 的正式调用次序和 `host_validation_stage10_11.cpp` 的路线/完成算法；在新源缺失时失败。禁止删除任何真实 Session 请求、物理移动和截图次序断言。
++
++- [ ] **Step 2: 原样移动两个状态结构和四个公开给主机的函数**
++
++  同时移动它们独占的 `has_environment_visual` 等叶子帮助函数。场景枚举仍留在 `raylib_host.hpp`，状态类型进入具名私有命名空间。
++
++- [ ] **Step 3: 保持主循环判定和移动优先级**
++
++  `validation_continue`、`continue_requested`、presented-frame 计数和 `stage10_validation_captured` 的更新位置不变；只替换类型/函数限定名。
++
++- [ ] **Step 4: 运行聚焦回归**
++
++  ```powershell
++  cmake --build --preset windows-msvc-debug --target arpg_game arpg_dungeon_tests arpg_platform_tests -- -j1
++  ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.host_validation_sequence|stage10\..*|stage11\..*|dungeon\.units|platform\.units)$' --output-on-failure -j1
++  git diff --check
++  ```
++
++- [ ] **Step 5: 独立审查并提交**
++
++  ```powershell
++  git add src/platform/raylib tests/dungeon tests/platform/host_validation_sequence_guard_test.cmake
++  git commit -m "refactor: extract stage10 and stage11 host validation"
++  ```
++
++---
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
+index 29c787e..dc996a1 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
+@@ -81,13 +81,58 @@ than accepting the old in-host implementation.
+ - The host preserves the original locations of `validation_continue`,
+   `continue_requested`, presented-frame counters, `stage10_validation_captured`,
+   and Stage11 -> Stage10 -> production movement priority; only the ownership
+   qualifiers changed.
+ - No change touches `persistence/room_progress_codec.cpp` or the known
+   `architecture.persistence_checkpoint_only` baseline issue.
+ - No P0/P1/P2 issue found in the changed surface.
+ 
+ ## Remaining Issues
+ 
+-None for Task 2. The known unrelated
+-`architecture.persistence_checkpoint_only` baseline failure was not run or
+-modified.
++No open Task 2 guard issue. The known unrelated
++`architecture.persistence_checkpoint_only` baseline failure was not modified;
++the corrected full-selector runtime/formal failures are recorded below.
++
++## Fix Round 1 Evidence
++
++- FIX_BASE: `67b1574a75bf578b0e463e7910adb13cda68b444`.
++- The original selector used `stage10\.` and `stage11\.` inside an anchored
++  expression, so it matched neither Stage prefix. Both the formal plan and
++  Task 2 brief now use `stage10\..*|stage11\..*`; `ctest -N` confirms 22
++  matching tests instead of the prior 3.
++- Stage10/11 guards accept `STAGE_SOURCE`/`STAGE_HEADER` overrides for mutation
++  testing while preserving the production-path defaults. Each guard now uses a
++  character-by-character brace-depth scan to isolate complete input and reached
++  function blocks. Route tokens are checked only in their owning input block;
++  completion tokens are checked only in their owning reached block.
++- Stage10 added `stage10.evidence.mutation_self_test`. Both capture-order
++  fixtures first satisfy the host call surface. The first models a pre-present
++  capture directly; the second models a pre-present Load/Export plus a legal
++  post-`EndDrawing()` dummy helper, and is rejected by aggregate capture/order
++  checks. Both self-test expected rejection categories pass.
++- Stage11's existing mutation self-test now has a valid capture-order fixture
++  and passes with the expected capture-order rejection.
++- Both Stage10 and Stage11 self-tests remove, one at a time, the owning
++  `session.request_descent(true)` and
++  `session.queue_action(combat::Action::light)` from a `STAGE_SOURCE` mutation.
++  Each is rejected by the matching Stage input-block check, proving no
++  cross-function substitution.
++- Direct Stage10 and Stage11 production guards passed after hardening; direct
++  Stage10 and Stage11 mutation self-tests also passed.
++- The corrected full selector ran 22 tests. 16 passed, including all Stage10/11
++  evidence guards, both mutation self-tests, Stage11 architecture boundaries,
++  `dungeon.units` (343 cases/0 failures), `platform.units` (497 cases/0
++  failures), and `platform.host_validation_sequence`. Six non-guard failures
++  were recorded without being masked: `stage11.death_stress.determinism_zero_alloc`
++  failed deterministic restart trace at `codec-17`; `stage10.validation_fixture.real_abyss_transactions`
++  stopped after 2.85 seconds without test output; the Stage10 validation game
++  did not produce its capture PNG; the Stage10 formal game exited with code 10;
++  `stage11.death_fixture.transactions` stopped after 21.80 seconds without
++  test output; and `stage11.death_formal.five_paths` timed out at its 300-second
++  CTest limit. No gameplay or persistence code was changed to address these
++  failures. A read-only `FIX_BASE` comparison confirms this fix did not change
++  the production host extraction files or any `src/dungeon`/`src/persistence`
++  path; that proves only that this guard/test fix left those production paths
++  untouched, not that the six failures predate `FIX_BASE`.
++- FINAL handoff SHA is reported outside this self-contained commit after amend;
++  embedding the commit's own content-addressed SHA in this report would change
++  that SHA.
+diff --git a/docs/superpowers/plans/2026-07-28-raylib-host-structural-refactor.md b/docs/superpowers/plans/2026-07-28-raylib-host-structural-refactor.md
+index e7f7826..7c409dc 100644
+--- a/docs/superpowers/plans/2026-07-28-raylib-host-structural-refactor.md
++++ b/docs/superpowers/plans/2026-07-28-raylib-host-structural-refactor.md
+@@ -210,21 +210,21 @@ bool stage11_validation_reached(
+   同时移动它们独占的 `has_environment_visual` 等叶子帮助函数。场景枚举仍留在 `raylib_host.hpp`，状态类型进入具名私有命名空间。
+ 
+ - [ ] **Step 3: 保持主循环判定和移动优先级**
+ 
+   `validation_continue`、`continue_requested`、presented-frame 计数和 `stage10_validation_captured` 的更新位置不变；只替换类型/函数限定名。
+ 
+ - [ ] **Step 4: 运行聚焦回归**
+ 
+   ```powershell
+   cmake --build --preset windows-msvc-debug --target arpg_game arpg_dungeon_tests arpg_platform_tests -- -j1
+-  ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.host_validation_sequence|stage10\.|stage11\.|dungeon\.units|platform\.units)$' --output-on-failure -j1
++  ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.host_validation_sequence|stage10\..*|stage11\..*|dungeon\.units|platform\.units)$' --output-on-failure -j1
+   git diff --check
+   ```
+ 
+ - [ ] **Step 5: 独立审查并提交**
+ 
+   ```powershell
+   git add src/platform/raylib tests/dungeon tests/platform/host_validation_sequence_guard_test.cmake
+   git commit -m "refactor: extract stage10 and stage11 host validation"
+   ```
+ 
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 20fa4ed..d09a138 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -282,20 +282,37 @@ add_test(NAME stage10.evidence.rejects_pre_capture_with_post_dummy
+         -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
+         -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
+         -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+         -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+         -DHOST_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_pre_capture_with_dummy.txt
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
+ set_tests_properties(stage10.evidence.rejects_pre_capture_with_post_dummy PROPERTIES
+     LABELS "headless;dungeon;stage10;evidence;negative"
+     WILL_FAIL TRUE)
+ 
++add_test(NAME stage10.evidence.mutation_self_test
++    COMMAND ${CMAKE_COMMAND}
++        -DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake
++        -DVALID_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_fixture.cpp
++        -DVALIDATION_GAME_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_game.cpp
++        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
++        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
++        -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
++        -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
++        -DVALID_HOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
++        -DVALID_HOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
++        -DBAD_CAPTURE_ORDER=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_capture_order.txt
++        -DBAD_PRE_CAPTURE_DUMMY=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_pre_capture_with_dummy.txt
++        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_self_test.cmake)
++set_tests_properties(stage10.evidence.mutation_self_test PROPERTIES
++    LABELS "headless;dungeon;stage10;evidence")
++
+ add_executable(arpg_stage11_death_validation_fixture
+     stage11_death_validation_fixture.cpp)
+ target_compile_features(arpg_stage11_death_validation_fixture PRIVATE cxx_std_17)
+ target_link_libraries(arpg_stage11_death_validation_fixture
+     PRIVATE arpg_dungeon arpg_persistence)
+ arpg_enable_project_warnings(arpg_stage11_death_validation_fixture)
+ add_test(NAME stage11.death_fixture.transactions
+     COMMAND arpg_stage11_death_validation_fixture)
+ set_tests_properties(stage11.death_fixture.transactions PROPERTIES
+     LABELS "headless;dungeon;stage11;validation" TIMEOUT 120)
+diff --git a/tests/dungeon/stage10_evidence_bad_capture_order.txt b/tests/dungeon/stage10_evidence_bad_capture_order.txt
+index c430da0..485d3cf 100644
+--- a/tests/dungeon/stage10_evidence_bad_capture_order.txt
++++ b/tests/dungeon/stage10_evidence_bad_capture_order.txt
+@@ -1,6 +1,21 @@
+-void capture_after_presented_frame(const char* path) noexcept { export_screenshot(path); }
+-capture_after_presented_frame("fake.png");
+-EndDrawing();
+-queue_action(Action::light);
+-request_descent(true);
+-reset_current_room();
++void stage10_capture_driver() {
++    host_validation::stage10_validation_input(*session,
++        current, config, stage10_validation_state);
++    const bool visible = host_validation::stage10_validation_reached(
++        current, config, stage10_validation_state);
++    ++stage10_validation_state.chaos_presented_frames;
++    const bool captured_stage10_frame = visible && capture_succeeded;
++    stage10_validation_captured = stage10_validation_captured
++        || captured_stage10_frame;
++}
++[[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
++    Image image = LoadImageFromScreen();
++    EndDrawing();
++    if (path == nullptr) return true;
++    if (image.data == nullptr) return false;
++    const bool exported = ExportImage(image, path);
++    UnloadImage(image);
++    return exported;
++}
++const bool capture_succeeded = present_frame_and_maybe_capture(
++    capture_path.has_value() ? capture_path->c_str() : nullptr);
+diff --git a/tests/dungeon/stage10_evidence_bad_pre_capture_with_dummy.txt b/tests/dungeon/stage10_evidence_bad_pre_capture_with_dummy.txt
+index abc7b9e..8a03f16 100644
+--- a/tests/dungeon/stage10_evidence_bad_pre_capture_with_dummy.txt
++++ b/tests/dungeon/stage10_evidence_bad_pre_capture_with_dummy.txt
+@@ -1,9 +1,28 @@
+-void export_screenshot(const char* path) noexcept { ExportImage(LoadImageFromScreen(), path); }
+-void capture_after_presented_frame(const char* path) noexcept { export_screenshot(path); }
+-capture_after_presented_frame("real-before-present.png");
+-EndDrawing();
+-++presented_frame_count;
+-capture_after_presented_frame("dummy-after-present.png");
+-queue_action(Action::light);
+-request_descent(true);
+-reset_current_room();
++void stage10_capture_driver() {
++    host_validation::stage10_validation_input(*session,
++        current, config, stage10_validation_state);
++    const bool visible = host_validation::stage10_validation_reached(
++        current, config, stage10_validation_state);
++    ++stage10_validation_state.chaos_presented_frames;
++    const bool captured_stage10_frame = visible && capture_succeeded;
++    stage10_validation_captured = stage10_validation_captured
++        || captured_stage10_frame;
++}
++Image pre_present_image = LoadImageFromScreen();
++const bool pre_present_exported = ExportImage(pre_present_image,
++    "real-before-present.png");
++UnloadImage(pre_present_image);
++[[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
++    EndDrawing();
++    if (path == nullptr) return true;
++    Image image = LoadImageFromScreen();
++    if (image.data == nullptr) return false;
++    const bool exported = ExportImage(image, path);
++    UnloadImage(image);
++    return exported;
++}
++const bool capture_succeeded = present_frame_and_maybe_capture(
++    capture_path.has_value() ? capture_path->c_str() : nullptr);
++const bool captured_stage10_frame = captured_stage10_target && capture_succeeded;
++stage10_validation_captured = stage10_validation_captured
++    || captured_stage10_frame;
+diff --git a/tests/dungeon/stage10_evidence_guard_self_test.cmake b/tests/dungeon/stage10_evidence_guard_self_test.cmake
+new file mode 100644
+index 0000000..d5aece5
+--- /dev/null
++++ b/tests/dungeon/stage10_evidence_guard_self_test.cmake
+@@ -0,0 +1,121 @@
++foreach(required GUARD_SCRIPT VALID_FIXTURE VALIDATION_GAME_SOURCE FORMAL_SOURCE
++        CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE VALID_HOST_HEADER
++        VALID_HOST_SOURCE BAD_CAPTURE_ORDER BAD_PRE_CAPTURE_DUMMY)
++    if(NOT DEFINED ${required})
++        message(FATAL_ERROR "Stage 10 guard self-test missing ${required}")
++    endif()
++endforeach()
++
++get_filename_component(_stage_directory "${VALID_HOST_HEADER}" DIRECTORY)
++set(VALID_STAGE_SOURCE "${_stage_directory}/host_validation_stage10_11.cpp")
++if(NOT EXISTS "${VALID_STAGE_SOURCE}")
++    message(FATAL_ERROR "Stage 10 guard self-test missing production stage source")
++endif()
++
++function(expect_guard_rejection name host expected)
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}"
++            -DFIXTURE_SOURCE=${VALID_FIXTURE}
++            -DVALIDATION_GAME_SOURCE=${VALIDATION_GAME_SOURCE}
++            -DFORMAL_SOURCE=${FORMAL_SOURCE}
++            -DCAPTURE_SCRIPT=${CAPTURE_SCRIPT}
++            -DFORMAL_CAPTURE_SCRIPT=${FORMAL_CAPTURE_SCRIPT}
++            -DSTRESS_SOURCE=${STRESS_SOURCE}
++            -DHOST_HEADER=${VALID_HOST_HEADER}
++            -DHOST_SOURCE=${host}
++            -DSTAGE_SOURCE=${VALID_STAGE_SOURCE}
++            -P ${GUARD_SCRIPT}
++        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
++    set(combined "${output}\n${error}")
++    if(result EQUAL 0)
++        message(FATAL_ERROR "${name}: mutated evidence was accepted")
++    endif()
++    string(FIND "${combined}" "${expected}" reason_index)
++    if(reason_index EQUAL -1)
++        message(FATAL_ERROR
++            "${name}: wrong rejection reason; expected '${expected}', got: ${combined}")
++    endif()
++endfunction()
++
++function(extract_braced_function_block source signature output)
++    string(FIND "${source}" "${signature}" function_begin)
++    if(function_begin EQUAL -1)
++        message(FATAL_ERROR "Stage 10 self-test function is missing: ${signature}")
++    endif()
++    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
++    string(FIND "${function_tail}" "{" brace_relative)
++    math(EXPR brace_open "${function_begin} + ${brace_relative}")
++    string(LENGTH "${source}" source_length)
++    math(EXPR source_last "${source_length} - 1")
++    set(brace_depth 0)
++    set(function_end -1)
++    foreach(character_index RANGE ${brace_open} ${source_last})
++        string(SUBSTRING "${source}" ${character_index} 1 character)
++        if(character STREQUAL "{")
++            math(EXPR brace_depth "${brace_depth} + 1")
++        elseif(character STREQUAL "}")
++            math(EXPR brace_depth "${brace_depth} - 1")
++            if(brace_depth EQUAL 0)
++                set(function_end ${character_index})
++                break()
++            endif()
++        endif()
++    endforeach()
++    math(EXPR function_length "${function_end} - ${function_begin} + 1")
++    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
++    set(${output} "${function_block}" PARENT_SCOPE)
++endfunction()
++
++function(expect_stage_route_rejection name token)
++    file(READ "${VALID_STAGE_SOURCE}" stage_source)
++    extract_braced_function_block("${stage_source}"
++        "combat::MovementInput stage10_validation_input(" stage10_input)
++    string(REPLACE "${token}" "" mutated_input "${stage10_input}")
++    if(mutated_input STREQUAL stage10_input)
++        message(FATAL_ERROR "${name}: mutation token was not found")
++    endif()
++    string(REPLACE "${stage10_input}" "${mutated_input}" mutated_source
++        "${stage_source}")
++    set(mutation_file "${CMAKE_CURRENT_BINARY_DIR}/stage10_${name}.cpp")
++    file(WRITE "${mutation_file}" "${mutated_source}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}"
++            -DFIXTURE_SOURCE=${VALID_FIXTURE}
++            -DVALIDATION_GAME_SOURCE=${VALIDATION_GAME_SOURCE}
++            -DFORMAL_SOURCE=${FORMAL_SOURCE}
++            -DCAPTURE_SCRIPT=${CAPTURE_SCRIPT}
++            -DFORMAL_CAPTURE_SCRIPT=${FORMAL_CAPTURE_SCRIPT}
++            -DSTRESS_SOURCE=${STRESS_SOURCE}
++            -DHOST_HEADER=${VALID_HOST_HEADER}
++            -DHOST_SOURCE=${VALID_HOST_SOURCE}
++            -DSTAGE_SOURCE=${mutation_file}
++            -P ${GUARD_SCRIPT}
++        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
++    file(REMOVE "${mutation_file}")
++    set(combined "${output}\n${error}")
++    if(result EQUAL 0)
++        message(FATAL_ERROR "${name}: stage route mutation was accepted")
++    endif()
++    string(FIND "${combined}" "Stage 10 validation input lacks production route"
++        reason_index)
++    if(reason_index EQUAL -1)
++        message(FATAL_ERROR
++            "${name}: missing Stage 10 route rejection, got: ${combined}")
++    endif()
++    string(FIND "${combined}" "${token}" token_index)
++    if(token_index EQUAL -1)
++        message(FATAL_ERROR
++            "${name}: missing rejected route token '${token}', got: ${combined}")
++    endif()
++endfunction()
++
++expect_guard_rejection(capture_before_present "${BAD_CAPTURE_ORDER}"
++    "Stage 10 presentation and capture must be owned by one helper")
++expect_guard_rejection(capture_before_present_with_dummy
++    "${BAD_PRE_CAPTURE_DUMMY}"
++    "Stage 10 presentation and capture must be owned by one helper")
++expect_stage_route_rejection(missing_descent "session.request_descent(true)")
++expect_stage_route_rejection(missing_queue_action
++    "session.queue_action(combat::Action::light)")
++
++message(STATUS "Stage 10 guard mutation self-test passed")
+diff --git a/tests/dungeon/stage10_evidence_guard_test.cmake b/tests/dungeon/stage10_evidence_guard_test.cmake
+index 424c41f..4ce5844 100644
+--- a/tests/dungeon/stage10_evidence_guard_test.cmake
++++ b/tests/dungeon/stage10_evidence_guard_test.cmake
+@@ -9,30 +9,76 @@ file(READ "${FIXTURE_SOURCE}" fixture_source)
+ file(READ "${VALIDATION_GAME_SOURCE}" validation_game_source)
+ file(READ "${FORMAL_SOURCE}" formal_source)
+ file(READ "${CAPTURE_SCRIPT}" capture_script)
+ file(READ "${FORMAL_CAPTURE_SCRIPT}" formal_capture_script)
+ file(READ "${STRESS_SOURCE}" stress_source)
+ file(READ "${HOST_HEADER}" host_header)
+ file(READ "${HOST_SOURCE}" host_source)
+ get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
+ set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
+ set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
++if(DEFINED STAGE_SOURCE)
++    set(stage_source "${STAGE_SOURCE}")
++endif()
++if(DEFINED STAGE_HEADER)
++    set(stage_header "${STAGE_HEADER}")
++endif()
+ if(NOT EXISTS "${stage_source}")
+     message(FATAL_ERROR "Stage 10 validation route target is missing: ${stage_source}")
+ endif()
+ if(NOT EXISTS "${stage_header}")
+     message(FATAL_ERROR "Stage 10 validation state target is missing: ${stage_header}")
+ endif()
+ file(READ "${stage_source}" stage_source_text)
+ file(READ "${stage_header}" stage_header_text)
+ set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}\n${stage_source_text}")
+ 
++function(extract_braced_function_block source signature output)
++    string(FIND "${source}" "${signature}" function_begin)
++    if(function_begin EQUAL -1)
++        message(FATAL_ERROR "Stage 10 validation function is missing: ${signature}")
++    endif()
++    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
++    string(FIND "${function_tail}" "{" brace_relative)
++    if(brace_relative EQUAL -1)
++        message(FATAL_ERROR "Stage 10 validation function has no opening brace: ${signature}")
++    endif()
++    math(EXPR brace_open "${function_begin} + ${brace_relative}")
++    string(LENGTH "${source}" source_length)
++    math(EXPR source_last "${source_length} - 1")
++    set(brace_depth 0)
++    set(function_end -1)
++    foreach(character_index RANGE ${brace_open} ${source_last})
++        string(SUBSTRING "${source}" ${character_index} 1 character)
++        if(character STREQUAL "{")
++            math(EXPR brace_depth "${brace_depth} + 1")
++        elseif(character STREQUAL "}")
++            math(EXPR brace_depth "${brace_depth} - 1")
++            if(brace_depth EQUAL 0)
++                set(function_end ${character_index})
++                break()
++            endif()
++        endif()
++    endforeach()
++    if(function_end EQUAL -1)
++        message(FATAL_ERROR "Stage 10 validation function has unbalanced braces: ${signature}")
++    endif()
++    math(EXPR function_length "${function_end} - ${function_begin} + 1")
++    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
++    set(${output} "${function_block}" PARENT_SCOPE)
++endfunction()
++
++extract_braced_function_block("${stage_source_text}"
++    "combat::MovementInput stage10_validation_input(" stage10_input_block)
++extract_braced_function_block("${stage_source_text}"
++    "bool stage10_validation_reached(" stage10_reached_block)
++
+ foreach(forbidden
+         "DungeonSessionTestAccess"
+         "CombatWorldTestAccess"
+         "force_defeat"
+         "relay_defeated"
+         "defeat_monster\\("
+         "set_phase\\("
+         "stable_state_"
+         "phase_[ \\t]*="
+         "generated_mask[ \\t]*="
+@@ -50,35 +96,47 @@ if(NOT fixture_source MATCHES "SaveStore"
+         OR NOT fixture_source MATCHES "resolution.room_seed"
+         OR NOT fixture_source MATCHES "resolution.rule"
+         OR NOT fixture_source MATCHES "MovementInput")
+     message(FATAL_ERROR "Stage 10 fixture must use real save, pickup, warning, confirmation, and movement APIs")
+ endif()
+ if(NOT validation_game_source MATCHES "run_raylib_host"
+         OR NOT formal_source MATCHES "make_door_transition"
+         OR NOT formal_source MATCHES "run_raylib_host")
+     message(FATAL_ERROR "Formal Stage 10 evidence must use generation and normal host inputs")
+ endif()
+-foreach(required_stage10_token
+-        "combat::MovementInput stage10_validation_input("
+-        "bool stage10_validation_reached("
++foreach(required_stage10_input_token
+         "session.reset_current_room()"
+         "session.request_descent(true)"
+         "session.request_active_skill_slot(1U)"
+-        "session.queue_action(combat::Action::light)"
+-        "bool has_environment_visual(")
+-    string(FIND "${stage_source_text}" "${required_stage10_token}"
++        "session.queue_action(combat::Action::light)")
++    string(FIND "${stage10_input_block}" "${required_stage10_input_token}"
+         required_stage10_index)
+     if(required_stage10_index EQUAL -1)
+         message(FATAL_ERROR
+-            "Stage 10 validation route lacks production algorithm: ${required_stage10_token}")
++            "Stage 10 validation input lacks production route: ${required_stage10_input_token}")
+     endif()
+ endforeach()
++foreach(required_stage10_reached_token
++        "has_environment_visual("
++        "state.entered_abyss && state.descent_warning_seen")
++    string(FIND "${stage10_reached_block}" "${required_stage10_reached_token}"
++        required_stage10_reached_index)
++    if(required_stage10_reached_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage 10 validation completion lacks production predicate: ${required_stage10_reached_token}")
++    endif()
++endforeach()
++string(FIND "${stage_source_text}" "bool has_environment_visual("
++    stage10_environment_visual_index)
++if(stage10_environment_visual_index EQUAL -1)
++    message(FATAL_ERROR "Stage 10 validation environment helper is missing")
++endif()
+ if(NOT stage_header_text MATCHES "struct Stage10ValidationState final")
+     message(FATAL_ERROR "Stage 10 validation state definition is missing")
+ endif()
+ foreach(required_host_stage10_token
+         "stage10_validation_input(*session,"
+         "stage10_validation_reached("
+         "++stage10_validation_state.chaos_presented_frames;"
+         "stage10_validation_captured = stage10_validation_captured")
+     string(FIND "${host_source}" "${required_host_stage10_token}" required_host_stage10_index)
+     if(required_host_stage10_index EQUAL -1)
+diff --git a/tests/dungeon/stage11_death_evidence_guard_self_test.cmake b/tests/dungeon/stage11_death_evidence_guard_self_test.cmake
+index 2f8a5dc..fcd6306 100644
+--- a/tests/dungeon/stage11_death_evidence_guard_self_test.cmake
++++ b/tests/dungeon/stage11_death_evidence_guard_self_test.cmake
+@@ -1,17 +1,23 @@
+ foreach(required GUARD_SCRIPT VALID_FIXTURE VALID_FORMAL VALID_CAPTURE
+         VALID_HOST_HEADER VALID_HOST_SOURCE BAD_TEST_ACCESS BAD_CAPTURE_ORDER)
+     if(NOT DEFINED ${required})
+         message(FATAL_ERROR "Stage 11 guard self-test missing ${required}")
+     endif()
+ endforeach()
+ 
++get_filename_component(_stage_directory "${VALID_HOST_HEADER}" DIRECTORY)
++set(VALID_STAGE_SOURCE "${_stage_directory}/host_validation_stage10_11.cpp")
++if(NOT EXISTS "${VALID_STAGE_SOURCE}")
++    message(FATAL_ERROR "Stage 11 guard self-test missing production stage source")
++endif()
++
+ function(expect_guard_rejection name fixture host expected)
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}"
+             -DFIXTURE_SOURCE=${fixture}
+             -DFORMAL_SOURCE=${VALID_FORMAL}
+             -DCAPTURE_SCRIPT=${VALID_CAPTURE}
+             -DHOST_HEADER=${VALID_HOST_HEADER}
+             -DHOST_SOURCE=${host}
+             -P ${GUARD_SCRIPT}
+         RESULT_VARIABLE result
+@@ -136,11 +142,84 @@ if(validation_scope_mutation_source STREQUAL valid_host_source)
+     message(FATAL_ERROR
+         "validation scope mutation did not find the request result condition")
+ endif()
+ file(WRITE "${validation_scope_mutation_file}"
+     "${validation_scope_mutation_source}")
+ expect_guard_rejection(validation_continue_in_gate_scope "${VALID_FIXTURE}"
+     "${validation_scope_mutation_file}"
+     "Formal validation_continue must remain outside the death input gate scope")
+ file(REMOVE "${validation_scope_mutation_file}")
+ 
++function(extract_braced_function_block source signature output)
++    string(FIND "${source}" "${signature}" function_begin)
++    if(function_begin EQUAL -1)
++        message(FATAL_ERROR "Stage 11 self-test function is missing: ${signature}")
++    endif()
++    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
++    string(FIND "${function_tail}" "{" brace_relative)
++    math(EXPR brace_open "${function_begin} + ${brace_relative}")
++    string(LENGTH "${source}" source_length)
++    math(EXPR source_last "${source_length} - 1")
++    set(brace_depth 0)
++    set(function_end -1)
++    foreach(character_index RANGE ${brace_open} ${source_last})
++        string(SUBSTRING "${source}" ${character_index} 1 character)
++        if(character STREQUAL "{")
++            math(EXPR brace_depth "${brace_depth} + 1")
++        elseif(character STREQUAL "}")
++            math(EXPR brace_depth "${brace_depth} - 1")
++            if(brace_depth EQUAL 0)
++                set(function_end ${character_index})
++                break()
++            endif()
++        endif()
++    endforeach()
++    math(EXPR function_length "${function_end} - ${function_begin} + 1")
++    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
++    set(${output} "${function_block}" PARENT_SCOPE)
++endfunction()
++
++function(expect_stage_route_rejection name token)
++    file(READ "${VALID_STAGE_SOURCE}" stage_source)
++    extract_braced_function_block("${stage_source}"
++        "combat::MovementInput stage11_validation_input(" stage11_input)
++    string(REPLACE "${token}" "" mutated_input "${stage11_input}")
++    if(mutated_input STREQUAL stage11_input)
++        message(FATAL_ERROR "${name}: mutation token was not found")
++    endif()
++    string(REPLACE "${stage11_input}" "${mutated_input}" mutated_source
++        "${stage_source}")
++    set(mutation_file "${CMAKE_CURRENT_BINARY_DIR}/stage11_${name}.cpp")
++    file(WRITE "${mutation_file}" "${mutated_source}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}"
++            -DFIXTURE_SOURCE=${VALID_FIXTURE}
++            -DFORMAL_SOURCE=${VALID_FORMAL}
++            -DCAPTURE_SCRIPT=${VALID_CAPTURE}
++            -DHOST_HEADER=${VALID_HOST_HEADER}
++            -DHOST_SOURCE=${VALID_HOST_SOURCE}
++            -DSTAGE_SOURCE=${mutation_file}
++            -P ${GUARD_SCRIPT}
++        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
++    file(REMOVE "${mutation_file}")
++    set(combined "${output}\n${error}")
++    if(result EQUAL 0)
++        message(FATAL_ERROR "${name}: stage route mutation was accepted")
++    endif()
++    string(FIND "${combined}" "Stage 11 validation input lacks production route"
++        reason_index)
++    if(reason_index EQUAL -1)
++        message(FATAL_ERROR
++            "${name}: missing Stage 11 route rejection, got: ${combined}")
++    endif()
++    string(FIND "${combined}" "${token}" token_index)
++    if(token_index EQUAL -1)
++        message(FATAL_ERROR
++            "${name}: missing rejected route token '${token}', got: ${combined}")
++    endif()
++endfunction()
++
++expect_stage_route_rejection(missing_descent "session.request_descent(true)")
++expect_stage_route_rejection(missing_queue_action
++    "session.queue_action(combat::Action::light)")
++
+ message(STATUS "Stage 11 guard mutation self-test passed")
+diff --git a/tests/dungeon/stage11_death_evidence_guard_test.cmake b/tests/dungeon/stage11_death_evidence_guard_test.cmake
+index 613e57b..7ac01f5 100644
+--- a/tests/dungeon/stage11_death_evidence_guard_test.cmake
++++ b/tests/dungeon/stage11_death_evidence_guard_test.cmake
+@@ -4,30 +4,76 @@ foreach(required FIXTURE_SOURCE FORMAL_SOURCE CAPTURE_SCRIPT HOST_HEADER HOST_SO
+     endif()
+ endforeach()
+ file(READ "${FIXTURE_SOURCE}" fixture_source)
+ file(READ "${FORMAL_SOURCE}" formal_source)
+ file(READ "${CAPTURE_SCRIPT}" capture_script)
+ file(READ "${HOST_HEADER}" host_header)
+ file(READ "${HOST_SOURCE}" host_source)
+ get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
+ set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
+ set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
++if(DEFINED STAGE_SOURCE)
++    set(stage_source "${STAGE_SOURCE}")
++endif()
++if(DEFINED STAGE_HEADER)
++    set(stage_header "${STAGE_HEADER}")
++endif()
+ if(NOT EXISTS "${stage_source}")
+     message(FATAL_ERROR "Stage 11 validation route target is missing: ${stage_source}")
+ endif()
+ if(NOT EXISTS "${stage_header}")
+     message(FATAL_ERROR "Stage 11 validation state target is missing: ${stage_header}")
+ endif()
+ file(READ "${stage_source}" stage_source_text)
+ file(READ "${stage_header}" stage_header_text)
+ set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}\n${stage_source_text}")
+ 
++function(extract_braced_function_block source signature output)
++    string(FIND "${source}" "${signature}" function_begin)
++    if(function_begin EQUAL -1)
++        message(FATAL_ERROR "Stage 11 validation function is missing: ${signature}")
++    endif()
++    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
++    string(FIND "${function_tail}" "{" brace_relative)
++    if(brace_relative EQUAL -1)
++        message(FATAL_ERROR "Stage 11 validation function has no opening brace: ${signature}")
++    endif()
++    math(EXPR brace_open "${function_begin} + ${brace_relative}")
++    string(LENGTH "${source}" source_length)
++    math(EXPR source_last "${source_length} - 1")
++    set(brace_depth 0)
++    set(function_end -1)
++    foreach(character_index RANGE ${brace_open} ${source_last})
++        string(SUBSTRING "${source}" ${character_index} 1 character)
++        if(character STREQUAL "{")
++            math(EXPR brace_depth "${brace_depth} + 1")
++        elseif(character STREQUAL "}")
++            math(EXPR brace_depth "${brace_depth} - 1")
++            if(brace_depth EQUAL 0)
++                set(function_end ${character_index})
++                break()
++            endif()
++        endif()
++    endforeach()
++    if(function_end EQUAL -1)
++        message(FATAL_ERROR "Stage 11 validation function has unbalanced braces: ${signature}")
++    endif()
++    math(EXPR function_length "${function_end} - ${function_begin} + 1")
++    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
++    set(${output} "${function_block}" PARENT_SCOPE)
++endfunction()
++
++extract_braced_function_block("${stage_source_text}"
++    "combat::MovementInput stage11_validation_input(" stage11_input_block)
++extract_braced_function_block("${stage_source_text}"
++    "bool stage11_validation_reached(" stage11_reached_block)
++
+ set(public_death_mutation_scan "${all_evidence}")
+ string(REPLACE "==" "__stage11_eq__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+ string(REPLACE "!=" "__stage11_ne__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+ string(REPLACE "<=" "__stage11_le__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+ string(REPLACE ">=" "__stage11_ge__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+ set(public_death_field_mutation
+@@ -67,32 +113,38 @@ foreach(required_fixture "SaveStore" "session.tick" "pending_save_view"
+     endif()
+ endforeach()
+ foreach(required_host "stage11_validation_input"
+         "MovementInput" "runtime.fixed_tick" "request_death_continue"
+         "host_death_input_gate" "settings::StableKey::e"
+         "death_gate.continue_death = true")
+     if(NOT host_source MATCHES "${required_host}")
+         message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
+     endif()
+ endforeach()
+-foreach(required_stage11_token
+-        "combat::MovementInput stage11_validation_input("
+-        "bool stage11_validation_reached("
++foreach(required_stage11_input_token
+         "session.request_descent(true)"
+-        "session.queue_action(combat::Action::light)"
+-        "Stage11ValidationScenario::deep_continue"
+-        "state.continue_requested && state.saw_depth_two")
+-    string(FIND "${stage_source_text}" "${required_stage11_token}"
++        "session.queue_action(combat::Action::light)")
++    string(FIND "${stage11_input_block}" "${required_stage11_input_token}"
+         required_stage11_index)
+     if(required_stage11_index EQUAL -1)
+         message(FATAL_ERROR
+-            "Stage 11 validation route lacks production algorithm: ${required_stage11_token}")
++            "Stage 11 validation input lacks production route: ${required_stage11_input_token}")
++    endif()
++endforeach()
++foreach(required_stage11_reached_token
++        "Stage11ValidationScenario::deep_continue"
++        "state.continue_requested && state.saw_depth_two")
++    string(FIND "${stage11_reached_block}" "${required_stage11_reached_token}"
++        required_stage11_reached_index)
++    if(required_stage11_reached_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage 11 validation completion lacks production predicate: ${required_stage11_reached_token}")
+     endif()
+ endforeach()
+ if(NOT stage_header_text MATCHES "struct Stage11ValidationState final")
+     message(FATAL_ERROR "Stage 11 validation state definition is missing")
+ endif()
+ foreach(required_host_stage11_token
+         "stage11_validation_input(*session,"
+         "stage11_validation_reached("
+         "stage11_validation_state.continue_requested = true;"
+         "++stage11_validation_state.target_presented_frames;")
+diff --git a/tests/dungeon/stage11_evidence_bad_capture_order.txt b/tests/dungeon/stage11_evidence_bad_capture_order.txt
+index 3d8f889..6fe2db6 100644
+--- a/tests/dungeon/stage11_evidence_bad_capture_order.txt
++++ b/tests/dungeon/stage11_evidence_bad_capture_order.txt
+@@ -1,15 +1,26 @@
+-void stage11_validation_input() {
++void stage11_capture_driver() {
+     MovementInput movement{};
+-    session.queue_action(Action::light);
++    host_validation::stage11_validation_input(*session,
++        current, config, stage11_validation_state);
++    const bool reached = host_validation::stage11_validation_reached(
++        current, config, stage11_validation_state);
++    ++stage11_validation_state.target_presented_frames;
++    stage11_validation_state.continue_requested = true;
+     runtime.fixed_tick(movement);
+     const auto death_key = settings::StableKey::e;
+     DeathInputGate death_gate = host_death_input_gate(
+         false, true, frame_input.keys, physical_keys);
+     death_gate.continue_death = true;
+     if (death_gate.continue_death) {
+         runtime.request_death_continue();
+     }
++}
++[[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
+     Image image = LoadImageFromScreen();
+-    ExportImage(image, path);
+     EndDrawing();
++    if (path == nullptr) return true;
++    if (image.data == nullptr) return false;
++    const bool exported = ExportImage(image, path);
++    UnloadImage(image);
++    return exported;
+ }

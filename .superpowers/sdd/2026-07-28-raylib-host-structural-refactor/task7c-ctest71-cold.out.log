@@ -1,0 +1,13 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+    Start 71: stage11b.architecture.settings_boundaries
+1/1 Test #71: stage11b.architecture.settings_boundaries ...   Passed  249.54 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+architecture    = 249.54 sec*proc (1 test)
+headless        = 249.54 sec*proc (1 test)
+platform        = 249.54 sec*proc (1 test)
+stage11b        = 249.54 sec*proc (1 test)
+
+Total Test time (real) = 249.55 sec

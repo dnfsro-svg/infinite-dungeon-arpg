@@ -106,4 +106,173 @@ the exact headless selector passed 5/5 in 126.64s. Formal evidence remains
 deferred: both HEAD and a clean detached BASE `a9e34cd` build return exit 4 from
 `--select-only` before entering the host, with formal source and selector
 dependencies unchanged. Code commit: 18fb820.
-Task 6A: active — extract Stage17 active-skill validation runtime.
+Task 6A: complete — Stage17 shared state plus six runtime observers/injector
+and private helpers were moved verbatim into the raylib-free header and new
+runtime source. Production comparison passed 20/20 moved blocks, 9/9 retained
+capture/report blocks, and the complete run_raylib_host body. Serial builds
+passed; the exact five-test selector passed 5/5, every later affected guard was
+rerun directly, and final independent review approved with no open P1/P2/P3.
+Code commit: 33d8681.
+Task 6B: complete — Stage17 capture/report helpers moved into
+`host_validation_stage17_report.cpp`; production capture lifecycle and summary
+order remained Host-owned. Final direct guard passed in 312.38s, self-test
+passed in 1423.22s under the unchanged 1500s timeout, and independent round-3
+review approved with no open Critical/Important findings. Code commit: 35cda88.
+Task 7A: complete — opaque HostValidationRuntime now owns the six validation
+states and encapsulates physical-input injection plus migrated Stage17 event,
+snapshot, inventory, and submitted-action observation. Serial build passed;
+all Task 7A gates passed in the final 16-test selector, while the known BASE
+`stage11b.settings_formal` failure remained and its dependent validator was
+not run. Independent round-3 review approved with Critical 0 / Important 0.
+Code commit: e98e042.
+Task 7B: complete — fixed-step and death-path encapsulation.
+Task 7B.0: complete — Stage11D evidence ownership was realigned to the Task 7A
+facade without production changes. The final guard passed in 15.05s and the
+47-bad / 2-harmless mutation self-test passed in 694.42s under the unchanged
+900s timeout. Independent round-3 review approved with Critical 0 / Important
+0 / Minor 0. Code commit: d2792fc.
+Task 7B.1: complete — final death/fixed-step owner guards proved RED before
+production migration. The opaque facade now owns death eligibility, movement
+selection, fixed-tick/death/post-tick observation, and validation target
+completion without moving Host gameplay authority or changing call order.
+Three-target serial build passed; all affected source/sequence/Stage10/11/11B/
+11D guards and adversarial self-tests passed. The exact 38-test selector ran to
+completion with every Task 7B gate green; its ten failures/skips match the
+pre-recorded Task 2, Task 3/7A, and Task 5B BASE failures. Independent Round 3
+review approved with Critical 0 / Important 0 / Minor 1 (non-blocking and
+covered by the central exact namespace guard). Code commit: adacc40.
+Task 7C: active — presentation/capture/summary final boundary. Three parallel
+read-only audits found the master card incomplete: death-input cache and
+pre-fixed pause-transition facade seams were missing; Stage11D needs the real
+same-frame HUD notices plus explicit dimensions; the temporary state-access
+shim, several mutation self-tests, the sequence-self timeout, and the 52-test
+selector were outside the stated scope. The corrected 28-file execution card
+is frozen in ignored `task-7c-brief.md` at BASE adacc40. A single 14-test BASE
+addendum process is running before any production edit; together with Task 7B's
+38-test record it forms the Task 7C 52-test comparison set. Production code is
+still unchanged.
+Task 7C planning gate: complete — corrected 28-file card independently reviewed
+with production Critical 0 / Important 0, guard Critical 0 / Important 0 /
+Minor 0, and gate Critical 0 / Important 0. The card preserves the distinct
+GroundLoot/overlay phases, exact capture override and same-frame exit behavior,
+52/30/14 selectors, bounded background test processes, and 25 named mutation
+families mapped to their real owners.
+Task 7C BASE addendum: complete at adacc40 after serially relinking Stage11C
+stress/formal and Stage17 formal. The exact 14-test addendum reproduced 9 pass,
+Stage11C formal failure, two dependent fixture skips, and the two pre-existing
+stale Stage11C evidence-guard failures in 410.17s; a prior unrelinked diagnostic
+run had the identical name/result set and is not used as BASE evidence.
+Task 7C RED phase: active — no production code changed. Stage10 evidence RED at
+the missing presentation-decision definition; Stage11 death evidence RED at the
+missing runtime presentation owner; Stage11B architecture/evidence RED at the
+missing pre-fixed pause-transition facade. The four central/input guards are
+also RED at the intended missing seams: exact CaptureOwner API, public cached
+Stage11D input snapshot access, removal of HostValidationStateAccess, and the
+new death-input sequence. Stage11C architecture/evidence are RED at the missing
+observe_hud and prepare_hud_snapshot runtime owners. Stage11D guard retargeting
+then completed its RED proof at the intended missing explicit screen-dimension
+seams in both renderer-integration and loot-evidence guards. All direct Task 7C
+guards are now RED for expected missing production owners; production migration
+is active while mutation self-test files finish in their disjoint scope.
+Task 7C production migration: implemented in the six approved files. The
+opaque runtime now owns death-input cache access, pre-tick pause observation,
+HUD preparation/evidence, active-skill and ground-loot observation, presented
+completion/capture decisions, capture-result promotion, and ordered summaries.
+Host retains the real renderer, Stage12/manual capture arbitration, EndDrawing,
+capture I/O, and clean-shutdown authority. `arpg_game` configured and built
+serially with MSVC in 29.7s.
+Task 7C direct GREEN: central facade/source passed in 106.05s after its retained
+dead-code/format adversaries were hardened; central sequence passed in 92.19s;
+host input passed in 107.03s; input latency passed in 70.48s; Stage11C
+architecture/evidence passed in 70.97s/48.34s; Stage11D renderer/loot passed in
+71.58s/31.13s. Migration exposed and fixed only stale guard ownership,
+formatting, CMake semicolon-counting, and removed-seam expectations. Stage10,
+Stage11, and Stage11B hardened direct guards are still being reconciled before
+mutation self-tests.
+Task 7C final verification: complete; commit pending. The focused selector
+passed 30/30. The exact 52-name regression run reproduced only BASE functional
+failure categories; its transient #71/#73 timeouts and intentional #104 RED
+were closed by current-state cold reruns: #71 passed in 249.54s, #73 passed in
+275.55s, and #104 passed in 1290.53s. M24/M25 now have 22 targeted adversarial
+cases (101 total mapped Mxx cases); targeted 22/22 passed. Two final bounded
+read-only reviews approved with Critical 0 / Important 0 / Minor 0. Exact
+28-file staging and commit remain; this ledger must stay unstaged.
+Task 7C: complete — exact 28-file commit `60611de` (`refactor: complete
+host validation boundary`). The progress ledger remains the only tracked
+unstaged file in the isolated worktree.
+Task 8A: complete — fixed-step frame gating moved verbatim into the dedicated
+`host_frame_gate.cpp`; public declaration and the two Host calls are unchanged.
+RED first failed only at the missing owner source. A stale input-latency guard
+made the real scope five files and was retargeted to the new owner. VS2022/SDK
+26100 serial build linked `arpg_game` and `arpg_platform_tests`; the planned
+selector passed 3/3 in 456.3s, the retargeted input-latency guard passed in
+66.7s, and the final streamlined source guard passed in 220.8s. Its peak
+Task8A addition was reduced from about 480 lines to 183 while retaining full
+owner-TU, direct-call, all-src ownership/macro, phase-2/token-paste, and real
+CMake registration boundaries. Two final reviews approved with Critical 0 /
+Important 0; one fail-closed CMake formatting risk remains non-blocking. Code
+commit: `1c33dea` (`refactor: extract host frame gate`).
+Task 8B: complete — settings notice, renderer-filter selection, preview/apply/
+rollback/quit settlement, and persistence publication moved into the value-type
+`HostSettingsRuntime`; the four compatibility functions are thin wrappers and
+Host retains the original update/notice/revision/settle/hint order. The final
+serial MSVC build linked the game, platform tests, and Stage11B formal target;
+platform units passed 510/510 in 17.21s, Host source/input/sequence guards passed
+in 334.03s/308.30s/169.95s, Stage11B and Stage11D base guards passed, and the
+new Task8B targeted owner suites passed 7-bad/1-harmless in 226.57s and
+17-bad/1-harmless in 743.00s. The pre-existing Stage11B formal fixture failure
+remains unchanged and was not reclassified as a Task 8B regression. Final
+production and guard reviews approved with Critical 0 / Important 0 / Minor 0.
+Code commit: `89928b7` (`refactor: extract host settings runtime`).
+Task 8C: minor (deferred): `HostWindowBackend` permits null or throwing
+function pointers even though `initialize()` and `close()` are `noexcept`;
+production supplies a complete non-throwing raylib backend, so document or
+enforce that precondition in a later API-hardening pass.
+Task 8C: fix round 1/5 (3 addressed, 0 open — active interface surface,
+unique raylib window owner, and full sequence self-test evidence; commits
+2358e54..ba1c93f).
+Task 8C: complete (commits 89928b7..ba1c93f, review clean).
+Task 9 guard hardening: complete — exception cleanup and exact-owner guards
+landed in `50d501c` and `9efa31e`. Fix round 4 added target-wide compile-time
+raylib lifecycle poisoning, real compiler probes, the exact owner seam, and
+renderer/namespace hardening in `23f94e8`. Its review found four remaining
+guard escapes; final fix round 5 closed extra CMake exemptions, cross-directory
+lifecycle directives, parameterized `##`/`%:%:` renderer macros, and sanitized
+push/pop pragmas in `4f50dec`. All required selective tests, MSVC configure,
+and four final full guards passed; final independent review approved with
+Critical 0 / Important 0. The guard-only commits are frozen and no B-G or
+gameplay behavior was changed.
+Task 9: BLOCKED — the recorded full gate remains Debug 99/124 and Release
+98/124, formal evidence is incomplete for five stages, several real-window
+actions remain inconclusive, and the paused game used about 1.54 logical CPU
+cores. The two deferred backend/renderer-lifetime P2 concerns also remain.
+Rounds 4-5 intentionally did not rerun or weaken those gates. Do not push or
+declare subproject A complete from the guard-only approval; gate recovery must
+be a separately scoped prerequisite task from the preserved Task 9 baseline.
+Task 9 gate recovery: integrated — `codex/task9-gate-recovery` fast-forwarded
+from `4f50dec` to `e416340` after independent overlap audit. The recovery
+commits restore the real Stage9 population fixture and the public-only Stage10
+dense combat/reward transaction fixture; their isolated branch gates passed,
+while post-integration focused revalidation and the original full Task 9 gate
+remain pending. Existing Task 9 evidence/metric dirt was hash-verified unchanged.
+Task 9 deferred P2 audit: closed as stale-report findings — commit `50d501c`
+already enforces complete `noexcept` window callbacks with null rejection and
+keeps renderer resource shutdown ahead of window destruction in both exception
+paths. Existing unit/source guards cover both contracts; no production change
+is required. The final Task 9 report must replace its obsolete open-P2 wording.
+Task 9 Stage9 evidence recovery: implementation/review complete — the 1000-room
+trace no longer synthesizes `relay_defeated`; it defeats each sealed-plan
+ordinal through the approved real `CombatWorld::defeat_monster` seam and the
+production session relay. The helper now accepts legal zero-affix monsters while
+retaining all blueprint/runtime/count/bit/event/fault checks. Debug serial build
+was clean; Stage9 fixture and evidence guard passed 2/2, and the direct 1000-room
+stress passed 2 cases/0 failures in 26.171 s. Stage10 remained on its approved
+75 s worst-case budget; its fresh successful transaction took 20.01 s. Final
+specification and code-quality reviews both passed with zero open findings.
+Task 9 save-slot stack recovery: implementation/review complete — all three
+automatic `SaveCheckpointSlot` values in the exit-unlock tests now use checked
+`std::nothrow` heap ownership without changing revisions, capture/restore
+operations, or assertions. The exact stack guard changed from RED to 1/1 GREEN,
+the Debug dungeon target built serially, and independent specification/code
+quality reviews passed with zero findings. Full dungeon runtime regression is
+deferred to the grouped Task 9 gate after the remaining persistence repair.

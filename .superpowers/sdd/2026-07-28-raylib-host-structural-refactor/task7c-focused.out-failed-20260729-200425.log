@@ -1,0 +1,76 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+      Start  20: stage10.evidence.no_private_injection
+ 1/30 Test  #20: stage10.evidence.no_private_injection ...................   Passed    4.13 sec
+      Start  21: stage10.evidence.rejects_private_injection
+ 2/30 Test  #21: stage10.evidence.rejects_private_injection ..............   Passed    1.60 sec
+      Start  22: stage10.evidence.rejects_pre_present_capture
+ 3/30 Test  #22: stage10.evidence.rejects_pre_present_capture ............   Passed    1.91 sec
+      Start  23: stage10.evidence.rejects_pre_capture_with_post_dummy
+ 4/30 Test  #23: stage10.evidence.rejects_pre_capture_with_post_dummy ....   Passed    1.94 sec
+      Start  24: stage10.evidence.mutation_self_test
+ 5/30 Test  #24: stage10.evidence.mutation_self_test .....................   Passed  149.51 sec
+      Start  27: stage11.death_evidence.production_paths
+ 6/30 Test  #27: stage11.death_evidence.production_paths .................   Passed    9.52 sec
+      Start  28: stage11.death_evidence.rejects_private_injection
+ 7/30 Test  #28: stage11.death_evidence.rejects_private_injection ........   Passed    1.60 sec
+      Start  29: stage11.death_evidence.rejects_pre_present_capture
+ 8/30 Test  #29: stage11.death_evidence.rejects_pre_present_capture ......   Passed    1.58 sec
+      Start  30: stage11.death_evidence.rejects_public_death_injection
+ 9/30 Test  #30: stage11.death_evidence.rejects_public_death_injection ...   Passed    1.58 sec
+      Start  31: stage11.death_evidence.mutation_self_test
+10/30 Test  #31: stage11.death_evidence.mutation_self_test ...............   Passed   29.39 sec
+      Start  34: platform.units
+11/30 Test  #34: platform.units ..........................................   Passed   14.14 sec
+      Start  70: stage11.architecture.death_boundaries
+12/30 Test  #70: stage11.architecture.death_boundaries ...................   Passed    0.84 sec
+      Start  71: stage11b.architecture.settings_boundaries
+13/30 Test  #71: stage11b.architecture.settings_boundaries ...............   Passed  227.91 sec
+      Start  72: stage11c.architecture.hud_boundaries
+14/30 Test  #72: stage11c.architecture.hud_boundaries ....................   Passed   23.76 sec
+      Start  73: stage11c.architecture.hud_boundaries_self_test
+15/30 Test  #73: stage11c.architecture.hud_boundaries_self_test ..........   Passed  256.36 sec
+      Start  74: stage11d.architecture.loot_boundaries
+16/30 Test  #74: stage11d.architecture.loot_boundaries ...................   Passed   54.75 sec
+      Start  75: stage11d.architecture.loot_boundaries_self_test
+17/30 Test  #75: stage11d.architecture.loot_boundaries_self_test .........   Passed  195.48 sec
+      Start  92: platform.input_latency_source
+18/30 Test  #92: platform.input_latency_source ...........................   Passed   33.13 sec
+      Start  93: platform.host_input_source
+19/30 Test  #93: platform.host_input_source ..............................   Passed   47.50 sec
+      Start  94: platform.host_validation_source
+20/30 Test  #94: platform.host_validation_source .........................   Passed  101.17 sec
+      Start  95: platform.host_validation_sequence
+21/30 Test  #95: platform.host_validation_sequence .......................   Passed   87.86 sec
+      Start  96: platform.host_validation_sequence_self_test
+22/30 Test  #96: platform.host_validation_sequence_self_test .............***Failed  610.04 sec
+CMake Error at E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_self_test.cmake:389 (if):
+  if given arguments:
+
+    "TARGET" "STREQUAL" "host"
+
+  Unknown arguments specified
+Call Stack (most recent call first):
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/platform/host_validation_sequence_guard_self_test.cmake:486 (arpg_expect_task7c_sequence_rejection)
+
+
+
+
+95% tests passed, 1 tests failed out of 22
+
+Label Time Summary:
+architecture    = 1638.81 sec*proc (11 tests)
+dungeon         = 202.74 sec*proc (10 tests)
+evidence        = 202.74 sec*proc (10 tests)
+headless        = 1855.69 sec*proc (22 tests)
+negative        =  10.20 sec*proc (6 tests)
+platform        = 1652.11 sec*proc (11 tests)
+stage10         = 159.08 sec*proc (5 tests)
+stage11         =  44.50 sec*proc (6 tests)
+stage11b        = 227.91 sec*proc (1 test)
+stage11c        = 280.13 sec*proc (2 tests)
+stage11d        = 250.23 sec*proc (2 tests)
+
+Total Test time (real) = 1855.79 sec
+
+The following tests FAILED:
+	 96 - platform.host_validation_sequence_self_test (Failed) architecture headless platform

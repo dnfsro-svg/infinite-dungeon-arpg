@@ -1,0 +1,869 @@
+# Review package: afa9637..2486d32
+
+## Commits
+2486d32 test: harden stage11c validation guards
+0822671 docs: record task 4 review findings
+
+## Files changed
+ .../progress.md                                    |  9 ++
+ src/platform/raylib/raylib_host.cpp                |  6 ++
+ .../host_validation_sequence_guard_self_test.cmake | 82 ++++++++++++++++++
+ .../host_validation_sequence_guard_test.cmake      | 20 ++++-
+ ...stage11c_hud_architecture_guard_self_test.cmake | 70 ++++++++++++++-
+ .../stage11c_hud_architecture_guard_test.cmake     | 60 +++++++++++--
+ .../stage11c_hud_evidence_guard_self_test.cmake    | 40 ++++++++-
+ .../stage11c_hud_evidence_guard_test.cmake         | 99 ++++++++++++++++++++--
+ 8 files changed, 366 insertions(+), 20 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+index 177a23e..9b7d5fe 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+@@ -37,10 +37,19 @@ six and passed 6/6 (581.18s). Fix commit: 94ac373.
+ Task 3: scoped re-review findings (round 2 required) — raw run_raylib_host pre-crop loses earlier comment/string lexical state; splice mutation retains only the short call rather than the guard's full sampled-keys declaration
+ Task 3: fix round 2/5 (all review findings addressed) — code-state lexer proves
+ the raw crop candidate before function isolation; one-pass cropped sanitizer;
+ block and valid escaped-multiline string pre-open decoys; complete-declaration
+ splice decoy; LF/CRLF lexical equivalence checks and splice block-close fix in
+ shared scanner. Task2 Stage10/11 scanner tests 4/4; serial build passed;
+ focused exact-six selector 6/6 (416.28s). No formal Step4 rerun. Fix commit:
+ 7e2297b.
+ Task 3: complete (commits 22e73e4..9f0758c, review clean after 2 fix rounds; formal Step4 remains a BASE-proven variable-tick failure at the same predicate)
+ Task 4: implementation complete pending independent review; Step3 focused selector passed 8/8. Step4 formal has a same-asset, BASE-proven baseline: BASE/HEAD staged bin assets each had 102 files with relative-path plus SHA256 DIFF_COUNT=0; combat/low-health/debug passed and cleared/abyss-warning/level-up failed on both, with identical zero snapshot and image hashes for the three failures. Low-health image hashes remain non-deterministic between runs but validator valid=1 on both sides.
++Task 4: review findings (round 1 required) — Stage11C evidence guard does not constrain injection/hash/reached/summary algorithms; host capture guard lacks comment/string-safe unique model/notices/layout/hash assignments and presented-frame/capture ordering; architecture/sequence boundary checks accept raw-text comment/string/forward-declaration/cross-function/CMake-comment decoys. FIX_BASE afa9637.
++Task 4: fix round 1/5 (all findings addressed) — Stage11C Stage-source
++function semantics and host capture ordering are guarded; architecture and
++sequence guards use splice-aware small-file isolation with comment/string,
++forward, cross-function/lambda, LF/CRLF splice, and CMake-comment/quoted-decoy
++self-tests. VS2022 serial four-target build passed in 195.59s; exact Step3
++selector passed 8/8 in 844.80s. Step4 formal intentionally not rerun: same
++102-file staged asset, BASE-proven formal baseline remains applicable. Commit
++pending: `test: harden stage11c validation guards`.
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index dcb2f55..d3fdae8 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -2928,37 +2928,39 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 config.stage12_material_showcase ? presented_snapshot : current;
+ 
+             // Observe after all possible fixed-step changes and before every
+             // presented frame, including death/recovery-owned overlay frames.
+             const HudPresentedFrame hud_presented_frame = current.death.has_value()
+                 ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
+             renderer.observe_presented_hud_frame(hud_presented_frame,
+                 presented_hud_previous, presented_hud_current,
+                 runtime.render_status(), control_hints,
+                 frame_seconds, pause_blocks_gameplay);
++// STAGE11C_HUD_VALIDATION_SEAM_BEGIN observation
+             const bool stage11c_target_visible = host_validation::stage11c_hud_validation_reached(
+                 current, config.stage11c_hud_validation,
+                 stage11c_validation_state, draw_debug);
+             if (stage11c_target_visible) {
+                 ++stage11c_validation_state.target_presented_frames;
+                 stage11c_validation_state.production_snapshot_hash =
+                     host_validation::stage11c_production_snapshot_hash(current);
+                 stage11c_validation_state.model = renderer.hud_model();
+                 stage11c_validation_state.notices = renderer.hud_notice_view();
+                 // Evidence records every formal HUD slot, including the F1 slot
+                 // while hidden; f1 remains the authoritative visibility flag.
+                 stage11c_validation_state.layout = make_hud_layout(
+                     GetScreenWidth(), GetScreenHeight(), true);
+                 stage11c_validation_state.debug_visible = draw_debug;
+             } else {
+                 stage11c_validation_state.target_presented_frames = 0U;
+             }
++// STAGE11C_HUD_VALIDATION_SEAM_END observation
+             const settings::LootFilterMode presented_loot_filter =
+                 renderer_loot_filter_mode(
+                     pause_menu.screen, live_settings, pause_menu.draft);
+             renderer.set_loot_filter_mode(presented_loot_filter);
+             BeginDrawing();
+             ClearBackground(Color{13, 17, 27, 255});
+             reset_ui_text_bounds_audit();
+             const GroundLootView ground_loot_view = [&]() noexcept {
+                 if (config.stage12_material_background_only) {
+                     static_cast<void>(renderer.draw_room_background_only(
+@@ -3171,22 +3173,24 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 ++stage10_validation_state.chaos_presented_frames;
+             }
+             const bool stage10_reached = stage10_target_visible
+                 && (config.stage10_validation
+                         != Stage10ValidationScenario::chaos_expansion
+                     || stage10_validation_state.chaos_presented_frames >= 16U);
+             const bool stage11_reached = stage11_target_visible
+                 && stage11_validation_state.target_presented_frames >= 4U;
+             const bool stage11b_reached = host_validation::stage11b_validation_complete(
+                 config, stage11b_validation_state, pause_menu);
++// STAGE11C_HUD_VALIDATION_SEAM_BEGIN reached
+             const bool stage11c_reached = stage11c_target_visible
+                 && stage11c_validation_state.target_presented_frames >= 4U;
++// STAGE11C_HUD_VALIDATION_SEAM_END reached
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached
+             const bool stage11d_reached = stage11d_validation_state.captured
+                 && (config.stage11d_loot_validation
+                         != Stage11DLootValidationScenario::rare_only_abyss
+                     || stage11d_validation_state.abyss_claimed);
+ // STAGE11D_LOOT_VALIDATION_SEAM_END reached
+             const bool stage17_reached = stage17_validation_complete(
+                 config, *stage17_validation_state);
+             const bool stage11b_visible_capture =
+                 (config.stage11b_validation == Stage11BValidationScenario::rebound_attack
+@@ -3270,32 +3274,34 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     && config.stage11c_hud_validation == Stage11CHudValidationScenario::none
+                     && no_loot_validation_active
+                     && presented_frame_count + 1U
+                         >= config.validation_exit_after_presented_frames) {
+                 // Formal material validation captures an ordinary gameplay frame
+                 // at a caller-owned path without sharing the legacy F12 file.
+                 capture_path = config.validation_capture_file->string();
+             } else if (!capture_path.has_value()) {
+                 capture_path = validation_capture_path();
+             }
++// STAGE11C_HUD_VALIDATION_SEAM_BEGIN presented_capture
+             const bool capture_succeeded =
+                 present_frame_and_maybe_capture(capture_path.has_value()
+                     ? capture_path->c_str() : nullptr);
+             if (stage17_capture_requested && capture_succeeded) {
+                 mark_stage17_capture_complete(*stage17_validation_state);
+             }
+             ++presented_frame_count;
+             const bool captured_stage10_frame = captured_stage10_target
+                 && capture_succeeded;
+             if (captured_stage10_frame && stage11c_reached) {
+                 stage11c_validation_state.captured = true;
+             }
++// STAGE11C_HUD_VALIDATION_SEAM_END presented_capture
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN captured
+             if (captured_stage10_frame
+                     && stage11d_validation_state.target_visible) {
+                 stage11d_validation_state.captured = true;
+             }
+ // STAGE11D_LOOT_VALIDATION_SEAM_END captured
+             stage10_validation_captured = stage10_validation_captured
+                 || captured_stage10_frame;
+             if (config.validation_exit_after_presented_frames != 0U
+                     && presented_frame_count
+diff --git a/tests/platform/host_validation_sequence_guard_self_test.cmake b/tests/platform/host_validation_sequence_guard_self_test.cmake
+index 5d1b1ee..6144a99 100644
+--- a/tests/platform/host_validation_sequence_guard_self_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_self_test.cmake
+@@ -14,20 +14,54 @@ function(arpg_assert_lexical_token_equivalence LABEL SOURCE TOKEN EXPECTED_CODE)
+     if(EXPECTED_CODE)
+         if(_sanitized_position EQUAL -1 OR _fast_position EQUAL -1
+                 OR NOT _sanitized_position EQUAL _fast_position)
+             message(FATAL_ERROR "lexical scanner mismatch for ${LABEL}: ${_sanitized_position}/${_fast_position}")
+         endif()
+     elseif(NOT _sanitized_position EQUAL -1 OR NOT _fast_position EQUAL -1)
+         message(FATAL_ERROR "lexical scanner exposed hidden token for ${LABEL}: ${_sanitized_position}/${_fast_position}")
+     endif()
+ endfunction()
+ 
++function(arpg_expect_stage11c_sequence_rejection
++        NAME TARGET_FILE SEARCH REPLACEMENT REASON)
++    set(_mutation_file "${GUARD_TEST_ROOT}/${NAME}-${TARGET_FILE}")
++    set(_production_file "${SOURCE_ROOT}/src/platform/raylib/${TARGET_FILE}")
++    file(READ "${_production_file}" _mutated_text)
++    set(_original_text "${_mutated_text}")
++    string(REPLACE "${SEARCH}" "${REPLACEMENT}" _mutated_text "${_mutated_text}")
++    if(_mutated_text STREQUAL _original_text)
++        message(FATAL_ERROR
++            "Stage11C sequence mutation ${NAME} anchor is missing: ${SEARCH}")
++    endif()
++    file(WRITE "${_mutation_file}" "${_mutated_text}")
++
++    set(_override "-DSTAGE11C_SOURCE_OVERRIDE=${_mutation_file}")
++    if(TARGET_FILE STREQUAL "host_validation_stage11c.hpp")
++        set(_override "-DSTAGE11C_HEADER_OVERRIDE=${_mutation_file}")
++    endif()
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}" "${_override}"
++            -P "${_guard}"
++        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
++    if(_result EQUAL 0)
++        message(FATAL_ERROR
++            "Host validation sequence guard accepted Stage11C ${NAME} decoy")
++    endif()
++    set(_combined "${_stdout}\n${_stderr}")
++    string(FIND "${_combined}" "${REASON}" _reason_index)
++    if(_reason_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11C sequence mutation ${NAME} failed for wrong reason; "
++            "expected '${REASON}', got: ${_combined}")
++    endif()
++endfunction()
++
+ set(_lexical_lf_fixture [=[
+ // lexical_line_hidden \
+ lexical_line_hidden
+ lexical_line_visible;
+ const char* escaped = "lexical_string_hidden \" still hidden";
+ const char escaped_quote = '\'';
+ /* lexical_block_hidden *\
+ / lexical_block_visible;
+ ]=])
+ string(ASCII 10 _lexical_lf)
+@@ -41,20 +75,68 @@ foreach(_fixture_name IN ITEMS lf crlf)
+     arpg_assert_lexical_token_equivalence("${_fixture_name} visible code"
+         "${_fixture_source}" "lexical_line_visible" TRUE)
+     arpg_assert_lexical_token_equivalence("${_fixture_name} escaped string"
+         "${_fixture_source}" "lexical_string_hidden" FALSE)
+     arpg_assert_lexical_token_equivalence("${_fixture_name} block close splice"
+         "${_fixture_source}" "lexical_block_hidden" FALSE)
+     arpg_assert_lexical_token_equivalence("${_fixture_name} block close visible"
+         "${_fixture_source}" "lexical_block_visible" TRUE)
+ endforeach()
+ 
++arpg_expect_stage11c_sequence_rejection(stage_header_comment_decoy
++    host_validation_stage11c.hpp
++    "struct Stage11CHudValidationState final {"
++    "struct Stage11CHudValidationState;\n// struct Stage11CHudValidationState final {"
++    "Host validation Stage11C state definition is missing")
++arpg_expect_stage11c_sequence_rejection(stage_source_comment_decoy
++    host_validation_stage11c.cpp
++    "std::uint64_t stage11c_production_snapshot_hash("
++    "// std::uint64_t stage11c_production_snapshot_hash(\nstd::uint64_t stage11c_missing_snapshot_hash("
++    "Evidence validation function is missing: std::uint64_t")
++arpg_expect_stage11c_sequence_rejection(stage_source_string_decoy
++    host_validation_stage11c.cpp
++    "std::uint64_t stage11c_production_snapshot_hash("
++    "constexpr const char* stage11c_hash_decoy = \"std::uint64_t stage11c_production_snapshot_hash(\";\nstd::uint64_t stage11c_missing_snapshot_hash("
++    "Evidence validation function is missing: std::uint64_t")
++arpg_expect_stage11c_sequence_rejection(stage_source_forward_decoy
++    host_validation_stage11c.cpp
++    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
++    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept;\nbool stage11c_hud_validation_reached_moved(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
++    "Host validation Stage11C definition is missing")
++arpg_expect_stage11c_sequence_rejection(stage_source_cross_function_decoy
++    host_validation_stage11c.cpp
++    "std::uint64_t stage11c_production_snapshot_hash("
++    "void stage11c_cross_function_decoy() {\n    const std::uint64_t stage11c_production_snapshot_hash(0);\n}\nstd::uint64_t stage11c_missing_snapshot_hash("
++    "Host validation Stage11C definition is missing")
++arpg_expect_stage11c_sequence_rejection(stage_source_lambda_decoy
++    host_validation_stage11c.cpp
++    "std::uint64_t stage11c_production_snapshot_hash("
++    "const auto stage11c_lambda_decoy = [] {\n    const std::uint64_t stage11c_production_snapshot_hash(0);\n};\nstd::uint64_t stage11c_missing_snapshot_hash("
++    "Host validation Stage11C definition is missing")
++string(ASCII 10 _stage11c_lf)
++string(ASCII 13 _stage11c_cr)
++string(ASCII 92 _stage11c_backslash)
++set(_stage11c_spliced_lf_decoy
++    "// std::uint64_t stage11c_production_snapshot_hash( ${_stage11c_backslash}${_stage11c_lf}std::uint64_t stage11c_missing_snapshot_hash(")
++set(_stage11c_spliced_crlf_decoy
++    "// std::uint64_t stage11c_production_snapshot_hash( ${_stage11c_backslash}${_stage11c_cr}${_stage11c_lf}std::uint64_t stage11c_missing_snapshot_hash(")
++arpg_expect_stage11c_sequence_rejection(stage_source_spliced_lf_comment_decoy
++    host_validation_stage11c.cpp
++    "std::uint64_t stage11c_production_snapshot_hash("
++    "${_stage11c_spliced_lf_decoy}"
++    "Evidence validation function is missing: std::uint64_t")
++arpg_expect_stage11c_sequence_rejection(stage_source_spliced_crlf_comment_decoy
++    host_validation_stage11c.cpp
++    "std::uint64_t stage11c_production_snapshot_hash("
++    "${_stage11c_spliced_crlf_decoy}"
++    "Evidence validation function is missing: std::uint64_t")
++
+ set(_split_fixed_step "${GUARD_TEST_ROOT}/split-fixed-step-conditions.cpp")
+ file(WRITE "${_split_fixed_step}" [=[
+ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+ while (!exit_requested) {
+     const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+     inject_stage11b_physical_edges();
+     inject_stage11c_physical_edges();
+     inject_stage11d_physical_edges();
+     inject_stage17_physical_edges();
+     map_host_frame_input();
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 24720af..eb5bd88 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -37,22 +37,28 @@ set(_stage10_11_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.cpp")
+ set(_stage11b_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.hpp")
+ if(DEFINED STAGE11B_HEADER_OVERRIDE)
+     set(_stage11b_header "${STAGE11B_HEADER_OVERRIDE}")
+ endif()
+ set(_stage11b_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
+ set(_stage11c_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.hpp")
++if(DEFINED STAGE11C_HEADER_OVERRIDE)
++    set(_stage11c_header "${STAGE11C_HEADER_OVERRIDE}")
++endif()
+ set(_stage11c_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.cpp")
++if(DEFINED STAGE11C_SOURCE_OVERRIDE)
++    set(_stage11c_source "${STAGE11C_SOURCE_OVERRIDE}")
++endif()
+ set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+ foreach(_required IN ITEMS
+         "${_input_header}" "${_input_source}"
+         "${_navigation_header}" "${_navigation_source}"
+         "${_stage10_11_header}" "${_stage10_11_source}"
+         "${_stage11b_header}" "${_stage11b_source}"
+         "${_stage11c_header}" "${_stage11c_source}" "${_raylib_cmake}")
+     if(NOT EXISTS "${_required}")
+         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
+     endif()
+@@ -134,34 +140,40 @@ foreach(_stage11b_definition_token IN ITEMS
+ endforeach()
+ if(NOT _stage11b_header_text MATCHES "struct Stage11BValidationState final")
+     message(FATAL_ERROR "Host validation Stage11B state definition is missing")
+ endif()
+ 
+ foreach(_stage11c_definition_token IN ITEMS
+         "PhysicalKeySnapshot inject_stage11c_physical_edges("
+         "std::uint64_t stage11c_production_snapshot_hash("
+         "bool stage11c_hud_validation_reached("
+         "void write_stage11c_hud_validation_summary(")
+-    string(FIND "${_stage11c_source_text}" "${_stage11c_definition_token}"
+-        _stage11c_definition)
+-    if(_stage11c_definition EQUAL -1)
++    evidence_extract_cpp_function_block("${_stage11c_source_text}"
++        "${_stage11c_definition_token}" _stage11c_function)
++    string(FIND "${_stage11c_function}" "{" _stage11c_definition)
++    string(FIND "${_stage11c_function}" ";" _stage11c_forward_declaration)
++    if(_stage11c_definition EQUAL -1
++            OR (NOT _stage11c_forward_declaration EQUAL -1
++                AND _stage11c_forward_declaration LESS _stage11c_definition))
+         message(FATAL_ERROR
+             "Host validation Stage11C definition is missing: ${_stage11c_definition_token}")
+     endif()
+     string(FIND "${_host_text}" "${_stage11c_definition_token}"
+         _host_stage11c_definition)
+     if(NOT _host_stage11c_definition EQUAL -1)
+         message(FATAL_ERROR
+             "Host validation Stage11C definition remains in raylib_host.cpp: ${_stage11c_definition_token}")
+     endif()
+ endforeach()
+-if(NOT _stage11c_header_text MATCHES "struct Stage11CHudValidationState final")
++evidence_sanitize_cpp_for_scan("${_stage11c_header_text}" _stage11c_header_code)
++if(NOT _stage11c_header_code MATCHES
++        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final[ \t\r\n]*[{]")
+     message(FATAL_ERROR "Host validation Stage11C state definition is missing")
+ endif()
+ if(_host_text MATCHES "struct Stage11CHudValidationState final")
+     message(FATAL_ERROR
+         "Host validation Stage11C state definition remains in raylib_host.cpp")
+ endif()
+ if(_host_text MATCHES "struct Stage11BValidationState final")
+     message(FATAL_ERROR
+         "Host validation Stage11B state definition remains in raylib_host.cpp")
+ endif()
+diff --git a/tests/platform/stage11c_hud_architecture_guard_self_test.cmake b/tests/platform/stage11c_hud_architecture_guard_self_test.cmake
+index cc749fd..95b1505 100644
+--- a/tests/platform/stage11c_hud_architecture_guard_self_test.cmake
++++ b/tests/platform/stage11c_hud_architecture_guard_self_test.cmake
+@@ -93,20 +93,64 @@ function(arpg_expect_hud_guard_rejects
+     endif()
+     set(_combined "${_stdout}\n${_stderr}")
+     string(FIND "${_combined}" "${REASON}" _reason_index)
+     if(_reason_index EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11C HUD mutation ${NAME} failed for wrong reason; "
+             "expected '${REASON}', got: ${_combined}")
+     endif()
+ endfunction()
+ 
++function(arpg_expect_hud_guard_rejects_after_replace
++        NAME TARGET_FILE SEARCH REPLACEMENT TAIL_MUTATION REASON)
++    set(_mutation_root "${GUARD_TEST_ROOT}/${NAME}")
++    file(MAKE_DIRECTORY "${_mutation_root}")
++    foreach(_production_source IN LISTS _production_hud_sources)
++        get_filename_component(_source_name "${_production_source}" NAME)
++        file(COPY_FILE "${_production_source}"
++            "${_mutation_root}/${_source_name}" ONLY_IF_DIFFERENT)
++    endforeach()
++
++    set(_mutated_source "${_mutation_root}/${TARGET_FILE}")
++    file(READ "${_mutated_source}" _mutated_text)
++    set(_original_text "${_mutated_text}")
++    string(REPLACE "${SEARCH}" "${REPLACEMENT}" _mutated_text "${_mutated_text}")
++    if(_mutated_text STREQUAL _original_text)
++        message(FATAL_ERROR
++            "Stage11C replacement mutation ${NAME} anchor is missing: ${SEARCH}")
++    endif()
++    if(NOT TAIL_MUTATION STREQUAL "")
++        string(APPEND _mutated_text "\n${TAIL_MUTATION}\n")
++    endif()
++    file(WRITE "${_mutated_source}" "${_mutated_text}")
++
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}"
++            "-DSOURCE_ROOT=${SOURCE_ROOT}"
++            "-DHUD_SOURCE_ROOT=${_mutation_root}"
++            -P "${GUARD_SCRIPT}"
++        RESULT_VARIABLE _result
++        OUTPUT_VARIABLE _stdout
++        ERROR_VARIABLE _stderr)
++    if(_result EQUAL 0)
++        message(FATAL_ERROR
++            "Stage11C HUD guard accepted ${NAME} production-source mutation")
++    endif()
++    set(_combined "${_stdout}\n${_stderr}")
++    string(FIND "${_combined}" "${REASON}" _reason_index)
++    if(_reason_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11C HUD replacement mutation ${NAME} failed for wrong reason; "
++            "expected '${REASON}', got: ${_combined}")
++    endif()
++endfunction()
++
+ arpg_expect_hud_guard_rejects(get_key_pressed combat_renderer.cpp ""
+     "int stage11c_bad_key() { return GetKeyPressed(); }"
+     "HUD boundary rejects physical input sampling")
+ arpg_expect_hud_guard_rejects(dungeon_session debug_overlay_renderer.hpp ""
+     "DungeonSession* stage11c_bad_session = nullptr;"
+     "HUD boundary rejects DungeonSession access")
+ arpg_expect_hud_guard_rejects(fixed_tick raylib_host.cpp
+     "GetFrameTime(), true);"
+     "runtime.fixed_tick({});"
+     "HUD boundary rejects fixed tick access")
+@@ -120,13 +164,37 @@ arpg_expect_hud_guard_rejects(dynamic_vector raylib_host.cpp
+     "const GroundLootView ground_loot_view = [&]() noexcept {"
+     "std::vector<int> stage11c_bad_vector;"
+     "HUD boundary rejects dynamic std::vector")
+ arpg_expect_hud_guard_rejects(legacy_budget raylib_host.cpp
+     "const GroundLootView ground_loot_view = [&]() noexcept {"
+     "constexpr const char* stage11c_bad_text = \"Budget\";"
+     "Normal HUD rejects legacy Budget text")
+ arpg_expect_hud_guard_rejects(fourth_status_tag hud_view_model.cpp ""
+     "void stage11c_bad_fourth(HudViewModel& output) { append_status_tag(output.player, HudStatusTagKind::slow); }"
+     "HUD visible status tag limit rejects fourth tag")
++arpg_expect_hud_guard_rejects_after_replace(stage_header_comment_decoy
++    host_validation_stage11c.hpp
++    "struct Stage11CHudValidationState final {"
++    "struct Stage11CHudValidationState;\n// struct Stage11CHudValidationState final {"
++    ""
++    "Stage11C HUD state definition is missing from private Stage header")
++arpg_expect_hud_guard_rejects_after_replace(stage_source_comment_string_decoy
++    host_validation_stage11c.cpp
++    "std::uint64_t stage11c_production_snapshot_hash("
++    "// std::uint64_t stage11c_production_snapshot_hash(\nconstexpr const char* stage11c_hash_decoy = \"std::uint64_t stage11c_production_snapshot_hash(\";\nstd::uint64_t stage11c_missing_snapshot_hash("
++    ""
++    "Evidence validation function is missing: std::uint64_t")
++arpg_expect_hud_guard_rejects_after_replace(stage_source_forward_decoy
++    host_validation_stage11c.cpp
++    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
++    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept;\nbool stage11c_hud_validation_reached_moved(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
++    ""
++    "Stage11C HUD definition is missing from Stage source")
++arpg_expect_hud_guard_rejects_after_replace(stage_cmake_comment_quoted_decoy
++    CMakeLists.txt
++    "    host_validation_stage11c.cpp"
++    "    # host_validation_stage11c.cpp\nmessage(STATUS \"host_validation_stage11c.cpp\")"
++    ""
++    "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
+ 
+ message(STATUS
+-    "Stage 11C HUD architecture guard rejected all eight production-source mutations")
++    "Stage 11C HUD architecture guard rejected all twelve production-source mutations")
+diff --git a/tests/platform/stage11c_hud_architecture_guard_test.cmake b/tests/platform/stage11c_hud_architecture_guard_test.cmake
+index f67fa63..fcd2b08 100644
+--- a/tests/platform/stage11c_hud_architecture_guard_test.cmake
++++ b/tests/platform/stage11c_hud_architecture_guard_test.cmake
+@@ -41,20 +41,21 @@ set(_hud_boundary_sources
+     "${_stage11c_header}" "${_stage11c_source}")
+ foreach(_required_source IN LISTS _hud_boundary_sources)
+     if(NOT EXISTS "${_required_source}")
+         message(FATAL_ERROR
+             "Stage11C HUD boundary source is missing: ${_required_source}")
+     endif()
+ endforeach()
+ if(NOT EXISTS "${_raylib_cmake}")
+     message(FATAL_ERROR "Stage11C HUD CMake source is missing: ${_raylib_cmake}")
+ endif()
++include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+ 
+ foreach(_validation_header IN ITEMS
+         "${_hud_root}/host_validation_input.hpp"
+         "${_hud_root}/host_validation_navigation.hpp")
+     file(READ "${_validation_header}" _validation_header_text)
+     if(_validation_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+         message(FATAL_ERROR
+             "Stage11C validation boundary header has a forbidden dependency: ${_validation_header}")
+     endif()
+ endforeach()
+@@ -102,50 +103,93 @@ function(arpg_extract_hud_host_seam
+     string(FIND "${_tail}" "${END_TOKEN}" _relative_end)
+     if(_relative_end EQUAL -1)
+         message(FATAL_ERROR "${REASON}: end token is missing")
+     endif()
+     string(LENGTH "${END_TOKEN}" _end_token_length)
+     math(EXPR _length "${_relative_end} + ${_end_token_length}")
+     string(SUBSTRING "${_tail}" 0 ${_length} _seam)
+     set("${OUT_SEAM}" "${_seam}" PARENT_SCOPE)
+ endfunction()
+ 
++# This only accepts an unquoted, uncommented source entry inside arpg_raylib's
++# add_library block.  The production CMake file is small, so line-oriented
++# parsing is sufficient here and deliberately avoids treating a # comment or
++# quoted diagnostic text as a source registration.
++function(arpg_assert_stage11c_cmake_registration CMAKE_TEXT)
++    string(REPLACE "\r\n" "\n" _cmake_lines "${CMAKE_TEXT}")
++    string(REPLACE "\r" "\n" _cmake_lines "${_cmake_lines}")
++    string(REPLACE "\n" ";" _cmake_lines "${_cmake_lines}")
++    set(_inside_arpg_raylib FALSE)
++    set(_registration_count 0)
++    foreach(_line IN LISTS _cmake_lines)
++        string(REGEX REPLACE "#[^\n]*$" "" _line_code "${_line}")
++        if(NOT _inside_arpg_raylib)
++            if(_line_code MATCHES "^[ \t]*add_library[ \t]*[(][ \t]*arpg_raylib[ \t]+STATIC")
++                set(_inside_arpg_raylib TRUE)
++            endif()
++            continue()
++        endif()
++        if(_line_code MATCHES "^[ \t]*host_validation_stage11c[.]cpp[ \t]*$")
++            math(EXPR _registration_count "${_registration_count} + 1")
++        endif()
++        if(_line_code MATCHES "^[ \t]*[)][ \t]*$")
++            set(_inside_arpg_raylib FALSE)
++        endif()
++    endforeach()
++    if(NOT _registration_count EQUAL 1)
++        message(FATAL_ERROR
++            "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
++    endif()
++endfunction()
++
+ file(READ "${_host_source}" _host_text)
+ file(READ "${_stage11c_header}" _stage11c_header_text)
+ file(READ "${_stage11c_source}" _stage11c_source_text)
+ file(READ "${_raylib_cmake}" _raylib_cmake_text)
+-if(NOT _stage11c_header_text MATCHES
+-        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
++evidence_sanitize_cpp_for_scan("${_stage11c_header_text}" _stage11c_header_code)
++if(NOT _stage11c_header_code MATCHES
++        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final[ \t\r\n]*[{]")
+     message(FATAL_ERROR "Stage11C HUD state definition is missing from private Stage header")
+ endif()
++foreach(_declaration IN ITEMS
++        "inject_stage11c_physical_edges[ \t\r\n]*[(]"
++        "stage11c_production_snapshot_hash[ \t\r\n]*[(]"
++        "stage11c_hud_validation_reached[ \t\r\n]*[(]"
++        "write_stage11c_hud_validation_summary[ \t\r\n]*[(]")
++    if(NOT _stage11c_header_code MATCHES "${_declaration}")
++        message(FATAL_ERROR
++            "Stage11C HUD declaration is missing from private Stage header: ${_declaration}")
++    endif()
++endforeach()
+ if(_host_text MATCHES
+         "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
+     message(FATAL_ERROR "Stage11C HUD state definition remains in raylib_host.cpp")
+ endif()
+ foreach(_definition IN ITEMS
+         "PhysicalKeySnapshot inject_stage11c_physical_edges("
+         "std::uint64_t stage11c_production_snapshot_hash("
+         "bool stage11c_hud_validation_reached("
+         "void write_stage11c_hud_validation_summary(")
+-    string(FIND "${_stage11c_source_text}" "${_definition}" _stage_definition)
+-    if(_stage_definition EQUAL -1)
++    evidence_extract_cpp_function_block("${_stage11c_source_text}" "${_definition}" _stage_function)
++    string(FIND "${_stage_function}" "{" _stage_definition)
++    string(FIND "${_stage_function}" ";" _stage_forward_declaration)
++    if(_stage_definition EQUAL -1
++            OR (NOT _stage_forward_declaration EQUAL -1
++                AND _stage_forward_declaration LESS _stage_definition))
+         message(FATAL_ERROR "Stage11C HUD definition is missing from Stage source: ${_definition}")
+     endif()
+     string(FIND "${_host_text}" "${_definition}" _host_definition)
+     if(NOT _host_definition EQUAL -1)
+         message(FATAL_ERROR "Stage11C HUD definition remains in raylib_host.cpp: ${_definition}")
+     endif()
+ endforeach()
+-string(FIND "${_raylib_cmake_text}" "host_validation_stage11c.cpp" _stage_registration)
+-if(_stage_registration EQUAL -1)
+-    message(FATAL_ERROR "arpg_raylib does not register host_validation_stage11c.cpp")
+-endif()
++arpg_assert_stage11c_cmake_registration("${_raylib_cmake_text}")
+ arpg_extract_hud_host_seam("${_host_text}"
+     "renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,"
+     "GetFrameTime(), true);"
+     "Host HUD recovery observation seam is invalid" _recovery_hud_seam)
+ arpg_extract_hud_host_seam("${_host_text}"
+     "const HudPresentedFrame hud_presented_frame = current.death.has_value()"
+     "feedback, audio_ready);"
+     "Host HUD normal observation/presentation seam is invalid" _normal_hud_seam)
+ foreach(_required_recovery IN ITEMS
+         "HudPresentedFrame::recovery" "renderer.observe_presented_hud_frame")
+diff --git a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+index 070b2fc..a065923 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+@@ -194,48 +194,84 @@ stage11c_expect_input_rejection(input_direct_viewmodel
+     "non-physical shared input")
+ stage11c_expect_input_rejection(input_direct_logical_action
+     "snapshot.down[index] = true;"
+     "snapshot.down[index] = true;\n    session.queue_action(combat::Action::light);"
+     "non-physical shared input")
+ stage11c_expect_input_rejection(input_skip_stable_binding
+     "settings::binding_for(settings_data, action)"
+     "static_cast<settings::StableKey>(action)"
+     "skipped stable binding")
+ 
+-set(_runtime_font "stage11c_validation_state.cjk_font_ready = hud_resources_ready;")
++set(_runtime_font "stage11c_validation_state.model = renderer.hud_model();")
+ stage11c_expect_host_text_rejection(host_runtime_model_and_hash_overwrite
+     "${_runtime_font}"
+-    "${_runtime_font}\n        stage11c_validation_state.model = {};\n        stage11c_validation_state.production_snapshot_hash = 1U;"
++    "${_runtime_font}\n                stage11c_validation_state.model = {};\n                stage11c_validation_state.production_snapshot_hash = 1U;"
+     "direct model overwrite")
+ 
+ set(_model_copy "stage11c_validation_state.model = renderer.hud_model();")
+ stage11c_expect_host_rejection(host_direct_model_overwrite
+     "${_model_copy}"
+     "${_model_copy}\n                stage11c_validation_state.model = {};"
+     "direct model overwrite")
++stage11c_expect_host_text_rejection(host_model_comment_decoy
++    "stage11c_validation_state.model = renderer.hud_model();"
++    "// stage11c_validation_state.model = renderer.hud_model();"
++    "direct model overwrite")
++stage11c_expect_host_text_rejection(host_fake_notices_capture
++    "stage11c_validation_state.notices = renderer.hud_notice_view();"
++    "stage11c_validation_state.notices = {};"
++    "missing capture surface token")
++stage11c_expect_host_text_rejection(host_fake_layout_capture
++    "stage11c_validation_state.layout = make_hud_layout("
++    "stage11c_validation_state.layout = {};\n                make_hud_layout("
++    "missing capture surface token")
++stage11c_expect_host_text_rejection(host_duplicate_notices_capture
++    "stage11c_validation_state.notices = renderer.hud_notice_view();"
++    "stage11c_validation_state.notices = renderer.hud_notice_view();\n                stage11c_validation_state.notices = renderer.hud_notice_view();"
++    "notices overwrite")
++stage11c_expect_host_text_rejection(host_captured_early
++    "const bool capture_succeeded =\n                present_frame_and_maybe_capture("
++    "stage11c_validation_state.captured = true;\n            const bool capture_succeeded =\n                present_frame_and_maybe_capture("
++    "captured overwrite")
++stage11c_expect_host_text_rejection(host_capture_success_removed
++    "&& capture_succeeded;"
++    ";"
++    "missing capture success")
+ 
+ set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);")
+ stage11c_expect_host_rejection(host_fake_snapshot_hash
+     "${_hash_copy}"
+     "${_hash_copy}\n                stage11c_validation_state.production_snapshot_hash = 1U;"
+     "fake snapshot hash")
+ 
+ set(_summary_gate "const bool stage11c_validation_result = state.captured")
+ stage11c_expect_stage_rejection(stage_fake_summary_state
+     "${_summary_gate}"
+     "const bool stage11c_validation_result = true || state.captured"
+     "fake summary state")
+ 
+ stage11c_expect_stage_rejection(stage_nonphysical_driver
+     "++state.injected_frames;"
+     "++state.injected_frames;\n    TestAccess stage11c_test_access{};"
+     "non-physical scenario driver")
++stage11c_expect_stage_rejection(stage_hash_constant
++    "mix(snapshot.root_seed);"
++    "return 1U;"
++    "production hash token")
++stage11c_expect_stage_rejection(stage_reached_constant
++    "case Scenario::cleared_exit:"
++    "return true;"
++    "reached predicate token")
++stage11c_expect_stage_rejection(stage_summary_notice_removed
++    "state.notices.primary.kind"
++    "state.notices_primary_removed"
++    "summary token")
+ 
+ stage11c_expect_host_rejection(host_bypassed_session_progression
+     "${_model_copy}"
+     "${_model_copy}\n                current.progression.level = 99U;"
+     "bypassed Session progression")
+ 
+ set(_state_alias
+     "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
+ string(REPLACE "${_state_alias}"
+     "host_validation::Stage11CHudValidationState stage11c_validation_state{};"
+diff --git a/tests/platform/stage11c_hud_evidence_guard_test.cmake b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+index e9cc68c..f108897 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+@@ -30,20 +30,36 @@ if(DEFINED FORMAL_OVERRIDE)
+ endif()
+ set(_validator "${SOURCE_ROOT}/tests/platform/stage11c_hud_formal_validator.ps1")
+ set(_bad "${SOURCE_ROOT}/tests/platform/stage11c_hud_bad_formal_input.txt")
+ foreach(_file IN ITEMS "${_host}" "${_header}" "${_input_header}" "${_input_source}"
+         "${_stage_header}" "${_stage_source}" "${_formal}" "${_validator}" "${_bad}")
+     if(NOT EXISTS "${_file}")
+         message(FATAL_ERROR "Stage11C HUD evidence target is missing: ${_file}")
+     endif()
+ endforeach()
+ file(READ "${_host}" _host_text)
++function(stage11c_extract_seam LABEL OUT)
++    set(_begin "// STAGE11C_HUD_VALIDATION_SEAM_BEGIN ${LABEL}")
++    set(_end "// STAGE11C_HUD_VALIDATION_SEAM_END ${LABEL}")
++    string(FIND "${_host_text}" "${_begin}" _begin_at)
++    string(FIND "${_host_text}" "${_end}" _end_at)
++    if(_begin_at EQUAL -1 OR _end_at EQUAL -1 OR NOT _begin_at LESS _end_at)
++        message(FATAL_ERROR "Stage11C evidence guard cannot isolate ${LABEL} seam")
++    endif()
++    math(EXPR _length "${_end_at} - ${_begin_at}")
++    string(SUBSTRING "${_host_text}" ${_begin_at} ${_length} _raw)
++    evidence_sanitize_cpp_for_scan("${_raw}" _code)
++    set(${OUT} "${_code}" PARENT_SCOPE)
++endfunction()
++stage11c_extract_seam(observation _stage11c_observation)
++stage11c_extract_seam(reached _stage11c_reached_seam)
++stage11c_extract_seam(presented_capture _stage11c_presented_capture)
+ file(READ "${_header}" _header_text)
+ file(READ "${_input_header}" _input_header_text)
+ file(READ "${_input_source}" _input_source_text)
+ file(READ "${_stage_header}" _stage_header_text)
+ file(READ "${_stage_source}" _stage_source_text)
+ file(READ "${_formal}" _formal_text)
+ file(READ "${_validator}" _validator_text)
+ set(_combined "${_header_text}\n${_input_header_text}\n${_input_source_text}\n${_stage_header_text}\n${_stage_source_text}\n${_host_text}\n${_formal_text}")
+ 
+ foreach(_required IN ITEMS
+@@ -113,20 +129,44 @@ foreach(_forbidden IN LISTS _physical_input_forbidden)
+ endforeach()
+ 
+ evidence_extract_cpp_function_block("${_stage_source_text}"
+     "PhysicalKeySnapshot inject_stage11c_physical_edges(" _stage11c_driver)
+ evidence_extract_cpp_function_block("${_stage_source_text}"
+     "std::uint64_t stage11c_production_snapshot_hash(" _stage11c_hash_function)
+ evidence_extract_cpp_function_block("${_stage_source_text}"
+     "bool stage11c_hud_validation_reached(" _stage11c_reached_function)
+ evidence_extract_cpp_function_block("${_stage_source_text}"
+     "void write_stage11c_hud_validation_summary(" _stage11c_summary_function)
++function(stage11c_require_function_tokens LABEL SURFACE)
++    foreach(_token IN LISTS ARGN)
++        string(FIND "${SURFACE}" "${_token}" _token_index)
++        if(_token_index EQUAL -1)
++            message(FATAL_ERROR "Stage11C evidence guard missing ${LABEL} token: ${_token}")
++        endif()
++    endforeach()
++endfunction()
++stage11c_require_function_tokens("physical driver" "${_stage11c_driver}"
++    "++state.injected_frames;" "nearest_living_monster(combat_snapshot)"
++    "inject_validation_movement(" "inject_validation_action(")
++stage11c_require_function_tokens("production hash" "${_stage11c_hash_function}"
++    "mix(snapshot.session_tick);" "mix(snapshot.root_seed);"
++    "mix(snapshot.progression.unspent_passive_points);"
++    "mix(monster.spawn_ordinal);" "return hash;")
++stage11c_require_function_tokens("reached predicate" "${_stage11c_reached_function}"
++    "case Scenario::low_health_status:" "player.hp > 0"
++    "case Scenario::cleared_exit:" "case Scenario::abyss_abandon:"
++    "case Scenario::level_up_points:" "case Scenario::debug_overlay:")
++stage11c_require_function_tokens("summary" "${_stage11c_summary_function}"
++    "state.model.player" "player.status_tag_count"
++    "state.notices.primary.kind" "state.notices.secondary.kind"
++    "state.model.navigation.depth" "state.cjk_font_ready"
++    "state.production_snapshot_hash" "stage11c_validation_result")
+ foreach(_forbidden IN LISTS _physical_input_forbidden)
+     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR "Stage11C evidence guard rejected non-physical scenario driver: ${_forbidden}")
+     endif()
+ endforeach()
+ 
+ set(_stage11c_runtime_alias
+     "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
+ string(REGEX MATCHALL
+@@ -178,49 +218,98 @@ math(EXPR _stage11c_summary_length
+ string(SUBSTRING "${_host_text}" ${_stage11c_summary_begin}
+     ${_stage11c_summary_length} _stage11c_summary)
+ string(FIND "${_stage11c_summary}"
+     "host_validation::write_stage11c_hud_validation_summary(config,"
+     _stage11c_summary_write)
+ if(_stage11c_summary_write EQUAL -1)
+     message(FATAL_ERROR "Stage11C evidence guard missing HUD validation summary write")
+ endif()
+ 
+ set(_stage11c_host_surface
+-    "${_stage11c_runtime}\n${_stage11c_capture}\n${_stage11c_summary}")
++    "${_stage11c_observation}\n${_stage11c_reached_seam}\n${_stage11c_presented_capture}")
++set(_stage11c_host_surface_code "${_stage11c_host_surface}")
++string(REGEX MATCHALL "stage11c_validation_state\\.captured[ \t\r\n]*=[ \t\r\n]*true"
++    _stage11c_captured_assignments "${_stage11c_presented_capture}")
++list(LENGTH _stage11c_captured_assignments _stage11c_captured_count)
++if(NOT _stage11c_captured_count EQUAL 1)
++    message(FATAL_ERROR "Stage11C evidence guard rejected captured overwrite")
++endif()
++string(FIND "${_stage11c_presented_capture}"
++    "stage11c_validation_state.captured = true;" _stage11c_captured_statement)
++if(_stage11c_captured_statement EQUAL -1)
++    message(FATAL_ERROR "Stage11C evidence guard rejected missing captured statement")
++endif()
+ 
+ string(REGEX MATCHALL
+     "stage11c_validation_state\\.model[ \t\r\n]*="
+-    _stage11c_model_assignments "${_stage11c_host_surface}")
++    _stage11c_model_assignments "${_stage11c_host_surface_code}")
+ list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
+ if(NOT _stage11c_model_assignment_count EQUAL 1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+ endif()
+ string(REGEX MATCH
+     "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
+-    _stage11c_model_member_overwrite "${_stage11c_host_surface}")
++    _stage11c_model_member_overwrite "${_stage11c_host_surface_code}")
+ if(_stage11c_model_member_overwrite)
+     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+ endif()
+ 
+ string(REGEX MATCHALL
+     "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
+-    _stage11c_hash_assignments "${_stage11c_host_surface}")
++    _stage11c_hash_assignments "${_stage11c_host_surface_code}")
+ list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
+ if(NOT _stage11c_hash_assignment_count EQUAL 1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+ endif()
+-string(FIND "${_stage11c_host_surface}"
++string(FIND "${_stage11c_host_surface_code}"
+     "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);"
+     _stage11c_real_hash)
+ if(_stage11c_real_hash EQUAL -1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+ endif()
++foreach(_capture_assignment IN ITEMS
++        "stage11c_validation_state.notices = renderer.hud_notice_view();"
++        "stage11c_validation_state.layout = make_hud_layout("
++        "++stage11c_validation_state.target_presented_frames;"
++        "present_frame_and_maybe_capture(capture_path.has_value()"
++        "stage11c_validation_state.captured = true;")
++    string(FIND "${_stage11c_host_surface_code}" "${_capture_assignment}" _capture_index)
++    if(_capture_index EQUAL -1)
++        message(FATAL_ERROR "Stage11C evidence guard missing capture surface token: ${_capture_assignment}")
++    endif()
++endforeach()
++string(FIND "${_stage11c_presented_capture}"
++    "const bool captured_stage10_frame = captured_stage10_target\n                && capture_succeeded;"
++    _captured_stage10_frame)
++if(_captured_stage10_frame EQUAL -1)
++    message(FATAL_ERROR "Stage11C evidence guard rejected missing capture success")
++endif()
++foreach(_field_rhs IN ITEMS
++        "model|renderer.hud_model();"
++        "notices|renderer.hud_notice_view();"
++        "layout|make_hud_layout(")
++    string(REPLACE "|" ";" _field_rhs_parts "${_field_rhs}")
++    list(GET _field_rhs_parts 0 _field)
++    list(GET _field_rhs_parts 1 _rhs)
++    string(REGEX MATCHALL
++        "stage11c_validation_state\\.${_field}[ \t\r\n]*=" _assignments
++        "${_stage11c_host_surface_code}")
++    list(LENGTH _assignments _assignment_count)
++    if(NOT _assignment_count EQUAL 1)
++        message(FATAL_ERROR "Stage11C evidence guard rejected ${_field} overwrite")
++    endif()
++    string(FIND "${_stage11c_host_surface_code}"
++        "stage11c_validation_state.${_field} = ${_rhs}" _rhs_index)
++    if(_rhs_index EQUAL -1)
++        message(FATAL_ERROR "Stage11C evidence guard rejected fake ${_field} capture")
++    endif()
++endforeach()
+ 
+ string(FIND "${_stage11c_summary_function}"
+     "const bool stage11c_validation_result = state.captured\n            && state.cjk_font_ready && state.production_snapshot_hash != 0U;"
+     _stage11c_summary_gate)
+ if(_stage11c_summary_gate EQUAL -1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected fake summary state")
+ endif()
+ 
+ string(REGEX MATCH
+     "(current|previous|snapshot|state)\\.progression\\.[A-Za-z_]+[ \t\r\n]*=[^=]"

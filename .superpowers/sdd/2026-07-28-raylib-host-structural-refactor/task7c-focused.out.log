@@ -1,0 +1,78 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+      Start  20: stage10.evidence.no_private_injection
+ 1/30 Test  #20: stage10.evidence.no_private_injection ...................   Passed    3.99 sec
+      Start  21: stage10.evidence.rejects_private_injection
+ 2/30 Test  #21: stage10.evidence.rejects_private_injection ..............   Passed    1.56 sec
+      Start  22: stage10.evidence.rejects_pre_present_capture
+ 3/30 Test  #22: stage10.evidence.rejects_pre_present_capture ............   Passed    1.84 sec
+      Start  23: stage10.evidence.rejects_pre_capture_with_post_dummy
+ 4/30 Test  #23: stage10.evidence.rejects_pre_capture_with_post_dummy ....   Passed    1.87 sec
+      Start  24: stage10.evidence.mutation_self_test
+ 5/30 Test  #24: stage10.evidence.mutation_self_test .....................   Passed  145.43 sec
+      Start  27: stage11.death_evidence.production_paths
+ 6/30 Test  #27: stage11.death_evidence.production_paths .................   Passed    9.21 sec
+      Start  28: stage11.death_evidence.rejects_private_injection
+ 7/30 Test  #28: stage11.death_evidence.rejects_private_injection ........   Passed    1.54 sec
+      Start  29: stage11.death_evidence.rejects_pre_present_capture
+ 8/30 Test  #29: stage11.death_evidence.rejects_pre_present_capture ......   Passed    1.53 sec
+      Start  30: stage11.death_evidence.rejects_public_death_injection
+ 9/30 Test  #30: stage11.death_evidence.rejects_public_death_injection ...   Passed    1.54 sec
+      Start  31: stage11.death_evidence.mutation_self_test
+10/30 Test  #31: stage11.death_evidence.mutation_self_test ...............   Passed   28.72 sec
+      Start  34: platform.units
+11/30 Test  #34: platform.units ..........................................   Passed   13.44 sec
+      Start  70: stage11.architecture.death_boundaries
+12/30 Test  #70: stage11.architecture.death_boundaries ...................   Passed    0.81 sec
+      Start  71: stage11b.architecture.settings_boundaries
+13/30 Test  #71: stage11b.architecture.settings_boundaries ...............   Passed  218.69 sec
+      Start  72: stage11c.architecture.hud_boundaries
+14/30 Test  #72: stage11c.architecture.hud_boundaries ....................   Passed   23.33 sec
+      Start  73: stage11c.architecture.hud_boundaries_self_test
+15/30 Test  #73: stage11c.architecture.hud_boundaries_self_test ..........   Passed  249.68 sec
+      Start  74: stage11d.architecture.loot_boundaries
+16/30 Test  #74: stage11d.architecture.loot_boundaries ...................   Passed   55.06 sec
+      Start  75: stage11d.architecture.loot_boundaries_self_test
+17/30 Test  #75: stage11d.architecture.loot_boundaries_self_test .........   Passed  193.40 sec
+      Start  92: platform.input_latency_source
+18/30 Test  #92: platform.input_latency_source ...........................   Passed   33.00 sec
+      Start  93: platform.host_input_source
+19/30 Test  #93: platform.host_input_source ..............................   Passed   46.29 sec
+      Start  94: platform.host_validation_source
+20/30 Test  #94: platform.host_validation_source .........................   Passed   98.32 sec
+      Start  95: platform.host_validation_sequence
+21/30 Test  #95: platform.host_validation_sequence .......................   Passed   88.34 sec
+      Start  96: platform.host_validation_sequence_self_test
+22/30 Test  #96: platform.host_validation_sequence_self_test .............   Passed  1309.45 sec
+      Start  97: stage11b.settings_evidence_guard
+23/30 Test  #97: stage11b.settings_evidence_guard ........................   Passed   17.49 sec
+      Start  98: stage11b.settings_evidence_guard_self_test
+24/30 Test  #98: stage11b.settings_evidence_guard_self_test ..............   Passed  557.48 sec
+      Start  99: stage11c.hud_evidence_guard
+25/30 Test  #99: stage11c.hud_evidence_guard .............................   Passed   30.28 sec
+      Start 100: stage11c.hud_evidence_guard_self_test
+26/30 Test #100: stage11c.hud_evidence_guard_self_test ...................   Passed  507.51 sec
+      Start 101: stage11d.renderer_integration_guard
+27/30 Test #101: stage11d.renderer_integration_guard .....................   Passed   24.75 sec
+      Start 102: stage11d.renderer_integration_guard_self_test
+28/30 Test #102: stage11d.renderer_integration_guard_self_test ...........   Passed  614.44 sec
+      Start 103: stage11d.loot_evidence_guard
+29/30 Test #103: stage11d.loot_evidence_guard ............................   Passed   19.39 sec
+      Start 104: stage11d.loot_evidence_guard_self_test
+30/30 Test #104: stage11d.loot_evidence_guard_self_test ..................   Passed  996.29 sec
+
+100% tests passed, 0 tests failed out of 30
+
+Label Time Summary:
+architecture    = 5083.98 sec*proc (19 tests)
+dungeon         = 197.22 sec*proc (10 tests)
+evidence        = 197.22 sec*proc (10 tests)
+headless        = 5294.64 sec*proc (30 tests)
+negative        =   9.88 sec*proc (6 tests)
+platform        = 5096.61 sec*proc (19 tests)
+stage10         = 154.69 sec*proc (5 tests)
+stage11         =  43.34 sec*proc (6 tests)
+stage11b        = 793.66 sec*proc (3 tests)
+stage11c        = 810.79 sec*proc (4 tests)
+stage11d        = 1903.33 sec*proc (6 tests)
+
+Total Test time (real) = 5294.75 sec

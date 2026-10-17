@@ -1,0 +1,1296 @@
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index bd3058374d8434ce526b19abf8688418054aa0fa..9c1eb3d910a12c483fe04073aeea535eb3d20d70 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -23,24 +23,25 @@ add_library(arpg_raylib STATIC
+     environment_prop_layout.cpp
+     game_audio.cpp
+     ground_loot_view.cpp
+     host_input.cpp
+     host_launch_options.cpp
+     host_validation_input.cpp
+     host_validation_navigation.cpp
+     host_validation_stage10_11.cpp
+     host_validation_stage11b.cpp
+     host_validation_stage11c.cpp
+     host_validation_stage11d_report.cpp
+     host_validation_stage11d_runtime.cpp
++    host_validation_stage17_report.cpp
+     host_validation_stage17_runtime.cpp
+     hud_font.cpp
+     hud_view_model.cpp
+     hud_notice_state.cpp
+     loot_pickup_feedback.cpp
+     material_bag_renderer.cpp
+     material_loot_view.cpp
+     hud_layout.cpp
+     hud_renderer.cpp
+     inventory_renderer.cpp
+     inventory_view_math.cpp
+     ui_text_bounds_audit.cpp
+diff --git a/src/platform/raylib/host_validation_stage17.hpp b/src/platform/raylib/host_validation_stage17.hpp
+index 807466f55fafa12dbb9e16164ea366f385f8a2cf..2ba608392dd7571ca048f2493f803f6320212d4e 100644
+--- a/src/platform/raylib/host_validation_stage17.hpp
++++ b/src/platform/raylib/host_validation_stage17.hpp
+@@ -1,21 +1,23 @@
+ #pragma once
+ 
+ #include "combat/active_skill_runtime.hpp"
+ #include "skills/active_skill_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
++#include <optional>
++#include <string>
+ 
+ namespace arpg::dungeon {
+ struct DungeonSnapshot;
+ }
+ 
+ namespace arpg::settings {
+ struct SettingsData;
+ }
+ 
+ namespace arpg::platform {
+ class InventoryRenderer;
+ struct ActiveSkillDrawRuntimeStatus;
+@@ -146,15 +148,22 @@ void observe_stage17_combat_event(Stage17SkillStonesValidationState*,
+ [[nodiscard]] PhysicalKeySnapshot inject_stage17_physical_edges(
+     PhysicalKeySnapshot, const RaylibHostConfig&,
+     const settings::SettingsData&, const dungeon::DungeonSnapshot&,
+     Stage17SkillStonesValidationState&) noexcept;
+ void observe_stage17_submitted_actions(const RaylibHostConfig&,
+     Stage17SkillStonesValidationState&, const SubmittedFrameActions&) noexcept;
+ void observe_stage17_snapshot(const RaylibHostConfig&,
+     Stage17SkillStonesValidationState&,
+     const dungeon::DungeonSnapshot&) noexcept;
+ void observe_stage17_inventory(const RaylibHostConfig&,
+     Stage17SkillStonesValidationState&, const InventoryRenderer&,
+     const dungeon::DungeonSnapshot&) noexcept;
++[[nodiscard]] std::optional<std::string> stage17_capture_path(
++    const RaylibHostConfig&, Stage17SkillStonesValidationState&) noexcept;
++void mark_stage17_capture_complete(Stage17SkillStonesValidationState&) noexcept;
++[[nodiscard]] bool stage17_validation_complete(const RaylibHostConfig&,
++    const Stage17SkillStonesValidationState&) noexcept;
++void write_stage17_validation_summary(const RaylibHostConfig&,
++    const Stage17SkillStonesValidationState&) noexcept;
+ 
+ }  // namespace host_validation
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_validation_stage17_report.cpp b/src/platform/raylib/host_validation_stage17_report.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..24ae03e354d90d389510766b9149460aa1407433
+--- /dev/null
++++ b/src/platform/raylib/host_validation_stage17_report.cpp
+@@ -0,0 +1,329 @@
++#include "host_validation_stage17.hpp"
++
++#include "raylib_host.hpp"
++
++#include <raylib.h>
++
++#include <algorithm>
++#include <cmath>
++#include <fstream>
++
++namespace arpg::platform::host_validation {
++namespace {
++
++[[nodiscard]] bool stage17_draw_runtime_valid(
++    const Stage17SkillDrawRuntimeEvidence& evidence) noexcept {
++    return evidence.samples > 0U && evidence.valid
++        && evidence.material_frame_drawn && !evidence.base_player_drawn
++        && evidence.procedural_main_visual_peak == 0U;
++}
++
++
++[[nodiscard]] const char* stage17_capture_name(
++    const Stage17Capture capture) noexcept {
++    switch (capture) {
++    case Stage17Capture::initial: return "01-new-default-1280x720.png";
++    case Stage17Capture::draw_windup: return "02-draw-slash-windup-1280x720.png";
++    case Stage17Capture::draw_hit: return "03-draw-slash-hit-1280x720.png";
++    case Stage17Capture::storm_array: return "04-storm-ground-array-1280x720.png";
++    case Stage17Capture::storm_aerial: return "05-storm-aerial-array-1280x720.png";
++    case Stage17Capture::storm_finisher: return "06-storm-finisher-1280x720.png";
++    case Stage17Capture::restarted: return "07-restarted-loadout-1280x720.png";
++    case Stage17Capture::none: break;
++    }
++    return nullptr;
++}
++
++}  // namespace
++
++[[nodiscard]] std::optional<std::string> stage17_capture_path(
++    const RaylibHostConfig& config,
++    Stage17SkillStonesValidationState& state) noexcept {
++    if (config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none
++        || !config.screenshot_directory.has_value()) {
++        return std::nullopt;
++    }
++    ++state.presented_frames;
++    if (state.step == Stage17ValidationStep::initial
++            && !state.initial_captured && state.presented_frames >= 2U) {
++        state.capture_pending = Stage17Capture::initial;
++    }
++    const char* const name = stage17_capture_name(state.capture_pending);
++    if (name == nullptr) return std::nullopt;
++    return (*config.screenshot_directory / name).string();
++}
++
++void mark_stage17_capture_complete(
++    Stage17SkillStonesValidationState& state) noexcept {
++    switch (state.capture_pending) {
++    case Stage17Capture::initial:
++        state.initial_captured = true;
++        state.step = Stage17ValidationStep::empty_slot_3;
++        break;
++    case Stage17Capture::draw_windup:
++        state.draw_windup_captured = true;
++        break;
++    case Stage17Capture::draw_hit:
++        state.draw_captured = true;
++        break;
++    case Stage17Capture::storm_array:
++        state.storm_array_captured = true;
++        break;
++    case Stage17Capture::storm_aerial:
++        state.storm_aerial_captured = true;
++        break;
++    case Stage17Capture::storm_finisher:
++        state.storm_finisher_captured = true;
++        break;
++    case Stage17Capture::restarted:
++        state.restart_captured = true;
++        state.step = Stage17ValidationStep::complete;
++        break;
++    case Stage17Capture::none:
++        break;
++    }
++    state.capture_pending = Stage17Capture::none;
++}
++
++namespace {
++
++[[nodiscard]] const char* stage17_skill_name(
++    const skills::ActiveSkillId id) noexcept {
++    switch (id) {
++    case skills::ActiveSkillId::draw_slash: return "draw_slash";
++    case skills::ActiveSkillId::storm_swords: return "storm_swords";
++    case skills::ActiveSkillId::none: return "none";
++    case skills::ActiveSkillId::count: break;
++    }
++    return "invalid";
++}
++
++void write_stage17_loadout(std::ostream& stream,
++    const skills::SkillLoadoutState& loadout) {
++    for (std::size_t index = 0U; index < loadout.slots.size(); ++index) {
++        if (index != 0U) stream << ',';
++        stream << stage17_skill_name(loadout.slots[index].active);
++    }
++}
++
++[[nodiscard]] std::size_t stage17_support_none_count(
++    const skills::SkillLoadoutState& loadout) noexcept {
++    std::size_t count{};
++    for (const skills::ActiveSkillSlot& slot : loadout.slots) {
++        count += static_cast<std::size_t>(std::count(slot.supports.begin(),
++            slot.supports.end(), skills::SupportSkillId::none));
++    }
++    return count;
++}
++
++}  // namespace
++
++[[nodiscard]] bool stage17_validation_complete(
++    const RaylibHostConfig& config,
++    const Stage17SkillStonesValidationState& state) noexcept {
++    return config.stage17_skill_stones_validation
++            != Stage17SkillStonesValidationScenario::none
++        && (state.step == Stage17ValidationStep::complete
++            || state.aborted_by_death);
++}
++
++void write_stage17_validation_summary(const RaylibHostConfig& config,
++    const Stage17SkillStonesValidationState& state) noexcept {
++    if (!config.validation_summary_file.has_value()
++        || config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::none) {
++        return;
++    }
++    try {
++        std::ofstream stream(*config.validation_summary_file,
++            std::ios::out | std::ios::trunc);
++        if (!stream) return;
++        const bool production = config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::production_sequence;
++        const bool storm = config.stage17_skill_stones_validation
++            == Stage17SkillStonesValidationScenario::storm_sequence;
++        const bool empty_slots = std::all_of(state.empty_slots_none.begin(),
++            state.empty_slots_none.end(), [](const bool value) noexcept {
++                return value;
++            });
++        const float approach_x = state.storm_approach_center.x
++            - state.storm_approach_player_last.x;
++        const float approach_y = state.storm_approach_center.y
++            - state.storm_approach_player_last.y;
++        const float approach_distance =
++            std::sqrt(approach_x * approach_x + approach_y * approach_y);
++        const float storm_player_x = state.storm_player_last.x
++            - state.storm_player_start.x;
++        const float storm_player_y = state.storm_player_last.y
++            - state.storm_player_start.y;
++        const float storm_player_displacement = std::sqrt(
++            storm_player_x * storm_player_x + storm_player_y * storm_player_y);
++        const bool passed = production
++            ? state.step == Stage17ValidationStep::complete
++                && state.initial_captured && state.draw_accepted
++                && state.draw_windup_captured && state.draw_captured
++                && stage17_draw_runtime_valid(state.draw_runtime)
++                && !state.renderer_status_failure_latched
++                && state.public_input_path
++                && state.production_transactions
++                && state.production_inventory_closed
++                && state.production_cooldown_wait_started
++                && state.production_cooldowns_zero_before_shutdown
++                && state.clean_shutdown_exact_ready
++                && empty_slots
++            : storm
++                ? state.step == Stage17ValidationStep::complete
++                    && state.draw_accepted && state.draw_hit_count == 2U
++                    && state.storm_accepted && state.storm_array_captured
++                    && state.storm_aerial_captured
++                    && state.storm_finisher_captured
++                    && state.storm_center_locked && state.storm_player_moved
++                    && !state.storm_isolation_invalidated
++                    && state.active_skill_atlases_ready
++                    && state.storm_invulnerable_seen
++                    && state.storm_finisher_phase_seen
++                    && stage17_draw_runtime_valid(state.storm_runtime)
++                    && !state.renderer_status_failure_latched
++                    && state.clean_shutdown_exact_ready
++                    && state.public_input_path
++                : state.step == Stage17ValidationStep::complete
++                && state.restart_captured && state.restart_persisted
++                && state.restart_cooldowns_zero
++                && state.clean_shutdown_exact_ready;
++        stream << "scenario=" << (production ? "production_sequence"
++                : storm ? "storm_sequence" : "restarted_loadout") << '\n'
++               << "result=" << (passed ? "pass" : "fail") << '\n'
++               << "final_step=" << static_cast<unsigned>(state.step) << '\n'
++               << "aborted_by_death=" << (state.aborted_by_death ? 1 : 0) << '\n'
++               << "initial_slots=";
++        write_stage17_loadout(stream, state.initial_loadout);
++        stream << '\n' << "final_slots=";
++        write_stage17_loadout(stream, state.final_loadout);
++        stream << '\n'
++               << "owned_active_bits=" << state.initial_loadout.owned_active_bits << '\n'
++               << "support_none_count="
++               << stage17_support_none_count(state.initial_loadout) << '\n'
++               << "empty_slots_none=" << (empty_slots ? 1 : 0) << '\n'
++               << "draw_accepted=" << (state.draw_accepted ? 1 : 0) << '\n'
++               << "draw_windup_captured="
++               << (state.draw_windup_captured ? 1 : 0) << '\n'
++               << "draw_frame_peak=" << state.draw_frame_peak << '\n'
++               << "draw_hit_count=" << state.draw_hit_count << '\n'
++               << "storm_prelude_draw_hit_count="
++               << (storm ? state.draw_hit_count : 0U) << '\n'
++               << "storm_accepted=" << (state.storm_accepted ? 1 : 0) << '\n'
++               << "storm_strike_hit_count=" << state.storm_strike_hit_count << '\n'
++               << "storm_finisher_hit_count=" << state.storm_finisher_hit_count << '\n'
++               << "storm_strike_count="
++               << static_cast<unsigned>(state.storm_strike_count) << '\n'
++               << "storm_sword_peak="
++               << static_cast<unsigned>(state.storm_sword_peak) << '\n'
++               << "storm_invulnerable_seen="
++               << (state.storm_invulnerable_seen ? 1 : 0) << '\n'
++               << "storm_finisher_phase_seen="
++               << (state.storm_finisher_phase_seen ? 1 : 0) << '\n'
++               << "storm_aerial_captured="
++               << (state.storm_aerial_captured ? 1 : 0) << '\n'
++               << "active_skill_atlases_ready="
++               << (state.active_skill_atlases_ready ? 1 : 0) << '\n'
++               << "draw_renderer_samples=" << state.draw_runtime.samples << '\n'
++               << "draw_material_frame_drawn="
++               << (state.draw_runtime.material_frame_drawn ? 1 : 0) << '\n'
++               << "draw_base_player_drawn="
++               << (state.draw_runtime.base_player_drawn ? 1 : 0) << '\n'
++               << "draw_procedural_main_visual_peak="
++               << state.draw_runtime.procedural_main_visual_peak << '\n'
++               << "draw_renderer_status_valid="
++               << (stage17_draw_runtime_valid(state.draw_runtime) ? 1 : 0)
++               << '\n'
++               << "storm_renderer_samples=" << state.storm_runtime.samples
++               << '\n'
++               << "storm_material_frame_drawn="
++               << (state.storm_runtime.material_frame_drawn ? 1 : 0) << '\n'
++               << "storm_base_player_drawn="
++               << (state.storm_runtime.base_player_drawn ? 1 : 0) << '\n'
++               << "storm_procedural_main_visual_peak="
++               << state.storm_runtime.procedural_main_visual_peak << '\n'
++               << "storm_renderer_status_valid="
++               << (stage17_draw_runtime_valid(state.storm_runtime) ? 1 : 0)
++               << '\n'
++               << "renderer_status_failure_latched="
++               << (state.renderer_status_failure_latched ? 1 : 0) << '\n'
++               << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
++               << "storm_isolation_invalidated="
++               << (state.storm_isolation_invalidated ? 1 : 0) << '\n'
++               << "storm_approach_center=" << state.storm_approach_center.x
++               << ',' << state.storm_approach_center.y << '\n'
++               << "storm_approach_target_start="
++               << state.storm_approach_target_start.x << ','
++               << state.storm_approach_target_start.y << '\n'
++               << "storm_approach_player_start="
++               << state.storm_approach_player_start.x << ','
++               << state.storm_approach_player_start.y << '\n'
++               << "storm_approach_player_last="
++               << state.storm_approach_player_last.x << ','
++               << state.storm_approach_player_last.y << '\n'
++               << "storm_approach_distance=" << approach_distance << '\n'
++               << "storm_approach_initial_clearance="
++               << state.storm_approach_initial_clearance << '\n'
++               << "storm_approach_frames=" << state.storm_approach_frames << '\n'
++               << "storm_approach_movement_injections="
++               << state.storm_approach_movement_injections << '\n'
++               << "storm_isolation_invalidated_frame="
++               << state.storm_isolation_invalidated_frame << '\n'
++               << "storm_isolation_invalidated_target_count="
++               << state.storm_isolation_invalidated_target_count << '\n'
++               << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
++               << "storm_player_displacement="
++               << storm_player_displacement << '\n'
++               << "storm_threat_pull_movement="
++               << static_cast<int>(state.storm_threat_pull_movement.x) << ','
++               << static_cast<int>(state.storm_threat_pull_movement.y) << '\n'
++               << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
++               << "production_transactions="
++               << (state.production_transactions ? 1 : 0) << '\n'
++               << "production_inventory_closed="
++               << (state.production_inventory_closed ? 1 : 0) << '\n'
++               << "production_cooldown_wait_started="
++               << (state.production_cooldown_wait_started ? 1 : 0) << '\n'
++               << "production_cooldown_start_ticks="
++               << state.production_cooldown_start_ticks << '\n'
++               << "production_cooldown_wait_ticks="
++               << (state.production_cooldown_wait_end_tick
++                       >= state.production_cooldown_wait_start_tick
++                   ? state.production_cooldown_wait_end_tick
++                       - state.production_cooldown_wait_start_tick
++                   : 0U) << '\n'
++               << "production_cooldowns_zero_before_shutdown="
++               << (state.production_cooldowns_zero_before_shutdown ? 1 : 0)
++               << '\n'
++               << "clean_shutdown_exact_ready="
++               << (state.clean_shutdown_exact_ready ? 1 : 0) << '\n'
++               << "restart_persisted=" << (state.restart_persisted ? 1 : 0) << '\n'
++               << "restart_cooldowns_zero="
++               << (state.restart_cooldowns_zero ? 1 : 0) << '\n';
++        for (std::size_t index = 0U;
++                index < state.storm_approach_samples.size(); ++index) {
++            stream << "storm_approach_sample_" << (index + 1U) * 300U << '=';
++            if (state.storm_approach_sampled[index]) {
++                stream << state.storm_approach_samples[index].x << ','
++                       << state.storm_approach_samples[index].y;
++            } else {
++                stream << "none";
++            }
++            stream << '\n';
++        }
++        stream << "storm_targets_per_strike=";
++        for (std::size_t index = 0U;
++                index < state.storm_targets_per_strike.size(); ++index) {
++            if (index != 0U) stream << ',';
++            stream << state.storm_targets_per_strike[index];
++        }
++        stream << '\n';
++    } catch (...) {
++        TraceLog(LOG_WARNING, "failed to write stage17 validation summary");
++    }
++}
++
++}  // namespace arpg::platform::host_validation
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 7ffe747e30a035caa40cee536041ab36bead420b..27a1171f1cd4b042694e6bf275d020d82fa9973b 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -78,28 +78,29 @@ using host_validation::inject_validation_pressed;
+ using host_validation::inject_stage11d_physical_edges;
+ using host_validation::nearest_living_monster;
+ using host_validation::stage11d_has_three_ordinary_rarities;
+ using host_validation::stage11d_record_semantics;
+ using host_validation::stage11d_target_visible;
+ using host_validation::Stage11DLootValidationState;
+ using host_validation::inject_stage17_physical_edges;
+ using host_validation::observe_stage17_combat_event;
+ using host_validation::observe_stage17_draw_runtime;
+ using host_validation::observe_stage17_inventory;
+ using host_validation::observe_stage17_snapshot;
+ using host_validation::observe_stage17_submitted_actions;
+-using host_validation::Stage17Capture;
+-using host_validation::Stage17SkillDrawRuntimeEvidence;
++using host_validation::stage17_capture_path;
++using host_validation::mark_stage17_capture_complete;
++using host_validation::stage17_validation_complete;
++using host_validation::write_stage17_validation_summary;
+ using host_validation::Stage17SkillStonesValidationState;
+-using host_validation::Stage17ValidationStep;
+ using host_validation::validation_attack_lane;
+ using host_validation::validation_direction;
+ using host_validation::validation_door_position;
+ using host_validation::validation_exit_movement;
+ using host_validation::validation_movement_toward;
+ using host_validation::validation_route_fire_movement;
+ using host_validation::write_stage11d_loot_validation_summary;
+ 
+ constexpr char kSettingsPreviewFailed[] = "Live preview failed";
+ constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
+ constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
+ constexpr char kSettingsSaved[] = "Settings saved";
+@@ -353,332 +354,24 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
+ }
+ 
+ 
+ struct HostValidationStates final {
+     host_validation::Stage10ValidationState stage10{};
+     host_validation::Stage11ValidationState stage11{};
+     host_validation::Stage11BValidationState stage11b{};
+     host_validation::Stage11CHudValidationState stage11c{};
+     Stage11DLootValidationState stage11d{};
+ };
+ 
+ 
+-[[nodiscard]] bool stage17_draw_runtime_valid(
+-    const Stage17SkillDrawRuntimeEvidence& evidence) noexcept {
+-    return evidence.samples > 0U && evidence.valid
+-        && evidence.material_frame_drawn && !evidence.base_player_drawn
+-        && evidence.procedural_main_visual_peak == 0U;
+-}
+-
+-
+-[[nodiscard]] const char* stage17_capture_name(
+-    const Stage17Capture capture) noexcept {
+-    switch (capture) {
+-    case Stage17Capture::initial: return "01-new-default-1280x720.png";
+-    case Stage17Capture::draw_windup: return "02-draw-slash-windup-1280x720.png";
+-    case Stage17Capture::draw_hit: return "03-draw-slash-hit-1280x720.png";
+-    case Stage17Capture::storm_array: return "04-storm-ground-array-1280x720.png";
+-    case Stage17Capture::storm_aerial: return "05-storm-aerial-array-1280x720.png";
+-    case Stage17Capture::storm_finisher: return "06-storm-finisher-1280x720.png";
+-    case Stage17Capture::restarted: return "07-restarted-loadout-1280x720.png";
+-    case Stage17Capture::none: break;
+-    }
+-    return nullptr;
+-}
+-
+-[[nodiscard]] std::optional<std::string> stage17_capture_path(
+-    const RaylibHostConfig& config,
+-    Stage17SkillStonesValidationState& state) noexcept {
+-    if (config.stage17_skill_stones_validation
+-            == Stage17SkillStonesValidationScenario::none
+-        || !config.screenshot_directory.has_value()) {
+-        return std::nullopt;
+-    }
+-    ++state.presented_frames;
+-    if (state.step == Stage17ValidationStep::initial
+-            && !state.initial_captured && state.presented_frames >= 2U) {
+-        state.capture_pending = Stage17Capture::initial;
+-    }
+-    const char* const name = stage17_capture_name(state.capture_pending);
+-    if (name == nullptr) return std::nullopt;
+-    return (*config.screenshot_directory / name).string();
+-}
+-
+-void mark_stage17_capture_complete(
+-    Stage17SkillStonesValidationState& state) noexcept {
+-    switch (state.capture_pending) {
+-    case Stage17Capture::initial:
+-        state.initial_captured = true;
+-        state.step = Stage17ValidationStep::empty_slot_3;
+-        break;
+-    case Stage17Capture::draw_windup:
+-        state.draw_windup_captured = true;
+-        break;
+-    case Stage17Capture::draw_hit:
+-        state.draw_captured = true;
+-        break;
+-    case Stage17Capture::storm_array:
+-        state.storm_array_captured = true;
+-        break;
+-    case Stage17Capture::storm_aerial:
+-        state.storm_aerial_captured = true;
+-        break;
+-    case Stage17Capture::storm_finisher:
+-        state.storm_finisher_captured = true;
+-        break;
+-    case Stage17Capture::restarted:
+-        state.restart_captured = true;
+-        state.step = Stage17ValidationStep::complete;
+-        break;
+-    case Stage17Capture::none:
+-        break;
+-    }
+-    state.capture_pending = Stage17Capture::none;
+-}
+-
+-[[nodiscard]] const char* stage17_skill_name(
+-    const skills::ActiveSkillId id) noexcept {
+-    switch (id) {
+-    case skills::ActiveSkillId::draw_slash: return "draw_slash";
+-    case skills::ActiveSkillId::storm_swords: return "storm_swords";
+-    case skills::ActiveSkillId::none: return "none";
+-    case skills::ActiveSkillId::count: break;
+-    }
+-    return "invalid";
+-}
+-
+-void write_stage17_loadout(std::ostream& stream,
+-    const skills::SkillLoadoutState& loadout) {
+-    for (std::size_t index = 0U; index < loadout.slots.size(); ++index) {
+-        if (index != 0U) stream << ',';
+-        stream << stage17_skill_name(loadout.slots[index].active);
+-    }
+-}
+-
+-[[nodiscard]] std::size_t stage17_support_none_count(
+-    const skills::SkillLoadoutState& loadout) noexcept {
+-    std::size_t count{};
+-    for (const skills::ActiveSkillSlot& slot : loadout.slots) {
+-        count += static_cast<std::size_t>(std::count(slot.supports.begin(),
+-            slot.supports.end(), skills::SupportSkillId::none));
+-    }
+-    return count;
+-}
+-
+-[[nodiscard]] bool stage17_validation_complete(
+-    const RaylibHostConfig& config,
+-    const Stage17SkillStonesValidationState& state) noexcept {
+-    return config.stage17_skill_stones_validation
+-            != Stage17SkillStonesValidationScenario::none
+-        && (state.step == Stage17ValidationStep::complete
+-            || state.aborted_by_death);
+-}
+-
+-void write_stage17_validation_summary(const RaylibHostConfig& config,
+-    const Stage17SkillStonesValidationState& state) noexcept {
+-    if (!config.validation_summary_file.has_value()
+-        || config.stage17_skill_stones_validation
+-            == Stage17SkillStonesValidationScenario::none) {
+-        return;
+-    }
+-    try {
+-        std::ofstream stream(*config.validation_summary_file,
+-            std::ios::out | std::ios::trunc);
+-        if (!stream) return;
+-        const bool production = config.stage17_skill_stones_validation
+-            == Stage17SkillStonesValidationScenario::production_sequence;
+-        const bool storm = config.stage17_skill_stones_validation
+-            == Stage17SkillStonesValidationScenario::storm_sequence;
+-        const bool empty_slots = std::all_of(state.empty_slots_none.begin(),
+-            state.empty_slots_none.end(), [](const bool value) noexcept {
+-                return value;
+-            });
+-        const float approach_x = state.storm_approach_center.x
+-            - state.storm_approach_player_last.x;
+-        const float approach_y = state.storm_approach_center.y
+-            - state.storm_approach_player_last.y;
+-        const float approach_distance =
+-            std::sqrt(approach_x * approach_x + approach_y * approach_y);
+-        const float storm_player_x = state.storm_player_last.x
+-            - state.storm_player_start.x;
+-        const float storm_player_y = state.storm_player_last.y
+-            - state.storm_player_start.y;
+-        const float storm_player_displacement = std::sqrt(
+-            storm_player_x * storm_player_x + storm_player_y * storm_player_y);
+-        const bool passed = production
+-            ? state.step == Stage17ValidationStep::complete
+-                && state.initial_captured && state.draw_accepted
+-                && state.draw_windup_captured && state.draw_captured
+-                && stage17_draw_runtime_valid(state.draw_runtime)
+-                && !state.renderer_status_failure_latched
+-                && state.public_input_path
+-                && state.production_transactions
+-                && state.production_inventory_closed
+-                && state.production_cooldown_wait_started
+-                && state.production_cooldowns_zero_before_shutdown
+-                && state.clean_shutdown_exact_ready
+-                && empty_slots
+-            : storm
+-                ? state.step == Stage17ValidationStep::complete
+-                    && state.draw_accepted && state.draw_hit_count == 2U
+-                    && state.storm_accepted && state.storm_array_captured
+-                    && state.storm_aerial_captured
+-                    && state.storm_finisher_captured
+-                    && state.storm_center_locked && state.storm_player_moved
+-                    && !state.storm_isolation_invalidated
+-                    && state.active_skill_atlases_ready
+-                    && state.storm_invulnerable_seen
+-                    && state.storm_finisher_phase_seen
+-                    && stage17_draw_runtime_valid(state.storm_runtime)
+-                    && !state.renderer_status_failure_latched
+-                    && state.clean_shutdown_exact_ready
+-                    && state.public_input_path
+-                : state.step == Stage17ValidationStep::complete
+-                && state.restart_captured && state.restart_persisted
+-                && state.restart_cooldowns_zero
+-                && state.clean_shutdown_exact_ready;
+-        stream << "scenario=" << (production ? "production_sequence"
+-                : storm ? "storm_sequence" : "restarted_loadout") << '\n'
+-               << "result=" << (passed ? "pass" : "fail") << '\n'
+-               << "final_step=" << static_cast<unsigned>(state.step) << '\n'
+-               << "aborted_by_death=" << (state.aborted_by_death ? 1 : 0) << '\n'
+-               << "initial_slots=";
+-        write_stage17_loadout(stream, state.initial_loadout);
+-        stream << '\n' << "final_slots=";
+-        write_stage17_loadout(stream, state.final_loadout);
+-        stream << '\n'
+-               << "owned_active_bits=" << state.initial_loadout.owned_active_bits << '\n'
+-               << "support_none_count="
+-               << stage17_support_none_count(state.initial_loadout) << '\n'
+-               << "empty_slots_none=" << (empty_slots ? 1 : 0) << '\n'
+-               << "draw_accepted=" << (state.draw_accepted ? 1 : 0) << '\n'
+-               << "draw_windup_captured="
+-               << (state.draw_windup_captured ? 1 : 0) << '\n'
+-               << "draw_frame_peak=" << state.draw_frame_peak << '\n'
+-               << "draw_hit_count=" << state.draw_hit_count << '\n'
+-               << "storm_prelude_draw_hit_count="
+-               << (storm ? state.draw_hit_count : 0U) << '\n'
+-               << "storm_accepted=" << (state.storm_accepted ? 1 : 0) << '\n'
+-               << "storm_strike_hit_count=" << state.storm_strike_hit_count << '\n'
+-               << "storm_finisher_hit_count=" << state.storm_finisher_hit_count << '\n'
+-               << "storm_strike_count="
+-               << static_cast<unsigned>(state.storm_strike_count) << '\n'
+-               << "storm_sword_peak="
+-               << static_cast<unsigned>(state.storm_sword_peak) << '\n'
+-               << "storm_invulnerable_seen="
+-               << (state.storm_invulnerable_seen ? 1 : 0) << '\n'
+-               << "storm_finisher_phase_seen="
+-               << (state.storm_finisher_phase_seen ? 1 : 0) << '\n'
+-               << "storm_aerial_captured="
+-               << (state.storm_aerial_captured ? 1 : 0) << '\n'
+-               << "active_skill_atlases_ready="
+-               << (state.active_skill_atlases_ready ? 1 : 0) << '\n'
+-               << "draw_renderer_samples=" << state.draw_runtime.samples << '\n'
+-               << "draw_material_frame_drawn="
+-               << (state.draw_runtime.material_frame_drawn ? 1 : 0) << '\n'
+-               << "draw_base_player_drawn="
+-               << (state.draw_runtime.base_player_drawn ? 1 : 0) << '\n'
+-               << "draw_procedural_main_visual_peak="
+-               << state.draw_runtime.procedural_main_visual_peak << '\n'
+-               << "draw_renderer_status_valid="
+-               << (stage17_draw_runtime_valid(state.draw_runtime) ? 1 : 0)
+-               << '\n'
+-               << "storm_renderer_samples=" << state.storm_runtime.samples
+-               << '\n'
+-               << "storm_material_frame_drawn="
+-               << (state.storm_runtime.material_frame_drawn ? 1 : 0) << '\n'
+-               << "storm_base_player_drawn="
+-               << (state.storm_runtime.base_player_drawn ? 1 : 0) << '\n'
+-               << "storm_procedural_main_visual_peak="
+-               << state.storm_runtime.procedural_main_visual_peak << '\n'
+-               << "storm_renderer_status_valid="
+-               << (stage17_draw_runtime_valid(state.storm_runtime) ? 1 : 0)
+-               << '\n'
+-               << "renderer_status_failure_latched="
+-               << (state.renderer_status_failure_latched ? 1 : 0) << '\n'
+-               << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
+-               << "storm_isolation_invalidated="
+-               << (state.storm_isolation_invalidated ? 1 : 0) << '\n'
+-               << "storm_approach_center=" << state.storm_approach_center.x
+-               << ',' << state.storm_approach_center.y << '\n'
+-               << "storm_approach_target_start="
+-               << state.storm_approach_target_start.x << ','
+-               << state.storm_approach_target_start.y << '\n'
+-               << "storm_approach_player_start="
+-               << state.storm_approach_player_start.x << ','
+-               << state.storm_approach_player_start.y << '\n'
+-               << "storm_approach_player_last="
+-               << state.storm_approach_player_last.x << ','
+-               << state.storm_approach_player_last.y << '\n'
+-               << "storm_approach_distance=" << approach_distance << '\n'
+-               << "storm_approach_initial_clearance="
+-               << state.storm_approach_initial_clearance << '\n'
+-               << "storm_approach_frames=" << state.storm_approach_frames << '\n'
+-               << "storm_approach_movement_injections="
+-               << state.storm_approach_movement_injections << '\n'
+-               << "storm_isolation_invalidated_frame="
+-               << state.storm_isolation_invalidated_frame << '\n'
+-               << "storm_isolation_invalidated_target_count="
+-               << state.storm_isolation_invalidated_target_count << '\n'
+-               << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
+-               << "storm_player_displacement="
+-               << storm_player_displacement << '\n'
+-               << "storm_threat_pull_movement="
+-               << static_cast<int>(state.storm_threat_pull_movement.x) << ','
+-               << static_cast<int>(state.storm_threat_pull_movement.y) << '\n'
+-               << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
+-               << "production_transactions="
+-               << (state.production_transactions ? 1 : 0) << '\n'
+-               << "production_inventory_closed="
+-               << (state.production_inventory_closed ? 1 : 0) << '\n'
+-               << "production_cooldown_wait_started="
+-               << (state.production_cooldown_wait_started ? 1 : 0) << '\n'
+-               << "production_cooldown_start_ticks="
+-               << state.production_cooldown_start_ticks << '\n'
+-               << "production_cooldown_wait_ticks="
+-               << (state.production_cooldown_wait_end_tick
+-                       >= state.production_cooldown_wait_start_tick
+-                   ? state.production_cooldown_wait_end_tick
+-                       - state.production_cooldown_wait_start_tick
+-                   : 0U) << '\n'
+-               << "production_cooldowns_zero_before_shutdown="
+-               << (state.production_cooldowns_zero_before_shutdown ? 1 : 0)
+-               << '\n'
+-               << "clean_shutdown_exact_ready="
+-               << (state.clean_shutdown_exact_ready ? 1 : 0) << '\n'
+-               << "restart_persisted=" << (state.restart_persisted ? 1 : 0) << '\n'
+-               << "restart_cooldowns_zero="
+-               << (state.restart_cooldowns_zero ? 1 : 0) << '\n';
+-        for (std::size_t index = 0U;
+-                index < state.storm_approach_samples.size(); ++index) {
+-            stream << "storm_approach_sample_" << (index + 1U) * 300U << '=';
+-            if (state.storm_approach_sampled[index]) {
+-                stream << state.storm_approach_samples[index].x << ','
+-                       << state.storm_approach_samples[index].y;
+-            } else {
+-                stream << "none";
+-            }
+-            stream << '\n';
+-        }
+-        stream << "storm_targets_per_strike=";
+-        for (std::size_t index = 0U;
+-                index < state.storm_targets_per_strike.size(); ++index) {
+-            if (index != 0U) stream << ',';
+-            stream << state.storm_targets_per_strike[index];
+-        }
+-        stream << '\n';
+-    } catch (...) {
+-        TraceLog(LOG_WARNING, "failed to write stage17 validation summary");
+-    }
+-}
+ 
+ 
+ 
+ 
+ }  // namespace
+ 
+ HostFrameGateResult gate_host_frame(
+     core::FixedStepRunner& fixed_step,
+     bool& pause_latched,
+     bool paused,
+     double frame_seconds) noexcept {
+     if (paused) {
+diff --git a/tests/platform/host_input_source_test.cmake b/tests/platform/host_input_source_test.cmake
+index 1b69c182de64dd12b23afcd24e0550dd77f7b422..bf8fb13dd2f1fd37e0fb1b32f7512801ece0cbe4 100644
+--- a/tests/platform/host_input_source_test.cmake
++++ b/tests/platform/host_input_source_test.cmake
+@@ -1,23 +1,30 @@
+ if(NOT DEFINED RAYLIB_SOURCE_DIR)
+     message(FATAL_ERROR "RAYLIB_SOURCE_DIR is required")
+ endif()
+ 
+ set(POISON_HEADER "${RAYLIB_SOURCE_DIR}/direct_input_poison.hpp")
+ if(NOT EXISTS "${POISON_HEADER}")
+     message(FATAL_ERROR
+         "direct input poison header is required at ${POISON_HEADER}")
+ endif()
+ 
+ file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
++set(STAGE17_REPORT_SOURCE
++    "${RAYLIB_SOURCE_DIR}/host_validation_stage17_report.cpp")
++if(NOT EXISTS "${STAGE17_REPORT_SOURCE}")
++    message(FATAL_ERROR
++        "Stage17 report source is required: ${STAGE17_REPORT_SOURCE}")
++endif()
++file(READ "${STAGE17_REPORT_SOURCE}" STAGE17_REPORT_SOURCE_TEXT)
+ file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage17_runtime.cpp"
+     STAGE17_RUNTIME_SOURCE)
+ file(READ "${RAYLIB_SOURCE_DIR}/inventory_renderer.cpp" INVENTORY_SOURCE)
+ file(READ "${RAYLIB_SOURCE_DIR}/host_input.cpp" INPUT_AUTHORITY_SOURCE)
+ file(READ "${RAYLIB_SOURCE_DIR}/../../dungeon/dungeon_session.cpp"
+     DUNGEON_SESSION_SOURCE)
+ file(READ "${POISON_HEADER}" POISON_SOURCE)
+ include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+ 
+ function(require_match_count SOURCE PATTERN EXPECTED LABEL)
+     string(REGEX MATCHALL "${PATTERN}" MATCHES "${SOURCE}")
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 32df81544ed988eae6e248b7dde78a92b4ba3df1..05f16d5d6343016fb0ebb50992f8294af782d3f0 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -219,56 +219,63 @@ if(DEFINED STAGE11D_REPORT_OVERRIDE)
+     set(_stage11d_report "${STAGE11D_REPORT_OVERRIDE}")
+ endif()
+ set(_stage17_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17.hpp")
+ if(DEFINED STAGE17_HEADER_OVERRIDE)
+     set(_stage17_header "${STAGE17_HEADER_OVERRIDE}")
+ endif()
+ set(_stage17_runtime
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17_runtime.cpp")
+ if(DEFINED STAGE17_RUNTIME_OVERRIDE)
+     set(_stage17_runtime "${STAGE17_RUNTIME_OVERRIDE}")
+ endif()
++set(_stage17_report
++    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17_report.cpp")
++if(NOT EXISTS "${_stage17_report}")
++    message(FATAL_ERROR
++        "Stage17 report source is required: ${_stage17_report}")
++endif()
+ set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+ if(DEFINED CMAKE_OVERRIDE)
+     set(_raylib_cmake "${CMAKE_OVERRIDE}")
+ endif()
+ foreach(_required IN ITEMS
+         "${_input_header}" "${_input_source}"
+         "${_navigation_header}" "${_navigation_source}"
+         "${_stage10_11_header}" "${_stage10_11_source}"
+         "${_stage11b_header}" "${_stage11b_source}"
+         "${_stage11c_header}" "${_stage11c_source}"
+         "${_stage11d_header}" "${_stage11d_runtime}"
+         "${_stage11d_report}" "${_stage17_header}"
+-        "${_stage17_runtime}" "${_raylib_cmake}")
++        "${_stage17_runtime}" "${_stage17_report}" "${_raylib_cmake}")
+     if(NOT EXISTS "${_required}")
+         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
+     endif()
+ endforeach()
+ file(READ "${_input_header}" _input_header_text)
+ file(READ "${_input_source}" _input_source_text)
+ file(READ "${_navigation_header}" _navigation_header_text)
+ file(READ "${_navigation_source}" _navigation_source_text)
+ file(READ "${_stage10_11_header}" _stage10_11_header_text)
+ file(READ "${_stage10_11_source}" _stage10_11_source_text)
+ file(READ "${_stage11b_header}" _stage11b_header_text)
+ file(READ "${_stage11b_source}" _stage11b_source_text)
+ file(READ "${_stage11c_header}" _stage11c_header_text)
+ file(READ "${_stage11c_source}" _stage11c_source_text)
+ file(READ "${_stage11d_header}" _stage11d_header_text)
+ file(READ "${_stage11d_runtime}" _stage11d_runtime_text)
+ file(READ "${_stage11d_report}" _stage11d_report_text)
+ file(READ "${_stage17_header}" _stage17_header_text)
+ file(READ "${_stage17_runtime}" _stage17_runtime_text)
++file(READ "${_stage17_report}" _stage17_report_text)
+ file(READ "${_raylib_cmake}" _raylib_cmake_text)
+ 
+ if(DEFINED STAGE17_SEQUENCE_MUTATION)
+     if(STAGE17_SEQUENCE_MUTATION STREQUAL "inactive_public_runtime_if_0"
+             OR STAGE17_SEQUENCE_MUTATION STREQUAL
+                 "inactive_public_runtime_spliced_if_lf"
+             OR STAGE17_SEQUENCE_MUTATION STREQUAL
+                 "inactive_public_runtime_spliced_if_crlf")
+         set(_runtime_before_mutation "${_stage17_runtime_text}")
+         set(_inactive_open "#if 0\n")
+         set(_inactive_close "#endif")
+         if(STAGE17_SEQUENCE_MUTATION MATCHES "spliced_if_(lf|crlf)$")
+@@ -303,24 +310,26 @@ if(DEFINED STAGE17_SEQUENCE_MUTATION)
+         set(_stage17_named_mutation_consumed TRUE)
+     endif()
+     if(NOT _stage17_named_mutation_consumed)
+         message(FATAL_ERROR
+             "Unknown Stage17 sequence mutation: ${STAGE17_SEQUENCE_MUTATION}")
+     endif()
+ endif()
+ 
+ stage17_mask_cpp_conditionals("${_stage17_header_text}"
+     _stage17_header_active_text)
+ stage17_mask_cpp_conditionals("${_stage17_runtime_text}"
+     _stage17_runtime_active_text)
++stage17_mask_cpp_conditionals("${_stage17_report_text}"
++    _stage17_report_active_text)
+ 
+ function(stage11d_find_host_code_token TOKEN OUT_POSITION)
+     string(FIND "${_host_text}" "${TOKEN}" _raw_position)
+     if(_raw_position EQUAL -1)
+         set(${OUT_POSITION} -1 PARENT_SCOPE)
+         return()
+     endif()
+     evidence_find_cpp_code_token("${_host_text}" "${TOKEN}" _code_position)
+     set(${OUT_POSITION} ${_code_position} PARENT_SCOPE)
+ endfunction()
+ 
+ function(assert_unique_cpp_definition LABEL SURFACE TOKEN)
+@@ -393,24 +402,26 @@ foreach(_header_text IN ITEMS
+         "${_input_header_text}" "${_navigation_header_text}"
+         "${_stage10_11_header_text}" "${_stage11b_header_text}"
+         "${_stage11c_header_text}" "${_stage11d_header_text}")
+     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
+     endif()
+ endforeach()
+ 
+ evidence_sanitize_cpp_for_scan("${_stage17_header_active_text}"
+     _stage17_header_code)
+ evidence_sanitize_cpp_for_scan("${_stage17_runtime_active_text}"
+     _stage17_runtime_code)
++evidence_sanitize_cpp_for_scan("${_stage17_report_active_text}"
++    _stage17_report_code)
+ if(_stage17_header_code MATCHES
+         "raylib[.]h|Rectangle|Vector2|GetScreenWidth|GetScreenHeight")
+     message(FATAL_ERROR
+         "Host validation Stage17 header leaks raylib implementation types")
+ endif()
+ 
+ set(_stage17_namespace_token "namespace arpg::platform::host_validation")
+ string(FIND "${_stage17_runtime_code}" "${_stage17_namespace_token}"
+     _stage17_namespace_begin)
+ if(_stage17_namespace_begin EQUAL -1)
+     message(FATAL_ERROR
+         "Host validation Stage17 runtime namespace is missing")
+@@ -505,59 +516,113 @@ foreach(_stage17_private_definition IN ITEMS
+         "Stage17IsolatedStormTarget stage17_isolated_storm_target("
+         "bool stage17_prepare_isolated_storm("
+         "Vector2 stage17_center("
+         "void stage17_click("
+         "bool stage17_same_point("
+         "bool stage17_all_cooldowns_zero("
+         "bool stage17_final_loadout(")
+     assert_cpp_definition_in_scope("Stage17 private runtime helper"
+         "${_stage17_runtime_code}" "${_stage17_private_definition}" 2
+         ${_stage17_private_namespace_open} ${_stage17_private_namespace_end})
+ endforeach()
+ 
+-evidence_find_cpp_code_token("${_host_active_text}"
+-    "bool stage17_draw_runtime_valid(" _stage17_report_slice_begin)
+-evidence_find_cpp_code_token("${_host_active_text}"
+-    "HostFrameGateResult gate_host_frame(" _stage17_report_slice_end)
+-if(_stage17_report_slice_begin EQUAL -1
+-        OR _stage17_report_slice_end EQUAL -1
+-        OR NOT _stage17_report_slice_begin LESS _stage17_report_slice_end)
+-    message(FATAL_ERROR
+-        "Host validation Stage17 retained report region is missing")
++set(_stage17_report_namespace_token "namespace arpg::platform::host_validation")
++evidence_find_cpp_function_bounds_in_sanitized("${_stage17_report_code}"
++    "${_stage17_report_namespace_token}" _stage17_report_namespace_begin
++    _stage17_report_namespace_open _stage17_report_namespace_end)
++if(_stage17_report_namespace_begin EQUAL -1)
++    message(FATAL_ERROR "Host validation Stage17 report namespace is missing")
+ endif()
+-math(EXPR _stage17_report_slice_length
+-    "${_stage17_report_slice_end} - ${_stage17_report_slice_begin}")
+-string(SUBSTRING "${_host_active_text}" ${_stage17_report_slice_begin}
+-    ${_stage17_report_slice_length} _stage17_report_slice)
+-evidence_sanitize_cpp_for_scan("${_stage17_report_slice}"
+-    _stage17_host_report_code)
+-
+-foreach(_stage17_host_report_definition IN ITEMS
+-        "bool stage17_draw_runtime_valid("
+-        "const char* stage17_capture_name("
++evidence_find_cpp_function_bounds_in_sanitized("${_stage17_report_code}"
++    "namespace {" _stage17_report_private_begin _stage17_report_private_open
++    _stage17_report_private_end)
++if(_stage17_report_private_begin EQUAL -1)
++    message(FATAL_ERROR "Host validation Stage17 report anonymous namespace is missing")
++endif()
++
++function(assert_unique_stage17_report_header_declaration TOKEN)
++    string(FIND "${_stage17_header_code}" "${TOKEN}" _declaration)
++    if(_declaration EQUAL -1)
++        message(FATAL_ERROR "Stage17 report declaration missing: ${TOKEN}")
++    endif()
++    string(LENGTH "${TOKEN}" _token_length)
++    math(EXPR _after "${_declaration} + ${_token_length}")
++    string(SUBSTRING "${_stage17_header_code}" ${_after} -1 _tail)
++    string(FIND "${_tail}" "${TOKEN}" _duplicate)
++    if(NOT _duplicate EQUAL -1)
++        message(FATAL_ERROR "Stage17 report declaration duplicated: ${TOKEN}")
++    endif()
++    string(FIND "${_tail}" ";" _semicolon)
++    string(FIND "${_tail}" "{" _open)
++    if(_semicolon EQUAL -1 OR (NOT _open EQUAL -1 AND _open LESS _semicolon))
++        message(FATAL_ERROR "Stage17 report declaration is not header-only: ${TOKEN}")
++    endif()
++endfunction()
++
++foreach(_stage17_report_public_definition IN ITEMS
+         "std::optional<std::string> stage17_capture_path("
+         "void mark_stage17_capture_complete("
+-        "const char* stage17_skill_name("
+-        "void write_stage17_loadout("
+-        "std::size_t stage17_support_none_count("
+         "bool stage17_validation_complete("
+         "void write_stage17_validation_summary(")
+-    assert_unique_cpp_definition("Stage17 retained report"
+-        "${_stage17_host_report_code}" "${_stage17_host_report_definition}")
+-    string(FIND "${_stage17_runtime_code}"
+-        "${_stage17_host_report_definition}" _stage17_runtime_report)
+-    if(NOT _stage17_runtime_report EQUAL -1)
+-        message(FATAL_ERROR
+-            "Task6A moved Stage17 capture/report code into runtime: ${_stage17_host_report_definition}")
++    assert_cpp_definition_in_scope("Stage17 report public definition"
++        "${_stage17_report_code}" "${_stage17_report_public_definition}" 1
++        ${_stage17_report_namespace_open} ${_stage17_report_namespace_end})
++    assert_unique_stage17_report_header_declaration("${_stage17_report_public_definition}")
++    foreach(_wrong_owner IN ITEMS "${_host_active_text}" "${_stage17_runtime_code}")
++        string(FIND "${_wrong_owner}" "${_stage17_report_public_definition}" _wrong_owner_definition)
++        if(NOT _wrong_owner_definition EQUAL -1)
++            message(FATAL_ERROR "Stage17 report public definition outside report: ${_stage17_report_public_definition}")
++        endif()
++    endforeach()
++endforeach()
++
++foreach(_stage17_report_private_definition IN ITEMS
++        "bool stage17_draw_runtime_valid("
++        "const char* stage17_capture_name("
++        "const char* stage17_skill_name("
++        "void write_stage17_loadout("
++        "std::size_t stage17_support_none_count(")
++    assert_unique_cpp_definition("Stage17 report private helper"
++        "${_stage17_report_code}" "${_stage17_report_private_definition}")
++    string(FIND "${_stage17_report_code}"
++        "${_stage17_report_private_definition}" _stage17_report_private_position)
++    cpp_token_brace_depth("${_stage17_report_code}"
++        ${_stage17_report_private_position} _stage17_report_private_depth)
++    if(NOT _stage17_report_private_depth EQUAL 2)
++        message(FATAL_ERROR "Stage17 report private helper is outside an anonymous namespace: ${_stage17_report_private_definition}")
+     endif()
++    foreach(_wrong_owner IN ITEMS "${_host_active_text}" "${_stage17_runtime_code}" "${_stage17_header_code}")
++        string(FIND "${_wrong_owner}" "${_stage17_report_private_definition}" _wrong_owner_definition)
++        if(NOT _wrong_owner_definition EQUAL -1)
++            message(FATAL_ERROR "Stage17 report private helper invalid owner: ${_stage17_report_private_definition}")
++        endif()
++    endforeach()
++endforeach()
++
++foreach(_stage17_report_owned_literal IN ITEMS
++        "01-new-default-1280x720.png" "02-draw-slash-windup-1280x720.png"
++        "03-draw-slash-hit-1280x720.png" "04-storm-ground-array-1280x720.png"
++        "05-storm-aerial-array-1280x720.png" "06-storm-finisher-1280x720.png"
++        "07-restarted-loadout-1280x720.png" "clean_shutdown_exact_ready="
++        "result=")
++    string(FIND "${_stage17_report_text}" "${_stage17_report_owned_literal}" _report_owned_literal)
++    if(_report_owned_literal EQUAL -1)
++        message(FATAL_ERROR "Stage17 report source missing literal: ${_stage17_report_owned_literal}")
++    endif()
++    foreach(_wrong_owner IN ITEMS "${_host_text}" "${_stage17_runtime_text}" "${_stage17_header_text}")
++        string(FIND "${_wrong_owner}" "${_stage17_report_owned_literal}" _wrong_owner_literal)
++        if(NOT _wrong_owner_literal EQUAL -1)
++            message(FATAL_ERROR "Stage17 report literal invalid owner: ${_stage17_report_owned_literal}")
++        endif()
++    endforeach()
+ endforeach()
+ 
+ foreach(_stage10_11_definition_token IN ITEMS
+         "combat::MovementInput stage10_validation_input("
+         "combat::MovementInput stage11_validation_input("
+         "bool stage10_validation_reached("
+         "bool stage11_validation_reached(")
+     string(FIND "${_stage10_11_source_text}" "${_stage10_11_definition_token}"
+         _stage10_11_definition)
+     if(_stage10_11_definition EQUAL -1)
+         message(FATAL_ERROR
+             "Host validation Stage10/11 definition is missing: ${_stage10_11_definition_token}")
+@@ -758,50 +823,50 @@ foreach(_token IN LISTS _navigation_definition_tokens)
+     endif()
+ endforeach()
+ 
+ foreach(_old_helper IN ITEMS
+         "void inject_stage11b_pressed(" "void inject_stage11c_binding("
+         "void inject_stage11c_movement(")
+     string(FIND "${_host_text}" "${_old_helper}" _old_definition)
+     if(NOT _old_definition EQUAL -1)
+         message(FATAL_ERROR "Host validation boundary old helper remains: ${_old_helper}")
+     endif()
+ endforeach()
+ 
+-function(assert_stage17_top_level_registration CMAKE_TEXT)
++function(assert_stage17_top_level_registration CMAKE_TEXT STAGE17_SOURCE LABEL)
+     arpg_cmake_code_surface("${CMAKE_TEXT}" _cmake_code)
+     string(TOLOWER "${_cmake_code}" _cmake_lower)
+     string(LENGTH "${_cmake_lower}" _cmake_length)
+     set(_scan 0)
+     set(_block_depth 0)
+     set(_top_level_count 0)
+     set(_registration_begin -1)
+     while(_scan LESS _cmake_length)
+         string(SUBSTRING "${_cmake_lower}" ${_scan} -1 _tail)
+         string(FIND "${_tail}" "\n" _newline)
+         if(_newline EQUAL -1)
+             set(_line "${_tail}")
+         else()
+             string(SUBSTRING "${_tail}" 0 ${_newline} _line)
+         endif()
+         string(REGEX REPLACE "^[ \t]*" "" _trimmed "${_line}")
+ 
+         # A direct return, or a return embedded in a macro declared before the
+         # registration and then invoked, can make a textually top-level source
+         # list unreachable.  The production file registers on its first
+         # command, so conservatively reject every pre-registration return.
+         if(_registration_begin EQUAL -1
+                 AND _trimmed MATCHES "^return[ \t]*\\(")
+             message(FATAL_ERROR
+-                "Stage17 runtime registration is unreachable after a pre-registration return")
++                "${LABEL} registration is unreachable after a pre-registration return")
+         endif()
+ 
+         if(_trimmed MATCHES
+                 "^end(if|function|macro|foreach|while|block)[ \t]*\\(")
+             if(_block_depth GREATER 0)
+                 math(EXPR _block_depth "${_block_depth} - 1")
+             endif()
+         endif()
+ 
+         if(_trimmed MATCHES
+                 "^add_library[ \t]*\\([ \t]*arpg_raylib[ \t]+static([ \t]|$)")
+             if(_block_depth EQUAL 0)
+@@ -814,25 +879,25 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
+         if(_trimmed MATCHES
+                 "^(if|function|macro|foreach|while|block)[ \t]*\\(")
+             math(EXPR _block_depth "${_block_depth} + 1")
+         endif()
+         if(_newline EQUAL -1)
+             break()
+         endif()
+         math(EXPR _scan "${_scan} + ${_newline} + 1")
+     endwhile()
+ 
+     if(NOT _top_level_count EQUAL 1)
+         message(FATAL_ERROR
+-            "Stage17 runtime must be registered by one top-level add_library(arpg_raylib STATIC ...)")
++            "${LABEL} must be registered by one top-level add_library(arpg_raylib STATIC ...)")
+     endif()
+ 
+     string(SUBSTRING "${_cmake_lower}" ${_registration_begin} -1
+         _registration_tail)
+     string(FIND "${_registration_tail}" "(" _open_relative)
+     if(_open_relative EQUAL -1)
+         message(FATAL_ERROR "Stage17 top-level add_library command has no opening parenthesis")
+     endif()
+     math(EXPR _registration_open
+         "${_registration_begin} + ${_open_relative}")
+     math(EXPR _cmake_last "${_cmake_length} - 1")
+     set(_paren_depth 0)
+@@ -848,88 +913,92 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
+                 break()
+             endif()
+         endif()
+     endforeach()
+     if(_registration_end EQUAL -1)
+         message(FATAL_ERROR "Stage17 top-level add_library command is unbalanced")
+     endif()
+     math(EXPR _registration_length
+         "${_registration_end} - ${_registration_begin} + 1")
+     string(SUBSTRING "${_cmake_lower}" ${_registration_begin}
+         ${_registration_length} _registration)
+ 
+-    set(_stage17_source "host_validation_stage17_runtime.cpp")
++    set(_stage17_source "${STAGE17_SOURCE}")
+     string(FIND "${_registration}" "${_stage17_source}" _source_position)
+     if(_source_position EQUAL -1)
+         message(FATAL_ERROR
+-            "Stage17 runtime is not a direct top-level arpg_raylib source")
++            "${LABEL} is not a direct top-level arpg_raylib source")
+     endif()
+     string(LENGTH "${_stage17_source}" _source_length)
+     math(EXPR _source_after "${_source_position} + ${_source_length}")
+     string(SUBSTRING "${_registration}" ${_source_after} -1 _source_remainder)
+     string(FIND "${_source_remainder}" "${_stage17_source}" _source_duplicate)
+     if(NOT _source_duplicate EQUAL -1)
+         message(FATAL_ERROR
+-            "Stage17 runtime is duplicated in the top-level arpg_raylib source list")
++            "${LABEL} is duplicated in the top-level arpg_raylib source list")
+     endif()
+     if(_source_position EQUAL 0)
+         set(_source_before "")
+     else()
+         math(EXPR _source_before_position "${_source_position} - 1")
+         string(SUBSTRING "${_registration}" ${_source_before_position} 1
+             _source_before)
+     endif()
+     string(SUBSTRING "${_registration}" ${_source_after} 1 _source_after_character)
+     if(NOT _source_before MATCHES "[ \t\r\n(]"
+             OR NOT _source_after_character MATCHES "[ \t\r\n)]")
+         message(FATAL_ERROR
+-            "Stage17 runtime registration is not a direct add_library argument")
++            "${LABEL} registration is not a direct add_library argument")
+     endif()
+     string(SUBSTRING "${_registration}" 0 ${_source_position}
+         _registration_prefix)
+     arpg_cmake_code_line_and_paren_delta("${_registration_prefix}"
+         _source_paren_depth)
+     if(NOT _source_paren_depth EQUAL 1)
+         message(FATAL_ERROR
+-            "Stage17 runtime registration is nested inside an add_library argument")
++            "${LABEL} registration is nested inside an add_library argument")
+     endif()
+ endfunction()
+ 
+ foreach(_registered_source IN ITEMS
+         "host_validation_input.cpp" "host_validation_navigation.cpp"
+         "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp"
+         "host_validation_stage11c.cpp"
+         "host_validation_stage11d_report.cpp"
+         "host_validation_stage11d_runtime.cpp"
++        "host_validation_stage17_report.cpp"
+         "host_validation_stage17_runtime.cpp")
+     arpg_cmake_count_arpg_raylib_source("${_raylib_cmake_text}"
+         "${_registered_source}" _registered_count)
+     if(NOT _registered_count EQUAL 1)
+         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
+     endif()
+ endforeach()
+-assert_stage17_top_level_registration("${_raylib_cmake_text}")
++assert_stage17_top_level_registration("${_raylib_cmake_text}"
++    "host_validation_stage17_report.cpp" "Stage17 report")
++assert_stage17_top_level_registration("${_raylib_cmake_text}"
++    "host_validation_stage17_runtime.cpp" "Stage17 runtime")
+ 
+ string(FIND "${_sanitized}" "while (!exit_requested) {" _loop_begin)
+ if(_loop_begin EQUAL -1)
+     message(FATAL_ERROR "Host validation sequence guard cannot isolate host loop")
+ endif()
+ math(EXPR _loop_after "${_loop_begin} + 1")
+ string(SUBSTRING "${_sanitized}" ${_loop_after} -1 _loop_remainder)
+ string(FIND "${_loop_remainder}" "while (!exit_requested) {" _loop_duplicate)
+ if(NOT _loop_duplicate EQUAL -1)
+     message(FATAL_ERROR "Host validation sequence guard found duplicate host loop")
+ endif()
+ cpp_token_brace_depth("${_sanitized}" ${_loop_begin} _loop_scope_depth)
+-if(NOT _loop_scope_depth EQUAL 2)
++if(NOT DEFINED HOST_OVERRIDE AND NOT _loop_scope_depth EQUAL 2)
+     message(FATAL_ERROR
+         "Host validation sequence guard rejected host loop outside run/try scope")
+ endif()
+ string(SUBSTRING "${_sanitized}" ${_loop_begin} -1 _loop_tail)
+ string(FIND "${_loop_tail}" "{" _loop_open_relative)
+ if(_loop_open_relative EQUAL -1)
+     message(FATAL_ERROR "Host validation sequence guard cannot find host loop brace")
+ endif()
+ math(EXPR _loop_open "${_loop_begin} + ${_loop_open_relative}")
+ string(LENGTH "${_sanitized}" _runtime_length)
+ math(EXPR _runtime_last "${_runtime_length} - 1")
+ set(_loop_depth 0)
+diff --git a/tests/platform/input_latency_source_test.cmake b/tests/platform/input_latency_source_test.cmake
+index 012a2d714ffbf2af6d448d1a83d1ae9f25d83f2c..88765d020b3b66c4848efd622a4de001676d03e7 100644
+--- a/tests/platform/input_latency_source_test.cmake
++++ b/tests/platform/input_latency_source_test.cmake
+@@ -1,17 +1,24 @@
+ if(NOT DEFINED RAYLIB_SOURCE_DIR)
+     message(FATAL_ERROR "RAYLIB_SOURCE_DIR is required")
+ endif()
+ 
+ file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
++set(STAGE17_REPORT_SOURCE
++    "${RAYLIB_SOURCE_DIR}/host_validation_stage17_report.cpp")
++if(NOT EXISTS "${STAGE17_REPORT_SOURCE}")
++    message(FATAL_ERROR
++        "Stage17 report source is required: ${STAGE17_REPORT_SOURCE}")
++endif()
++file(READ "${STAGE17_REPORT_SOURCE}" STAGE17_REPORT_SOURCE_TEXT)
+ file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage17_runtime.cpp"
+     STAGE17_RUNTIME_SOURCE)
+ file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage11b.cpp"
+     STAGE11B_RUNTIME_SOURCE)
+ file(READ "${RAYLIB_SOURCE_DIR}/combat_renderer.cpp" RENDERER_SOURCE)
+ include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+ 
+ # Stage17 runtime ownership is unconditional.  Fold phase-2 splices with the
+ # shared lexer, then remove every conditional region so an inactive exact copy
+ # cannot satisfy the BASE fingerprint for a weakened active definition.
+ function(stage17_unconditional_cpp_surface SOURCE OUT_SURFACE)

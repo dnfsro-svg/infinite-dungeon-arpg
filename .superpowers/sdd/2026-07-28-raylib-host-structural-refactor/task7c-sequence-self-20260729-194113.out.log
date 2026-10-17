@@ -1,0 +1,12 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+    Start 96: platform.host_validation_sequence_self_test
+1/1 Test #96: platform.host_validation_sequence_self_test ...   Passed  1338.42 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+architecture    = 1338.42 sec*proc (1 test)
+headless        = 1338.42 sec*proc (1 test)
+platform        = 1338.42 sec*proc (1 test)
+
+Total Test time (real) = 1338.43 sec

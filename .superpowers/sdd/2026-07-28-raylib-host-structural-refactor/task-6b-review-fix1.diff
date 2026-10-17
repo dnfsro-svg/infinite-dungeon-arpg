@@ -1,0 +1,311 @@
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 05f16d5d6343016fb0ebb50992f8294af782d3f0..7071c5511513cf7b0fbf3e5b612cd2ed14bb7c1c 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -48,24 +48,52 @@ function(stage17_mask_cpp_conditionals SOURCE OUT_SURFACE)
+         if(_newline EQUAL -1)
+             break()
+         endif()
+         math(EXPR _scan "${_scan} + ${_line_length}")
+     endwhile()
+     if(NOT _conditional_depth EQUAL 0)
+         message(FATAL_ERROR
+             "Host validation Stage17 preprocessor conditional is unbalanced")
+     endif()
+     set(${OUT_SURFACE} "${_surface}" PARENT_SCOPE)
+ endfunction()
+ 
++# Preserve only the named string literals as identifier sentinels before the
++# shared lexer removes strings/comments; then apply the existing conditional
++# masker.  This makes literal evidence active-code evidence rather than raw
++# text that can be borrowed from a comment or #if 0 branch.
++function(stage17_active_report_literal_surface SOURCE OUT_SURFACE)
++    set(_prepared "${SOURCE}")
++    string(REPLACE "\"01-new-default-1280x720.png\"" "stage17_literal_01"
++        _prepared "${_prepared}")
++    string(REPLACE "\"02-draw-slash-windup-1280x720.png\"" "stage17_literal_02"
++        _prepared "${_prepared}")
++    string(REPLACE "\"03-draw-slash-hit-1280x720.png\"" "stage17_literal_03"
++        _prepared "${_prepared}")
++    string(REPLACE "\"04-storm-ground-array-1280x720.png\"" "stage17_literal_04"
++        _prepared "${_prepared}")
++    string(REPLACE "\"05-storm-aerial-array-1280x720.png\"" "stage17_literal_05"
++        _prepared "${_prepared}")
++    string(REPLACE "\"06-storm-finisher-1280x720.png\"" "stage17_literal_06"
++        _prepared "${_prepared}")
++    string(REPLACE "\"07-restarted-loadout-1280x720.png\"" "stage17_literal_07"
++        _prepared "${_prepared}")
++    string(REPLACE "\"clean_shutdown_exact_ready=\""
++        "stage17_literal_clean_shutdown" _prepared "${_prepared}")
++    string(REPLACE "\"result=\"" "stage17_literal_result"
++        _prepared "${_prepared}")
++    stage17_mask_cpp_conditionals("${_prepared}" _active)
++    set(${OUT_SURFACE} "${_active}" PARENT_SCOPE)
++endfunction()
++
+ function(stage17_assert_spliced_conditional LABEL EOL)
+     string(ASCII 92 _backslash)
+     set(_fixture
+         "#${_backslash}${EOL}if 0${EOL}${LABEL}_hidden;${EOL}#${_backslash}${EOL}endif${EOL}${LABEL}_visible;")
+     stage17_mask_cpp_conditionals("${_fixture}" _active)
+     string(FIND "${_active}" "${LABEL}_hidden" _hidden)
+     string(FIND "${_active}" "${LABEL}_visible" _visible)
+     if(NOT _hidden EQUAL -1 OR _visible EQUAL -1)
+         message(FATAL_ERROR
+             "Stage17 conditional masker failed ${LABEL} phase-2 splice self-check")
+     endif()
+ endfunction()
+@@ -404,24 +432,26 @@ foreach(_header_text IN ITEMS
+         "${_stage11c_header_text}" "${_stage11d_header_text}")
+     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
+     endif()
+ endforeach()
+ 
+ evidence_sanitize_cpp_for_scan("${_stage17_header_active_text}"
+     _stage17_header_code)
+ evidence_sanitize_cpp_for_scan("${_stage17_runtime_active_text}"
+     _stage17_runtime_code)
+ evidence_sanitize_cpp_for_scan("${_stage17_report_active_text}"
+     _stage17_report_code)
++stage17_active_report_literal_surface("${_stage17_report_text}"
++    _stage17_report_literal_surface)
+ if(_stage17_header_code MATCHES
+         "raylib[.]h|Rectangle|Vector2|GetScreenWidth|GetScreenHeight")
+     message(FATAL_ERROR
+         "Host validation Stage17 header leaks raylib implementation types")
+ endif()
+ 
+ set(_stage17_namespace_token "namespace arpg::platform::host_validation")
+ string(FIND "${_stage17_runtime_code}" "${_stage17_namespace_token}"
+     _stage17_namespace_begin)
+ if(_stage17_namespace_begin EQUAL -1)
+     message(FATAL_ERROR
+         "Host validation Stage17 runtime namespace is missing")
+@@ -529,42 +559,86 @@ set(_stage17_report_namespace_token "namespace arpg::platform::host_validation")
+ evidence_find_cpp_function_bounds_in_sanitized("${_stage17_report_code}"
+     "${_stage17_report_namespace_token}" _stage17_report_namespace_begin
+     _stage17_report_namespace_open _stage17_report_namespace_end)
+ if(_stage17_report_namespace_begin EQUAL -1)
+     message(FATAL_ERROR "Host validation Stage17 report namespace is missing")
+ endif()
+ evidence_find_cpp_function_bounds_in_sanitized("${_stage17_report_code}"
+     "namespace {" _stage17_report_private_begin _stage17_report_private_open
+     _stage17_report_private_end)
+ if(_stage17_report_private_begin EQUAL -1)
+     message(FATAL_ERROR "Host validation Stage17 report anonymous namespace is missing")
+ endif()
++math(EXPR _stage17_report_after_first_private
++    "${_stage17_report_private_end} + 1")
++string(SUBSTRING "${_stage17_report_code}" ${_stage17_report_after_first_private}
++    -1 _stage17_report_after_first_private_text)
++string(FIND "${_stage17_report_after_first_private_text}" "namespace {"
++    _stage17_report_second_private_relative)
++if(_stage17_report_second_private_relative EQUAL -1)
++    message(FATAL_ERROR "Host validation Stage17 report second anonymous namespace is missing")
++endif()
++math(EXPR _stage17_report_second_private_begin
++    "${_stage17_report_after_first_private} + ${_stage17_report_second_private_relative}")
++string(SUBSTRING "${_stage17_report_code}"
++    ${_stage17_report_second_private_begin} -1 _stage17_report_second_private_tail)
++evidence_find_cpp_function_bounds_in_sanitized(
++    "${_stage17_report_second_private_tail}" "namespace {"
++    _stage17_report_second_private_tail_begin
++    _stage17_report_second_private_tail_open _stage17_report_second_private_tail_end)
++math(EXPR _stage17_report_second_private_open
++    "${_stage17_report_second_private_begin} + ${_stage17_report_second_private_tail_open}")
++math(EXPR _stage17_report_second_private_end
++    "${_stage17_report_second_private_begin} + ${_stage17_report_second_private_tail_end}")
++
++string(FIND "${_stage17_header_code}" "namespace arpg::platform {"
++    _stage17_header_platform_begin)
++evidence_find_cpp_function_bounds_in_sanitized("${_stage17_header_code}"
++    "namespace arpg::platform {" _stage17_header_platform_begin
++    _stage17_header_platform_open _stage17_header_platform_end)
++string(FIND "${_stage17_header_code}" "namespace host_validation {"
++    _stage17_header_namespace_begin)
++if(_stage17_header_namespace_begin EQUAL -1)
++    message(FATAL_ERROR "Stage17 report header namespace is missing")
++endif()
++evidence_find_cpp_function_bounds_in_sanitized("${_stage17_header_code}"
++    "namespace host_validation {" _stage17_header_namespace_begin
++    _stage17_header_namespace_open _stage17_header_namespace_end)
+ 
+ function(assert_unique_stage17_report_header_declaration TOKEN)
+     string(FIND "${_stage17_header_code}" "${TOKEN}" _declaration)
+     if(_declaration EQUAL -1)
+         message(FATAL_ERROR "Stage17 report declaration missing: ${TOKEN}")
+     endif()
+     string(LENGTH "${TOKEN}" _token_length)
+     math(EXPR _after "${_declaration} + ${_token_length}")
+     string(SUBSTRING "${_stage17_header_code}" ${_after} -1 _tail)
+     string(FIND "${_tail}" "${TOKEN}" _duplicate)
+     if(NOT _duplicate EQUAL -1)
+         message(FATAL_ERROR "Stage17 report declaration duplicated: ${TOKEN}")
+     endif()
+     string(FIND "${_tail}" ";" _semicolon)
+     string(FIND "${_tail}" "{" _open)
+     if(_semicolon EQUAL -1 OR (NOT _open EQUAL -1 AND _open LESS _semicolon))
+         message(FATAL_ERROR "Stage17 report declaration is not header-only: ${TOKEN}")
+     endif()
++    if(_declaration LESS_EQUAL _stage17_header_namespace_open
++            OR _declaration GREATER_EQUAL _stage17_header_namespace_end)
++        message(FATAL_ERROR "Stage17 report declaration is outside host_validation: ${TOKEN}")
++    endif()
++    cpp_token_brace_depth("${_stage17_header_code}" ${_declaration}
++        _declaration_depth)
++    if(NOT _declaration_depth EQUAL 2)
++        message(FATAL_ERROR "Stage17 report declaration is not direct host_validation scope: ${TOKEN}")
++    endif()
+ endfunction()
+ 
+ foreach(_stage17_report_public_definition IN ITEMS
+         "std::optional<std::string> stage17_capture_path("
+         "void mark_stage17_capture_complete("
+         "bool stage17_validation_complete("
+         "void write_stage17_validation_summary(")
+     assert_cpp_definition_in_scope("Stage17 report public definition"
+         "${_stage17_report_code}" "${_stage17_report_public_definition}" 1
+         ${_stage17_report_namespace_open} ${_stage17_report_namespace_end})
+     assert_unique_stage17_report_header_declaration("${_stage17_report_public_definition}")
+     foreach(_wrong_owner IN ITEMS "${_host_active_text}" "${_stage17_runtime_code}")
+@@ -578,53 +652,66 @@ endforeach()
+ foreach(_stage17_report_private_definition IN ITEMS
+         "bool stage17_draw_runtime_valid("
+         "const char* stage17_capture_name("
+         "const char* stage17_skill_name("
+         "void write_stage17_loadout("
+         "std::size_t stage17_support_none_count(")
+     assert_unique_cpp_definition("Stage17 report private helper"
+         "${_stage17_report_code}" "${_stage17_report_private_definition}")
+     string(FIND "${_stage17_report_code}"
+         "${_stage17_report_private_definition}" _stage17_report_private_position)
+     cpp_token_brace_depth("${_stage17_report_code}"
+         ${_stage17_report_private_position} _stage17_report_private_depth)
+-    if(NOT _stage17_report_private_depth EQUAL 2)
++    if(_stage17_report_private_definition MATCHES
++            "stage17_draw_runtime_valid|stage17_capture_name")
++        set(_private_open ${_stage17_report_private_open})
++        set(_private_end ${_stage17_report_private_end})
++    else()
++        set(_private_open ${_stage17_report_second_private_open})
++        set(_private_end ${_stage17_report_second_private_end})
++    endif()
++    if(NOT _stage17_report_private_depth EQUAL 2
++            OR _stage17_report_private_position LESS_EQUAL _private_open
++            OR _stage17_report_private_position GREATER_EQUAL _private_end)
+         message(FATAL_ERROR "Stage17 report private helper is outside an anonymous namespace: ${_stage17_report_private_definition}")
+     endif()
+     foreach(_wrong_owner IN ITEMS "${_host_active_text}" "${_stage17_runtime_code}" "${_stage17_header_code}")
+         string(FIND "${_wrong_owner}" "${_stage17_report_private_definition}" _wrong_owner_definition)
+         if(NOT _wrong_owner_definition EQUAL -1)
+             message(FATAL_ERROR "Stage17 report private helper invalid owner: ${_stage17_report_private_definition}")
+         endif()
+     endforeach()
+ endforeach()
+ 
+-foreach(_stage17_report_owned_literal IN ITEMS
+-        "01-new-default-1280x720.png" "02-draw-slash-windup-1280x720.png"
+-        "03-draw-slash-hit-1280x720.png" "04-storm-ground-array-1280x720.png"
+-        "05-storm-aerial-array-1280x720.png" "06-storm-finisher-1280x720.png"
+-        "07-restarted-loadout-1280x720.png" "clean_shutdown_exact_ready="
+-        "result=")
+-    string(FIND "${_stage17_report_text}" "${_stage17_report_owned_literal}" _report_owned_literal)
+-    if(_report_owned_literal EQUAL -1)
+-        message(FATAL_ERROR "Stage17 report source missing literal: ${_stage17_report_owned_literal}")
+-    endif()
+-    foreach(_wrong_owner IN ITEMS "${_host_text}" "${_stage17_runtime_text}" "${_stage17_header_text}")
+-        string(FIND "${_wrong_owner}" "${_stage17_report_owned_literal}" _wrong_owner_literal)
+-        if(NOT _wrong_owner_literal EQUAL -1)
+-            message(FATAL_ERROR "Stage17 report literal invalid owner: ${_stage17_report_owned_literal}")
+-        endif()
+-    endforeach()
++evidence_extract_cpp_function_block("${_stage17_report_literal_surface}"
++    "const char* stage17_capture_name(" _stage17_capture_name_literal_block)
++evidence_extract_cpp_function_block("${_stage17_report_literal_surface}"
++    "void write_stage17_validation_summary(" _stage17_summary_literal_block)
++foreach(_capture_literal IN ITEMS stage17_literal_01 stage17_literal_02
++        stage17_literal_03 stage17_literal_04 stage17_literal_05
++        stage17_literal_06 stage17_literal_07)
++    string(FIND "${_stage17_capture_name_literal_block}" "${_capture_literal}"
++        _capture_literal_position)
++    if(_capture_literal_position EQUAL -1)
++        message(FATAL_ERROR "Stage17 capture basename is not active capture-name evidence: ${_capture_literal}")
++    endif()
++endforeach()
++foreach(_summary_literal IN ITEMS stage17_literal_result
++        stage17_literal_clean_shutdown)
++    string(FIND "${_stage17_summary_literal_block}" "${_summary_literal}"
++        _summary_literal_position)
++    if(_summary_literal_position EQUAL -1)
++        message(FATAL_ERROR "Stage17 summary literal is not active summary evidence: ${_summary_literal}")
++    endif()
+ endforeach()
+-
+ foreach(_stage10_11_definition_token IN ITEMS
+         "combat::MovementInput stage10_validation_input("
+         "combat::MovementInput stage11_validation_input("
+         "bool stage10_validation_reached("
+         "bool stage11_validation_reached(")
+     string(FIND "${_stage10_11_source_text}" "${_stage10_11_definition_token}"
+         _stage10_11_definition)
+     if(_stage10_11_definition EQUAL -1)
+         message(FATAL_ERROR
+             "Host validation Stage10/11 definition is missing: ${_stage10_11_definition_token}")
+     endif()
+     string(FIND "${_host_text}" "${_stage10_11_definition_token}"
+@@ -1420,24 +1507,54 @@ if(NOT _loop_session_end LESS _stage17_loop_top_snapshot_position
+         OR NOT _stage17_loop_top_snapshot_position LESS _sampled_physical_keys_position)
+     message(FATAL_ERROR
+         "Host validation sequence guard rejected loop-top Stage17 snapshot position")
+ endif()
+ if(NOT _stage17_loop_top_snapshot_position LESS _stage17_inventory_position
+         OR NOT _stage17_inventory_position LESS _stage17_submitted_position
+         OR NOT _stage17_submitted_position LESS _stage17_snapshot_position
+         OR NOT _stage17_snapshot_position LESS _stage17_draw_position)
+     message(FATAL_ERROR
+         "Host validation sequence guard rejected Stage17 observer order")
+ endif()
+ 
++if(NOT DEFINED HOST_OVERRIDE)
++    evidence_extract_cpp_function_block("${_host_active_text}"
++        "bool present_frame_and_maybe_capture(" _present_capture_function)
++    assert_unique_ordered_host_tokens("present/capture raylib ownership"
++        "${_present_capture_function}" 1
++        "EndDrawing();"
++        "LoadImageFromScreen();"
++        "ExportImage(image, path);")
++    string(REGEX REPLACE "[ \t\r\n]+" " " _capture_loop_normalized
++        "${_host_loop}")
++    assert_one_normalized_match("Stage17 capture lifecycle"
++        "${_capture_loop_normalized}"
++        "std::optional<std::string>[ ]+capture_path[ ]*=[ ]*stage17_capture_path\\([ ]*config,[ ]*[*]stage17_validation_state[ ]*\\)[ ]*;[ ]*const[ ]+bool[ ]+stage17_capture_requested[ ]*=[ ]*capture_path[.]has_value\\([ ]*\\)[ ]*;.*if[ ]*\\([ ]*![ ]*capture_path[.]has_value\\([ ]*\\)[ ]*&&.*const[ ]+bool[ ]+capture_succeeded[ ]*=[ ]*present_frame_and_maybe_capture\\([ ]*capture_path[.]has_value\\([ ]*\\)[ ]*\\?[ ]*capture_path->c_str\\([ ]*\\)[ ]*:[ ]*nullptr[ ]*\\)[ ]*;[ ]*if[ ]*\\([ ]*stage17_capture_requested[ ]*&&[ ]*capture_succeeded[ ]*\\)[ ]*\\{[ ]*mark_stage17_capture_complete\\([ ]*[*]stage17_validation_state[ ]*\\)[ ]*;")
++    assert_direct_exact_call_count("Stage17 requested successful capture mark"
++        "${_capture_loop_normalized}" "mark_stage17_capture_complete\\("
++        "[}]?[ ]*mark_stage17_capture_complete\\([ ]*[*]stage17_validation_state[ ]*\\)[ ]*;" 1)
++    string(REGEX REPLACE "[ \t\r\n]+" " " _host_runtime_normalized
++        "${_host_runtime}")
++    assert_one_normalized_match("Stage17 exact clean-shutdown assignment"
++        "${_host_runtime_normalized}"
++        "stage17_validation_state->clean_shutdown_exact_ready[ ]*=[ ]*runtime[.]clean_shutdown_state\\([ ]*\\)[ ]*==[ ]*CleanShutdownState::ready[ ]*;")
++    assert_unique_ordered_host_tokens("Stage17 shutdown and summaries"
++        "${_host_runtime}" 2
++        "stage17_validation_state->clean_shutdown_exact_ready ="
++        "write_stage11b_validation_summary("
++        "write_stage11c_hud_validation_summary("
++        "write_stage11d_loot_validation_summary("
++        "write_stage17_validation_summary(")
++endif()
++
+ # run_raylib_host owns the frame loop and summary calls inside its single
+ # top-level try block, so direct execution statements are at brace depth two
+ # relative to the complete function block (function body plus try body).
+ assert_unique_ordered_host_tokens("validation summary write" "${_host_runtime}" 2
+     "write_stage11b_validation_summary("
+     "write_stage11c_hud_validation_summary("
+     "write_stage11d_loot_validation_summary("
+     "write_stage17_validation_summary(")
+ foreach(_summary_token IN ITEMS
+         "write_stage11b_validation_summary("
+         "write_stage11c_hud_validation_summary("
+         "write_stage11d_loot_validation_summary("

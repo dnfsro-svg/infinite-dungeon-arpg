@@ -1,0 +1,336 @@
+# Review package: 3b3ac0a58d1037505a36d3cccd791a241e250d8d..6c173ee2c43ce6a51a3a971f79fd0cc2520001d6
+
+## Commits
+6c173ee test: freeze raylib host validation baseline
+
+## Files changed
+ docs/validation/raylib-host-refactor-baseline.md   | 67 ++++++++++++++++++++++
+ tests/platform/CMakeLists.txt                      |  9 +++
+ .../host_validation_sequence_guard_test.cmake      | 64 +++++++++++++++++++++
+ .../stage11c_hud_evidence_guard_self_test.cmake    | 24 ++++++++
+ .../stage11c_hud_evidence_guard_test.cmake         | 52 ++++++++++++++---
+ 5 files changed, 208 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/docs/validation/raylib-host-refactor-baseline.md b/docs/validation/raylib-host-refactor-baseline.md
+new file mode 100644
+index 0000000..e4815f5
+--- /dev/null
++++ b/docs/validation/raylib-host-refactor-baseline.md
+@@ -0,0 +1,67 @@
++# Raylib host structural-refactor acceptance baseline
++
++Captured before Task 0 test-only changes, from revision
++`3b3ac0a58d1037505a36d3cccd791a241e250d8d` (the Task 0 review base).
++The worktree was clean at capture time.
++
++## Host scale and state ownership
++
++- `src/platform/raylib/raylib_host.cpp`: 4,135 lines.
++- The six validation-state definitions are `Stage10ValidationState` (328-333),
++  `Stage11ValidationState` (335-340), `Stage11BValidationState` (342-361),
++  `Stage11CHudValidationState` (363-373), `Stage11DLootValidationState`
++  (376-430), and `Stage17SkillStonesValidationState` (483-552).
++- `HostValidationStates` owns the Stage 10 through Stage 11D values at
++  433-439. `run_raylib_host` binds the current Stage 11C runtime reference at
++  3166-3167; it is not an independent local value.
++
++## Stage validation function regions
++
++| Stage | Host region |
++| --- | --- |
++| Stage 17 | draw/runtime and validation support 554-1539; physical injection begins 898; summary begins 1343 |
++| Stage 11B | physical injection 1541-1602; completion/hash/summary 1604-1691 |
++| Stage 11C | physical binding/injection 1857-1935; capture hash/reached/summary 2145-2297 |
++| Stage 11D | physical injection begins 1937; evidence semantics begin 2300; summary begins 2495 |
++| Stage 10 | fixed-step validation input begins 2625 |
++| Stage 11 | fixed-step validation input begins 2735 |
++
++`run_raylib_host` spans 3035-4124. Its relevant call sites are:
++
++- state-reference binding: 3159-3176;
++- physical-input chain and host-frame mapping: 3250-3276;
++- fixed-step validation movement priority: 3612-3622;
++- Stage 11C production capture assignments: 3731-3747 and 4073-4084;
++- ordered validation-summary writes: 4104-4114.
++
++## Frozen acceptance order
++
++After comments are removed, the host loop must contain one instance of each
++token in these orders:
++
++1. `sample_physical_keys()` → `inject_stage11b_physical_edges(` →
++   `inject_stage11c_physical_edges(` → `inject_stage11d_physical_edges(` →
++   `inject_stage17_physical_edges(` → `map_host_frame_input(`.
++2. `stage11_validation_input(` → `stage10_validation_input(` →
++   `step_movement = movement;` in the fixed-step if/else-if/else priority.
++3. `write_stage11b_validation_summary(` →
++   `write_stage11c_hud_validation_summary(` →
++   `write_stage11d_loot_validation_summary(` →
++   `write_stage17_validation_summary(`.
++
++## Existing Stage11C guard drift
++
++Before this task, the command below failed with the known baseline error:
++
++```powershell
++cmake "-DSOURCE_ROOT=E:/game/.worktrees/whole-game-refactor-2026-07" -P tests/platform/stage11c_hud_evidence_guard_test.cmake
++```
++
++```text
++Stage11C evidence guard cannot bind complete host capture surface
++```
++
++The failure was caused by the guard's removed-text anchor
++`Stage11CHudValidationState stage11c_validation_state{};`. The actual runtime
++binding is the `Stage11CHudValidationState&` alias above. It predates this
++structural-refactor baseline and is not attributed to the refactor.
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 4a64c33..7ba7962 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1625,20 +1625,29 @@ arpg_verify_direct_input_poison()
+ 
+ add_test(
+     NAME platform.host_input_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/host_input_source_test.cmake")
+ set_tests_properties(
+     platform.host_input_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
++add_test(
++    NAME platform.host_validation_sequence
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/host_validation_sequence_guard_test.cmake")
++set_tests_properties(
++    platform.host_validation_sequence
++    PROPERTIES LABELS "headless;platform;architecture")
++
+ # Task 11 deliberately registers the real-host evidence gate before the
+ # harness exists.  This keeps the first execution red instead of silently
+ # accepting an unvalidated settings path.
+ add_test(
+     NAME stage11b.settings_evidence_guard
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+         "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-evidence-guard"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_test.cmake")
+ set_tests_properties(
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+new file mode 100644
+index 0000000..0d73072
+--- /dev/null
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -0,0 +1,64 @@
++if(NOT DEFINED SOURCE_ROOT)
++    message(FATAL_ERROR "SOURCE_ROOT is required")
++endif()
++
++set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
++if(DEFINED HOST_OVERRIDE)
++    set(_host "${HOST_OVERRIDE}")
++endif()
++if(NOT EXISTS "${_host}")
++    message(FATAL_ERROR "Host validation sequence target is missing: ${_host}")
++endif()
++
++file(READ "${_host}" _host_text)
++
++# Keep seam comments from satisfying a source-order assertion.
++string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" _sanitized "${_host_text}")
++string(REGEX REPLACE "//[^\r\n]*" "" _sanitized "${_sanitized}")
++
++string(FIND "${_sanitized}" "while (!exit_requested) {" _loop_begin)
++string(FIND "${_sanitized}" "audio.shutdown();" _loop_end)
++if(_loop_begin EQUAL -1 OR _loop_end EQUAL -1 OR NOT _loop_begin LESS _loop_end)
++    message(FATAL_ERROR "Host validation sequence guard cannot isolate host loop and summary")
++endif()
++math(EXPR _loop_length "${_loop_end} - ${_loop_begin}")
++string(SUBSTRING "${_sanitized}" ${_loop_begin} ${_loop_length} _host_loop)
++
++function(assert_unique_ordered_host_tokens LABEL)
++    set(_previous -1)
++    foreach(_token IN ITEMS ${ARGN})
++        string(FIND "${_host_loop}" "${_token}" _position)
++        if(_position EQUAL -1)
++            message(FATAL_ERROR "Host validation sequence guard missing ${LABEL} token: ${_token}")
++        endif()
++        math(EXPR _after "${_position} + 1")
++        string(SUBSTRING "${_host_loop}" ${_after} -1 _remainder)
++        string(FIND "${_remainder}" "${_token}" _duplicate)
++        if(NOT _duplicate EQUAL -1)
++            message(FATAL_ERROR "Host validation sequence guard found duplicate ${LABEL} token: ${_token}")
++        endif()
++        if(NOT _previous EQUAL -1 AND _position LESS _previous)
++            message(FATAL_ERROR "Host validation sequence guard rejected ${LABEL} order")
++        endif()
++        set(_previous ${_position})
++    endforeach()
++endfunction()
++
++assert_unique_ordered_host_tokens("input injection chain"
++    "sample_physical_keys()"
++    "inject_stage11b_physical_edges("
++    "inject_stage11c_physical_edges("
++    "inject_stage11d_physical_edges("
++    "inject_stage17_physical_edges("
++    "map_host_frame_input(")
++
++assert_unique_ordered_host_tokens("fixed-step movement priority"
++    "stage11_validation_input("
++    "stage10_validation_input("
++    "step_movement = movement;")
++
++assert_unique_ordered_host_tokens("validation summary write"
++    "write_stage11b_validation_summary("
++    "write_stage11c_hud_validation_summary("
++    "write_stage11d_loot_validation_summary("
++    "write_stage17_validation_summary(")
+diff --git a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+index f57d9cf..78a78e3 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+@@ -119,10 +119,34 @@ stage11c_expect_host_rejection(host_fake_snapshot_hash
+ set(_summary_gate "const bool stage11c_validation_result = state.captured")
+ stage11c_expect_host_rejection(host_fake_summary_state
+     "${_summary_gate}"
+     "const bool stage11c_validation_result = true || state.captured"
+     "fake summary state")
+ 
+ stage11c_expect_host_rejection(host_bypassed_session_progression
+     "${_model_copy}"
+     "${_model_copy}\n                current.progression.level = 99U;"
+     "bypassed Session progression")
++
++set(_state_alias
++    "Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
++string(REPLACE "${_state_alias}"
++    "Stage11CHudValidationState stage11c_validation_state{};"
++    _independent_state_source "${_host_source}")
++if(_independent_state_source STREQUAL _host_source)
++    message(FATAL_ERROR "independent Stage11C state mutation did not change production source")
++endif()
++set(_independent_state "${GUARD_TEST_ROOT}/host-independent-stage11c-state.cpp")
++file(WRITE "${_independent_state}" "${_independent_state_source}")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_independent_state}" -P "${_guard}"
++    RESULT_VARIABLE _independent_state_result
++    OUTPUT_VARIABLE _independent_state_stdout
++    ERROR_VARIABLE _independent_state_stderr)
++if(_independent_state_result EQUAL 0)
++    message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: independent_stage11c_state")
++endif()
++if(NOT "${_independent_state_stdout}${_independent_state_stderr}" MATCHES
++        "cannot bind complete host capture surface")
++    message(FATAL_ERROR "named host mutation independent_stage11c_state failed for wrong reason: ${_independent_state_stdout}${_independent_state_stderr}")
++endif()
+diff --git a/tests/platform/stage11c_hud_evidence_guard_test.cmake b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+index f1526e8..422bb2d 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+@@ -74,57 +74,93 @@ endif()
+ math(EXPR _stage11c_length "${_stage11c_end} - ${_stage11c_begin}")
+ string(SUBSTRING "${_host_text}" ${_stage11c_begin} ${_stage11c_length} _stage11c_driver)
+ foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive_" "TestAccess" "HudViewModel direct_model")
+     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR "Stage11C evidence guard rejected non-physical scenario driver: ${_forbidden}")
+     endif()
+ endforeach()
+ 
+ string(FIND "${_host_text}"
+-    "Stage11CHudValidationState stage11c_validation_state{};"
++    "Stage11CHudValidationState& stage11c_validation_state ="
+     _stage11c_runtime_begin)
+ string(FIND "${_host_text}"
+-    "write_stage11c_hud_validation_summary(config,"
++    "while (!exit_requested) {"
+     _stage11c_runtime_end)
+ if(_stage11c_runtime_begin EQUAL -1 OR _stage11c_runtime_end EQUAL -1
+         OR NOT _stage11c_runtime_begin LESS _stage11c_runtime_end)
+     message(FATAL_ERROR "Stage11C evidence guard cannot bind complete host capture surface")
+ endif()
+ math(EXPR _stage11c_runtime_length
+-    "${_stage11c_runtime_end} - ${_stage11c_runtime_begin} + 160")
++    "${_stage11c_runtime_end} - ${_stage11c_runtime_begin}")
+ string(SUBSTRING "${_host_text}" ${_stage11c_runtime_begin}
+     ${_stage11c_runtime_length} _stage11c_runtime)
+-set(_stage11c_host_surface "${_stage11c_driver}\n${_stage11c_runtime}")
++
++string(FIND "${_host_text}"
++    "const bool stage11c_target_visible = stage11c_hud_validation_reached("
++    _stage11c_capture_begin)
++string(FIND "${_host_text}"
++    "stage10_validation_captured = stage10_validation_captured"
++    _stage11c_capture_end)
++if(_stage11c_capture_begin EQUAL -1 OR _stage11c_capture_end EQUAL -1
++        OR NOT _stage11c_capture_begin LESS _stage11c_capture_end)
++    message(FATAL_ERROR "Stage11C evidence guard cannot bind production capture assignment")
++endif()
++math(EXPR _stage11c_capture_length
++    "${_stage11c_capture_end} - ${_stage11c_capture_begin}")
++string(SUBSTRING "${_host_text}" ${_stage11c_capture_begin}
++    ${_stage11c_capture_length} _stage11c_capture)
++
++string(FIND "${_host_text}"
++    "write_stage11b_validation_summary(config,"
++    _stage11c_summary_begin)
++string(FIND "${_host_text}" "audio.shutdown();" _stage11c_summary_end)
++if(_stage11c_summary_begin EQUAL -1 OR _stage11c_summary_end EQUAL -1
++        OR NOT _stage11c_summary_begin LESS _stage11c_summary_end)
++    message(FATAL_ERROR "Stage11C evidence guard cannot isolate validation summary")
++endif()
++math(EXPR _stage11c_summary_length
++    "${_stage11c_summary_end} - ${_stage11c_summary_begin}")
++string(SUBSTRING "${_host_text}" ${_stage11c_summary_begin}
++    ${_stage11c_summary_length} _stage11c_summary)
++string(FIND "${_stage11c_summary}"
++    "write_stage11c_hud_validation_summary(config,"
++    _stage11c_summary_write)
++if(_stage11c_summary_write EQUAL -1)
++    message(FATAL_ERROR "Stage11C evidence guard missing HUD validation summary write")
++endif()
++
++set(_stage11c_host_surface
++    "${_stage11c_driver}\n${_stage11c_runtime}\n${_stage11c_capture}\n${_stage11c_summary}")
+ 
+ string(REGEX MATCHALL
+     "stage11c_validation_state\\.model[ \t\r\n]*="
+-    _stage11c_model_assignments "${_stage11c_host_surface}")
++    _stage11c_model_assignments "${_stage11c_capture}")
+ list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
+ if(NOT _stage11c_model_assignment_count EQUAL 1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+ endif()
+ string(REGEX MATCH
+     "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
+-    _stage11c_model_member_overwrite "${_stage11c_host_surface}")
++    _stage11c_model_member_overwrite "${_stage11c_capture}")
+ if(_stage11c_model_member_overwrite)
+     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+ endif()
+ 
+ string(REGEX MATCHALL
+     "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
+-    _stage11c_hash_assignments "${_stage11c_host_surface}")
++    _stage11c_hash_assignments "${_stage11c_capture}")
+ list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
+ if(NOT _stage11c_hash_assignment_count EQUAL 1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+ endif()
+-string(FIND "${_stage11c_runtime}"
++string(FIND "${_stage11c_capture}"
+     "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);"
+     _stage11c_real_hash)
+ if(_stage11c_real_hash EQUAL -1)
+     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+ endif()
+ 
+ string(FIND "${_stage11c_driver}"
+     "const bool stage11c_validation_result = state.captured\n            && state.cjk_font_ready && state.production_snapshot_hash != 0U;"
+     _stage11c_summary_gate)
+ if(_stage11c_summary_gate EQUAL -1)

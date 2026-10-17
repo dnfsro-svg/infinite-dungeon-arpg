@@ -1,0 +1,2346 @@
+# Review package: HEAD..26d508100be5b6e975826605204e24ad7692a89e
+
+## Commits
+26d5081 Task5B review snapshot
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt                 |   1 +
+ src/platform/raylib/host_validation_stage11d.hpp   |  13 +
+ .../raylib/host_validation_stage11d_report.cpp     | 332 ++++++++++++++
+ src/platform/raylib/raylib_host.cpp                | 310 +------------
+ .../host_validation_sequence_guard_test.cmake      |  91 +++-
+ .../stage11d_loot_evidence_guard_self_test.cmake   |  76 +++-
+ .../stage11d_loot_evidence_guard_test.cmake        | 121 ++++-
+ ...e11d_renderer_integration_guard_self_test.cmake | 177 +++++++-
+ .../stage11d_renderer_integration_guard_test.cmake | 501 ++++++++++++++++++++-
+ 9 files changed, 1295 insertions(+), 327 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 0b820e0..ce0345f 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -23,20 +23,21 @@ add_library(arpg_raylib STATIC
+     environment_prop_layout.cpp
+     game_audio.cpp
+     ground_loot_view.cpp
+     host_input.cpp
+     host_launch_options.cpp
+     host_validation_input.cpp
+     host_validation_navigation.cpp
+     host_validation_stage10_11.cpp
+     host_validation_stage11b.cpp
+     host_validation_stage11c.cpp
++    host_validation_stage11d_report.cpp
+     host_validation_stage11d_runtime.cpp
+     hud_font.cpp
+     hud_view_model.cpp
+     hud_notice_state.cpp
+     loot_pickup_feedback.cpp
+     material_bag_renderer.cpp
+     material_loot_view.cpp
+     hud_layout.cpp
+     hud_renderer.cpp
+     inventory_renderer.cpp
+diff --git a/src/platform/raylib/host_validation_stage11d.hpp b/src/platform/raylib/host_validation_stage11d.hpp
+index 8b4e210..1067dd2 100644
+--- a/src/platform/raylib/host_validation_stage11d.hpp
++++ b/src/platform/raylib/host_validation_stage11d.hpp
+@@ -5,24 +5,27 @@
+ #include "hud_layout.hpp"
+ #include "hud_notice_state.hpp"
+ #include "items/item_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::settings {
++enum class LootFilterMode : std::uint8_t;
+ struct SettingsData;
+ }
+ 
+ namespace arpg::platform {
++struct DungeonRenderStatus;
++struct PauseMenuState;
+ struct PhysicalKeySnapshot;
+ struct RaylibHostConfig;
+ 
+ namespace host_validation {
+ 
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN state
+ struct Stage11DLootValidationState final {
+     std::uint32_t injected_frames{};
+     std::uint32_t target_presented_frames{};
+     std::array<std::uint64_t, dungeon::kGroundDropCapacity> snapshot_item_ids{};
+@@ -83,13 +86,23 @@ struct Stage11DLootValidationState final {
+     const dungeon::DungeonSnapshot&) noexcept;
+ [[nodiscard]] PhysicalKeySnapshot inject_stage11d_physical_edges(
+     PhysicalKeySnapshot, const RaylibHostConfig&,
+     const settings::SettingsData&, const dungeon::DungeonSnapshot&,
+     Stage11DLootValidationState&) noexcept;
+ [[nodiscard]] bool stage11d_validation_active(
+     const RaylibHostConfig&) noexcept;
+ void observe_stage11d_abyss_claim(Stage11DLootValidationState&,
+     const dungeon::DungeonSnapshot&,
+     const items::ItemOwnershipState&) noexcept;
++[[nodiscard]] bool stage11d_target_visible(const RaylibHostConfig&,
++    const dungeon::DungeonSnapshot&, const PauseMenuState&,
++    const DungeonRenderStatus&, settings::LootFilterMode,
++    const GroundLootView&, HudNoticeView,
++    Stage11DLootValidationState&) noexcept;
++void stage11d_record_semantics(Stage11DLootValidationState&,
++    const dungeon::DungeonSnapshot&, const items::ItemOwnershipState*,
++    const GroundLootView&, HudNoticeView) noexcept;
++void write_stage11d_loot_validation_summary(const RaylibHostConfig&,
++    const Stage11DLootValidationState&, const PauseMenuState&) noexcept;
+ 
+ }  // namespace host_validation
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_validation_stage11d_report.cpp b/src/platform/raylib/host_validation_stage11d_report.cpp
+new file mode 100644
+index 0000000..6b3e2e5
+--- /dev/null
++++ b/src/platform/raylib/host_validation_stage11d_report.cpp
+@@ -0,0 +1,332 @@
++#include "host_validation_stage11d.hpp"
++
++#include "combat/monster_affix_generation.hpp"
++#include "dungeon_runtime.hpp"
++#include "pause_menu_state.hpp"
++#include "platform/settings/settings_types.hpp"
++#include "raylib_host.hpp"
++
++#include <raylib.h>
++
++#include <algorithm>
++#include <cmath>
++#include <fstream>
++
++namespace arpg::platform::host_validation {
++
++// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN evidence_semantics
++namespace {
++
++[[nodiscard]] bool stage11d_view_has_rarity(
++    const GroundLootView& view, const dungeon::DungeonSnapshot& snapshot,
++    items::ItemRarity rarity, bool abyss) noexcept {
++    for (std::size_t label_index = 0U; label_index < view.count; ++label_index) {
++        const auto& label = view.labels[label_index];
++        for (std::size_t item_index = 0U;
++             item_index < snapshot.ground_item_count; ++item_index) {
++            const auto& item = snapshot.ground_items[item_index];
++            if (item.ordinal == label.ordinal && item.rarity == rarity
++                    && (item.source == dungeon::GroundItemSource::abyss_chest)
++                        == abyss) {
++                return true;
++            }
++        }
++    }
++    return false;
++}
++
++}  // namespace
++
++void stage11d_record_semantics(Stage11DLootValidationState& state,
++    const dungeon::DungeonSnapshot& snapshot,
++    const items::ItemOwnershipState* ownership,
++    const GroundLootView& view, HudNoticeView notices) noexcept {
++    state.view = view;
++    state.notices = notices;
++    state.snapshot_item_count = snapshot.ground_item_count;
++    state.snapshot_item_ids.fill(0U);
++    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
++        const auto& item = snapshot.ground_items[index];
++        state.snapshot_item_ids[index] = item.item_id;
++        if (item.source == dungeon::GroundItemSource::abyss_chest) {
++            state.abyss_item_id = item.item_id;
++            state.abyss_rarity = item.rarity;
++        } else if (item.rarity == items::ItemRarity::normal) {
++            state.normal_item_id = item.item_id;
++        } else if (item.rarity == items::ItemRarity::magic) {
++            state.magic_item_id = item.item_id;
++        } else if (item.rarity == items::ItemRarity::rare) {
++            state.rare_item_id = item.item_id;
++        }
++    }
++    state.inventory_item_count = 0U;
++    state.inventory_item_ids.fill(0U);
++    if (ownership != nullptr) {
++        for (const auto& item : ownership->items) {
++            if (state.inventory_item_count >= state.inventory_item_ids.size()) break;
++            state.inventory_item_ids[state.inventory_item_count++] = item.id;
++        }
++    }
++}
++
++bool stage11d_target_visible(
++    const RaylibHostConfig& config, const dungeon::DungeonSnapshot& snapshot,
++    const PauseMenuState& pause_menu, const DungeonRenderStatus& status,
++    settings::LootFilterMode mode, const GroundLootView& view,
++    HudNoticeView notices, Stage11DLootValidationState& state) noexcept {
++    using Scenario = Stage11DLootValidationScenario;
++    const Scenario scenario = config.stage11d_loot_validation;
++    if (scenario == Scenario::none) return false;
++    state.ordinary_normal_count = 0U;
++    state.ordinary_magic_count = 0U;
++    state.ordinary_rare_count = 0U;
++    state.remaining_targets = snapshot.remaining_targets;
++    state.live_inventory_count = snapshot.inventory_count;
++    state.last_phase = snapshot.phase;
++    state.player_hp = snapshot.combat.has_value()
++        ? snapshot.combat->player.hp : 0;
++    if (status.loot_pickup.valid) {
++        state.pickup_item_id = status.loot_pickup.item_id;
++        state.pickup_commit_generation = status.loot_pickup.commit_generation;
++    }
++    if (notices.primary.kind == HudNoticeKind::loot_pickup
++            || notices.secondary.kind == HudNoticeKind::loot_pickup) {
++        const HudLayout layout = make_hud_layout(
++            GetScreenWidth(), GetScreenHeight(), false);
++        state.pickup_notice_rect = notices.primary.kind
++                == HudNoticeKind::loot_pickup
++            ? layout.primary_notice : layout.secondary_notice;
++    }
++    if (snapshot.combat.has_value()) {
++        for (std::size_t index = 0U;
++             index < snapshot.combat->monster_count; ++index) {
++            const auto& monster = snapshot.combat->monsters[index];
++            if (monster.spawn_ordinal >= state.last_monster_hp.size()) continue;
++            const std::size_t ordinal = monster.spawn_ordinal;
++            state.seen_ordinal_bits = static_cast<std::uint8_t>(
++                state.seen_ordinal_bits | (1U << ordinal));
++            state.last_monster_hp[ordinal] = monster.hp;
++            state.min_monster_hp[ordinal] = (std::min)(
++                state.min_monster_hp[ordinal], monster.hp);
++            state.monster_affix_danger[ordinal] =
++                combat::monster_affix_danger_score(monster.affixes);
++            state.monster_ai_phase[ordinal] = static_cast<std::uint8_t>(
++                monster.ai_phase);
++            if (monster.hp <= 0
++                    || monster.reaction == combat::ReactionState::defeated
++                    || monster.ai_phase == combat::MonsterAiPhase::defeated) {
++                const std::uint8_t bit = static_cast<std::uint8_t>(1U << ordinal);
++                if ((state.defeated_ordinal_bits & bit) == 0U) {
++                    const float x = monster.position.x
++                        - snapshot.combat->player.position.x;
++                    const float y = monster.position.y
++                        - snapshot.combat->player.position.y;
++                    state.defeat_distance_milli[ordinal] =
++                        static_cast<std::uint32_t>(std::lround(
++                            std::sqrt(x * x + y * y) * 1000.0F));
++                    state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;
++                }
++                state.defeated_ordinal_bits = static_cast<std::uint8_t>(
++                    state.defeated_ordinal_bits | bit);
++            }
++        }
++    }
++    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
++        const auto& item = snapshot.ground_items[index];
++        if (item.source != dungeon::GroundItemSource::monster_drop) continue;
++        if (item.rarity == items::ItemRarity::normal) {
++            ++state.ordinary_normal_count;
++            state.observed_normal_item_id = item.item_id;
++            state.observed_normal_ordinal = item.ordinal;
++        } else if (item.rarity == items::ItemRarity::magic) {
++            ++state.ordinary_magic_count;
++            state.observed_magic_item_id = item.item_id;
++            state.observed_magic_ordinal = item.ordinal;
++        } else if (item.rarity == items::ItemRarity::rare) {
++            ++state.ordinary_rare_count;
++            state.observed_rare_item_id = item.item_id;
++            state.observed_rare_ordinal = item.ordinal;
++        }
++    }
++    state.max_ordinary_normal_count = (std::max)(
++        state.max_ordinary_normal_count, state.ordinary_normal_count);
++    state.max_ordinary_magic_count = (std::max)(
++        state.max_ordinary_magic_count, state.ordinary_magic_count);
++    state.max_ordinary_rare_count = (std::max)(
++        state.max_ordinary_rare_count, state.ordinary_rare_count);
++    state.max_ground_item_count = (std::max)(state.max_ground_item_count,
++        static_cast<std::uint32_t>(snapshot.ground_item_count));
++    state.max_inventory_count = (std::max)(state.max_inventory_count,
++        snapshot.inventory_count);
++    state.min_remaining_targets = (std::min)(
++        state.min_remaining_targets, snapshot.remaining_targets);
++    if (scenario == Scenario::pickup_feedback) {
++        const bool notice = notices.primary.kind == HudNoticeKind::loot_pickup
++            || notices.secondary.kind == HudNoticeKind::loot_pickup;
++        return status.loot_pickup.valid && notice;
++    }
++    if (scenario == Scenario::rare_only_abyss) {
++        for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
++            const auto& item = snapshot.ground_items[index];
++            if (item.source == dungeon::GroundItemSource::abyss_chest
++                    && item.rarity != items::ItemRarity::rare
++                    && ground_loot_visible(item, mode)) {
++                return true;
++            }
++        }
++        return false;
++    }
++    if (!stage11d_has_three_ordinary_rarities(snapshot)) return false;
++    if (scenario == Scenario::preview_cancel) {
++        if (state.preview_phase == 11U) state.preview_visible_count = view.count;
++        if (state.preview_phase < 13U || pause_menu.screen != PauseScreen::closed) {
++            return false;
++        }
++        state.restored_visible_count = view.count;
++        return state.preview_visible_count < state.restored_visible_count
++            && pause_menu.committed.loot_filter_mode
++                == settings::LootFilterMode::show_all
++            && pause_menu.draft.loot_filter_mode
++                == settings::LootFilterMode::show_all;
++    }
++    const bool normal = stage11d_view_has_rarity(
++        view, snapshot, items::ItemRarity::normal, false);
++    const bool magic = stage11d_view_has_rarity(
++        view, snapshot, items::ItemRarity::magic, false);
++    const bool rare = stage11d_view_has_rarity(
++        view, snapshot, items::ItemRarity::rare, false);
++    if (scenario == Scenario::show_all) return normal && magic && rare;
++    if (scenario == Scenario::magic_or_better) return !normal && magic && rare;
++    return scenario == Scenario::rare_only && !normal && !magic && rare;
++}
++
++namespace {
++
++[[nodiscard]] const char* stage11d_scenario_name(
++    Stage11DLootValidationScenario scenario) noexcept {
++    switch (scenario) {
++    case Stage11DLootValidationScenario::none: return "none";
++    case Stage11DLootValidationScenario::show_all: return "show_all";
++    case Stage11DLootValidationScenario::magic_or_better: return "magic_or_better";
++    case Stage11DLootValidationScenario::rare_only: return "rare_only";
++    case Stage11DLootValidationScenario::rare_only_abyss: return "rare_only_abyss";
++    case Stage11DLootValidationScenario::preview_cancel: return "preview_cancel";
++    case Stage11DLootValidationScenario::pickup_feedback: return "pickup_feedback";
++    }
++    return "invalid";
++}
++
++}  // namespace
++
++void write_stage11d_loot_validation_summary(const RaylibHostConfig& config,
++    const Stage11DLootValidationState& state,
++    const PauseMenuState& pause_menu) noexcept {
++    if (!config.validation_summary_file.has_value()
++            || config.stage11d_loot_validation
++                == Stage11DLootValidationScenario::none) return;
++    try {
++        std::ofstream stream(*config.validation_summary_file,
++            std::ios::out | std::ios::trunc);
++        if (!stream) return;
++        stream << "scenario=" << stage11d_scenario_name(
++            config.stage11d_loot_validation) << '\n'
++            << "committed_mode=" << static_cast<unsigned>(
++                pause_menu.committed.loot_filter_mode) << '\n'
++            << "draft_mode=" << static_cast<unsigned>(
++                pause_menu.draft.loot_filter_mode) << '\n'
++            << "snapshot_count=" << state.snapshot_item_count << '\n'
++            << "visible_count=" << state.view.count << '\n'
++            << "inventory_count=" << state.inventory_item_count << '\n'
++            << "normal_item_id=" << state.normal_item_id << '\n'
++            << "magic_item_id=" << state.magic_item_id << '\n'
++            << "rare_item_id=" << state.rare_item_id << '\n'
++            << "abyss_item_id=" << state.abyss_item_id << '\n'
++            << "abyss_rarity=" << static_cast<unsigned>(
++                state.abyss_rarity) << '\n'
++            << "preview_visible_count=" << state.preview_visible_count << '\n'
++            << "restored_visible_count=" << state.restored_visible_count << '\n'
++            << "abyss_claimed=" << (state.abyss_claimed ? 1 : 0) << '\n'
++            << "progress_phase=" << static_cast<unsigned>(state.last_phase) << '\n'
++            << "progress_remaining=" << static_cast<unsigned>(
++                state.remaining_targets) << '\n'
++            << "progress_inventory=" << state.live_inventory_count << '\n'
++            << "progress_hp=" << state.player_hp << '\n'
++            << "progress_rarities=" << state.ordinary_normal_count << ','
++                << state.ordinary_magic_count << ','
++                << state.ordinary_rare_count << '\n'
++            << "max_ground_rarities=" << state.max_ordinary_normal_count << ','
++                << state.max_ordinary_magic_count << ','
++                << state.max_ordinary_rare_count << '\n'
++            << "max_ground_count=" << state.max_ground_item_count << '\n'
++            << "min_remaining=" << static_cast<unsigned>(
++                state.min_remaining_targets) << '\n'
++            << "max_inventory=" << state.max_inventory_count << '\n'
++            << "observed_normal=" << state.observed_normal_item_id << ','
++                << state.observed_normal_ordinal << '\n'
++            << "observed_magic=" << state.observed_magic_item_id << ','
++                << state.observed_magic_ordinal << '\n'
++            << "observed_rare=" << state.observed_rare_item_id << ','
++                << state.observed_rare_ordinal << '\n'
++            << "monster_seen_bits=" << static_cast<unsigned>(
++                state.seen_ordinal_bits) << '\n'
++            << "monster_defeated_bits=" << static_cast<unsigned>(
++                state.defeated_ordinal_bits) << '\n'
++            << "monster_last_hp=" << state.last_monster_hp[0] << ','
++                << state.last_monster_hp[1] << ','
++                << state.last_monster_hp[2] << '\n'
++            << "monster_min_hp=" << state.min_monster_hp[0] << ','
++                << state.min_monster_hp[1] << ','
++                << state.min_monster_hp[2] << '\n'
++            << "monster_affix_danger=" << state.monster_affix_danger[0]
++                << ',' << state.monster_affix_danger[1] << ','
++                << state.monster_affix_danger[2] << '\n'
++            << "monster_ai_phase=" << static_cast<unsigned>(
++                state.monster_ai_phase[0]) << ',' << static_cast<unsigned>(
++                state.monster_ai_phase[1]) << ',' << static_cast<unsigned>(
++                state.monster_ai_phase[2]) << '\n'
++            << "defeat_distance_milli=" << state.defeat_distance_milli[0]
++                << ',' << state.defeat_distance_milli[1] << ','
++                << state.defeat_distance_milli[2] << '\n'
++            << "defeat_player_hp=" << state.defeat_player_hp[0] << ','
++                << state.defeat_player_hp[1] << ','
++                << state.defeat_player_hp[2] << '\n'
++            << "target_ordinal=" << state.target_ordinal << '\n'
++            << "pickup_item_id=" << state.pickup_item_id << '\n'
++            << "pickup_commit_generation="
++                << state.pickup_commit_generation << '\n'
++            << "pickup_notice_rect=" << state.pickup_notice_rect.x << ','
++                << state.pickup_notice_rect.y << ','
++                << state.pickup_notice_rect.width << ','
++                << state.pickup_notice_rect.height << '\n'
++            << "notice_text=";
++        const HudNotice& notice = state.notices.primary.kind
++                == HudNoticeKind::loot_pickup
++            ? state.notices.primary : state.notices.secondary;
++        stream << notice.text.bytes.data() << '\n' << "snapshot_ids=";
++        for (std::size_t index = 0U; index < state.snapshot_item_count; ++index) {
++            if (index != 0U) stream << ',';
++            stream << state.snapshot_item_ids[index];
++        }
++        stream << '\n' << "inventory_ids=";
++        for (std::size_t index = 0U; index < state.inventory_item_count; ++index) {
++            if (index != 0U) stream << ',';
++            stream << state.inventory_item_ids[index];
++        }
++        stream << '\n' << "label_rects=";
++        for (std::size_t index = 0U; index < state.view.count; ++index) {
++            if (index != 0U) stream << ';';
++            const auto& label = state.view.labels[index];
++            stream << label.ordinal << ',' << label.rect.x << ',' << label.rect.y
++                << ',' << label.rect.width << ',' << label.rect.height;
++        }
++        stream << '\n' << "result=" << (state.captured
++            && (config.stage11d_loot_validation
++                    != Stage11DLootValidationScenario::rare_only_abyss
++                || state.abyss_claimed) ? "pass" : "fail") << '\n';
++    } catch (...) {
++        TraceLog(LOG_WARNING, "failed to write stage11d loot validation summary");
++    }
++}
++// STAGE11D_LOOT_VALIDATION_SEAM_END evidence_semantics
++
++}  // namespace arpg::platform::host_validation
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index a13f4dc..3a2a69e 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -1,17 +1,16 @@
+ #include "raylib_host.hpp"
+ 
+ #include "combat_feedback.hpp"
+ #include "combat_renderer.hpp"
+ #include "combat/active_skill_runtime.hpp"
+ #include "combat/fire_room_obstacle.hpp"
+-#include "combat/monster_affix_generation.hpp"
+ #include "combat/room_bounds.hpp"
+ #include "control_hints.hpp"
+ #include "death_overlay_font.hpp"
+ #include "core/fixed_step.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "game_audio.hpp"
+ #include "host_input.hpp"
+ #include "host_launch_options.hpp"
+ #include "host_validation_input.hpp"
+@@ -71,27 +70,30 @@ static_assert(FLAG_VSYNC_HINT != 0, "raylib VSync flag must remain available");
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ using host_validation::inject_validation_action;
+ using host_validation::inject_validation_movement;
+ using host_validation::inject_validation_pressed;
+ using host_validation::inject_stage11d_physical_edges;
+ using host_validation::nearest_living_monster;
+ using host_validation::stage11d_has_three_ordinary_rarities;
++using host_validation::stage11d_record_semantics;
++using host_validation::stage11d_target_visible;
+ using host_validation::Stage11DLootValidationState;
+ using host_validation::validation_attack_lane;
+ using host_validation::validation_direction;
+ using host_validation::validation_door_position;
+ using host_validation::validation_exit_movement;
+ using host_validation::validation_movement_toward;
+ using host_validation::validation_route_fire_movement;
++using host_validation::write_stage11d_loot_validation_summary;
+ 
+ constexpr char kSettingsPreviewFailed[] = "Live preview failed";
+ constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
+ constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
+ constexpr char kSettingsSaved[] = "Settings saved";
+ constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
+ 
+ struct Stage17SkillStonesValidationState;
+ void observe_stage17_combat_event(
+     Stage17SkillStonesValidationState* state,
+@@ -1331,326 +1333,20 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
+             stream << state.storm_targets_per_strike[index];
+         }
+         stream << '\n';
+     } catch (...) {
+         TraceLog(LOG_WARNING, "failed to write stage17 validation summary");
+     }
+ }
+ 
+ 
+ 
+-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN evidence_semantics
+-[[nodiscard]] bool stage11d_view_has_rarity(
+-    const GroundLootView& view, const dungeon::DungeonSnapshot& snapshot,
+-    items::ItemRarity rarity, bool abyss) noexcept {
+-    for (std::size_t label_index = 0U; label_index < view.count; ++label_index) {
+-        const auto& label = view.labels[label_index];
+-        for (std::size_t item_index = 0U;
+-             item_index < snapshot.ground_item_count; ++item_index) {
+-            const auto& item = snapshot.ground_items[item_index];
+-            if (item.ordinal == label.ordinal && item.rarity == rarity
+-                    && (item.source == dungeon::GroundItemSource::abyss_chest)
+-                        == abyss) {
+-                return true;
+-            }
+-        }
+-    }
+-    return false;
+-}
+-
+-void stage11d_record_semantics(Stage11DLootValidationState& state,
+-    const dungeon::DungeonSnapshot& snapshot,
+-    const items::ItemOwnershipState* ownership,
+-    const GroundLootView& view, HudNoticeView notices) noexcept {
+-    state.view = view;
+-    state.notices = notices;
+-    state.snapshot_item_count = snapshot.ground_item_count;
+-    state.snapshot_item_ids.fill(0U);
+-    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
+-        const auto& item = snapshot.ground_items[index];
+-        state.snapshot_item_ids[index] = item.item_id;
+-        if (item.source == dungeon::GroundItemSource::abyss_chest) {
+-            state.abyss_item_id = item.item_id;
+-            state.abyss_rarity = item.rarity;
+-        } else if (item.rarity == items::ItemRarity::normal) {
+-            state.normal_item_id = item.item_id;
+-        } else if (item.rarity == items::ItemRarity::magic) {
+-            state.magic_item_id = item.item_id;
+-        } else if (item.rarity == items::ItemRarity::rare) {
+-            state.rare_item_id = item.item_id;
+-        }
+-    }
+-    state.inventory_item_count = 0U;
+-    state.inventory_item_ids.fill(0U);
+-    if (ownership != nullptr) {
+-        for (const auto& item : ownership->items) {
+-            if (state.inventory_item_count >= state.inventory_item_ids.size()) break;
+-            state.inventory_item_ids[state.inventory_item_count++] = item.id;
+-        }
+-    }
+-}
+-
+-[[nodiscard]] bool stage11d_target_visible(
+-    const RaylibHostConfig& config, const dungeon::DungeonSnapshot& snapshot,
+-    const PauseMenuState& pause_menu, const DungeonRenderStatus& status,
+-    settings::LootFilterMode mode, const GroundLootView& view,
+-    HudNoticeView notices, Stage11DLootValidationState& state) noexcept {
+-    using Scenario = Stage11DLootValidationScenario;
+-    const Scenario scenario = config.stage11d_loot_validation;
+-    if (scenario == Scenario::none) return false;
+-    state.ordinary_normal_count = 0U;
+-    state.ordinary_magic_count = 0U;
+-    state.ordinary_rare_count = 0U;
+-    state.remaining_targets = snapshot.remaining_targets;
+-    state.live_inventory_count = snapshot.inventory_count;
+-    state.last_phase = snapshot.phase;
+-    state.player_hp = snapshot.combat.has_value()
+-        ? snapshot.combat->player.hp : 0;
+-    if (status.loot_pickup.valid) {
+-        state.pickup_item_id = status.loot_pickup.item_id;
+-        state.pickup_commit_generation = status.loot_pickup.commit_generation;
+-    }
+-    if (notices.primary.kind == HudNoticeKind::loot_pickup
+-            || notices.secondary.kind == HudNoticeKind::loot_pickup) {
+-        const HudLayout layout = make_hud_layout(
+-            GetScreenWidth(), GetScreenHeight(), false);
+-        state.pickup_notice_rect = notices.primary.kind
+-                == HudNoticeKind::loot_pickup
+-            ? layout.primary_notice : layout.secondary_notice;
+-    }
+-    if (snapshot.combat.has_value()) {
+-        for (std::size_t index = 0U;
+-             index < snapshot.combat->monster_count; ++index) {
+-            const auto& monster = snapshot.combat->monsters[index];
+-            if (monster.spawn_ordinal >= state.last_monster_hp.size()) continue;
+-            const std::size_t ordinal = monster.spawn_ordinal;
+-            state.seen_ordinal_bits = static_cast<std::uint8_t>(
+-                state.seen_ordinal_bits | (1U << ordinal));
+-            state.last_monster_hp[ordinal] = monster.hp;
+-            state.min_monster_hp[ordinal] = (std::min)(
+-                state.min_monster_hp[ordinal], monster.hp);
+-            state.monster_affix_danger[ordinal] =
+-                combat::monster_affix_danger_score(monster.affixes);
+-            state.monster_ai_phase[ordinal] = static_cast<std::uint8_t>(
+-                monster.ai_phase);
+-            if (monster.hp <= 0
+-                    || monster.reaction == combat::ReactionState::defeated
+-                    || monster.ai_phase == combat::MonsterAiPhase::defeated) {
+-                const std::uint8_t bit = static_cast<std::uint8_t>(1U << ordinal);
+-                if ((state.defeated_ordinal_bits & bit) == 0U) {
+-                    const float x = monster.position.x
+-                        - snapshot.combat->player.position.x;
+-                    const float y = monster.position.y
+-                        - snapshot.combat->player.position.y;
+-                    state.defeat_distance_milli[ordinal] =
+-                        static_cast<std::uint32_t>(std::lround(
+-                            std::sqrt(x * x + y * y) * 1000.0F));
+-                    state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;
+-                }
+-                state.defeated_ordinal_bits = static_cast<std::uint8_t>(
+-                    state.defeated_ordinal_bits | bit);
+-            }
+-        }
+-    }
+-    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
+-        const auto& item = snapshot.ground_items[index];
+-        if (item.source != dungeon::GroundItemSource::monster_drop) continue;
+-        if (item.rarity == items::ItemRarity::normal) {
+-            ++state.ordinary_normal_count;
+-            state.observed_normal_item_id = item.item_id;
+-            state.observed_normal_ordinal = item.ordinal;
+-        } else if (item.rarity == items::ItemRarity::magic) {
+-            ++state.ordinary_magic_count;
+-            state.observed_magic_item_id = item.item_id;
+-            state.observed_magic_ordinal = item.ordinal;
+-        } else if (item.rarity == items::ItemRarity::rare) {
+-            ++state.ordinary_rare_count;
+-            state.observed_rare_item_id = item.item_id;
+-            state.observed_rare_ordinal = item.ordinal;
+-        }
+-    }
+-    state.max_ordinary_normal_count = (std::max)(
+-        state.max_ordinary_normal_count, state.ordinary_normal_count);
+-    state.max_ordinary_magic_count = (std::max)(
+-        state.max_ordinary_magic_count, state.ordinary_magic_count);
+-    state.max_ordinary_rare_count = (std::max)(
+-        state.max_ordinary_rare_count, state.ordinary_rare_count);
+-    state.max_ground_item_count = (std::max)(state.max_ground_item_count,
+-        static_cast<std::uint32_t>(snapshot.ground_item_count));
+-    state.max_inventory_count = (std::max)(state.max_inventory_count,
+-        snapshot.inventory_count);
+-    state.min_remaining_targets = (std::min)(
+-        state.min_remaining_targets, snapshot.remaining_targets);
+-    if (scenario == Scenario::pickup_feedback) {
+-        const bool notice = notices.primary.kind == HudNoticeKind::loot_pickup
+-            || notices.secondary.kind == HudNoticeKind::loot_pickup;
+-        return status.loot_pickup.valid && notice;
+-    }
+-    if (scenario == Scenario::rare_only_abyss) {
+-        for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
+-            const auto& item = snapshot.ground_items[index];
+-            if (item.source == dungeon::GroundItemSource::abyss_chest
+-                    && item.rarity != items::ItemRarity::rare
+-                    && ground_loot_visible(item, mode)) {
+-                return true;
+-            }
+-        }
+-        return false;
+-    }
+-    if (!stage11d_has_three_ordinary_rarities(snapshot)) return false;
+-    if (scenario == Scenario::preview_cancel) {
+-        if (state.preview_phase == 11U) state.preview_visible_count = view.count;
+-        if (state.preview_phase < 13U || pause_menu.screen != PauseScreen::closed) {
+-            return false;
+-        }
+-        state.restored_visible_count = view.count;
+-        return state.preview_visible_count < state.restored_visible_count
+-            && pause_menu.committed.loot_filter_mode
+-                == settings::LootFilterMode::show_all
+-            && pause_menu.draft.loot_filter_mode
+-                == settings::LootFilterMode::show_all;
+-    }
+-    const bool normal = stage11d_view_has_rarity(
+-        view, snapshot, items::ItemRarity::normal, false);
+-    const bool magic = stage11d_view_has_rarity(
+-        view, snapshot, items::ItemRarity::magic, false);
+-    const bool rare = stage11d_view_has_rarity(
+-        view, snapshot, items::ItemRarity::rare, false);
+-    if (scenario == Scenario::show_all) return normal && magic && rare;
+-    if (scenario == Scenario::magic_or_better) return !normal && magic && rare;
+-    return scenario == Scenario::rare_only && !normal && !magic && rare;
+-}
+-
+-[[nodiscard]] const char* stage11d_scenario_name(
+-    Stage11DLootValidationScenario scenario) noexcept {
+-    switch (scenario) {
+-    case Stage11DLootValidationScenario::none: return "none";
+-    case Stage11DLootValidationScenario::show_all: return "show_all";
+-    case Stage11DLootValidationScenario::magic_or_better: return "magic_or_better";
+-    case Stage11DLootValidationScenario::rare_only: return "rare_only";
+-    case Stage11DLootValidationScenario::rare_only_abyss: return "rare_only_abyss";
+-    case Stage11DLootValidationScenario::preview_cancel: return "preview_cancel";
+-    case Stage11DLootValidationScenario::pickup_feedback: return "pickup_feedback";
+-    }
+-    return "invalid";
+-}
+-
+-void write_stage11d_loot_validation_summary(const RaylibHostConfig& config,
+-    const Stage11DLootValidationState& state,
+-    const PauseMenuState& pause_menu) noexcept {
+-    if (!config.validation_summary_file.has_value()
+-            || config.stage11d_loot_validation
+-                == Stage11DLootValidationScenario::none) return;
+-    try {
+-        std::ofstream stream(*config.validation_summary_file,
+-            std::ios::out | std::ios::trunc);
+-        if (!stream) return;
+-        stream << "scenario=" << stage11d_scenario_name(
+-            config.stage11d_loot_validation) << '\n'
+-            << "committed_mode=" << static_cast<unsigned>(
+-                pause_menu.committed.loot_filter_mode) << '\n'
+-            << "draft_mode=" << static_cast<unsigned>(
+-                pause_menu.draft.loot_filter_mode) << '\n'
+-            << "snapshot_count=" << state.snapshot_item_count << '\n'
+-            << "visible_count=" << state.view.count << '\n'
+-            << "inventory_count=" << state.inventory_item_count << '\n'
+-            << "normal_item_id=" << state.normal_item_id << '\n'
+-            << "magic_item_id=" << state.magic_item_id << '\n'
+-            << "rare_item_id=" << state.rare_item_id << '\n'
+-            << "abyss_item_id=" << state.abyss_item_id << '\n'
+-            << "abyss_rarity=" << static_cast<unsigned>(
+-                state.abyss_rarity) << '\n'
+-            << "preview_visible_count=" << state.preview_visible_count << '\n'
+-            << "restored_visible_count=" << state.restored_visible_count << '\n'
+-            << "abyss_claimed=" << (state.abyss_claimed ? 1 : 0) << '\n'
+-            << "progress_phase=" << static_cast<unsigned>(state.last_phase) << '\n'
+-            << "progress_remaining=" << static_cast<unsigned>(
+-                state.remaining_targets) << '\n'
+-            << "progress_inventory=" << state.live_inventory_count << '\n'
+-            << "progress_hp=" << state.player_hp << '\n'
+-            << "progress_rarities=" << state.ordinary_normal_count << ','
+-                << state.ordinary_magic_count << ','
+-                << state.ordinary_rare_count << '\n'
+-            << "max_ground_rarities=" << state.max_ordinary_normal_count << ','
+-                << state.max_ordinary_magic_count << ','
+-                << state.max_ordinary_rare_count << '\n'
+-            << "max_ground_count=" << state.max_ground_item_count << '\n'
+-            << "min_remaining=" << static_cast<unsigned>(
+-                state.min_remaining_targets) << '\n'
+-            << "max_inventory=" << state.max_inventory_count << '\n'
+-            << "observed_normal=" << state.observed_normal_item_id << ','
+-                << state.observed_normal_ordinal << '\n'
+-            << "observed_magic=" << state.observed_magic_item_id << ','
+-                << state.observed_magic_ordinal << '\n'
+-            << "observed_rare=" << state.observed_rare_item_id << ','
+-                << state.observed_rare_ordinal << '\n'
+-            << "monster_seen_bits=" << static_cast<unsigned>(
+-                state.seen_ordinal_bits) << '\n'
+-            << "monster_defeated_bits=" << static_cast<unsigned>(
+-                state.defeated_ordinal_bits) << '\n'
+-            << "monster_last_hp=" << state.last_monster_hp[0] << ','
+-                << state.last_monster_hp[1] << ','
+-                << state.last_monster_hp[2] << '\n'
+-            << "monster_min_hp=" << state.min_monster_hp[0] << ','
+-                << state.min_monster_hp[1] << ','
+-                << state.min_monster_hp[2] << '\n'
+-            << "monster_affix_danger=" << state.monster_affix_danger[0]
+-                << ',' << state.monster_affix_danger[1] << ','
+-                << state.monster_affix_danger[2] << '\n'
+-            << "monster_ai_phase=" << static_cast<unsigned>(
+-                state.monster_ai_phase[0]) << ',' << static_cast<unsigned>(
+-                state.monster_ai_phase[1]) << ',' << static_cast<unsigned>(
+-                state.monster_ai_phase[2]) << '\n'
+-            << "defeat_distance_milli=" << state.defeat_distance_milli[0]
+-                << ',' << state.defeat_distance_milli[1] << ','
+-                << state.defeat_distance_milli[2] << '\n'
+-            << "defeat_player_hp=" << state.defeat_player_hp[0] << ','
+-                << state.defeat_player_hp[1] << ','
+-                << state.defeat_player_hp[2] << '\n'
+-            << "target_ordinal=" << state.target_ordinal << '\n'
+-            << "pickup_item_id=" << state.pickup_item_id << '\n'
+-            << "pickup_commit_generation="
+-                << state.pickup_commit_generation << '\n'
+-            << "pickup_notice_rect=" << state.pickup_notice_rect.x << ','
+-                << state.pickup_notice_rect.y << ','
+-                << state.pickup_notice_rect.width << ','
+-                << state.pickup_notice_rect.height << '\n'
+-            << "notice_text=";
+-        const HudNotice& notice = state.notices.primary.kind
+-                == HudNoticeKind::loot_pickup
+-            ? state.notices.primary : state.notices.secondary;
+-        stream << notice.text.bytes.data() << '\n' << "snapshot_ids=";
+-        for (std::size_t index = 0U; index < state.snapshot_item_count; ++index) {
+-            if (index != 0U) stream << ',';
+-            stream << state.snapshot_item_ids[index];
+-        }
+-        stream << '\n' << "inventory_ids=";
+-        for (std::size_t index = 0U; index < state.inventory_item_count; ++index) {
+-            if (index != 0U) stream << ',';
+-            stream << state.inventory_item_ids[index];
+-        }
+-        stream << '\n' << "label_rects=";
+-        for (std::size_t index = 0U; index < state.view.count; ++index) {
+-            if (index != 0U) stream << ';';
+-            const auto& label = state.view.labels[index];
+-            stream << label.ordinal << ',' << label.rect.x << ',' << label.rect.y
+-                << ',' << label.rect.width << ',' << label.rect.height;
+-        }
+-        stream << '\n' << "result=" << (state.captured
+-            && (config.stage11d_loot_validation
+-                    != Stage11DLootValidationScenario::rare_only_abyss
+-                || state.abyss_claimed) ? "pass" : "fail") << '\n';
+-    } catch (...) {
+-        TraceLog(LOG_WARNING, "failed to write stage11d loot validation summary");
+-    }
+-}
+-// STAGE11D_LOOT_VALIDATION_SEAM_END evidence_semantics
+ 
+ }  // namespace
+ 
+ HostFrameGateResult gate_host_frame(
+     core::FixedStepRunner& fixed_step,
+     bool& pause_latched,
+     bool paused,
+     double frame_seconds) noexcept {
+     if (paused) {
+         if (!pause_latched) fixed_step.clear_accumulator();
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 6d63680..5eac948 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -56,59 +56,91 @@ endif()
+ set(_stage11d_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
+ if(DEFINED STAGE11D_HEADER_OVERRIDE)
+     set(_stage11d_header "${STAGE11D_HEADER_OVERRIDE}")
+ endif()
+ set(_stage11d_runtime
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_runtime.cpp")
+ if(DEFINED STAGE11D_RUNTIME_OVERRIDE)
+     set(_stage11d_runtime "${STAGE11D_RUNTIME_OVERRIDE}")
+ endif()
++set(_stage11d_report
++    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
++if(DEFINED STAGE11D_REPORT_OVERRIDE)
++    set(_stage11d_report "${STAGE11D_REPORT_OVERRIDE}")
++endif()
+ set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+ if(DEFINED CMAKE_OVERRIDE)
+     set(_raylib_cmake "${CMAKE_OVERRIDE}")
+ endif()
+ foreach(_required IN ITEMS
+         "${_input_header}" "${_input_source}"
+         "${_navigation_header}" "${_navigation_source}"
+         "${_stage10_11_header}" "${_stage10_11_source}"
+         "${_stage11b_header}" "${_stage11b_source}"
+         "${_stage11c_header}" "${_stage11c_source}"
+-        "${_stage11d_header}" "${_stage11d_runtime}" "${_raylib_cmake}")
++        "${_stage11d_header}" "${_stage11d_runtime}"
++        "${_stage11d_report}" "${_raylib_cmake}")
+     if(NOT EXISTS "${_required}")
+         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
+     endif()
+ endforeach()
+ file(READ "${_input_header}" _input_header_text)
+ file(READ "${_input_source}" _input_source_text)
+ file(READ "${_navigation_header}" _navigation_header_text)
+ file(READ "${_navigation_source}" _navigation_source_text)
+ file(READ "${_stage10_11_header}" _stage10_11_header_text)
+ file(READ "${_stage10_11_source}" _stage10_11_source_text)
+ file(READ "${_stage11b_header}" _stage11b_header_text)
+ file(READ "${_stage11b_source}" _stage11b_source_text)
+ file(READ "${_stage11c_header}" _stage11c_header_text)
+ file(READ "${_stage11c_source}" _stage11c_source_text)
+ file(READ "${_stage11d_header}" _stage11d_header_text)
+ file(READ "${_stage11d_runtime}" _stage11d_runtime_text)
++file(READ "${_stage11d_report}" _stage11d_report_text)
+ file(READ "${_raylib_cmake}" _raylib_cmake_text)
+ 
+ function(stage11d_find_host_code_token TOKEN OUT_POSITION)
+     string(FIND "${_host_text}" "${TOKEN}" _raw_position)
+     if(_raw_position EQUAL -1)
+         set(${OUT_POSITION} -1 PARENT_SCOPE)
+         return()
+     endif()
+     evidence_find_cpp_code_token("${_host_text}" "${TOKEN}" _code_position)
+     set(${OUT_POSITION} ${_code_position} PARENT_SCOPE)
+ endfunction()
+ 
++function(assert_unique_cpp_definition LABEL SURFACE TOKEN)
++    string(FIND "${SURFACE}" "${TOKEN}" _position)
++    if(_position EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation ${LABEL} definition is missing: ${TOKEN}")
++    endif()
++    string(LENGTH "${TOKEN}" _token_length)
++    math(EXPR _after "${_position} + ${_token_length}")
++    string(SUBSTRING "${SURFACE}" ${_after} -1 _remainder)
++    string(FIND "${_remainder}" "${TOKEN}" _duplicate)
++    if(NOT _duplicate EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation ${LABEL} definition is duplicated: ${TOKEN}")
++    endif()
++    string(SUBSTRING "${SURFACE}" ${_position} -1 _tail)
++    string(FIND "${_tail}" "{" _open)
++    string(FIND "${_tail}" ";" _semicolon)
++    if(_open EQUAL -1 OR (NOT _semicolon EQUAL -1 AND _semicolon LESS _open))
++        message(FATAL_ERROR
++            "Host validation ${LABEL} is only a forward declaration: ${TOKEN}")
++    endif()
++    evidence_find_cpp_function_bounds_in_sanitized("${SURFACE}" "${TOKEN}"
++        _function_begin _function_open _function_end)
++endfunction()
++
+ foreach(_header_text IN ITEMS
+         "${_input_header_text}" "${_navigation_header_text}"
+         "${_stage10_11_header_text}" "${_stage11b_header_text}"
+         "${_stage11c_header_text}" "${_stage11d_header_text}")
+     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
+     endif()
+ endforeach()
+ 
+ foreach(_stage10_11_definition_token IN ITEMS
+@@ -233,20 +265,65 @@ if(NOT _stage11d_header_code MATCHES
+         "struct[ \t\r\n]+Stage11DLootValidationState[ \t\r\n]+final[ \t\r\n]*[{]")
+     message(FATAL_ERROR "Host validation Stage11D state definition is missing")
+ endif()
+ stage11d_find_host_code_token("struct Stage11DLootValidationState final"
+     _host_stage11d_state_definition)
+ if(NOT _host_stage11d_state_definition EQUAL -1)
+     message(FATAL_ERROR
+         "Host validation Stage11D state definition remains in raylib_host.cpp")
+ endif()
+ 
++evidence_sanitize_cpp_for_scan("${_stage11d_report_text}"
++    _stage11d_report_code)
++foreach(_stage11d_report_definition IN ITEMS
++        "bool stage11d_view_has_rarity("
++        "void stage11d_record_semantics("
++        "bool stage11d_target_visible("
++        "const char* stage11d_scenario_name("
++        "void write_stage11d_loot_validation_summary(")
++    assert_unique_cpp_definition("Stage11D report"
++        "${_stage11d_report_code}" "${_stage11d_report_definition}")
++    stage11d_find_host_code_token("${_stage11d_report_definition}"
++        _host_stage11d_report_definition)
++    if(NOT _host_stage11d_report_definition EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation Stage11D report definition remains in raylib_host.cpp: ${_stage11d_report_definition}")
++    endif()
++endforeach()
++
++foreach(_stage11d_report_declaration IN ITEMS
++        "bool stage11d_target_visible("
++        "void stage11d_record_semantics("
++        "void write_stage11d_loot_validation_summary(")
++    string(FIND "${_stage11d_header_code}"
++        "${_stage11d_report_declaration}" _declaration)
++    if(_declaration EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation Stage11D report declaration is missing: ${_stage11d_report_declaration}")
++    endif()
++    string(LENGTH "${_stage11d_report_declaration}" _declaration_length)
++    math(EXPR _after "${_declaration} + ${_declaration_length}")
++    string(SUBSTRING "${_stage11d_header_code}" ${_after} -1 _remainder)
++    string(FIND "${_remainder}" "${_stage11d_report_declaration}" _duplicate)
++    if(NOT _duplicate EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation Stage11D report declaration is duplicated: ${_stage11d_report_declaration}")
++    endif()
++    string(SUBSTRING "${_stage11d_header_code}" ${_declaration} -1 _tail)
++    string(FIND "${_tail}" ";" _semicolon)
++    string(FIND "${_tail}" "{" _open)
++    if(_semicolon EQUAL -1 OR (NOT _open EQUAL -1 AND _open LESS _semicolon))
++        message(FATAL_ERROR
++            "Host validation Stage11D report declaration is not header-only: ${_stage11d_report_declaration}")
++    endif()
++endforeach()
++
+ set(_input_definition_tokens
+     "void inject_validation_pressed("
+     "void inject_validation_action("
+     "void inject_validation_movement(")
+ set(_navigation_definition_tokens
+     "combat::MovementInput validation_route_fire_movement("
+     "const combat::MonsterSnapshot* nearest_living_monster("
+     "combat::MovementInput validation_movement_toward("
+     "combat::Vec3 validation_door_position("
+     "combat::MovementInput validation_exit_movement("
+@@ -279,20 +356,21 @@ foreach(_old_helper IN ITEMS
+     string(FIND "${_host_text}" "${_old_helper}" _old_definition)
+     if(NOT _old_definition EQUAL -1)
+         message(FATAL_ERROR "Host validation boundary old helper remains: ${_old_helper}")
+     endif()
+ endforeach()
+ 
+ foreach(_registered_source IN ITEMS
+         "host_validation_input.cpp" "host_validation_navigation.cpp"
+         "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp"
+         "host_validation_stage11c.cpp"
++        "host_validation_stage11d_report.cpp"
+         "host_validation_stage11d_runtime.cpp")
+     arpg_cmake_count_arpg_raylib_source("${_raylib_cmake_text}"
+         "${_registered_source}" _registered_count)
+     if(NOT _registered_count EQUAL 1)
+         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
+     endif()
+ endforeach()
+ 
+ string(FIND "${_sanitized}" "while (!exit_requested) {" _loop_begin)
+ if(_loop_begin EQUAL -1)
+@@ -421,10 +499,21 @@ foreach(_fixed_step_token IN ITEMS
+ endforeach()
+ 
+ # run_raylib_host owns the frame loop and summary calls inside its single
+ # top-level try block, so direct execution statements are at brace depth two
+ # relative to the complete function block (function body plus try body).
+ assert_unique_ordered_host_tokens("validation summary write" "${_host_runtime}" 2
+     "write_stage11b_validation_summary("
+     "write_stage11c_hud_validation_summary("
+     "write_stage11d_loot_validation_summary("
+     "write_stage17_validation_summary(")
++foreach(_summary_token IN ITEMS
++        "write_stage11b_validation_summary("
++        "write_stage11c_hud_validation_summary("
++        "write_stage11d_loot_validation_summary("
++        "write_stage17_validation_summary(")
++    string(FIND "${_host_runtime}" "${_summary_token}" _summary_position)
++    if(NOT _summary_position GREATER _loop_end)
++        message(FATAL_ERROR
++            "Host validation sequence guard rejected summary write before loop end: ${_summary_token}")
++    endif()
++endforeach()
+diff --git a/tests/platform/stage11d_loot_evidence_guard_self_test.cmake b/tests/platform/stage11d_loot_evidence_guard_self_test.cmake
+index a6f604f..d1df0e5 100644
+--- a/tests/platform/stage11d_loot_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11d_loot_evidence_guard_self_test.cmake
+@@ -2,25 +2,27 @@ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
+ endif()
+ set(_guard "${SOURCE_ROOT}/tests/platform/stage11d_loot_evidence_guard_test.cmake")
+ set(_sequence_guard
+     "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
+ set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ set(_stage_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
+ set(_runtime
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_runtime.cpp")
++set(_report
++    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
+ set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
+ set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
+ set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
+ foreach(_file IN ITEMS "${_guard}" "${_sequence_guard}" "${_host}"
+-        "${_stage_header}" "${_runtime}" "${_renderer}"
++        "${_stage_header}" "${_runtime}" "${_report}" "${_renderer}"
+         "${_formal}" "${_validator}")
+     if(NOT EXISTS "${_file}")
+         message(FATAL_ERROR "Stage11D guard self-test input is missing: ${_file}")
+     endif()
+ endforeach()
+ file(REMOVE_RECURSE "${GUARD_TEST_ROOT}")
+ file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
+ 
+ execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+     -P "${_guard}" RESULT_VARIABLE _baseline OUTPUT_QUIET ERROR_QUIET)
+@@ -33,38 +35,108 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
+         set(_targeted_names
+             "stage11d header state payload cross scope"
+             "runtime selector payload cross scope"
+             "host pause call in uncalled lambda"
+             "host fixed-step activation payload cross scope"
+             "host real moved definition")
+         list(FIND _targeted_names "${NAME}" _targeted_index)
+         if(_targeted_index EQUAL -1)
+             return()
+         endif()
++    elseif(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
++        set(_targeted_names
++            "report semantic recorder comment decoy"
++            "report target evaluator string decoy"
++            "report summary forward declaration decoy"
++            "report semantic payload cross function decoy")
++        list(FIND _targeted_names "${NAME}" _targeted_index)
++        if(_targeted_index EQUAL -1)
++            return()
++        endif()
+     endif()
+     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+         "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${_guard}"
+         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
+     if(_result EQUAL 0)
+         message(FATAL_ERROR "Stage11D loot evidence guard accepted mutation: ${NAME}")
+     endif()
+     set(_log "${_output}\n${_error}")
+     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized_log "${_log}")
+     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized_reason
+         "${EXPECTED_REASON}")
+     string(FIND "${_normalized_log}" "${_normalized_reason}" _reason)
+     if(_reason EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11D guard rejected ${NAME} for the wrong reason: ${_log}")
+     endif()
+ endfunction()
+ 
++file(READ "${_report}" _task5b_report_text)
++string(REPLACE "\r\n" "\n" _task5b_report_text
++    "${_task5b_report_text}")
++
++string(REPLACE "void stage11d_record_semantics("
++    "// void stage11d_record_semantics(\nvoid task5b_record_removed("
++    _task5b_report_record_comment "${_task5b_report_text}")
++if(_task5b_report_record_comment STREQUAL _task5b_report_text)
++    message(FATAL_ERROR "Task5B report recorder comment mutation made no change")
++endif()
++set(_path "${GUARD_TEST_ROOT}/report-record-comment-decoy.cpp")
++file(WRITE "${_path}" "${_task5b_report_record_comment}")
++expect_rejected("report semantic recorder comment decoy" REPORT "${_path}"
++    "report semantic recorder definition token inventory")
++
++string(REPLACE "bool stage11d_target_visible("
++    "const char* task5b_target_string = \"bool stage11d_target_visible(\";\nbool task5b_target_removed("
++    _task5b_report_target_string "${_task5b_report_text}")
++if(_task5b_report_target_string STREQUAL _task5b_report_text)
++    message(FATAL_ERROR "Task5B report target string mutation made no change")
++endif()
++set(_path "${GUARD_TEST_ROOT}/report-target-string-decoy.cpp")
++file(WRITE "${_path}" "${_task5b_report_target_string}")
++expect_rejected("report target evaluator string decoy" REPORT "${_path}"
++    "report target-visible evaluator definition token inventory")
++
++string(REPLACE "void write_stage11d_loot_validation_summary("
++    "void write_stage11d_loot_validation_summary();\nvoid task5b_summary_removed("
++    _task5b_report_summary_forward "${_task5b_report_text}")
++if(_task5b_report_summary_forward STREQUAL _task5b_report_text)
++    message(FATAL_ERROR "Task5B report summary forward mutation made no change")
++endif()
++set(_path "${GUARD_TEST_ROOT}/report-summary-forward-decoy.cpp")
++file(WRITE "${_path}" "${_task5b_report_summary_forward}")
++expect_rejected("report summary forward declaration decoy" REPORT "${_path}"
++    "missing report summary writer definition")
++
++set(_task5b_affix_payload
++    "            state.monster_affix_danger[ordinal] =\n                combat::monster_affix_danger_score(monster.affixes);")
++string(REPLACE "${_task5b_affix_payload}" "            static_cast<void>(ordinal);"
++    _task5b_report_payload_removed "${_task5b_report_text}")
++if(_task5b_report_payload_removed STREQUAL _task5b_report_text)
++    message(FATAL_ERROR "Task5B report payload mutation made no change")
++endif()
++set(_task5b_report_close "}  // namespace arpg::platform::host_validation")
++set(_task5b_cross_function
++    "void task5b_report_payload_decoy() {\n    ${_task5b_affix_payload}\n}\n\n${_task5b_report_close}")
++string(REPLACE "${_task5b_report_close}" "${_task5b_cross_function}"
++    _task5b_report_payload_cross_function "${_task5b_report_payload_removed}")
++set(_path "${GUARD_TEST_ROOT}/report-payload-cross-function-decoy.cpp")
++file(WRITE "${_path}" "${_task5b_report_payload_cross_function}")
++expect_rejected("report semantic payload cross function decoy" REPORT "${_path}"
++    "missing report evaluator semantic: state.monster_affix_danger")
++
++if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
++    message(STATUS
++        "Stage11D Task5B targeted evidence guard passed: bad_mutations=4")
++    return()
++endif()
++
+ function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
+     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+         "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${GUARD}"
+         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
+     if(NOT _result EQUAL 0)
+         message(FATAL_ERROR
+             "${NAME} was rejected: ${_output}\n${_error}")
+     endif()
+ endfunction()
+ 
+@@ -626,12 +698,12 @@ endif()
+ set(_path "${GUARD_TEST_ROOT}/existence-only-validator.ps1")
+ file(WRITE "${_path}" "${_mutated}")
+ expect_rejected("existence-only validation" VALIDATOR "${_path}"
+     "missing semantic check: $feature")
+ 
+ if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
+     message(STATUS
+         "Stage11D Task5A targeted guard test passed: bad_mutations=5; harmless_decoys=2")
+ else()
+     message(STATUS
+-        "Stage11D loot evidence guard self-test passed: bad_mutations=39; harmless_decoys=2")
++        "Stage11D loot evidence guard self-test passed: bad_mutations=43; harmless_decoys=2")
+ endif()
+diff --git a/tests/platform/stage11d_loot_evidence_guard_test.cmake b/tests/platform/stage11d_loot_evidence_guard_test.cmake
+index 2032545..9f7d765 100644
+--- a/tests/platform/stage11d_loot_evidence_guard_test.cmake
++++ b/tests/platform/stage11d_loot_evidence_guard_test.cmake
+@@ -4,60 +4,66 @@ endif()
+ 
+ include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+ 
+ set(_header "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
+ set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ set(_stage_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
+ set(_runtime
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_runtime.cpp")
++set(_report
++    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
+ set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
+ set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
+ set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
+ if(DEFINED HEADER_OVERRIDE)
+     set(_header "${HEADER_OVERRIDE}")
+ endif()
+ if(DEFINED HOST_OVERRIDE)
+     set(_host "${HOST_OVERRIDE}")
+ endif()
+ if(DEFINED STAGE11D_HEADER_OVERRIDE)
+     set(_stage_header "${STAGE11D_HEADER_OVERRIDE}")
+ endif()
+ if(DEFINED RUNTIME_OVERRIDE)
+     set(_runtime "${RUNTIME_OVERRIDE}")
+ endif()
++if(DEFINED REPORT_OVERRIDE)
++    set(_report "${REPORT_OVERRIDE}")
++endif()
+ if(DEFINED RENDERER_OVERRIDE)
+     set(_renderer "${RENDERER_OVERRIDE}")
+ endif()
+ if(DEFINED FORMAL_OVERRIDE)
+     set(_formal "${FORMAL_OVERRIDE}")
+ endif()
+ if(DEFINED VALIDATOR_OVERRIDE)
+     set(_validator "${VALIDATOR_OVERRIDE}")
+ endif()
+ foreach(_file IN ITEMS "${_header}" "${_host}" "${_stage_header}"
+-        "${_runtime}" "${_renderer}" "${_formal}" "${_validator}")
++        "${_runtime}" "${_report}" "${_renderer}" "${_formal}" "${_validator}")
+     if(NOT EXISTS "${_file}")
+         message(FATAL_ERROR "Stage11D loot evidence input is missing: ${_file}")
+     endif()
+ endforeach()
+ 
+ file(READ "${_header}" _header_text)
+ file(READ "${_host}" _host_text)
+ file(READ "${_stage_header}" _stage_header_text)
+ file(READ "${_runtime}" _runtime_text)
++file(READ "${_report}" _report_text)
+ file(READ "${_renderer}" _renderer_text)
+ file(READ "${_formal}" _formal_text)
+ file(READ "${_validator}" _validator_text)
+ set(_combined
+-    "${_header_text}\n${_stage_header_text}\n${_runtime_text}\n${_host_text}\n${_formal_text}")
++    "${_header_text}\n${_stage_header_text}\n${_runtime_text}\n${_report_text}\n${_host_text}\n${_formal_text}")
+ 
+ function(stage11d_count_raw_token SOURCE TOKEN OUT_COUNT)
+     string(LENGTH "${SOURCE}" _source_length)
+     string(LENGTH "${TOKEN}" _token_length)
+     string(REPLACE "${TOKEN}" "" _without "${SOURCE}")
+     string(LENGTH "${_without}" _without_length)
+     math(EXPR _removed "${_source_length} - ${_without_length}")
+     math(EXPR _count "${_removed} / ${_token_length}")
+     set(${OUT_COUNT} ${_count} PARENT_SCOPE)
+ endfunction()
+@@ -165,21 +171,26 @@ stage11d_prepare_marker_surface("${_stage_header_text}" stage_header
+ stage11d_require_marker_depth("${_stage_header_code}" stage_header state 2)
+ 
+ set(_runtime_labels selectors safe_movement physical_driver fixed_step_runtime)
+ stage11d_prepare_marker_surface("${_runtime_text}" runtime
+     "${_runtime_labels}" _runtime_code)
+ stage11d_require_marker_depth("${_runtime_code}" runtime selectors 1)
+ stage11d_require_marker_depth("${_runtime_code}" runtime safe_movement 2)
+ stage11d_require_marker_depth("${_runtime_code}" runtime physical_driver 1)
+ stage11d_require_marker_depth("${_runtime_code}" runtime fixed_step_runtime 1)
+ 
+-set(_host_labels evidence_semantics foreground runtime_state runtime_input
++set(_report_labels evidence_semantics)
++stage11d_prepare_marker_surface("${_report_text}" report
++    "${_report_labels}" _report_code)
++stage11d_require_marker_depth("${_report_code}" report evidence_semantics 1)
++
++set(_host_labels foreground runtime_state runtime_input
+     fixed_step abyss_claim presented_semantics reached_merge reached
+     visible_capture captured summary)
+ string(REPLACE "\r\n" "\n" _host_marker_count_text "${_host_text}")
+ foreach(_label IN LISTS _host_labels)
+     foreach(_kind IN ITEMS BEGIN END)
+         set(_marker
+             "// STAGE11D_LOOT_VALIDATION_SEAM_${_kind} ${_label}")
+         stage11d_count_raw_token("${_host_marker_count_text}"
+             "${_marker}\n" _count)
+         if(NOT _count EQUAL 1)
+@@ -231,21 +242,27 @@ set(_host_fixed_step_labels fixed_step abyss_claim)
+ stage11d_prepare_marker_surface("${_host_fixed_step_crop}" host
+     "${_host_fixed_step_labels}" _host_fixed_step_code)
+ stage11d_require_marker_depth("${_host_fixed_step_code}" host fixed_step 1)
+ stage11d_require_marker_depth("${_host_fixed_step_code}" host abyss_claim 1)
+ 
+ set(_stage11d_host_seam "")
+ foreach(_label IN LISTS _host_labels)
+     stage11d_extract_raw_seam("${_host_text}" "${_label}" _region)
+     string(APPEND _stage11d_host_seam "\n${_region}")
+ endforeach()
++stage11d_extract_raw_seam("${_report_text}" evidence_semantics
++    _stage11d_report_seam)
++set(_stage11d_semantic_seam
++    "${_stage11d_host_seam}\n${_stage11d_report_seam}")
+ arpg_sanitize_cpp_source("${_stage11d_host_seam}" _stage11d_host_code)
++arpg_sanitize_cpp_source("${_stage11d_semantic_seam}"
++    _stage11d_semantic_code)
+ 
+ function(stage11d_extract_runtime_definition LABEL SIGNATURE OUT_FUNCTION)
+     stage11d_count_raw_token("${_runtime_code}" "${SIGNATURE}" _count)
+     if(NOT _count EQUAL 1)
+         message(FATAL_ERROR
+             "Stage11D loot evidence guard missing runtime ${LABEL} definition")
+     endif()
+     string(FIND "${_runtime_code}" "${SIGNATURE}" _begin)
+     string(SUBSTRING "${_runtime_code}" ${_begin} -1 _tail)
+     string(FIND "${_tail}" "{" _open)
+@@ -256,20 +273,43 @@ function(stage11d_extract_runtime_definition LABEL SIGNATURE OUT_FUNCTION)
+     endif()
+     evidence_find_cpp_function_bounds_in_sanitized("${_runtime_code}"
+         "${SIGNATURE}" _function_begin _function_open _function_end)
+     math(EXPR _function_length
+         "${_function_end} - ${_function_begin} + 1")
+     string(SUBSTRING "${_runtime_code}" ${_function_begin}
+         ${_function_length} _function)
+     set(${OUT_FUNCTION} "${_function}" PARENT_SCOPE)
+ endfunction()
+ 
++function(stage11d_extract_report_definition LABEL SIGNATURE OUT_FUNCTION)
++    stage11d_count_raw_token("${_report_code}" "${SIGNATURE}" _count)
++    if(NOT _count EQUAL 1)
++        message(FATAL_ERROR
++            "Stage11D loot evidence guard missing report ${LABEL} definition")
++    endif()
++    string(FIND "${_report_code}" "${SIGNATURE}" _begin)
++    string(SUBSTRING "${_report_code}" ${_begin} -1 _tail)
++    string(FIND "${_tail}" "{" _open)
++    string(FIND "${_tail}" ";" _semicolon)
++    if(_open EQUAL -1 OR (NOT _semicolon EQUAL -1 AND _semicolon LESS _open))
++        message(FATAL_ERROR
++            "Stage11D loot evidence guard missing report ${LABEL} definition")
++    endif()
++    evidence_find_cpp_function_bounds_in_sanitized("${_report_code}"
++        "${SIGNATURE}" _function_begin _function_open _function_end)
++    math(EXPR _function_length
++        "${_function_end} - ${_function_begin} + 1")
++    string(SUBSTRING "${_report_code}" ${_function_begin}
++        ${_function_length} _function)
++    set(${OUT_FUNCTION} "${_function}" PARENT_SCOPE)
++endfunction()
++
+ function(stage11d_require_unique_token_depth LABEL SURFACE TOKEN EXPECTED_DEPTH)
+     stage11d_count_raw_token("${SURFACE}" "${TOKEN}" _count)
+     if(NOT _count EQUAL 1)
+         message(FATAL_ERROR
+             "Stage11D loot evidence guard rejected ${LABEL} token inventory")
+     endif()
+     string(FIND "${SURFACE}" "${TOKEN}" _position)
+     stage11d_code_brace_depth("${SURFACE}" ${_position} _depth)
+     if(NOT _depth EQUAL EXPECTED_DEPTH)
+         message(FATAL_ERROR
+@@ -294,41 +334,54 @@ foreach(_required IN ITEMS
+         "struct Stage11DLootValidationState final"
+         "std::array<std::uint64_t, dungeon::kGroundDropCapacity> snapshot_item_ids{};"
+         "std::array<std::uint64_t, dungeon::kGroundDropCapacity> inventory_item_ids{};"
+         "std::array<std::int32_t, 3> last_monster_hp{};"
+         "std::array<std::uint16_t, 3> monster_affix_danger{};"
+         "std::array<std::uint32_t, 3> defeat_distance_milli{};"
+         "std::uint64_t pickup_commit_generation{};"
+         "bool abyss_claim_requested{};" "bool abyss_claimed{};"
+         "PhysicalKeySnapshot inject_stage11d_physical_edges("
+         "bool stage11d_validation_active("
+-        "void observe_stage11d_abyss_claim(")
++        "void observe_stage11d_abyss_claim("
++        "bool stage11d_target_visible("
++        "void stage11d_record_semantics("
++        "void write_stage11d_loot_validation_summary("
++        "enum class LootFilterMode : std::uint8_t;"
++        "struct DungeonRenderStatus;" "struct PauseMenuState;")
+     string(FIND "${_stage_header_code}" "${_required}" _found)
+     if(_found EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11D loot evidence guard missing runtime header token: ${_required}")
+     endif()
+ endforeach()
+ foreach(_forbidden IN ITEMS "raylib.h" "renderer" "persistence" "test")
+     string(FIND "${_stage_header_text}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11D loot evidence guard rejected runtime header dependency: ${_forbidden}")
+     endif()
+ endforeach()
+ stage11d_find_host_code_token("struct Stage11DLootValidationState final"
+     _host_state_definition)
+ if(NOT _host_state_definition EQUAL -1)
+     message(FATAL_ERROR
+         "Stage11D loot evidence guard found runtime state definition in host")
+ endif()
+ 
++foreach(_declaration IN ITEMS
++        "bool stage11d_target_visible("
++        "void stage11d_record_semantics("
++        "void write_stage11d_loot_validation_summary(")
++    stage11d_require_unique_token_depth("report header declaration"
++        "${_stage_header_code}" "${_declaration}" 2)
++endforeach()
++
+ set(_runtime_definitions
+     "ordinary rarity selector|bool stage11d_has_three_ordinary_rarities(|1"
+     "ground selector|const dungeon::GroundItemSnapshot* stage11d_nearest_ground(|2"
+     "monster selector|const combat::MonsterSnapshot* stage11d_priority_monster(|2"
+     "attack selector|bool stage11d_attack_lane(|2"
+     "safe movement|combat::MovementInput stage11d_safe_movement_toward(|2"
+     "physical driver|PhysicalKeySnapshot inject_stage11d_physical_edges(|1"
+     "fixed-step activation|bool stage11d_validation_active(|1"
+     "abyss observer|void observe_stage11d_abyss_claim(|1")
+ foreach(_entry IN LISTS _runtime_definitions)
+@@ -351,20 +404,69 @@ foreach(_signature IN ITEMS
+         "PhysicalKeySnapshot inject_stage11d_physical_edges("
+         "bool stage11d_validation_active("
+         "void observe_stage11d_abyss_claim(")
+     stage11d_find_host_code_token("${_signature}" _host_definition)
+     if(NOT _host_definition EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11D loot evidence guard found runtime definition in host")
+     endif()
+ endforeach()
+ 
++set(_report_definitions
++    "rarity-view helper|bool stage11d_view_has_rarity(|2"
++    "semantic recorder|void stage11d_record_semantics(|1"
++    "target-visible evaluator|bool stage11d_target_visible(|1"
++    "scenario-name helper|const char* stage11d_scenario_name(|2"
++    "summary writer|void write_stage11d_loot_validation_summary(|1")
++foreach(_entry IN LISTS _report_definitions)
++    string(REPLACE "|" ";" _parts "${_entry}")
++    list(GET _parts 0 _label)
++    list(GET _parts 1 _signature)
++    list(GET _parts 2 _expected_depth)
++    stage11d_require_unique_token_depth("report ${_label} definition"
++        "${_report_code}" "${_signature}" ${_expected_depth})
++    stage11d_extract_report_definition("${_label}" "${_signature}"
++        _definition)
++    stage11d_find_host_code_token("${_signature}" _host_definition)
++    if(NOT _host_definition EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D loot evidence guard found report definition in host")
++    endif()
++endforeach()
++
++stage11d_extract_report_definition("semantic recorder"
++    "void stage11d_record_semantics(" _report_record_function)
++stage11d_extract_report_definition("target-visible evaluator"
++    "bool stage11d_target_visible(" _report_target_function)
++stage11d_extract_report_definition("summary writer"
++    "void write_stage11d_loot_validation_summary(" _report_summary_function)
++foreach(_required IN ITEMS
++        "state.snapshot_item_ids[index] = item.item_id;"
++        "state.inventory_item_ids[state.inventory_item_count++] = item.id;")
++    string(FIND "${_report_record_function}" "${_required}" _found)
++    if(_found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D loot evidence guard missing report recorder semantic: ${_required}")
++    endif()
++endforeach()
++foreach(_required IN ITEMS
++        "state.monster_affix_danger[ordinal] ="
++        "state.monster_ai_phase[ordinal] ="
++        "state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;"
++        "state.pickup_commit_generation = status.loot_pickup.commit_generation;")
++    string(FIND "${_report_target_function}" "${_required}" _found)
++    if(_found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D loot evidence guard missing report evaluator semantic: ${_required}")
++    endif()
++endforeach()
++
+ stage11d_extract_runtime_definition("physical driver"
+     "PhysicalKeySnapshot inject_stage11d_physical_edges(" _driver_text)
+ stage11d_require_unique_token_depth("runtime physical driver" "${_driver_text}"
+     "using Scenario = Stage11DLootValidationScenario;" 1)
+ foreach(_required IN ITEMS
+         "inject_validation_pressed(" "inject_validation_action("
+         "inject_validation_movement(" "validation_movement_toward("
+         "validation_route_fire_movement(" "nearest_living_monster("
+         "stage11d_safe_movement_toward(" "stage11d_attack_lane(")
+     string(FIND "${_driver_text}" "${_required}" _found)
+@@ -465,46 +567,47 @@ foreach(_required IN ITEMS
+         "stage11d-root-safety-sentinel.unknown"
+         "return sentinel_preserved && known_removed")
+     string(FIND "${_formal_text}" "${_required}" _cleanup_found)
+     if(_cleanup_found EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11D formal cleanup safety is incomplete: ${_required}")
+     endif()
+ endforeach()
+ 
+ set(_host_code "${_host_text}")
++set(_semantic_ownership_text "${_host_text}\n${_report_text}")
+ foreach(_forbidden IN ITEMS
+         "TestAccess" "snapshot_override" "set_snapshot(" "FakeRenderer"
+         "fake_renderer" "request_pickup(" "complete_pickup("
+         "publish_pickup(")
+-    string(FIND "${_host_code}" "${_forbidden}" _host_found)
++    string(FIND "${_semantic_ownership_text}" "${_forbidden}" _host_found)
+     if(NOT _host_found EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11D host-bypass-${_forbidden}")
+     endif()
+ endforeach()
+ 
+ string(REGEX MATCH
+     "pause_menu[ \t\r\n]*[.][ \t\r\n]*committed([^=;]*|)[=][^=]"
+-    _committed_assignment "${_stage11d_host_code}")
++    _committed_assignment "${_stage11d_semantic_code}")
+ if(_committed_assignment)
+     message(FATAL_ERROR
+         "Stage11D loot evidence guard rejected host validation seam direct committed settings write")
+ endif()
+ string(REGEX MATCH "live_settings([^=;]*|)[=][^=]"
+-    _live_assignment "${_stage11d_host_code}")
++    _live_assignment "${_stage11d_semantic_code}")
+ if(_live_assignment)
+     message(FATAL_ERROR
+         "Stage11D loot evidence guard rejected host validation seam direct live settings write")
+ endif()
+ string(REGEX MATCH "result[ \t\r\n]*=[ \t\r\n]*pass"
+-    _direct_pass "${_stage11d_host_seam}")
++    _direct_pass "${_stage11d_semantic_seam}")
+ if(_direct_pass)
+     message(FATAL_ERROR
+         "Stage11D loot evidence guard rejected host validation seam direct result pass")
+ endif()
+ 
+ string(REGEX REPLACE "[ \t\r\n]+" "" _host_normalized "${_host_code}")
+ string(REGEX MATCHALL
+     "live_settings[.]loot_filter_mode=pause_menu[.]committed[.]loot_filter_mode"
+     _canonical_live_settings_writes "${_host_normalized}")
+ list(LENGTH _canonical_live_settings_writes _canonical_live_settings_count)
+@@ -515,21 +618,21 @@ endif()
+ string(REGEX MATCHALL "live_settings[.]loot_filter_mode="
+     _all_live_filter_writes "${_host_normalized}")
+ list(LENGTH _all_live_filter_writes _all_live_filter_write_count)
+ if(NOT _all_live_filter_write_count EQUAL 2)
+     message(FATAL_ERROR
+         "Stage11D loot evidence guard rejected extra live-settings filter write")
+ endif()
+ 
+ string(REGEX MATCH
+     "ground_items[ \t\r\n]*\\[[^]]+\\][ \t\r\n]*=[^=]"
+-    _host_ground_mutation "${_host_text}")
++    _host_ground_mutation "${_host_text}\n${_report_text}")
+ if(_host_ground_mutation)
+     message(FATAL_ERROR "Stage11D loot evidence guard rejected host snapshot mutation")
+ endif()
+ 
+ function(stage11d_require_ordered_host_tokens SURFACE EXPECTED_DEPTH)
+     set(_previous -1)
+     foreach(_token IN ITEMS ${ARGN})
+         stage11d_count_raw_token("${SURFACE}" "${_token}" _count)
+         if(NOT _count EQUAL 1)
+             message(FATAL_ERROR
+diff --git a/tests/platform/stage11d_renderer_integration_guard_self_test.cmake b/tests/platform/stage11d_renderer_integration_guard_self_test.cmake
+index 71fd658..970cd31 100644
+--- a/tests/platform/stage11d_renderer_integration_guard_self_test.cmake
++++ b/tests/platform/stage11d_renderer_integration_guard_self_test.cmake
+@@ -1,45 +1,59 @@
+ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
+ endif()
+ 
+ set(_guard
+     "${SOURCE_ROOT}/tests/platform/stage11d_renderer_integration_guard_test.cmake")
+ file(READ "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.hpp" _header)
+ file(READ "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp" _combat)
+ file(READ "${SOURCE_ROOT}/src/platform/raylib/room_renderer.cpp" _room)
+ file(READ "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp" _hud)
++file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" _host)
++file(READ "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp"
++    _report)
++string(REPLACE "\r\n" "\n" _host "${_host}")
++string(REPLACE "\r\n" "\n" _report "${_report}")
+ file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
+ 
+ function(stage11d_replace_required OUT_VAR SOURCE BEFORE AFTER LABEL)
+     string(FIND "${SOURCE}" "${BEFORE}" _found)
+     if(_found EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11D guard mutation replacement failed closed: ${LABEL}")
+     endif()
+     string(REPLACE "${BEFORE}" "${AFTER}" _mutated "${SOURCE}")
+     if("${_mutated}" STREQUAL "${SOURCE}")
+         message(FATAL_ERROR
+             "Stage11D guard mutation did not change source: ${LABEL}")
+     endif()
+     set(${OUT_VAR} "${_mutated}" PARENT_SCOPE)
+ endfunction()
+ 
+ function(stage11d_run_guard_case LABEL COMBAT ROOM HUD EXPECT_PASS EXPECT_REASON)
+     set(_root "${GUARD_TEST_ROOT}/${LABEL}")
+-    file(MAKE_DIRECTORY "${_root}/src/platform/raylib")
+-    file(WRITE "${_root}/src/platform/raylib/combat_renderer.hpp" "${_header}")
+-    file(WRITE "${_root}/src/platform/raylib/combat_renderer.cpp" "${COMBAT}")
+-    file(WRITE "${_root}/src/platform/raylib/room_renderer.cpp" "${ROOM}")
+-    file(WRITE "${_root}/src/platform/raylib/hud_renderer.cpp" "${HUD}")
++    file(MAKE_DIRECTORY "${_root}")
++    set(_header_path "${_root}/combat_renderer.hpp")
++    set(_combat_path "${_root}/combat_renderer.cpp")
++    set(_room_path "${_root}/room_renderer.cpp")
++    set(_hud_path "${_root}/hud_renderer.cpp")
++    file(WRITE "${_header_path}" "${_header}")
++    file(WRITE "${_combat_path}" "${COMBAT}")
++    file(WRITE "${_room_path}" "${ROOM}")
++    file(WRITE "${_hud_path}" "${HUD}")
+     execute_process(
+-        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${_root}" -P "${_guard}"
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++            "-DCOMBAT_HEADER_OVERRIDE=${_header_path}"
++            "-DCOMBAT_SOURCE_OVERRIDE=${_combat_path}"
++            "-DROOM_SOURCE_OVERRIDE=${_room_path}"
++            "-DHUD_SOURCE_OVERRIDE=${_hud_path}"
++            -DTASK5B_RENDERER_ONLY=ON -P "${_guard}"
+         RESULT_VARIABLE _result
+         OUTPUT_VARIABLE _stdout
+         ERROR_VARIABLE _stderr)
+     set(_output "${_stdout}${_stderr}")
+     if(EXPECT_PASS)
+         if(NOT _result EQUAL 0)
+             message(FATAL_ERROR
+                 "Stage11D guard rejected equivalent ${LABEL} variant: ${_output}")
+         endif()
+     else()
+@@ -47,20 +61,169 @@ function(stage11d_run_guard_case LABEL COMBAT ROOM HUD EXPECT_PASS EXPECT_REASON
+             message(FATAL_ERROR
+                 "Stage11D guard accepted bad ${LABEL} mutation")
+         endif()
+         if(NOT _output MATCHES "${EXPECT_REASON}")
+             message(FATAL_ERROR
+                 "Stage11D ${LABEL} mutation failed for wrong reason; expected ${EXPECT_REASON}: ${_output}")
+         endif()
+     endif()
+ endfunction()
+ 
++function(stage11d_run_report_guard_case LABEL REPORT EXPECT_PASS EXPECT_REASON)
++    set(_path "${GUARD_TEST_ROOT}/${LABEL}-report.cpp")
++    file(WRITE "${_path}" "${REPORT}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++            "-DREPORT_OVERRIDE=${_path}" -DTASK5B_REPORT_ONLY=ON
++            -P "${_guard}"
++        RESULT_VARIABLE _result
++        OUTPUT_VARIABLE _stdout
++        ERROR_VARIABLE _stderr)
++    set(_output "${_stdout}${_stderr}")
++    if(EXPECT_PASS)
++        if(NOT _result EQUAL 0)
++            message(FATAL_ERROR
++                "Stage11D guard rejected equivalent ${LABEL} report variant: ${_output}")
++        endif()
++    else()
++        if(_result EQUAL 0)
++            message(FATAL_ERROR
++                "Stage11D guard accepted bad ${LABEL} report mutation")
++        endif()
++        if(NOT _output MATCHES "${EXPECT_REASON}")
++            message(FATAL_ERROR
++                "Stage11D ${LABEL} report mutation failed for wrong reason; expected ${EXPECT_REASON}: ${_output}")
++        endif()
++    endif()
++endfunction()
++
++function(stage11d_run_host_guard_case LABEL HOST EXPECT_PASS EXPECT_REASON)
++    set(_path "${GUARD_TEST_ROOT}/${LABEL}-host.cpp")
++    file(WRITE "${_path}" "${HOST}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++            "-DHOST_OVERRIDE=${_path}" -P "${_guard}"
++        RESULT_VARIABLE _result
++        OUTPUT_VARIABLE _stdout
++        ERROR_VARIABLE _stderr)
++    set(_output "${_stdout}${_stderr}")
++    if(EXPECT_PASS)
++        if(NOT _result EQUAL 0)
++            message(FATAL_ERROR
++                "Stage11D guard rejected equivalent ${LABEL} host variant: ${_output}")
++        endif()
++    else()
++        if(_result EQUAL 0)
++            message(FATAL_ERROR
++                "Stage11D guard accepted bad ${LABEL} host mutation")
++        endif()
++        if(NOT _output MATCHES "${EXPECT_REASON}")
++            message(FATAL_ERROR
++                "Stage11D ${LABEL} host mutation failed for wrong reason; expected ${EXPECT_REASON}: ${_output}")
++        endif()
++    endif()
++endfunction()
++
++set(_stage11d_semantic_call
++    "stage11d_record_semantics(stage11d_validation_state, current,\n                    runtime.item_state(), ground_loot_view,\n                    renderer.hud_notice_view());")
++if(DEFINED TASK5B_ORDER_ONLY AND TASK5B_ORDER_ONLY)
++    stage11d_replace_required(_host_without_semantic_call "${_host}"
++        "${_stage11d_semantic_call}" "" host_semantic_after_capture_remove)
++    stage11d_replace_required(_host_semantic_after_capture
++        "${_host_without_semantic_call}"
++        "stage11d_validation_state.captured = true;"
++        "stage11d_validation_state.captured = true;\n                ${_stage11d_semantic_call}"
++        host_semantic_after_capture_insert)
++    stage11d_run_host_guard_case(host_semantic_after_capture_order_decoy
++        "${_host_semantic_after_capture}" FALSE "production run-chain order")
++    message(STATUS
++        "[stage11d-renderer-task5b-order] named_mutations=1")
++    return()
++endif()
++if(NOT DEFINED TASK5B_REPORT_CASES_ONLY OR NOT TASK5B_REPORT_CASES_ONLY)
++set(_stage11d_semantic_lambda
++    "const auto task5b_semantic_decoy = [&]() noexcept {\n                    ${_stage11d_semantic_call}\n                };")
++stage11d_replace_required(_host_semantic_lambda "${_host}"
++    "${_stage11d_semantic_call}" "${_stage11d_semantic_lambda}"
++    host_semantic_uncalled_lambda)
++stage11d_run_host_guard_case(host_semantic_uncalled_lambda
++    "${_host_semantic_lambda}" FALSE "production run-chain token scope")
++
++if(DEFINED TASK5B_RED_ONLY AND TASK5B_RED_ONLY)
++    message(STATUS "[stage11d-renderer-task5b-red] named_mutations=1")
++    return()
++endif()
++endif()
++
++stage11d_replace_required(_report_record_comment "${_report}"
++    "void stage11d_record_semantics("
++    "// void stage11d_record_semantics(\nvoid task5b_record_removed("
++    report_record_comment_decoy)
++stage11d_run_report_guard_case(report_record_comment_decoy
++    "${_report_record_comment}" FALSE "semantic recorder.*definition")
++
++stage11d_replace_required(_report_target_string "${_report}"
++    "bool stage11d_target_visible("
++    "const char* task5b_target_string = \"bool stage11d_target_visible(\";\nbool task5b_target_removed("
++    report_target_string_decoy)
++stage11d_run_report_guard_case(report_target_string_decoy
++    "${_report_target_string}" FALSE "target-visible evaluator.*definition")
++
++stage11d_replace_required(_report_summary_forward "${_report}"
++    "void write_stage11d_loot_validation_summary("
++    "void write_stage11d_loot_validation_summary();\nvoid task5b_summary_removed("
++    report_summary_forward_declaration_decoy)
++stage11d_run_report_guard_case(report_summary_forward_declaration_decoy
++    "${_report_summary_forward}" FALSE "summary writer forward declaration")
++
++set(_report_affix_payload
++    "            state.monster_affix_danger[ordinal] =\n                combat::monster_affix_danger_score(monster.affixes);")
++stage11d_replace_required(_report_without_affix_payload "${_report}"
++    "${_report_affix_payload}" "            static_cast<void>(ordinal);"
++    report_semantic_payload_removal)
++set(_report_outer_close "}  // namespace arpg::platform::host_validation")
++set(_report_cross_function
++    "void task5b_report_payload_decoy() {\n    ${_report_affix_payload}\n}\n\n${_report_outer_close}")
++stage11d_replace_required(_report_payload_cross_function
++    "${_report_without_affix_payload}" "${_report_outer_close}"
++    "${_report_cross_function}" report_semantic_payload_cross_function_decoy)
++stage11d_run_report_guard_case(report_semantic_payload_cross_function_decoy
++    "${_report_payload_cross_function}" FALSE
++    "target evaluator is missing.*monster_affix_danger")
++
++if(DEFINED TASK5B_REPORT_CASES_ONLY AND TASK5B_REPORT_CASES_ONLY)
++    message(STATUS
++        "[stage11d-renderer-task5b-report] named_mutations=4")
++    return()
++endif()
++
++stage11d_replace_required(_host_outer_lambda_begin "${_host}"
++    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
++    "const auto task5b_outer_semantic_decoy = [&]() noexcept {\n// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
++    host_presented_outer_uncalled_lambda_begin)
++stage11d_replace_required(_host_outer_lambda "${_host_outer_lambda_begin}"
++    "// STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics"
++    "// STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics\n            };"
++    host_presented_outer_uncalled_lambda_end)
++stage11d_run_host_guard_case(host_presented_outer_uncalled_lambda
++    "${_host_outer_lambda}" FALSE "production run-chain token scope")
++
++stage11d_replace_required(_host_without_semantic_call "${_host}"
++    "${_stage11d_semantic_call}" "" host_semantic_after_capture_remove)
++stage11d_replace_required(_host_semantic_after_capture
++    "${_host_without_semantic_call}"
++    "stage11d_validation_state.captured = true;"
++    "stage11d_validation_state.captured = true;\n                ${_stage11d_semantic_call}"
++    host_semantic_after_capture_insert)
++stage11d_run_host_guard_case(host_semantic_after_capture_order_decoy
++    "${_host_semantic_after_capture}" FALSE "production run-chain order")
++
+ stage11d_run_guard_case(pristine "${_combat}" "${_room}" "${_hud}" TRUE "")
+ 
+ set(_camera_line "    const CameraOffset camera_offset = feedback.camera_offset();")
+ set(_duplicate_factory
+     "    static_cast<void>(make_combat_render_plan(current, loot_filter_mode_, 1.0F, 1.0F));\n${_camera_line}")
+ stage11d_replace_required(_combat_duplicate "${_combat}"
+     "${_camera_line}" "${_duplicate_factory}" duplicate_factory)
+ stage11d_run_guard_case(duplicate_factory "${_combat_duplicate}" "${_room}"
+     "${_hud}" FALSE "factory.*exactly once")
+ 
+@@ -159,11 +322,11 @@ stage11d_replace_required(_combat_alias "${_combat_renamed}"
+     "${_renamed_camera}" "${_alias_declaration}" const_reference_alias)
+ stage11d_replace_required(_combat_alias_room "${_combat_alias}"
+     "frame_plan.ground_loot, frame_plan.material_loot);"
+     "shared_ground_loot, frame_plan.material_loot);" alias_room_consumer)
+ stage11d_replace_required(_combat_alias_consumers "${_combat_alias_room}"
+     "frame_plan.ground_loot);" "shared_ground_loot);" alias_hud_consumer)
+ stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_room}"
+     "${_hud}" TRUE "")
+ 
+ message(STATUS
+-    "[stage11d-renderer-guard-self-test] bad_mutations=9 equivalent_variants=3")
++    "[stage11d-renderer-guard-self-test] bad_mutations=16 equivalent_variants=3")
+diff --git a/tests/platform/stage11d_renderer_integration_guard_test.cmake b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+index da42bbb..cd3bef3 100644
+--- a/tests/platform/stage11d_renderer_integration_guard_test.cmake
++++ b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+@@ -1,33 +1,532 @@
+ if(NOT DEFINED SOURCE_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT is required")
+ endif()
+ 
++include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
++
+ set(_combat_header_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.hpp")
+ set(_combat_source_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
+ set(_room_source_path "${SOURCE_ROOT}/src/platform/raylib/room_renderer.cpp")
+ set(_hud_source_path "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp")
++set(_host_source_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
++set(_report_source_path
++    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
++if(DEFINED COMBAT_HEADER_OVERRIDE)
++    set(_combat_header_path "${COMBAT_HEADER_OVERRIDE}")
++endif()
++if(DEFINED COMBAT_SOURCE_OVERRIDE)
++    set(_combat_source_path "${COMBAT_SOURCE_OVERRIDE}")
++endif()
++if(DEFINED ROOM_SOURCE_OVERRIDE)
++    set(_room_source_path "${ROOM_SOURCE_OVERRIDE}")
++endif()
++if(DEFINED HUD_SOURCE_OVERRIDE)
++    set(_hud_source_path "${HUD_SOURCE_OVERRIDE}")
++endif()
++if(DEFINED HOST_OVERRIDE)
++    set(_host_source_path "${HOST_OVERRIDE}")
++endif()
++if(DEFINED REPORT_OVERRIDE)
++    set(_report_source_path "${REPORT_OVERRIDE}")
++endif()
+ 
+ foreach(_required_path IN ITEMS
+         "${_combat_header_path}"
+         "${_combat_source_path}"
+         "${_room_source_path}"
+-        "${_hud_source_path}")
++        "${_hud_source_path}"
++        "${_host_source_path}"
++        "${_report_source_path}")
+     if(NOT EXISTS "${_required_path}")
+         message(FATAL_ERROR "Stage11D renderer integration guard input missing: ${_required_path}")
+     endif()
+ endforeach()
+ 
+ file(READ "${_combat_header_path}" _combat_header)
+ file(READ "${_combat_source_path}" _combat_source)
+ file(READ "${_room_source_path}" _room_source)
+ file(READ "${_hud_source_path}" _hud_source)
++file(READ "${_host_source_path}" _host_source)
++file(READ "${_report_source_path}" _report_source)
++
++function(stage11d_count_token SOURCE TOKEN OUT_COUNT)
++    string(LENGTH "${SOURCE}" _source_length)
++    string(LENGTH "${TOKEN}" _token_length)
++    string(REPLACE "${TOKEN}" "" _without "${SOURCE}")
++    string(LENGTH "${_without}" _without_length)
++    math(EXPR _removed "${_source_length} - ${_without_length}")
++    math(EXPR _count "${_removed} / ${_token_length}")
++    set(${OUT_COUNT} ${_count} PARENT_SCOPE)
++endfunction()
++
++function(stage11d_brace_depth SURFACE POSITION OUT_DEPTH)
++    if(POSITION EQUAL 0)
++        set(${OUT_DEPTH} 0 PARENT_SCOPE)
++        return()
++    endif()
++    string(SUBSTRING "${SURFACE}" 0 ${POSITION} _prefix)
++    string(REGEX REPLACE "[^{}]" "" _braces "${_prefix}")
++    string(LENGTH "${_braces}" _brace_length)
++    set(_depth 0)
++    if(_brace_length GREATER 0)
++        math(EXPR _last "${_brace_length} - 1")
++        foreach(_index RANGE 0 ${_last})
++            string(SUBSTRING "${_braces}" ${_index} 1 _brace)
++            if(_brace STREQUAL "{")
++                math(EXPR _depth "${_depth} + 1")
++            else()
++                math(EXPR _depth "${_depth} - 1")
++            endif()
++        endforeach()
++    endif()
++    set(${OUT_DEPTH} ${_depth} PARENT_SCOPE)
++endfunction()
++
++function(stage11d_require_definition LABEL SURFACE SIGNATURE EXPECTED_DEPTH
++        OUT_FUNCTION)
++    stage11d_count_token("${SURFACE}" "${SIGNATURE}" _count)
++    if(NOT _count EQUAL 1)
++        message(FATAL_ERROR
++            "Stage11D report requires one ${LABEL} definition; found ${_count}")
++    endif()
++    string(FIND "${SURFACE}" "${SIGNATURE}" _position)
++    stage11d_brace_depth("${SURFACE}" ${_position} _depth)
++    if(NOT _depth EQUAL EXPECTED_DEPTH)
++        message(FATAL_ERROR
++            "Stage11D report rejected ${LABEL} definition scope")
++    endif()
++    string(SUBSTRING "${SURFACE}" ${_position} -1 _tail)
++    string(FIND "${_tail}" "{" _brace)
++    string(FIND "${_tail}" ";" _semicolon)
++    if(_brace EQUAL -1 OR (NOT _semicolon EQUAL -1 AND _semicolon LESS _brace))
++        message(FATAL_ERROR
++            "Stage11D report rejected ${LABEL} forward declaration")
++    endif()
++    evidence_find_cpp_function_bounds_in_sanitized("${SURFACE}" "${SIGNATURE}"
++        _begin _open _end)
++    math(EXPR _length "${_end} - ${_begin} + 1")
++    string(SUBSTRING "${SURFACE}" ${_begin} ${_length} _function)
++    set(${OUT_FUNCTION} "${_function}" PARENT_SCOPE)
++endfunction()
++
++if(NOT DEFINED TASK5B_RENDERER_ONLY OR NOT TASK5B_RENDERER_ONLY)
++set(_report_marked "${_report_source}")
++foreach(_edge IN ITEMS BEGIN END)
++    set(_marker
++        "// STAGE11D_LOOT_VALIDATION_SEAM_${_edge} evidence_semantics")
++    string(REPLACE "${_marker}" "TASK5B_REPORT_${_edge}"
++        _report_marked "${_report_marked}")
++endforeach()
++evidence_sanitize_cpp_for_scan("${_report_marked}" _report_code)
++foreach(_edge IN ITEMS BEGIN END)
++    stage11d_count_token("${_report_code}" "TASK5B_REPORT_${_edge}"
++        _marker_count)
++    if(NOT _marker_count EQUAL 1)
++        message(FATAL_ERROR
++            "Stage11D report rejected evidence_semantics marker comment/string decoy")
++    endif()
++endforeach()
++stage11d_require_definition("rarity-view helper" "${_report_code}"
++    "bool stage11d_view_has_rarity(" 2 _report_view_function)
++stage11d_require_definition("semantic recorder" "${_report_code}"
++    "void stage11d_record_semantics(" 1 _report_record_function)
++stage11d_require_definition("target-visible evaluator" "${_report_code}"
++    "bool stage11d_target_visible(" 1 _report_target_function)
++stage11d_require_definition("scenario-name helper" "${_report_code}"
++    "const char* stage11d_scenario_name(" 2 _report_name_function)
++stage11d_require_definition("summary writer" "${_report_code}"
++    "void write_stage11d_loot_validation_summary(" 1 _report_summary_function)
++
++foreach(_required IN ITEMS
++        "state.view = view;" "state.notices = notices;"
++        "state.snapshot_item_count = snapshot.ground_item_count;"
++        "state.snapshot_item_ids[index] = item.item_id;"
++        "state.inventory_item_ids[state.inventory_item_count++] = item.id;")
++    string(FIND "${_report_record_function}" "${_required}" _found)
++    if(_found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D report semantic recorder is missing: ${_required}")
++    endif()
++endforeach()
++foreach(_required IN ITEMS
++        "state.pickup_commit_generation = status.loot_pickup.commit_generation;"
++        "state.monster_affix_danger[ordinal] ="
++        "state.monster_ai_phase[ordinal] ="
++        "state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;"
++        "state.min_remaining_targets"
++        "stage11d_has_three_ordinary_rarities(snapshot)"
++        "stage11d_view_has_rarity(")
++    string(FIND "${_report_target_function}" "${_required}" _found)
++    if(_found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D report target evaluator is missing: ${_required}")
++    endif()
++endforeach()
++evidence_find_cpp_function_bounds_in_sanitized("${_report_code}"
++    "void write_stage11d_loot_validation_summary("
++    _report_summary_begin _report_summary_open _report_summary_end)
++math(EXPR _report_summary_length
++    "${_report_summary_end} - ${_report_summary_begin} + 1")
++string(SUBSTRING "${_report_marked}" ${_report_summary_begin}
++    ${_report_summary_length} _report_summary_raw)
++set(_summary_fields
++    scenario committed_mode draft_mode snapshot_count visible_count
++    inventory_count normal_item_id magic_item_id rare_item_id abyss_item_id
++    abyss_rarity preview_visible_count restored_visible_count abyss_claimed
++    progress_phase progress_remaining progress_inventory progress_hp
++    progress_rarities max_ground_rarities max_ground_count min_remaining
++    max_inventory observed_normal observed_magic observed_rare
++    monster_seen_bits monster_defeated_bits monster_last_hp monster_min_hp
++    monster_affix_danger monster_ai_phase defeat_distance_milli
++    defeat_player_hp target_ordinal pickup_item_id pickup_commit_generation
++    pickup_notice_rect notice_text snapshot_ids inventory_ids label_rects result)
++set(_summary_fields_marked "${_report_summary_raw}")
++foreach(_field IN LISTS _summary_fields)
++    set(_literal "\"${_field}=\"")
++    string(REPLACE "${_literal}" "TASK5B_SUMMARY_FIELD_${_field}"
++        _summary_fields_marked "${_summary_fields_marked}")
++endforeach()
++evidence_sanitize_cpp_for_scan("${_summary_fields_marked}"
++    _summary_fields_code)
++set(_previous_field_position -1)
++foreach(_field IN LISTS _summary_fields)
++    set(_marker "TASK5B_SUMMARY_FIELD_${_field}")
++    stage11d_count_token("${_summary_fields_code}" "${_marker}" _count)
++    string(FIND "${_summary_fields_code}" "${_marker}" _position)
++    if(NOT _count EQUAL 1 OR _position EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D report summary is missing or duplicates field: ${_field}")
++    endif()
++    if(NOT _previous_field_position EQUAL -1
++            AND NOT _position GREATER _previous_field_position)
++        message(FATAL_ERROR
++            "Stage11D report summary field order changed at: ${_field}")
++    endif()
++    set(_previous_field_position ${_position})
++endforeach()
++
++if(NOT DEFINED TASK5B_REPORT_ONLY OR NOT TASK5B_REPORT_ONLY)
++function(stage11d_require_token_depth LABEL SURFACE TOKEN EXPECTED_DEPTH)
++    stage11d_count_token("${SURFACE}" "${TOKEN}" _count)
++    if(NOT _count EQUAL 1)
++        message(FATAL_ERROR
++            "Stage11D host requires one ${LABEL}; found ${_count}")
++    endif()
++    string(FIND "${SURFACE}" "${TOKEN}" _position)
++    stage11d_brace_depth("${SURFACE}" ${_position} _depth)
++    if(NOT _depth EQUAL EXPECTED_DEPTH)
++        message(FATAL_ERROR "Stage11D host rejected ${LABEL} scope")
++    endif()
++    set(stage11d_last_token_position ${_position} PARENT_SCOPE)
++endfunction()
++
++function(stage11d_extract_host_seam LABEL OUT_CODE)
++    set(_begin "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN ${LABEL}")
++    set(_end "// STAGE11D_LOOT_VALIDATION_SEAM_END ${LABEL}")
++    stage11d_count_token("${_host_source}" "${_begin}" _begin_count)
++    stage11d_count_token("${_host_source}" "${_end}" _end_count)
++    if(NOT _begin_count EQUAL 1 OR NOT _end_count EQUAL 1)
++        message(FATAL_ERROR
++            "Stage11D host cannot bind ${LABEL} seam markers")
++    endif()
++    string(FIND "${_host_source}" "${_begin}" _begin_at)
++    string(FIND "${_host_source}" "${_end}" _end_at)
++    if(NOT _begin_at LESS _end_at)
++        message(FATAL_ERROR "Stage11D host rejected ${LABEL} seam order")
++    endif()
++    string(LENGTH "${_end}" _end_length)
++    math(EXPR _length "${_end_at} - ${_begin_at} + ${_end_length}")
++    string(SUBSTRING "${_host_source}" ${_begin_at} ${_length} _raw)
++    string(REPLACE "${_begin}" "TASK5B_${LABEL}_BEGIN" _marked "${_raw}")
++    string(REPLACE "${_end}" "TASK5B_${LABEL}_END" _marked "${_marked}")
++    evidence_sanitize_cpp_for_scan("${_marked}" _code)
++    foreach(_marker IN ITEMS "TASK5B_${LABEL}_BEGIN" "TASK5B_${LABEL}_END")
++        stage11d_count_token("${_code}" "${_marker}" _marker_count)
++        if(NOT _marker_count EQUAL 1)
++            message(FATAL_ERROR
++                "Stage11D host rejected ${LABEL} marker comment/string decoy")
++        endif()
++    endforeach()
++    set(${OUT_CODE} "${_code}" PARENT_SCOPE)
++endfunction()
++
++set(_run_signature "HostExitCode run_raylib_host(")
++evidence_find_cpp_code_token("${_host_source}" "${_run_signature}"
++    _run_raw_begin)
++if(_run_raw_begin EQUAL -1)
++    message(FATAL_ERROR
++        "Stage11D host cannot bind the production run_raylib_host definition")
++endif()
++string(SUBSTRING "${_host_source}" ${_run_raw_begin} -1 _run_raw_tail)
++evidence_sanitize_cpp_for_scan("${_run_raw_tail}" _run_tail_code)
++stage11d_count_token("${_run_tail_code}" "${_run_signature}"
++    _run_signature_count)
++if(NOT _run_signature_count EQUAL 1)
++    message(FATAL_ERROR
++        "Stage11D host requires one production run_raylib_host definition")
++endif()
++evidence_find_cpp_function_bounds_in_sanitized("${_run_tail_code}"
++    "${_run_signature}" _run_begin _run_open _run_end)
++math(EXPR _run_length "${_run_end} - ${_run_begin} + 1")
++string(SUBSTRING "${_run_tail_code}" ${_run_begin} ${_run_length}
++    _run_function_code)
++evidence_find_cpp_function_bounds_in_sanitized("${_run_function_code}"
++    "while (!exit_requested)" _loop_begin _loop_open _loop_end)
++
++set(_run_loop_chain_tokens
++    "const settings::LootFilterMode presented_loot_filter ="
++    "renderer.set_loot_filter_mode("
++    "BeginDrawing()"
++    "const GroundLootView ground_loot_view = [&]() noexcept {"
++    "return renderer.draw("
++    "stage11d_target_visible("
++    "stage11d_record_semantics("
++    "const bool stage11d_reached ="
++    "const bool loot_validation_visible_capture ="
++    "captured_stage10_target = true"
++    "const bool capture_succeeded ="
++    "const bool captured_stage10_frame ="
++    "stage11d_validation_state.captured = true")
++set(_run_loop_chain_depths 3 3 3 3 4 3 4 3 3 4 3 3 4)
++set(_run_previous_position -1)
++list(LENGTH _run_loop_chain_tokens _run_loop_chain_count)
++math(EXPR _run_loop_chain_last "${_run_loop_chain_count} - 1")
++foreach(_index RANGE 0 ${_run_loop_chain_last})
++    list(GET _run_loop_chain_tokens ${_index} _token)
++    list(GET _run_loop_chain_depths ${_index} _depth)
++    stage11d_require_token_depth("production run-chain token"
++        "${_run_function_code}" "${_token}" ${_depth})
++    set(_position ${stage11d_last_token_position})
++    if(NOT _position GREATER _loop_open OR NOT _position LESS _loop_end)
++        message(FATAL_ERROR
++            "Stage11D host rejected production run-chain loop scope")
++    endif()
++    if(NOT _run_previous_position EQUAL -1
++            AND NOT _position GREATER _run_previous_position)
++        message(FATAL_ERROR
++            "Stage11D host rejected production run-chain order")
++    endif()
++    set(_run_previous_position ${_position})
++endforeach()
++
++string(REGEX REPLACE "[ \t\r\n]+" "" _run_function_normalized
++    "${_run_function_code}")
++foreach(_binding IN ITEMS
++        "renderer.set_loot_filter_mode(presented_loot_filter);BeginDrawing();"
++        "validation_reached||loot_validation_visible_capture"
++        "capture_path=config.validation_capture_file->string();captured_stage10_target=true;"
++        "constboolcaptured_stage10_frame=captured_stage10_target&&capture_succeeded;"
++        "if(captured_stage10_frame&&stage11d_validation_state.target_visible){stage11d_validation_state.captured=true;}")
++    string(FIND "${_run_function_normalized}" "${_binding}" _binding_found)
++    if(_binding_found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D host rejected production run-chain binding")
++    endif()
++endforeach()
++
++set(_run_post_loop_chain_tokens
++    "stage17_validation_state->clean_shutdown_exact_ready ="
++    "host_validation::write_stage11b_validation_summary("
++    "host_validation::write_stage11c_hud_validation_summary("
++    "write_stage11d_loot_validation_summary("
++    "write_stage17_validation_summary("
++    "audio.shutdown()"
++    "renderer.shutdown_resources()"
++    "pause_menu_renderer.shutdown()"
++    "return HostExitCode::success")
++set(_run_previous_position ${_loop_end})
++foreach(_token IN LISTS _run_post_loop_chain_tokens)
++    stage11d_require_token_depth("production post-loop token"
++        "${_run_function_code}" "${_token}" 2)
++    set(_position ${stage11d_last_token_position})
++    if(NOT _position GREATER _run_previous_position)
++        message(FATAL_ERROR
++            "Stage11D host rejected production post-loop summary/shutdown order")
++    endif()
++    set(_run_previous_position ${_position})
++endforeach()
++string(FIND "${_run_function_normalized}"
++    "pause_menu_renderer.shutdown();CloseWindow();returnHostExitCode::success;"
++    _clean_shutdown_binding)
++if(_clean_shutdown_binding EQUAL -1)
++    message(FATAL_ERROR
++        "Stage11D host rejected production clean-shutdown binding")
++endif()
++
++math(EXPR _run_raw_end "${_run_raw_begin} + ${_run_end}")
++foreach(_label IN ITEMS presented_semantics reached reached_merge
++        visible_capture captured summary)
++    foreach(_edge IN ITEMS BEGIN END)
++        set(_marker
++            "// STAGE11D_LOOT_VALIDATION_SEAM_${_edge} ${_label}")
++        string(FIND "${_host_source}" "${_marker}" _marker_position)
++        if(_marker_position EQUAL -1
++                OR NOT _marker_position GREATER _run_raw_begin
++                OR NOT _marker_position LESS _run_raw_end)
++            message(FATAL_ERROR
++                "Stage11D host rejected ${_label} seam outside production run scope")
++        endif()
++    endforeach()
++endforeach()
++
++set(_ground_view_anchor "const GroundLootView ground_loot_view = [&]() noexcept {")
++string(FIND "${_host_source}" "${_ground_view_anchor}" _ground_view_raw)
++string(FIND "${_host_source}"
++    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
++    _presented_marker_raw)
++if(_ground_view_raw EQUAL -1 OR _presented_marker_raw EQUAL -1
++        OR NOT _ground_view_raw LESS _presented_marker_raw)
++    message(FATAL_ERROR
++        "Stage11D host cannot isolate the real GroundLootView presentation crop")
++endif()
++math(EXPR _ground_crop_length "${_presented_marker_raw} - ${_ground_view_raw}")
++string(SUBSTRING "${_host_source}" ${_ground_view_raw}
++    ${_ground_crop_length} _ground_crop_raw)
++evidence_sanitize_cpp_for_scan("${_ground_crop_raw}" _ground_crop_code)
++stage11d_require_token_depth("presented GroundLootView construction"
++    "${_ground_crop_code}" "${_ground_view_anchor}" 0)
++stage11d_require_token_depth("production renderer GroundLootView result"
++    "${_ground_crop_code}" "return renderer.draw(" 1)
++
++stage11d_extract_host_seam(presented_semantics _presented_semantics_code)
++stage11d_require_token_depth("presented target-visible call"
++    "${_presented_semantics_code}" "stage11d_target_visible(" 0)
++set(_target_call_position ${stage11d_last_token_position})
++stage11d_require_token_depth("presented semantic call"
++    "${_presented_semantics_code}" "stage11d_record_semantics(" 1)
++set(_record_call_position ${stage11d_last_token_position})
++if(NOT _target_call_position LESS _record_call_position)
++    message(FATAL_ERROR
++        "Stage11D host rejected target-visible to semantic-record order")
++endif()
++stage11d_count_token("${_presented_semantics_code}"
++    "renderer.hud_notice_view()" _notice_sample_count)
++if(NOT _notice_sample_count EQUAL 2)
++    message(FATAL_ERROR
++        "Stage11D host requires two fresh HUD notice samples; found ${_notice_sample_count}")
++endif()
++string(REGEX REPLACE "[ \t\r\n]+" "" _presented_semantics_normalized
++    "${_presented_semantics_code}")
++foreach(_binding IN ITEMS
++        "stage11d_validation_state.target_visible=stage11d_target_visible(config,current,pause_menu,runtime.render_status(),presented_loot_filter,ground_loot_view,renderer.hud_notice_view(),stage11d_validation_state);"
++        "if(stage11d_validation_state.target_visible&&!stage11d_validation_state.captured){stage11d_record_semantics(stage11d_validation_state,current,runtime.item_state(),ground_loot_view,renderer.hud_notice_view());}")
++    string(FIND "${_presented_semantics_normalized}" "${_binding}" _binding_found)
++    if(_binding_found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D host rejected presented semantic binding")
++    endif()
++endforeach()
++
++evidence_find_cpp_code_token("${_host_source}"
++    "bool present_frame_and_maybe_capture(" _present_helper_start)
++if(_present_helper_start EQUAL -1)
++    message(FATAL_ERROR "Stage11D host is missing presentation helper")
++endif()
++string(SUBSTRING "${_host_source}" ${_present_helper_start} -1
++    _present_helper_tail)
++string(FIND "${_present_helper_tail}" "void draw_stage12_ui_material_gallery("
++    _present_helper_end)
++if(_present_helper_end EQUAL -1)
++    message(FATAL_ERROR "Stage11D host cannot isolate presentation helper")
++endif()
++string(SUBSTRING "${_present_helper_tail}" 0 ${_present_helper_end}
++    _present_helper_raw)
++evidence_sanitize_cpp_for_scan("${_present_helper_raw}" _present_helper_code)
++set(_present_helper_chain_tokens
++    "EndDrawing()"
++    "if (path == nullptr) return true"
++    "Image image = LoadImageFromScreen()"
++    "if (image.data == nullptr) return false"
++    "const bool exported = ExportImage(image, path)"
++    "UnloadImage(image)"
++    "return exported")
++set(_present_helper_previous -1)
++foreach(_token IN LISTS _present_helper_chain_tokens)
++    stage11d_require_token_depth("presentation-helper lifecycle token"
++        "${_present_helper_code}" "${_token}" 1)
++    set(_position ${stage11d_last_token_position})
++    if(NOT _present_helper_previous EQUAL -1
++            AND NOT _position GREATER _present_helper_previous)
++        message(FATAL_ERROR
++            "Stage11D host rejected presentation-helper lifecycle order")
++    endif()
++    set(_present_helper_previous ${_position})
++endforeach()
++
++set(_capture_region_begin
++    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached")
++set(_capture_region_end
++    "// STAGE11D_LOOT_VALIDATION_SEAM_END captured")
++string(FIND "${_host_source}" "${_capture_region_begin}" _capture_begin_at)
++string(FIND "${_host_source}" "${_capture_region_end}" _capture_end_at)
++if(_capture_begin_at EQUAL -1 OR _capture_end_at EQUAL -1
++        OR NOT _capture_begin_at LESS _capture_end_at)
++    message(FATAL_ERROR "Stage11D host cannot isolate capture-state chain")
++endif()
++string(LENGTH "${_capture_region_end}" _capture_end_length)
++math(EXPR _capture_region_length
++    "${_capture_end_at} - ${_capture_begin_at} + ${_capture_end_length}")
++string(SUBSTRING "${_host_source}" ${_capture_begin_at}
++    ${_capture_region_length} _capture_region_raw)
++string(REPLACE "${_capture_region_begin}" "TASK5B_CAPTURE_BEGIN"
++    _capture_region_marked "${_capture_region_raw}")
++string(REPLACE "${_capture_region_end}" "TASK5B_CAPTURE_END"
++    _capture_region_marked "${_capture_region_marked}")
++evidence_sanitize_cpp_for_scan("${_capture_region_marked}" _capture_region_code)
++set(_capture_chain_tokens
++    "const bool stage11d_reached ="
++    "const bool loot_validation_visible_capture ="
++    "present_frame_and_maybe_capture("
++    "const bool captured_stage10_frame ="
++    "stage11d_validation_state.captured = true")
++set(_previous_position -1)
++foreach(_token IN LISTS _capture_chain_tokens)
++    if(_token STREQUAL "stage11d_validation_state.captured = true")
++        set(_expected_depth 1)
++    else()
++        set(_expected_depth 0)
++    endif()
++    stage11d_require_token_depth("capture-chain token"
++        "${_capture_region_code}" "${_token}" ${_expected_depth})
++    set(_position ${stage11d_last_token_position})
++    if(NOT _previous_position EQUAL -1 AND _position LESS _previous_position)
++        message(FATAL_ERROR "Stage11D host rejected capture-state order")
++    endif()
++    set(_previous_position ${_position})
++endforeach()
++string(REGEX REPLACE "[ \t\r\n]+" "" _capture_region_normalized
++    "${_capture_region_code}")
++foreach(_binding IN ITEMS
++        "constboolstage11d_reached=stage11d_validation_state.captured&&(config.stage11d_loot_validation!=Stage11DLootValidationScenario::rare_only_abyss||stage11d_validation_state.abyss_claimed);"
++        "constboolloot_validation_visible_capture=stage11d_validation_state.target_visible;"
++        "constboolcaptured_stage10_frame=captured_stage10_target&&capture_succeeded;"
++        "if(captured_stage10_frame&&stage11d_validation_state.target_visible){stage11d_validation_state.captured=true;}")
++    string(FIND "${_capture_region_normalized}" "${_binding}" _binding_found)
++    if(_binding_found EQUAL -1)
++        message(FATAL_ERROR "Stage11D host rejected capture-state binding")
++    endif()
++endforeach()
++
++stage11d_extract_host_seam(summary _summary_seam_code)
++stage11d_require_token_depth("summary call" "${_summary_seam_code}"
++    "write_stage11d_loot_validation_summary(" 0)
++string(REGEX REPLACE "[ \t\r\n]+" "" _summary_normalized
++    "${_summary_seam_code}")
++string(FIND "${_summary_normalized}"
++    "write_stage11d_loot_validation_summary(config,stage11d_validation_state,pause_menu);"
++    _summary_binding)
++if(_summary_binding EQUAL -1)
++    message(FATAL_ERROR "Stage11D host rejected summary call binding")
++endif()
++endif()
++endif()
+ 
+ set(_legacy_tokens
+     "GroundLootRenderConsumers"
+     "make_ground_loot_render_consumers"
+     "\.hud_view"
+     "\.room_view")
+ foreach(_legacy_token IN LISTS _legacy_tokens)
+     if(_combat_header MATCHES "${_legacy_token}" OR _combat_source MATCHES "${_legacy_token}")
+         message(FATAL_ERROR "Stage11D renderer integration must not restore legacy wrapper token: ${_legacy_token}")
+     endif()

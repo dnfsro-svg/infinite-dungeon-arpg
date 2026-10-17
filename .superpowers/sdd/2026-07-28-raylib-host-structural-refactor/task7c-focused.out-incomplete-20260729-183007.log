@@ -1,0 +1,10 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+      Start  20: stage10.evidence.no_private_injection
+ 1/30 Test  #20: stage10.evidence.no_private_injection ...................   Passed    4.33 sec
+      Start  21: stage10.evidence.rejects_private_injection
+ 2/30 Test  #21: stage10.evidence.rejects_private_injection ..............   Passed    1.68 sec
+      Start  22: stage10.evidence.rejects_pre_present_capture
+ 3/30 Test  #22: stage10.evidence.rejects_pre_present_capture ............   Passed    1.96 sec
+      Start  23: stage10.evidence.rejects_pre_capture_with_post_dummy
+ 4/30 Test  #23: stage10.evidence.rejects_pre_capture_with_post_dummy ....   Passed    1.95 sec
+      Start  24: stage10.evidence.mutation_self_test

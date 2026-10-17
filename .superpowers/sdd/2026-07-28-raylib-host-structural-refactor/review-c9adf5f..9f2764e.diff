@@ -1,0 +1,799 @@
+# Review package: c9adf5f..9f2764e
+
+## Commits
+9f2764e chore: record task 3 fix commit
+94ac373 test: harden stage11b validation guards
+
+## Files changed
+ .../progress.md                                    | 17 ++--
+ .../task-3-report.md                               | 47 +++++++++--
+ src/platform/raylib/raylib_host.cpp                |  1 -
+ .../host_validation_sequence_guard_self_test.cmake | 96 +++++++++++++++++++++-
+ .../host_validation_sequence_guard_test.cmake      | 93 +++++++++++++++++----
+ .../stage11b_architecture_guard_test.cmake         | 42 +++++++---
+ ...tage11b_settings_evidence_guard_self_test.cmake |  6 +-
+ .../stage11b_settings_evidence_guard_test.cmake    | 42 ++++++----
+ 8 files changed, 284 insertions(+), 60 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+index 2d13287..b71c801 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/progress.md
+@@ -15,15 +15,22 @@ Task 1: deferred build noise — Ninja reported recoverable premature end of fil
+ Task 1: complete (commits 0197327..cdecc8b, review clean)
+ Task 2: review findings (round 1 required) — focused CTest selector matched no stage10/stage11 tests and capture-order mutations failed for the wrong prerequisite; shared Stage10/11 source token scans allowed cross-function substitution
+ Task 2: fix round 1/5 (2 addressed, 0 open — corrected selector/mutation fixtures; per-function Session-route guards; scoped re-review required; FIX_BASE 67b1574)
+ Task 2: scoped re-review findings (round 2 required) — Stage10 capture mutations still fail additional non-order gates; brace parser counts comment braces and can again span into Stage11
+ Task 2: fix round 2/5 (2 addressed, 0 open — single-target capture mutations; shared comment/string-safe function isolation with adversarial mutations; scoped re-review required; FIX_BASE 0ef2305)
+ Task 2: scoped re-review finding (round 3 required) — C++ backslash-newline splicing can continue or form line comments, letting commented route decoys satisfy the scanner
+ Task 2: fix round 3/5 (2 addressed, 0 open — splice-aware comment scanning and Stage10/11 continuation-decoy mutations; scoped re-review required; FIX_BASE 894f3e6)
+ Task 2: deferred full-selector evidence — 22 selected; the last full execution was 16 pass/6 non-guard failures, with no claim that those six failures are baseline-proven
+ Task 2: complete (commits cdecc8b..7defd1c, review clean after 3 fix rounds)
+ Task 3: Stage11B state/injection/completion/hash/summary extracted into
+-host_validation_stage11b.hpp/.cpp; dual-surface guards and focused selector
+-passed. Formal 11B evidence chain remains red: the formal harness observed
+-changed run_a/run_b fingerprints before reaching its swap scenario, so its
+-dependent evidence validator did not run. This is recorded as unresolved, not
+-as a baseline-proven failure.
++host_validation_stage11b.hpp/.cpp. Formal 11B evidence remains red at the
++same pause-resume predicate: BASE comparable runs observed 1 -> 4 and 1 -> 5,
++while HEAD observed 1 -> 5. Record this as same failing predicate with
++variable observed tick count; dependent validator not run, and fingerprints
++were noncausal after the short circuit.
++Task 3: review findings (round 1 required) — formal Step 4 failed and report reversed the short-circuit cause; Stage/source and host/sequence guards permit comment or cross-scope decoys; Stage11B private header missing from dependency scan; unused host include remains
++Task 3: fix round 1/5 (all review findings addressed) — corrected formal
++causality with comparable BASE evidence; Stage function isolation and
++splice-safe decoys; host loop/function brace-depth scope checks including
++lambda/out-of-loop full-call decoys; Stage11B header dependency mutation;
++removed unused include. Serial build passed; focused selector lists exactly
++six and passed 6/6 (581.18s). Fix commit: 94ac373.
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md
+index cc2edf6..8692ed0 100644
+--- a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-3-report.md
+@@ -32,36 +32,65 @@ evidence guard, sequence guard, and the Stage-source mutations all pass.
+ ## Verification
+ 
+ - Required MSVC targets were built with `VsDevCmd`,
+   `CMAKE_BUILD_PARALLEL_LEVEL=1`, and `-j1`. The serial Ninja log records
+   links for `arpg_game.exe`, `arpg_platform_tests.exe`, and
+   `arpg_stage11b_settings_formal.exe`.
+ - Required focused selector passed 6/6 in 14.70 seconds:
+   `platform.units`, both host-validation sequence tests, the Stage11B
+   architecture guard, the evidence guard, and its mutation self-test.
+ - `git diff --check` passed before the formal chain.
+-- The formal Step 4 selector did not pass: `stage11b.settings_formal` failed
+-  after 14.68 seconds and its dependent
+-  `stage11b.settings_evidence_validator` was not run. The generated report
+-  shows the Stage11B observations themselves are present (rebound new attack
+-  accepted, pause tick/hash frozen, recovery notice visible), but save-file
+-  fingerprints changed and the short-circuited formal harness never ran its
+-  swap scenario. This task did not modify persistence or the formal harness;
+-  that result is recorded as an unresolved failure, not claimed as a proven
+-  pre-existing baseline failure.
++- The original formal Step 4 selector did not pass: `stage11b.settings_formal`
++  failed after 14.68 seconds and its dependent
++  `stage11b.settings_evidence_validator` was not run. The first failed
++  predicate is the pause resume check (`resume_tick_before=1`,
++  `resume_tick_after=5`, expected +1); because the harness chains assertions
++  with `ok = ok &&`, it then short-circuits its later settings/swap children.
++  The save-file fingerprint comparison occurs after that short circuit and was
++  not the causal failure. This task did not modify persistence or the formal
++  harness; BASE comparison is required before attributing the failure.
+ 
+ ## Build Note
+ 
+ The first compile exposed two direct include requirements in the new isolated
+ source: `SettingsLoadStatus` is defined by `settings_store.hpp`, and the
+ by-value `PhysicalKeySnapshot` is defined by `host_input.hpp`. Both were added
+ as minimal direct dependencies before the successful target links.
+ 
+ ## Review
+ 
+ - Guard ownership is split: Stage algorithms, summary fields, and injected
+   keys are scanned in the Stage source; capture order, pause capture,
+   fixed-tick, and physical input chain remain scanned in the host.
+ - The evidence self-test mutates both a Stage key route and a Stage summary
+   field in copies of the actual Stage source; host mutations continue to copy
+   the host source.
+ - No known P0/P1/P2 issue was found in the Task 3 production or guard diff.
++
++## Review Fix Round 1
++
++- Reproduced Step 4 against detached BASE `22e73e4` with the same built
++  executable configuration and 101 staged assets. Two BASE runs failed at the
++  same pause-resume predicate, while the observed after tick varied from 4 to
++  5 (`resume_tick_before=1`). HEAD observed 5. This is therefore recorded as
++  the same failing predicate with variable observed tick count; the dependent
++  validator remained not run. No formal harness, persistence, or gameplay
++  code was changed.
++- Stage algorithms are now extracted with the Task 2 splice-aware scanner and
++  each required function is scanned independently. Mutation checks remove a
++  real Stage token while leaving comment decoys; they reject with the
++  Stage-specific missing-token diagnosis. The summary token includes its
++  expression boundary, avoiding prefix matches in renamed identifiers.
++- The host sequence guard extracts `run_raylib_host`, balances the actual
++  `while (!exit_requested)` braces, and scans only sanitized code. Its direct
++  scope check rejects a complete input declaration placed in a nested lambda,
++  a complete declaration outside the loop, and a complete Stage11B summary
++  call placed in a lambda. It also rejects a spliced comment decoy.
++- The Stage11B private header now participates in the forbidden-dependency
++  scan; its self-test injects a real `persistence/save_store.hpp` include.
++  The unused `stable_key_raylib.hpp` include was removed from the host.
++- Final verification: serial MSVC build of `arpg_game`,
++  `arpg_platform_tests`, and `arpg_stage11b_settings_formal` passed in
++  187.2 seconds. The focused six-test CTest selector listed exactly six tests
++  and passed 6/6 in 581.18 seconds. Direct/self guard timings: evidence
++  7.19/102.21 seconds, architecture including its mutation checks 34.43
++  seconds, and sequence 74.43/339.27 seconds.
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index baba733..bd7f83e 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -22,21 +22,20 @@
+ #include "passive_tree_renderer.hpp"
+ #include "passive_tree_view_math.hpp"
+ #include "pause_menu_renderer.hpp"
+ #include "pause_menu_state.hpp"
+ #include "pause_menu_view.hpp"
+ #include "ui_material.hpp"
+ #include "ui_text_bounds_audit.hpp"
+ #include "persistence/save_paths.hpp"
+ #include "platform/settings/settings_store.hpp"
+ #include "platform/settings/settings_types.hpp"
+-#include "stable_key_raylib.hpp"
+ #include "window_settings.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <cstdint>
+ #include <cmath>
+ #include <cstddef>
+ #include <array>
+ #include <cstdio>
+diff --git a/tests/platform/host_validation_sequence_guard_self_test.cmake b/tests/platform/host_validation_sequence_guard_self_test.cmake
+index 86f551a..83b255f 100644
+--- a/tests/platform/host_validation_sequence_guard_self_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_self_test.cmake
+@@ -1,21 +1,22 @@
+ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
+ endif()
+ 
+ set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
+ file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
+ 
+ set(_split_fixed_step "${GUARD_TEST_ROOT}/split-fixed-step-conditions.cpp")
+ file(WRITE "${_split_fixed_step}" [=[
++HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+ while (!exit_requested) {
+-    sample_physical_keys();
++    const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+     inject_stage11b_physical_edges();
+     inject_stage11c_physical_edges();
+     inject_stage11d_physical_edges();
+     inject_stage17_physical_edges();
+     map_host_frame_input();
+     if (!step_death) {
+         if (config.stage11_validation != Stage11ValidationScenario::none) {
+             stage11_validation_input();
+         }
+         if (config.stage10_validation != Stage10ValidationScenario::none) {
+@@ -24,23 +25,116 @@ while (!exit_requested) {
+         step_movement = movement;
+     }
+     runtime.fixed_tick(step_movement,
+         loot_pickup_policy(live_settings.loot_filter_mode));
+     write_stage11b_validation_summary();
+     write_stage11c_hud_validation_summary();
+     write_stage11d_loot_validation_summary();
+     write_stage17_validation_summary();
+ }
+ audio.shutdown();
++}
+ ]=])
+ 
+ execute_process(
+     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+         "-DHOST_OVERRIDE=${_split_fixed_step}" -P "${_guard}"
+     RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+ if(_result EQUAL 0)
+     message(FATAL_ERROR "Host validation sequence guard accepted split fixed-step conditions")
+ endif()
+ if(NOT "${_stdout}${_stderr}" MATCHES
+         "rejected fixed-step movement priority[ \t\r\n]+structure")
+     message(FATAL_ERROR "split fixed-step conditions failed for wrong reason: ${_stdout}${_stderr}")
+ endif()
++
++file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" _host_source)
++string(REPLACE
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();\n            // decoy continues \\\nsample_physical_keys()"
++    _spliced_input_host "${_host_source}")
++set(_spliced_input "${GUARD_TEST_ROOT}/spliced-input-decoy.cpp")
++file(WRITE "${_spliced_input}" "${_spliced_input_host}")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_spliced_input}" -P "${_guard}"
++    RESULT_VARIABLE _spliced_result OUTPUT_VARIABLE _spliced_stdout ERROR_VARIABLE _spliced_stderr)
++if(_spliced_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted spliced input decoy")
++endif()
++if(NOT "${_spliced_stdout}${_spliced_stderr}" MATCHES
++        "missing input injection chain token")
++    message(FATAL_ERROR "spliced input decoy failed for wrong reason: ${_spliced_stdout}${_spliced_stderr}")
++endif()
++
++string(REPLACE
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
++    "const auto loop_input_decoy = [] {\n                const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();\n            };\n            const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();"
++    _lambda_input_host "${_host_source}")
++set(_lambda_input "${GUARD_TEST_ROOT}/lambda-input-decoy.cpp")
++file(WRITE "${_lambda_input}" "${_lambda_input_host}")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_lambda_input}" -P "${_guard}"
++    RESULT_VARIABLE _lambda_result OUTPUT_VARIABLE _lambda_stdout ERROR_VARIABLE _lambda_stderr)
++if(_lambda_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted lambda input decoy")
++endif()
++if(NOT "${_lambda_stdout}${_lambda_stderr}" MATCHES
++        "rejected input injection chain token outside[ \t\r\n]+direct host scope")
++    message(FATAL_ERROR "lambda input decoy failed for wrong reason: ${_lambda_stdout}${_lambda_stderr}")
++endif()
++
++string(REPLACE
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();"
++    _outside_input_host "${_host_source}")
++string(REPLACE "audio.shutdown();"
++    "const auto outside_input_decoy = [] {\n            const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();\n        };\n        audio.shutdown();"
++    _outside_input_host "${_outside_input_host}")
++set(_outside_input "${GUARD_TEST_ROOT}/outside-input-decoy.cpp")
++file(WRITE "${_outside_input}" "${_outside_input_host}")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_outside_input}" -P "${_guard}"
++    RESULT_VARIABLE _outside_result OUTPUT_VARIABLE _outside_stdout ERROR_VARIABLE _outside_stderr)
++if(_outside_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted out-of-loop input decoy")
++endif()
++if(NOT "${_outside_stdout}${_outside_stderr}" MATCHES
++        "missing input injection chain token")
++    message(FATAL_ERROR "out-of-loop input decoy failed for wrong reason: ${_outside_stdout}${_outside_stderr}")
++endif()
++
++string(REPLACE
++    "host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,\n            pause_menu);"
++    "const auto summary_decoy = [&] {\n            host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,\n                pause_menu);\n        };"
++    _lambda_summary_host "${_host_source}")
++set(_lambda_summary "${GUARD_TEST_ROOT}/lambda-summary-decoy.cpp")
++file(WRITE "${_lambda_summary}" "${_lambda_summary_host}")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_OVERRIDE=${_lambda_summary}" -P "${_guard}"
++    RESULT_VARIABLE _summary_result OUTPUT_VARIABLE _summary_stdout ERROR_VARIABLE _summary_stderr)
++if(_summary_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted lambda summary decoy")
++endif()
++if(NOT "${_summary_stdout}${_summary_stderr}" MATCHES
++        "rejected validation summary write token[ \t\r\n]+outside[ \t\r\n]+direct host scope")
++    message(FATAL_ERROR "lambda summary decoy failed for wrong reason: ${_summary_stdout}${_summary_stderr}")
++endif()
++
++set(_stage_header_mutation "${GUARD_TEST_ROOT}/stage11b-header-persistence.hpp")
++file(COPY_FILE "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.hpp"
++    "${_stage_header_mutation}")
++file(APPEND "${_stage_header_mutation}" "\n#include \"persistence/save_store.hpp\"\n")
++execute_process(
++    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DSTAGE11B_HEADER_OVERRIDE=${_stage_header_mutation}" -P "${_guard}"
++    RESULT_VARIABLE _header_result OUTPUT_VARIABLE _header_stdout ERROR_VARIABLE _header_stderr)
++if(_header_result EQUAL 0)
++    message(FATAL_ERROR "Host validation sequence guard accepted Stage11B header persistence dependency")
++endif()
++if(NOT "${_header_stdout}${_header_stderr}" MATCHES
++        "Host validation boundary header has a forbidden dependency")
++    message(FATAL_ERROR "Stage11B header mutation failed for wrong reason: ${_header_stdout}${_header_stderr}")
++endif()
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index c80190b..9d5afc0 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -1,38 +1,51 @@
+ if(NOT DEFINED SOURCE_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT is required")
+ endif()
+ 
++include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
++
+ set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ if(DEFINED HOST_OVERRIDE)
+     set(_host "${HOST_OVERRIDE}")
+ endif()
+ if(NOT EXISTS "${_host}")
+     message(FATAL_ERROR "Host validation sequence target is missing: ${_host}")
+ endif()
+ 
+ file(READ "${_host}" _host_text)
++string(FIND "${_host_text}" "HostExitCode run_raylib_host(" _runtime_candidate)
++if(_runtime_candidate EQUAL -1)
++    message(FATAL_ERROR "Host validation sequence guard missing run_raylib_host candidate")
++endif()
++string(SUBSTRING "${_host_text}" ${_runtime_candidate} -1 _host_runtime_candidate)
++evidence_extract_cpp_function_block("${_host_runtime_candidate}"
++    "HostExitCode run_raylib_host(" _host_runtime)
++evidence_sanitize_cpp_for_scan("${_host_runtime}" _sanitized)
+ 
+ set(_input_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.hpp")
+ set(_input_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.cpp")
+ set(_navigation_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.hpp")
+ set(_navigation_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.cpp")
+ set(_stage10_11_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.hpp")
+ set(_stage10_11_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.cpp")
+ set(_stage11b_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.hpp")
++if(DEFINED STAGE11B_HEADER_OVERRIDE)
++    set(_stage11b_header "${STAGE11B_HEADER_OVERRIDE}")
++endif()
+ set(_stage11b_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
+ set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+ foreach(_required IN ITEMS
+         "${_input_header}" "${_input_source}"
+         "${_navigation_header}" "${_navigation_source}"
+         "${_stage10_11_header}" "${_stage10_11_source}"
+         "${_stage11b_header}" "${_stage11b_source}" "${_raylib_cmake}")
+     if(NOT EXISTS "${_required}")
+         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
+@@ -43,21 +56,21 @@ file(READ "${_input_source}" _input_source_text)
+ file(READ "${_navigation_header}" _navigation_header_text)
+ file(READ "${_navigation_source}" _navigation_source_text)
+ file(READ "${_stage10_11_header}" _stage10_11_header_text)
+ file(READ "${_stage10_11_source}" _stage10_11_source_text)
+ file(READ "${_stage11b_header}" _stage11b_header_text)
+ file(READ "${_stage11b_source}" _stage11b_source_text)
+ file(READ "${_raylib_cmake}" _raylib_cmake_text)
+ 
+ foreach(_header_text IN ITEMS
+         "${_input_header_text}" "${_navigation_header_text}"
+-        "${_stage10_11_header_text}")
++        "${_stage10_11_header_text}" "${_stage11b_header_text}")
+     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
+     endif()
+ endforeach()
+ 
+ foreach(_stage10_11_definition_token IN ITEMS
+         "combat::MovementInput stage10_validation_input("
+         "combat::MovementInput stage11_validation_input("
+         "bool stage10_validation_reached("
+         "bool stage11_validation_reached(")
+@@ -162,54 +175,101 @@ endforeach()
+ 
+ foreach(_registered_source IN ITEMS
+         "host_validation_input.cpp" "host_validation_navigation.cpp"
+         "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp")
+     string(FIND "${_raylib_cmake_text}" "${_registered_source}" _registered)
+     if(_registered EQUAL -1)
+         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
+     endif()
+ endforeach()
+ 
+-# Keep seam comments from satisfying a source-order assertion.
+-string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" _sanitized "${_host_text}")
+-string(REGEX REPLACE "//[^\r\n]*" "" _sanitized "${_sanitized}")
+-
+ string(FIND "${_sanitized}" "while (!exit_requested) {" _loop_begin)
+-string(FIND "${_sanitized}" "audio.shutdown();" _loop_end)
+-if(_loop_begin EQUAL -1 OR _loop_end EQUAL -1 OR NOT _loop_begin LESS _loop_end)
+-    message(FATAL_ERROR "Host validation sequence guard cannot isolate host loop and summary")
++if(_loop_begin EQUAL -1)
++    message(FATAL_ERROR "Host validation sequence guard cannot isolate host loop")
++endif()
++string(SUBSTRING "${_sanitized}" ${_loop_begin} -1 _loop_tail)
++string(FIND "${_loop_tail}" "{" _loop_open_relative)
++if(_loop_open_relative EQUAL -1)
++    message(FATAL_ERROR "Host validation sequence guard cannot find host loop brace")
++endif()
++math(EXPR _loop_open "${_loop_begin} + ${_loop_open_relative}")
++string(LENGTH "${_sanitized}" _runtime_length)
++math(EXPR _runtime_last "${_runtime_length} - 1")
++set(_loop_depth 0)
++set(_loop_end -1)
++foreach(_index RANGE ${_loop_open} ${_runtime_last})
++    string(SUBSTRING "${_sanitized}" ${_index} 1 _character)
++    if(_character STREQUAL "{")
++        math(EXPR _loop_depth "${_loop_depth} + 1")
++    elseif(_character STREQUAL "}")
++        math(EXPR _loop_depth "${_loop_depth} - 1")
++        if(_loop_depth EQUAL 0)
++            set(_loop_end ${_index})
++            break()
++        endif()
++    endif()
++endforeach()
++if(_loop_end EQUAL -1)
++    message(FATAL_ERROR "Host validation sequence guard found unbalanced host loop")
+ endif()
+-math(EXPR _loop_length "${_loop_end} - ${_loop_begin}")
++math(EXPR _loop_length "${_loop_end} - ${_loop_begin} + 1")
+ string(SUBSTRING "${_sanitized}" ${_loop_begin} ${_loop_length} _host_loop)
+ 
+-function(assert_unique_ordered_host_tokens LABEL)
++function(host_token_brace_depth SURFACE POSITION OUTPUT)
++    if(POSITION EQUAL 0)
++        set(${OUTPUT} 0 PARENT_SCOPE)
++        return()
++    endif()
++    string(SUBSTRING "${SURFACE}" 0 ${POSITION} _prefix)
++    string(REGEX REPLACE "[^{}]" "" _braces "${_prefix}")
++    string(LENGTH "${_braces}" _brace_length)
++    set(_depth 0)
++    if(_brace_length GREATER 0)
++        math(EXPR _brace_last "${_brace_length} - 1")
++        foreach(_brace_index RANGE 0 ${_brace_last})
++            string(SUBSTRING "${_braces}" ${_brace_index} 1 _brace)
++            if(_brace STREQUAL "{")
++                math(EXPR _depth "${_depth} + 1")
++            else()
++                math(EXPR _depth "${_depth} - 1")
++            endif()
++        endforeach()
++    endif()
++    set(${OUTPUT} ${_depth} PARENT_SCOPE)
++endfunction()
++
++function(assert_unique_ordered_host_tokens LABEL SURFACE REQUIRED_DEPTH)
+     set(_previous -1)
+     foreach(_token IN ITEMS ${ARGN})
+-        string(FIND "${_host_loop}" "${_token}" _position)
++        string(FIND "${SURFACE}" "${_token}" _position)
+         if(_position EQUAL -1)
+             message(FATAL_ERROR "Host validation sequence guard missing ${LABEL} token: ${_token}")
+         endif()
+         math(EXPR _after "${_position} + 1")
+-        string(SUBSTRING "${_host_loop}" ${_after} -1 _remainder)
++        string(SUBSTRING "${SURFACE}" ${_after} -1 _remainder)
+         string(FIND "${_remainder}" "${_token}" _duplicate)
+         if(NOT _duplicate EQUAL -1)
+             message(FATAL_ERROR "Host validation sequence guard found duplicate ${LABEL} token: ${_token}")
+         endif()
+         if(NOT _previous EQUAL -1 AND _position LESS _previous)
+             message(FATAL_ERROR "Host validation sequence guard rejected ${LABEL} order")
+         endif()
++        host_token_brace_depth("${SURFACE}" ${_position} _token_depth)
++        if(NOT _token_depth EQUAL REQUIRED_DEPTH)
++            message(FATAL_ERROR "Host validation sequence guard rejected ${LABEL} token outside direct host scope: ${_token}")
++        endif()
+         set(_previous ${_position})
+     endforeach()
+ endfunction()
+ 
+-assert_unique_ordered_host_tokens("input injection chain"
+-    "sample_physical_keys()"
++assert_unique_ordered_host_tokens("input injection chain" "${_host_loop}" 1
++    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+     "inject_stage11b_physical_edges("
+     "inject_stage11c_physical_edges("
+     "inject_stage11d_physical_edges("
+     "inject_stage17_physical_edges("
+     "map_host_frame_input(")
+ 
+ string(FIND "${_host_loop}" "if (!step_death) {" _fixed_step_begin)
+ string(FIND "${_host_loop}" "runtime.fixed_tick(step_movement,"
+     _fixed_step_end)
+ if(_fixed_step_begin EQUAL -1 OR _fixed_step_end EQUAL -1
+@@ -241,15 +301,18 @@ function(assert_unique_fixed_step_token TOKEN)
+     endif()
+ endfunction()
+ 
+ foreach(_fixed_step_token IN ITEMS
+         "stage11_validation_input("
+         "stage10_validation_input("
+         "step_movement = movement;")
+     assert_unique_fixed_step_token("${_fixed_step_token}")
+ endforeach()
+ 
+-assert_unique_ordered_host_tokens("validation summary write"
++# run_raylib_host owns the frame loop and summary calls inside its single
++# top-level try block, so direct execution statements are at brace depth two
++# relative to the complete function block (function body plus try body).
++assert_unique_ordered_host_tokens("validation summary write" "${_host_runtime}" 2
+     "write_stage11b_validation_summary("
+     "write_stage11c_hud_validation_summary("
+     "write_stage11d_loot_validation_summary("
+     "write_stage17_validation_summary(")
+diff --git a/tests/platform/stage11b_architecture_guard_test.cmake b/tests/platform/stage11b_architecture_guard_test.cmake
+index d1b5cce..a99feee 100644
+--- a/tests/platform/stage11b_architecture_guard_test.cmake
++++ b/tests/platform/stage11b_architecture_guard_test.cmake
+@@ -1,14 +1,16 @@
+ if(NOT DEFINED SOURCE_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT is required")
+ endif()
+ 
++include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
++
+ function(arpg_assert_files_exclude REASON REGEX)
+     foreach(_file IN LISTS ARGN)
+         if(NOT EXISTS "${_file}")
+             message(FATAL_ERROR "${REASON}: source is missing: ${_file}")
+         endif()
+         file(READ "${_file}" _source)
+         if(_source MATCHES "${REGEX}")
+             message(FATAL_ERROR "${REASON}: ${_file}")
+         endif()
+     endforeach()
+@@ -72,20 +74,37 @@ endif()
+ 
+ foreach(_stage_required IN ITEMS "${_stage_header}" "${_stage_source}")
+     if(NOT EXISTS "${_stage_required}")
+         message(FATAL_ERROR "Stage 11B validation target is missing: ${_stage_required}")
+     endif()
+ endforeach()
+ file(READ "${_stage_header}" _stage_header_text)
+ file(READ "${_stage_source}" _stage_source_text)
+ file(READ "${_host_source}" _host_source_text)
+ file(READ "${SOURCE_ROOT}/platform/raylib/CMakeLists.txt" _raylib_cmake_text)
++evidence_extract_cpp_function_block("${_stage_source_text}"
++    "PhysicalKeySnapshot inject_stage11b_physical_edges(" _stage11b_injection_block)
++evidence_extract_cpp_function_block("${_stage_source_text}"
++    "bool stage11b_validation_complete(" _stage11b_complete_block)
++evidence_extract_cpp_function_block("${_stage_source_text}"
++    "std::uint64_t stage11b_snapshot_hash(" _stage11b_hash_block)
++evidence_extract_cpp_function_block("${_stage_source_text}"
++    "void write_stage11b_validation_summary(" _stage11b_summary_block)
++
++function(arpg_assert_stage11b_block_tokens LABEL BLOCK)
++    foreach(_token IN ITEMS ${ARGN})
++        string(FIND "${BLOCK}" "${_token}" _token_found)
++        if(_token_found EQUAL -1)
++            message(FATAL_ERROR "Stage 11B ${LABEL} token is missing: ${_token}")
++        endif()
++    endforeach()
++endfunction()
+ 
+ foreach(_stage_definition IN ITEMS
+         "PhysicalKeySnapshot inject_stage11b_physical_edges("
+         "bool stage11b_validation_complete("
+         "std::uint64_t stage11b_snapshot_hash("
+         "void write_stage11b_validation_summary(")
+     string(FIND "${_stage_source_text}" "${_stage_definition}" _stage_found)
+     if(_stage_found EQUAL -1)
+         message(FATAL_ERROR "Stage 11B validation definition is missing: ${_stage_definition}")
+     endif()
+@@ -93,31 +112,28 @@ foreach(_stage_definition IN ITEMS
+     if(NOT _host_found EQUAL -1)
+         message(FATAL_ERROR "Stage 11B validation definition remains in raylib_host.cpp: ${_stage_definition}")
+     endif()
+ endforeach()
+ if(NOT _stage_header_text MATCHES "struct Stage11BValidationState final")
+     message(FATAL_ERROR "Stage 11B validation state definition is missing")
+ endif()
+ if(_host_source_text MATCHES "struct Stage11BValidationState final")
+     message(FATAL_ERROR "Stage 11B validation state definition remains in raylib_host.cpp")
+ endif()
+-foreach(_stage_algorithm_token IN ITEMS
+-        "StableKey::j"
+-        "StableKey::u"
+-        "state.pause_capture_while_paused"
+-        "player_monster_hash_before="
+-        "load_status=")
+-    string(FIND "${_stage_source_text}" "${_stage_algorithm_token}" _stage_token_found)
+-    if(_stage_token_found EQUAL -1)
+-        message(FATAL_ERROR "Stage 11B validation algorithm token is missing: ${_stage_algorithm_token}")
+-    endif()
+-endforeach()
++arpg_assert_stage11b_block_tokens("injection" "${_stage11b_injection_block}"
++    "StableKey::j" "StableKey::u")
++arpg_assert_stage11b_block_tokens("completion" "${_stage11b_complete_block}"
++    "state.pause_capture_while_paused")
++arpg_assert_stage11b_block_tokens("snapshot hash" "${_stage11b_hash_block}"
++    "mix(snapshot.depth)" "mix(snapshot.room_index)")
++arpg_assert_stage11b_block_tokens("summary" "${_stage11b_summary_block}"
++    "state.player_monster_hash_before <<" "state.load_status")
+ string(FIND "${_raylib_cmake_text}" "host_validation_stage11b.cpp" _stage_registered)
+ if(_stage_registered EQUAL -1)
+     message(FATAL_ERROR "arpg_raylib does not register host_validation_stage11b.cpp")
+ endif()
+ 
+ file(GLOB_RECURSE _settings_sources LIST_DIRECTORIES FALSE
+     "${SOURCE_ROOT}/platform/settings/*.h" "${SOURCE_ROOT}/platform/settings/*.hpp"
+     "${SOURCE_ROOT}/platform/settings/*.cpp")
+ list(REMOVE_ITEM _settings_sources "${SOURCE_ROOT}/platform/settings/settings_types.cpp"
+              "${SOURCE_ROOT}/platform/settings/settings_store.cpp")
+@@ -187,29 +203,31 @@ if(NOT DEFINED STAGE11B_GUARD_MUTATION_MODE)
+     arpg_expect_guard_rejects(duplicate_stable_key duplicate
+         "${SOURCE_ROOT}/platform/settings/settings_types.cpp"
+         ""
+         "settings default bindings duplicate stable key")
+ 
+     set(_stage_mutation "${GUARD_TEST_ROOT}/stage11b-rebound-key.cpp")
+     file(COPY_FILE "${_stage_source}" "${_stage_mutation}")
+     file(READ "${_stage_mutation}" _stage_mutation_text)
+     string(REPLACE "settings::StableKey::j" "settings::StableKey::q"
+         _stage_mutation_text "${_stage_mutation_text}")
++    string(APPEND _stage_mutation_text
++        "\n// decoy settings::StableKey::j\\\n")
+     file(WRITE "${_stage_mutation}" "${_stage_mutation_text}")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}"
+             "-DSOURCE_ROOT=${SOURCE_ROOT}"
+             "-DSTAGE11B_GUARD_MUTATION_MODE=1"
+             "-DSTAGE11B_GUARD_MUTATION_KIND=stage"
+             "-DSTAGE11B_GUARD_MUTATION_FILE=${_stage_mutation}"
+             -P "${CMAKE_CURRENT_LIST_FILE}"
+         RESULT_VARIABLE _stage_result OUTPUT_VARIABLE _stage_stdout ERROR_VARIABLE _stage_stderr)
+     if(_stage_result EQUAL 0)
+         message(FATAL_ERROR "Stage 11b guard missed stage rebound-key mutation")
+     endif()
+     if(NOT "${_stage_stdout}${_stage_stderr}" MATCHES
+-            "Stage 11B validation algorithm token is missing: StableKey::j")
++            "Stage 11B injection token is missing: StableKey::j")
+         message(FATAL_ERROR "Stage 11b stage rebound-key mutation lacked the expected reason")
+     endif()
+ endif()
+ 
+ message(STATUS "Stage 11b settings architecture boundaries verified")
+diff --git a/tests/platform/stage11b_settings_evidence_guard_self_test.cmake b/tests/platform/stage11b_settings_evidence_guard_self_test.cmake
+index 5e3774f..0228dbb 100644
+--- a/tests/platform/stage11b_settings_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11b_settings_evidence_guard_self_test.cmake
+@@ -31,42 +31,44 @@ foreach(_fixture_forbidden IN ITEMS
+     endif()
+     if(NOT "${_fixture_stdout}${_fixture_stderr}" MATCHES
+             "rejected forbidden token: ${_fixture_forbidden}")
+         message(FATAL_ERROR "fixture mutation failed for the wrong reason: ${_fixture_forbidden}: ${_fixture_stdout}${_fixture_stderr}")
+     endif()
+ endforeach()
+ 
+ set(_stage_mutation_index 0)
+ foreach(_stage_mutation_pair IN ITEMS
+         "settings::StableKey::j|settings::StableKey::q|StableKey::j"
+-        "player_monster_hash_before=|player_monster_hash_before_removed=|player_monster_hash_before=")
++        "state.player_monster_hash_before <<|state.player_monster_hash_before_removed <<|state.player_monster_hash_before <<")
+     string(REPLACE "|" ";" _stage_mutation_parts "${_stage_mutation_pair}")
+     list(GET _stage_mutation_parts 0 _stage_before)
+     list(GET _stage_mutation_parts 1 _stage_after)
+     list(GET _stage_mutation_parts 2 _stage_expected)
+     math(EXPR _stage_mutation_index "${_stage_mutation_index} + 1")
+     set(_stage_mutation "${GUARD_TEST_ROOT}/stage-${_stage_mutation_index}.cpp")
+     file(COPY_FILE "${_stage_source}" "${_stage_mutation}")
+     file(READ "${_stage_mutation}" _stage_mutation_text)
+     string(REPLACE "${_stage_before}" "${_stage_after}"
+         _stage_mutation_text "${_stage_mutation_text}")
++    string(APPEND _stage_mutation_text
++        "\n// decoy ${_stage_before}\\\n")
+     file(WRITE "${_stage_mutation}" "${_stage_mutation_text}")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+             "-DSTAGE_OVERRIDE=${_stage_mutation}" -P "${_guard}"
+         RESULT_VARIABLE _stage_mutation_result
+         OUTPUT_VARIABLE _stage_mutation_stdout ERROR_VARIABLE _stage_mutation_stderr)
+     if(_stage_mutation_result EQUAL 0)
+         message(FATAL_ERROR "evidence guard self-test accepted Stage mutation: ${_stage_before}")
+     endif()
+     string(FIND "${_stage_mutation_stdout}${_stage_mutation_stderr}"
+-        "Stage11B evidence guard missing Stage source token" _stage_reason)
++        "Stage11B evidence guard missing Stage" _stage_reason)
+     string(FIND "${_stage_mutation_stdout}${_stage_mutation_stderr}"
+         "${_stage_expected}" _stage_expected_failure)
+     if(_stage_reason EQUAL -1 OR _stage_expected_failure EQUAL -1)
+         message(FATAL_ERROR "Stage mutation failed for wrong reason: ${_stage_before}: ${_stage_mutation_stdout}${_stage_mutation_stderr}")
+     endif()
+ endforeach()
+ set(_paused_capture_mutation "${GUARD_TEST_ROOT}/host-paused-capture.cpp")
+ file(COPY_FILE "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" "${_paused_capture_mutation}")
+ file(READ "${_paused_capture_mutation}" _paused_capture_source)
+ string(REPLACE "&& pause_menu.screen != PauseScreen::closed"
+diff --git a/tests/platform/stage11b_settings_evidence_guard_test.cmake b/tests/platform/stage11b_settings_evidence_guard_test.cmake
+index b2e8359..e626fe1 100644
+--- a/tests/platform/stage11b_settings_evidence_guard_test.cmake
++++ b/tests/platform/stage11b_settings_evidence_guard_test.cmake
+@@ -1,14 +1,16 @@
+ if(NOT DEFINED SOURCE_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT is required")
+ endif()
+ 
++include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
++
+ if(DEFINED HOST_OVERRIDE)
+     set(_host "${HOST_OVERRIDE}")
+ else()
+     set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ endif()
+ if(DEFINED STAGE_OVERRIDE)
+     set(_stage "${STAGE_OVERRIDE}")
+ else()
+     set(_stage "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
+ endif()
+@@ -28,55 +30,65 @@ foreach(_required IN ITEMS "${_host}" "${_stage}" "${_stage_header}" "${_header}
+ endforeach()
+ 
+ file(READ "${_host}" _host_text)
+ file(READ "${_stage}" _stage_text)
+ file(READ "${_stage_header}" _stage_header_text)
+ file(READ "${_header}" _header_text)
+ file(READ "${_formal}" _formal_text)
+ file(READ "${_pause_renderer}" _pause_renderer_text)
+ file(READ "${_font_source}" _font_source_text)
+ set(_combined "${_header}\n${_host_text}\n${_formal_text}")
++evidence_extract_cpp_function_block("${_stage_text}"
++    "PhysicalKeySnapshot inject_stage11b_physical_edges(" _stage11b_injection_block)
++evidence_extract_cpp_function_block("${_stage_text}"
++    "bool stage11b_validation_complete(" _stage11b_complete_block)
++evidence_extract_cpp_function_block("${_stage_text}"
++    "std::uint64_t stage11b_snapshot_hash(" _stage11b_hash_block)
++evidence_extract_cpp_function_block("${_stage_text}"
++    "void write_stage11b_validation_summary(" _stage11b_summary_block)
++
++function(arpg_require_stage11b_block_token LABEL BLOCK TOKEN)
++    # The extractor returns a sanitized block, but sanitize again here so a
++    # future extractor refactor cannot accidentally make comment/literal decoys
++    # satisfy a Stage-local behavior requirement.
++    evidence_sanitize_cpp_for_scan("${BLOCK}" _sanitized_block)
++    string(FIND "${_sanitized_block}" "${TOKEN}" _token_found)
++    if(_token_found EQUAL -1)
++        message(FATAL_ERROR "Stage11B evidence guard missing ${LABEL} token: ${TOKEN}")
++    endif()
++endfunction()
+ 
+ foreach(_required IN ITEMS
+         "Stage11BValidationScenario"
+         "sample_physical_keys"
+         "map_host_frame_input"
+         "submit_frame_actions"
+         "present_frame_and_maybe_capture"
+         "SettingsStore"
+         "settings_store.load()"
+         "settings_store.save("
+         "run_child"
+         "restarted_settings"
+         "paused_freeze"
+         "rebound_attack")
+     string(FIND "${_combined}" "${_required}" _found)
+     if(_found EQUAL -1)
+         message(FATAL_ERROR "Stage11B evidence guard missing required token: ${_required}")
+     endif()
+ endforeach()
+ 
+-foreach(_stage_required IN ITEMS
+-        "PhysicalKeySnapshot inject_stage11b_physical_edges("
+-        "bool stage11b_validation_complete("
+-        "std::uint64_t stage11b_snapshot_hash("
+-        "void write_stage11b_validation_summary("
+-        "StableKey::j"
+-        "StableKey::u"
+-        "state.pause_capture_while_paused"
+-        "player_monster_hash_before="
+-        "load_status=")
+-    string(FIND "${_stage_text}" "${_stage_required}" _stage_found)
+-    if(_stage_found EQUAL -1)
+-        message(FATAL_ERROR "Stage11B evidence guard missing Stage source token: ${_stage_required}")
+-    endif()
+-endforeach()
++arpg_require_stage11b_block_token("Stage injection" "${_stage11b_injection_block}" "StableKey::j")
++arpg_require_stage11b_block_token("Stage injection" "${_stage11b_injection_block}" "StableKey::u")
++arpg_require_stage11b_block_token("Stage completion" "${_stage11b_complete_block}" "state.pause_capture_while_paused")
++arpg_require_stage11b_block_token("Stage hash" "${_stage11b_hash_block}" "mix(snapshot.depth)")
++arpg_require_stage11b_block_token("Stage summary" "${_stage11b_summary_block}" "state.player_monster_hash_before <<")
++arpg_require_stage11b_block_token("Stage summary" "${_stage11b_summary_block}" "state.load_status")
+ if(NOT _stage_header_text MATCHES "struct Stage11BValidationState final")
+     message(FATAL_ERROR "Stage11B evidence guard missing Stage state definition")
+ endif()
+ foreach(_host_definition IN ITEMS
+         "PhysicalKeySnapshot inject_stage11b_physical_edges("
+         "bool stage11b_validation_complete("
+         "std::uint64_t stage11b_snapshot_hash("
+         "void write_stage11b_validation_summary(")
+     string(FIND "${_host_text}" "${_host_definition}" _host_definition_found)
+     if(NOT _host_definition_found EQUAL -1)

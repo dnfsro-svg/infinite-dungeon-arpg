@@ -1,0 +1,62 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+      Start  20: stage10.evidence.no_private_injection
+ 1/30 Test  #20: stage10.evidence.no_private_injection ...................   Passed    4.07 sec
+      Start  21: stage10.evidence.rejects_private_injection
+ 2/30 Test  #21: stage10.evidence.rejects_private_injection ..............   Passed    1.62 sec
+      Start  22: stage10.evidence.rejects_pre_present_capture
+ 3/30 Test  #22: stage10.evidence.rejects_pre_present_capture ............   Passed    1.90 sec
+      Start  23: stage10.evidence.rejects_pre_capture_with_post_dummy
+ 4/30 Test  #23: stage10.evidence.rejects_pre_capture_with_post_dummy ....   Passed    1.98 sec
+      Start  24: stage10.evidence.mutation_self_test
+ 5/30 Test  #24: stage10.evidence.mutation_self_test .....................   Passed  150.09 sec
+      Start  27: stage11.death_evidence.production_paths
+ 6/30 Test  #27: stage11.death_evidence.production_paths .................   Passed    9.62 sec
+      Start  28: stage11.death_evidence.rejects_private_injection
+ 7/30 Test  #28: stage11.death_evidence.rejects_private_injection ........   Passed    1.64 sec
+      Start  29: stage11.death_evidence.rejects_pre_present_capture
+ 8/30 Test  #29: stage11.death_evidence.rejects_pre_present_capture ......   Passed    1.61 sec
+      Start  30: stage11.death_evidence.rejects_public_death_injection
+ 9/30 Test  #30: stage11.death_evidence.rejects_public_death_injection ...   Passed    1.58 sec
+      Start  31: stage11.death_evidence.mutation_self_test
+10/30 Test  #31: stage11.death_evidence.mutation_self_test ...............***Failed    6.28 sec
+CMake Error at E:/game/.worktrees/whole-game-refactor-2026-07/tests/dungeon/stage11_death_evidence_guard_self_test.cmake:48 (message):
+  host_hidden_continue_write: wrong rejection reason; expected 'must not
+  access continue_requested', got:
+
+  CMake Error at
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/dungeon/stage11_death_evidence_guard_test.cmake:646
+  (message):
+
+    Stage 11 Host must not own presentation validation state directly:
+    stage11_validation_state
+
+
+
+
+
+Call Stack (most recent call first):
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/dungeon/stage11_death_evidence_guard_self_test.cmake:83 (expect_guard_rejection)
+  E:/game/.worktrees/whole-game-refactor-2026-07/tests/dungeon/stage11_death_evidence_guard_self_test.cmake:374 (expect_host_replacement_rejection)
+
+
+
+
+90% tests passed, 1 tests failed out of 10
+
+Label Time Summary:
+architecture    =   0.00 sec*proc (0 test)
+dungeon         = 180.37 sec*proc (10 tests)
+evidence        = 180.37 sec*proc (10 tests)
+headless        = 180.37 sec*proc (10 tests)
+negative        =  10.32 sec*proc (6 tests)
+platform        =   0.00 sec*proc (0 test)
+stage10         = 159.66 sec*proc (5 tests)
+stage11         =  20.71 sec*proc (5 tests)
+stage11b        =   0.00 sec*proc (0 test)
+stage11c        =   0.00 sec*proc (0 test)
+stage11d        =   0.00 sec*proc (0 test)
+
+Total Test time (real) = 180.42 sec
+
+The following tests FAILED:
+	 31 - stage11.death_evidence.mutation_self_test (Failed) dungeon evidence headless stage11

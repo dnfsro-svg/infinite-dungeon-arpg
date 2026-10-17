@@ -1,0 +1,2068 @@
+# Review package: 9efa31e..23f94e8
+
+## Commits
+23f94e8 test: enforce raylib lifecycle ownership at compile time
+
+## Files changed
+ .../task-9-report.md                               | 268 +++++++++++++++
+ src/platform/raylib/CMakeLists.txt                 |  24 ++
+ src/platform/raylib/host_window_lifetime.cpp       |  10 +
+ src/platform/raylib/raylib_lifecycle_poison.hpp    |  42 +++
+ tests/dungeon/evidence_source_scan.cmake           | 380 +++++++++++++++++----
+ tests/platform/CMakeLists.txt                      | 205 +++++++++++
+ tests/platform/host_input_source_test.cmake        |   6 +-
+ .../host_validation_sequence_guard_self_test.cmake |  76 ++++-
+ .../host_validation_sequence_guard_test.cmake      |  26 +-
+ tests/platform/host_validation_source_test.cmake   | 301 +++++++++++++---
+ tests/platform/input_latency_source_test.cmake     |   6 +-
+ tests/platform/raylib_lifecycle_poison_alias.inc   |   1 +
+ ...stage11c_hud_architecture_guard_self_test.cmake |  15 +-
+ .../stage11c_hud_architecture_guard_test.cmake     |   4 +-
+ 14 files changed, 1241 insertions(+), 123 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-9-report.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-9-report.md
+new file mode 100644
+index 0000000..416aaf2
+--- /dev/null
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-9-report.md
+@@ -0,0 +1,268 @@
++# Task 9: 子项目 A 全量门禁、独立审查和真实窗口验收
++
++## 状态
++
++- **BLOCKED**
++- Worktree: `E:/game/.worktrees/whole-game-refactor-2026-07`
++- Validated revision: `ba1c93f4fab37108d2da079cb14ab1dc748aa741`
++- Scope: only subproject A; no B-G implementation or file was introduced.
++- No production source, expected image/hash, CTest timeout, or test assertion
++  was changed.  No commit or push was made because the completion gate is red.
++
++## Resource preflight and build
++
++All builds/tests used `CMAKE_BUILD_PARALLEL_LEVEL=1` and `-j1`; no overlapping
++build or CTest chain was started.
++
++| Command/result | Exit | Time/evidence |
++| --- | ---: | --- |
++| Initial Debug build from a plain shell | 2 | 0.575 s; MSVC could not find `cstddef` (`C1083`). |
++| Load `Launch-VsDevShell.ps1`, then `cmake --build --preset windows-msvc-debug -- -j1` | 0 | 146.837 s, 134 actions. |
++| `ctest --preset windows-msvc-debug -j1`, then serial continuation `-I 9,124` after preset stop-on-failure | 8 | Combined 7,550.84 s. |
++| `cmake --preset windows-msvc-release` | 0 | 8.394 s. |
++| `cmake --build --preset windows-msvc-release -- -j1` | 0 | 588.247 s, 420 actions. |
++| `ctest --preset windows-msvc-release -j1`, then serial continuation `-I 6,124` after preset stop-on-failure | 8 | Combined 7,260.12 s. |
++
++The initial Debug failure was an environment error only; the successful build
++used the same source revision.  After all test work, process readback found no
++`cl`, `link`, `ninja`, `cmake`, `ctest`, or `arpg_*` residue.  The Release
++CTest `LastTest.log` was subsequently replaced by a `ctest --show-only=json-v1`
++inventory query; counts, names, durations, console output, and
++`LastTestsFailed.log` had already been captured.  This report does not present
++the overwritten log as retained evidence.
++
++## Full CTest results
++
++| Configuration | Total | Pass | Executed fail | Timeout | Access violation | Fixture not run | Non-pass | Wall time |
++| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
++| Debug | 124 | 99 | 19 | 2 | 2 | 6 | 25 | 7,550.84 s |
++| Release | 124 | 98 | 20 | 2 | 2 | 6 | 26 | 7,260.12 s |
++
++Debug executed failures were:
++
++1. `stage16.loot_reinforcement.simulation` (60 s timeout)
++2. `stage11.death_stress.determinism_zero_alloc` (`codec-17`)
++3. `stage9.validation_fixture.real_v4_reward_reload` (access violation)
++4. `stage10.validation_fixture.real_abyss_transactions` (access violation)
++5. `stage9.evidence.no_injected_defeat_trace`
++6. `stage10.validation_game.capture_after_present`
++7. `stage10.formal_game.capture_after_present`
++8. `stage11.death_fixture.transactions`
++9. `stage11.death_formal.five_paths` (300 s timeout)
++10. `persistence.save_commit_stack_guard`
++11. `stage16.loot_reinforcement.real_raylib`
++12. `stage12.material_formal`
++13. `stage11b.settings_formal`
++14. `stage11c.hud_formal`
++15. `stage11d.loot_formal`
++16. `stage11c.architecture.hud_boundaries_self_test`
++17. `architecture.persistence_checkpoint_only`
++18. `platform.input_latency_source`
++19. `platform.host_input_source`
++
++The six dependent not-run tests were Stage12 material validator/self-test,
++Stage11B settings validator, Stage11C validator/self-test, and Stage11D loot
++validator.  Release has the same set plus `dungeon.units`, whose single failed
++case reports that neither event nor combat-relay overflow count was positive.
++
++The 60-second Stage16 simulation executable continued running for more than
++ten minutes when invoked directly and produced no assertion output.  Its test
++source, principal dungeon dependency object hashes, and 60-second CMake
++property are identical to the plan base, so this is recorded as a legacy/time-
++budget concern, not silently fixed by raising the timeout.  The current gate
++nevertheless remains red.
++
++`architecture.persistence_checkpoint_only` is the exact forbidden
++`room_progress_codec.cpp -> dungeon/health_potion_loot.hpp` include already
++captured at the Task 1 review base.  `stage11b.settings_formal` is the formal
++pause/resume failure already captured by Tasks 3/7A.  Task 7B also records the
++Stage10/11 and Stage11D formal groups at its own base.  Those attributions are
++kept separate from new/unattributed failures; they do not satisfy the full
++CTest completion gate.
++
++## Formal evidence comparison
++
++The fresh Debug run passed `platform.host_validation_source` (217 s),
++`platform.host_validation_sequence` (89 s), and the Stage11B/11C/11D evidence
++source guards (16/27/20 s).  This proves the current source still binds the
++facade, input/snapshot ordering, post-present capture and ordered summary
++writers.  Artifact-level comparison is not green:
++
++| Stage | Expected contract | Fresh result |
++| --- | --- | --- |
++| 10 | Seven named 1280x720 formal captures and complete state evidence | Formal directory empty; formal capture failed. |
++| 11 | Five named 1280x720 death/continue captures plus path summary | Only `01-normal-death.png` exists (1280x720); formal timed out. |
++| 11B | `pause/settings/rebound/swap/restart/single-slot/corrupt` evidence and passing aggregate | Five PNGs are valid 1280x720, but `settings.png` and `swap.png` are absent; aggregate ends `result=fail`; validator not run. |
++| 11C | Six named 1280x720 PNGs and valid ordered per-scene hashes | Only `combat`, `low-health`, `debug` exist; three scene hashes/valid bits are zero; aggregate ends `result=fail`; validators not run. |
++| 11D | Six named 1280x720 PNGs, summaries and manifest | Evidence directory empty; formal failed; validator not run. |
++| 17 | Production real-window evidence, state fields and validator | Four Stage17 tests passed. Seven named 1280x720 PNGs and V3 ordered state fields were accepted in Debug and Release. |
++
++Stage17's checked-in validation document still lists an older five-file,
++23-field contract while the current passing validator emits seven files and a
++larger V3 state.  That is documentation drift to reconcile separately; no
++golden/hash expectation was updated in Task 9.
++
++## Real raylib window matrix
++
++Launch command used the Release executable, seed `0x8`, and isolated directory
++`out/task9-real-window-save-20260730-1355` for save, settings, and screenshots.
++Exactly one game window existed.  Windows Graphics Capture returned a white
++OpenGL client surface; visual decisions therefore use the game's own F12
++post-present PNG (1280x720), not the white control screenshot.
++
++| Check | Result | Evidence |
++| --- | --- | --- |
++| Movement | INCONCLUSIVE | `D` injected; camera lock and dense monster pile prevented independent position proof. |
++| Light attack | INCONCLUSIVE | `J` injected and a hit/action flash was visible, but actor overlap prevents attribution. |
++| Jump | INCONCLUSIVE | `K` injected; player died before a distinct jump frame was captured. |
++| Launch + 0.5 s float | INCONCLUSIVE | Strict `L -> refresh -> 500 ms -> F12`; hit flash visible, actor height not distinguishable. |
++| Active skills 1/2 | INCONCLUSIVE | `Numpad1` and `Numpad2` injected; death/overlap prevented independently attributable skill frames. |
++| Inventory | PASS | Complete Equipment/Inventory/Item Detail/material-bag screen visible; current inventory was empty. |
++| Drop pickup | INCONCLUSIVE | No item reached the inventory and no pickup receipt was captured. |
++| Pause/settings | PASS | Pause, Settings, saved values, all bindings, Apply/Cancel, and return path visible. |
++| Doors | PARTIAL | Lightning/Chaos/Water door artwork visible; interaction was blocked by the uncleared 400-monster room. |
++| Next-floor hole | INCONCLUSIVE | No cleared-room interaction or floor transition was reached. |
++| Death continue | PASS | Chinese death recap visible; `E` returned to active combat. |
++| HUD/font | PASS | Chinese HUD, English control hints, skills, room/element data and overlays rendered clearly. |
++| Restart persistence | PASS | After a menu-confirmed exit, the same isolated directory restarted directly into the prior death recap; `run_a.sav`/`run_b.sav` were present. |
++| Clean exit | PASS | Both launches exited via the in-game confirmation page; original/restart PIDs and all `arpg_game` processes read back as absent. |
++
++While the Pause menu was visibly active, a two-second process sample consumed
++3.047 CPU seconds (~153.9% of one logical core), with 671.29 MiB working set,
++611.23 MiB private bytes, 601 handles, 23 threads, and `Responding=True`.
++This fails the requested no-idle-high-usage observation.
++
++## Metrics
++
++- Tracked raylib production surface: 25,136 -> 26,033 physical lines (+897).
++- `raylib_host.cpp`: 4,135 -> 1,240 lines (-2,895).
++- Largest current file: `raylib_host.cpp` 1,240 lines; next is
++  `inventory_renderer.cpp` 1,222 lines.
++- Added-file line counts are recorded in
++  `docs/validation/raylib-host-refactor-baseline.md`.
++- Current Host has no private Stage validation-state type and no direct
++  `inject_stage*`, `observe_stage*`, or Stage summary writer; the only
++  validation facade is `HostValidationRuntime`.
++
++## Review and completion decision
++
++Two independent read-only reviews completed.  After deduplication they report
++P0=0, P1=3, P2=2:
++
++- P1: `platform.input_latency_source` and `platform.host_input_source` still
++  require `SetConfigFlags`/`InitWindow` in `raylib_host.cpp` after Task 8C moved
++  the transaction to `host_window_lifetime.cpp`.  The guards need a cross-file
++  contract and mutation coverage; weakening their expected text is not enough.
++- P1: the `ba1c93f` shared evidence scanner diagnostic change makes
++  `stage11c.architecture.hud_boundaries_self_test` fail for the wrong reason.
++  It needs a nonfatal bounds probe followed by the owner-specific diagnostic.
++- P1: both full CTest configurations and the formal evidence chains are red;
++  recorded BASE attribution is not an exception to Task 9's all-green gate.
++- P2: `HostWindowBackend` permits null or throwing callbacks while the lifetime
++  methods are `noexcept` and directly invoke them; this previously deferred
++  precondition remains open.
++- P2: `make_unique` can throw after renderer/material resources initialize,
++  while explicit renderer shutdown exists only on the success tail and the
++  relevant wrappers do not provide destructor cleanup before the window
++  context closes.
++
++The scope reviewer found no B-G or square-room pollution: production changes
++remain under `src/platform/raylib`, and every new production `.cpp` is listed
++by that directory's CMake target.  Scope cleanliness does not offset the
++findings above.
++
++Task 9 cannot satisfy the completion gate because both full suites are red,
++formal evidence is incomplete for five stages, several real-window interactions
++remain inconclusive, and paused CPU is high.  Therefore documentation is left
++as an unstaged working-tree change and there is deliberately no commit, push,
++or remote-hash claim.
++
++## Fix round 4/5: compile-time lifecycle ownership
++
++### RED evidence
++
++All commands ran in `E:/game/.worktrees/whole-game-refactor-2026-07` with no
++overlapping build, CMake, CTest, or `arpg_*` chain.
++
++| Command/probe | Exit | Time | Intended diagnostic |
++| --- | ---: | ---: | --- |
++| `cmake -DSOURCE_ROOT=... -P tests/platform/host_validation_source_test.cmake` after adding the CMake contract test | 1 | 0.129 s | Lifecycle force-include contract expected 1, found 0. |
++| MSVC DevShell `cmake --preset windows-msvc-debug` after adding real lifecycle compile probes | 1 | 4.084 s | Active sentinel could not include the missing `raylib_lifecycle_poison.hpp`; the existing direct-input controls still behaved normally. |
++| First post-policy source guard | 1 | 161.284 s | The superseded CMake token-paste interpreter falsely classified the policy header itself as a lifecycle owner violation. |
++| `inline_owner_namespace` selective mutation | 1 | 87.874 s | The old namespace walker accepted `inline namespace platform`. |
++| `phase2_directive_scope_decoy` selective mutation | 1 | 87.873 s | Braces in a phase-2-spliced macro body were treated as real scopes. |
++| `.inc` `TASK9_EARLY()` renderer macro selective mutation | 1 | 77.483 s | The sequence guard accepted the included early-renderer macro. |
++
++One intermediate GREEN attempt is recorded rather than hidden: the first
++custom `try_compile` invocation linked an executable and failed on missing
++`main` (exit 1, 2.444 s).  Setting `CMAKE_TRY_COMPILE_TARGET_TYPE` in the
++calling scope produced the required static-library probes.  A first directive
++masking attempt also ran after token whitespace had already removed logical
++line boundaries; `phase2_directive_scope_decoy` remained red (exit 1,
++88.936 s).  Moving masking before normalization fixed the root cause.
++
++### Production and guard effect
++
++- Added `raylib_lifecycle_poison.hpp`.  It includes `<raylib.h>` first and then
++  object-like-poisons the five lifecycle APIs with a dedicated `Blocked`
++  value whose call, copy/alias, and address-taking paths are deleted.
++- `arpg_raylib` privately force-includes the absolute policy header.  Exact
++  per-source `COMPILE_DEFINITIONS` allow only the four owner calls, the five
++  reviewed `IsWindowReady` consumers, and the Host's `WindowShouldClose` call.
++  No definition or forced include reaches test/formal targets.
++- The owner retains two exact four-identifier `#undef` groups around
++  `<raylib.h>`, with no local include or define between the second group and
++  the four wrappers.
++- Removed the WIP CMake alias/token-paste interpreter and its fake compiler
++  expectations.  Real MSVC static-library probes now cover direct and
++  parenthesized calls, address-taking, CAT/CAT3 rescanning, object forwarding,
++  an include alias, harmless pastes, the owner allow set, and the ready-only
++  allow/reject split.  Negative probes first compile a no-poison control and
++  require a `Blocked` diagnostic.
++- Static guards retain only force-include/exact allowlist checks, direct
++  identifier budgets, exact lifecycle directive roles, the owner seam, and a
++  bounded renderer-macro replacement check.  Code-like `.cpp/.hpp/.h/.inc/.inl/.ipp`
++  files are scanned; non-policy lifecycle `#define`/`#undef`/push/pop escapes
++  and direct or token-pasted renderer ownership macros are rejected.
++- Renderer ownership now requires the owner, FixedStepRunner, allocation, and
++  renderer reference at their reviewed direct depths in canonical order, with
++  the reviewed `CombatRenderer == 3` and `renderer_storage == 7` budgets.
++  Layered namespaces are flattened, inline/wrong/detail/anonymous extra scopes
++  are rejected, and complete logical preprocessor directive lines are masked
++  before scope walking.
++- The shared Stage11C scope consumer now masks directives before whitespace
++  normalization.  This resolves the previously recorded wrong-reason P1 while
++  preserving owner-specific diagnostics.
++
++### GREEN verification
++
++| Command/check | Exit | Time/result |
++| --- | ---: | --- |
++| MSVC lifecycle configure/compile probes | 0 | 6.461 s; final repeat 6.567 s. |
++| Compile-command scope audit | 0 | 73/73 `arpg_raylib` sources force-included; 7 exact exempt sources; 0 non-target leaks. |
++| Namespace selectives | 0 | inline 87.974 s; phase-2 directive 88.408 s; layered 87.758 s; wrong 89.772 s; detail 88.556 s. |
++| Lifecycle directive and renderer macro selectives | 0 | escape roles 89.824 s; direct `.inc` macro 0.106 s; token-paste `.inc` macro 0.097 s. |
++| Renderer early-reset/dead-anchor sequence selective | 0 | 29.330 s; rejected for the intended renderer boundary diagnostic. |
++| MSVC `cmake --build --preset windows-msvc-debug --target arpg_game arpg_platform_tests -- -j1` | 0 | 123.840 s; 76/76 actions. |
++| `arpg_platform_tests.exe` | 0 | 13.922 s; 514 cases, 0 failures.  Existing asset fallback warnings remained nonfatal. |
++| Final full `host_validation_source_test.cmake` | 0 | 235.597 s. |
++| Final full `host_input_source_test.cmake` | 0 | 120.652 s. |
++| Final full `input_latency_source_test.cmake` | 0 | 285.840 s. |
++| Full Stage11C architecture self-test | 0 | 346.049 s; rejected 20 mutations and accepted 5 harmless variants. |
++| Full host validation sequence self-test | 0 | 1,444.345 s; within the required 1,800 s budget. |
++| `git diff --check` before final reporting | 0 | No whitespace error. |
++
++### Round 4 review and remaining concerns
++
++The uncommitted diff was reviewed against `9efa31e`.  Production impact is
++limited to the raylib lifecycle policy, target-local compile policy, and the
++previously reviewed owner seam; all other changes are source/architecture
++guards and compile probes.  No gameplay, golden value, timeout, Stage
++interface, or B-G source changed.
++
++Round 4's lifecycle/renderer/namespace findings are covered and green.  The
++original Task 9 full Debug/Release CTest and real-window/formal-evidence
++blockers remain separate; this round deliberately did not rerun or weaken
++those gates, as required by the round brief.  The two previously deferred P2
++items concerning throwing/null backend callbacks and renderer cleanup on
++allocation failure are also unchanged and outside this compile-policy fix.
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 1163d2f..9b3cc79 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -72,18 +72,42 @@ add_library(arpg_raylib STATIC
+ target_sources(arpg_raylib PRIVATE water_room_material_slice.cpp)
+ target_sources(arpg_raylib PRIVATE lightning_room_material_slice.cpp)
+ target_sources(arpg_raylib PRIVATE chaos_room_material_slice.cpp)
+ 
+ target_include_directories(arpg_raylib
+     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+ target_compile_features(arpg_raylib PUBLIC cxx_std_17)
+ target_link_libraries(arpg_raylib
+     PUBLIC arpg_dungeon arpg_persistence raylib
+     PRIVATE arpg_core arpg_settings)
++
++set(_arpg_raylib_lifecycle_policy
++    "${CMAKE_CURRENT_SOURCE_DIR}/raylib_lifecycle_poison.hpp")
++if(MSVC)
++    target_compile_options(arpg_raylib PRIVATE
++        "/FI${_arpg_raylib_lifecycle_policy}")
++else()
++    target_compile_options(arpg_raylib PRIVATE
++        -include "${_arpg_raylib_lifecycle_policy}")
++endif()
++
++set_source_files_properties(host_window_lifetime.cpp PROPERTIES
++    COMPILE_DEFINITIONS
++        "ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS;ARPG_ALLOW_RAYLIB_INIT_WINDOW;ARPG_ALLOW_RAYLIB_IS_WINDOW_READY;ARPG_ALLOW_RAYLIB_CLOSE_WINDOW")
++set_source_files_properties(
++    combat_renderer.cpp
++    death_overlay_renderer.cpp
++    hud_renderer.cpp
++    pause_menu_renderer.cpp
++    window_settings.cpp
++    PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
++set_source_files_properties(raylib_host.cpp PROPERTIES
++    COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE)
++
+ if(WIN32)
+     target_link_libraries(arpg_raylib PRIVATE user32)
+ endif()
+ 
+ arpg_enable_project_warnings(arpg_raylib)
+ if(MSVC)
+     target_compile_options(arpg_raylib PRIVATE /utf-8)
+ endif()
+diff --git a/src/platform/raylib/host_window_lifetime.cpp b/src/platform/raylib/host_window_lifetime.cpp
+index 2d6163f..03166be 100644
+--- a/src/platform/raylib/host_window_lifetime.cpp
++++ b/src/platform/raylib/host_window_lifetime.cpp
+@@ -1,17 +1,27 @@
+ #include "host_window_lifetime.hpp"
+ 
+ #include "raylib_host.hpp"
+ #include "window_settings.hpp"
+ 
++#undef SetConfigFlags
++#undef InitWindow
++#undef IsWindowReady
++#undef CloseWindow
++
+ #include <raylib.h>
+ 
++#undef SetConfigFlags
++#undef InitWindow
++#undef IsWindowReady
++#undef CloseWindow
++
+ namespace {
+ 
+ void set_config_flags_noexcept(unsigned int flags) noexcept {
+     SetConfigFlags(flags);
+ }
+ 
+ void init_window_noexcept(int width, int height, const char* title) noexcept {
+     InitWindow(width, height, title);
+ }
+ 
+diff --git a/src/platform/raylib/raylib_lifecycle_poison.hpp b/src/platform/raylib/raylib_lifecycle_poison.hpp
+new file mode 100644
+index 0000000..aa3d8ae
+--- /dev/null
++++ b/src/platform/raylib/raylib_lifecycle_poison.hpp
+@@ -0,0 +1,42 @@
++#pragma once
++
++#include <raylib.h>
++
++namespace arpg::platform::raylib_lifecycle_poison {
++
++struct Blocked final {
++    constexpr Blocked() noexcept = default;
++    Blocked(const Blocked&) = delete;
++    Blocked& operator=(const Blocked&) = delete;
++
++    template <typename... Args>
++    void operator()(Args&&...) const = delete;
++
++    Blocked* operator&() = delete;
++    const Blocked* operator&() const = delete;
++};
++
++inline constexpr Blocked blocked{};
++inline constexpr bool active = true;
++
++}  // namespace arpg::platform::raylib_lifecycle_poison
++
++#ifndef ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS
++#define SetConfigFlags ::arpg::platform::raylib_lifecycle_poison::blocked
++#endif
++
++#ifndef ARPG_ALLOW_RAYLIB_INIT_WINDOW
++#define InitWindow ::arpg::platform::raylib_lifecycle_poison::blocked
++#endif
++
++#ifndef ARPG_ALLOW_RAYLIB_IS_WINDOW_READY
++#define IsWindowReady ::arpg::platform::raylib_lifecycle_poison::blocked
++#endif
++
++#ifndef ARPG_ALLOW_RAYLIB_CLOSE_WINDOW
++#define CloseWindow ::arpg::platform::raylib_lifecycle_poison::blocked
++#endif
++
++#ifndef ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE
++#define WindowShouldClose ::arpg::platform::raylib_lifecycle_poison::blocked
++#endif
+diff --git a/tests/dungeon/evidence_source_scan.cmake b/tests/dungeon/evidence_source_scan.cmake
+index e91d893..c476e4c 100644
+--- a/tests/dungeon/evidence_source_scan.cmake
++++ b/tests/dungeon/evidence_source_scan.cmake
+@@ -662,60 +662,263 @@ function(evidence_cpp_normalize_token_whitespace source output)
+             "(" ")" "{" "}" "[" "]" "," ":" "&" "*" "<" ">" "=" "!")
+         string(REPLACE " ${punctuation}" "${punctuation}"
+             normalized "${normalized}")
+         string(REPLACE "${punctuation} " "${punctuation}"
+             normalized "${normalized}")
+     endforeach()
+     string(STRIP "${normalized}" normalized)
+     set(${output} "${normalized}" PARENT_SCOPE)
+ endfunction()
+ 
++function(evidence_count_literal_occurrences source literal output)
++    string(LENGTH "${literal}" literal_length)
++    if(literal_length EQUAL 0)
++        set(${output} 0 PARENT_SCOPE)
++        return()
++    endif()
++    string(LENGTH "${source}" source_length)
++    string(REPLACE "${literal}" "" without_literal "${source}")
++    string(LENGTH "${without_literal}" without_literal_length)
++    math(EXPR occurrence_count
++        "(${source_length} - ${without_literal_length}) / ${literal_length}")
++    set(${output} ${occurrence_count} PARENT_SCOPE)
++endfunction()
++
++function(evidence_cpp_brace_depth_at source position output)
++    if(position LESS_EQUAL 0)
++        set(${output} 0 PARENT_SCOPE)
++        return()
++    endif()
++    string(SUBSTRING "${source}" 0 ${position} prefix)
++    string(REGEX REPLACE "[^{}]" "" braces "${prefix}")
++    string(LENGTH "${braces}" brace_length)
++    set(depth 0)
++    if(brace_length GREATER 0)
++        math(EXPR brace_last "${brace_length} - 1")
++        foreach(brace_index RANGE 0 ${brace_last})
++            string(SUBSTRING "${braces}" ${brace_index} 1 brace)
++            if(brace STREQUAL "{")
++                math(EXPR depth "${depth} + 1")
++            else()
++                math(EXPR depth "${depth} - 1")
++            endif()
++        endforeach()
++    endif()
++    set(${output} ${depth} PARENT_SCOPE)
++endfunction()
++
++function(evidence_cpp_mask_preprocessor_directives_in_sanitized
++        source output)
++    string(LENGTH "${source}" source_length)
++    set(scan 0)
++    set(masked "")
++    while(scan LESS source_length)
++        string(SUBSTRING "${source}" ${scan} -1 tail)
++        string(FIND "${tail}" "\n" newline_position)
++        if(newline_position EQUAL -1)
++            set(line "${tail}")
++            set(line_length -1)
++        else()
++            math(EXPR line_length "${newline_position} + 1")
++            string(SUBSTRING "${tail}" 0 ${line_length} line)
++        endif()
++        if(line MATCHES "^[ \t]*(#|%:)")
++            string(REGEX REPLACE "[^\r\n]" " " line "${line}")
++        endif()
++        string(APPEND masked "${line}")
++        if(newline_position EQUAL -1)
++            break()
++        endif()
++        math(EXPR scan "${scan} + ${line_length}")
++    endwhile()
++    set(${output} "${masked}" PARENT_SCOPE)
++endfunction()
++
++function(evidence_cpp_contains_forbidden_renderer_macro source output)
++    set(${output} FALSE PARENT_SCOPE)
++    string(REGEX MATCHALL
++        "(^|\n)[ \t]*(#|%:)[ \t]*define[^\r\n]*"
++        macro_definitions "${source}")
++    foreach(macro_definition IN LISTS macro_definitions)
++        string(REGEX REPLACE
++            "^[\r\n \t]*(#|%:)[ \t]*define[ \t]+[A-Za-z_][A-Za-z0-9_]*([ \t]*\\([^\r\n)]*\\))?[ \t]*"
++            "" replacement "${macro_definition}")
++        set(formed_replacement "${replacement}")
++        string(REPLACE "##" "" formed_replacement
++            "${formed_replacement}")
++        string(REPLACE "%:%:" "" formed_replacement
++            "${formed_replacement}")
++        string(REGEX REPLACE "[ \t\r\n]" "" formed_replacement
++            "${formed_replacement}")
++        if(formed_replacement MATCHES
++                "(^|[^A-Za-z0-9_])(CombatRenderer|renderer_storage)([^A-Za-z0-9_]|$)"
++                OR formed_replacement MATCHES
++                "(^|[^A-Za-z0-9_])make_unique<CombatRenderer>([^A-Za-z0-9_]|$)")
++            set(${output} TRUE PARENT_SCOPE)
++            return()
++        endif()
++    endforeach()
++endfunction()
++
++# The renderer must be constructed only after the fixed-step owner exists, in
++# the direct try body. Exact identifier totals make alternate new/reset/direct
++# construction paths fail closed without guessing at every C++ spelling.
++function(evidence_renderer_allocation_boundary_is_valid source output)
++    set(${output} FALSE PARENT_SCOPE)
++    string(REGEX REPLACE "[ \t\r\n]+" "" compact "${source}")
++
++    set(owner "std::unique_ptr<CombatRenderer>renderer_storage;")
++    set(fixed_step "core::FixedStepRunnerfixed_step;")
++    set(allocation
++        "renderer_storage=std::make_unique<CombatRenderer>();")
++    set(renderer_reference
++        "CombatRenderer&renderer=*renderer_storage;")
++    set(allocation_anchor
++        "${fixed_step}${allocation}${renderer_reference}")
++    set(window_owner "HostWindowLifetimewindow{raylib_host_window_backend()};")
++    set(window_initialize "window.initialize(config,committed_settings)")
++    set(try_token "try{")
++    set(standard_catch "catch(conststd::exception&exception){")
++    set(unknown_catch "catch(...){")
++
++    foreach(unique_token IN ITEMS
++            "${owner}" "${fixed_step}" "${allocation}"
++            "${renderer_reference}" "${allocation_anchor}"
++            "${window_owner}" "${window_initialize}" "${try_token}"
++            "${standard_catch}" "${unknown_catch}")
++        evidence_count_literal_occurrences(
++            "${compact}" "${unique_token}" token_count)
++        if(NOT token_count EQUAL 1)
++            return()
++        endif()
++    endforeach()
++
++    evidence_count_cpp_identifier("${source}" CombatRenderer
++        combat_renderer_count)
++    evidence_count_cpp_identifier("${source}" renderer_storage
++        renderer_storage_count)
++    if(NOT combat_renderer_count EQUAL 3
++            OR NOT renderer_storage_count EQUAL 7)
++        return()
++    endif()
++
++    string(FIND "${compact}" "${window_owner}" window_owner_position)
++    string(FIND "${compact}" "${owner}" owner_position)
++    string(FIND "${compact}" "${try_token}" try_position)
++    string(FIND "${compact}" "${window_initialize}"
++        window_initialize_position)
++    string(FIND "${compact}" "${fixed_step}" fixed_step_position)
++    string(FIND "${compact}" "${allocation}" allocation_position)
++    string(FIND "${compact}" "${renderer_reference}"
++        renderer_reference_position)
++    string(FIND "${compact}" "${standard_catch}" standard_catch_position)
++    string(FIND "${compact}" "${unknown_catch}" unknown_catch_position)
++    if(NOT window_owner_position LESS owner_position
++            OR NOT owner_position LESS try_position
++            OR NOT try_position LESS window_initialize_position
++            OR NOT window_initialize_position LESS fixed_step_position
++            OR NOT fixed_step_position LESS allocation_position
++            OR NOT allocation_position LESS renderer_reference_position
++            OR NOT renderer_reference_position LESS standard_catch_position
++            OR NOT standard_catch_position LESS unknown_catch_position)
++        return()
++    endif()
++
++    evidence_cpp_brace_depth_at("${compact}" ${owner_position} owner_depth)
++    evidence_cpp_brace_depth_at("${compact}" ${try_position} try_depth)
++    evidence_cpp_brace_depth_at("${compact}" ${window_initialize_position}
++        window_initialize_depth)
++    evidence_cpp_brace_depth_at("${compact}" ${fixed_step_position}
++        fixed_step_depth)
++    evidence_cpp_brace_depth_at("${compact}" ${allocation_position}
++        allocation_depth)
++    evidence_cpp_brace_depth_at("${compact}" ${renderer_reference_position}
++        renderer_reference_depth)
++    evidence_cpp_brace_depth_at("${compact}" ${standard_catch_position}
++        standard_catch_depth)
++    evidence_cpp_brace_depth_at("${compact}" ${unknown_catch_position}
++        unknown_catch_depth)
++    if(NOT owner_depth EQUAL 1 OR NOT try_depth EQUAL 1
++            OR NOT window_initialize_depth EQUAL 2
++            OR NOT fixed_step_depth EQUAL 2
++            OR NOT allocation_depth EQUAL 2
++            OR NOT renderer_reference_depth EQUAL 2
++            OR NOT standard_catch_depth EQUAL 1
++            OR NOT unknown_catch_depth EQUAL 1)
++        return()
++    endif()
++    set(${output} TRUE PARENT_SCOPE)
++endfunction()
++
+ function(evidence_cpp_prefix_has_exact_namespace_scope_in_sanitized
+         source prefix_end expected_namespace output_valid)
+     set(${output_valid} FALSE PARENT_SCOPE)
+     if(prefix_end LESS_EQUAL 0)
+         return()
+     endif()
+     string(SUBSTRING "${source}" 0 ${prefix_end} prefix_source)
+     string(LENGTH "${prefix_source}" prefix_length)
+     if(prefix_length EQUAL 0)
+         return()
+     endif()
+     math(EXPR prefix_last "${prefix_length} - 1")
+     set(scope_names)
+     foreach(character_index RANGE 0 ${prefix_last})
+         string(SUBSTRING "${prefix_source}" ${character_index} 1 character)
+         if(character STREQUAL "{")
+             string(SUBSTRING "${prefix_source}" 0 ${character_index}
+                 before_open)
+             if(before_open MATCHES
++                    "(^|[^A-Za-z0-9_])inline[ \t\r\n]+namespace[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*[ \t\r\n]*$")
++                list(APPEND scope_names "<inline-namespace>")
++            elseif(before_open MATCHES
+                     "(^|[^A-Za-z0-9_])namespace[ \t\r\n]+([A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*)[ \t\r\n]*$")
+                 list(APPEND scope_names "${CMAKE_MATCH_2}")
+             elseif(before_open MATCHES
+                     "(^|[^A-Za-z0-9_])namespace[ \t\r\n]*$")
+                 list(APPEND scope_names "<anonymous>")
+             else()
+                 list(APPEND scope_names "<non-namespace>")
+             endif()
+         elseif(character STREQUAL "}")
+             list(LENGTH scope_names scope_depth)
+             if(scope_depth EQUAL 0)
+                 return()
+             endif()
+             list(POP_BACK scope_names)
+         endif()
+     endforeach()
+     list(LENGTH scope_names scope_depth)
+-    if(NOT scope_depth EQUAL 1)
++    if(expected_namespace STREQUAL "<anonymous>")
++        if(scope_depth EQUAL 1)
++            list(GET scope_names 0 actual_namespace)
++            if(actual_namespace STREQUAL "<anonymous>")
++                set(${output_valid} TRUE PARENT_SCOPE)
++            endif()
++        endif()
+         return()
+     endif()
+-    list(GET scope_names 0 actual_namespace)
++    set(actual_namespace_components)
++    foreach(scope_name IN LISTS scope_names)
++        if(scope_name MATCHES "^<")
++            return()
++        endif()
++        string(REPLACE "::" ";" frame_components "${scope_name}")
++        foreach(frame_component IN LISTS frame_components)
++            if(NOT frame_component MATCHES
++                    "^[A-Za-z_][A-Za-z0-9_]*$")
++                return()
++            endif()
++            list(APPEND actual_namespace_components "${frame_component}")
++        endforeach()
++    endforeach()
++    list(JOIN actual_namespace_components "::" actual_namespace)
+     if(NOT actual_namespace STREQUAL expected_namespace)
+         return()
+     endif()
+     set(${output_valid} TRUE PARENT_SCOPE)
+ endfunction()
+ 
+ function(evidence_try_find_unique_cpp_function_in_namespace_in_sanitized
+         source signature expected_namespace output_begin output_open
+         output_end output_valid)
+     set(${output_begin} -1 PARENT_SCOPE)
+@@ -755,100 +958,113 @@ function(evidence_try_find_unique_cpp_function_in_namespace_in_sanitized
+     endwhile()
+     if(NOT matching_definition_count EQUAL 1)
+         return()
+     endif()
+     set(${output_begin} ${matching_begin} PARENT_SCOPE)
+     set(${output_open} ${matching_open} PARENT_SCOPE)
+     set(${output_end} ${matching_end} PARENT_SCOPE)
+     set(${output_valid} TRUE PARENT_SCOPE)
+ endfunction()
+ 
+-function(evidence_cpp_surface_may_form_window_lifecycle_identifier
+-        source output)
+-    string(REGEX REPLACE "[ \t\r\n]+" "" compact "${source}")
+-    set(paste_expanded "${compact}")
+-    string(REPLACE "##" "" paste_expanded "${paste_expanded}")
+-    string(REPLACE "%:%:" "" paste_expanded "${paste_expanded}")
+-    foreach(identifier IN ITEMS
+-            SetConfigFlags InitWindow IsWindowReady CloseWindow)
+-        string(LENGTH "${compact}" compact_length)
+-        string(REPLACE "${identifier}" "" compact_without
+-            "${compact}")
+-        string(LENGTH "${compact_without}" compact_without_length)
+-        string(LENGTH "${paste_expanded}" expanded_length)
+-        string(REPLACE "${identifier}" "" expanded_without
+-            "${paste_expanded}")
+-        string(LENGTH "${expanded_without}" expanded_without_length)
+-        string(LENGTH "${identifier}" identifier_length)
+-        math(EXPR compact_count
+-            "(${compact_length} - ${compact_without_length}) / ${identifier_length}")
+-        math(EXPR expanded_count
+-            "(${expanded_length} - ${expanded_without_length}) / ${identifier_length}")
+-        if(expanded_count GREATER compact_count)
+-            set(${output} TRUE PARENT_SCOPE)
+-            return()
+-        endif()
+-    endforeach()
+-    string(REGEX MATCHALL
+-        "\\([A-Za-z_][A-Za-z0-9_]*(,[A-Za-z_][A-Za-z0-9_]*)+\\)"
+-        identifier_argument_lists "${compact}")
+-    foreach(identifier_argument_list IN LISTS identifier_argument_lists)
+-        string(REGEX REPLACE "[(),]" "" concatenated_identifier
+-            "${identifier_argument_list}")
+-        if(concatenated_identifier STREQUAL SetConfigFlags
+-                OR concatenated_identifier STREQUAL InitWindow
+-                OR concatenated_identifier STREQUAL IsWindowReady
+-                OR concatenated_identifier STREQUAL CloseWindow)
+-            set(${output} TRUE PARENT_SCOPE)
+-            return()
+-        endif()
+-    endforeach()
+-    set(${output} FALSE PARENT_SCOPE)
+-endfunction()
+-
+ function(evidence_window_lifecycle_source_surface_is_valid
+         active_surface lexical_surface source_role output)
+-    foreach(surface IN ITEMS "${active_surface}" "${lexical_surface}")
+-        evidence_cpp_surface_may_form_window_lifecycle_identifier(
+-            "${surface}" lifecycle_identifier_may_be_formed)
+-        if(lifecycle_identifier_may_be_formed)
+-            set(${output} FALSE PARENT_SCOPE)
+-            return()
+-        endif()
+-    endforeach()
+     set(expected_SetConfigFlags 0)
+     set(expected_InitWindow 0)
+     set(expected_IsWindowReady 0)
+     set(expected_CloseWindow 0)
++    set(expected_WindowShouldClose 0)
++    set(expected_lexical_SetConfigFlags 0)
++    set(expected_lexical_InitWindow 0)
++    set(expected_lexical_IsWindowReady 0)
++    set(expected_lexical_CloseWindow 0)
++    set(expected_lexical_WindowShouldClose 0)
++    set(expected_define_count 0)
++    set(expected_undef_count 0)
+     if(source_role STREQUAL owner)
+-        set(expected_SetConfigFlags 1)
+-        set(expected_InitWindow 1)
+-        set(expected_IsWindowReady 1)
+-        set(expected_CloseWindow 1)
++        # The owner has one wrapper use plus two unconditional #undef seams:
++        # one before raylib.h protects its declarations from project macros,
++        # and one after raylib.h protects the wrappers from raylib macros.
++        set(expected_SetConfigFlags 3)
++        set(expected_InitWindow 3)
++        set(expected_IsWindowReady 3)
++        set(expected_CloseWindow 3)
++        set(expected_lexical_SetConfigFlags 3)
++        set(expected_lexical_InitWindow 3)
++        set(expected_lexical_IsWindowReady 3)
++        set(expected_lexical_CloseWindow 3)
++        set(expected_undef_count 8)
++    elseif(source_role STREQUAL policy)
++        set(expected_lexical_SetConfigFlags 1)
++        set(expected_lexical_InitWindow 1)
++        set(expected_lexical_IsWindowReady 1)
++        set(expected_lexical_CloseWindow 1)
++        set(expected_lexical_WindowShouldClose 1)
++        set(expected_define_count 5)
+     elseif(source_role MATCHES "^ready-([0-9]+)$")
+         set(expected_IsWindowReady "${CMAKE_MATCH_1}")
++        set(expected_lexical_IsWindowReady "${CMAKE_MATCH_1}")
++    elseif(source_role STREQUAL should-close-1)
++        set(expected_WindowShouldClose 1)
++        set(expected_lexical_WindowShouldClose 1)
+     elseif(NOT source_role STREQUAL none)
+         set(${output} FALSE PARENT_SCOPE)
+         return()
+     endif()
+     foreach(lifecycle_identifier IN ITEMS
+-            SetConfigFlags InitWindow IsWindowReady CloseWindow)
++            SetConfigFlags InitWindow IsWindowReady CloseWindow
++            WindowShouldClose)
+         set(expected_count "${expected_${lifecycle_identifier}}")
+-        foreach(surface IN ITEMS "${active_surface}" "${lexical_surface}")
+-            evidence_count_cpp_identifier(
+-                "${surface}" "${lifecycle_identifier}" actual_count)
+-            if(NOT actual_count EQUAL expected_count)
+-                set(${output} FALSE PARENT_SCOPE)
+-                return()
+-            endif()
+-        endforeach()
++        evidence_count_cpp_identifier(
++            "${active_surface}" "${lifecycle_identifier}" actual_count)
++        if(NOT actual_count EQUAL expected_count)
++            set(${output} FALSE PARENT_SCOPE)
++            return()
++        endif()
++        set(expected_lexical_count
++            "${expected_lexical_${lifecycle_identifier}}")
++        evidence_count_cpp_identifier(
++            "${lexical_surface}" "${lifecycle_identifier}"
++            actual_lexical_count)
++        if(NOT actual_lexical_count EQUAL expected_lexical_count)
++            set(${output} FALSE PARENT_SCOPE)
++            return()
++        endif()
+     endforeach()
++
++    set(actual_define_count 0)
++    set(actual_undef_count 0)
++    foreach(lifecycle_identifier IN ITEMS
++            SetConfigFlags InitWindow IsWindowReady CloseWindow
++            WindowShouldClose)
++        string(REGEX MATCHALL
++            "(^|\n)[ \t]*(#|%:)[ \t]*define[ \t]+${lifecycle_identifier}([^A-Za-z0-9_]|$)"
++            identifier_defines "${lexical_surface}")
++        list(LENGTH identifier_defines identifier_define_count)
++        math(EXPR actual_define_count
++            "${actual_define_count} + ${identifier_define_count}")
++        string(REGEX MATCHALL
++            "(^|\n)[ \t]*(#|%:)[ \t]*undef[ \t]+${lifecycle_identifier}([^A-Za-z0-9_]|$)"
++            identifier_undefs "${lexical_surface}")
++        list(LENGTH identifier_undefs identifier_undef_count)
++        math(EXPR actual_undef_count
++            "${actual_undef_count} + ${identifier_undef_count}")
++        if(lexical_surface MATCHES
++                "(^|\n)[ \t]*(#|%:)[ \t]*pragma[ \t]+(push_macro|pop_macro)[ \t]*\\([ \t]*\"${lifecycle_identifier}\"")
++            set(${output} FALSE PARENT_SCOPE)
++            return()
++        endif()
++    endforeach()
++    if(NOT actual_define_count EQUAL expected_define_count
++            OR NOT actual_undef_count EQUAL expected_undef_count)
++        set(${output} FALSE PARENT_SCOPE)
++        return()
++    endif()
+     set(${output} TRUE PARENT_SCOPE)
+ endfunction()
+ 
+ function(evidence_window_lifecycle_owner_surface_is_valid
+         active_surface lexical_surface is_owner output)
+     if(is_owner)
+         set(source_role owner)
+     else()
+         set(source_role none)
+     endif()
+@@ -864,45 +1080,75 @@ function(evidence_raylib_lifecycle_source_role
+     cmake_path(ABSOLUTE_PATH normalized_root NORMALIZE)
+     file(TO_CMAKE_PATH "${source_path}" normalized_path)
+     cmake_path(ABSOLUTE_PATH normalized_path
+         BASE_DIRECTORY "${normalized_root}" NORMALIZE)
+     file(RELATIVE_PATH repo_relative_path
+         "${normalized_root}" "${normalized_path}")
+     file(TO_CMAKE_PATH "${repo_relative_path}" repo_relative_path)
+     if(repo_relative_path STREQUAL
+             "src/platform/raylib/host_window_lifetime.cpp")
+         set(source_role owner)
++    elseif(repo_relative_path STREQUAL
++            "src/platform/raylib/raylib_lifecycle_poison.hpp")
++        set(source_role policy)
+     elseif(repo_relative_path STREQUAL
+             "src/platform/raylib/combat_renderer.cpp")
+         set(source_role ready-1)
+     elseif(repo_relative_path STREQUAL
+             "src/platform/raylib/death_overlay_renderer.cpp")
+         set(source_role ready-2)
+     elseif(repo_relative_path STREQUAL
+             "src/platform/raylib/hud_renderer.cpp")
+         set(source_role ready-4)
+     elseif(repo_relative_path STREQUAL
+             "src/platform/raylib/pause_menu_renderer.cpp")
+         set(source_role ready-1)
+     elseif(repo_relative_path STREQUAL
+             "src/platform/raylib/window_settings.cpp")
+         set(source_role ready-2)
++    elseif(repo_relative_path STREQUAL
++            "src/platform/raylib/raylib_host.cpp")
++        set(source_role should-close-1)
+     else()
+         set(source_role none)
+     endif()
+     set(${output} "${source_role}" PARENT_SCOPE)
+ endfunction()
+ 
+ function(evidence_window_lifetime_boundary_is_valid
+         host_direct owner_active owner_lexical output)
++    string(REGEX REPLACE "[ \t\r\n]+" "" owner_lexical_compact
++        "${owner_lexical}")
++    set(wrapper_seam
++        "#include\"host_window_lifetime.hpp\"#include\"raylib_host.hpp\"#include\"window_settings.hpp\"#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindow#include<raylib.h>#undefSetConfigFlags#undefInitWindow#undefIsWindowReady#undefCloseWindownamespace{voidset_config_flags_noexcept(unsignedintflags)noexcept{SetConfigFlags(flags);}voidinit_window_noexcept(intwidth,intheight,constchar*title)noexcept{InitWindow(width,height,title);}boolis_window_ready_noexcept()noexcept{returnIsWindowReady();}voidclose_window_noexcept()noexcept{CloseWindow();}}")
++    string(FIND "${owner_lexical_compact}" "${wrapper_seam}"
++        wrapper_seam_position)
++    evidence_count_literal_occurrences("${owner_lexical_compact}"
++        "#include<raylib.h>" raylib_include_count)
++    foreach(lifecycle_identifier IN ITEMS
++            SetConfigFlags InitWindow IsWindowReady CloseWindow)
++        evidence_count_literal_occurrences("${owner_lexical_compact}"
++            "#undef${lifecycle_identifier}" undef_count)
++        if(NOT undef_count EQUAL 2)
++            set(${output} FALSE PARENT_SCOPE)
++            return()
++        endif()
++    endforeach()
++    if(NOT wrapper_seam_position EQUAL 0 OR NOT raylib_include_count EQUAL 1)
++        set(${output} FALSE PARENT_SCOPE)
++        return()
++    endif()
++
++    evidence_cpp_mask_preprocessor_directives_in_sanitized(
++        "${owner_active}" owner_scope_surface)
+     evidence_cpp_normalize_token_whitespace(
+-        "${owner_active}" owner_token_surface)
++        "${owner_scope_surface}" owner_token_surface)
+     evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(
+         "${owner_token_surface}" "bool HostWindowLifetime::initialize("
+         "arpg::platform"
+         initialize_begin initialize_open initialize_end initialize_valid)
+     if(NOT initialize_valid)
+         set(${output} FALSE PARENT_SCOPE)
+         return()
+     endif()
+     math(EXPR initialize_length
+         "${initialize_end} - ${initialize_begin} + 1")
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 645077c..88d6bb8 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1618,20 +1618,225 @@ function(arpg_verify_direct_input_poison)
+         " "${_arpg_poison_result}")
+         if(${_arpg_poison_result})
+             message(FATAL_ERROR
+                 "direct input poison compile probe unexpectedly accepted ${_arpg_poison_label}")
+         endif()
+     endforeach()
+ endfunction()
+ 
+ arpg_verify_direct_input_poison()
+ 
++function(arpg_try_compile_lifecycle_poison LABEL SOURCE OUT_RESULT OUT_OUTPUT)
++    set(_arpg_lifecycle_probe_includes "${raylib_SOURCE_DIR}/src")
++    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
++    try_compile(_arpg_lifecycle_probe_result
++        SOURCE_FROM_CONTENT "${LABEL}.cpp" "${SOURCE}"
++        CMAKE_FLAGS
++            "-DINCLUDE_DIRECTORIES:STRING=${_arpg_lifecycle_probe_includes}"
++        CXX_STANDARD 17
++        CXX_STANDARD_REQUIRED ON
++        CXX_EXTENSIONS OFF
++        OUTPUT_VARIABLE _arpg_lifecycle_probe_output
++        NO_CACHE)
++    set(${OUT_RESULT} ${_arpg_lifecycle_probe_result} PARENT_SCOPE)
++    set(${OUT_OUTPUT} "${_arpg_lifecycle_probe_output}" PARENT_SCOPE)
++endfunction()
++
++function(arpg_expect_lifecycle_poison_compiles LABEL SOURCE)
++    arpg_try_compile_lifecycle_poison(
++        "${LABEL}" "${SOURCE}" _arpg_result _arpg_output)
++    if(NOT _arpg_result)
++        message(FATAL_ERROR
++            "lifecycle poison probe ${LABEL} must compile:\n${_arpg_output}")
++    endif()
++endfunction()
++
++function(arpg_expect_lifecycle_poison_rejects LABEL CONTROL_SOURCE POISON_SOURCE)
++    arpg_try_compile_lifecycle_poison(
++        "${LABEL}_control" "${CONTROL_SOURCE}"
++        _arpg_control_result _arpg_control_output)
++    if(NOT _arpg_control_result)
++        message(FATAL_ERROR
++            "lifecycle poison control ${LABEL} must compile before poisoning:\n${_arpg_control_output}")
++    endif()
++
++    arpg_try_compile_lifecycle_poison(
++        "${LABEL}_poison" "${POISON_SOURCE}"
++        _arpg_poison_result _arpg_poison_output)
++    if(_arpg_poison_result)
++        message(FATAL_ERROR
++            "lifecycle poison unexpectedly accepted ${LABEL}")
++    endif()
++    if(NOT _arpg_poison_output MATCHES "Blocked")
++        message(FATAL_ERROR
++            "lifecycle poison ${LABEL} failed without a Blocked diagnostic:\n${_arpg_poison_output}")
++    endif()
++endfunction()
++
++function(arpg_verify_lifecycle_poison)
++    file(TO_CMAKE_PATH
++        "${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_lifecycle_poison.hpp"
++        _arpg_lifecycle_policy)
++    file(TO_CMAKE_PATH
++        "${CMAKE_CURRENT_SOURCE_DIR}/raylib_lifecycle_poison_alias.inc"
++        _arpg_lifecycle_alias_include)
++    set(_arpg_raylib_control "#include <raylib.h>\n")
++    set(_arpg_policy_include
++        "#include \"${_arpg_lifecycle_policy}\"\n")
++
++    set(_arpg_active_sentinel [=[
++        static_assert(
++            ::arpg::platform::raylib_lifecycle_poison::active,
++            "lifecycle poison must be active");
++        int probe() { return 0; }
++    ]=])
++    arpg_expect_lifecycle_poison_compiles(active_sentinel
++        "${_arpg_policy_include}${_arpg_active_sentinel}")
++
++    set(_arpg_direct_call [=[
++        int probe() {
++            InitWindow(1, 1, "probe");
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_rejects(direct_call
++        "${_arpg_raylib_control}${_arpg_direct_call}"
++        "${_arpg_policy_include}${_arpg_direct_call}")
++
++    set(_arpg_parenthesized_call [=[
++        int probe() {
++            (InitWindow)(1, 1, "probe");
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_rejects(parenthesized_call
++        "${_arpg_raylib_control}${_arpg_parenthesized_call}"
++        "${_arpg_policy_include}${_arpg_parenthesized_call}")
++
++    set(_arpg_address [=[
++        int probe() {
++            static_cast<void>(&InitWindow);
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_rejects(address
++        "${_arpg_raylib_control}${_arpg_address}"
++        "${_arpg_policy_include}${_arpg_address}")
++
++    set(_arpg_cat [=[
++        #define ARPG_CAT_I(a, b) a ## b
++        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
++        int probe() {
++            ARPG_CAT(Init, Window)(1, 1, "probe");
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_rejects(cat_init_window
++        "${_arpg_raylib_control}${_arpg_cat}"
++        "${_arpg_policy_include}${_arpg_cat}")
++
++    set(_arpg_cat3 [=[
++        #define ARPG_CAT3_I(a, b, c) a ## b ## c
++        #define ARPG_CAT3(a, b, c) ARPG_CAT3_I(a, b, c)
++        int probe() {
++            ARPG_CAT3(Init, Window,)(1, 1, "probe");
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_rejects(cat3_init_window
++        "${_arpg_raylib_control}${_arpg_cat3}"
++        "${_arpg_policy_include}${_arpg_cat3}")
++
++    set(_arpg_alias_forward [=[
++        #define ARPG_LIFECYCLE_ALIAS InitWindow
++        #define ARPG_LIFECYCLE_FORWARD(name) name
++        int probe() {
++            ARPG_LIFECYCLE_FORWARD(ARPG_LIFECYCLE_ALIAS)(1, 1, "probe");
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_rejects(alias_forward
++        "${_arpg_raylib_control}${_arpg_alias_forward}"
++        "${_arpg_policy_include}${_arpg_alias_forward}")
++
++    set(_arpg_include_alias [=[
++        int probe() {
++            ARPG_LIFECYCLE_INCLUDE_ALIAS(1, 1, "probe");
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_rejects(include_alias
++        "${_arpg_raylib_control}#include \"${_arpg_lifecycle_alias_include}\"\n${_arpg_include_alias}"
++        "${_arpg_policy_include}#include \"${_arpg_lifecycle_alias_include}\"\n${_arpg_include_alias}")
++
++    set(_arpg_harmless_embedded_paste [=[
++        #define ARPG_CAT_I(a, b) a ## b
++        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
++        int ARPG_CAT(PreInit, WindowSuffix) = 0;
++        int probe() { return PreInitWindowSuffix; }
++    ]=])
++    arpg_expect_lifecycle_poison_compiles(harmless_embedded_paste
++        "${_arpg_policy_include}${_arpg_harmless_embedded_paste}")
++    set(_arpg_harmless_suffix_paste [=[
++        #define ARPG_CAT_I(a, b) a ## b
++        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
++        int ARPG_CAT(InitSuffix, Window) = 0;
++        int probe() { return InitSuffixWindow; }
++    ]=])
++    arpg_expect_lifecycle_poison_compiles(harmless_suffix_paste
++        "${_arpg_policy_include}${_arpg_harmless_suffix_paste}")
++    set(_arpg_harmless_unrelated_paste [=[
++        #define ARPG_CAT_I(a, b) a ## b
++        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
++        int ARPG_CAT(alpha, beta) = 0;
++        int probe() { return alphabeta; }
++    ]=])
++    arpg_expect_lifecycle_poison_compiles(harmless_unrelated_paste
++        "${_arpg_policy_include}${_arpg_harmless_unrelated_paste}")
++
++    set(_arpg_owner_allow_set [=[
++        #define ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS
++        #define ARPG_ALLOW_RAYLIB_INIT_WINDOW
++        #define ARPG_ALLOW_RAYLIB_IS_WINDOW_READY
++        #define ARPG_ALLOW_RAYLIB_CLOSE_WINDOW
++    ]=])
++    string(APPEND _arpg_owner_allow_set "${_arpg_policy_include}")
++    string(APPEND _arpg_owner_allow_set [=[
++         int probe() {
++            SetConfigFlags(0);
++            InitWindow(1, 1, "probe");
++            static_cast<void>(IsWindowReady());
++            CloseWindow();
++            return 0;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_compiles(owner_allow_set
++        "${_arpg_owner_allow_set}")
++
++    set(_arpg_ready_only_allow [=[
++        #define ARPG_ALLOW_RAYLIB_IS_WINDOW_READY
++    ]=])
++    string(APPEND _arpg_ready_only_allow "${_arpg_policy_include}")
++    string(APPEND _arpg_ready_only_allow [=[
++        int probe() {
++            return IsWindowReady() ? 0 : 1;
++        }
++    ]=])
++    arpg_expect_lifecycle_poison_compiles(ready_only_allow
++        "${_arpg_ready_only_allow}")
++    arpg_expect_lifecycle_poison_rejects(ready_only_rejects_init
++        "${_arpg_raylib_control}int probe() { InitWindow(1, 1, \"probe\"); return 0; }"
++        "#define ARPG_ALLOW_RAYLIB_IS_WINDOW_READY\n${_arpg_policy_include}int probe() { InitWindow(1, 1, \"probe\"); return 0; }")
++endfunction()
++
++arpg_verify_lifecycle_poison()
++
+ add_test(
+     NAME platform.host_input_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/host_input_source_test.cmake")
+ set_tests_properties(
+     platform.host_input_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
+ add_test(
+diff --git a/tests/platform/host_input_source_test.cmake b/tests/platform/host_input_source_test.cmake
+index 31976d0..bb8bb14 100644
+--- a/tests/platform/host_input_source_test.cmake
++++ b/tests/platform/host_input_source_test.cmake
+@@ -607,22 +607,26 @@ string(FIND "${DIRECT_HOST_ENTRY_SOURCE}" "try {" HOST_TRY_INDEX)
+ evidence_window_lifetime_boundary_is_valid(
+     "${DIRECT_HOST_ENTRY_SOURCE}"
+     "${ACTIVE_SANITIZED_HOST_WINDOW_LIFETIME_SOURCE}"
+     "${SANITIZED_HOST_WINDOW_LIFETIME_SOURCE}"
+     WINDOW_LIFETIME_BOUNDARY_VALID)
+ if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
+     message(FATAL_ERROR
+         "Host must delegate the ordered window initialization boundary exactly once")
+ endif()
+ file(GLOB_RECURSE RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
++    "${RAYLIB_SOURCE_DIR}/*.h"
+     "${RAYLIB_SOURCE_DIR}/*.cpp"
+-    "${RAYLIB_SOURCE_DIR}/*.hpp")
++    "${RAYLIB_SOURCE_DIR}/*.hpp"
++    "${RAYLIB_SOURCE_DIR}/*.inc"
++    "${RAYLIB_SOURCE_DIR}/*.inl"
++    "${RAYLIB_SOURCE_DIR}/*.ipp")
+ get_filename_component(RAYLIB_REPO_ROOT
+     "${RAYLIB_SOURCE_DIR}/../../.." ABSOLUTE)
+ foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
+     file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
+     arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
+         RAYLIB_PRODUCTION_LEXICAL)
+     mask_cpp_inactive_preprocessor_regions(
+         "${RAYLIB_PRODUCTION_LEXICAL}" RAYLIB_PRODUCTION_ACTIVE)
+     evidence_raylib_lifecycle_source_role(
+         "${RAYLIB_PRODUCTION_SOURCE}" "${RAYLIB_REPO_ROOT}"
+diff --git a/tests/platform/host_validation_sequence_guard_self_test.cmake b/tests/platform/host_validation_sequence_guard_self_test.cmake
+index fd3ea62..d046896 100644
+--- a/tests/platform/host_validation_sequence_guard_self_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_self_test.cmake
+@@ -1,49 +1,104 @@
+ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
+ endif()
+ 
+ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+ 
+ set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
+ file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
+ 
+ if(DEFINED TASK9_REVIEW_MUTATION
+-        AND TASK9_REVIEW_MUTATION STREQUAL moved_renderer_allocation_earlier)
++        AND (TASK9_REVIEW_MUTATION STREQUAL renderer_macro_include
++            OR TASK9_REVIEW_MUTATION STREQUAL renderer_macro_paste_include))
++    file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
++        _task9_renderer_macro_host)
++    string(PREPEND _task9_renderer_macro_host
++        "#include \"task9_early.inc\"\n")
++    set(_task9_renderer_macro_host_path
++        "${GUARD_TEST_ROOT}/task9-renderer-macro-host.cpp")
++    set(_task9_renderer_macro_include_path
++        "${GUARD_TEST_ROOT}/task9_early.inc")
++    file(WRITE "${_task9_renderer_macro_host_path}"
++        "${_task9_renderer_macro_host}")
++    if(TASK9_REVIEW_MUTATION STREQUAL renderer_macro_include)
++        set(_task9_renderer_macro_definition
++            "#define TASK9_EARLY() renderer_storage.reset(new CombatRenderer{})\n")
++    else()
++        set(_task9_renderer_macro_definition
++            "#define TASK9_EARLY() renderer ## _storage.reset(new Combat ## Renderer{})\n")
++    endif()
++    file(WRITE "${_task9_renderer_macro_include_path}"
++        "${_task9_renderer_macro_definition}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++            "-DHOST_OVERRIDE=${_task9_renderer_macro_host_path}"
++            "-DTASK9_RAYLIB_CODELIKE_OVERRIDE=${_task9_renderer_macro_include_path}"
++            -P "${_guard}"
++        RESULT_VARIABLE _task9_renderer_macro_result
++        OUTPUT_VARIABLE _task9_renderer_macro_stdout
++        ERROR_VARIABLE _task9_renderer_macro_stderr)
++    if(_task9_renderer_macro_result EQUAL 0)
++        message(FATAL_ERROR
++            "Host validation sequence guard accepted Task 9 ${TASK9_REVIEW_MUTATION}")
++    endif()
++    if(NOT "${_task9_renderer_macro_stdout}${_task9_renderer_macro_stderr}"
++            MATCHES "Task 9 raylib renderer macro definition is forbidden")
++        message(FATAL_ERROR
++            "Task 9 renderer macro include failed for wrong reason: ${_task9_renderer_macro_stdout}${_task9_renderer_macro_stderr}")
++    endif()
++    message(STATUS
++        "Task 9 renderer macro include mutation was rejected for the intended reason")
++    return()
++endif()
++
++if(DEFINED TASK9_REVIEW_MUTATION
++        AND (TASK9_REVIEW_MUTATION STREQUAL moved_renderer_allocation_earlier
++            OR TASK9_REVIEW_MUTATION STREQUAL early_reset_dead_anchor))
+     file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+         _task9_review_host)
+     set(_task9_review_original "${_task9_review_host}")
+     set(_task9_allocation_anchor [=[        core::FixedStepRunner fixed_step;
+         renderer_storage = std::make_unique<CombatRenderer>();
+         CombatRenderer& renderer = *renderer_storage;]=])
+-    set(_task9_allocation_moved [=[        renderer_storage = std::make_unique<CombatRenderer>();
++    if(TASK9_REVIEW_MUTATION STREQUAL moved_renderer_allocation_earlier)
++        set(_task9_allocation_moved [=[        renderer_storage = std::make_unique<CombatRenderer>();
+         core::FixedStepRunner fixed_step;
+         CombatRenderer& renderer = *renderer_storage;]=])
++    else()
++        set(_task9_allocation_moved [=[        renderer_storage.reset(new CombatRenderer{});
++        if constexpr (sizeof(int) == 0) {
++            core::FixedStepRunner fixed_step;
++            renderer_storage = std::make_unique<CombatRenderer>();
++            CombatRenderer& renderer = *renderer_storage;
++        }
++        CombatRenderer& renderer = *renderer_storage;]=])
++    endif()
+     string(REPLACE "${_task9_allocation_anchor}"
+         "${_task9_allocation_moved}" _task9_review_host
+         "${_task9_review_host}")
+     if(_task9_review_host STREQUAL _task9_review_original)
+         message(FATAL_ERROR
+             "Task 9 renderer allocation review mutation anchor is missing")
+     endif()
+     set(_task9_review_path
+-        "${GUARD_TEST_ROOT}/task9-moved-renderer-allocation-earlier.cpp")
++        "${GUARD_TEST_ROOT}/task9-${TASK9_REVIEW_MUTATION}.cpp")
+     file(WRITE "${_task9_review_path}" "${_task9_review_host}")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+             "-DHOST_OVERRIDE=${_task9_review_path}" -P "${_guard}"
+         RESULT_VARIABLE _task9_review_result
+         OUTPUT_VARIABLE _task9_review_stdout
+         ERROR_VARIABLE _task9_review_stderr)
+     if(_task9_review_result EQUAL 0)
+         message(FATAL_ERROR
+-            "Host validation sequence guard accepted Task 9 moved renderer allocation")
++            "Host validation sequence guard accepted Task 9 ${TASK9_REVIEW_MUTATION}")
+     endif()
+     if(NOT "${_task9_review_stdout}${_task9_review_stderr}" MATCHES
+             "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid")
+         message(FATAL_ERROR
+             "Task 9 moved renderer allocation failed for wrong reason: ${_task9_review_stdout}${_task9_review_stderr}")
+     endif()
+     return()
+ endif()
+ 
+ set(_sequence_cmake_mutation "${GUARD_TEST_ROOT}/sequence-cmake-comment-decoy.cmake")
+@@ -577,20 +632,31 @@ function(arpg_expect_task9_host_cleanup_rejection NAME MUTATION)
+     try {
+         std::unique_ptr<CombatRenderer> renderer_storage;
+ ]=])
+     elseif(MUTATION STREQUAL moved_renderer_allocation_earlier)
+         set(_anchor [=[        core::FixedStepRunner fixed_step;
+         renderer_storage = std::make_unique<CombatRenderer>();
+         CombatRenderer& renderer = *renderer_storage;]=])
+         set(_replacement [=[        renderer_storage = std::make_unique<CombatRenderer>();
+         core::FixedStepRunner fixed_step;
+         CombatRenderer& renderer = *renderer_storage;]=])
++    elseif(MUTATION STREQUAL early_reset_dead_anchor)
++        set(_anchor [=[        core::FixedStepRunner fixed_step;
++        renderer_storage = std::make_unique<CombatRenderer>();
++        CombatRenderer& renderer = *renderer_storage;]=])
++        set(_replacement [=[        renderer_storage.reset(new CombatRenderer{});
++        if constexpr (sizeof(int) == 0) {
++            core::FixedStepRunner fixed_step;
++            renderer_storage = std::make_unique<CombatRenderer>();
++            CombatRenderer& renderer = *renderer_storage;
++        }
++        CombatRenderer& renderer = *renderer_storage;]=])
+     else()
+         message(FATAL_ERROR "Unknown Task 9 Host cleanup mutation: ${MUTATION}")
+     endif()
+     string(REPLACE "${_anchor}" "${_replacement}" _mutated "${_mutated}")
+     if(_mutated STREQUAL _original)
+         message(FATAL_ERROR "Task 9 Host cleanup mutation anchor is missing: ${NAME}")
+     endif()
+     set(_mutation_path "${GUARD_TEST_ROOT}/task9-${NAME}.cpp")
+     file(WRITE "${_mutation_path}" "${_mutated}")
+     execute_process(
+@@ -610,20 +676,22 @@ function(arpg_expect_task9_host_cleanup_rejection NAME MUTATION)
+     endif()
+ endfunction()
+ 
+ arpg_expect_task9_host_cleanup_rejection(
+     missing_standard_cleanup missing_standard_cleanup)
+ arpg_expect_task9_host_cleanup_rejection(
+     missing_unknown_cleanup missing_unknown_cleanup)
+ arpg_expect_task9_host_cleanup_rejection(owner_inside_try owner_inside_try)
+ arpg_expect_task9_host_cleanup_rejection(
+     moved_renderer_allocation_earlier moved_renderer_allocation_earlier)
++arpg_expect_task9_host_cleanup_rejection(
++    early_reset_dead_anchor early_reset_dead_anchor)
+ 
+ string(REPLACE
+     "validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"
+     "const auto summary_decoy = [&] {\n            validation_runtime->write_summaries(\n                runtime.clean_shutdown_state(), pause_menu);\n        };"
+     _lambda_summary_host "${_host_source}")
+ if(_lambda_summary_host STREQUAL _host_source)
+     message(FATAL_ERROR "Task 7C lambda summary mutation anchor is missing")
+ endif()
+ set(_lambda_summary "${GUARD_TEST_ROOT}/lambda-summary-decoy.cpp")
+ file(WRITE "${_lambda_summary}" "${_lambda_summary_host}")
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 19b528d..ebf5a54 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -142,20 +142,39 @@ set(_stage17_named_mutation_consumed FALSE)
+ 
+ set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ if(DEFINED HOST_OVERRIDE)
+     set(_host "${HOST_OVERRIDE}")
+ endif()
+ if(NOT EXISTS "${_host}")
+     message(FATAL_ERROR "Host validation sequence target is missing: ${_host}")
+ endif()
+ 
+ file(READ "${_host}" _host_text)
++if(DEFINED TASK9_RAYLIB_CODELIKE_OVERRIDE)
++    if(NOT EXISTS "${TASK9_RAYLIB_CODELIKE_OVERRIDE}"
++            OR NOT TASK9_RAYLIB_CODELIKE_OVERRIDE MATCHES
++            "\\.(cpp|hpp|h|inc|inl|ipp)$")
++        message(FATAL_ERROR
++            "Task 9 raylib renderer macro override must be a code-like file")
++    endif()
++    file(READ "${TASK9_RAYLIB_CODELIKE_OVERRIDE}"
++        _task9_raylib_codelike_text)
++    arpg_sanitize_cpp_source(
++        "${_task9_raylib_codelike_text}" _task9_raylib_codelike_lexical)
++    evidence_cpp_contains_forbidden_renderer_macro(
++        "${_task9_raylib_codelike_lexical}"
++        _task9_forbidden_renderer_macro)
++    if(_task9_forbidden_renderer_macro)
++        message(FATAL_ERROR
++            "Task 9 raylib renderer macro definition is forbidden: ${TASK9_RAYLIB_CODELIKE_OVERRIDE}")
++    endif()
++endif()
+ if(DEFINED STAGE17_SEQUENCE_MUTATION)
+     set(_host_before_mutation "${_host_text}")
+     if(STAGE17_SEQUENCE_MUTATION STREQUAL
+             "loop_top_snapshot_unbraced_dead_branch")
+         string(REPLACE
+             "            }\n            validation_runtime->observe_snapshot(current);"
+             "            }\n            if (false)\n                validation_runtime->observe_snapshot(current);"
+             _host_text "${_host_text}")
+         set(_stage17_named_mutation_consumed TRUE)
+     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
+@@ -2009,40 +2028,45 @@ string(FIND "${_host_runtime}" "${_task9_renderer_allocation}"
+     _task9_renderer_allocation_position)
+ string(FIND "${_host_runtime}" "catch (const std::exception& exception) {"
+     _task9_standard_catch_position)
+ string(FIND "${_host_runtime}" "catch (...) {"
+     _task9_unknown_catch_position)
+ task7b_count_token("${_host_runtime}" "${_task9_renderer_cleanup}"
+     _task9_renderer_cleanup_count)
+ task7b_count_token("${_host_runtime_normalized}"
+     "${_task9_renderer_allocation_anchor}"
+     _task9_renderer_allocation_anchor_count)
++evidence_cpp_direct_execution_surface_in_sanitized(
++    "${_host_runtime}" _task9_host_direct)
++evidence_renderer_allocation_boundary_is_valid(
++    "${_task9_host_direct}" _task9_renderer_allocation_boundary_valid)
+ if(_task9_window_owner_position EQUAL -1
+         OR _task9_renderer_owner_position EQUAL -1
+         OR _task9_try_position EQUAL -1
+         OR _task9_window_initialize_position EQUAL -1
+         OR _task9_renderer_allocation_position EQUAL -1
+         OR _task9_standard_catch_position EQUAL -1
+         OR _task9_unknown_catch_position EQUAL -1
+         OR NOT _task9_renderer_cleanup_count EQUAL 2
+         OR NOT _task9_renderer_allocation_anchor_count EQUAL 1
++        OR NOT _task9_renderer_allocation_boundary_valid
+         OR NOT _task9_window_owner_position LESS _task9_renderer_owner_position
+         OR NOT _task9_renderer_owner_position LESS _task9_try_position
+         OR NOT _task9_try_position LESS _task9_window_initialize_position
+         OR NOT _task9_window_initialize_position LESS
+             _task9_renderer_allocation_position
+         OR NOT _task9_renderer_allocation_position LESS
+             _task9_standard_catch_position
+         OR NOT _task9_standard_catch_position LESS
+             _task9_unknown_catch_position)
+     message(FATAL_ERROR
+-        "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid: window=${_task9_window_owner_position} owner=${_task9_renderer_owner_position} try=${_task9_try_position} init=${_task9_window_initialize_position} allocation=${_task9_renderer_allocation_position} allocation_anchor=${_task9_renderer_allocation_anchor_count} standard=${_task9_standard_catch_position} unknown=${_task9_unknown_catch_position} cleanups=${_task9_renderer_cleanup_count}")
++        "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid: window=${_task9_window_owner_position} owner=${_task9_renderer_owner_position} try=${_task9_try_position} init=${_task9_window_initialize_position} allocation=${_task9_renderer_allocation_position} allocation_anchor=${_task9_renderer_allocation_anchor_count} direct_boundary=${_task9_renderer_allocation_boundary_valid} standard=${_task9_standard_catch_position} unknown=${_task9_unknown_catch_position} cleanups=${_task9_renderer_cleanup_count}")
+ endif()
+ string(SUBSTRING "${_host_runtime}" ${_task9_standard_catch_position}
+     -1 _task9_standard_catch_tail)
+ string(FIND "${_task9_standard_catch_tail}" "${_task9_renderer_cleanup}"
+     _task9_standard_cleanup_relative)
+ string(FIND "${_task9_standard_catch_tail}"
+     "return HostExitCode::save_initialization_failed;"
+     _task9_standard_return_relative)
+ math(EXPR _task9_unknown_catch_relative
+     "${_task9_unknown_catch_position} - ${_task9_standard_catch_position}")
+diff --git a/tests/platform/host_validation_source_test.cmake b/tests/platform/host_validation_source_test.cmake
+index 004168e..a3f48cd 100644
+--- a/tests/platform/host_validation_source_test.cmake
++++ b/tests/platform/host_validation_source_test.cmake
+@@ -16,20 +16,22 @@ set(_host_header_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
+ set(_host_frame_gate
+     "${SOURCE_ROOT}/src/platform/raylib/host_frame_gate.cpp")
+ set(_host_settings_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.hpp")
+ set(_host_settings_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.cpp")
+ set(_host_window_lifetime_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.hpp")
+ set(_host_window_lifetime_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.cpp")
++set(_raylib_lifecycle_policy
++    "${SOURCE_ROOT}/src/platform/raylib/raylib_lifecycle_poison.hpp")
+ 
+ foreach(_target IN ITEMS
+         "${_host_validation_header}"
+         "${_host_validation_state}"
+         "${_host_validation_runtime}")
+     if(NOT EXISTS "${_target}")
+         message(FATAL_ERROR
+             "Host validation runtime target is missing: ${_target}")
+     endif()
+ endforeach()
+@@ -679,20 +681,60 @@ function(host_validation_assert_top_level_registration CMAKE_TEXT SOURCE)
+         message(FATAL_ERROR
+             "Host validation runtime registration is unreachable after return")
+     endif()
+     arpg_cmake_code_line_and_paren_delta("${_prefix}" _paren_depth)
+     if(NOT _paren_depth EQUAL 1)
+         message(FATAL_ERROR
+             "Host validation source registration is not a direct add_library argument")
+     endif()
+ endfunction()
+ 
++set(_task9_lifecycle_force_include_contract [=[
++set(_arpg_raylib_lifecycle_policy
++    "${CMAKE_CURRENT_SOURCE_DIR}/raylib_lifecycle_poison.hpp")
++if(MSVC)
++    target_compile_options(arpg_raylib PRIVATE
++        "/FI${_arpg_raylib_lifecycle_policy}")
++else()
++    target_compile_options(arpg_raylib PRIVATE
++        -include "${_arpg_raylib_lifecycle_policy}")
++endif()
++]=])
++host_validation_require_canonical_count(
++    "Task 9 lifecycle force-include CMake contract"
++    "${_raylib_cmake_text}"
++    "${_task9_lifecycle_force_include_contract}" 1)
++
++set(_task9_lifecycle_allowlist_contract [=[
++set_source_files_properties(host_window_lifetime.cpp PROPERTIES
++    COMPILE_DEFINITIONS
++        "ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS;ARPG_ALLOW_RAYLIB_INIT_WINDOW;ARPG_ALLOW_RAYLIB_IS_WINDOW_READY;ARPG_ALLOW_RAYLIB_CLOSE_WINDOW")
++set_source_files_properties(
++    combat_renderer.cpp
++    death_overlay_renderer.cpp
++    hud_renderer.cpp
++    pause_menu_renderer.cpp
++    window_settings.cpp
++    PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
++set_source_files_properties(raylib_host.cpp PROPERTIES
++    COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE)
++]=])
++host_validation_require_canonical_count(
++    "Task 9 lifecycle exact source allowlist"
++    "${_raylib_cmake_text}"
++    "${_task9_lifecycle_allowlist_contract}" 1)
++
++if(NOT EXISTS "${_raylib_lifecycle_policy}")
++    message(FATAL_ERROR
++        "Task 9 lifecycle poison policy is missing: ${_raylib_lifecycle_policy}")
++endif()
++
+ host_validation_unconditional_cpp_surface(
+     "${_facade_text}" _facade _facade_lexical)
+ host_validation_unconditional_cpp_surface(
+     "${_state_text}" _state _state_lexical)
+ host_validation_unconditional_cpp_surface(
+     "${_runtime_text}" _runtime _runtime_lexical)
+ host_validation_unconditional_cpp_surface(
+     "${_host_header_text}" _host_header _host_header_lexical)
+ arpg_sanitize_cpp_source(
+     "${_host_frame_gate_text}" _host_frame_gate_lexical)
+@@ -2317,20 +2359,60 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+         _task8c_wrapper_ready_false_lexical)
+     evidence_window_lifetime_boundary_is_valid(
+         "${_run_host_direct}"
+         "${_task8c_wrapper_ready_false_active}"
+         "${_task8c_wrapper_ready_false_lexical}"
+         _task8c_wrapper_ready_false_valid)
+     if(_task8c_wrapper_ready_false_valid)
+         list(APPEND _task8c_review_mutation_acceptances wrapper_ready_false)
+     endif()
+ endif()
++if(NOT DEFINED TASK8C_REVIEW_MUTATION
++        OR TASK8C_REVIEW_MUTATION STREQUAL wrapper_external_include)
++    string(REPLACE "namespace {"
++        "#include \"task8c_wrapper_macros.inc\"\n\nnamespace {"
++        _task8c_wrapper_external_include
++        "${_host_window_lifetime_source_text}")
++    host_validation_unconditional_cpp_surface(
++        "${_task8c_wrapper_external_include}"
++        _task8c_wrapper_external_include_active
++        _task8c_wrapper_external_include_lexical)
++    evidence_window_lifetime_boundary_is_valid(
++        "${_run_host_direct}"
++        "${_task8c_wrapper_external_include_active}"
++        "${_task8c_wrapper_external_include_lexical}"
++        _task8c_wrapper_external_include_valid)
++    if(_task8c_wrapper_external_include_valid)
++        list(APPEND _task8c_review_mutation_acceptances
++            wrapper_external_include)
++    endif()
++endif()
++if(NOT DEFINED TASK8C_REVIEW_MUTATION
++        OR TASK8C_REVIEW_MUTATION STREQUAL wrapper_pre_raylib_macro)
++    string(REPLACE "#include <raylib.h>"
++        "#define InitWindow(width, height, title) InitWindow(height, width, title)\n#include <raylib.h>"
++        _task8c_wrapper_pre_raylib_macro
++        "${_host_window_lifetime_source_text}")
++    host_validation_unconditional_cpp_surface(
++        "${_task8c_wrapper_pre_raylib_macro}"
++        _task8c_wrapper_pre_raylib_macro_active
++        _task8c_wrapper_pre_raylib_macro_lexical)
++    evidence_window_lifetime_boundary_is_valid(
++        "${_run_host_direct}"
++        "${_task8c_wrapper_pre_raylib_macro_active}"
++        "${_task8c_wrapper_pre_raylib_macro_lexical}"
++        _task8c_wrapper_pre_raylib_macro_valid)
++    if(_task8c_wrapper_pre_raylib_macro_valid)
++        list(APPEND _task8c_review_mutation_acceptances
++            wrapper_pre_raylib_macro)
++    endif()
++endif()
+ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+         OR TASK8C_REVIEW_MUTATION STREQUAL subdir_owner_basename)
+     evidence_raylib_lifecycle_source_role(
+         "${SOURCE_ROOT}/src/platform/raylib/review-shadow/host_window_lifetime.cpp"
+         "${SOURCE_ROOT}"
+         _task8c_subdir_owner_role)
+     if(_task8c_subdir_owner_role STREQUAL owner)
+         list(APPEND _task8c_review_mutation_acceptances
+             subdir_owner_basename)
+     endif()
+@@ -2339,44 +2421,20 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+         OR TASK8C_REVIEW_MUTATION STREQUAL nested_repo_suffix_owner)
+     evidence_raylib_lifecycle_source_role(
+         "${SOURCE_ROOT}/review-shadow/src/platform/raylib/host_window_lifetime.cpp"
+         "${SOURCE_ROOT}"
+         _task8c_nested_repo_suffix_role)
+     if(_task8c_nested_repo_suffix_role STREQUAL owner)
+         list(APPEND _task8c_review_mutation_acceptances
+             nested_repo_suffix_owner)
+     endif()
+ endif()
+-if(NOT DEFINED TASK8C_REVIEW_MUTATION
+-        OR TASK8C_REVIEW_MUTATION STREQUAL external_cat_init)
+-    set(_task8c_external_cat_init
+-        "inline void task8c_external_cat_init() { CAT(Init, Window)(1, 1, nullptr); }")
+-    evidence_window_lifecycle_owner_surface_is_valid(
+-        "${_task8c_external_cat_init}" "${_task8c_external_cat_init}"
+-        FALSE _task8c_external_cat_init_valid)
+-    if(_task8c_external_cat_init_valid)
+-        list(APPEND _task8c_review_mutation_acceptances external_cat_init)
+-    endif()
+-endif()
+-if(NOT DEFINED TASK8C_REVIEW_MUTATION
+-        OR TASK8C_REVIEW_MUTATION STREQUAL unrelated_token_paste)
+-    set(_task8c_unrelated_token_paste
+-        "#define TASK8C_UNRELATED_JOIN(a, b) a ## b\ninline int task8c_unrelated() { return TASK8C_UNRELATED_JOIN(alpha, beta); }")
+-    evidence_window_lifecycle_owner_surface_is_valid(
+-        "${_task8c_unrelated_token_paste}"
+-        "${_task8c_unrelated_token_paste}" FALSE
+-        _task8c_unrelated_token_paste_valid)
+-    if(NOT _task8c_unrelated_token_paste_valid)
+-        message(FATAL_ERROR
+-            "Task 8C shared window guard rejected harmless unrelated token paste")
+-    endif()
+-endif()
+ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+         OR TASK8C_REVIEW_MUTATION STREQUAL digraph_inactive_surface)
+     set(_task8c_digraph_inactive_source
+         "%:if 0\ninline void task8c_inactive() { InitWindow(1, 1, nullptr); }\n%:endif\n")
+     host_validation_unconditional_cpp_surface(
+         "${_task8c_digraph_inactive_source}"
+         _task8c_digraph_inactive_active)
+     evidence_count_cpp_identifier(
+         "${_task8c_digraph_inactive_active}" InitWindow
+         _task8c_digraph_inactive_count)
+@@ -2390,42 +2448,37 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+     set(_task8c_direct_header_ready
+         "inline bool task8c_header_ready() { return IsWindowReady(); }")
+     evidence_window_lifecycle_owner_surface_is_valid(
+         "${_task8c_direct_header_ready}" "${_task8c_direct_header_ready}"
+         FALSE _task8c_direct_header_ready_valid)
+     if(_task8c_direct_header_ready_valid)
+         list(APPEND _task8c_review_mutation_acceptances direct_header_ready)
+     endif()
+ endif()
+ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+-        OR TASK8C_REVIEW_MUTATION STREQUAL macro_header_ready)
+-    set(_task8c_macro_header_ready
+-        "#define TASK8C_READY IsWindowReady\ninline bool task8c_header_ready() { return TASK8C_READY(); }")
+-    evidence_window_lifecycle_owner_surface_is_valid(
+-        "${_task8c_macro_header_ready}" "${_task8c_macro_header_ready}"
+-        FALSE _task8c_macro_header_ready_valid)
+-    if(_task8c_macro_header_ready_valid)
+-        list(APPEND _task8c_review_mutation_acceptances macro_header_ready)
+-    endif()
+-endif()
+-if(NOT DEFINED TASK8C_REVIEW_MUTATION
+-        OR TASK8C_REVIEW_MUTATION STREQUAL token_paste_header_init)
+-    set(_task8c_token_paste_header_init
+-        "#define TASK8C_INIT Init ## Window\ninline void task8c_header_init() { TASK8C_INIT(1, 1, nullptr); }")
+-    evidence_window_lifecycle_owner_surface_is_valid(
+-        "${_task8c_token_paste_header_init}"
+-        "${_task8c_token_paste_header_init}" FALSE
+-        _task8c_token_paste_header_init_valid)
+-    if(_task8c_token_paste_header_init_valid)
+-        list(APPEND _task8c_review_mutation_acceptances
+-            token_paste_header_init)
+-    endif()
++        OR TASK8C_REVIEW_MUTATION STREQUAL lifecycle_escape_directives)
++    set(_task9_lifecycle_escape_surfaces
++        "#define TASK9_INIT_ALIAS InitWindow\n"
++        "#undef InitWindow\n"
++        "#pragma push_macro(\"InitWindow\")\n"
++        "#pragma pop_macro(\"InitWindow\")\n")
++    foreach(_task9_lifecycle_escape_surface IN LISTS
++            _task9_lifecycle_escape_surfaces)
++        evidence_window_lifecycle_owner_surface_is_valid(
++            "${_task9_lifecycle_escape_surface}"
++            "${_task9_lifecycle_escape_surface}" FALSE
++            _task9_lifecycle_escape_valid)
++        if(_task9_lifecycle_escape_valid)
++            list(APPEND _task8c_review_mutation_acceptances
++                lifecycle_escape_directives)
++        endif()
++    endforeach()
+ endif()
+ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+         OR TASK8C_REVIEW_MUTATION STREQUAL phase2_owner_mapping)
+     string(ASCII 92 _task8c_backslash)
+     string(ASCII 10 _task8c_line_feed)
+     string(REPLACE "InitWindow("
+         "Init${_task8c_backslash}${_task8c_line_feed}Window("
+         _task8c_phase2_owner_mapping
+         "${_host_window_lifetime_source_text}")
+     if(NOT _task8c_phase2_owner_mapping STREQUAL
+@@ -2438,20 +2491,135 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
+             "${_run_host_direct}"
+             "${_task8c_phase2_owner_mapping_active}"
+             "${_task8c_phase2_owner_mapping_lexical}"
+             _task8c_phase2_owner_mapping_valid)
+         if(NOT _task8c_phase2_owner_mapping_valid)
+             message(FATAL_ERROR
+                 "Task 8C shared window guard rejected harmless phase-2-spliced owner mapping")
+         endif()
+     endif()
+ endif()
++if(NOT DEFINED TASK8C_REVIEW_MUTATION
++        OR TASK8C_REVIEW_MUTATION STREQUAL layered_owner_namespace)
++    string(REPLACE "namespace arpg::platform {"
++        "namespace arpg {\nnamespace platform {"
++        _task8c_layered_owner_namespace
++        "${_host_window_lifetime_source_text}")
++    string(REPLACE "}  // namespace arpg::platform"
++        "}  // namespace platform\n}  // namespace arpg"
++        _task8c_layered_owner_namespace
++        "${_task8c_layered_owner_namespace}")
++    host_validation_unconditional_cpp_surface(
++        "${_task8c_layered_owner_namespace}"
++        _task8c_layered_owner_namespace_active
++        _task8c_layered_owner_namespace_lexical)
++    evidence_window_lifetime_boundary_is_valid(
++        "${_run_host_direct}"
++        "${_task8c_layered_owner_namespace_active}"
++        "${_task8c_layered_owner_namespace_lexical}"
++        _task8c_layered_owner_namespace_valid)
++    if(NOT _task8c_layered_owner_namespace_valid)
++        message(FATAL_ERROR
++            "Task 8C shared window guard rejected harmless layered owner namespace")
++    endif()
++endif()
++if(NOT DEFINED TASK8C_REVIEW_MUTATION
++        OR TASK8C_REVIEW_MUTATION STREQUAL inline_owner_namespace)
++    string(REPLACE "namespace arpg::platform {"
++        "namespace arpg {\ninline namespace platform {"
++        _task9_inline_owner_namespace
++        "${_host_window_lifetime_source_text}")
++    string(REPLACE "}  // namespace arpg::platform"
++        "}  // namespace platform\n}  // namespace arpg"
++        _task9_inline_owner_namespace
++        "${_task9_inline_owner_namespace}")
++    host_validation_unconditional_cpp_surface(
++        "${_task9_inline_owner_namespace}"
++        _task9_inline_owner_namespace_active
++        _task9_inline_owner_namespace_lexical)
++    evidence_window_lifetime_boundary_is_valid(
++        "${_run_host_direct}"
++        "${_task9_inline_owner_namespace_active}"
++        "${_task9_inline_owner_namespace_lexical}"
++        _task9_inline_owner_namespace_valid)
++    if(_task9_inline_owner_namespace_valid)
++        list(APPEND _task8c_review_mutation_acceptances
++            inline_owner_namespace)
++    endif()
++endif()
++if(NOT DEFINED TASK8C_REVIEW_MUTATION
++        OR TASK8C_REVIEW_MUTATION STREQUAL wrong_owner_namespace)
++    string(REPLACE "namespace arpg::platform {"
++        "namespace arpg::wrong {"
++        _task9_wrong_owner_namespace
++        "${_host_window_lifetime_source_text}")
++    host_validation_unconditional_cpp_surface(
++        "${_task9_wrong_owner_namespace}"
++        _task9_wrong_owner_namespace_active
++        _task9_wrong_owner_namespace_lexical)
++    evidence_window_lifetime_boundary_is_valid(
++        "${_run_host_direct}"
++        "${_task9_wrong_owner_namespace_active}"
++        "${_task9_wrong_owner_namespace_lexical}"
++        _task9_wrong_owner_namespace_valid)
++    if(_task9_wrong_owner_namespace_valid)
++        list(APPEND _task8c_review_mutation_acceptances
++            wrong_owner_namespace)
++    endif()
++endif()
++if(NOT DEFINED TASK8C_REVIEW_MUTATION
++        OR TASK8C_REVIEW_MUTATION STREQUAL detail_owner_namespace)
++    string(REPLACE "namespace arpg::platform {"
++        "namespace arpg::platform {\nnamespace detail {"
++        _task9_detail_owner_namespace
++        "${_host_window_lifetime_source_text}")
++    string(REPLACE "}  // namespace arpg::platform"
++        "}  // namespace detail\n}  // namespace arpg::platform"
++        _task9_detail_owner_namespace
++        "${_task9_detail_owner_namespace}")
++    host_validation_unconditional_cpp_surface(
++        "${_task9_detail_owner_namespace}"
++        _task9_detail_owner_namespace_active
++        _task9_detail_owner_namespace_lexical)
++    evidence_window_lifetime_boundary_is_valid(
++        "${_run_host_direct}"
++        "${_task9_detail_owner_namespace_active}"
++        "${_task9_detail_owner_namespace_lexical}"
++        _task9_detail_owner_namespace_valid)
++    if(_task9_detail_owner_namespace_valid)
++        list(APPEND _task8c_review_mutation_acceptances
++            detail_owner_namespace)
++    endif()
++endif()
++if(NOT DEFINED TASK8C_REVIEW_MUTATION
++        OR TASK8C_REVIEW_MUTATION STREQUAL phase2_directive_scope_decoy)
++    string(ASCII 92 _task9_backslash)
++    set(_task9_scope_directive
++        "#define TASK9_SCOPE_DECOY() ${_task9_backslash}\nnamespace fake { ${_task9_backslash}\nif (true) {\n\n")
++    string(REPLACE "namespace arpg::platform {"
++        "${_task9_scope_directive}namespace arpg::platform {"
++        _task9_phase2_directive_scope_decoy
++        "${_host_window_lifetime_source_text}")
++    host_validation_unconditional_cpp_surface(
++        "${_task9_phase2_directive_scope_decoy}"
++        _task9_phase2_directive_scope_decoy_active
++        _task9_phase2_directive_scope_decoy_lexical)
++    evidence_window_lifetime_boundary_is_valid(
++        "${_run_host_direct}"
++        "${_task9_phase2_directive_scope_decoy_active}"
++        "${_task9_phase2_directive_scope_decoy_lexical}"
++        _task9_phase2_directive_scope_decoy_valid)
++    if(NOT _task9_phase2_directive_scope_decoy_valid)
++        message(FATAL_ERROR
++            "Task 9 namespace guard rejected a harmless spliced directive body")
++    endif()
++endif()
+ if(_task8c_review_mutation_acceptances)
+     list(JOIN _task8c_review_mutation_acceptances ", "
+         _task8c_review_mutation_names)
+     message(FATAL_ERROR
+         "Task 8C shared window guard accepted review mutations: ${_task8c_review_mutation_names}")
+ endif()
+ if(DEFINED TASK8C_REVIEW_MUTATION)
+     return()
+ endif()
+ 
+@@ -2611,20 +2779,48 @@ host_validation_require_canonical_count("Task 9 renderer outer owner"
+     "${_run_host_direct}"
+     "std::unique_ptr<CombatRenderer> renderer_storage;" 1)
+ host_validation_require_canonical_count("Task 9 renderer allocation"
+     "${_run_host_direct}"
+     "renderer_storage = std::make_unique<CombatRenderer>();" 1)
+ host_validation_require_canonical_count("Task 9 renderer allocation anchor"
+     "${_run_host_direct}"
+     "core::FixedStepRunner fixed_step;
+     renderer_storage = std::make_unique<CombatRenderer>();
+     CombatRenderer& renderer = *renderer_storage;" 1)
++evidence_renderer_allocation_boundary_is_valid(
++    "${_run_host_direct}" _task9_renderer_allocation_boundary_valid)
++if(NOT _task9_renderer_allocation_boundary_valid)
++    message(FATAL_ERROR
++        "Task 9 Host renderer owner/allocation direct-scope boundary is invalid")
++endif()
++set(_task9_renderer_bypass_anchor [=[        core::FixedStepRunner fixed_step;
++        renderer_storage = std::make_unique<CombatRenderer>();
++        CombatRenderer& renderer = *renderer_storage;]=])
++set(_task9_renderer_bypass_replacement [=[        renderer_storage.reset(new CombatRenderer{});
++        if constexpr (sizeof(int) == 0) {
++            core::FixedStepRunner fixed_step;
++            renderer_storage = std::make_unique<CombatRenderer>();
++            CombatRenderer& renderer = *renderer_storage;
++        }
++        CombatRenderer& renderer = *renderer_storage;]=])
++string(REPLACE "${_task9_renderer_bypass_anchor}"
++    "${_task9_renderer_bypass_replacement}"
++    _task9_renderer_bypass_run "${_run_host_direct}")
++if(_task9_renderer_bypass_run STREQUAL _run_host_direct)
++    message(FATAL_ERROR "Task 9 renderer bypass self-test anchor is missing")
++endif()
++evidence_renderer_allocation_boundary_is_valid(
++    "${_task9_renderer_bypass_run}" _task9_renderer_bypass_valid)
++if(_task9_renderer_bypass_valid)
++    message(FATAL_ERROR
++        "Task 9 Host source guard accepted early reset with a dead exact anchor")
++endif()
+ host_validation_require_canonical_count("Task 9 catch renderer cleanup"
+     "${_run_host_direct}"
+     "if (renderer_storage != nullptr) {
+         renderer_storage->shutdown_resources();
+     }" 2)
+ host_validation_require_canonical_order("Task 9 renderer exception lifetime"
+     "${_run_host_direct}"
+     "HostWindowLifetime window{raylib_host_window_backend()};"
+     "std::unique_ptr<CombatRenderer> renderer_storage;"
+     "try {"
+@@ -2634,26 +2830,37 @@ host_validation_require_canonical_order("Task 9 renderer exception lifetime"
+     "if (renderer_storage != nullptr) {
+         renderer_storage->shutdown_resources();
+     }"
+     "return HostExitCode::save_initialization_failed;"
+     "catch (...) {"
+     "if (renderer_storage != nullptr) {
+         renderer_storage->shutdown_resources();
+     }"
+     "return HostExitCode::save_initialization_failed;")
+ file(GLOB_RECURSE _task8c_raylib_production_sources LIST_DIRECTORIES FALSE
++    "${SOURCE_ROOT}/src/platform/raylib/*.h"
+     "${SOURCE_ROOT}/src/platform/raylib/*.cpp"
+-    "${SOURCE_ROOT}/src/platform/raylib/*.hpp")
++    "${SOURCE_ROOT}/src/platform/raylib/*.hpp"
++    "${SOURCE_ROOT}/src/platform/raylib/*.inc"
++    "${SOURCE_ROOT}/src/platform/raylib/*.inl"
++    "${SOURCE_ROOT}/src/platform/raylib/*.ipp")
+ foreach(_task8c_production_source IN LISTS _task8c_raylib_production_sources)
+     file(READ "${_task8c_production_source}" _task8c_production_text)
+     host_validation_unconditional_cpp_surface("${_task8c_production_text}"
+         _task8c_production_active _task8c_production_lexical)
++    evidence_cpp_contains_forbidden_renderer_macro(
++        "${_task8c_production_lexical}"
++        _task9_forbidden_renderer_macro)
++    if(_task9_forbidden_renderer_macro)
++        message(FATAL_ERROR
++            "Task 9 raylib renderer macro definition is forbidden: ${_task8c_production_source}")
++    endif()
+     evidence_raylib_lifecycle_source_role(
+         "${_task8c_production_source}" "${SOURCE_ROOT}"
+         _task8c_lifecycle_source_role)
+     evidence_window_lifecycle_source_surface_is_valid(
+         "${_task8c_production_active}" "${_task8c_production_lexical}"
+         "${_task8c_lifecycle_source_role}" _task8c_owner_valid)
+     if(NOT _task8c_owner_valid)
+         message(FATAL_ERROR
+             "Task 8C direct raylib lifecycle owner violation: ${_task8c_production_source}")
+     endif()
+diff --git a/tests/platform/input_latency_source_test.cmake b/tests/platform/input_latency_source_test.cmake
+index 701596b..d792dd9 100644
+--- a/tests/platform/input_latency_source_test.cmake
++++ b/tests/platform/input_latency_source_test.cmake
+@@ -1537,22 +1537,26 @@ string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "settings_store.load()" SETTINGS_LOAD_
+ string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "make_host_settings_notice(loaded.status)"
+     SETTINGS_NOTICE_INDEX)
+ evidence_window_lifetime_boundary_is_valid(
+     "${HOST_ENTRY_DIRECT_SOURCE}" "${HOST_WINDOW_LIFETIME_ACTIVE_SOURCE}"
+     "${HOST_WINDOW_LIFETIME_LEXICAL_SOURCE}" WINDOW_LIFETIME_BOUNDARY_VALID)
+ if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
+     message(FATAL_ERROR
+         "Host must delegate the ordered window initialization boundary exactly once")
+ endif()
+ file(GLOB_RECURSE RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
++    "${RAYLIB_SOURCE_DIR}/*.h"
+     "${RAYLIB_SOURCE_DIR}/*.cpp"
+-    "${RAYLIB_SOURCE_DIR}/*.hpp")
++    "${RAYLIB_SOURCE_DIR}/*.hpp"
++    "${RAYLIB_SOURCE_DIR}/*.inc"
++    "${RAYLIB_SOURCE_DIR}/*.inl"
++    "${RAYLIB_SOURCE_DIR}/*.ipp")
+ get_filename_component(RAYLIB_REPO_ROOT
+     "${RAYLIB_SOURCE_DIR}/../../.." ABSOLUTE)
+ foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
+     file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
+     arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
+         RAYLIB_PRODUCTION_LEXICAL)
+     stage17_unconditional_cpp_surface("${RAYLIB_PRODUCTION_TEXT}"
+         RAYLIB_PRODUCTION_ACTIVE)
+     evidence_raylib_lifecycle_source_role(
+         "${RAYLIB_PRODUCTION_SOURCE}" "${RAYLIB_REPO_ROOT}"
+diff --git a/tests/platform/raylib_lifecycle_poison_alias.inc b/tests/platform/raylib_lifecycle_poison_alias.inc
+new file mode 100644
+index 0000000..21df6bc
+--- /dev/null
++++ b/tests/platform/raylib_lifecycle_poison_alias.inc
+@@ -0,0 +1 @@
++#define ARPG_LIFECYCLE_INCLUDE_ALIAS InitWindow
+diff --git a/tests/platform/stage11c_hud_architecture_guard_self_test.cmake b/tests/platform/stage11c_hud_architecture_guard_self_test.cmake
+index 6515b50..112a90d 100644
+--- a/tests/platform/stage11c_hud_architecture_guard_self_test.cmake
++++ b/tests/platform/stage11c_hud_architecture_guard_self_test.cmake
+@@ -238,20 +238,33 @@ endif()
+ if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+         OR STAGE11C_REVIEW_MUTATION STREQUAL reformatted_signature)
+     string(REPLACE
+         "PhysicalKeySnapshot inject_stage11c_physical_edges(\n    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,"
+         "PhysicalKeySnapshot\ninject_stage11c_physical_edges ( PhysicalKeySnapshot snapshot,\n    const RaylibHostConfig& config,"
+         _stage11c_reformatted_signature "${_stage11c_review_source}")
+     arpg_expect_hud_guard_accepts_source(
+         stage_source_reformatted_signature host_validation_stage11c.cpp
+         "${_stage11c_reformatted_signature}")
+ endif()
++if(NOT DEFINED STAGE11C_REVIEW_MUTATION
++        OR STAGE11C_REVIEW_MUTATION STREQUAL layered_owner_namespace)
++    string(REPLACE "namespace arpg::platform::host_validation {"
++        "namespace arpg {\nnamespace platform {\nnamespace host_validation {"
++        _stage11c_layered_owner_namespace "${_stage11c_review_source}")
++    string(REPLACE "}  // namespace arpg::platform::host_validation"
++        "}  // namespace host_validation\n}  // namespace platform\n}  // namespace arpg"
++        _stage11c_layered_owner_namespace
++        "${_stage11c_layered_owner_namespace}")
++    arpg_expect_hud_guard_accepts_source(
++        stage_source_layered_owner_namespace host_validation_stage11c.cpp
++        "${_stage11c_layered_owner_namespace}")
++endif()
+ if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+         OR STAGE11C_REVIEW_MUTATION STREQUAL inactive_definition)
+     string(REPLACE
+         "PhysicalKeySnapshot inject_stage11c_physical_edges("
+         "#if 0\nPhysicalKeySnapshot inject_stage11c_physical_edges("
+         _stage11c_inactive_definition "${_stage11c_review_source}")
+     string(APPEND _stage11c_inactive_definition "\n#endif\n")
+     arpg_expect_hud_guard_rejects_source(
+         stage_source_inactive_definition host_validation_stage11c.cpp
+         "${_stage11c_inactive_definition}"
+@@ -423,11 +436,11 @@ arpg_expect_hud_guard_accepts_source(inactive_host_facade_decoy
+     raylib_host.cpp "${_inactive_host_decoy}")
+ file(READ "${_production_hud_root}/host_validation_runtime.cpp"
+     _task7c_runtime_source)
+ string(REPLACE "void HostValidationRuntime::observe_hud("
+     "#if 0\nvoid HostValidationRuntime::observe_hud() {}\n#endif\nvoid HostValidationRuntime::observe_hud("
+     _inactive_runtime_decoy "${_task7c_runtime_source}")
+ arpg_expect_hud_guard_accepts_source(inactive_runtime_facade_decoy
+     host_validation_runtime.cpp "${_inactive_runtime_decoy}")
+ 
+ message(STATUS
+-    "Stage 11C HUD architecture guard rejected 20 mutations and accepted 4 harmless variants")
++    "Stage 11C HUD architecture guard rejected 20 mutations and accepted 5 harmless variants")
+diff --git a/tests/platform/stage11c_hud_architecture_guard_test.cmake b/tests/platform/stage11c_hud_architecture_guard_test.cmake
+index f4eb02f..687c4d1 100644
+--- a/tests/platform/stage11c_hud_architecture_guard_test.cmake
++++ b/tests/platform/stage11c_hud_architecture_guard_test.cmake
+@@ -294,22 +294,24 @@ endforeach()
+ if(_host_text MATCHES
+         "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
+     message(FATAL_ERROR "Stage11C HUD state definition remains in raylib_host.cpp")
+ endif()
+ arpg_sanitize_cpp_source(
+     "${_stage11c_source_text}" _stage11c_source_lexical)
+ stage11c_arch_unconditional_cpp_surface(
+     "${_stage11c_source_text}" _stage11c_source_active)
+ evidence_cpp_normalize_token_whitespace(
+     "${_stage11c_source_lexical}" _stage11c_source_lexical_code)
++evidence_cpp_mask_preprocessor_directives_in_sanitized(
++    "${_stage11c_source_active}" _stage11c_source_scope)
+ evidence_cpp_normalize_token_whitespace(
+-    "${_stage11c_source_active}" _stage11c_source_code)
++    "${_stage11c_source_scope}" _stage11c_source_code)
+ arpg_sanitize_cpp_source("${_host_text}" _host_lexical_source)
+ evidence_cpp_normalize_token_whitespace(
+     "${_host_lexical_source}" _host_lexical_code)
+ set(_stage11c_signature_inject [=[PhysicalKeySnapshot inject_stage11c_physical_edges(
+     PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
+     const settings::SettingsData& settings_data,
+     const dungeon::DungeonSnapshot& current,
+     Stage11CHudValidationState& state) noexcept]=])
+ set(_stage11c_signature_hash [=[std::uint64_t stage11c_production_snapshot_hash(
+     const dungeon::DungeonSnapshot& snapshot) noexcept]=])

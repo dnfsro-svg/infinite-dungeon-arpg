@@ -1,0 +1,13 @@
+Test project E:/game/.worktrees/whole-game-refactor-2026-07/out/build/windows-msvc-debug
+    Start 73: stage11c.architecture.hud_boundaries_self_test
+1/1 Test #73: stage11c.architecture.hud_boundaries_self_test ...   Passed  275.55 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+architecture    = 275.55 sec*proc (1 test)
+headless        = 275.55 sec*proc (1 test)
+platform        = 275.55 sec*proc (1 test)
+stage11c        = 275.55 sec*proc (1 test)
+
+Total Test time (real) = 275.56 sec

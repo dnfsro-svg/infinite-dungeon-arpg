@@ -1,0 +1,1348 @@
+# Review package: cdecc8bf686f7a3c7c61ff29cbe9f577d974c02b..67b1574a75bf578b0e463e7910adb13cda68b444
+
+## Commits
+67b1574 refactor: extract stage10 and stage11 host validation
+
+## Files changed
+ .../task-2-report.md                               |  93 +++++++
+ src/platform/raylib/CMakeLists.txt                 |   1 +
+ src/platform/raylib/host_validation_stage10_11.cpp | 260 +++++++++++++++++++
+ src/platform/raylib/host_validation_stage10_11.hpp |  45 ++++
+ src/platform/raylib/raylib_host.cpp                | 278 +--------------------
+ tests/dungeon/stage10_evidence_guard_test.cmake    |  47 +++-
+ .../stage11_death_evidence_guard_test.cmake        |  43 +++-
+ .../host_validation_sequence_guard_test.cmake      |  54 +++-
+ .../stage11c_hud_evidence_guard_test.cmake         |   2 +-
+ .../platform/stage12_environment_render_tests.cpp  |   9 +-
+ 10 files changed, 550 insertions(+), 282 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
+new file mode 100644
+index 0000000..29c787e
+--- /dev/null
++++ b/.superpowers/sdd/2026-07-28-raylib-host-structural-refactor/task-2-report.md
+@@ -0,0 +1,93 @@
++# Task 2 Report: Stage10/11 Host Validation Extraction
++
++## Revisions
++
++- BASE SHA: `cdecc8bf686f7a3c7c61ff29cbe9f577d974c02b`
++- FINAL SHA: recorded in the final task handoff after this report is amended
++  into the same commit. (A commit cannot embed its own content-addressed SHA
++  without changing that SHA.)
++
++## Changed Files
++
++- `src/platform/raylib/host_validation_stage10_11.hpp` (new): named
++  `host_validation` state types and host-facing declarations.
++- `src/platform/raylib/host_validation_stage10_11.cpp` (new): Stage10/11
++  routes, completion predicates, and the environment-visual helper.
++- `src/platform/raylib/raylib_host.cpp`: includes the new boundary and keeps
++  only qualified state/function use at the original loop sites.
++- `src/platform/raylib/CMakeLists.txt`: registers the new implementation.
++- `tests/dungeon/stage10_evidence_guard_test.cmake` and
++  `tests/dungeon/stage11_death_evidence_guard_test.cmake`: split algorithm
++  checks onto the new source while retaining host call and capture checks.
++- `tests/platform/host_validation_sequence_guard_test.cmake`: requires the
++  new boundary, its state/function ownership, CMake registration, and the
++  unchanged qualified fixed-step priority.
++- `tests/platform/stage11c_hud_evidence_guard_test.cmake`: retargets the
++  moved Stage10 definition endpoint to the next stable host endpoint without
++  narrowing the guarded driver range.
++- `tests/platform/stage12_environment_render_tests.cpp`: follows the moved
++  Stage10 implementation while retaining the same production skill-route
++  assertions.
++
++## RED Evidence
++
++Before production code existed, the updated guards failed as intended:
++
++- Stage10 direct guard command failed with
++  `Stage 10 validation route target is missing: ...host_validation_stage10_11.cpp`.
++- Stage11 direct guard command failed with
++  `Stage 11 validation route target is missing: ...host_validation_stage10_11.cpp`.
++- Sequence direct guard command failed with
++  `Host validation boundary target is missing: ...host_validation_stage10_11.hpp`.
++
++These failures prove the guards require the new ownership boundary rather
++than accepting the old in-host implementation.
++
++## GREEN Evidence
++
++- Direct Stage10 guard: passed after the new route/state sources were added.
++- Direct Stage11 guard: passed (`Stage 11 production evidence guard passed`).
++- Direct Stage11C evidence guard: passed after its end anchor was migrated.
++- Direct `host_validation_sequence_guard_self_test.cmake`: passed.
++- Required build command (MSVC DevCmd, `CMAKE_BUILD_PARALLEL_LEVEL=1`,
++  `-j1`) produced all three requested targets. The final Ninja log records
++  `bin/arpg_game.exe`, `bin/arpg_dungeon_tests.exe`, and
++  `bin/arpg_platform_tests.exe`; their latest timestamps are 08:36:19–20.
++- Required focused CTest command completed. The latest `LastTest.log` records
++  `dungeon.units` 343 cases/0 failures, `platform.units` 497 cases/0 failures,
++  and `platform.host_validation_sequence` passed. The runner's 64-second
++  observation window timed out while the existing CTest process continued;
++  the completed final log has no `Test Failed.` entry. `LastTestsFailed.log`
++  contains only the prior 08:31 pre-fix `platform.units` residue and was not
++  used as this run's result.
++- `git diff --check`: passed.
++
++## Resource and Build-Chain Checks
++
++- Before building, no `cmake`, `ninja`, `cl`, `link`, or requested target
++  process was active; 8,903 MiB physical memory was free.
++- Builds used one observed serial chain at a time (`cmake -> ninja -j 1 -> cl`).
++  Tool waits expired during the long serial build, so the existing child chain
++  was monitored to completion rather than restarted.
++
++## Self-Review
++
++- `Stage10ValidationState` and `Stage11ValidationState` are defined once in
++  the named `arpg::platform::host_validation` namespace; the scenario enums
++  remain in `raylib_host.hpp`.
++- New code reuses Task 1 navigation helpers and directly includes
++  `dungeon/dungeon_session.hpp`; it has no raylib, renderer, persistence, or
++  test header in its public header.
++- The host preserves the original locations of `validation_continue`,
++  `continue_requested`, presented-frame counters, `stage10_validation_captured`,
++  and Stage11 -> Stage10 -> production movement priority; only the ownership
++  qualifiers changed.
++- No change touches `persistence/room_progress_codec.cpp` or the known
++  `architecture.persistence_checkpoint_only` baseline issue.
++- No P0/P1/P2 issue found in the changed surface.
++
++## Remaining Issues
++
++None for Task 2. The known unrelated
++`architecture.persistence_checkpoint_only` baseline failure was not run or
++modified.
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 4550368..2190e76 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -20,20 +20,21 @@ add_library(arpg_raylib STATIC
+     fire_room_material_slice.cpp
+     dungeon_view_math.cpp
+     dungeon_runtime.cpp
+     environment_prop_layout.cpp
+     game_audio.cpp
+     ground_loot_view.cpp
+     host_input.cpp
+     host_launch_options.cpp
+     host_validation_input.cpp
+     host_validation_navigation.cpp
++    host_validation_stage10_11.cpp
+     hud_font.cpp
+     hud_view_model.cpp
+     hud_notice_state.cpp
+     loot_pickup_feedback.cpp
+     material_bag_renderer.cpp
+     material_loot_view.cpp
+     hud_layout.cpp
+     hud_renderer.cpp
+     inventory_renderer.cpp
+     inventory_view_math.cpp
+diff --git a/src/platform/raylib/host_validation_stage10_11.cpp b/src/platform/raylib/host_validation_stage10_11.cpp
+new file mode 100644
+index 0000000..50bfeba
+--- /dev/null
++++ b/src/platform/raylib/host_validation_stage10_11.cpp
+@@ -0,0 +1,260 @@
++#include "host_validation_stage10_11.hpp"
++
++#include "combat/active_skill_runtime.hpp"
++#include "dungeon/dungeon_session.hpp"
++#include "dungeon_view_math.hpp"
++#include "host_validation_navigation.hpp"
++#include "raylib_host.hpp"
++
++#include <cmath>
++#include <cstddef>
++
++namespace arpg::platform::host_validation {
++namespace {
++
++bool has_environment_visual(
++    const dungeon::DungeonSnapshot& snapshot,
++    combat::HazardKind kind,
++    bool require_warning) noexcept {
++    if (!snapshot.combat.has_value()) return false;
++    for (std::size_t index = 0U;
++         index < snapshot.combat->hazard_count; ++index) {
++        const combat::HazardSnapshot& hazard = snapshot.combat->hazards[index];
++        if (hazard.active
++                && hazard.source == combat::HazardSource::abyss_environment
++                && hazard.kind == kind
++                && (!require_warning || hazard.telegraph_ticks != 0U)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++}  // namespace
++
++combat::MovementInput stage10_validation_input(
++    dungeon::DungeonSession& session,
++    const dungeon::DungeonSnapshot& snapshot,
++    const RaylibHostConfig& config,
++    Stage10ValidationState& state) noexcept {
++    const Stage10ValidationScenario scenario = config.stage10_validation;
++    state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
++    if (scenario == Stage10ValidationScenario::room_reset
++            && snapshot.is_abyss
++            && snapshot.phase == dungeon::RoomPhase::combat
++            && !state.reset_requested) {
++        state.reset_requested = session.reset_current_room()
++            != dungeon::RequestResult::rejected;
++        return {};
++    }
++    if (scenario == Stage10ValidationScenario::player_death
++            && snapshot.is_abyss) {
++        return {};
++    }
++    if (!snapshot.combat.has_value()) return {};
++    if (snapshot.phase == dungeon::RoomPhase::combat) {
++        const auto* const target = nearest_living_monster(*snapshot.combat);
++        if (target == nullptr) return {};
++        if (scenario == Stage10ValidationScenario::abyss_hole_descent
++                && snapshot.is_abyss && snapshot.remaining_targets == 1U) {
++            const auto& monster = target->position;
++            const float x = monster.x - kHoleCenter.x;
++            const float y = monster.y - kHoleCenter.y;
++            if (x * x + y * y > 1.44F) {
++                return validation_movement_toward(
++                    snapshot.combat->player.position, kHoleCenter);
++            }
++        }
++        const auto movement = validation_movement_toward(
++            snapshot.combat->player.position, target->position);
++        const auto& player = snapshot.combat->player;
++        const bool skill_ready = (!snapshot.is_abyss
++                || scenario == Stage10ValidationScenario::abyss_hole_descent)
++            && player.hp > 0
++            && player.hurt_ticks == 0U && player.hit_stop_ticks == 0U
++            && player.active_attack == combat::AttackId::none
++            && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
++            && snapshot.combat->diagnostics.input_size == 0U;
++        if (skill_ready) {
++            const float facing = player.facing == combat::Facing::right
++                ? 1.0F : -1.0F;
++            const float storm_center_x = player.position.x
++                + facing * combat::kStormCenterForward;
++            const float storm_dx = target->position.x - storm_center_x;
++            const float storm_dy = target->position.y - player.position.y;
++            const bool storm_target = storm_dx * storm_dx
++                    + storm_dy * storm_dy
++                <= combat::kStormStrikeRadius * combat::kStormStrikeRadius;
++            combat::SkillCastResult storm = combat::SkillCastResult::none;
++            if (storm_target) {
++                storm = session.request_active_skill_slot(1U);
++                if (storm == combat::SkillCastResult::accepted) return movement;
++            }
++            if (!storm_target
++                    || storm == combat::SkillCastResult::cooling_down) {
++                const float forward =
++                    (target->position.x - player.position.x) * facing;
++                const float half_width = forward >= 0.0F
++                        && forward <= combat::kDrawSlashRange
++                    ? combat::kDrawSlashHalfWidthAtEnd
++                        * (forward / combat::kDrawSlashRange)
++                    : -1.0F;
++                const bool draw_target = half_width >= 0.0F
++                    && std::fabs(target->position.y - player.position.y)
++                        <= half_width;
++                if (draw_target
++                        && session.request_active_skill_slot(0U)
++                            == combat::SkillCastResult::accepted) {
++                    return movement;
++                }
++            }
++        }
++        if (snapshot.combat->player.hurt_ticks == 0U
++                && snapshot.combat->player.active_attack
++                    == combat::AttackId::none
++                && snapshot.combat->diagnostics.input_size == 0U
++                && validation_attack_lane(*snapshot.combat, *target)) {
++            static_cast<void>(session.queue_action(combat::Action::light));
++        }
++        return movement;
++    }
++    if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
++    if (!snapshot.is_abyss) {
++        return validation_exit_movement(snapshot.combat->player.position,
++            validation_direction(config));
++    }
++    if (scenario == Stage10ValidationScenario::exit_confirmation) {
++        return snapshot.abyss_exit_confirmation_armed
++            ? combat::MovementInput{}
++            : validation_exit_movement(snapshot.combat->player.position,
++                dungeon::ExitDirection::right);
++    }
++    if (scenario == Stage10ValidationScenario::abyss_hole_descent) {
++        state.descent_warning_seen = state.descent_warning_seen
++            || snapshot.abyss_exit_confirmation_armed;
++        const combat::MovementInput movement = validation_movement_toward(
++            snapshot.combat->player.position, kHoleCenter);
++        if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
++            static_cast<void>(session.request_descent(true));
++        }
++        return movement;
++    }
++    return {};
++}
++
++combat::MovementInput stage11_validation_input(
++    dungeon::DungeonSession& session,
++    const dungeon::DungeonSnapshot& snapshot,
++    const RaylibHostConfig& config,
++    Stage11ValidationState& state) noexcept {
++    state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
++    state.saw_depth_two = state.saw_depth_two || snapshot.depth > 1U;
++    const auto scenario = config.stage11_validation;
++    const bool drive_to_abyss = scenario
++        == Stage11ValidationScenario::abyss_death_recap
++        && !state.entered_abyss;
++    const bool drive_to_depth = scenario
++        == Stage11ValidationScenario::deep_continue
++        && !state.saw_depth_two;
++    if (!drive_to_abyss && !drive_to_depth) return {};
++    if (!snapshot.combat.has_value()) return {};
++    if (snapshot.phase == dungeon::RoomPhase::combat) {
++        const auto* const target = nearest_living_monster(*snapshot.combat);
++        if (target == nullptr) return {};
++        const auto movement = validation_movement_toward(
++            snapshot.combat->player.position, target->position);
++        if (snapshot.combat->diagnostics.input_size == 0U
++                && validation_attack_lane(*snapshot.combat, *target)) {
++            static_cast<void>(session.queue_action(combat::Action::light));
++        }
++        return movement;
++    }
++    if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
++    if (drive_to_abyss) {
++        return validation_exit_movement(snapshot.combat->player.position,
++            validation_direction(config));
++    }
++    const auto movement = validation_movement_toward(
++        snapshot.combat->player.position, kHoleCenter);
++    if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
++        static_cast<void>(session.request_descent(true));
++    }
++    return movement;
++}
++
++bool stage11_validation_reached(const dungeon::DungeonSnapshot& snapshot,
++    const RaylibHostConfig& config,
++    const Stage11ValidationState& state) noexcept {
++    const bool pending = snapshot.death.has_value()
++        && snapshot.death->can_continue && !snapshot.death->saving;
++    switch (config.stage11_validation) {
++    case Stage11ValidationScenario::none: return false;
++    case Stage11ValidationScenario::normal_death_recap:
++    case Stage11ValidationScenario::restart_same_recap:
++        return pending && !snapshot.death->checkpoint.death_was_abyss;
++    case Stage11ValidationScenario::abyss_death_recap:
++        return pending && state.entered_abyss
++            && snapshot.death->checkpoint.death_was_abyss;
++    case Stage11ValidationScenario::deep_continue:
++        return state.continue_requested && state.saw_depth_two
++            && !snapshot.death.has_value() && snapshot.depth == 1U
++            && snapshot.combat.has_value()
++            && snapshot.combat->player.hp > 0;
++    case Stage11ValidationScenario::floor_one_continue:
++        return state.continue_requested && !snapshot.death.has_value()
++            && snapshot.depth == 1U && snapshot.combat.has_value()
++            && snapshot.combat->player.hp > 0;
++    }
++    return false;
++}
++
++bool stage10_validation_reached(
++    const dungeon::DungeonSnapshot& snapshot,
++    const RaylibHostConfig& config,
++    const Stage10ValidationState& state) noexcept {
++    switch (config.stage10_validation) {
++    case Stage10ValidationScenario::none:
++        return false;
++    case Stage10ValidationScenario::abyss_door: {
++        const auto direction = validation_direction(config);
++        const std::size_t index = static_cast<std::size_t>(direction);
++        return !snapshot.is_abyss
++            && snapshot.phase == dungeon::RoomPhase::awaiting_exit
++            && index < snapshot.abyss_doors.size()
++            && snapshot.abyss_doors[index];
++    }
++    case Stage10ValidationScenario::thunderstorm_warning:
++        return snapshot.abyss_rule == abyss::AbyssRuleId::thunderstorm
++            && has_environment_visual(snapshot,
++                combat::HazardKind::thunderstorm, true);
++    case Stage10ValidationScenario::hunting_flames_warning:
++        return snapshot.abyss_rule == abyss::AbyssRuleId::hunting_flames
++            && has_environment_visual(snapshot,
++                combat::HazardKind::hunting_flame, true);
++    case Stage10ValidationScenario::chaos_expansion:
++        return snapshot.abyss_rule == abyss::AbyssRuleId::chaos_expansion
++            && has_environment_visual(snapshot,
++                combat::HazardKind::chaos_expansion, false);
++    case Stage10ValidationScenario::reward_chest:
++        return snapshot.is_abyss && snapshot.ground_item_count != 0U;
++    case Stage10ValidationScenario::pending_reward:
++        return snapshot.is_abyss && snapshot.abyss_pending_rewards != 0U;
++    case Stage10ValidationScenario::exit_confirmation:
++        return snapshot.is_abyss
++            && snapshot.abyss_exit_confirmation_armed;
++    case Stage10ValidationScenario::player_death:
++    case Stage10ValidationScenario::room_reset:
++        return state.entered_abyss && !snapshot.is_abyss;
++    case Stage10ValidationScenario::leave_started:
++        return snapshot.is_abyss
++            && snapshot.phase == dungeon::RoomPhase::combat;
++    case Stage10ValidationScenario::restarted_failed:
++        return !snapshot.is_abyss && snapshot.room_index == 1U;
++    case Stage10ValidationScenario::abyss_hole_descent:
++        return state.entered_abyss && state.descent_warning_seen
++            && snapshot.depth > 1U;
++    }
++    return false;
++}
++
++}  // namespace arpg::platform::host_validation
+diff --git a/src/platform/raylib/host_validation_stage10_11.hpp b/src/platform/raylib/host_validation_stage10_11.hpp
+new file mode 100644
+index 0000000..6a52bcc
+--- /dev/null
++++ b/src/platform/raylib/host_validation_stage10_11.hpp
+@@ -0,0 +1,45 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++#include "dungeon/dungeon_types.hpp"
++
++#include <cstdint>
++
++namespace arpg::dungeon {
++class DungeonSession;
++}
++
++namespace arpg::platform {
++struct RaylibHostConfig;
++
++namespace host_validation {
++
++struct Stage10ValidationState final {
++    bool entered_abyss{};
++    bool reset_requested{};
++    bool descent_warning_seen{};
++    std::uint32_t chaos_presented_frames{};
++};
++
++struct Stage11ValidationState final {
++    bool entered_abyss{};
++    bool saw_depth_two{};
++    bool continue_requested{};
++    std::uint32_t target_presented_frames{};
++};
++
++[[nodiscard]] combat::MovementInput stage10_validation_input(
++    dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
++    const RaylibHostConfig&, Stage10ValidationState&) noexcept;
++[[nodiscard]] combat::MovementInput stage11_validation_input(
++    dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
++    const RaylibHostConfig&, Stage11ValidationState&) noexcept;
++[[nodiscard]] bool stage10_validation_reached(
++    const dungeon::DungeonSnapshot&, const RaylibHostConfig&,
++    const Stage10ValidationState&) noexcept;
++[[nodiscard]] bool stage11_validation_reached(
++    const dungeon::DungeonSnapshot&, const RaylibHostConfig&,
++    const Stage11ValidationState&) noexcept;
++
++}  // namespace host_validation
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index d55588d..f4adae5 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -9,20 +9,21 @@
+ #include "control_hints.hpp"
+ #include "death_overlay_font.hpp"
+ #include "core/fixed_step.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "game_audio.hpp"
+ #include "host_input.hpp"
+ #include "host_launch_options.hpp"
+ #include "host_validation_input.hpp"
+ #include "host_validation_navigation.hpp"
++#include "host_validation_stage10_11.hpp"
+ #include "inventory_renderer.hpp"
+ #include "passive_tree_renderer.hpp"
+ #include "passive_tree_view_math.hpp"
+ #include "pause_menu_renderer.hpp"
+ #include "pause_menu_state.hpp"
+ #include "pause_menu_view.hpp"
+ #include "ui_material.hpp"
+ #include "ui_text_bounds_audit.hpp"
+ #include "persistence/save_paths.hpp"
+ #include "platform/settings/settings_store.hpp"
+@@ -331,34 +332,20 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
+         monster.id = ids[index];
+         monster.position = positions[index];
+         monster.spawn = positions[index];
+         monster.facing = combat::Facing::right;
+         monster.hp = 100;
+         monster.max_hp = 100;
+         monster.ai_phase = combat::MonsterAiPhase::active;
+     }
+ }
+ 
+-struct Stage10ValidationState final {
+-    bool entered_abyss{};
+-    bool reset_requested{};
+-    bool descent_warning_seen{};
+-    std::uint32_t chaos_presented_frames{};
+-};
+-
+-struct Stage11ValidationState final {
+-    bool entered_abyss{};
+-    bool saw_depth_two{};
+-    bool continue_requested{};
+-    std::uint32_t target_presented_frames{};
+-};
+-
+ struct Stage11BValidationState final {
+     std::uint32_t injected_frame{};
+     std::uint32_t paused_presented{};
+     std::uint64_t fixed_ticks{};
+     std::uint64_t paused_ticks_before{};
+     std::uint64_t paused_ticks_after{};
+     std::uint64_t resume_ticks_before{};
+     std::uint64_t resume_ticks_after{};
+     std::uint64_t player_monster_hash_before{};
+     std::uint64_t player_monster_hash_after{};
+@@ -437,22 +424,22 @@ struct Stage11DLootValidationState final {
+     std::uint64_t pickup_item_id{};
+     std::uint64_t pickup_commit_generation{};
+     bool target_visible{};
+     bool captured{};
+     bool abyss_claim_requested{};
+     bool abyss_claimed{};
+ };
+ // STAGE11D_LOOT_VALIDATION_SEAM_END state
+ 
+ struct HostValidationStates final {
+-    Stage10ValidationState stage10{};
+-    Stage11ValidationState stage11{};
++    host_validation::Stage10ValidationState stage10{};
++    host_validation::Stage11ValidationState stage11{};
+     Stage11BValidationState stage11b{};
+     Stage11CHudValidationState stage11c{};
+     Stage11DLootValidationState stage11d{};
+ };
+ 
+ enum class Stage17ValidationStep : std::uint8_t {
+     initial,
+     empty_slot_3,
+     empty_slot_4,
+     empty_slot_5,
+@@ -2466,263 +2453,20 @@ void write_stage11d_loot_validation_summary(const RaylibHostConfig& config,
+         stream << '\n' << "result=" << (state.captured
+             && (config.stage11d_loot_validation
+                     != Stage11DLootValidationScenario::rare_only_abyss
+                 || state.abyss_claimed) ? "pass" : "fail") << '\n';
+     } catch (...) {
+         TraceLog(LOG_WARNING, "failed to write stage11d loot validation summary");
+     }
+ }
+ // STAGE11D_LOOT_VALIDATION_SEAM_END evidence_semantics
+ 
+-combat::MovementInput stage10_validation_input(
+-    dungeon::DungeonSession& session,
+-    const dungeon::DungeonSnapshot& snapshot,
+-    const RaylibHostConfig& config,
+-    Stage10ValidationState& state) noexcept {
+-    const Stage10ValidationScenario scenario = config.stage10_validation;
+-    state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
+-    if (scenario == Stage10ValidationScenario::room_reset
+-            && snapshot.is_abyss
+-            && snapshot.phase == dungeon::RoomPhase::combat
+-            && !state.reset_requested) {
+-        state.reset_requested = session.reset_current_room()
+-            != dungeon::RequestResult::rejected;
+-        return {};
+-    }
+-    if (scenario == Stage10ValidationScenario::player_death
+-            && snapshot.is_abyss) {
+-        return {};
+-    }
+-    if (!snapshot.combat.has_value()) return {};
+-    if (snapshot.phase == dungeon::RoomPhase::combat) {
+-        const auto* const target = nearest_living_monster(*snapshot.combat);
+-        if (target == nullptr) return {};
+-        if (scenario == Stage10ValidationScenario::abyss_hole_descent
+-                && snapshot.is_abyss && snapshot.remaining_targets == 1U) {
+-            const auto& monster = target->position;
+-            const float x = monster.x - kHoleCenter.x;
+-            const float y = monster.y - kHoleCenter.y;
+-            if (x * x + y * y > 1.44F) {
+-                return validation_movement_toward(
+-                    snapshot.combat->player.position, kHoleCenter);
+-            }
+-        }
+-        const auto movement = validation_movement_toward(
+-            snapshot.combat->player.position, target->position);
+-        const auto& player = snapshot.combat->player;
+-        const bool skill_ready = (!snapshot.is_abyss
+-                || scenario == Stage10ValidationScenario::abyss_hole_descent)
+-            && player.hp > 0
+-            && player.hurt_ticks == 0U && player.hit_stop_ticks == 0U
+-            && player.active_attack == combat::AttackId::none
+-            && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
+-            && snapshot.combat->diagnostics.input_size == 0U;
+-        if (skill_ready) {
+-            const float facing = player.facing == combat::Facing::right
+-                ? 1.0F : -1.0F;
+-            const float storm_center_x = player.position.x
+-                + facing * combat::kStormCenterForward;
+-            const float storm_dx = target->position.x - storm_center_x;
+-            const float storm_dy = target->position.y - player.position.y;
+-            const bool storm_target = storm_dx * storm_dx
+-                    + storm_dy * storm_dy
+-                <= combat::kStormStrikeRadius * combat::kStormStrikeRadius;
+-            combat::SkillCastResult storm = combat::SkillCastResult::none;
+-            if (storm_target) {
+-                storm = session.request_active_skill_slot(1U);
+-                if (storm == combat::SkillCastResult::accepted) return movement;
+-            }
+-            if (!storm_target
+-                    || storm == combat::SkillCastResult::cooling_down) {
+-                const float forward =
+-                    (target->position.x - player.position.x) * facing;
+-                const float half_width = forward >= 0.0F
+-                        && forward <= combat::kDrawSlashRange
+-                    ? combat::kDrawSlashHalfWidthAtEnd
+-                        * (forward / combat::kDrawSlashRange)
+-                    : -1.0F;
+-                const bool draw_target = half_width >= 0.0F
+-                    && std::fabs(target->position.y - player.position.y)
+-                        <= half_width;
+-                if (draw_target
+-                        && session.request_active_skill_slot(0U)
+-                            == combat::SkillCastResult::accepted) {
+-                    return movement;
+-                }
+-            }
+-        }
+-        if (snapshot.combat->player.hurt_ticks == 0U
+-                && snapshot.combat->player.active_attack
+-                    == combat::AttackId::none
+-                && snapshot.combat->diagnostics.input_size == 0U
+-                && validation_attack_lane(*snapshot.combat, *target)) {
+-            static_cast<void>(session.queue_action(combat::Action::light));
+-        }
+-        return movement;
+-    }
+-    if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
+-    if (!snapshot.is_abyss) {
+-        return validation_exit_movement(snapshot.combat->player.position,
+-            validation_direction(config));
+-    }
+-    if (scenario == Stage10ValidationScenario::exit_confirmation) {
+-        return snapshot.abyss_exit_confirmation_armed
+-            ? combat::MovementInput{}
+-            : validation_exit_movement(snapshot.combat->player.position,
+-                dungeon::ExitDirection::right);
+-    }
+-    if (scenario == Stage10ValidationScenario::abyss_hole_descent) {
+-        state.descent_warning_seen = state.descent_warning_seen
+-            || snapshot.abyss_exit_confirmation_armed;
+-        const combat::MovementInput movement = validation_movement_toward(
+-            snapshot.combat->player.position, kHoleCenter);
+-        if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+-            static_cast<void>(session.request_descent(true));
+-        }
+-        return movement;
+-    }
+-    return {};
+-}
+-
+-combat::MovementInput stage11_validation_input(
+-    dungeon::DungeonSession& session,
+-    const dungeon::DungeonSnapshot& snapshot,
+-    const RaylibHostConfig& config,
+-    Stage11ValidationState& state) noexcept {
+-    state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
+-    state.saw_depth_two = state.saw_depth_two || snapshot.depth > 1U;
+-    const auto scenario = config.stage11_validation;
+-    const bool drive_to_abyss = scenario
+-        == Stage11ValidationScenario::abyss_death_recap
+-        && !state.entered_abyss;
+-    const bool drive_to_depth = scenario
+-        == Stage11ValidationScenario::deep_continue
+-        && !state.saw_depth_two;
+-    if (!drive_to_abyss && !drive_to_depth) return {};
+-    if (!snapshot.combat.has_value()) return {};
+-    if (snapshot.phase == dungeon::RoomPhase::combat) {
+-        const auto* const target = nearest_living_monster(*snapshot.combat);
+-        if (target == nullptr) return {};
+-        const auto movement = validation_movement_toward(
+-            snapshot.combat->player.position, target->position);
+-        if (snapshot.combat->diagnostics.input_size == 0U
+-                && validation_attack_lane(*snapshot.combat, *target)) {
+-            static_cast<void>(session.queue_action(combat::Action::light));
+-        }
+-        return movement;
+-    }
+-    if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
+-    if (drive_to_abyss) {
+-        return validation_exit_movement(snapshot.combat->player.position,
+-            validation_direction(config));
+-    }
+-    const auto movement = validation_movement_toward(
+-        snapshot.combat->player.position, kHoleCenter);
+-    if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+-        static_cast<void>(session.request_descent(true));
+-    }
+-    return movement;
+-}
+-
+-bool stage11_validation_reached(const dungeon::DungeonSnapshot& snapshot,
+-    const RaylibHostConfig& config,
+-    const Stage11ValidationState& state) noexcept {
+-    const bool pending = snapshot.death.has_value()
+-        && snapshot.death->can_continue && !snapshot.death->saving;
+-    switch (config.stage11_validation) {
+-    case Stage11ValidationScenario::none: return false;
+-    case Stage11ValidationScenario::normal_death_recap:
+-    case Stage11ValidationScenario::restart_same_recap:
+-        return pending && !snapshot.death->checkpoint.death_was_abyss;
+-    case Stage11ValidationScenario::abyss_death_recap:
+-        return pending && state.entered_abyss
+-            && snapshot.death->checkpoint.death_was_abyss;
+-    case Stage11ValidationScenario::deep_continue:
+-        return state.continue_requested && state.saw_depth_two
+-            && !snapshot.death.has_value() && snapshot.depth == 1U
+-            && snapshot.combat.has_value()
+-            && snapshot.combat->player.hp > 0;
+-    case Stage11ValidationScenario::floor_one_continue:
+-        return state.continue_requested && !snapshot.death.has_value()
+-            && snapshot.depth == 1U && snapshot.combat.has_value()
+-            && snapshot.combat->player.hp > 0;
+-    }
+-    return false;
+-}
+-
+-bool has_environment_visual(
+-    const dungeon::DungeonSnapshot& snapshot,
+-    combat::HazardKind kind,
+-    bool require_warning) noexcept {
+-    if (!snapshot.combat.has_value()) return false;
+-    for (std::size_t index = 0U;
+-         index < snapshot.combat->hazard_count; ++index) {
+-        const combat::HazardSnapshot& hazard = snapshot.combat->hazards[index];
+-        if (hazard.active
+-                && hazard.source == combat::HazardSource::abyss_environment
+-                && hazard.kind == kind
+-                && (!require_warning || hazard.telegraph_ticks != 0U)) {
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-bool stage10_validation_reached(
+-    const dungeon::DungeonSnapshot& snapshot,
+-    const RaylibHostConfig& config,
+-    const Stage10ValidationState& state) noexcept {
+-    switch (config.stage10_validation) {
+-    case Stage10ValidationScenario::none:
+-        return false;
+-    case Stage10ValidationScenario::abyss_door: {
+-        const auto direction = validation_direction(config);
+-        const std::size_t index = static_cast<std::size_t>(direction);
+-        return !snapshot.is_abyss
+-            && snapshot.phase == dungeon::RoomPhase::awaiting_exit
+-            && index < snapshot.abyss_doors.size()
+-            && snapshot.abyss_doors[index];
+-    }
+-    case Stage10ValidationScenario::thunderstorm_warning:
+-        return snapshot.abyss_rule == abyss::AbyssRuleId::thunderstorm
+-            && has_environment_visual(snapshot,
+-                combat::HazardKind::thunderstorm, true);
+-    case Stage10ValidationScenario::hunting_flames_warning:
+-        return snapshot.abyss_rule == abyss::AbyssRuleId::hunting_flames
+-            && has_environment_visual(snapshot,
+-                combat::HazardKind::hunting_flame, true);
+-    case Stage10ValidationScenario::chaos_expansion:
+-        return snapshot.abyss_rule == abyss::AbyssRuleId::chaos_expansion
+-            && has_environment_visual(snapshot,
+-                combat::HazardKind::chaos_expansion, false);
+-    case Stage10ValidationScenario::reward_chest:
+-        return snapshot.is_abyss && snapshot.ground_item_count != 0U;
+-    case Stage10ValidationScenario::pending_reward:
+-        return snapshot.is_abyss && snapshot.abyss_pending_rewards != 0U;
+-    case Stage10ValidationScenario::exit_confirmation:
+-        return snapshot.is_abyss
+-            && snapshot.abyss_exit_confirmation_armed;
+-    case Stage10ValidationScenario::player_death:
+-    case Stage10ValidationScenario::room_reset:
+-        return state.entered_abyss && !snapshot.is_abyss;
+-    case Stage10ValidationScenario::leave_started:
+-        return snapshot.is_abyss
+-            && snapshot.phase == dungeon::RoomPhase::combat;
+-    case Stage10ValidationScenario::restarted_failed:
+-        return !snapshot.is_abyss && snapshot.room_index == 1U;
+-    case Stage10ValidationScenario::abyss_hole_descent:
+-        return state.entered_abyss && state.descent_warning_seen
+-            && snapshot.depth > 1U;
+-    }
+-    return false;
+-}
+-
+ }  // namespace
+ 
+ HostFrameGateResult gate_host_frame(
+     core::FixedStepRunner& fixed_step,
+     bool& pause_latched,
+     bool paused,
+     double frame_seconds) noexcept {
+     if (paused) {
+         if (!pause_latched) fixed_step.clear_accumulator();
+         pause_latched = true;
+@@ -3000,23 +2744,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 } else {
+                     static_cast<void>(runtime.request_clean_shutdown());
+                 }
+                 return;
+             }
+             exit_requested = true;
+         };
+         std::uint32_t presented_frame_count = 0U;
+         unsigned validation_capture_tick = 0U;
+         unsigned validation_capture_count = 0U;
+-        Stage10ValidationState& stage10_validation_state =
++        host_validation::Stage10ValidationState& stage10_validation_state =
+             validation_states->stage10;
+-        Stage11ValidationState& stage11_validation_state =
++        host_validation::Stage11ValidationState& stage11_validation_state =
+             validation_states->stage11;
+         Stage11BValidationState& stage11b_validation_state =
+             validation_states->stage11b;
+         stage11b_validation_state.load_status = loaded.status;
+         Stage11CHudValidationState& stage11c_validation_state =
+             validation_states->stage11c;
+         stage11c_validation_state.cjk_font_ready = hud_resources_ready;
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_state
+         Stage11DLootValidationState& stage11d_validation_state =
+             validation_states->stage11d;
+@@ -3455,25 +3199,25 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     }
+                 }
+             }
+             for (std::uint32_t step = 0; step < frame.steps; ++step) {
+                 previous = current;
+                 const bool step_death = current.death.has_value();
+                 combat::MovementInput step_movement{};
+                 if (!step_death) {
+                     if (config.stage11_validation
+                             != Stage11ValidationScenario::none) {
+-                        step_movement = stage11_validation_input(*session,
++                        step_movement = host_validation::stage11_validation_input(*session,
+                             current, config, stage11_validation_state);
+                     } else if (config.stage10_validation
+                             != Stage10ValidationScenario::none) {
+-                        step_movement = stage10_validation_input(*session,
++                        step_movement = host_validation::stage10_validation_input(*session,
+                             current, config, stage10_validation_state);
+                     } else {
+                         step_movement = movement;
+                     }
+                 }
+                 runtime.fixed_tick(step_movement,
+                     loot_pickup_policy(live_settings.loot_filter_mode));
+                 ++stage11b_validation_state.fixed_ticks;
+                 session->snapshot(current);
+                 observe_stage17_snapshot(
+@@ -3503,25 +3247,25 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 if (!passive_tree_can_open(current)) {
+                     passive_overlay_open = false;
+                 }
+                 if (runtime.state() != DungeonRuntimeState::running
+                     && inventory.is_open()) {
+                     inventory.close();
+                     fixed_step.clear_accumulator();
+                 }
+                 drain_events(*session, renderer, feedback, audio,
+                     stage17_validation_state.get());
+-                if (stage10_validation_reached(
++                if (host_validation::stage10_validation_reached(
+                         current, config, stage10_validation_state)) {
+                     break;
+                 }
+-                if (stage11_validation_reached(
++                if (host_validation::stage11_validation_reached(
+                         current, config, stage11_validation_state)) {
+                     break;
+                 }
+             }
+ 
+             if (inventory.is_open() != inventory_open_before
+                     || passive_overlay_open != passive_open_before) {
+                 const bool opened = inventory.is_open() || passive_overlay_open;
+                 ui_audio_cues = static_cast<UiAudioCueMask>(ui_audio_cues
+                     | ui_audio_cue_mask(opened
+@@ -3793,23 +3537,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                         stage11b_validation_state.fixed_ticks;
+                     stage11b_validation_state.player_monster_hash_before =
+                         stage11b_snapshot_hash(current);
+                 }
+                 ++stage11b_validation_state.paused_presented;
+                 stage11b_validation_state.paused_ticks_after =
+                     stage11b_validation_state.fixed_ticks;
+                 stage11b_validation_state.player_monster_hash_after =
+                     stage11b_snapshot_hash(current);
+             }
+-            const bool stage10_target_visible = stage10_validation_reached(
++            const bool stage10_target_visible = host_validation::stage10_validation_reached(
+                 current, config, stage10_validation_state);
+-            const bool stage11_target_visible = stage11_validation_reached(
++            const bool stage11_target_visible = host_validation::stage11_validation_reached(
+                 current, config, stage11_validation_state);
+             if (stage11_target_visible) {
+                 ++stage11_validation_state.target_presented_frames;
+             } else {
+                 stage11_validation_state.target_presented_frames = 0U;
+             }
+             if (config.stage10_validation
+                     == Stage10ValidationScenario::chaos_expansion
+                     && stage10_target_visible) {
+                 ++stage10_validation_state.chaos_presented_frames;
+diff --git a/tests/dungeon/stage10_evidence_guard_test.cmake b/tests/dungeon/stage10_evidence_guard_test.cmake
+index a38e3bf..424c41f 100644
+--- a/tests/dungeon/stage10_evidence_guard_test.cmake
++++ b/tests/dungeon/stage10_evidence_guard_test.cmake
+@@ -6,21 +6,32 @@ foreach(required FIXTURE_SOURCE VALIDATION_GAME_SOURCE FORMAL_SOURCE
+ endforeach()
+ 
+ file(READ "${FIXTURE_SOURCE}" fixture_source)
+ file(READ "${VALIDATION_GAME_SOURCE}" validation_game_source)
+ file(READ "${FORMAL_SOURCE}" formal_source)
+ file(READ "${CAPTURE_SCRIPT}" capture_script)
+ file(READ "${FORMAL_CAPTURE_SCRIPT}" formal_capture_script)
+ file(READ "${STRESS_SOURCE}" stress_source)
+ file(READ "${HOST_HEADER}" host_header)
+ file(READ "${HOST_SOURCE}" host_source)
+-set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}")
++get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
++set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
++set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
++if(NOT EXISTS "${stage_source}")
++    message(FATAL_ERROR "Stage 10 validation route target is missing: ${stage_source}")
++endif()
++if(NOT EXISTS "${stage_header}")
++    message(FATAL_ERROR "Stage 10 validation state target is missing: ${stage_header}")
++endif()
++file(READ "${stage_source}" stage_source_text)
++file(READ "${stage_header}" stage_header_text)
++set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}\n${stage_source_text}")
+ 
+ foreach(forbidden
+         "DungeonSessionTestAccess"
+         "CombatWorldTestAccess"
+         "force_defeat"
+         "relay_defeated"
+         "defeat_monster\\("
+         "set_phase\\("
+         "stable_state_"
+         "phase_[ \\t]*="
+@@ -36,26 +47,52 @@ if(NOT fixture_source MATCHES "SaveStore"
+         OR NOT fixture_source MATCHES "request_pickup"
+         OR NOT fixture_source MATCHES "abyss_exit_warning"
+         OR NOT fixture_source MATCHES "abyss_exit_confirmation_armed"
+         OR NOT fixture_source MATCHES "resolution.room_seed"
+         OR NOT fixture_source MATCHES "resolution.rule"
+         OR NOT fixture_source MATCHES "MovementInput")
+     message(FATAL_ERROR "Stage 10 fixture must use real save, pickup, warning, confirmation, and movement APIs")
+ endif()
+ if(NOT validation_game_source MATCHES "run_raylib_host"
+         OR NOT formal_source MATCHES "make_door_transition"
+-        OR NOT formal_source MATCHES "run_raylib_host"
+-        OR NOT host_source MATCHES "queue_action"
+-        OR NOT host_source MATCHES "request_descent"
+-        OR NOT host_source MATCHES "reset_current_room")
++        OR NOT formal_source MATCHES "run_raylib_host")
+     message(FATAL_ERROR "Formal Stage 10 evidence must use generation and normal host inputs")
+ endif()
++foreach(required_stage10_token
++        "combat::MovementInput stage10_validation_input("
++        "bool stage10_validation_reached("
++        "session.reset_current_room()"
++        "session.request_descent(true)"
++        "session.request_active_skill_slot(1U)"
++        "session.queue_action(combat::Action::light)"
++        "bool has_environment_visual(")
++    string(FIND "${stage_source_text}" "${required_stage10_token}"
++        required_stage10_index)
++    if(required_stage10_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage 10 validation route lacks production algorithm: ${required_stage10_token}")
++    endif()
++endforeach()
++if(NOT stage_header_text MATCHES "struct Stage10ValidationState final")
++    message(FATAL_ERROR "Stage 10 validation state definition is missing")
++endif()
++foreach(required_host_stage10_token
++        "stage10_validation_input(*session,"
++        "stage10_validation_reached("
++        "++stage10_validation_state.chaos_presented_frames;"
++        "stage10_validation_captured = stage10_validation_captured")
++    string(FIND "${host_source}" "${required_host_stage10_token}" required_host_stage10_index)
++    if(required_host_stage10_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage 10 formal host call is missing: ${required_host_stage10_token}")
++    endif()
++endforeach()
+ 
+ if(stress_source MATCHES "make_full_ground_pool"
+         OR stress_source MATCHES "std::array<[^>]*GroundItem")
+     message(FATAL_ERROR "Stage 10 stress may not substitute a local GroundItem array for the production session pool")
+ endif()
+ if(NOT stress_source MATCHES "DungeonSession"
+         OR NOT stress_source MATCHES "fill_ground_pool"
+         OR NOT stress_source MATCHES "ground_items\\(session\\)"
+         OR NOT stress_source MATCHES "session.tick\\("
+         OR NOT stress_source MATCHES "ground_saturation_count"
+diff --git a/tests/dungeon/stage11_death_evidence_guard_test.cmake b/tests/dungeon/stage11_death_evidence_guard_test.cmake
+index cbacd74..613e57b 100644
+--- a/tests/dungeon/stage11_death_evidence_guard_test.cmake
++++ b/tests/dungeon/stage11_death_evidence_guard_test.cmake
+@@ -1,21 +1,32 @@
+ foreach(required FIXTURE_SOURCE FORMAL_SOURCE CAPTURE_SCRIPT HOST_HEADER HOST_SOURCE)
+     if(NOT DEFINED ${required})
+         message(FATAL_ERROR "Stage 11 evidence guard missing ${required}")
+     endif()
+ endforeach()
+ file(READ "${FIXTURE_SOURCE}" fixture_source)
+ file(READ "${FORMAL_SOURCE}" formal_source)
+ file(READ "${CAPTURE_SCRIPT}" capture_script)
+ file(READ "${HOST_HEADER}" host_header)
+ file(READ "${HOST_SOURCE}" host_source)
+-set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}")
++get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
++set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
++set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
++if(NOT EXISTS "${stage_source}")
++    message(FATAL_ERROR "Stage 11 validation route target is missing: ${stage_source}")
++endif()
++if(NOT EXISTS "${stage_header}")
++    message(FATAL_ERROR "Stage 11 validation state target is missing: ${stage_header}")
++endif()
++file(READ "${stage_source}" stage_source_text)
++file(READ "${stage_header}" stage_header_text)
++set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}\n${stage_source_text}")
+ 
+ set(public_death_mutation_scan "${all_evidence}")
+ string(REPLACE "==" "__stage11_eq__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+ string(REPLACE "!=" "__stage11_ne__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+ string(REPLACE "<=" "__stage11_le__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+ string(REPLACE ">=" "__stage11_ge__" public_death_mutation_scan
+     "${public_death_mutation_scan}")
+@@ -48,28 +59,56 @@ foreach(forbidden "DungeonSessionTestAccess" "CombatWorldTestAccess"
+         message(FATAL_ERROR "Forbidden Stage 11 evidence injection: ${forbidden}")
+     endif()
+ endforeach()
+ 
+ foreach(required_fixture "SaveStore" "session.tick" "pending_save_view"
+         "request_death_continue" "store.commit" "store.load")
+     if(NOT fixture_source MATCHES "${required_fixture}")
+         message(FATAL_ERROR "Fixture lacks production API: ${required_fixture}")
+     endif()
+ endforeach()
+-foreach(required_host "stage11_validation_input" "queue_action"
++foreach(required_host "stage11_validation_input"
+         "MovementInput" "runtime.fixed_tick" "request_death_continue"
+         "host_death_input_gate" "settings::StableKey::e"
+         "death_gate.continue_death = true")
+     if(NOT host_source MATCHES "${required_host}")
+         message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
+     endif()
+ endforeach()
++foreach(required_stage11_token
++        "combat::MovementInput stage11_validation_input("
++        "bool stage11_validation_reached("
++        "session.request_descent(true)"
++        "session.queue_action(combat::Action::light)"
++        "Stage11ValidationScenario::deep_continue"
++        "state.continue_requested && state.saw_depth_two")
++    string(FIND "${stage_source_text}" "${required_stage11_token}"
++        required_stage11_index)
++    if(required_stage11_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage 11 validation route lacks production algorithm: ${required_stage11_token}")
++    endif()
++endforeach()
++if(NOT stage_header_text MATCHES "struct Stage11ValidationState final")
++    message(FATAL_ERROR "Stage 11 validation state definition is missing")
++endif()
++foreach(required_host_stage11_token
++        "stage11_validation_input(*session,"
++        "stage11_validation_reached("
++        "stage11_validation_state.continue_requested = true;"
++        "++stage11_validation_state.target_presented_frames;")
++    string(FIND "${host_source}" "${required_host_stage11_token}" required_host_stage11_index)
++    if(required_host_stage11_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage 11 formal host call is missing: ${required_host_stage11_token}")
++    endif()
++endforeach()
+ string(ASCII 9 host_tab)
+ string(ASCII 10 host_lf)
+ string(ASCII 13 host_cr)
+ string(REPLACE " " "" host_compact "${host_source}")
+ string(REPLACE "${host_tab}" "" host_compact "${host_compact}")
+ string(REPLACE "${host_lf}" "" host_compact "${host_compact}")
+ string(REPLACE "${host_cr}" "" host_compact "${host_compact}")
+ string(REGEX MATCHALL "if\\(death_gate[.]continue_death\\)\\{"
+     exact_death_gate_conditions "${host_compact}")
+ list(LENGTH exact_death_gate_conditions exact_death_gate_condition_count)
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 0c1d33d..d5a7601 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -13,40 +13,85 @@ endif()
+ file(READ "${_host}" _host_text)
+ 
+ set(_input_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.hpp")
+ set(_input_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.cpp")
+ set(_navigation_header
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.hpp")
+ set(_navigation_source
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.cpp")
++set(_stage10_11_header
++    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.hpp")
++set(_stage10_11_source
++    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.cpp")
+ set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+ foreach(_required IN ITEMS
+         "${_input_header}" "${_input_source}"
+-        "${_navigation_header}" "${_navigation_source}" "${_raylib_cmake}")
++        "${_navigation_header}" "${_navigation_source}"
++        "${_stage10_11_header}" "${_stage10_11_source}" "${_raylib_cmake}")
+     if(NOT EXISTS "${_required}")
+         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
+     endif()
+ endforeach()
+ file(READ "${_input_header}" _input_header_text)
+ file(READ "${_input_source}" _input_source_text)
+ file(READ "${_navigation_header}" _navigation_header_text)
+ file(READ "${_navigation_source}" _navigation_source_text)
++file(READ "${_stage10_11_header}" _stage10_11_header_text)
++file(READ "${_stage10_11_source}" _stage10_11_source_text)
+ file(READ "${_raylib_cmake}" _raylib_cmake_text)
+ 
+-foreach(_header_text IN ITEMS "${_input_header_text}" "${_navigation_header_text}")
++foreach(_header_text IN ITEMS
++        "${_input_header_text}" "${_navigation_header_text}"
++        "${_stage10_11_header_text}")
+     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
+     endif()
+ endforeach()
+ 
++foreach(_stage10_11_definition_token IN ITEMS
++        "combat::MovementInput stage10_validation_input("
++        "combat::MovementInput stage11_validation_input("
++        "bool stage10_validation_reached("
++        "bool stage11_validation_reached(")
++    string(FIND "${_stage10_11_source_text}" "${_stage10_11_definition_token}"
++        _stage10_11_definition)
++    if(_stage10_11_definition EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation Stage10/11 definition is missing: ${_stage10_11_definition_token}")
++    endif()
++    string(FIND "${_host_text}" "${_stage10_11_definition_token}"
++        _host_stage10_11_definition)
++    if(NOT _host_stage10_11_definition EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation Stage10/11 definition remains in raylib_host.cpp: ${_stage10_11_definition_token}")
++    endif()
++endforeach()
++
++foreach(_stage10_11_state_token IN ITEMS
++        "struct Stage10ValidationState final"
++        "struct Stage11ValidationState final")
++    string(FIND "${_stage10_11_header_text}" "${_stage10_11_state_token}"
++        _stage10_11_state_definition)
++    if(_stage10_11_state_definition EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation Stage10/11 state definition is missing: ${_stage10_11_state_token}")
++    endif()
++    string(FIND "${_host_text}" "${_stage10_11_state_token}"
++        _host_stage10_11_state_definition)
++    if(NOT _host_stage10_11_state_definition EQUAL -1)
++        message(FATAL_ERROR
++            "Host validation Stage10/11 state definition remains in raylib_host.cpp: ${_stage10_11_state_token}")
++    endif()
++endforeach()
++
+ set(_input_definition_tokens
+     "void inject_validation_pressed("
+     "void inject_validation_action("
+     "void inject_validation_movement(")
+ set(_navigation_definition_tokens
+     "combat::MovementInput validation_route_fire_movement("
+     "const combat::MonsterSnapshot* nearest_living_monster("
+     "combat::MovementInput validation_movement_toward("
+     "combat::Vec3 validation_door_position("
+     "combat::MovementInput validation_exit_movement("
+@@ -76,21 +121,22 @@ endforeach()
+ foreach(_old_helper IN ITEMS
+         "void inject_stage11b_pressed(" "void inject_stage11c_binding("
+         "void inject_stage11c_movement(")
+     string(FIND "${_host_text}" "${_old_helper}" _old_definition)
+     if(NOT _old_definition EQUAL -1)
+         message(FATAL_ERROR "Host validation boundary old helper remains: ${_old_helper}")
+     endif()
+ endforeach()
+ 
+ foreach(_registered_source IN ITEMS
+-        "host_validation_input.cpp" "host_validation_navigation.cpp")
++        "host_validation_input.cpp" "host_validation_navigation.cpp"
++        "host_validation_stage10_11.cpp")
+     string(FIND "${_raylib_cmake_text}" "${_registered_source}" _registered)
+     if(_registered EQUAL -1)
+         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
+     endif()
+ endforeach()
+ 
+ # Keep seam comments from satisfying a source-order assertion.
+ string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" _sanitized "${_host_text}")
+ string(REGEX REPLACE "//[^\r\n]*" "" _sanitized "${_sanitized}")
+ 
+@@ -136,21 +182,21 @@ string(FIND "${_host_loop}" "runtime.fixed_tick(step_movement,"
+ if(_fixed_step_begin EQUAL -1 OR _fixed_step_end EQUAL -1
+         OR NOT _fixed_step_begin LESS _fixed_step_end)
+     message(FATAL_ERROR "Host validation sequence guard cannot isolate fixed-step movement branch")
+ endif()
+ math(EXPR _fixed_step_length "${_fixed_step_end} - ${_fixed_step_begin}")
+ string(SUBSTRING "${_host_loop}" ${_fixed_step_begin} ${_fixed_step_length}
+     _fixed_step_branch)
+ string(REGEX REPLACE "[ \t\r\n]+" " " _fixed_step_normalized
+     "${_fixed_step_branch}")
+ string(REGEX MATCH
+-    "if \\(!step_death\\) \\{ if \\(config\\.stage11_validation != Stage11ValidationScenario::none\\) \\{ step_movement = stage11_validation_input\\(.*\\); \\} else if \\(config\\.stage10_validation != Stage10ValidationScenario::none\\) \\{ step_movement = stage10_validation_input\\(.*\\); \\} else \\{ step_movement = movement; \\} \\}"
++    "if \\(!step_death\\) \\{ if \\(config\\.stage11_validation != Stage11ValidationScenario::none\\) \\{ step_movement = host_validation::stage11_validation_input\\(.*\\); \\} else if \\(config\\.stage10_validation != Stage10ValidationScenario::none\\) \\{ step_movement = host_validation::stage10_validation_input\\(.*\\); \\} else \\{ step_movement = movement; \\} \\}"
+     _fixed_step_priority_structure "${_fixed_step_normalized}")
+ if(NOT _fixed_step_priority_structure)
+     message(FATAL_ERROR "Host validation sequence guard rejected fixed-step movement priority structure")
+ endif()
+ 
+ function(assert_unique_fixed_step_token TOKEN)
+     string(FIND "${_fixed_step_branch}" "${TOKEN}" _position)
+     if(_position EQUAL -1)
+         message(FATAL_ERROR "Host validation sequence guard missing fixed-step movement token: ${TOKEN}")
+     endif()
+diff --git a/tests/platform/stage11c_hud_evidence_guard_test.cmake b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+index fcaa414..3e32873 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_test.cmake
+@@ -92,21 +92,21 @@ set(_physical_input_forbidden
+     "TestAccess" "HudViewModel direct_model")
+ foreach(_forbidden IN LISTS _physical_input_forbidden)
+     string(FIND "${_input_source_text}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR
+             "Stage11C evidence guard rejected non-physical shared input: ${_forbidden}")
+     endif()
+ endforeach()
+ 
+ string(FIND "${_host_text}" "[[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges" _stage11c_begin)
+-string(FIND "${_host_text}" "combat::MovementInput stage10_validation_input" _stage11c_end)
++string(FIND "${_host_text}" "void consume_host_settings_notice(" _stage11c_end)
+ if(_stage11c_begin EQUAL -1 OR _stage11c_end EQUAL -1 OR NOT _stage11c_begin LESS _stage11c_end)
+     message(FATAL_ERROR "Stage11C evidence guard cannot isolate physical scenario driver")
+ endif()
+ math(EXPR _stage11c_length "${_stage11c_end} - ${_stage11c_begin}")
+ string(SUBSTRING "${_host_text}" ${_stage11c_begin} ${_stage11c_length} _stage11c_driver)
+ foreach(_forbidden IN LISTS _physical_input_forbidden)
+     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR "Stage11C evidence guard rejected non-physical scenario driver: ${_forbidden}")
+     endif()
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index 2e78bb3..f20ba77 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -228,61 +228,64 @@ arpg::test::Failure environment_falls_back_atomically_when_a_required_frame_is_m
+     available.hole_required = false;
+     ARPG_REQUIRE(arpg::platform::should_draw_material_environment(available));
+     return {};
+ }
+ 
+ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noexcept {
+     const std::string host_header = read_project_source(
+         "src/platform/raylib/raylib_host.hpp");
+     const std::string host = read_project_source(
+         "src/platform/raylib/raylib_host.cpp");
++    const std::string stage10_11 = read_project_source(
++        "src/platform/raylib/host_validation_stage10_11.cpp");
+     const std::string renderer_header = read_project_source(
+         "src/platform/raylib/combat_renderer.hpp");
+     const std::string renderer = read_project_source(
+         "src/platform/raylib/room_renderer.cpp");
+     const std::string material_pack = read_project_source(
+         "src/platform/raylib/material_pack.cpp");
+     const std::string platform_cmake = read_project_source(
+         "tests/platform/CMakeLists.txt");
+     const std::string formal = read_project_source(
+         "tests/platform/stage12_material_formal_game_validation.cpp");
+     const std::string validator = read_project_source(
+         "tests/platform/stage12_material_validator.ps1");
+     const std::string validator_self_test = read_project_source(
+         "tests/platform/stage12_material_validator_self_test.ps1");
+     ARPG_REQUIRE(!host_header.empty());
+     ARPG_REQUIRE(!host.empty());
++    ARPG_REQUIRE(!stage10_11.empty());
+     ARPG_REQUIRE(!renderer_header.empty());
+     ARPG_REQUIRE(!renderer.empty());
+     ARPG_REQUIRE(!material_pack.empty());
+     ARPG_REQUIRE(!platform_cmake.empty());
+     ARPG_REQUIRE(!formal.empty());
+     ARPG_REQUIRE(!validator.empty());
+     ARPG_REQUIRE(!validator_self_test.empty());
+ 
+-    const std::size_t stage10_input = host.find(
++    const std::size_t stage10_input = stage10_11.find(
+         "combat::MovementInput stage10_validation_input");
+     ARPG_REQUIRE(stage10_input != std::string::npos);
+     const std::string stage10_input_block = braced_block_after(
+-        host, stage10_input);
++        stage10_11, stage10_input);
+     ARPG_REQUIRE(!stage10_input_block.empty());
+     for (const char* validation_only : {
+              "scenario == Stage10ValidationScenario::abyss_hole_descent",
+              "session.request_active_skill_slot(1U)",
+              "session.request_active_skill_slot(0U)",
+              "combat::kStormCenterForward", "combat::kDrawSlashRange"}) {
+         ARPG_REQUIRE(stage10_input_block.find(validation_only)
+             != std::string::npos);
+     }
+     ARPG_REQUIRE(occurrence_count(stage10_input_block,
+         "request_active_skill_slot") == 2U);
+-    ARPG_REQUIRE(occurrence_count(host,
++    ARPG_REQUIRE(occurrence_count(stage10_11,
+         "request_active_skill_slot")
+         == occurrence_count(stage10_input_block,
+             "request_active_skill_slot"));
+ 
+     ARPG_REQUIRE(platform_cmake.find(
+         "target_link_options(arpg_stage12_material_formal PRIVATE /STACK:2097152)")
+         != std::string::npos);
+     ARPG_REQUIRE(occurrence_count(platform_cmake, "/STACK:2097152") == 1U);
+ 
+     const std::size_t material_draw = material_pack.find(

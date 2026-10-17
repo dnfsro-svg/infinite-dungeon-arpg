@@ -1,0 +1,279 @@
+# Review package: 2358e54eb2ff75c45b6c84847aef3d6dd4665c96..ba1c93f
+
+## Commits
+ba1c93f test: harden raylib window lifetime guard
+
+## Files changed
+ tests/dungeon/evidence_source_scan.cmake           |   3 +-
+ .../host_validation_sequence_guard_test.cmake      |  23 +++-
+ tests/platform/host_validation_source_test.cmake   | 138 ++++++++++++++++++---
+ 3 files changed, 142 insertions(+), 22 deletions(-)
+
+## Diff
+diff --git a/tests/dungeon/evidence_source_scan.cmake b/tests/dungeon/evidence_source_scan.cmake
+index 286df43..e349cec 100644
+--- a/tests/dungeon/evidence_source_scan.cmake
++++ b/tests/dungeon/evidence_source_scan.cmake
+@@ -250,22 +250,21 @@ function(evidence_try_find_cpp_function_bounds_in_sanitized
+     set(${output_open} ${brace_open} PARENT_SCOPE)
+     set(${output_end} ${function_end} PARENT_SCOPE)
+     set(${output_valid} TRUE PARENT_SCOPE)
+ endfunction()
+ 
+ function(evidence_find_cpp_function_bounds_in_sanitized sanitized_source signature output_begin output_open output_end)
+     evidence_try_find_cpp_function_bounds_in_sanitized(
+         "${sanitized_source}" "${signature}"
+         function_begin function_open function_end function_valid)
+     if(NOT function_valid)
+-        message(FATAL_ERROR
+-            "Evidence validation function is missing or is not a concrete definition: ${signature}")
++        message(FATAL_ERROR "Evidence validation function is missing: ${signature}")
+     endif()
+     set(${output_begin} ${function_begin} PARENT_SCOPE)
+     set(${output_open} ${function_open} PARENT_SCOPE)
+     set(${output_end} ${function_end} PARENT_SCOPE)
+ endfunction()
+ 
+ function(evidence_find_cpp_function_bounds source signature output_begin output_open output_end)
+     evidence_sanitize_cpp_for_scan("${source}" sanitized_source)
+     evidence_find_cpp_function_bounds_in_sanitized("${sanitized_source}" "${signature}"
+         function_begin function_open function_end)
+diff --git a/tests/platform/host_validation_sequence_guard_test.cmake b/tests/platform/host_validation_sequence_guard_test.cmake
+index 3236859..c38dee1 100644
+--- a/tests/platform/host_validation_sequence_guard_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_test.cmake
+@@ -1077,27 +1077,46 @@ foreach(_stage11b_definition_token IN ITEMS
+         _host_stage11b_definition)
+     if(NOT _host_stage11b_definition EQUAL -1)
+         message(FATAL_ERROR
+             "Host validation Stage11B definition remains in raylib_host.cpp: ${_stage11b_definition_token}")
+     endif()
+ endforeach()
+ if(NOT _stage11b_header_text MATCHES "struct Stage11BValidationState final")
+     message(FATAL_ERROR "Host validation Stage11B state definition is missing")
+ endif()
+ 
++evidence_sanitize_cpp_for_scan("${_stage11c_source_text}"
++    _stage11c_source_code)
+ foreach(_stage11c_definition_token IN ITEMS
+         "PhysicalKeySnapshot inject_stage11c_physical_edges("
+         "std::uint64_t stage11c_production_snapshot_hash("
+         "bool stage11c_hud_validation_reached("
+         "void write_stage11c_hud_validation_summary(")
+-    evidence_extract_cpp_function_block("${_stage11c_source_text}"
+-        "${_stage11c_definition_token}" _stage11c_function)
++    evidence_try_find_cpp_function_bounds_in_sanitized(
++        "${_stage11c_source_code}" "${_stage11c_definition_token}"
++        _stage11c_function_begin _stage11c_function_open _stage11c_function_end
++        _stage11c_function_valid)
++    if(NOT _stage11c_function_valid)
++        string(FIND "${_stage11c_source_code}"
++            "${_stage11c_definition_token}" _stage11c_signature_position)
++        if(_stage11c_signature_position EQUAL -1)
++            message(FATAL_ERROR
++                "Evidence validation function is missing: ${_stage11c_definition_token}")
++        endif()
++        message(FATAL_ERROR
++            "Host validation Stage11C definition is missing: ${_stage11c_definition_token}")
++    endif()
++    math(EXPR _stage11c_function_length
++        "${_stage11c_function_end} - ${_stage11c_function_begin} + 1")
++    string(SUBSTRING "${_stage11c_source_code}"
++        ${_stage11c_function_begin} ${_stage11c_function_length}
++        _stage11c_function)
+     string(FIND "${_stage11c_function}" "{" _stage11c_definition)
+     string(FIND "${_stage11c_function}" ";" _stage11c_forward_declaration)
+     if(_stage11c_definition EQUAL -1
+             OR (NOT _stage11c_forward_declaration EQUAL -1
+                 AND _stage11c_forward_declaration LESS _stage11c_definition))
+         message(FATAL_ERROR
+             "Host validation Stage11C definition is missing: ${_stage11c_definition_token}")
+     endif()
+     string(FIND "${_host_text}" "${_stage11c_definition_token}"
+         _host_stage11c_definition)
+diff --git a/tests/platform/host_validation_source_test.cmake b/tests/platform/host_validation_source_test.cmake
+index 8500e24..d10f7c2 100644
+--- a/tests/platform/host_validation_source_test.cmake
++++ b/tests/platform/host_validation_source_test.cmake
+@@ -2225,40 +2225,119 @@ host_validation_require_canonical_order("Task 8B Host settings order"
+     "${_run_host_direct}"
+     "const PauseCommand pause_command = update_pause_menu("
+     "settings_runtime.consume_notice(pause_screen_before);"
+     "const std::uint64_t input_revision_before = input_settings.revision;"
+         "settings_runtime.settle("
+     "if (input_settings.revision != input_revision_before)")
+ 
+ # Task 8C centralizes only the raylib window's lifetime.  The Host retains
+ # post-ready policy calls, while the dedicated owner preserves the exact
+ # flags -> create -> readiness boundary and provides the sole CloseWindow call.
++function(task8c_compact_cpp_surface SOURCE OUT_COMPACT)
++    string(REGEX REPLACE "[ \t\r\n]" "" _compact "${SOURCE}")
++    set("${OUT_COMPACT}" "${_compact}" PARENT_SCOPE)
++endfunction()
++
++function(task8c_lifecycle_owner_surface_valid
++        ACTIVE_SURFACE LEXICAL_SURFACE IS_OWNER OUT_VALID)
++    foreach(_task8c_lifecycle_symbol IN ITEMS
++            "SetConfigFlags" "InitWindow" "CloseWindow")
++        if(IS_OWNER)
++            set(_expected_count 1)
++        else()
++            set(_expected_count 0)
++        endif()
++        foreach(_task8c_surface IN ITEMS
++                "${ACTIVE_SURFACE}" "${LEXICAL_SURFACE}")
++            host_validation_count_token("${_task8c_surface}"
++                "${_task8c_lifecycle_symbol}" _task8c_symbol_count)
++            if(NOT _task8c_symbol_count EQUAL _expected_count)
++                set("${OUT_VALID}" FALSE PARENT_SCOPE)
++                return()
++            endif()
++        endforeach()
++    endforeach()
++    set("${OUT_VALID}" TRUE PARENT_SCOPE)
++endfunction()
++
++# RED witnesses for the predecessor guard: it counted raw header text and only
++# inspected raylib_host.cpp.  Both fixtures therefore satisfy those old local
++# counts despite violating the intended ownership contract.
++set(_task8c_disabled_interface_decoy [=[
++// The following API is disabled and must not constitute public evidence.
++#if 0
++class HostWindowLifetime final {
++public:
++    void close() noexcept;
++};
++#endif
++]=])
++host_validation_require_count("Task 8C RED legacy raw interface witness"
++    "${_task8c_disabled_interface_decoy}"
++    "class HostWindowLifetime final {" 1)
++host_validation_unconditional_cpp_surface("${_task8c_disabled_interface_decoy}"
++    _task8c_disabled_interface_active _task8c_disabled_interface_lexical)
++host_validation_require_count("Task 8C RED disabled interface is inactive"
++    "${_task8c_disabled_interface_active}"
++    "class HostWindowLifetime final {" 0)
++
++set(_task8c_foreign_close_window_decoy [=[
++void task8c_foreign_window_owner() {
++    CloseWindow();
++}
++]=])
++host_validation_require_count("Task 8C RED legacy Host-only witness"
++    "${_run_host_direct}" "CloseWindow(" 0)
++host_validation_require_count("Task 8C RED legacy owner witness"
++    "${_host_window_lifetime_source_active}" "&CloseWindow" 1)
++host_validation_require_count("Task 8C RED foreign owner exists"
++    "${_task8c_foreign_close_window_decoy}" "CloseWindow(" 1)
++message(STATUS "Task 8C RED witnesses: raw disabled interface and foreign CloseWindow owner pass predecessor-local checks")
++
++host_validation_unconditional_cpp_surface("${_task8c_foreign_close_window_decoy}"
++    _task8c_foreign_close_window_active _task8c_foreign_close_window_lexical)
++task8c_lifecycle_owner_surface_valid(
++    "${_task8c_foreign_close_window_active}"
++    "${_task8c_foreign_close_window_lexical}" FALSE
++    _task8c_foreign_close_window_valid)
++if(_task8c_foreign_close_window_valid)
++    message(FATAL_ERROR
++        "Task 8C foreign CloseWindow owner escaped the lifetime-owner guard")
++endif()
++
++task8c_compact_cpp_surface("${_host_window_lifetime_header_active}"
++    _task8c_interface_active)
++task8c_compact_cpp_surface("${_host_window_lifetime_header_lexical}"
++    _task8c_interface_lexical)
+ foreach(_task8c_interface_member IN ITEMS
+-        "struct HostWindowBackend final {"
+-        "void (*set_config_flags)(unsigned int){}"
+-        "void (*init_window)(int, int, const char*){}"
+-        "bool (*is_window_ready)(){}"
+-        "void (*close_window)(){}"
+-        "class HostWindowLifetime final {"
+-        "explicit HostWindowLifetime(HostWindowBackend backend) noexcept"
+-        "[[nodiscard]] bool initialize("
+-        "const RaylibHostConfig& config,"
+-        "const settings::SettingsData& settings) noexcept"
+-        "void close() noexcept"
+-        "[[nodiscard]] bool ready() const noexcept"
++        "structHostWindowBackendfinal{"
++        "void(*set_config_flags)(unsignedint){}"
++        "void(*init_window)(int,int,constchar*){}"
++        "bool(*is_window_ready)(){}"
++        "void(*close_window)(){}"
++        "classHostWindowLifetimefinal{"
++        "explicitHostWindowLifetime(HostWindowBackendbackend)noexcept"
++        "[[nodiscard]]boolinitialize("
++        "constRaylibHostConfig&config,"
++        "constsettings::SettingsData&settings)noexcept"
++        "voidclose()noexcept"
++        "[[nodiscard]]boolready()constnoexcept"
+         "~HostWindowLifetime()"
+-        "HostWindowLifetime(const HostWindowLifetime&) = delete"
+-        "HostWindowLifetime& operator=(const HostWindowLifetime&) = delete"
+-        "[[nodiscard]] HostWindowBackend raylib_host_window_backend() noexcept")
+-    host_validation_require_count("Task 8C public interface member"
+-        "${_host_window_lifetime_header_text}"
+-        "${_task8c_interface_member}" 1)
++        "HostWindowLifetime(constHostWindowLifetime&)=delete"
++        "HostWindowLifetime&operator=(constHostWindowLifetime&)=delete"
++        "[[nodiscard]]HostWindowBackendraylib_host_window_backend()noexcept")
++    foreach(_task8c_interface_surface IN ITEMS
++            "${_task8c_interface_active}" "${_task8c_interface_lexical}")
++        host_validation_require_count("Task 8C active/lexical public interface member"
++            "${_task8c_interface_surface}"
++            "${_task8c_interface_member}" 1)
++    endforeach()
+ endforeach()
+ foreach(_task8c_forbidden_owner IN ITEMS
+         "std::unique_ptr" "std::shared_ptr" "std::vector" "std::string")
+     host_validation_require_count("Task 8C lifetime heap ownership"
+         "${_host_window_lifetime_header_lexical}"
+         "${_task8c_forbidden_owner}" 0)
+ endforeach()
+ host_validation_extract_sanitized_block(
+     "${_host_window_lifetime_source_active}"
+     "bool HostWindowLifetime::initialize("
+@@ -2319,20 +2398,43 @@ endforeach()
+ host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
+     "${_run_host_direct}"
+     "window.initialize(config, committed_settings)"
+     "ChangeDirectory("
+     "SetWindowMinSize(800, 450);"
+     "SetExitKey(KEY_NULL);"
+     "audio.shutdown();"
+     "renderer.shutdown_resources();"
+     "pause_menu_renderer.shutdown();"
+     "window.close();")
++file(GLOB_RECURSE _task8c_raylib_production_sources LIST_DIRECTORIES FALSE
++    "${SOURCE_ROOT}/src/platform/raylib/*.cpp")
++file(REAL_PATH "${_host_window_lifetime_source}"
++    _task8c_lifetime_owner_source_real)
++foreach(_task8c_production_source IN LISTS _task8c_raylib_production_sources)
++    file(READ "${_task8c_production_source}" _task8c_production_text)
++    host_validation_unconditional_cpp_surface("${_task8c_production_text}"
++        _task8c_production_active _task8c_production_lexical)
++    file(REAL_PATH "${_task8c_production_source}" _task8c_production_source_real)
++    if("${_task8c_production_source_real}" STREQUAL
++            "${_task8c_lifetime_owner_source_real}")
++        set(_task8c_is_lifetime_owner TRUE)
++    else()
++        set(_task8c_is_lifetime_owner FALSE)
++    endif()
++    task8c_lifecycle_owner_surface_valid(
++        "${_task8c_production_active}" "${_task8c_production_lexical}"
++        ${_task8c_is_lifetime_owner} _task8c_owner_valid)
++    if(NOT _task8c_owner_valid)
++        message(FATAL_ERROR
++            "Task 8C direct raylib lifecycle owner violation: ${_task8c_production_source}")
++    endif()
++endforeach()
+ set(_task8b_coordinator_declaration [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+             &live_settings, &input_settings, &settings_store,
+             settings_backend};]=])
+ set(_task8b_second_coordinator_mutation [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+             &live_settings, &input_settings, &settings_store,
+             settings_backend};
+         HostSettingsRuntime task8b_shadow_runtime{nullptr, &pause_menu,
+             &pause_menu.draft, &input_settings, &settings_store,
+             settings_backend};
+         static_cast<void>(task8b_shadow_runtime.settle(
