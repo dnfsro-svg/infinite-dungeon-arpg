@@ -1,0 +1,361 @@
+# Review package: 7fe5115..2839446
+
+## Commits
+2839446 feat: define stage 4 monster catalog
+
+## Files changed
+ src/combat/CMakeLists.txt              |   1 +
+ src/combat/combat_types.hpp            |  58 +++++++++++++++++++
+ src/combat/monster_catalog.cpp         | 100 +++++++++++++++++++++++++++++++++
+ src/combat/monster_catalog.hpp         |  11 ++++
+ tests/combat/CMakeLists.txt            |   1 +
+ tests/combat/combat_test_main.cpp      |   4 +-
+ tests/combat/monster_catalog_tests.cpp |  53 +++++++++++++++++
+ 7 files changed, 227 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+index 82bced0..80c642c 100644
+--- a/src/combat/CMakeLists.txt
++++ b/src/combat/CMakeLists.txt
+@@ -1,15 +1,16 @@
+ add_library(arpg_combat STATIC
+     attack_catalog.cpp
+     combat_collision.cpp
+     combat_world.cpp
+     hit_resolution.cpp
+     input_buffer.cpp
++    monster_catalog.cpp
+     player_simulation.cpp
+     target_simulation.cpp)
+ 
+ target_include_directories(arpg_combat
+     PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_combat PUBLIC cxx_std_17)
+ target_link_libraries(arpg_combat PRIVATE arpg_core)
+ 
+ arpg_enable_project_warnings(arpg_combat)
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index 9ccd40c..7347727 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -39,20 +39,78 @@ enum class FeedbackLevel : std::uint8_t {
+     heavy,
+ };
+ 
+ enum class ImpactKind : std::uint8_t {
+     light_hitstun,
+     medium_hitstun,
+     knockdown,
+     launch,
+ };
+ 
++enum class MonsterId : std::uint8_t {
++    fire_bomber,
++    fire_charger,
++    water_bulwark,
++    water_support,
++    lightning_shooter,
++    lightning_dasher,
++    chaos_chaser,
++    chaos_hazard,
++    count,
++};
++
++enum class MonsterTag : std::uint16_t {
++    none = 0,
++    melee = 1U << 0U,
++    ranged = 1U << 1U,
++    support = 1U << 2U,
++    high_priority = 1U << 3U,
++    ground_hazard = 1U << 4U,
++    direct_target = 1U << 5U,
++};
++
++struct MonsterDefinition final {
++    MonsterId id{MonsterId::chaos_chaser};
++    std::uint8_t preferred_ecology{};
++    std::uint16_t tags{};
++    std::uint8_t threat_cost{1};
++    int max_hp{100};
++    int max_break{};
++    float move_speed{0.04F};
++    float preferred_range{1.0F};
++    std::uint16_t telegraph_ticks{20};
++    std::uint16_t active_ticks{4};
++    std::uint16_t recovery_ticks{20};
++    std::uint16_t cooldown_ticks{60};
++    int contact_damage{10};
++    float projectile_speed{};
++    std::uint16_t hazard_ticks{};
++    FeedbackLevel feedback{FeedbackLevel::light};
++};
++
++inline constexpr std::size_t kMonsterCapacity = 96;
++inline constexpr std::size_t kProjectileCapacity = 384;
++inline constexpr std::size_t kHazardCapacity = 96;
++inline constexpr std::size_t kEncounterWaveCapacity = 2;
++inline constexpr std::size_t kEncounterSpawnCapacity = 96;
++
++struct MonsterSpawnSpec final {
++    MonsterId id{MonsterId::chaos_chaser};
++    Vec3 position{};
++};
++
++struct EncounterWave final {
++    std::array<MonsterSpawnSpec, kEncounterSpawnCapacity> spawns{};
++    std::uint8_t spawn_count{};
++    std::uint8_t spent_budget{};
++};
++
+ enum class CombatEventKind : std::uint8_t {
+     swing,
+     hit,
+     impact_summary,
+     landing,
+     break_started,
+     defeated,
+     respawned,
+     reset,
+ };
+diff --git a/src/combat/monster_catalog.cpp b/src/combat/monster_catalog.cpp
+new file mode 100644
+index 0000000..df381a9
+--- /dev/null
++++ b/src/combat/monster_catalog.cpp
+@@ -0,0 +1,100 @@
++#include "combat/monster_catalog.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::combat {
++namespace {
++
++constexpr std::uint16_t tag(MonsterTag value) noexcept {
++    return static_cast<std::uint16_t>(value);
++}
++
++constexpr std::uint16_t tags(
++    MonsterTag first,
++    MonsterTag second) noexcept {
++    return static_cast<std::uint16_t>(tag(first) | tag(second));
++}
++
++constexpr std::uint16_t tags(
++    MonsterTag first,
++    MonsterTag second,
++    MonsterTag third) noexcept {
++    return static_cast<std::uint16_t>(tags(first, second) | tag(third));
++}
++
++constexpr std::uint16_t tags(
++    MonsterTag first,
++    MonsterTag second,
++    MonsterTag third,
++    MonsterTag fourth) noexcept {
++    return static_cast<std::uint16_t>(tags(first, second, third) | tag(fourth));
++}
++
++constexpr std::array<MonsterDefinition, 8> kCatalog{{
++    {MonsterId::fire_bomber, 0, tags(MonsterTag::high_priority,
++         MonsterTag::direct_target), 3, 220, 0, 0.040F, 1.2F,
++     60, 1, 0, 0, 120, 0.0F, 0, FeedbackLevel::heavy},
++    {MonsterId::fire_charger, 0, tags(MonsterTag::melee,
++         MonsterTag::high_priority, MonsterTag::direct_target),
++     4, 420, 60, 0.030F, 5.0F, 45, 18, 35, 100, 90, 0.0F, 0,
++     FeedbackLevel::heavy},
++    {MonsterId::water_bulwark, 1, tags(MonsterTag::melee,
++         MonsterTag::direct_target), 4, 700, 120, 0.025F, 1.0F,
++     24, 6, 30, 72, 70, 0.0F, 0, FeedbackLevel::heavy},
++    {MonsterId::water_support, 1, tag(MonsterTag::support),
++     3, 300, 0, 0.030F, 4.0F, 36, 1, 24, 120, 0, 0.0F, 0,
++     FeedbackLevel::medium},
++    {MonsterId::lightning_shooter, 2, tags(MonsterTag::ranged,
++         MonsterTag::direct_target), 3, 240, 0, 0.035F, 4.5F,
++     30, 1, 20, 75, 40, 0.0F, 0, FeedbackLevel::medium},
++    {MonsterId::lightning_dasher, 2, tags(MonsterTag::melee,
++         MonsterTag::high_priority, MonsterTag::direct_target),
++     3, 280, 0, 0.050F, 3.0F, 24, 12, 30, 80, 60, 0.0F, 0,
++     FeedbackLevel::medium},
++    {MonsterId::chaos_chaser, 3, tags(MonsterTag::melee,
++         MonsterTag::direct_target), 2, 260, 0, 0.045F, 0.9F,
++     12, 4, 18, 42, 45, 0.0F, 0, FeedbackLevel::light},
++    {MonsterId::chaos_hazard, 3, tags(MonsterTag::ranged,
++         MonsterTag::high_priority, MonsterTag::ground_hazard,
++         MonsterTag::direct_target), 4, 320, 0, 0.030F, 4.0F,
++     45, 1, 25, 120, 35, 0.0F, 180, FeedbackLevel::heavy},
++}};
++
++constexpr bool has_tag(
++    const MonsterDefinition& definition,
++    MonsterTag value) noexcept {
++    return (definition.tags & tag(value)) != 0U;
++}
++
++constexpr bool validate_catalog() noexcept {
++    bool has_direct_target = false;
++    for (std::size_t index = 0; index < kCatalog.size(); ++index) {
++        const auto& definition = kCatalog[index];
++        if (static_cast<std::size_t>(definition.id) != index ||
++            definition.preferred_ecology > 3U ||
++            definition.threat_cost == 0U || definition.max_hp <= 0) {
++            return false;
++        }
++        has_direct_target = has_direct_target ||
++            has_tag(definition, MonsterTag::direct_target);
++    }
++    return has_direct_target;
++}
++
++static_assert(kCatalog.size() == static_cast<std::size_t>(MonsterId::count));
++static_assert(validate_catalog());
++
++}  // namespace
++
++const MonsterDefinition* monster_definition(MonsterId id) noexcept {
++    const auto index = static_cast<std::size_t>(id);
++    return index < kCatalog.size() ? &kCatalog[index] : nullptr;
++}
++
++bool monster_catalog_valid() noexcept {
++    return validate_catalog();
++}
++
++}  // namespace arpg::combat
+diff --git a/src/combat/monster_catalog.hpp b/src/combat/monster_catalog.hpp
+new file mode 100644
+index 0000000..cd48c5c
+--- /dev/null
++++ b/src/combat/monster_catalog.hpp
+@@ -0,0 +1,11 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++
++namespace arpg::combat {
++
++[[nodiscard]] const MonsterDefinition* monster_definition(
++    MonsterId id) noexcept;
++[[nodiscard]] bool monster_catalog_valid() noexcept;
++
++}  // namespace arpg::combat
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index 15d498b..c261948 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -1,20 +1,21 @@
+ add_executable(arpg_combat_tests
+     ../core/allocation_probe.cpp
+     combat_test_main.cpp
+     attack_catalog_tests.cpp
+     attack_state_tests.cpp
+     break_stress_tests.cpp
+     combat_config_tests.cpp
+     dummy_reaction_tests.cpp
+     hit_resolution_tests.cpp
+     input_buffer_tests.cpp
++    monster_catalog_tests.cpp
+     movement_jump_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+ add_test(NAME combat.units COMMAND arpg_combat_tests)
+ set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 7369042..87e7239 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -1,25 +1,27 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite attack_catalog_suite() noexcept;
+ arpg::test::TestSuite attack_state_suite() noexcept;
+ arpg::test::TestSuite break_stress_suite() noexcept;
+ arpg::test::TestSuite combat_config_suite() noexcept;
+ arpg::test::TestSuite dummy_reaction_suite() noexcept;
+ arpg::test::TestSuite input_buffer_suite() noexcept;
+ arpg::test::TestSuite movement_jump_suite() noexcept;
+ arpg::test::TestSuite hit_resolution_suite() noexcept;
++arpg::test::TestSuite monster_catalog_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+         attack_state_suite(),
+         break_stress_suite(),
+         combat_config_suite(),
+         dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
++        monster_catalog_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 32, "stage 1");
++    return arpg::test::run_suites(suites, 34, "stage 4 task 1");
+ }
+diff --git a/tests/combat/monster_catalog_tests.cpp b/tests/combat/monster_catalog_tests.cpp
+new file mode 100644
+index 0000000..bab9df1
+--- /dev/null
++++ b/tests/combat/monster_catalog_tests.cpp
+@@ -0,0 +1,53 @@
++#include "test_framework.hpp"
++
++#include "combat/monster_catalog.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace {
++
++using namespace arpg::combat;
++
++arpg::test::Failure catalog_contains_eight_unique_stable_ids() noexcept {
++    std::array<bool, static_cast<std::size_t>(MonsterId::count)> seen{};
++    for (std::uint8_t raw = 0;
++         raw < static_cast<std::uint8_t>(MonsterId::count); ++raw) {
++        const auto id = static_cast<MonsterId>(raw);
++        const auto* definition = monster_definition(id);
++        ARPG_REQUIRE(definition != nullptr);
++        ARPG_REQUIRE(definition->id == id);
++        ARPG_REQUIRE(!seen[raw]);
++        seen[raw] = true;
++    }
++    ARPG_REQUIRE(monster_catalog_valid());
++    return {};
++}
++
++arpg::test::Failure catalog_has_two_preferred_roles_per_ecology() noexcept {
++    std::array<std::uint8_t, 4> counts{};
++    for (std::uint8_t raw = 0;
++         raw < static_cast<std::uint8_t>(MonsterId::count); ++raw) {
++        const auto* definition =
++            monster_definition(static_cast<MonsterId>(raw));
++        ARPG_REQUIRE(definition->preferred_ecology < counts.size());
++        ++counts[definition->preferred_ecology];
++        ARPG_REQUIRE(definition->threat_cost > 0U);
++        ARPG_REQUIRE(definition->max_hp > 0);
++    }
++    ARPG_REQUIRE((counts == std::array<std::uint8_t, 4>{{2, 2, 2, 2}}));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"eight unique stable ids", &catalog_contains_eight_unique_stable_ids},
++    {"two preferred roles per ecology",
++     &catalog_has_two_preferred_roles_per_ecology},
++};
++
++}  // namespace
++
++arpg::test::TestSuite monster_catalog_suite() noexcept {
++    return arpg::test::make_suite("monster_catalog", kCases);
++}
