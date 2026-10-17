@@ -1,0 +1,1197 @@
+# Review package: 511e390..69a8ef8
+
+## Commits
+69a8ef8 feat: add deterministic dungeon progression
+
+## Files changed
+ src/dungeon/CMakeLists.txt                  |   2 +
+ src/dungeon/dungeon_progression.cpp         | 177 +++++++++++++++++++
+ src/dungeon/dungeon_progression.hpp         |  34 ++++
+ src/dungeon/room_combat_template.cpp        |  50 ++++++
+ src/dungeon/room_combat_template.hpp        |  16 ++
+ src/dungeon/room_generation.cpp             | 157 +++++++++++------
+ src/dungeon/room_generation.hpp             |  32 ++++
+ tests/dungeon/CMakeLists.txt                |   3 +-
+ tests/dungeon/dungeon_progression_tests.cpp | 206 ++++++++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp         |   4 +-
+ tests/dungeon/room_generation_tests.cpp     | 257 ++++++++++++++++------------
+ 11 files changed, 769 insertions(+), 169 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/CMakeLists.txt b/src/dungeon/CMakeLists.txt
+index e4eaa71..5cdab09 100644
+--- a/src/dungeon/CMakeLists.txt
++++ b/src/dungeon/CMakeLists.txt
+@@ -1,10 +1,12 @@
+ add_library(arpg_dungeon STATIC
+     dungeon_rules.cpp
+     dungeon_session.cpp
++    dungeon_progression.cpp
+     room_generation.cpp
++    room_combat_template.cpp
+     room_navigation.cpp)
+ 
+ target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_dungeon PUBLIC cxx_std_17)
+ target_link_libraries(arpg_dungeon PUBLIC arpg_combat PRIVATE arpg_core)
+ arpg_enable_project_warnings(arpg_dungeon)
+diff --git a/src/dungeon/dungeon_progression.cpp b/src/dungeon/dungeon_progression.cpp
+new file mode 100644
+index 0000000..4b2eb33
+--- /dev/null
++++ b/src/dungeon/dungeon_progression.cpp
+@@ -0,0 +1,177 @@
++#include "dungeon/dungeon_progression.hpp"
++
++#include <cstdint>
++#include <limits>
++
++namespace arpg::dungeon {
++namespace {
++
++[[nodiscard]] RunStateBuildResult unchanged(
++    DungeonFault fault,
++    const checkpoint::DungeonRunState& state) noexcept {
++    RunStateBuildResult result;
++    result.fault = fault;
++    result.state = state;
++    return result;
++}
++
++[[nodiscard]] bool checked_increment(
++    std::uint64_t value,
++    std::uint64_t& next) noexcept {
++    if (value == (std::numeric_limits<std::uint64_t>::max)()) {
++        return false;
++    }
++    next = value + 1U;
++    return true;
++}
++
++[[nodiscard]] bool checked_increment(
++    std::uint32_t value,
++    std::uint32_t& next) noexcept {
++    if (value == (std::numeric_limits<std::uint32_t>::max)()) {
++        return false;
++    }
++    next = value + 1U;
++    return true;
++}
++
++}  // namespace
++
++RunStateBuildResult make_initial_run_state(
++    std::uint64_t root_seed,
++    const DungeonRules& rules) noexcept {
++    const std::array<std::uint32_t, 4> biases{};
++    const auto generated = generate_room_descriptor(
++        derive_initial_room_seed(root_seed, 0U),
++        0U,
++        1U,
++        1U,
++        checkpoint::EntrySide::initial,
++        biases,
++        rules);
++    if (generated.fault != DungeonFault::none) {
++        return {generated.fault, {}, {}};
++    }
++
++    checkpoint::DungeonRunState state;
++    state.root_seed = root_seed;
++    state.commit_generation = 1U;
++    state.biases = biases;
++    state.current_room = generated.room;
++    state.last_transition = checkpoint::TransitionKind::none;
++    state.last_direction = checkpoint::ExitDirection::none;
++    return {DungeonFault::none, state, generated.samples};
++}
++
++RunStateBuildResult make_door_transition(
++    const checkpoint::DungeonRunState& current,
++    checkpoint::ExitDirection direction,
++    const DungeonRules& rules) noexcept {
++    const auto element = element_for_exit(direction);
++    if (!element.has_value()) {
++        return unchanged(DungeonFault::invalid_direction, current);
++    }
++
++    checkpoint::DungeonRunState next = current;
++    if (!checked_increment(
++            current.commit_generation, next.commit_generation)) {
++        return unchanged(DungeonFault::commit_generation_overflow, current);
++    }
++    if (!checked_increment(
++            current.current_room.index, next.current_room.index)) {
++        return unchanged(DungeonFault::room_index_overflow, current);
++    }
++    if (!checked_increment(
++            current.current_room.floor_room_index,
++            next.current_room.floor_room_index)) {
++        return unchanged(DungeonFault::floor_room_overflow, current);
++    }
++    const auto element_index = static_cast<std::size_t>(element.value());
++    if (!checked_increment(
++            current.biases[element_index], next.biases[element_index])) {
++        return unchanged(DungeonFault::bias_overflow, current);
++    }
++
++    next.current_room.seed = derive_door_room_seed(
++        current.current_room.seed,
++        next.current_room.index,
++        direction);
++    next.current_room.entry = entry_side_for_exit(direction);
++    const auto generated = generate_room_descriptor(
++        next.current_room.seed,
++        next.current_room.index,
++        next.current_room.depth,
++        next.current_room.floor_room_index,
++        next.current_room.entry,
++        next.biases,
++        rules);
++    if (generated.fault != DungeonFault::none) {
++        return unchanged(generated.fault, current);
++    }
++
++    next.current_room = generated.room;
++    next.last_transition = checkpoint::TransitionKind::door;
++    next.last_direction = direction;
++    return {DungeonFault::none, next, generated.samples};
++}
++
++RunStateBuildResult make_descent_transition(
++    const checkpoint::DungeonRunState& current,
++    const DungeonRules& rules) noexcept {
++    checkpoint::DungeonRunState next = current;
++    if (!checked_increment(
++            current.commit_generation, next.commit_generation)) {
++        return unchanged(DungeonFault::commit_generation_overflow, current);
++    }
++    if (!checked_increment(
++            current.current_room.index, next.current_room.index)) {
++        return unchanged(DungeonFault::room_index_overflow, current);
++    }
++    if (!checked_increment(
++            current.current_room.depth, next.current_room.depth)) {
++        return unchanged(DungeonFault::depth_overflow, current);
++    }
++
++    next.biases = {};
++    next.current_room.seed = derive_descent_room_seed(
++        current.current_room.seed,
++        next.current_room.index);
++    next.current_room.floor_room_index = 1U;
++    next.current_room.entry = checkpoint::EntrySide::initial;
++    const auto generated = generate_room_descriptor(
++        next.current_room.seed,
++        next.current_room.index,
++        next.current_room.depth,
++        next.current_room.floor_room_index,
++        next.current_room.entry,
++        next.biases,
++        rules);
++    if (generated.fault != DungeonFault::none) {
++        return unchanged(generated.fault, current);
++    }
++
++    next.current_room = generated.room;
++    next.last_transition = checkpoint::TransitionKind::descent;
++    next.last_direction = checkpoint::ExitDirection::none;
++    return {DungeonFault::none, next, generated.samples};
++}
++
++bool same_run_state(
++    const checkpoint::DungeonRunState& lhs,
++    const checkpoint::DungeonRunState& rhs) noexcept {
++    return lhs.root_seed == rhs.root_seed
++        && lhs.commit_generation == rhs.commit_generation
++        && lhs.biases == rhs.biases
++        && lhs.current_room.index == rhs.current_room.index
++        && lhs.current_room.seed == rhs.current_room.seed
++        && lhs.current_room.depth == rhs.current_room.depth
++        && lhs.current_room.floor_room_index == rhs.current_room.floor_room_index
++        && lhs.current_room.entry == rhs.current_room.entry
++        && lhs.current_room.ecology == rhs.current_room.ecology
++        && lhs.current_room.has_hole == rhs.current_room.has_hole
++        && lhs.current_room.is_abyss == rhs.current_room.is_abyss
++        && lhs.last_transition == rhs.last_transition
++        && lhs.last_direction == rhs.last_direction;
++}
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_progression.hpp b/src/dungeon/dungeon_progression.hpp
+new file mode 100644
+index 0000000..b174f28
+--- /dev/null
++++ b/src/dungeon/dungeon_progression.hpp
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include "dungeon/dungeon_checkpoint.hpp"
++#include "dungeon/dungeon_rules.hpp"
++#include "dungeon/room_generation.hpp"
++
++#include <cstdint>
++
++namespace arpg::dungeon {
++
++struct RunStateBuildResult final {
++    DungeonFault fault{DungeonFault::none};
++    checkpoint::DungeonRunState state{};
++    RoomRandomSamples samples{};
++};
++
++[[nodiscard]] RunStateBuildResult make_initial_run_state(
++    std::uint64_t root_seed,
++    const DungeonRules& rules) noexcept;
++
++[[nodiscard]] RunStateBuildResult make_door_transition(
++    const checkpoint::DungeonRunState& current,
++    checkpoint::ExitDirection direction,
++    const DungeonRules& rules) noexcept;
++
++[[nodiscard]] RunStateBuildResult make_descent_transition(
++    const checkpoint::DungeonRunState& current,
++    const DungeonRules& rules) noexcept;
++
++[[nodiscard]] bool same_run_state(
++    const checkpoint::DungeonRunState& lhs,
++    const checkpoint::DungeonRunState& rhs) noexcept;
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/room_combat_template.cpp b/src/dungeon/room_combat_template.cpp
+new file mode 100644
+index 0000000..61fa60d
+--- /dev/null
++++ b/src/dungeon/room_combat_template.cpp
+@@ -0,0 +1,50 @@
++#include "dungeon/room_combat_template.hpp"
++
++namespace arpg::dungeon {
++
++std::optional<combat::CombatLabConfig> make_combat_lab_config(
++    checkpoint::EntrySide entry,
++    std::uint32_t rules_version) noexcept {
++    if (rules_version != 1U) {
++        return std::nullopt;
++    }
++
++    combat::CombatLabConfig config;
++    config.respawn_defeated_dummies = false;
++
++    switch (entry) {
++    case checkpoint::EntrySide::initial:
++        break;
++    case checkpoint::EntrySide::left:
++        config.player_spawn = {-6.50F, 0.0F, 0.0F};
++        break;
++    case checkpoint::EntrySide::right:
++        config.player_spawn = {6.50F, 0.0F, 0.0F};
++        config.dummy_spawns = {{
++            {-2.30F, -0.35F, 0.0F},
++            {-2.80F, 0.0F, 0.0F},
++            {-3.30F, 0.35F, 0.0F},
++        }};
++        config.initial_facing = combat::Facing::left;
++        break;
++    case checkpoint::EntrySide::top:
++        config.player_spawn = {0.0F, -2.75F, 0.0F};
++        config.dummy_spawns = {{
++            {2.30F, 2.30F, 0.0F},
++            {2.80F, 2.30F, 0.0F},
++            {3.30F, 2.30F, 0.0F},
++        }};
++        break;
++    case checkpoint::EntrySide::bottom:
++        config.player_spawn = {0.0F, 2.75F, 0.0F};
++        config.dummy_spawns = {{
++            {2.30F, -2.30F, 0.0F},
++            {2.80F, -2.30F, 0.0F},
++            {3.30F, -2.30F, 0.0F},
++        }};
++        break;
++    }
++    return config;
++}
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/room_combat_template.hpp b/src/dungeon/room_combat_template.hpp
+new file mode 100644
+index 0000000..f43a9dd
+--- /dev/null
++++ b/src/dungeon/room_combat_template.hpp
+@@ -0,0 +1,16 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++#include "dungeon/dungeon_checkpoint.hpp"
++
++#include <cstdint>
++#include <optional>
++
++namespace arpg::dungeon {
++
++[[nodiscard]] std::optional<combat::CombatLabConfig>
++make_combat_lab_config(
++    checkpoint::EntrySide entry,
++    std::uint32_t rules_version) noexcept;
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/room_generation.cpp b/src/dungeon/room_generation.cpp
+index 9dc8458..ee9e25d 100644
+--- a/src/dungeon/room_generation.cpp
++++ b/src/dungeon/room_generation.cpp
+@@ -1,60 +1,40 @@
+ #include "dungeon/room_generation.hpp"
+ 
+ #include "core/deterministic_rng.hpp"
++#include "dungeon/room_combat_template.hpp"
+ 
++#include <array>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::dungeon {
+ namespace {
+ 
+-constexpr std::uint64_t kInitialRoomDomain = 0x524F4F4D5F494E49ULL;
+-constexpr std::uint64_t kNextRoomDomain = 0x524F4F4D5F4E4558ULL;
+-
+-combat::CombatLabConfig combat_template(EntrySide entry) noexcept {
+-    combat::CombatLabConfig config;
+-    config.respawn_defeated_dummies = false;
+-
+-    switch (entry) {
+-    case EntrySide::initial:
+-        break;
+-    case EntrySide::left:
+-        config.player_spawn = {-6.50F, 0.0F, 0.0F};
+-        break;
+-    case EntrySide::right:
+-        config.player_spawn = {6.50F, 0.0F, 0.0F};
+-        config.dummy_spawns = {{
+-            {-2.30F, -0.35F, 0.0F},
+-            {-2.80F, 0.0F, 0.0F},
+-            {-3.30F, 0.35F, 0.0F},
+-        }};
+-        config.initial_facing = combat::Facing::left;
+-        break;
+-    case EntrySide::top:
+-        config.player_spawn = {0.0F, -2.75F, 0.0F};
+-        config.dummy_spawns = {{
+-            {2.30F, 2.30F, 0.0F},
+-            {2.80F, 2.30F, 0.0F},
+-            {3.30F, 2.30F, 0.0F},
+-        }};
+-        break;
+-    case EntrySide::bottom:
+-        config.player_spawn = {0.0F, 2.75F, 0.0F};
+-        config.dummy_spawns = {{
+-            {2.30F, -2.30F, 0.0F},
+-            {2.80F, -2.30F, 0.0F},
+-            {3.30F, -2.30F, 0.0F},
+-        }};
+-        break;
+-    }
+-    return config;
++constexpr std::uint64_t kInitialRoomDomain =
++    0x524F4F4D5F494E49ULL;
++constexpr std::uint64_t kDoorRoomDomain =
++    0x524F4F4D5F4E4558ULL;
++constexpr std::uint64_t kDescentRoomDomain =
++    0x44455343454E5431ULL;
++constexpr std::uint64_t kEcologyDomain =
++    0x45434F4C4F475931ULL;
++constexpr std::uint64_t kHoleDomain =
++    0x484F4C455F563031ULL;
++constexpr std::uint64_t kAbyssDomain =
++    0x41425953535F3031ULL;
++
++[[nodiscard]] std::uint64_t first(
++    std::uint64_t seed,
++    std::uint64_t domain) noexcept {
++    auto stream = core::DeterministicRng::derive_stream(seed, domain);
++    return stream.next_u64();
+ }
+ 
+ }  // namespace
+ 
+ EntrySide entry_side_for_exit(ExitDirection exit) noexcept {
+     switch (exit) {
+     case ExitDirection::up:
+         return EntrySide::bottom;
+     case ExitDirection::down:
+         return EntrySide::top;
+@@ -64,56 +44,123 @@ EntrySide entry_side_for_exit(ExitDirection exit) noexcept {
+         return EntrySide::left;
+     case ExitDirection::none:
+         return EntrySide::initial;
+     }
+     return EntrySide::initial;
+ }
+ 
+ std::uint64_t derive_initial_room_seed(
+     std::uint64_t root_seed,
+     std::uint64_t room_index) noexcept {
+-    auto domain = core::DeterministicRng::derive_stream(
+-        root_seed, kInitialRoomDomain);
+-    auto indexed = core::DeterministicRng::derive_stream(
+-        domain.next_u64(), room_index);
+-    return indexed.next_u64();
++    return first(first(root_seed, kInitialRoomDomain), room_index);
++}
++
++std::uint64_t derive_door_room_seed(
++    std::uint64_t current_seed,
++    std::uint64_t next_serial,
++    ExitDirection direction) noexcept {
++    return first(
++        first(first(current_seed, kDoorRoomDomain), next_serial),
++        static_cast<std::uint64_t>(direction));
++}
++
++std::uint64_t derive_descent_room_seed(
++    std::uint64_t current_seed,
++    std::uint64_t next_serial) noexcept {
++    return first(
++        first(first(current_seed, kDescentRoomDomain), next_serial),
++        static_cast<std::uint64_t>(ExitDirection::none));
++}
++
++RoomGenerationResult generate_room_descriptor(
++    std::uint64_t seed,
++    std::uint64_t global_index,
++    std::uint64_t depth,
++    std::uint64_t floor_room_index,
++    checkpoint::EntrySide entry,
++    const std::array<std::uint32_t, 4>& biases,
++    const DungeonRules& rules) noexcept {
++    std::array<std::uint64_t, 4> weights{};
++    std::uint64_t total = 0U;
++    const DungeonFault weight_fault = compute_ecology_weights(
++        rules, biases, weights, total);
++    if (weight_fault != DungeonFault::none) {
++        return {weight_fault, {}, {}};
++    }
++
++    auto ecology_stream = core::DeterministicRng::derive_stream(
++        seed, kEcologyDomain);
++    const auto ecology_value = ecology_stream.next_bounded(total);
++    auto hole_stream = core::DeterministicRng::derive_stream(
++        seed, kHoleDomain);
++    const auto hole_value = hole_stream.next_bounded(kProbabilityScale);
++    auto abyss_stream = core::DeterministicRng::derive_stream(
++        seed, kAbyssDomain);
++    const auto abyss_value = abyss_stream.next_bounded(kProbabilityScale);
++    if (!ecology_value.has_value()
++            || !hole_value.has_value()
++            || !abyss_value.has_value()) {
++        return {DungeonFault::invalid_rules, {}, {}};
++    }
++
++    checkpoint::DungeonElement ecology = checkpoint::DungeonElement::fire;
++    std::uint64_t remaining = ecology_value.value();
++    for (std::size_t index = 0; index < weights.size(); ++index) {
++        if (remaining < weights[index]) {
++            ecology = static_cast<checkpoint::DungeonElement>(index);
++            break;
++        }
++        remaining -= weights[index];
++    }
++
++    checkpoint::RoomDescriptor room;
++    room.index = global_index;
++    room.seed = seed;
++    room.depth = depth;
++    room.floor_room_index = floor_room_index;
++    room.entry = entry;
++    room.ecology = ecology;
++    room.has_hole = hole_value.value() < rules.hole_threshold;
++    room.is_abyss = abyss_value.value() < rules.abyss_threshold;
++
++    RoomRandomSamples samples;
++    samples.ecology = ecology_value.value();
++    samples.hole = static_cast<std::uint32_t>(hole_value.value());
++    samples.abyss = static_cast<std::uint32_t>(abyss_value.value());
++    return {DungeonFault::none, room, samples};
+ }
+ 
+ std::uint64_t derive_next_room_seed(
+     std::uint64_t current_seed,
+     std::uint64_t next_index,
+     ExitDirection exit) noexcept {
+-    auto domain = core::DeterministicRng::derive_stream(
+-        current_seed, kNextRoomDomain);
+-    auto indexed = core::DeterministicRng::derive_stream(
+-        domain.next_u64(), next_index);
+-    auto directed = core::DeterministicRng::derive_stream(
+-        indexed.next_u64(), static_cast<std::uint64_t>(exit));
+-    return directed.next_u64();
++    return derive_door_room_seed(current_seed, next_index, exit);
+ }
+ 
+ RoomDescriptor make_initial_room(const DungeonSessionConfig& config) noexcept {
+     RoomDescriptor room;
+     room.index = config.initial_room_index;
+     room.seed = derive_initial_room_seed(config.root_seed, room.index);
+     room.entry = EntrySide::initial;
+-    room.combat = combat_template(room.entry);
++    room.combat = *make_combat_lab_config(
++        checkpoint::EntrySide::initial, 1U);
+     return room;
+ }
+ 
+ std::optional<RoomDescriptor> make_next_room(
+     const RoomDescriptor& current,
+     ExitDirection exit) noexcept {
+     if (exit == ExitDirection::none
+             || current.index == (std::numeric_limits<std::uint64_t>::max)()) {
+         return std::nullopt;
+     }
+ 
+     RoomDescriptor next;
+     next.index = current.index + 1U;
+-    next.seed = derive_next_room_seed(current.seed, next.index, exit);
++    next.seed = derive_door_room_seed(current.seed, next.index, exit);
+     next.entry = entry_side_for_exit(exit);
+-    next.combat = combat_template(next.entry);
++    next.combat = *make_combat_lab_config(
++        static_cast<checkpoint::EntrySide>(next.entry), 1U);
+     return next;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/room_generation.hpp b/src/dungeon/room_generation.hpp
+index 5aa609a..0d88fb8 100644
+--- a/src/dungeon/room_generation.hpp
++++ b/src/dungeon/room_generation.hpp
+@@ -1,25 +1,57 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_types.hpp"
++#include "dungeon/dungeon_rules.hpp"
+ 
++#include <array>
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::dungeon {
+ 
+ [[nodiscard]] EntrySide entry_side_for_exit(ExitDirection exit) noexcept;
+ 
+ [[nodiscard]] std::uint64_t derive_initial_room_seed(
+     std::uint64_t root_seed,
+     std::uint64_t room_index) noexcept;
+ 
++[[nodiscard]] std::uint64_t derive_door_room_seed(
++    std::uint64_t current_seed,
++    std::uint64_t next_serial,
++    checkpoint::ExitDirection direction) noexcept;
++
++[[nodiscard]] std::uint64_t derive_descent_room_seed(
++    std::uint64_t current_seed,
++    std::uint64_t next_serial) noexcept;
++
++struct RoomRandomSamples final {
++    std::uint64_t ecology{};
++    std::uint32_t hole{};
++    std::uint32_t abyss{};
++};
++
++struct RoomGenerationResult final {
++    DungeonFault fault{DungeonFault::none};
++    checkpoint::RoomDescriptor room{};
++    RoomRandomSamples samples{};
++};
++
++[[nodiscard]] RoomGenerationResult generate_room_descriptor(
++    std::uint64_t seed,
++    std::uint64_t global_index,
++    std::uint64_t depth,
++    std::uint64_t floor_room_index,
++    checkpoint::EntrySide entry,
++    const std::array<std::uint32_t, 4>& biases,
++    const DungeonRules& rules) noexcept;
++
+ [[nodiscard]] std::uint64_t derive_next_room_seed(
+     std::uint64_t current_seed,
+     std::uint64_t next_index,
+     ExitDirection exit) noexcept;
+ 
+ [[nodiscard]] RoomDescriptor make_initial_room(
+     const DungeonSessionConfig& config) noexcept;
+ 
+ [[nodiscard]] std::optional<RoomDescriptor> make_next_room(
+     const RoomDescriptor& current,
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 2d6b70f..5d630e2 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -1,17 +1,18 @@
+ add_executable(arpg_dungeon_tests
+     ../core/allocation_probe.cpp
+     dungeon_test_main.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+-    dungeon_rules_tests.cpp)
++    dungeon_rules_tests.cpp
++    dungeon_progression_tests.cpp)
+ 
+ target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_dungeon_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon)
+ arpg_enable_project_warnings(arpg_dungeon_tests)
+ 
+ add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+ set_tests_properties(dungeon.units PROPERTIES LABELS "headless;dungeon")
+diff --git a/tests/dungeon/dungeon_progression_tests.cpp b/tests/dungeon/dungeon_progression_tests.cpp
+new file mode 100644
+index 0000000..3e8924d
+--- /dev/null
++++ b/tests/dungeon/dungeon_progression_tests.cpp
+@@ -0,0 +1,206 @@
++#include "test_framework.hpp"
++
++#include "dungeon/dungeon_progression.hpp"
++
++#include <array>
++#include <cstdint>
++#include <limits>
++
++namespace {
++
++namespace dungeon = arpg::dungeon;
++namespace checkpoint = arpg::dungeon::checkpoint;
++using dungeon::DungeonFault;
++using dungeon::DungeonRules;
++using checkpoint::DungeonElement;
++using checkpoint::EntrySide;
++using checkpoint::ExitDirection;
++using checkpoint::TransitionKind;
++
++bool same_room(
++    const checkpoint::RoomDescriptor& lhs,
++    const checkpoint::RoomDescriptor& rhs) noexcept {
++    return lhs.index == rhs.index
++        && lhs.seed == rhs.seed
++        && lhs.depth == rhs.depth
++        && lhs.floor_room_index == rhs.floor_room_index
++        && lhs.entry == rhs.entry
++        && lhs.ecology == rhs.ecology
++        && lhs.has_hole == rhs.has_hole
++        && lhs.is_abyss == rhs.is_abyss;
++}
++
++arpg::test::Failure initial_state_is_one_commit_and_three_samples() noexcept {
++    const auto result = dungeon::make_initial_run_state(
++        0x0123456789ABCDEFULL, DungeonRules{});
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    ARPG_REQUIRE(result.state.root_seed == 0x0123456789ABCDEFULL);
++    ARPG_REQUIRE(result.state.commit_generation == 1U);
++    ARPG_REQUIRE((result.state.biases == std::array<std::uint32_t, 4>{}));
++    ARPG_REQUIRE(result.state.current_room.index == 0U);
++    ARPG_REQUIRE(result.state.current_room.seed == 0xCA5A07A71C3153C4ULL);
++    ARPG_REQUIRE(result.state.current_room.depth == 1U);
++    ARPG_REQUIRE(result.state.current_room.floor_room_index == 1U);
++    ARPG_REQUIRE(result.state.current_room.entry == EntrySide::initial);
++    ARPG_REQUIRE(result.state.last_transition == TransitionKind::none);
++    ARPG_REQUIRE(result.state.last_direction == ExitDirection::none);
++    ARPG_REQUIRE(result.samples.ecology == 96U);
++    ARPG_REQUIRE(result.samples.hole == 6033U);
++    ARPG_REQUIRE(result.samples.abyss == 2160U);
++    return {};
++}
++
++arpg::test::Failure each_door_advances_counters_and_bias() noexcept {
++    const auto initial = dungeon::make_initial_run_state(7U, DungeonRules{});
++    ARPG_REQUIRE(initial.fault == DungeonFault::none);
++    constexpr std::array<ExitDirection, 4> directions{{
++        ExitDirection::up,
++        ExitDirection::down,
++        ExitDirection::left,
++        ExitDirection::right,
++    }};
++    for (std::size_t index = 0; index < directions.size(); ++index) {
++        const auto next = dungeon::make_door_transition(
++            initial.state, directions[index], DungeonRules{});
++        ARPG_REQUIRE(next.fault == DungeonFault::none);
++        ARPG_REQUIRE(next.state.commit_generation == 2U);
++        ARPG_REQUIRE(next.state.current_room.index == 1U);
++        ARPG_REQUIRE(next.state.current_room.depth == 1U);
++        ARPG_REQUIRE(next.state.current_room.floor_room_index == 2U);
++        ARPG_REQUIRE(next.state.biases[index] == 1U);
++        ARPG_REQUIRE(next.state.last_transition == TransitionKind::door);
++        ARPG_REQUIRE(next.state.last_direction == directions[index]);
++    }
++    return {};
++}
++
++arpg::test::Failure door_bias_is_applied_before_room_generation() noexcept {
++    const auto initial = dungeon::make_initial_run_state(
++        0x0123456789ABCDEFULL, DungeonRules{});
++    const auto next = dungeon::make_door_transition(
++        initial.state, ExitDirection::up, DungeonRules{});
++    const std::array<std::uint32_t, 4> expected_biases{{1U, 0U, 0U, 0U}};
++    const auto expected = dungeon::generate_room_descriptor(
++        dungeon::derive_door_room_seed(
++            initial.state.current_room.seed, 1U, ExitDirection::up),
++        1U,
++        1U,
++        2U,
++        EntrySide::bottom,
++        expected_biases,
++        DungeonRules{});
++    ARPG_REQUIRE(next.fault == DungeonFault::none);
++    ARPG_REQUIRE(expected.fault == DungeonFault::none);
++    ARPG_REQUIRE(next.state.current_room.ecology == expected.room.ecology);
++    ARPG_REQUIRE(next.samples.ecology == expected.samples.ecology);
++    ARPG_REQUIRE(next.samples.hole == expected.samples.hole);
++    ARPG_REQUIRE(next.samples.abyss == expected.samples.abyss);
++    return {};
++}
++
++arpg::test::Failure descent_resets_floor_bias_and_entry() noexcept {
++    const auto initial = dungeon::make_initial_run_state(7U, DungeonRules{});
++    const auto door = dungeon::make_door_transition(
++        initial.state, ExitDirection::right, DungeonRules{});
++    const auto descent = dungeon::make_descent_transition(
++        door.state, DungeonRules{});
++    ARPG_REQUIRE(descent.fault == DungeonFault::none);
++    ARPG_REQUIRE(descent.state.commit_generation == 3U);
++    ARPG_REQUIRE(descent.state.current_room.index == 2U);
++    ARPG_REQUIRE(descent.state.current_room.depth == 2U);
++    ARPG_REQUIRE(descent.state.current_room.floor_room_index == 1U);
++    ARPG_REQUIRE((descent.state.biases == std::array<std::uint32_t, 4>{}));
++    ARPG_REQUIRE(descent.state.current_room.entry == EntrySide::initial);
++    ARPG_REQUIRE(descent.state.last_transition == TransitionKind::descent);
++    ARPG_REQUIRE(descent.state.last_direction == ExitDirection::none);
++    return {};
++}
++
++arpg::test::Failure checked_limits_preserve_input_state() noexcept {
++    const auto initial = dungeon::make_initial_run_state(7U, DungeonRules{});
++    ARPG_REQUIRE(initial.fault == DungeonFault::none);
++
++    auto generation = initial.state;
++    generation.commit_generation = (std::numeric_limits<std::uint64_t>::max)();
++    auto result = dungeon::make_door_transition(
++        generation, ExitDirection::up, DungeonRules{});
++    ARPG_REQUIRE(result.fault == DungeonFault::commit_generation_overflow);
++    ARPG_REQUIRE(dungeon::same_run_state(result.state, generation));
++
++    auto index = initial.state;
++    index.current_room.index = (std::numeric_limits<std::uint64_t>::max)();
++    result = dungeon::make_door_transition(index, ExitDirection::up, DungeonRules{});
++    ARPG_REQUIRE(result.fault == DungeonFault::room_index_overflow);
++    ARPG_REQUIRE(dungeon::same_run_state(result.state, index));
++
++    auto depth = initial.state;
++    depth.current_room.depth = (std::numeric_limits<std::uint64_t>::max)();
++    result = dungeon::make_descent_transition(depth, DungeonRules{});
++    ARPG_REQUIRE(result.fault == DungeonFault::depth_overflow);
++    ARPG_REQUIRE(dungeon::same_run_state(result.state, depth));
++
++    auto floor = initial.state;
++    floor.current_room.floor_room_index = (std::numeric_limits<std::uint64_t>::max)();
++    result = dungeon::make_door_transition(floor, ExitDirection::up, DungeonRules{});
++    ARPG_REQUIRE(result.fault == DungeonFault::floor_room_overflow);
++    ARPG_REQUIRE(dungeon::same_run_state(result.state, floor));
++
++    auto bias = initial.state;
++    bias.biases[0] = (std::numeric_limits<std::uint32_t>::max)();
++    result = dungeon::make_door_transition(bias, ExitDirection::up, DungeonRules{});
++    ARPG_REQUIRE(result.fault == DungeonFault::bias_overflow);
++    ARPG_REQUIRE(dungeon::same_run_state(result.state, bias));
++    return {};
++}
++
++arpg::test::Failure same_root_and_route_are_replayable() noexcept {
++    const auto first = dungeon::make_initial_run_state(7U, DungeonRules{});
++    const auto second = dungeon::make_initial_run_state(7U, DungeonRules{});
++    const auto first_door = dungeon::make_door_transition(
++        first.state, ExitDirection::left, DungeonRules{});
++    const auto second_door = dungeon::make_door_transition(
++        second.state, ExitDirection::left, DungeonRules{});
++    ARPG_REQUIRE(dungeon::same_run_state(first.state, second.state));
++    ARPG_REQUIRE(dungeon::same_run_state(first_door.state, second_door.state));
++    ARPG_REQUIRE(first_door.samples.ecology == second_door.samples.ecology);
++    ARPG_REQUIRE(first_door.samples.hole == second_door.samples.hole);
++    ARPG_REQUIRE(first_door.samples.abyss == second_door.samples.abyss);
++    return {};
++}
++
++arpg::test::Failure uncalled_door_domains_do_not_change_selected_samples() noexcept {
++    const auto initial = dungeon::make_initial_run_state(7U, DungeonRules{});
++    const auto selected = dungeon::make_door_transition(
++        initial.state, ExitDirection::down, DungeonRules{});
++    const auto direct = dungeon::generate_room_descriptor(
++        dungeon::derive_door_room_seed(
++            initial.state.current_room.seed, 1U, ExitDirection::down),
++        1U,
++        1U,
++        2U,
++        EntrySide::top,
++        std::array<std::uint32_t, 4>{{0U, 1U, 0U, 0U}},
++        DungeonRules{});
++    ARPG_REQUIRE(selected.fault == DungeonFault::none);
++    ARPG_REQUIRE(direct.fault == DungeonFault::none);
++    ARPG_REQUIRE(selected.samples.ecology == direct.samples.ecology);
++    ARPG_REQUIRE(selected.samples.hole == direct.samples.hole);
++    ARPG_REQUIRE(selected.samples.abyss == direct.samples.abyss);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"initial state is one commit and three samples", &initial_state_is_one_commit_and_three_samples},
++    {"each door advances counters and bias", &each_door_advances_counters_and_bias},
++    {"door bias is applied before room generation", &door_bias_is_applied_before_room_generation},
++    {"descent resets floor bias and entry", &descent_resets_floor_bias_and_entry},
++    {"checked limits preserve input state", &checked_limits_preserve_input_state},
++    {"same root and route are replayable", &same_root_and_route_are_replayable},
++    {"uncalled door domains do not change selected samples", &uncalled_door_domains_do_not_change_selected_samples},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_progression_suite() noexcept {
++    return arpg::test::make_suite("dungeon_progression", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index dda3f2f..175523d 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -1,19 +1,21 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite room_generation_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
++arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         room_generation_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
++        dungeon_progression_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 25, "stage 3 dungeon");
++    return arpg::test::run_suites(suites, 35, "stage 3 dungeon");
+ }
+diff --git a/tests/dungeon/room_generation_tests.cpp b/tests/dungeon/room_generation_tests.cpp
+index 9e13d87..147ce32 100644
+--- a/tests/dungeon/room_generation_tests.cpp
++++ b/tests/dungeon/room_generation_tests.cpp
+@@ -1,160 +1,193 @@
+ #include "test_framework.hpp"
+ 
++#include "dungeon/room_combat_template.hpp"
+ #include "dungeon/room_generation.hpp"
+ 
++#include <array>
+ #include <cstdint>
+-#include <limits>
+ 
+ namespace {
+ 
+ bool same_position(
+     const arpg::combat::Vec3& actual,
+     float x,
+     float y,
+     float z = 0.0F) noexcept {
+     return actual.x == x && actual.y == y && actual.z == z;
+ }
+ 
+-arpg::test::Failure direction_ids_and_opposite_entries_are_fixed() noexcept {
++arpg::test::Failure golden_seed_chain_is_stable() noexcept {
+     using namespace arpg::dungeon;
+-    std::uint8_t up_id = static_cast<std::uint8_t>(ExitDirection::up);
+-    std::uint8_t down_id = static_cast<std::uint8_t>(ExitDirection::down);
+-    std::uint8_t left_id = static_cast<std::uint8_t>(ExitDirection::left);
+-    std::uint8_t right_id = static_cast<std::uint8_t>(ExitDirection::right);
+-    std::uint8_t none_id = static_cast<std::uint8_t>(ExitDirection::none);
+-    ARPG_REQUIRE(up_id == 0U);
+-    ARPG_REQUIRE(down_id == 1U);
+-    ARPG_REQUIRE(left_id == 2U);
+-    ARPG_REQUIRE(right_id == 3U);
+-    ARPG_REQUIRE(none_id == 0xFFU);
+-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::up) == EntrySide::bottom);
+-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::down) == EntrySide::top);
+-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::left) == EntrySide::right);
+-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::right) == EntrySide::left);
++    constexpr std::uint64_t root = 0x0123456789ABCDEFULL;
++    const auto initial = derive_initial_room_seed(root, 0U);
++    ARPG_REQUIRE(initial == 0xCA5A07A71C3153C4ULL);
++    const auto up = derive_door_room_seed(
++        initial, 1U, ExitDirection::up);
++    ARPG_REQUIRE(up == 0xCF92F9DC3E32DA47ULL);
++    const auto right = derive_door_room_seed(
++        up, 2U, ExitDirection::right);
++    ARPG_REQUIRE(right == 0xF71A3E545FA8D5CCULL);
++    ARPG_REQUIRE(derive_descent_room_seed(right, 3U)
++        == 0x21DD351FA20839E8ULL);
++    ARPG_REQUIRE(derive_next_room_seed(initial, 1U, ExitDirection::up)
++        == up);
+     return {};
+ }
+ 
+-arpg::test::Failure initial_descriptor_uses_stage_two_template() noexcept {
+-    using namespace arpg::combat;
++arpg::test::Failure ecology_and_three_stream_samples_are_fixed() noexcept {
+     using namespace arpg::dungeon;
+-    DungeonSessionConfig config;
+-    config.root_seed = 0x123456789ABCDEF0ULL;
+-    config.initial_room_index = 7U;
++    using namespace arpg::dungeon::checkpoint;
++    DungeonRules rules;
++    const auto result = generate_room_descriptor(
++        0xCF92F9DC3E32DA47ULL,
++        2U,
++        1U,
++        2U,
++        EntrySide::initial,
++        std::array<std::uint32_t, 4>{{1U, 0U, 0U, 0U}},
++        rules);
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    ARPG_REQUIRE(result.samples.ecology == 83U);
++    ARPG_REQUIRE(result.samples.hole == 7295U);
++    ARPG_REQUIRE(result.samples.abyss == 8629U);
++    ARPG_REQUIRE(result.room.ecology == DungeonElement::fire);
++    return {};
++}
+ 
+-    const RoomDescriptor room = make_initial_room(config);
+-    ARPG_REQUIRE(room.index == config.initial_room_index);
+-    ARPG_REQUIRE(room.seed == derive_initial_room_seed(
+-        config.root_seed, config.initial_room_index));
+-    ARPG_REQUIRE(room.entry == EntrySide::initial);
+-    ARPG_REQUIRE(same_position(room.combat.player_spawn, 0.0F, 0.0F));
+-    ARPG_REQUIRE(same_position(room.combat.dummy_spawns[0], 2.30F, -0.35F));
+-    ARPG_REQUIRE(same_position(room.combat.dummy_spawns[1], 2.80F, 0.0F));
+-    ARPG_REQUIRE(same_position(room.combat.dummy_spawns[2], 3.30F, 0.35F));
+-    ARPG_REQUIRE(room.combat.initial_facing == Facing::right);
+-    ARPG_REQUIRE(!room.combat.respawn_defeated_dummies);
++arpg::test::Failure hole_threshold_boundary_is_left_closed() noexcept {
++    using namespace arpg::dungeon;
++    using namespace arpg::dungeon::checkpoint;
++    DungeonRules rules;
++    const auto included = generate_room_descriptor(
++        0xAA3ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
++    const auto excluded = generate_room_descriptor(
++        0x2D80ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
++    ARPG_REQUIRE(included.samples.hole == 999U);
++    ARPG_REQUIRE(included.room.has_hole);
++    ARPG_REQUIRE(excluded.samples.hole == 1000U);
++    ARPG_REQUIRE(!excluded.room.has_hole);
+     return {};
+ }
+ 
+-arpg::test::Failure side_entries_mirror_spawn_and_facing() noexcept {
+-    using namespace arpg::combat;
++arpg::test::Failure abyss_threshold_boundary_is_left_closed() noexcept {
+     using namespace arpg::dungeon;
+-    const RoomDescriptor current = make_initial_room({});
++    using namespace arpg::dungeon::checkpoint;
++    DungeonRules rules;
++    const auto included = generate_room_descriptor(
++        0x11E9ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
++    const auto excluded = generate_room_descriptor(
++        0x38ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
++    ARPG_REQUIRE(included.samples.abyss == 99U);
++    ARPG_REQUIRE(included.room.is_abyss);
++    ARPG_REQUIRE(excluded.samples.abyss == 100U);
++    ARPG_REQUIRE(!excluded.room.is_abyss);
++    return {};
++}
+ 
+-    const auto from_right = make_next_room(current, ExitDirection::left);
+-    ARPG_REQUIRE(from_right.has_value());
+-    ARPG_REQUIRE(from_right->index == current.index + 1U);
+-    ARPG_REQUIRE(from_right->seed == derive_next_room_seed(
+-        current.seed, current.index + 1U, ExitDirection::left));
+-    ARPG_REQUIRE(from_right->entry == EntrySide::right);
+-    ARPG_REQUIRE(same_position(from_right->combat.player_spawn, 6.50F, 0.0F));
+-    ARPG_REQUIRE(from_right->combat.initial_facing == Facing::left);
+-    ARPG_REQUIRE(same_position(from_right->combat.dummy_spawns[0], -2.30F, -0.35F));
+-    ARPG_REQUIRE(same_position(from_right->combat.dummy_spawns[1], -2.80F, 0.0F));
+-    ARPG_REQUIRE(same_position(from_right->combat.dummy_spawns[2], -3.30F, 0.35F));
+-    ARPG_REQUIRE(!from_right->combat.respawn_defeated_dummies);
++arpg::test::Failure hole_and_abyss_can_coexist() noexcept {
++    using namespace arpg::dungeon;
++    using namespace arpg::dungeon::checkpoint;
++    const auto result = generate_room_descriptor(
++        0x747ULL, 0U, 1U, 1U, EntrySide::initial, {}, DungeonRules{});
++    ARPG_REQUIRE(result.fault == DungeonFault::none);
++    ARPG_REQUIRE(result.samples.hole == 210U);
++    ARPG_REQUIRE(result.samples.abyss == 47U);
++    ARPG_REQUIRE(result.room.has_hole);
++    ARPG_REQUIRE(result.room.is_abyss);
++    return {};
++}
+ 
+-    const auto from_left = make_next_room(current, ExitDirection::right);
+-    ARPG_REQUIRE(from_left.has_value());
+-    ARPG_REQUIRE(from_left->index == current.index + 1U);
+-    ARPG_REQUIRE(from_left->seed == derive_next_room_seed(
+-        current.seed, current.index + 1U, ExitDirection::right));
+-    ARPG_REQUIRE(from_left->entry == EntrySide::left);
+-    ARPG_REQUIRE(same_position(from_left->combat.player_spawn, -6.50F, 0.0F));
+-    ARPG_REQUIRE(from_left->combat.initial_facing == Facing::right);
+-    ARPG_REQUIRE(same_position(from_left->combat.dummy_spawns[0], 2.30F, -0.35F));
+-    ARPG_REQUIRE(same_position(from_left->combat.dummy_spawns[1], 2.80F, 0.0F));
+-    ARPG_REQUIRE(same_position(from_left->combat.dummy_spawns[2], 3.30F, 0.35F));
+-    ARPG_REQUIRE(!from_left->combat.respawn_defeated_dummies);
++arpg::test::Failure bias_only_changes_ecology_stream() noexcept {
++    using namespace arpg::dungeon;
++    using namespace arpg::dungeon::checkpoint;
++    const auto unbiased = generate_room_descriptor(
++        0xCF92F9DC3E32DA47ULL,
++        2U,
++        1U,
++        2U,
++        EntrySide::initial,
++        {},
++        DungeonRules{});
++    const auto biased = generate_room_descriptor(
++        0xCF92F9DC3E32DA47ULL,
++        2U,
++        1U,
++        2U,
++        EntrySide::initial,
++        std::array<std::uint32_t, 4>{{1U, 0U, 0U, 0U}},
++        DungeonRules{});
++    ARPG_REQUIRE(unbiased.fault == DungeonFault::none);
++    ARPG_REQUIRE(biased.fault == DungeonFault::none);
++    ARPG_REQUIRE(unbiased.samples.hole == biased.samples.hole);
++    ARPG_REQUIRE(unbiased.samples.abyss == biased.samples.abyss);
++    ARPG_REQUIRE(unbiased.room.has_hole == biased.room.has_hole);
++    ARPG_REQUIRE(unbiased.room.is_abyss == biased.room.is_abyss);
+     return {};
+ }
+ 
+-arpg::test::Failure vertical_entries_use_horizontal_target_rows() noexcept {
++arpg::test::Failure entry_templates_preserve_stage_two_layout() noexcept {
+     using namespace arpg::combat;
+     using namespace arpg::dungeon;
+-    const RoomDescriptor current = make_initial_room({});
+-
+-    const auto from_bottom = make_next_room(current, ExitDirection::up);
+-    ARPG_REQUIRE(from_bottom.has_value());
+-    ARPG_REQUIRE(from_bottom->index == current.index + 1U);
+-    ARPG_REQUIRE(from_bottom->seed == derive_next_room_seed(
+-        current.seed, current.index + 1U, ExitDirection::up));
+-    ARPG_REQUIRE(from_bottom->entry == EntrySide::bottom);
+-    ARPG_REQUIRE(same_position(from_bottom->combat.player_spawn, 0.0F, 2.75F));
+-    ARPG_REQUIRE(from_bottom->combat.initial_facing == Facing::right);
+-    ARPG_REQUIRE(same_position(from_bottom->combat.dummy_spawns[0], 2.30F, -2.30F));
+-    ARPG_REQUIRE(same_position(from_bottom->combat.dummy_spawns[1], 2.80F, -2.30F));
+-    ARPG_REQUIRE(same_position(from_bottom->combat.dummy_spawns[2], 3.30F, -2.30F));
+-    ARPG_REQUIRE(!from_bottom->combat.respawn_defeated_dummies);
+-
+-    const auto from_top = make_next_room(current, ExitDirection::down);
+-    ARPG_REQUIRE(from_top.has_value());
+-    ARPG_REQUIRE(from_top->index == current.index + 1U);
+-    ARPG_REQUIRE(from_top->seed == derive_next_room_seed(
+-        current.seed, current.index + 1U, ExitDirection::down));
+-    ARPG_REQUIRE(from_top->entry == EntrySide::top);
+-    ARPG_REQUIRE(same_position(from_top->combat.player_spawn, 0.0F, -2.75F));
+-    ARPG_REQUIRE(from_top->combat.initial_facing == Facing::right);
+-    ARPG_REQUIRE(same_position(from_top->combat.dummy_spawns[0], 2.30F, 2.30F));
+-    ARPG_REQUIRE(same_position(from_top->combat.dummy_spawns[1], 2.80F, 2.30F));
+-    ARPG_REQUIRE(same_position(from_top->combat.dummy_spawns[2], 3.30F, 2.30F));
+-    ARPG_REQUIRE(!from_top->combat.respawn_defeated_dummies);
++    using namespace arpg::dungeon::checkpoint;
++    const auto initial = make_combat_lab_config(EntrySide::initial, 1U);
++    const auto left = make_combat_lab_config(EntrySide::left, 1U);
++    const auto right = make_combat_lab_config(EntrySide::right, 1U);
++    const auto top = make_combat_lab_config(EntrySide::top, 1U);
++    const auto bottom = make_combat_lab_config(EntrySide::bottom, 1U);
++    ARPG_REQUIRE(initial.has_value() && left.has_value() && right.has_value()
++        && top.has_value() && bottom.has_value());
++    ARPG_REQUIRE(same_position(initial->player_spawn, 0.0F, 0.0F));
++    ARPG_REQUIRE(initial->initial_facing == Facing::right);
++    ARPG_REQUIRE(same_position(initial->dummy_spawns[0], 2.30F, -0.35F));
++    ARPG_REQUIRE(same_position(initial->dummy_spawns[1], 2.80F, 0.0F));
++    ARPG_REQUIRE(same_position(initial->dummy_spawns[2], 3.30F, 0.35F));
++    ARPG_REQUIRE(same_position(left->player_spawn, -6.50F, 0.0F));
++    ARPG_REQUIRE(left->initial_facing == Facing::right);
++    ARPG_REQUIRE(same_position(left->dummy_spawns[0], 2.30F, -0.35F));
++    ARPG_REQUIRE(same_position(left->dummy_spawns[1], 2.80F, 0.0F));
++    ARPG_REQUIRE(same_position(left->dummy_spawns[2], 3.30F, 0.35F));
++    ARPG_REQUIRE(same_position(right->player_spawn, 6.50F, 0.0F));
++    ARPG_REQUIRE(right->initial_facing == Facing::left);
++    ARPG_REQUIRE(same_position(right->dummy_spawns[0], -2.30F, -0.35F));
++    ARPG_REQUIRE(same_position(right->dummy_spawns[1], -2.80F, 0.0F));
++    ARPG_REQUIRE(same_position(right->dummy_spawns[2], -3.30F, 0.35F));
++    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F, -2.75F));
++    ARPG_REQUIRE(same_position(top->dummy_spawns[0], 2.30F, 2.30F));
++    ARPG_REQUIRE(same_position(top->dummy_spawns[1], 2.80F, 2.30F));
++    ARPG_REQUIRE(same_position(top->dummy_spawns[2], 3.30F, 2.30F));
++    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F, 2.75F));
++    ARPG_REQUIRE(same_position(bottom->dummy_spawns[0], 2.30F, -2.30F));
++    ARPG_REQUIRE(same_position(bottom->dummy_spawns[1], 2.80F, -2.30F));
++    ARPG_REQUIRE(same_position(bottom->dummy_spawns[2], 3.30F, -2.30F));
++    ARPG_REQUIRE(!initial->respawn_defeated_dummies);
++    ARPG_REQUIRE(!left->respawn_defeated_dummies);
++    ARPG_REQUIRE(!right->respawn_defeated_dummies);
++    ARPG_REQUIRE(!top->respawn_defeated_dummies);
++    ARPG_REQUIRE(!bottom->respawn_defeated_dummies);
+     return {};
+ }
+ 
+-arpg::test::Failure seed_derivation_is_deterministic_and_complete() noexcept {
++arpg::test::Failure non_v1_combat_template_is_rejected() noexcept {
+     using namespace arpg::dungeon;
+-    constexpr std::uint64_t root_seed = 0x0102030405060708ULL;
+-    constexpr std::uint64_t high_bit = std::uint64_t{1} << 63U;
+-
+-    const auto initial = derive_initial_room_seed(root_seed, 9U);
+-    ARPG_REQUIRE(initial == derive_initial_room_seed(root_seed, 9U));
+-    ARPG_REQUIRE(initial != derive_initial_room_seed(root_seed, high_bit | 9U));
+-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::up)
+-        == derive_next_room_seed(initial, 10U, ExitDirection::up));
+-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::up)
+-        != derive_next_room_seed(initial, 10U, ExitDirection::down));
+-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::left)
+-        != derive_next_room_seed(initial, 10U, ExitDirection::right));
+-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::up)
+-        != derive_next_room_seed(initial, high_bit | 10U, ExitDirection::up));
+-
+-    RoomDescriptor maximum = make_initial_room({});
+-    maximum.index = (std::numeric_limits<std::uint64_t>::max)();
+-    ARPG_REQUIRE(!make_next_room(maximum, ExitDirection::right).has_value());
+-    ARPG_REQUIRE(!make_next_room(make_initial_room({}), ExitDirection::none).has_value());
++    using namespace arpg::dungeon::checkpoint;
++    ARPG_REQUIRE(!make_combat_lab_config(EntrySide::initial, 0U).has_value());
++    ARPG_REQUIRE(!make_combat_lab_config(EntrySide::initial, 2U).has_value());
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+-    {"direction ids and opposite entries are fixed", &direction_ids_and_opposite_entries_are_fixed},
+-    {"initial descriptor uses stage two template", &initial_descriptor_uses_stage_two_template},
+-    {"side entries mirror spawn and facing", &side_entries_mirror_spawn_and_facing},
+-    {"vertical entries use horizontal target rows", &vertical_entries_use_horizontal_target_rows},
+-    {"seed derivation is deterministic and complete", &seed_derivation_is_deterministic_and_complete},
++    {"golden seed chain is stable", &golden_seed_chain_is_stable},
++    {"ecology and three stream samples are fixed", &ecology_and_three_stream_samples_are_fixed},
++    {"hole threshold boundary is left closed", &hole_threshold_boundary_is_left_closed},
++    {"abyss threshold boundary is left closed", &abyss_threshold_boundary_is_left_closed},
++    {"hole and abyss can coexist", &hole_and_abyss_can_coexist},
++    {"bias only changes ecology stream", &bias_only_changes_ecology_stream},
++    {"entry templates preserve stage two layout", &entry_templates_preserve_stage_two_layout},
++    {"non v1 combat template is rejected", &non_v1_combat_template_is_rejected},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite room_generation_suite() noexcept {
+     return arpg::test::make_suite("room_generation", kCases);
+ }

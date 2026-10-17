@@ -1,0 +1,173 @@
+# Review package: 873f2ef3d0a392e73d8332e6ffe24bcf5026d937..6f190df
+
+## Commits
+6f190df feat: add deterministic bounded sampling
+
+## Files changed
+ src/core/deterministic_rng.cpp         | 15 +++++++++++++++
+ src/core/deterministic_rng.hpp         |  4 ++++
+ tests/core/deterministic_rng_tests.cpp | 25 +++++++++++++++++++++++++
+ tests/core/test_main.cpp               |  2 +-
+ 4 files changed, 45 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/core/deterministic_rng.cpp b/src/core/deterministic_rng.cpp
+index 3652a15..bf94d68 100644
+--- a/src/core/deterministic_rng.cpp
++++ b/src/core/deterministic_rng.cpp
+@@ -42,20 +42,35 @@ std::uint64_t DeterministicRng::next_u64() noexcept {
+ 
+     state_[2] ^= state_[0];
+     state_[3] ^= state_[1];
+     state_[1] ^= state_[2];
+     state_[0] ^= state_[3];
+     state_[2] ^= shifted;
+     state_[3] = rotate_left(state_[3], 45U);
+     return result;
+ }
+ 
++std::optional<std::uint64_t> DeterministicRng::next_bounded(
++    std::uint64_t bound) noexcept {
++    if (bound == 0U) {
++        return std::nullopt;
++    }
++    const std::uint64_t threshold =
++        (std::uint64_t{0} - bound) % bound;
++    for (;;) {
++        const std::uint64_t value = next_u64();
++        if (value >= threshold) {
++            return value % bound;
++        }
++    }
++}
++
+ DeterministicRng DeterministicRng::derive_stream(
+     std::uint64_t root_seed,
+     std::uint64_t stream_id) noexcept {
+     std::uint64_t id_state = stream_id;
+     const std::uint64_t mixed_id = splitmix64_next(id_state);
+     std::uint64_t outer_state = root_seed ^ mixed_id;
+     const std::uint64_t child_seed =
+         splitmix64_next(outer_state);
+     return DeterministicRng{child_seed};
+ }
+diff --git a/src/core/deterministic_rng.hpp b/src/core/deterministic_rng.hpp
+index 4053829..0faaf99 100644
+--- a/src/core/deterministic_rng.hpp
++++ b/src/core/deterministic_rng.hpp
+@@ -1,22 +1,26 @@
+ #pragma once
+ 
+ #include <array>
+ #include <cstdint>
++#include <optional>
+ 
+ namespace arpg::core {
+ 
+ class DeterministicRng final {
+ public:
+     explicit DeterministicRng(std::uint64_t seed) noexcept;
+ 
+     [[nodiscard]] std::uint64_t next_u64() noexcept;
+ 
++    [[nodiscard]] std::optional<std::uint64_t> next_bounded(
++        std::uint64_t bound) noexcept;
++
+     [[nodiscard]] static DeterministicRng derive_stream(
+         std::uint64_t root_seed,
+         std::uint64_t stream_id) noexcept;
+ 
+ private:
+     std::array<std::uint64_t, 4> state_{};
+ };
+ 
+ }  // namespace arpg::core
+diff --git a/tests/core/deterministic_rng_tests.cpp b/tests/core/deterministic_rng_tests.cpp
+index 1aaeabb..fc4af39 100644
+--- a/tests/core/deterministic_rng_tests.cpp
++++ b/tests/core/deterministic_rng_tests.cpp
+@@ -38,20 +38,43 @@ arpg::test::Failure seed_one_golden_sequence() noexcept {
+     DeterministicRng rng{1};
+     constexpr std::array<std::uint64_t, 4> expected = {
+         0xB3F2AF6D0FC710C5ULL,
+         0x853B559647364CEAULL,
+         0x92F89756082A4514ULL,
+         0x642E1C7BC266A3A7ULL,
+     };
+     return require_sequence(rng, expected);
+ }
+ 
++arpg::test::Failure bounded_zero_and_golden_samples() noexcept {
++    DeterministicRng zero{1};
++    ARPG_REQUIRE(!zero.next_bounded(0).has_value());
++    ARPG_REQUIRE(zero.next_u64() == 0xB3F2AF6D0FC710C5ULL);
++
++    DeterministicRng samples{1};
++    ARPG_REQUIRE(samples.next_bounded(10000).value() == 9557U);
++    ARPG_REQUIRE(samples.next_bounded(425).value() == 97U);
++    ARPG_REQUIRE(samples.next_bounded(1).value() == 0U);
++    return {};
++}
++
++arpg::test::Failure bounded_rejection_path_is_fixed() noexcept {
++    DeterministicRng rng{1};
++    static_cast<void>(rng.next_u64());
++    static_cast<void>(rng.next_u64());
++    static_cast<void>(rng.next_u64());
++    ARPG_REQUIRE(
++        rng.next_bounded(0x8000000000000001ULL).value()
++        == 0x327A48E29A233672ULL);
++    return {};
++}
++
+ arpg::test::Failure identical_seeds_remain_identical() noexcept {
+     DeterministicRng lhs{0xA55AA55A12345678ULL};
+     DeterministicRng rhs{0xA55AA55A12345678ULL};
+     for (int index = 0; index < 1000; ++index) {
+         ARPG_REQUIRE(lhs.next_u64() == rhs.next_u64());
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure derived_stream_golden_sequences() noexcept {
+@@ -104,20 +127,22 @@ arpg::test::Failure streams_are_isolated() noexcept {
+         ARPG_REQUIRE(
+             stream_one_after.next_u64() ==
+             stream_one_fresh.next_u64());
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"seed zero golden", &seed_zero_golden_sequence},
+     {"seed one golden", &seed_one_golden_sequence},
++    {"bounded zero and golden samples", &bounded_zero_and_golden_samples},
++    {"bounded rejection path", &bounded_rejection_path_is_fixed},
+     {"identical seeds", &identical_seeds_remain_identical},
+     {"derived streams golden", &derived_stream_golden_sequences},
+     {"stream isolation", &streams_are_isolated},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite deterministic_rng_suite() noexcept {
+     return arpg::test::make_suite("deterministic_rng", kCases);
+ }
+diff --git a/tests/core/test_main.cpp b/tests/core/test_main.cpp
+index 757df27..fd7e777 100644
+--- a/tests/core/test_main.cpp
++++ b/tests/core/test_main.cpp
+@@ -6,12 +6,12 @@ arpg::test::TestSuite fixed_pool_suite() noexcept;
+ arpg::test::TestSuite bounded_queue_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         fixed_step_suite(),
+         deterministic_rng_suite(),
+         fixed_pool_suite(),
+         bounded_queue_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 22, "stage 0");
++    return arpg::test::run_suites(suites, 24, "stage 0");
+ }

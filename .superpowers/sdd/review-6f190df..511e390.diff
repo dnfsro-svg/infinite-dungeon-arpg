@@ -1,0 +1,428 @@
+# Review package: 6f190df..511e390
+
+## Commits
+511e390 feat: define stage 3 dungeon rules
+
+## Files changed
+ src/dungeon/CMakeLists.txt            |   1 +
+ src/dungeon/dungeon_checkpoint.hpp    |  57 +++++++++++++++++++
+ src/dungeon/dungeon_rules.cpp         |  74 ++++++++++++++++++++++++
+ src/dungeon/dungeon_rules.hpp         |  47 ++++++++++++++++
+ src/dungeon/dungeon_types.hpp         |  18 +-----
+ tests/dungeon/CMakeLists.txt          |   3 +-
+ tests/dungeon/dungeon_rules_tests.cpp | 103 ++++++++++++++++++++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp   |   4 +-
+ 8 files changed, 290 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/CMakeLists.txt b/src/dungeon/CMakeLists.txt
+index e20ce82..e4eaa71 100644
+--- a/src/dungeon/CMakeLists.txt
++++ b/src/dungeon/CMakeLists.txt
+@@ -1,9 +1,10 @@
+ add_library(arpg_dungeon STATIC
++    dungeon_rules.cpp
+     dungeon_session.cpp
+     room_generation.cpp
+     room_navigation.cpp)
+ 
+ target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_dungeon PUBLIC cxx_std_17)
+ target_link_libraries(arpg_dungeon PUBLIC arpg_combat PRIVATE arpg_core)
+ arpg_enable_project_warnings(arpg_dungeon)
+diff --git a/src/dungeon/dungeon_checkpoint.hpp b/src/dungeon/dungeon_checkpoint.hpp
+new file mode 100644
+index 0000000..d6a1417
+--- /dev/null
++++ b/src/dungeon/dungeon_checkpoint.hpp
+@@ -0,0 +1,57 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++
++namespace arpg::dungeon::checkpoint {
++
++enum class ExitDirection : std::uint8_t {
++    up = 0,
++    down = 1,
++    left = 2,
++    right = 3,
++    none = 0xFF,
++};
++
++enum class EntrySide : std::uint8_t {
++    initial = 0,
++    top = 1,
++    bottom = 2,
++    left = 3,
++    right = 4,
++};
++
++enum class DungeonElement : std::uint8_t {
++    fire = 0,
++    water = 1,
++    lightning = 2,
++    chaos = 3,
++};
++
++enum class TransitionKind : std::uint8_t {
++    door = 0,
++    descent = 1,
++    none = 0xFF,
++};
++
++struct RoomDescriptor final {
++    std::uint64_t index{};
++    std::uint64_t seed{};
++    std::uint64_t depth{1};
++    std::uint64_t floor_room_index{1};
++    EntrySide entry{EntrySide::initial};
++    DungeonElement ecology{DungeonElement::fire};
++    bool has_hole{};
++    bool is_abyss{};
++};
++
++struct DungeonRunState final {
++    std::uint64_t root_seed{};
++    std::uint64_t commit_generation{1};
++    std::array<std::uint32_t, 4> biases{};
++    RoomDescriptor current_room{};
++    TransitionKind last_transition{TransitionKind::none};
++    ExitDirection last_direction{ExitDirection::none};
++};
++
++}  // namespace arpg::dungeon::checkpoint
+diff --git a/src/dungeon/dungeon_rules.cpp b/src/dungeon/dungeon_rules.cpp
+new file mode 100644
+index 0000000..5f64b1f
+--- /dev/null
++++ b/src/dungeon/dungeon_rules.cpp
+@@ -0,0 +1,74 @@
++#include "dungeon/dungeon_rules.hpp"
++
++#include <limits>
++
++namespace arpg::dungeon {
++
++std::optional<checkpoint::DungeonElement> element_for_exit(
++    checkpoint::ExitDirection direction) noexcept {
++    switch (direction) {
++    case checkpoint::ExitDirection::up:
++        return checkpoint::DungeonElement::fire;
++    case checkpoint::ExitDirection::down:
++        return checkpoint::DungeonElement::water;
++    case checkpoint::ExitDirection::left:
++        return checkpoint::DungeonElement::lightning;
++    case checkpoint::ExitDirection::right:
++        return checkpoint::DungeonElement::chaos;
++    case checkpoint::ExitDirection::none:
++        return std::nullopt;
++    }
++    return std::nullopt;
++}
++
++DungeonFault validate_rules(const DungeonRules& rules) noexcept {
++    if (rules.rules_version != 1U
++            || rules.hole_threshold > kProbabilityScale
++            || rules.abyss_threshold > kProbabilityScale) {
++        return DungeonFault::invalid_rules;
++    }
++
++    for (const std::uint32_t weight : rules.base_weights) {
++        if (weight == 0U) {
++            return DungeonFault::invalid_rules;
++        }
++    }
++    return DungeonFault::none;
++}
++
++DungeonFault compute_ecology_weights(
++    const DungeonRules& rules,
++    const std::array<std::uint32_t, 4>& biases,
++    std::array<std::uint64_t, 4>& weights,
++    std::uint64_t& total) noexcept {
++    const DungeonFault rules_fault = validate_rules(rules);
++    if (rules_fault != DungeonFault::none) {
++        return rules_fault;
++    }
++
++    std::array<std::uint64_t, 4> checked_weights{};
++    std::uint64_t checked_total = 0U;
++    for (std::size_t index = 0; index < checked_weights.size(); ++index) {
++        const std::uint64_t base = rules.base_weights[index];
++        const std::uint64_t bias = biases[index];
++        const std::uint64_t increment = rules.bias_weight_increment;
++        if (increment != 0U
++                && bias > ((std::numeric_limits<std::uint64_t>::max)()
++                    - base) / increment) {
++            return DungeonFault::weight_overflow;
++        }
++        const std::uint64_t weight = base + bias * increment;
++        if (checked_total > (std::numeric_limits<std::uint64_t>::max)()
++                - weight) {
++            return DungeonFault::weight_overflow;
++        }
++        checked_weights[index] = weight;
++        checked_total += weight;
++    }
++
++    weights = checked_weights;
++    total = checked_total;
++    return DungeonFault::none;
++}
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_rules.hpp b/src/dungeon/dungeon_rules.hpp
+new file mode 100644
+index 0000000..beda304
+--- /dev/null
++++ b/src/dungeon/dungeon_rules.hpp
+@@ -0,0 +1,47 @@
++#pragma once
++
++#include "dungeon/dungeon_checkpoint.hpp"
++
++#include <array>
++#include <cstdint>
++#include <optional>
++
++namespace arpg::dungeon {
++
++inline constexpr std::uint32_t kProbabilityScale = 10000U;
++
++enum class DungeonFault : std::uint8_t {
++    none,
++    invalid_rules,
++    invalid_direction,
++    commit_generation_overflow,
++    room_index_overflow,
++    depth_overflow,
++    floor_room_overflow,
++    bias_overflow,
++    weight_overflow,
++    event_overflow,
++    combat_relay_overflow,
++    save_commit_indeterminate,
++    save_receipt_mismatch,
++};
++
++struct DungeonRules final {
++    std::array<std::uint32_t, 4> base_weights{{100, 100, 100, 100}};
++    std::uint32_t bias_weight_increment{25};
++    std::uint32_t hole_threshold{1000};
++    std::uint32_t abyss_threshold{100};
++    std::uint32_t rules_version{1};
++};
++
++[[nodiscard]] std::optional<checkpoint::DungeonElement> element_for_exit(
++    checkpoint::ExitDirection direction) noexcept;
++[[nodiscard]] DungeonFault validate_rules(
++    const DungeonRules& rules) noexcept;
++[[nodiscard]] DungeonFault compute_ecology_weights(
++    const DungeonRules& rules,
++    const std::array<std::uint32_t, 4>& biases,
++    std::array<std::uint64_t, 4>& weights,
++    std::uint64_t& total) noexcept;
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index 3996aaa..10fe545 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -1,35 +1,23 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
++#include "dungeon/dungeon_checkpoint.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::dungeon {
+ 
+-enum class ExitDirection : std::uint8_t {
+-    up = 0,
+-    down = 1,
+-    left = 2,
+-    right = 3,
+-    none = 0xFF,
+-};
+-
+-enum class EntrySide : std::uint8_t {
+-    initial,
+-    top,
+-    bottom,
+-    left,
+-    right,
+-};
++using ExitDirection = checkpoint::ExitDirection;
++using EntrySide = checkpoint::EntrySide;
+ 
+ enum class RoomPhase : std::uint8_t {
+     locked,
+     combat,
+     cleared,
+     awaiting_exit,
+     transitioning,
+ };
+ 
+ enum class DungeonEventKind : std::uint8_t {
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 47d8071..2d6b70f 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -1,16 +1,17 @@
+ add_executable(arpg_dungeon_tests
+     ../core/allocation_probe.cpp
+     dungeon_test_main.cpp
+     dungeon_lifecycle_tests.cpp
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+-    room_generation_tests.cpp)
++    room_generation_tests.cpp
++    dungeon_rules_tests.cpp)
+ 
+ target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_dungeon_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon)
+ arpg_enable_project_warnings(arpg_dungeon_tests)
+ 
+ add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+ set_tests_properties(dungeon.units PROPERTIES LABELS "headless;dungeon")
+diff --git a/tests/dungeon/dungeon_rules_tests.cpp b/tests/dungeon/dungeon_rules_tests.cpp
+new file mode 100644
+index 0000000..f57403f
+--- /dev/null
++++ b/tests/dungeon/dungeon_rules_tests.cpp
+@@ -0,0 +1,103 @@
++#include "test_framework.hpp"
++
++#include "dungeon/dungeon_checkpoint.hpp"
++#include "dungeon/dungeon_rules.hpp"
++
++#include <array>
++#include <cstdint>
++#include <limits>
++
++namespace {
++
++using arpg::dungeon::DungeonFault;
++using arpg::dungeon::DungeonRules;
++using arpg::dungeon::compute_ecology_weights;
++using arpg::dungeon::element_for_exit;
++using arpg::dungeon::validate_rules;
++namespace checkpoint = arpg::dungeon::checkpoint;
++using checkpoint::DungeonElement;
++using checkpoint::ExitDirection;
++
++static_assert(static_cast<std::uint8_t>(ExitDirection::up) == 0U);
++static_assert(static_cast<std::uint8_t>(ExitDirection::none) == 0xFFU);
++static_assert(static_cast<std::uint8_t>(checkpoint::TransitionKind::descent) == 1U);
++
++arpg::test::Failure exit_directions_map_to_elements() noexcept {
++    ARPG_REQUIRE(element_for_exit(ExitDirection::up).value() == DungeonElement::fire);
++    ARPG_REQUIRE(element_for_exit(ExitDirection::down).value() == DungeonElement::water);
++    ARPG_REQUIRE(element_for_exit(ExitDirection::left).value() == DungeonElement::lightning);
++    ARPG_REQUIRE(element_for_exit(ExitDirection::right).value() == DungeonElement::chaos);
++    ARPG_REQUIRE(!element_for_exit(ExitDirection::none).has_value());
++    return {};
++}
++
++arpg::test::Failure default_rules_are_valid() noexcept {
++    DungeonRules defaults;
++    ARPG_REQUIRE(validate_rules(defaults) == DungeonFault::none);
++    ARPG_REQUIRE(defaults.base_weights[0] == 100U);
++    ARPG_REQUIRE(defaults.bias_weight_increment == 25U);
++    ARPG_REQUIRE(defaults.hole_threshold == 1000U);
++    ARPG_REQUIRE(defaults.abyss_threshold == 100U);
++    return {};
++}
++
++arpg::test::Failure default_biases_produce_checked_weights() noexcept {
++    DungeonRules defaults;
++    std::array<std::uint32_t, 4> biases{{5, 0, 0, 0}};
++    std::array<std::uint64_t, 4> weights{};
++    std::uint64_t total = 0;
++    ARPG_REQUIRE(compute_ecology_weights(
++        defaults, biases, weights, total) == DungeonFault::none);
++    ARPG_REQUIRE(weights[0] == 225U && total == 525U);
++    return {};
++}
++
++arpg::test::Failure threshold_boundaries_are_checked() noexcept {
++    DungeonRules rules;
++    rules.hole_threshold = 0U;
++    rules.abyss_threshold = 0U;
++    ARPG_REQUIRE(validate_rules(rules) == DungeonFault::none);
++    rules.hole_threshold = 10000U;
++    rules.abyss_threshold = 10000U;
++    ARPG_REQUIRE(validate_rules(rules) == DungeonFault::none);
++    rules.hole_threshold = 10001U;
++    ARPG_REQUIRE(validate_rules(rules) == DungeonFault::invalid_rules);
++    rules.hole_threshold = 10000U;
++    rules.abyss_threshold = 10001U;
++    ARPG_REQUIRE(validate_rules(rules) == DungeonFault::invalid_rules);
++    return {};
++}
++
++arpg::test::Failure invalid_weights_leave_outputs_zeroed() noexcept {
++    DungeonRules rules;
++    rules.bias_weight_increment = (std::numeric_limits<std::uint32_t>::max)();
++    std::array<std::uint32_t, 4> biases{{
++        (std::numeric_limits<std::uint32_t>::max)(),
++        (std::numeric_limits<std::uint32_t>::max)(),
++        (std::numeric_limits<std::uint32_t>::max)(),
++        (std::numeric_limits<std::uint32_t>::max)()}};
++    std::array<std::uint64_t, 4> weights{};
++    std::uint64_t total = 0;
++    ARPG_REQUIRE(compute_ecology_weights(
++        rules, biases, weights, total) == DungeonFault::weight_overflow);
++    ARPG_REQUIRE((weights == std::array<std::uint64_t, 4>{}));
++    ARPG_REQUIRE(total == 0U);
++
++    rules.base_weights[0] = 0U;
++    ARPG_REQUIRE(validate_rules(rules) == DungeonFault::invalid_rules);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"exit directions map to elements", &exit_directions_map_to_elements},
++    {"default rules are valid", &default_rules_are_valid},
++    {"default biases produce checked weights", &default_biases_produce_checked_weights},
++    {"threshold boundaries are checked", &threshold_boundaries_are_checked},
++    {"invalid weights leave outputs zeroed", &invalid_weights_leave_outputs_zeroed},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_rules_suite() noexcept {
++    return arpg::test::make_suite("dungeon_rules", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 87a17c9..dda3f2f 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -1,17 +1,19 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite room_generation_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
++arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         room_generation_suite(),
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
++        dungeon_rules_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 20, "stage 2 dungeon");
++    return arpg::test::run_suites(suites, 25, "stage 3 dungeon");
+ }
