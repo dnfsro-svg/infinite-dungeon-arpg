@@ -1,0 +1,38 @@
+# Review package: cc4b2da224388d8f6d73cdafa425a78c46e18018..effb6bd
+
+## Commits
+effb6bd fix: avoid raylib worktree path false positive
+
+## Files changed
+ tests/platform/CMakeLists.txt | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index a5e3c47..73c0c28 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,19 +1,22 @@
+ foreach(PROPERTY_NAME IN ITEMS
+         LINK_LIBRARIES
+         INTERFACE_LINK_LIBRARIES
+         INCLUDE_DIRECTORIES
+         INTERFACE_INCLUDE_DIRECTORIES)
+     get_target_property(PROPERTY_VALUE arpg_core "${PROPERTY_NAME}")
+     if(PROPERTY_VALUE)
+         string(TOLOWER "${PROPERTY_VALUE}" PROPERTY_VALUE_LOWER)
+-        if(PROPERTY_VALUE_LOWER MATCHES "raylib|_deps[/\\\\]raylib")
++        # Match a target or path component, not a parent directory whose
++        # name merely contains "raylib" (for example m00-raylib-host).
++        if(PROPERTY_VALUE_LOWER MATCHES
++                "(^|[;:/\\\\<])raylib($|[;:/\\\\>])|_deps[/\\\\]raylib")
+             message(FATAL_ERROR
+                 "arpg_core ${PROPERTY_NAME} leaks raylib: ${PROPERTY_VALUE}")
+         endif()
+     endif()
+ endforeach()
+ 
+ add_test(
+     NAME architecture.core_no_raylib
+     COMMAND "${CMAKE_COMMAND}"
+         "-DCORE_DIR=${PROJECT_SOURCE_DIR}/src/core"
