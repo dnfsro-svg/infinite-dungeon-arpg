@@ -1,0 +1,333 @@
+# Review package: fbd00d8..c8639be
+
+## Commits
+c8639be test: cover passive runtime save rollback
+4949c44 feat: persist passive mutations through runtime
+
+## Files changed
+ src/platform/raylib/dungeon_runtime.cpp  | 12 +++--
+ src/platform/raylib/dungeon_runtime.hpp  |  4 +-
+ tests/dungeon/dungeon_test_support.hpp   |  9 ++++
+ tests/platform/dungeon_runtime_tests.cpp | 91 ++++++++++++++++++++++++++++++++
+ tests/platform/platform_test_main.cpp    |  2 +-
+ 5 files changed, 112 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/dungeon_runtime.cpp b/src/platform/raylib/dungeon_runtime.cpp
+index 0caf999..97a1186 100644
+--- a/src/platform/raylib/dungeon_runtime.cpp
++++ b/src/platform/raylib/dungeon_runtime.cpp
+@@ -35,21 +35,21 @@ void DungeonRuntime::sync_load_status(
+ }
+ 
+ void DungeonRuntime::sync_commit_status(
+     const persistence::SaveCommitResult& result) noexcept {
+     status_.active_slot = result.active_slot;
+     status_.error = result.error;
+     status_.indicator = result.state == persistence::SaveCommitState::committed
+         ? SaveIndicator::saved : SaveIndicator::error;
+ }
+ 
+-dungeon::TransitionSaveResult DungeonRuntime::to_session_result(
++dungeon::PendingSaveResult DungeonRuntime::to_session_result(
+     const persistence::SaveCommitResult& saved) noexcept {
+     dungeon::SaveDisposition disposition = dungeon::SaveDisposition::indeterminate;
+     if (saved.state == persistence::SaveCommitState::committed) {
+         disposition = dungeon::SaveDisposition::committed;
+     } else if (saved.state == persistence::SaveCommitState::not_committed) {
+         disposition = dungeon::SaveDisposition::not_committed;
+     }
+     return {disposition, saved.verified_state.commit_generation,
+         saved.verified_state};
+ }
+@@ -113,37 +113,41 @@ dungeon::DungeonSession* DungeonRuntime::session() noexcept {
+ }
+ 
+ const dungeon::DungeonSession* DungeonRuntime::session() const noexcept {
+     return session_.has_value() ? &*session_ : nullptr;
+ }
+ 
+ DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
+     return status_;
+ }
+ 
+-void DungeonRuntime::service_pending_transition() noexcept {
++void DungeonRuntime::service_pending_save() noexcept {
+     if (state() != DungeonRuntimeState::running || !session_.has_value()) {
+         return;
+     }
+-    const auto pending = session_->pending_transition();
++    const auto pending = session_->pending_save();
+     if (!pending.has_value()) {
+         return;
+     }
+     status_.indicator = SaveIndicator::saving;
+     const persistence::SaveCommitResult saved = store_.commit(pending->next_state);
+     sync_commit_status(saved);
+-    session_->resolve_pending_transition(to_session_result(saved));
++    session_->resolve_pending_save(to_session_result(saved));
+     if (session_->snapshot().phase == dungeon::RoomPhase::faulted) {
+         state_ = DungeonRuntimeState::faulted;
+     }
+ }
+ 
++void DungeonRuntime::service_pending_transition() noexcept {
++    service_pending_save();
++}
++
+ bool DungeonRuntime::recover_with_new_run() noexcept {
+     if (state_ != DungeonRuntimeState::recovery_required) {
+         return false;
+     }
+     const auto root_seed = select_new_run_seed();
+     if (!root_seed.has_value()) {
+         state_ = DungeonRuntimeState::faulted;
+         return false;
+     }
+     const dungeon::RunStateBuildResult built =
+diff --git a/src/platform/raylib/dungeon_runtime.hpp b/src/platform/raylib/dungeon_runtime.hpp
+index d8acc53..2b776d4 100644
+--- a/src/platform/raylib/dungeon_runtime.hpp
++++ b/src/platform/raylib/dungeon_runtime.hpp
+@@ -35,28 +35,30 @@ struct DungeonRenderStatus final {
+ 
+ class DungeonRuntime final {
+ public:
+     explicit DungeonRuntime(DungeonRuntimeConfig config);
+ 
+     [[nodiscard]] bool initialize() noexcept;
+     [[nodiscard]] DungeonRuntimeState state() const noexcept;
+     [[nodiscard]] dungeon::DungeonSession* session() noexcept;
+     [[nodiscard]] const dungeon::DungeonSession* session() const noexcept;
+     [[nodiscard]] DungeonRenderStatus render_status() const noexcept;
++    void service_pending_save() noexcept;
++    // Kept until the host is migrated to the generic pending-save entry point.
+     void service_pending_transition() noexcept;
+     [[nodiscard]] bool recover_with_new_run() noexcept;
+ 
+ private:
+     [[nodiscard]] std::optional<std::uint64_t> select_new_run_seed() const noexcept;
+     void sync_load_status(const persistence::SaveLoadResult& result) noexcept;
+     void sync_commit_status(const persistence::SaveCommitResult& result) noexcept;
+-    [[nodiscard]] static dungeon::TransitionSaveResult to_session_result(
++    [[nodiscard]] static dungeon::PendingSaveResult to_session_result(
+         const persistence::SaveCommitResult& saved) noexcept;
+ 
+     DungeonRuntimeConfig config_{};
+     persistence::SaveStore store_;
+     std::optional<dungeon::DungeonSession> session_{};
+     DungeonRuntimeState state_{DungeonRuntimeState::uninitialized};
+     DungeonRenderStatus status_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index 9591358..0399a88 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -19,20 +19,24 @@ struct DungeonSessionTestAccess final {
+         return session.combat_->encounter_config_.player_build;
+     }
+     static const combat::CombatWorld* combat_world_address(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.combat_.has_value() ? &*session.combat_ : nullptr;
+     }
+     static void set_current_room_hole(
+         dungeon::DungeonSession& session, bool has_hole) noexcept {
+         session.stable_state_.current_room.has_hole = has_hole;
+     }
++    static void attempt_exit(dungeon::DungeonSession& session,
++        dungeon::ExitDirection direction) noexcept {
++        session.attempt_exit(direction);
++    }
+     static void damage_current_player(
+         dungeon::DungeonSession& session, int damage) noexcept {
+         if (session.combat_.has_value()) {
+             session.combat_->apply_player_damage(
+                 damage, combat::Vec3{}, combat::FeedbackLevel::light);
+         }
+     }
+     static void force_defeat_current_wave(
+         dungeon::DungeonSession& session) noexcept {
+         if (!session.combat_.has_value()) {
+@@ -74,20 +78,25 @@ inline const combat::PlayerCombatBuild& player_build(
+ inline const combat::CombatWorld* combat_world_address(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::combat_world_address(session);
+ }
+ 
+ inline void set_current_room_hole(
+     dungeon::DungeonSession& session, bool has_hole) noexcept {
+     DungeonSessionTestAccess::set_current_room_hole(session, has_hole);
+ }
+ 
++inline void attempt_exit(dungeon::DungeonSession& session,
++    dungeon::ExitDirection direction) noexcept {
++    DungeonSessionTestAccess::attempt_exit(session, direction);
++}
++
+ inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
+     const dungeon::RoomEncounterPlan& right) noexcept {
+     if (left.wave_count != right.wave_count
+             || left.total_budget != right.total_budget) return false;
+     for (std::size_t wave = 0; wave < left.wave_count; ++wave) {
+         const auto& a = left.waves[wave];
+         const auto& b = right.waves[wave];
+         if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) return false;
+         for (std::size_t spawn = 0; spawn < a.spawn_count; ++spawn) {
+             if (a.spawns[spawn].id != b.spawns[spawn].id
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+index cc7c390..8f1f2bd 100644
+--- a/tests/platform/dungeon_runtime_tests.cpp
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -157,20 +157,107 @@ arpg::test::Failure committed_pending_transition_maps_verified_state_and_saved_i
+     ARPG_REQUIRE(expected.has_value());
+     runtime.service_pending_transition();
+     const auto snapshot = runtime.session()->snapshot();
+     ARPG_REQUIRE(snapshot.phase == dungeon::RoomPhase::transitioning);
+     ARPG_REQUIRE(snapshot.commit_generation == expected->next_state.commit_generation);
+     ARPG_REQUIRE(snapshot.room_seed == expected->next_state.current_room.seed);
+     ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::saved);
+     return {};
+ }
+ 
++arpg::test::Failure committed_passive_save_survives_runtime_restart() noexcept {
++    TempDirectory directory;
++    platform::DungeonRuntime runtime(config_for(directory));
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(clear_and_await(*runtime.session()));
++    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
++    runtime.service_pending_save();
++    const auto saved = runtime.session()->snapshot();
++    ARPG_REQUIRE(saved.passive_tree.allocated_bits == ((1ULL << 0U) | (1ULL << 8U)));
++    ARPG_REQUIRE(!saved.passive_save_pending);
++    const auto generation = saved.commit_generation;
++    runtime.service_pending_save();
++    ARPG_REQUIRE(runtime.session()->snapshot().commit_generation == generation);
++    platform::DungeonRuntime resumed(config_for(directory, 999U));
++    ARPG_REQUIRE(resumed.initialize());
++    ARPG_REQUIRE(resumed.session()->snapshot().passive_tree.allocated_bits
++        == saved.passive_tree.allocated_bits);
++    return {};
++}
++
++arpg::test::Failure passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime() noexcept {
++    TempDirectory directory;
++    FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
++    auto config = config_for(directory);
++    config.save.fault_hook = &fail_when_enabled;
++    config.save.fault_context = &fault;
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(clear_and_await(*runtime.session()));
++    const auto before = runtime.session()->snapshot();
++    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
++    fault.enabled = true;
++    runtime.service_pending_save();
++    const auto after = runtime.session()->snapshot();
++    ARPG_REQUIRE(after.passive_tree.allocated_bits == before.passive_tree.allocated_bits);
++    ARPG_REQUIRE(after.commit_generation == before.commit_generation);
++    ARPG_REQUIRE(after.phase == dungeon::RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(!after.passive_save_pending);
++    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
++    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
++    platform::DungeonRuntime resumed(config_for(directory, 999U));
++    ARPG_REQUIRE(resumed.initialize());
++    const auto restored = resumed.session()->snapshot();
++    ARPG_REQUIRE(restored.passive_tree.allocated_bits
++        == before.passive_tree.allocated_bits);
++    ARPG_REQUIRE(restored.commit_generation == before.commit_generation);
++    return {};
++}
++
++arpg::test::Failure indeterminate_passive_save_faults_runtime() noexcept {
++    TempDirectory directory;
++    FaultContext fault{persistence::SaveFaultPoint::after_publish, false};
++    auto config = config_for(directory);
++    config.save.fault_hook = &fail_when_enabled;
++    config.save.fault_context = &fault;
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(clear_and_await(*runtime.session()));
++    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
++    fault.enabled = true;
++    runtime.service_pending_save();
++    ARPG_REQUIRE(runtime.session()->snapshot().phase == dungeon::RoomPhase::faulted);
++    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
++    return {};
++}
++
++arpg::test::Failure passive_pending_rejects_door_and_descent_requests() noexcept {
++    TempDirectory directory;
++    platform::DungeonRuntime runtime(config_for(directory));
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(clear_and_await(*runtime.session()));
++    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
++    const auto pending = runtime.session()->pending_save();
++    ARPG_REQUIRE(pending.has_value());
++    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::passive_tree);
++    ARPG_REQUIRE(!runtime.session()->request_descent(true));
++    const auto before_door = runtime.session()->snapshot();
++    arpg::test::attempt_exit(*runtime.session(), dungeon::ExitDirection::right);
++    const auto snapshot = runtime.session()->snapshot();
++    ARPG_REQUIRE(snapshot.phase == dungeon::RoomPhase::committing);
++    ARPG_REQUIRE(snapshot.passive_save_pending);
++    ARPG_REQUIRE(!snapshot.has_pending_transition);
++    ARPG_REQUIRE(snapshot.diagnostics.rejected_exit_count
++        == before_door.diagnostics.rejected_exit_count + 1U);
++    return {};
++}
++
+ arpg::test::Failure pre_publish_not_committed_maps_to_retryable_error() noexcept {
+     TempDirectory directory;
+     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+     auto config = config_for(directory);
+     config.save.fault_hook = &fail_when_enabled;
+     config.save.fault_context = &fault;
+     platform::DungeonRuntime runtime(config);
+     ARPG_REQUIRE(runtime.initialize());
+     ARPG_REQUIRE(drive_door_pending(*runtime.session()));
+     fault.enabled = true;
+@@ -263,20 +350,24 @@ arpg::test::Failure invalid_rules_fault_without_creating_save_or_session() noexc
+         ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_a.sav"));
+         ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.sav"));
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"empty directory commits seeded generation one before running", &empty_directory_commits_seeded_generation_one_before_running},
+     {"valid save ignores new run seed override", &valid_save_ignores_new_run_seed_override},
+     {"committed pending transition maps verified state and saved indicator", &committed_pending_transition_maps_verified_state_and_saved_indicator},
++    {"committed passive save survives runtime restart", &committed_passive_save_survives_runtime_restart},
++    {"passive pre publish failure keeps old tree and retryable runtime", &passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime},
++    {"indeterminate passive save faults runtime", &indeterminate_passive_save_faults_runtime},
++    {"passive pending rejects door and descent requests", &passive_pending_rejects_door_and_descent_requests},
+     {"pre publish not committed maps to retryable error", &pre_publish_not_committed_maps_to_retryable_error},
+     {"indeterminate maps to faulted runtime and blocks selection", &indeterminate_maps_to_faulted_runtime_and_blocks_selection},
+     {"dual slot corruption requires recovery then archives new run", &dual_slot_corruption_requires_recovery_then_archives_new_run},
+     {"single slot corruption recovers and subsequent saves alternate", &single_slot_corruption_recovers_and_subsequent_saves_alternate},
+     {"invalid rules fault without creating save or session", &invalid_rules_fault_without_creating_save_or_session},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept {
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index bedbe2e..b49c4bb 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -12,12 +12,12 @@ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 41, "stage 5 platform");
++    return arpg::test::run_suites(suites, 45, "stage 6 platform");
+ }

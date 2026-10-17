@@ -1,0 +1,893 @@
+diff --git a/src/combat/attack_catalog.cpp b/src/combat/attack_catalog.cpp
+index 4c10384..343c246 100644
+--- a/src/combat/attack_catalog.cpp
++++ b/src/combat/attack_catalog.cpp
+@@ -68,12 +68,21 @@ const AttackDefinition* find_attack_definition(AttackId id) noexcept {
+ AttackPhase attack_phase_at(
+     const AttackDefinition& definition,
+     std::uint32_t elapsed_ticks) noexcept {
+-    const auto active_start =
+-        static_cast<std::uint32_t>(definition.startup_ticks);
++    return attack_phase_at(definition, elapsed_ticks,
++                           definition.startup_ticks,
++                           definition.recovery_ticks);
++}
++
++AttackPhase attack_phase_at(
++    const AttackDefinition& definition,
++    std::uint32_t elapsed_ticks,
++    std::uint16_t startup_ticks,
++    std::uint16_t recovery_ticks) noexcept {
++    const auto active_start = static_cast<std::uint32_t>(startup_ticks);
+     const auto recovery_start =
+         active_start + static_cast<std::uint32_t>(definition.active_ticks);
+     const auto finished_start =
+-        recovery_start + static_cast<std::uint32_t>(definition.recovery_ticks);
++        recovery_start + static_cast<std::uint32_t>(recovery_ticks);
+ 
+     if (elapsed_ticks < active_start) {
+         return AttackPhase::startup;
+diff --git a/src/combat/attack_catalog.hpp b/src/combat/attack_catalog.hpp
+index ce9a43f..329be29 100644
+--- a/src/combat/attack_catalog.hpp
++++ b/src/combat/attack_catalog.hpp
+@@ -14,6 +14,11 @@ inline constexpr std::size_t kAttackCount = 5;
+ [[nodiscard]] AttackPhase attack_phase_at(
+     const AttackDefinition& definition,
+     std::uint32_t elapsed_ticks) noexcept;
++[[nodiscard]] AttackPhase attack_phase_at(
++    const AttackDefinition& definition,
++    std::uint32_t elapsed_ticks,
++    std::uint16_t startup_ticks,
++    std::uint16_t recovery_ticks) noexcept;
+ [[nodiscard]] bool validate_attack_catalog() noexcept;
+ 
+ }  // namespace arpg::combat
+diff --git a/src/combat/combat_snapshot.cpp b/src/combat/combat_snapshot.cpp
+index 2479f1a..41e992d 100644
+--- a/src/combat/combat_snapshot.cpp
++++ b/src/combat/combat_snapshot.cpp
+@@ -13,9 +13,11 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+         attack_.id == AttackId::none
+             ? AttackPhase::finished
+             : attack_phase_at(
+-                  *find_attack_definition(attack_.id), attack_.elapsed_ticks),
++                  *find_attack_definition(attack_.id), attack_.elapsed_ticks,
++                  attack_.startup_ticks, attack_.recovery_ticks),
+         attack_.elapsed_ticks, player_.combo_stage, player_.hit_stop_ticks,
+         player_.air_attack_available, player_.hp, player_.max_hp,
++        player_.barrier, player_.max_barrier, player_.resistance,
+         player_.hurt_ticks, player_.invulnerability_ticks,
+     };
+     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index f3b7e01..8019023 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -4,6 +4,9 @@
+ #include <cstddef>
+ #include <cstdint>
+ 
++#include "modifiers/damage_types.hpp"
++#include "modifiers/player_modifier_values.hpp"
++
+ namespace arpg::test {
+ struct CombatWorldTestAccess;
+ }
+@@ -43,6 +46,39 @@ enum class FeedbackLevel : std::uint8_t {
+     heavy,
+ };
+ 
++struct DamagePacket final {
++    std::array<int, modifiers::kDamageTypeCount> amount{};
++
++    constexpr DamagePacket() noexcept = default;
++    constexpr DamagePacket(int physical) noexcept {
++        amount[modifiers::damage_index(modifiers::DamageType::physical)] =
++            physical;
++    }
++    constexpr DamagePacket(
++        std::array<int, modifiers::kDamageTypeCount> values) noexcept
++        : amount(values) {}
++
++    friend bool operator==(
++        const DamagePacket& left, const DamagePacket& right) noexcept {
++        return left.amount == right.amount;
++    }
++    friend bool operator!=(
++        const DamagePacket& left, const DamagePacket& right) noexcept {
++        return !(left == right);
++    }
++};
++
++struct PlayerCombatBuild final {
++    modifiers::PlayerModifierValues values{};
++};
++
++[[nodiscard]] DamagePacket build_player_hit_packet(
++    int base_physical, const PlayerCombatBuild& build) noexcept;
++[[nodiscard]] int resolve_player_damage(
++    DamagePacket packet, const PlayerCombatBuild& build) noexcept;
++[[nodiscard]] std::uint16_t scaled_phase_ticks(
++    std::uint16_t base, modifiers::FixedValue attack_speed) noexcept;
++
+ enum class ImpactKind : std::uint8_t {
+     light_hitstun,
+     medium_hitstun,
+@@ -85,7 +121,7 @@ struct MonsterDefinition final {
+     std::uint16_t active_ticks{4};
+     std::uint16_t recovery_ticks{20};
+     std::uint16_t cooldown_ticks{60};
+-    int contact_damage{10};
++    DamagePacket contact_damage{10};
+     float projectile_speed{};
+     std::uint16_t hazard_ticks{};
+     FeedbackLevel feedback{FeedbackLevel::light};
+@@ -121,7 +157,7 @@ struct ProjectileRuntime final {
+     Vec3 position{};
+     Vec3 velocity{};
+     std::uint16_t lifetime_ticks{};
+-    int damage{};
++    DamagePacket damage{};
+     float radius{};
+ };
+ 
+@@ -138,7 +174,7 @@ struct HazardRuntime final {
+     std::uint16_t damage_cooldown_ticks{};
+     bool player_latched{};
+     bool persists_after_owner_death{};
+-    int damage{};
++    DamagePacket damage{};
+ };
+ 
+ struct EncounterWave final {
+@@ -258,6 +294,7 @@ struct CombatEncounterConfig final {
+     Facing initial_facing{Facing::right};
+     EncounterWave wave{};
+     bool reset_player_health{true};
++    PlayerCombatBuild player_build{};
+ };
+ 
+ struct PlayerSnapshot final {
+@@ -273,6 +310,9 @@ struct PlayerSnapshot final {
+     bool air_attack_available{true};
+     int hp{};
+     int max_hp{};
++    int barrier{};
++    int max_barrier{};
++    std::array<int, modifiers::kElementCount> resistance{};
+     std::uint16_t hurt_ticks{};
+     std::uint16_t invulnerability_ticks{};
+ };
+@@ -310,7 +350,7 @@ struct ProjectileSnapshot final {
+     Vec3 position{};
+     Vec3 velocity{};
+     std::uint16_t lifetime_ticks{};
+-    int damage{};
++    DamagePacket damage{};
+     float radius{};
+ };
+ 
+@@ -325,7 +365,7 @@ struct HazardSnapshot final {
+     std::uint16_t lifetime_ticks{};
+     std::uint16_t damage_interval_ticks{};
+     bool player_latched{};
+-    int damage{};
++    DamagePacket damage{};
+ };
+ 
+ // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 9c3be36..b87b37d 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -13,6 +13,66 @@ namespace arpg::combat {
+ 
+ namespace {
+ 
++constexpr int fixed_floor(modifiers::FixedValue value) noexcept {
++    return static_cast<int>(value / modifiers::kFixedOne);
++}
++
++int fixed_scale(int value, modifiers::FixedValue factor) noexcept {
++    const auto product = static_cast<std::int64_t>(value) * factor;
++    return static_cast<int>(product / modifiers::kFixedOne);
++}
++
++}  // namespace
++
++DamagePacket build_player_hit_packet(
++    int base_physical, const PlayerCombatBuild& build) noexcept {
++    DamagePacket packet{};
++    const auto& values = build.values;
++    packet.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
++        fixed_scale(std::max(0, base_physical), values.melee_damage);
++    for (std::size_t index = 1; index < modifiers::kDamageTypeCount; ++index) {
++        const int flat = fixed_floor(values.flat_damage[index]);
++        const int increased = fixed_scale(flat, values.damage_increased[index]);
++        packet.amount[index] = fixed_scale(increased, values.melee_damage);
++    }
++    return packet;
++}
++
++int resolve_player_damage(
++    DamagePacket packet, const PlayerCombatBuild& build) noexcept {
++    std::int64_t total = 0;
++    total += std::max(0, packet.amount[
++        modifiers::damage_index(modifiers::DamageType::physical)]);
++    for (std::size_t element = 0; element < modifiers::kElementCount; ++element) {
++        const auto resistance = std::clamp(build.values.resistance[element],
++                                           modifiers::FixedValue{-6000},
++                                           modifiers::FixedValue{7500});
++        const auto multiplier = modifiers::kFixedOne - resistance;
++        const int raw = std::max(0, packet.amount[element + 1U]);
++        total += static_cast<std::int64_t>(raw) * multiplier
++            / modifiers::kFixedOne;
++    }
++    total = total * std::max<modifiers::FixedValue>(
++        0, build.values.damage_taken) / modifiers::kFixedOne;
++    if (total <= 0) return 0;
++    if (total > std::numeric_limits<int>::max()) {
++        return std::numeric_limits<int>::max();
++    }
++    return static_cast<int>(total);
++}
++
++std::uint16_t scaled_phase_ticks(
++    std::uint16_t base, modifiers::FixedValue attack_speed) noexcept {
++    if (base == 0U) return 1U;
++    const auto speed = std::max<modifiers::FixedValue>(
++        1, attack_speed);
++    const auto scaled = static_cast<std::int64_t>(base)
++        * modifiers::kFixedOne / speed;
++    return static_cast<std::uint16_t>(std::max<std::int64_t>(1, scaled));
++}
++
++namespace {
++
+ constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
+ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
+ constexpr int kStage4PlayerMaxHp = 1000;
+@@ -129,7 +189,18 @@ void CombatWorld::initialize_player() noexcept {
+     player_ = PlayerRuntime{};
+     player_.position = encounter_config_.player_spawn;
+     player_.facing = encounter_config_.initial_facing;
+-    player_.max_hp = kStage4PlayerMaxHp;
++    const auto& values = encounter_config_.player_build.values;
++    player_.max_hp = std::max(
++        1, fixed_scale(kStage4PlayerMaxHp + fixed_floor(values.max_health),
++                       std::max<modifiers::FixedValue>(0,
++                                                        values.max_health_more)));
++    player_.max_barrier = std::max(0, fixed_floor(values.max_barrier));
++    for (std::size_t index = 0; index < modifiers::kElementCount; ++index) {
++        player_.resistance[index] = static_cast<int>(std::clamp(
++            values.resistance[index], modifiers::FixedValue{-6000},
++            modifiers::FixedValue{7500}));
++    }
++    player_.barrier = player_.max_barrier;
+     player_.hp = player_.max_hp;
+ }
+ 
+@@ -194,6 +265,7 @@ bool CombatWorld::load_wave(
+     encounter_config_.wave = wave;
+     encounter_config_.reset_player_health = reset_player_health;
+     legacy_mode_ = false;
++    player_.barrier = player_.max_barrier;
+     if (reset_player_health) {
+         const bool health_changed = player_.hp != player_.max_hp
+                                  || player_.hurt_ticks != 0
+@@ -239,14 +311,19 @@ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
+ }
+ 
+ void CombatWorld::apply_player_damage(
+-    int damage,
++    DamagePacket packet,
+     Vec3 source_position,
+     FeedbackLevel feedback) noexcept {
++    const int damage = resolve_player_damage(packet,
++                                              encounter_config_.player_build);
+     if (damage <= 0 || player_.invulnerability_ticks != 0) {
+         return;
+     }
+ 
+-    player_.hp = damage >= player_.hp ? 1 : player_.hp - damage;
++    const int absorbed = std::min(player_.barrier, damage);
++    player_.barrier -= absorbed;
++    const int hp_damage = damage - absorbed;
++    player_.hp = hp_damage >= player_.hp ? 1 : player_.hp - hp_damage;
+     player_.hurt_ticks = kPlayerHurtTicks;
+     player_.invulnerability_ticks = kPlayerInvulnerabilityTicks;
+     player_.velocity.x = 0.0F;
+@@ -271,12 +348,19 @@ void CombatWorld::apply_player_damage(
+     emit_event(hurt_started);
+ }
+ 
++void CombatWorld::apply_player_damage(
++    int damage,
++    Vec3 source_position,
++    FeedbackLevel feedback) noexcept {
++    apply_player_damage(DamagePacket{damage}, source_position, feedback);
++}
++
+ bool CombatWorld::spawn_projectile(
+     MonsterHandle owner,
+     Vec3 position,
+     Vec3 velocity,
+     std::uint16_t lifetime_ticks,
+-    int damage,
++    DamagePacket damage,
+     float radius) noexcept {
+     if (monsters_.get(owner) == nullptr) {
+         saturating_increment(projectile_invalid_owner_count_);
+@@ -291,6 +375,17 @@ bool CombatWorld::spawn_projectile(
+     return true;
+ }
+ 
++bool CombatWorld::spawn_projectile(
++    MonsterHandle owner,
++    Vec3 position,
++    Vec3 velocity,
++    std::uint16_t lifetime_ticks,
++    int damage,
++    float radius) noexcept {
++    return spawn_projectile(owner, position, velocity, lifetime_ticks,
++                            DamagePacket{damage}, radius);
++}
++
+ void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
+     for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
+         const ProjectileRuntime* projectile = projectiles_.get(ProjectileHandle{
+@@ -315,7 +410,7 @@ bool CombatWorld::spawn_hazard(
+     std::uint16_t telegraph_ticks,
+     std::uint16_t active_ticks,
+     std::uint16_t damage_interval_ticks,
+-    int damage) noexcept {
++    DamagePacket damage) noexcept {
+     if (monsters_.get(owner) == nullptr) {
+         saturating_increment(hazard_invalid_owner_count_);
+         return false;
+@@ -328,6 +423,18 @@ bool CombatWorld::spawn_hazard(
+     return true;
+ }
+ 
++bool CombatWorld::spawn_hazard(
++    MonsterHandle owner,
++    Vec3 center,
++    float radius,
++    std::uint16_t telegraph_ticks,
++    std::uint16_t active_ticks,
++    std::uint16_t damage_interval_ticks,
++    int damage) noexcept {
++    return spawn_hazard(owner, center, radius, telegraph_ticks, active_ticks,
++                        damage_interval_ticks, DamagePacket{damage});
++}
++
+ void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
+     for (std::size_t index = 0; index < kHazardCapacity; ++index) {
+         const HazardRuntime& hazard = hazards_.slots()[index];
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index 39935f4..cc45be6 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -45,6 +45,9 @@ private:
+         bool air_attack_available{true};
+         int hp{};
+         int max_hp{};
++        int barrier{};
++        int max_barrier{};
++        std::array<int, modifiers::kElementCount> resistance{};
+         std::uint16_t hurt_ticks{};
+         std::uint16_t invulnerability_ticks{};
+     };
+@@ -52,6 +55,8 @@ private:
+     struct AttackRuntime final {
+         AttackId id{AttackId::none};
+         std::uint16_t elapsed_ticks{};
++        std::uint16_t startup_ticks{};
++        std::uint16_t recovery_ticks{};
+         bool connected{};
+         bool impact_event_emitted{};
+         std::array<bool, kMonsterCapacity> hit_targets{};
+@@ -69,8 +74,19 @@ private:
+     void respawn_dummy(std::size_t index) noexcept;
+     void apply_attack_assist(const AttackDefinition& definition) noexcept;
+     void resolve_attack_hits() noexcept;
++    void apply_player_damage(
++        DamagePacket damage,
++        Vec3 source_position,
++        FeedbackLevel feedback) noexcept;
+     void apply_player_damage(
+         int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
++    [[nodiscard]] bool spawn_projectile(
++        MonsterHandle owner,
++        Vec3 position,
++        Vec3 velocity,
++        std::uint16_t lifetime_ticks,
++        DamagePacket damage,
++        float radius) noexcept;
+     [[nodiscard]] bool spawn_projectile(
+         MonsterHandle owner,
+         Vec3 position,
+@@ -78,6 +94,14 @@ private:
+         std::uint16_t lifetime_ticks,
+         int damage,
+         float radius) noexcept;
++    [[nodiscard]] bool spawn_hazard(
++        MonsterHandle owner,
++        Vec3 center,
++        float radius,
++        std::uint16_t telegraph_ticks,
++        std::uint16_t active_ticks,
++        std::uint16_t damage_interval_ticks,
++        DamagePacket damage) noexcept;
+     [[nodiscard]] bool spawn_hazard(
+         MonsterHandle owner,
+         Vec3 center,
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 2a15796..440d43b 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -86,7 +86,8 @@ void CombatWorld::resolve_attack_hits() noexcept {
+ 
+     const AttackDefinition* definition = find_attack_definition(attack_.id);
+     if (definition == nullptr
+-        || attack_phase_at(*definition, attack_.elapsed_ticks)
++        || attack_phase_at(*definition, attack_.elapsed_ticks,
++                           attack_.startup_ticks, attack_.recovery_ticks)
+                != AttackPhase::active) {
+         return;
+     }
+@@ -121,7 +122,10 @@ void CombatWorld::resolve_attack_hits() noexcept {
+         MonsterRuntime& dummy = monsters_.slots_[index];
+         attack_.hit_targets[index] = true;
+         attack_.connected = true;
+-        int hp_damage = definition->damage;
++        const DamagePacket packet = build_player_hit_packet(
++            definition->damage, encounter_config_.player_build);
++        int hp_damage = 0;
++        for (const int value : packet.amount) hp_damage += std::max(0, value);
+         if (dummy.shield != 0 && hp_damage > 0) {
+             const int absorbed = std::min(dummy.shield, hp_damage);
+             dummy.shield -= absorbed;
+@@ -160,7 +164,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
+         hit.hit_count = 1;
+         hit.feedback = definition->feedback;
+         hit.position = dummy.position;
+-        hit.value = definition->damage;
++        hit.value = hp_damage;
+         emit_event(hit);
+ 
+         if (starts_break) {
+diff --git a/src/combat/monster_catalog.cpp b/src/combat/monster_catalog.cpp
+index 08aff04..0e415db 100644
+--- a/src/combat/monster_catalog.cpp
++++ b/src/combat/monster_catalog.cpp
+@@ -32,34 +32,50 @@ constexpr std::uint16_t tags(
+     return static_cast<std::uint16_t>(tags(first, second, third) | tag(fourth));
+ }
+ 
++constexpr DamagePacket elemental_damage(
++    modifiers::DamageType type, int amount) noexcept {
++    DamagePacket packet{};
++    packet.amount[modifiers::damage_index(type)] = amount;
++    return packet;
++}
++
+ constexpr std::array<MonsterDefinition, 8> kCatalog{{
+     {MonsterId::fire_bomber, 0, tags(MonsterTag::high_priority,
+          MonsterTag::direct_target), 3, 220, 0, 0.040F, 1.2F,
+-     60, 1, 0, 0, 120, 0.0F, 0, FeedbackLevel::heavy},
++     60, 1, 0, 0, elemental_damage(modifiers::DamageType::fire, 120),
++     0.0F, 0, FeedbackLevel::heavy},
+     {MonsterId::fire_charger, 0, tags(MonsterTag::melee,
+          MonsterTag::high_priority, MonsterTag::direct_target),
+-     4, 420, 60, 0.030F, 5.0F, 45, 18, 35, 100, 90, 0.0F, 0,
++     4, 420, 60, 0.030F, 5.0F, 45, 18, 35, 100,
++     elemental_damage(modifiers::DamageType::fire, 90), 0.0F, 0,
+      FeedbackLevel::heavy},
+     {MonsterId::water_bulwark, 1, tags(MonsterTag::melee,
+          MonsterTag::direct_target), 4, 700, 120, 0.025F, 1.0F,
+-     24, 6, 30, 72, 70, 0.0F, 0, FeedbackLevel::heavy},
++     24, 6, 30, 72, elemental_damage(modifiers::DamageType::water, 70),
++     0.0F, 0, FeedbackLevel::heavy},
+     {MonsterId::water_support, 1, tag(MonsterTag::support),
+-     3, 300, 0, 0.030F, 4.0F, 36, 1, 24, 120, 0, 0.0F, 0,
++     3, 300, 0, 0.030F, 4.0F, 36, 1, 24, 120,
++     elemental_damage(modifiers::DamageType::water, 0), 0.0F, 0,
+      FeedbackLevel::medium, 90, 120},
+     {MonsterId::lightning_shooter, 2, tags(MonsterTag::ranged,
+          MonsterTag::direct_target), 3, 240, 0, 0.035F, 4.5F,
+-     30, 1, 20, 75, 40, 0.14F, 0, FeedbackLevel::medium},
++     30, 1, 20, 75,
++     elemental_damage(modifiers::DamageType::lightning, 40), 0.14F, 0,
++     FeedbackLevel::medium},
+     {MonsterId::lightning_dasher, 2, tags(MonsterTag::melee,
+          MonsterTag::high_priority, MonsterTag::direct_target),
+-     3, 280, 0, 0.050F, 3.0F, 24, 12, 30, 80, 60, 0.0F, 0,
++     3, 280, 0, 0.050F, 3.0F, 24, 12, 30, 80,
++     elemental_damage(modifiers::DamageType::lightning, 60), 0.0F, 0,
+      FeedbackLevel::medium},
+     {MonsterId::chaos_chaser, 3, tags(MonsterTag::melee,
+          MonsterTag::direct_target), 2, 260, 0, 0.045F, 0.9F,
+-     12, 4, 18, 42, 45, 0.0F, 0, FeedbackLevel::light},
++     12, 4, 18, 42, elemental_damage(modifiers::DamageType::chaos, 45),
++     0.0F, 0, FeedbackLevel::light},
+     {MonsterId::chaos_hazard, 3, tags(MonsterTag::ranged,
+          MonsterTag::high_priority, MonsterTag::ground_hazard,
+          MonsterTag::direct_target), 4, 320, 0, 0.030F, 4.0F,
+-     45, 1, 25, 120, 35, 0.0F, 180, FeedbackLevel::heavy},
++     45, 1, 25, 120, elemental_damage(modifiers::DamageType::chaos, 35),
++     0.0F, 180, FeedbackLevel::heavy},
+ }};
+ 
+ constexpr bool has_tag(
+diff --git a/src/combat/monster_pool.cpp b/src/combat/monster_pool.cpp
+index da03961..68f10d5 100644
+--- a/src/combat/monster_pool.cpp
++++ b/src/combat/monster_pool.cpp
+@@ -159,7 +159,7 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
+     Vec3 position,
+     Vec3 velocity,
+     std::uint16_t lifetime_ticks,
+-    int damage,
++    DamagePacket damage,
+     float radius) noexcept {
+     if (owner.index >= kMonsterCapacity || owner.generation == 0U) {
+         return std::nullopt;
+@@ -179,7 +179,7 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
+         runtime.position = position;
+         runtime.velocity = velocity;
+         runtime.lifetime_ticks = lifetime_ticks;
+-        runtime.damage = damage;
++    runtime.damage = damage;
+         runtime.radius = radius;
+         ++active_count_;
+         return ProjectileHandle{
+@@ -188,6 +188,17 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
+     return std::nullopt;
+ }
+ 
++std::optional<ProjectileHandle> ProjectilePool::spawn(
++    MonsterHandle owner,
++    Vec3 position,
++    Vec3 velocity,
++    std::uint16_t lifetime_ticks,
++    int damage,
++    float radius) noexcept {
++    return spawn(owner, position, velocity, lifetime_ticks,
++                 DamagePacket{damage}, radius);
++}
++
+ bool ProjectilePool::destroy(ProjectileHandle handle) noexcept {
+     ProjectileRuntime* runtime = get(handle);
+     if (runtime == nullptr) {
+@@ -266,12 +277,15 @@ std::optional<HazardHandle> HazardPool::spawn(
+     std::uint16_t telegraph_ticks,
+     std::uint16_t active_ticks,
+     std::uint16_t damage_interval_ticks,
+-    int damage,
++    DamagePacket damage,
+     bool persists_after_owner_death) noexcept {
+     if (owner.index >= kMonsterCapacity || owner.generation == 0U
+-        || radius <= 0.0F || active_ticks == 0U || damage <= 0) {
++        || radius <= 0.0F || active_ticks == 0U) {
+         return std::nullopt;
+     }
++    bool has_damage = false;
++    for (const int value : damage.amount) has_damage = has_damage || value > 0;
++    if (!has_damage) return std::nullopt;
+     for (std::size_t index = 0; index < slots_.size(); ++index) {
+         HazardRuntime& runtime = slots_[index];
+         if (runtime.active) {
+@@ -299,6 +313,20 @@ std::optional<HazardHandle> HazardPool::spawn(
+     return std::nullopt;
+ }
+ 
++std::optional<HazardHandle> HazardPool::spawn(
++    MonsterHandle owner,
++    Vec3 center,
++    float radius,
++    std::uint16_t telegraph_ticks,
++    std::uint16_t active_ticks,
++    std::uint16_t damage_interval_ticks,
++    int damage,
++    bool persists_after_owner_death) noexcept {
++    return spawn(owner, center, radius, telegraph_ticks, active_ticks,
++                 damage_interval_ticks, DamagePacket{damage},
++                 persists_after_owner_death);
++}
++
+ bool HazardPool::destroy(HazardHandle handle) noexcept {
+     HazardRuntime* runtime = get(handle);
+     if (runtime == nullptr) {
+diff --git a/src/combat/monster_pool.hpp b/src/combat/monster_pool.hpp
+index 192bb4c..1fb043a 100644
+--- a/src/combat/monster_pool.hpp
++++ b/src/combat/monster_pool.hpp
+@@ -70,6 +70,13 @@ private:
+ class ProjectilePool final {
+ public:
+     void clear() noexcept;
++    [[nodiscard]] std::optional<ProjectileHandle> spawn(
++        MonsterHandle owner,
++        Vec3 position,
++        Vec3 velocity,
++        std::uint16_t lifetime_ticks,
++        DamagePacket damage,
++        float radius) noexcept;
+     [[nodiscard]] std::optional<ProjectileHandle> spawn(
+         MonsterHandle owner,
+         Vec3 position,
+@@ -102,6 +109,15 @@ struct HazardHandle final {
+ class HazardPool final {
+ public:
+     void clear() noexcept;
++    [[nodiscard]] std::optional<HazardHandle> spawn(
++        MonsterHandle owner,
++        Vec3 center,
++        float radius,
++        std::uint16_t telegraph_ticks,
++        std::uint16_t active_ticks,
++        std::uint16_t damage_interval_ticks,
++        DamagePacket damage,
++        bool persists_after_owner_death = false) noexcept;
+     [[nodiscard]] std::optional<HazardHandle> spawn(
+         MonsterHandle owner,
+         Vec3 center,
+diff --git a/src/combat/player_simulation.cpp b/src/combat/player_simulation.cpp
+index 5b659d2..6a02140 100644
+--- a/src/combat/player_simulation.cpp
++++ b/src/combat/player_simulation.cpp
+@@ -92,6 +92,12 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
+ 
+         attack_.id = id;
+         attack_.elapsed_ticks = 0;
++        attack_.startup_ticks = scaled_phase_ticks(
++            definition->startup_ticks,
++            encounter_config_.player_build.values.attack_speed);
++        attack_.recovery_ticks = scaled_phase_ticks(
++            definition->recovery_ticks,
++            encounter_config_.player_build.values.attack_speed);
+         attack_.connected = false;
+         attack_.impact_event_emitted = false;
+         attack_.hit_targets.fill(false);
+@@ -122,6 +128,8 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
+     const auto finish_attack = [this, &is_airborne]() noexcept {
+         attack_.id = AttackId::none;
+         attack_.elapsed_ticks = 0;
++        attack_.startup_ticks = 0;
++        attack_.recovery_ticks = 0;
+         attack_.connected = false;
+         attack_.impact_event_emitted = false;
+         attack_.hit_targets.fill(false);
+@@ -166,7 +174,8 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
+ 
+         ++attack_.elapsed_ticks;
+         const AttackPhase phase =
+-            attack_phase_at(*definition, attack_.elapsed_ticks);
++            attack_phase_at(*definition, attack_.elapsed_ticks,
++                            attack_.startup_ticks, attack_.recovery_ticks);
+         if (phase == AttackPhase::finished) {
+             finish_attack();
+             advance_vertical(false);
+@@ -189,7 +198,9 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
+     } else if (player_.state == PlayerState::idle ||
+                player_.state == PlayerState::move) {
+         if (input_buffer_.consume(Action::jump)) {
+-            player_.velocity.z = kJumpSpeed;
++            player_.velocity.z = kJumpSpeed * static_cast<float>(
++                encounter_config_.player_build.values.jump_speed)
++                / static_cast<float>(modifiers::kFixedOne);
+             player_.state = PlayerState::jump_rise;
+             airborne = true;
+         } else if (input_buffer_.consume(Action::launcher)) {
+@@ -206,7 +217,13 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
+     const float diagonal = x_direction != 0 && y_direction != 0
+                                ? kDiagonal
+                                : 1.0F;
+-    const float speed = kGroundSpeed * (airborne ? kAirRatio : 1.0F);
++    const auto& values = encounter_config_.player_build.values;
++    const float movement_scale = static_cast<float>(values.movement_speed)
++        / static_cast<float>(modifiers::kFixedOne);
++    const float air_scale = static_cast<float>(values.air_control)
++        / static_cast<float>(modifiers::kFixedOne);
++    const float speed = kGroundSpeed * movement_scale
++        * (airborne ? kAirRatio * air_scale : 1.0F);
+     player_.velocity.x = static_cast<float>(x_direction) * speed * diagonal;
+     player_.velocity.y = static_cast<float>(y_direction) * speed * diagonal;
+     if (x_direction < 0) {
+diff --git a/src/combat/target_simulation.cpp b/src/combat/target_simulation.cpp
+index abe0383..d76db33 100644
+--- a/src/combat/target_simulation.cpp
++++ b/src/combat/target_simulation.cpp
+@@ -77,7 +77,10 @@ void CombatWorld::apply_dummy_impact(
+     dummy.ai_ticks = 0;
+     dummy.contact_attack_resolved = true;
+ 
+-    const float scale = impulse_scale(dummy.kind);
++    const float player_scale = static_cast<float>(
++        encounter_config_.player_build.values.impulse_scale)
++        / static_cast<float>(modifiers::kFixedOne);
++    const float scale = impulse_scale(dummy.kind) * player_scale;
+     const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
+     const bool already_airborne =
+         dummy.reaction == ReactionState::airborne || dummy.position.z > 0.0F;
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index c2672bf..4c78ca2 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -14,7 +14,8 @@ add_executable(arpg_combat_tests
+     monster_special_tests.cpp
+     monster_pool_tests.cpp
+     movement_jump_tests.cpp
+-    player_health_tests.cpp)
++    player_health_tests.cpp
++    player_build_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index d48ab95..d33ccca 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -14,6 +14,7 @@ arpg::test::TestSuite monster_ranged_suite() noexcept;
+ arpg::test::TestSuite monster_special_suite() noexcept;
+ arpg::test::TestSuite monster_pool_suite() noexcept;
+ arpg::test::TestSuite player_health_suite() noexcept;
++arpg::test::TestSuite player_build_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+@@ -31,7 +32,8 @@ int main() {
+         monster_special_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
++        player_build_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 67, "stage 4 task 10");
++    return arpg::test::run_suites(suites, 74, "stage 7 task 3");
+ }
+diff --git a/tests/combat/combat_test_support.hpp b/tests/combat/combat_test_support.hpp
+index 723abd4..6556dd6 100644
+--- a/tests/combat/combat_test_support.hpp
++++ b/tests/combat/combat_test_support.hpp
+@@ -16,6 +16,14 @@ struct CombatWorldTestAccess final {
+         world.apply_player_damage(damage, source_position, feedback);
+     }
+ 
++    static void apply_damage(
++        combat::CombatWorld& world,
++        combat::DamagePacket packet,
++        combat::Vec3 source_position,
++        combat::FeedbackLevel feedback) noexcept {
++        world.apply_player_damage(packet, source_position, feedback);
++    }
++
+     static void fill_projectiles(
+         combat::CombatWorld& world,
+         combat::MonsterHandle owner) noexcept {
+diff --git a/tests/combat/player_build_tests.cpp b/tests/combat/player_build_tests.cpp
+new file mode 100644
+index 0000000..15b843b
+--- /dev/null
++++ b/tests/combat/player_build_tests.cpp
+@@ -0,0 +1,118 @@
++#include "test_framework.hpp"
++
++#include "combat_test_support.hpp"
++
++#include "combat/combat_world.hpp"
++#include "modifiers/damage_types.hpp"
++
++namespace {
++
++using namespace arpg::combat;
++using namespace arpg::modifiers;
++
++CombatEncounterConfig one_monster_config() noexcept {
++    CombatEncounterConfig config{};
++    config.wave.spawn_count = 1U;
++    config.wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::chaos_chaser, Vec3{1.0F, 0.0F, 0.0F}};
++    return config;
++}
++
++arpg::test::Failure fire_resistance_then_barrier_absorbs_damage() noexcept {
++    PlayerCombatBuild build{};
++    build.values.resistance[element_index(DamageType::fire)] = 7500;
++    build.values.max_barrier = 100000;
++    CombatEncounterConfig config = one_monster_config();
++    config.player_build = build;
++    CombatWorld world{config};
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, DamagePacket{{0, 40, 0, 0, 0}}, Vec3{}, FeedbackLevel::light);
++    const auto player = world.snapshot().player;
++    ARPG_REQUIRE(player.barrier == 0);
++    ARPG_REQUIRE(player.hp == player.max_hp);
++    return {};
++}
++
++arpg::test::Failure player_attack_adds_element_without_converting_physical() noexcept {
++    PlayerCombatBuild build{};
++    build.values.flat_damage[damage_index(DamageType::fire)] = 30000;
++    const DamagePacket packet = build_player_hit_packet(28, build);
++    ARPG_REQUIRE(packet.amount[damage_index(DamageType::physical)] == 28);
++    ARPG_REQUIRE(packet.amount[damage_index(DamageType::fire)] == 3);
++    return {};
++}
++
++arpg::test::Failure negative_water_resistance_increases_damage() noexcept {
++    PlayerCombatBuild build{};
++    build.values.resistance[element_index(DamageType::water)] = -5000;
++    const DamagePacket packet{{0, 0, 20, 0, 0}};
++    ARPG_REQUIRE(resolve_player_damage(packet, build) == 30);
++    return {};
++}
++
++arpg::test::Failure chaos_more_damage_taken_is_applied_after_resistance() noexcept {
++    PlayerCombatBuild build{};
++    build.values.damage_taken = 11500;
++    const DamagePacket packet{{0, 0, 0, 0, 20}};
++    ARPG_REQUIRE(resolve_player_damage(packet, build) == 23);
++    return {};
++}
++
++arpg::test::Failure default_build_preserves_j1_damage() noexcept {
++    const DamagePacket packet = build_player_hit_packet(28, PlayerCombatBuild{});
++    ARPG_REQUIRE(packet.amount[damage_index(DamageType::physical)] == 28);
++    ARPG_REQUIRE(resolve_player_damage(packet, PlayerCombatBuild{}) == 28);
++    return {};
++}
++
++arpg::test::Failure attack_speed_scales_only_startup_and_recovery() noexcept {
++    PlayerCombatBuild build{};
++    build.values.attack_speed = 20000;
++    CombatEncounterConfig config{};
++    config.player_build = build;
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::startup);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::startup);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    return {};
++}
++
++arpg::test::Failure impulse_scale_affects_knockback_and_launch() noexcept {
++    PlayerCombatBuild build{};
++    build.values.impulse_scale = 20000;
++    CombatEncounterConfig config{};
++    config.player_build = build;
++    config.wave.spawn_count = 1U;
++    config.wave.spawns[0] = MonsterSpawnSpec{
++        MonsterId::chaos_chaser, Vec3{1.0F, 0.0F, 0.0F}};
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.queue_action(Action::launcher));
++    for (int tick = 0; tick < 8; ++tick) world.tick(MovementInput{});
++    const auto monster = world.snapshot().monsters[0];
++    ARPG_REQUIRE(monster.reaction == ReactionState::airborne);
++    ARPG_REQUIRE(monster.velocity.x > 2.0F);
++    ARPG_REQUIRE(monster.velocity.z > 10.0F);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"fire resistance and barrier", &fire_resistance_then_barrier_absorbs_damage},
++    {"elemental add does not convert physical", &player_attack_adds_element_without_converting_physical},
++    {"negative water resistance", &negative_water_resistance_increases_damage},
++    {"chaos damage taken", &chaos_more_damage_taken_is_applied_after_resistance},
++    {"default j1 damage", &default_build_preserves_j1_damage},
++    {"attack speed phase scaling", &attack_speed_scales_only_startup_and_recovery},
++    {"impulse scale", &impulse_scale_affects_knockback_and_launch},
++};
++
++}  // namespace
++
++arpg::test::TestSuite player_build_suite() noexcept {
++    return arpg::test::make_suite("player_build", kCases);
++}

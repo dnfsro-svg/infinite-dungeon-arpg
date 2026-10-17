@@ -1,0 +1,569 @@
+# Review package: cf8563d..9d2d4d2
+
+## Commits
+9d2d4d2 test: verify passive star chart integration
+
+## Files changed
+ docs/stage7/2026-07-14-result.md                   |  21 ++++
+ tests/dungeon/dungeon_stress_tests.cpp             | 140 +++++++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp                |   2 +-
+ .../persistence/dungeon_save_integration_tests.cpp |  98 +++++++++++++++
+ tests/persistence/persistence_test_main.cpp        |   2 +-
+ tests/platform/dungeon_runtime_tests.cpp           |  41 ++++++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ 7 files changed, 303 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/docs/stage7/2026-07-14-result.md b/docs/stage7/2026-07-14-result.md
+new file mode 100644
+index 0000000..da23405
+--- /dev/null
++++ b/docs/stage7/2026-07-14-result.md
+@@ -0,0 +1,21 @@
++# Stage 7 被动星盘验收记录
++
++日期：2026-07-14
++范围：64 节点被动星盘的事务保存、确定性回放与回归验证。
++
++## 自动化验收
++
++- Debug：完整构建成功，`ctest --preset windows-msvc-debug` 为 27/27 通过。
++- Release：完整构建成功，`ctest --preset windows-msvc-release` 为 27/27 通过。
++- Dungeon：80 个用例通过；新增固定根种子的两个独立 session 各完成 1000 房间。每 25 房按 `8,9,10,22,23,24,36,37,38,50,51,52` 循环请求星盘节点；所有实际加点均经 `PendingSaveKind::passive_tree` 的 committed 回执完成。1000 条记录逐项一致，并且每条记录的房间种子、位图、提交代数、生命和护盾均来自已提交的 `session.snapshot()`。
++- Persistence：38 个用例通过；在 8→9→10 路线上注入 `before_publish` 与 `after_publish`。重启后分别只恢复到完整的旧位图/点数，或完整的新位图/点数；没有出现点数与位图半提交。
++- Platform：52 个用例通过；运行时覆盖 8→9→10、退款 10、保存完成及重启后的位图和点数保持。
++
++## 窗口验收
++
++本项由主代理通过 Windows 自动化执行，尚待把实际观察补入：清房后 `P` 打开覆盖层、点击 8/9/10 分配、退款 10、关闭覆盖层进入下一房，以及重启后的构筑保持。
++
++## 已知限制
++
++- 本阶段不包含装备、掉落、暴击、异常、穿透、伤害转换、资源系统或 Stage 8 内容。
++- 自动化回归验证事务和状态一致性；窗口交互的实际鼠标/键盘验收以上述主代理记录为准。
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index cfdfa27..a233d40 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -1,18 +1,19 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "dungeon_test_support.hpp"
+ 
+ #include "dungeon/room_generation.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/encounter_director.hpp"
++#include "passives/passive_tree_catalog.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstdio>
+ 
+ namespace {
+ 
+ using arpg::combat::CombatEvent;
+ using arpg::combat::CombatSnapshot;
+@@ -452,20 +453,145 @@ bool drive_rooms(
+     for (std::size_t index = 0; index < exits; ++index) {
+         if (!drive_clear(session, summary)
+                 || !drive_exit(session, kRoute[index % kRoute.size()], summary,
+                     verify_phases)) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
++constexpr std::array<arpg::passives::PassiveNodeId, 12U> kPassiveRouteCycle{{
++    8U, 9U, 10U, 22U, 23U, 24U, 36U, 37U, 38U, 50U, 51U, 52U,
++}};
++
++struct PassiveStressRecord final {
++    std::uint64_t room_seed{};
++    std::uint64_t allocated_bits{};
++    std::uint64_t generation{};
++    int hp{};
++    int barrier{};
++};
++
++bool same_record(const PassiveStressRecord& left,
++    const PassiveStressRecord& right) noexcept {
++    return left.room_seed == right.room_seed
++        && left.allocated_bits == right.allocated_bits
++        && left.generation == right.generation
++        && left.hp == right.hp && left.barrier == right.barrier;
++}
++
++bool node_is_allocated(std::uint64_t bits,
++    arpg::passives::PassiveNodeId node) noexcept {
++    return (bits & (std::uint64_t{1U} << node)) != 0U;
++}
++
++bool has_allocated_neighbor(std::uint64_t bits,
++    const arpg::passives::PassiveNode& node) noexcept {
++    for (std::size_t index = 0U; index < node.neighbor_count; ++index) {
++        if (node_is_allocated(bits, node.neighbors[index])) {
++            return true;
++        }
++    }
++    return false;
++}
++
++bool commit_passive_receipt(DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()
++            || pending->kind != arpg::dungeon::PendingSaveKind::passive_tree) {
++        return false;
++    }
++    session.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::committed,
++        pending->expected_generation,
++        pending->next_state,
++    });
++    const DungeonSnapshot committed = session.snapshot();
++    return !committed.passive_save_pending
++        && committed.commit_generation == pending->expected_generation
++        && committed.passive_tree.allocated_bits
++            == pending->next_state.passive_tree.allocated_bits;
++}
++
++bool allocate_route_node(DungeonSession& session,
++    arpg::passives::PassiveNodeId requested) noexcept {
++    const DungeonSnapshot before = session.snapshot();
++    const auto& nodes = arpg::passives::passive_nodes();
++    const auto& target = nodes[requested];
++    arpg::passives::PassiveNodeId chosen = requested;
++    bool found = !node_is_allocated(before.passive_tree.allocated_bits, requested)
++        && has_allocated_neighbor(before.passive_tree.allocated_bits, target);
++    if (!found) {
++        bool has_candidate = false;
++        for (std::size_t index = 0U; index < target.neighbor_count; ++index) {
++            const auto neighbor = target.neighbors[index];
++            if (node_is_allocated(before.passive_tree.allocated_bits, neighbor)
++                    || !has_allocated_neighbor(before.passive_tree.allocated_bits,
++                        nodes[neighbor])) {
++                continue;
++            }
++            if (!has_candidate || neighbor < chosen) {
++                chosen = neighbor;
++                has_candidate = true;
++            }
++        }
++        found = has_candidate;
++    }
++    if (!found) {
++        return true;
++    }
++    return session.request_passive_allocation(chosen)
++        && commit_passive_receipt(session);
++}
++
++DungeonSession passive_trace_session(std::uint64_t root_seed) noexcept {
++    auto built = arpg::dungeon::make_initial_run_state(root_seed, DungeonRules{});
++    built.state.progression = {64U, 0U, 63U, 63U};
++    return DungeonSession(DungeonRules{}, built.state);
++}
++
++bool generate_passive_stress_trace(
++    std::array<PassiveStressRecord, 1000U>& trace) noexcept {
++    DungeonSession session = passive_trace_session(0x7A6E4F1B2C3DULL);
++    StressSummary summary{};
++    for (std::size_t room_index = 0U; room_index < trace.size(); ++room_index) {
++        if (!drive_clear(session, summary)) {
++            return false;
++        }
++        if (room_index % 25U == 0U) {
++            const auto next = kPassiveRouteCycle[(room_index / 25U)
++                % kPassiveRouteCycle.size()];
++            if (!allocate_route_node(session, next)) {
++                return false;
++            }
++        }
++        const DungeonSnapshot snapshot = session.snapshot();
++        if (!snapshot.combat.has_value()
++                || snapshot.passive_tree.allocated_bits == 0U
++                || snapshot.commit_generation == 0U) {
++            return false;
++        }
++        trace[room_index] = {
++            snapshot.room_seed,
++            snapshot.passive_tree.allocated_bits,
++            snapshot.commit_generation,
++            snapshot.combat->player.hp,
++            snapshot.combat->player.barrier,
++        };
++        if (!drive_exit(session, kRoute[room_index % kRoute.size()], summary, true)) {
++            return false;
++        }
++    }
++    return true;
++}
++
+ DungeonRules single_chaser_rules() noexcept {
+     DungeonRules rules{};
+     rules.encounter.base_budget = 2U;
+     rules.encounter.max_budget = 2U;
+     rules.encounter.two_wave_threshold = 2U;
+     return rules;
+ }
+ 
+ MovementInput launcher_robot_movement(
+     const arpg::combat::PlayerSnapshot& player,
+@@ -972,31 +1098,45 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
+     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
+     ARPG_REQUIRE(summary.relay_overflow == 0U);
+     ARPG_REQUIRE(summary.combat_overflow == 0U);
+     ARPG_REQUIRE(summary.input_overflow == 0U);
+     ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
+     ARPG_REQUIRE(final.diagnostics.combat_relay_overflow_count == 0U);
+     ARPG_REQUIRE(final.combat->diagnostics.event_overflow_count == 0U);
+     return {};
+ }
+ 
++arpg::test::Failure passive_star_chart_end_to_end_trace_is_deterministic() noexcept {
++    std::array<PassiveStressRecord, 1000U> first{};
++    std::array<PassiveStressRecord, 1000U> second{};
++    ARPG_REQUIRE(generate_passive_stress_trace(first));
++    ARPG_REQUIRE(generate_passive_stress_trace(second));
++    for (std::size_t index = 0U; index < first.size(); ++index) {
++        ARPG_REQUIRE(same_record(first[index], second[index]));
++        ARPG_REQUIRE(first[index].allocated_bits != 0U);
++        ARPG_REQUIRE(first[index].generation != 0U);
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"launcher robot clears room38 reverse deadband regression",
+      &launcher_robot_clears_room38_reverse_deadband_regression},
+     {"launcher input robot clears ten minimal committed rooms",
+      &launcher_input_robot_clears_ten_minimal_committed_rooms},
+     {"launcher input robot clears thousand minimal committed rooms",
+      &launcher_input_robot_clears_thousand_minimal_committed_rooms},
+     {"ten thousand director plans are legal deterministic and allocation free",
+      &ten_thousand_director_plans_are_legal_deterministic_and_allocation_free},
+     {"identical seed and route are field equal", &identical_seed_and_route_are_field_equal},
+     {"one changed direction changes only committed room", &one_changed_direction_changes_only_committed_room},
+     {"fixed seed room trace matches baseline golden", &fixed_seed_room_trace_matches_baseline_golden},
+     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},
+     {"measured thousand rooms allocate nothing and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
++    {"passive star chart end to end trace is deterministic", &passive_star_chart_end_to_end_trace_is_deterministic},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_stress_suite() noexcept {
+     return arpg::test::make_suite("dungeon_stress", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index db16598..da92cd4 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -20,12 +20,12 @@ int main() {
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_transaction_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 79, "stage 7 task 5 dungeon");
++    return arpg::test::run_suites(suites, 80, "stage 7 task 8 dungeon");
+ }
+diff --git a/tests/persistence/dungeon_save_integration_tests.cpp b/tests/persistence/dungeon_save_integration_tests.cpp
+index d636c7d..dbdf07b 100644
+--- a/tests/persistence/dungeon_save_integration_tests.cpp
++++ b/tests/persistence/dungeon_save_integration_tests.cpp
+@@ -76,20 +76,27 @@ dungeon::TransitionSaveResult to_session_result(
+         disposition,
+         saved.verified_state.commit_generation,
+         saved.verified_state,
+     };
+ }
+ 
+ dungeon::DungeonRunState initial_state(std::uint64_t seed) noexcept {
+     return dungeon::make_initial_run_state(seed, dungeon::DungeonRules{}).state;
+ }
+ 
++dungeon::DungeonRunState initial_state_with_passive_points(
++    std::uint64_t seed) noexcept {
++    auto state = initial_state(seed);
++    state.progression = {4U, 0U, 3U, 3U};
++    return state;
++}
++
+ bool same_descriptor(const dungeon::DungeonSnapshot& snapshot,
+     const dungeon::DungeonRunState& state) noexcept {
+     const auto& room = state.current_room;
+     return snapshot.root_seed == state.root_seed
+         && snapshot.room_index == room.index
+         && snapshot.entry_side == room.entry
+         && snapshot.last_transition == state.last_transition
+         && snapshot.last_exit == state.last_direction
+         && snapshot.commit_generation == state.commit_generation
+         && snapshot.room_seed == room.seed
+@@ -159,20 +166,44 @@ bool drive_door_pending(dungeon::DungeonSession& session,
+         session.tick(outward);
+         arpg::test::EventSummary summary;
+         arpg::test::drain_all_events(session, summary);
+         if (session.snapshot().phase == dungeon::RoomPhase::committing) {
+             return session.pending_transition().has_value();
+         }
+     }
+     return false;
+ }
+ 
++bool commit_pending_passive(dungeon::DungeonSession& session,
++    persistence::SaveStore& store) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()
++            || pending->kind != dungeon::PendingSaveKind::passive_tree) {
++        return false;
++    }
++    const auto saved = store.commit(pending->next_state);
++    session.resolve_pending_save(to_session_result(saved));
++    const auto snapshot = session.snapshot();
++    return saved.state == persistence::SaveCommitState::committed
++        && !snapshot.passive_save_pending
++        && snapshot.passive_tree.allocated_bits
++            == pending->next_state.passive_tree.allocated_bits
++        && snapshot.progression.unspent_passive_points
++            == pending->next_state.progression.unspent_passive_points;
++}
++
++bool allocate_committed(dungeon::DungeonSession& session,
++    persistence::SaveStore& store, std::uint8_t node) noexcept {
++    return session.request_passive_allocation(node)
++        && commit_pending_passive(session, store);
++}
++
+ arpg::test::Failure initial_generation_one_round_trips_descriptor() noexcept {
+     TempDirectory directory;
+     auto store = make_store(directory.path);
+     const auto initial = initial_state(0x8101U);
+     ARPG_REQUIRE(initial.commit_generation == 1U);
+     ARPG_REQUIRE(store.commit(initial).state
+         == persistence::SaveCommitState::committed);
+ 
+     const auto loaded = store.load();
+     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+@@ -362,24 +393,91 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields()
+     ARPG_REQUIRE(dungeon::same_run_state(second_load.checkpoint,
+         saved.verified_state));
+     dungeon::DungeonSession reopened{dungeon::DungeonRules{}, first_load.checkpoint};
+     dungeon::DungeonSession repeated{dungeon::DungeonRules{}, second_load.checkpoint};
+     ARPG_REQUIRE(same_descriptor(after_reset, saved.verified_state));
+     ARPG_REQUIRE(same_descriptor(reopened.snapshot(), saved.verified_state));
+     ARPG_REQUIRE(same_descriptor(repeated.snapshot(), saved.verified_state));
+     return {};
+ }
+ 
++arpg::test::Failure passive_fault_recovery_never_persists_partial_points_or_bits() noexcept {
++    constexpr std::uint64_t kTwoNodes = (1ULL << 0U) | (1ULL << 8U)
++        | (1ULL << 9U);
++    constexpr std::uint64_t kThreeNodes = kTwoNodes | (1ULL << 10U);
++
++    {
++        TempDirectory directory;
++        auto store = make_store(directory.path);
++        const auto initial = initial_state_with_passive_points(0x8110U);
++        ARPG_REQUIRE(store.commit(initial).state
++            == persistence::SaveCommitState::committed);
++        dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
++        ARPG_REQUIRE(clear_and_await(session));
++        ARPG_REQUIRE(allocate_committed(session, store, 8U));
++        ARPG_REQUIRE(allocate_committed(session, store, 9U));
++        const auto before = session.snapshot();
++        ARPG_REQUIRE(before.passive_tree.allocated_bits == kTwoNodes);
++        ARPG_REQUIRE(session.request_passive_allocation(10U));
++        const auto pending = *session.pending_save();
++        FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
++        auto faulty = make_store(directory.path, &fault);
++        const auto saved = faulty.commit(pending.next_state);
++        ARPG_REQUIRE(saved.state == persistence::SaveCommitState::not_committed);
++        session.resolve_pending_save(to_session_result(saved));
++        const auto after = session.snapshot();
++        ARPG_REQUIRE(after.passive_tree.allocated_bits == before.passive_tree.allocated_bits);
++        ARPG_REQUIRE(after.progression.unspent_passive_points
++            == before.progression.unspent_passive_points);
++        auto restarted_store = make_store(directory.path);
++        const auto restarted = restarted_store.load();
++        ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
++        ARPG_REQUIRE(restarted.checkpoint.passive_tree.allocated_bits == kTwoNodes);
++        ARPG_REQUIRE(restarted.checkpoint.progression.unspent_passive_points
++            == before.progression.unspent_passive_points);
++    }
++
++    {
++        TempDirectory directory;
++        auto store = make_store(directory.path);
++        const auto initial = initial_state_with_passive_points(0x8111U);
++        ARPG_REQUIRE(store.commit(initial).state
++            == persistence::SaveCommitState::committed);
++        dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
++        ARPG_REQUIRE(clear_and_await(session));
++        ARPG_REQUIRE(allocate_committed(session, store, 8U));
++        ARPG_REQUIRE(allocate_committed(session, store, 9U));
++        ARPG_REQUIRE(session.request_passive_allocation(10U));
++        const auto pending = *session.pending_save();
++        FaultContext fault{persistence::SaveFaultPoint::after_publish, false};
++        auto faulty = make_store(directory.path, &fault);
++        const auto saved = faulty.commit(pending.next_state);
++        ARPG_REQUIRE(saved.state == persistence::SaveCommitState::indeterminate);
++        session.resolve_pending_save(to_session_result(saved));
++        ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
++        auto restarted_store = make_store(directory.path);
++        const auto restarted = restarted_store.load();
++        ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
++        ARPG_REQUIRE(restarted.checkpoint.passive_tree.allocated_bits == kThreeNodes);
++        ARPG_REQUIRE(restarted.checkpoint.progression.unspent_passive_points
++            == pending.next_state.progression.unspent_passive_points);
++        ARPG_REQUIRE(dungeon::same_run_state(restarted.checkpoint,
++            pending.next_state));
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
+     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
+     {"pre publish failure keeps old room in memory and on disk", &pre_publish_failure_keeps_old_room_in_memory_and_on_disk},
+     {"lost post publish receipt faults session but restart uses new room", &lost_post_publish_receipt_faults_session_but_restart_uses_new_room},
+     {"committed descent restarts without rerolling hole or abyss", &committed_descent_restarts_without_rerolling_hole_or_abyss},
+     {"reset reopen and repeated load keep persisted room fields", &reset_reopen_and_repeated_load_keep_persisted_room_fields},
++    {"passive fault recovery never persists partial points or bits", &passive_fault_recovery_never_persists_partial_points_or_bits},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_save_integration_suite() noexcept {
+     return arpg::test::make_suite("dungeon_save_integration", kCases);
+ }
+diff --git a/tests/persistence/persistence_test_main.cpp b/tests/persistence/persistence_test_main.cpp
+index 631b2e2..63ceaa2 100644
+--- a/tests/persistence/persistence_test_main.cpp
++++ b/tests/persistence/persistence_test_main.cpp
+@@ -8,12 +8,12 @@ arpg::test::TestSuite dungeon_save_integration_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         checkpoint_codec_suite(),
+         passive_tree_checkpoint_suite(),
+         save_store_suite(),
+         save_store_fault_suite(),
+         dungeon_save_integration_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 37, "stage 7 task 4 persistence");
++    return arpg::test::run_suites(suites, 38, "stage 7 task 8 persistence");
+ }
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+index 8f1f2bd..515db4d 100644
+--- a/tests/platform/dungeon_runtime_tests.cpp
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -177,20 +177,60 @@ arpg::test::Failure committed_passive_save_survives_runtime_restart() noexcept {
+     const auto generation = saved.commit_generation;
+     runtime.service_pending_save();
+     ARPG_REQUIRE(runtime.session()->snapshot().commit_generation == generation);
+     platform::DungeonRuntime resumed(config_for(directory, 999U));
+     ARPG_REQUIRE(resumed.initialize());
+     ARPG_REQUIRE(resumed.session()->snapshot().passive_tree.allocated_bits
+         == saved.passive_tree.allocated_bits);
+     return {};
+ }
+ 
++arpg::test::Failure committed_route_and_refund_survive_runtime_restart() noexcept {
++    TempDirectory directory;
++    auto config = config_for(directory);
++    persistence::SaveStore seed_store(config.save);
++    auto initial = dungeon::make_initial_run_state(8U, config.rules).state;
++    initial.progression = {4U, 0U, 3U, 3U};
++    ARPG_REQUIRE(seed_store.commit(initial).state
++        == persistence::SaveCommitState::committed);
++
++    platform::DungeonRuntime runtime(config);
++    ARPG_REQUIRE(runtime.initialize());
++    ARPG_REQUIRE(clear_and_await(*runtime.session()));
++    const auto before = runtime.session()->snapshot();
++    for (const std::uint8_t node : {std::uint8_t{8U}, std::uint8_t{9U},
++            std::uint8_t{10U}}) {
++        ARPG_REQUIRE(runtime.session()->request_passive_allocation(node));
++        runtime.service_pending_save();
++        ARPG_REQUIRE(!runtime.session()->snapshot().passive_save_pending);
++        ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::saved);
++    }
++    ARPG_REQUIRE(runtime.session()->request_passive_refund(10U));
++    runtime.service_pending_save();
++    const auto saved = runtime.session()->snapshot();
++    constexpr std::uint64_t kExpectedBits = (1ULL << 0U) | (1ULL << 8U)
++        | (1ULL << 9U);
++    ARPG_REQUIRE(saved.passive_tree.allocated_bits == kExpectedBits);
++    ARPG_REQUIRE(saved.progression.unspent_passive_points
++        == before.progression.unspent_passive_points - 2U);
++    ARPG_REQUIRE(!saved.passive_save_pending);
++
++    platform::DungeonRuntime resumed(config_for(directory, 999U));
++    ARPG_REQUIRE(resumed.initialize());
++    const auto restored = resumed.session()->snapshot();
++    ARPG_REQUIRE(restored.passive_tree.allocated_bits == kExpectedBits);
++    ARPG_REQUIRE(restored.progression.unspent_passive_points
++        == saved.progression.unspent_passive_points);
++    ARPG_REQUIRE(!restored.passive_save_pending);
++    return {};
++}
++
+ arpg::test::Failure passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime() noexcept {
+     TempDirectory directory;
+     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+     auto config = config_for(directory);
+     config.save.fault_hook = &fail_when_enabled;
+     config.save.fault_context = &fault;
+     platform::DungeonRuntime runtime(config);
+     ARPG_REQUIRE(runtime.initialize());
+     ARPG_REQUIRE(clear_and_await(*runtime.session()));
+     const auto before = runtime.session()->snapshot();
+@@ -351,20 +391,21 @@ arpg::test::Failure invalid_rules_fault_without_creating_save_or_session() noexc
+         ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.sav"));
+     }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"empty directory commits seeded generation one before running", &empty_directory_commits_seeded_generation_one_before_running},
+     {"valid save ignores new run seed override", &valid_save_ignores_new_run_seed_override},
+     {"committed pending transition maps verified state and saved indicator", &committed_pending_transition_maps_verified_state_and_saved_indicator},
+     {"committed passive save survives runtime restart", &committed_passive_save_survives_runtime_restart},
++    {"committed route and refund survive runtime restart", &committed_route_and_refund_survive_runtime_restart},
+     {"passive pre publish failure keeps old tree and retryable runtime", &passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime},
+     {"indeterminate passive save faults runtime", &indeterminate_passive_save_faults_runtime},
+     {"passive pending rejects door and descent requests", &passive_pending_rejects_door_and_descent_requests},
+     {"pre publish not committed maps to retryable error", &pre_publish_not_committed_maps_to_retryable_error},
+     {"indeterminate maps to faulted runtime and blocks selection", &indeterminate_maps_to_faulted_runtime_and_blocks_selection},
+     {"dual slot corruption requires recovery then archives new run", &dual_slot_corruption_requires_recovery_then_archives_new_run},
+     {"single slot corruption recovers and subsequent saves alternate", &single_slot_corruption_recovers_and_subsequent_saves_alternate},
+     {"invalid rules fault without creating save or session", &invalid_rules_fault_without_creating_save_or_session},
+ };
+ 
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 5a9f945..29d2fde 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -14,12 +14,12 @@ int main() {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 51, "stage 7 platform");
++    return arpg::test::run_suites(suites, 52, "stage 7 task 8 platform");
+ }

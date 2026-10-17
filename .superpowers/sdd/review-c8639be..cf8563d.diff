@@ -1,0 +1,855 @@
+# Review package: c8639be..cf8563d
+
+## Commits
+cf8563d fix: space passive route hit targets
+f70e26c fix: separate passive star chart routes
+5ac25fc feat: add passive star chart overlay
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt             |   2 +
+ src/platform/raylib/hud_renderer.cpp           |  13 +-
+ src/platform/raylib/passive_tree_renderer.cpp  | 223 +++++++++++++++++++++++++
+ src/platform/raylib/passive_tree_renderer.hpp  |  12 ++
+ src/platform/raylib/passive_tree_view_math.cpp | 116 +++++++++++++
+ src/platform/raylib/passive_tree_view_math.hpp |  48 ++++++
+ src/platform/raylib/raylib_host.cpp            |  43 ++++-
+ tests/platform/CMakeLists.txt                  |   1 +
+ tests/platform/passive_tree_view_tests.cpp     | 128 ++++++++++++++
+ tests/platform/platform_test_main.cpp          |   4 +-
+ 10 files changed, 583 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 419431a..21558f2 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -2,20 +2,22 @@ add_library(arpg_raylib STATIC
+     actor_renderer.cpp
+     combat_audio.cpp
+     combat_feedback.cpp
+     combat_renderer.cpp
+     combat_view_math.cpp
+     debug_renderer.cpp
+     dungeon_view_math.cpp
+     dungeon_runtime.cpp
+     host_launch_options.cpp
+     hud_renderer.cpp
++    passive_tree_renderer.cpp
++    passive_tree_view_math.cpp
+     raylib_host.cpp
+     room_renderer.cpp)
+ 
+ target_include_directories(arpg_raylib
+     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+ target_compile_features(arpg_raylib PUBLIC cxx_std_17)
+ target_link_libraries(arpg_raylib
+     PUBLIC arpg_dungeon arpg_persistence raylib
+     PRIVATE arpg_core)
+ 
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index 566b6e1..7020907 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -42,40 +42,51 @@ void CombatRenderer::draw_hud(
+     const bool doors_open = current.phase == dungeon::RoomPhase::cleared
+         || current.phase == dungeon::RoomPhase::awaiting_exit;
+     DrawRectangleRounded({16.0F, 14.0F, layout.hud_panel_width,
+         layout.hud_panel_height}, 0.06F, 6, Color{7, 10, 17, 220});
+     const Color text{218, 226, 239, 255};
+     const Color accent{110, 207, 255, 255};
+     int y = layout.hud_first_line_y;
+     DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend",
+         static_cast<int>(layout.hud_x), y, 16, accent);
+     y = layout.hud_second_instruction_y;
+-    DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit",
++    DrawText("P Star Chart after clear  R Reset  F1 Debug  F12 Screenshot  Esc Exit",
+         static_cast<int>(layout.hud_x), y, 16, accent);
+     y = layout.hud_status_y;
+     DrawText(TextFormat("Depth %llu  Floor Room %llu  Global Room %llu",
+         static_cast<unsigned long long>(current.depth),
+         static_cast<unsigned long long>(current.floor_room_index),
+         static_cast<unsigned long long>(room_ordinal)),
+         static_cast<int>(layout.hud_x), y, 16, text);
+     y += layout.hud_line_step;
+     DrawText(TextFormat("Ecology %s  F/W/L/C bias %u/%u/%u/%u",
+         ecology_name(current.ecology), current.biases[0], current.biases[1],
+         current.biases[2], current.biases[3]), static_cast<int>(layout.hud_x), y, 16, text);
+     y += layout.hud_line_step;
+     if (current.combat.has_value()) {
+         const combat::CombatSnapshot& combat_state = *current.combat;
+         DrawText(TextFormat("HP %d/%d", combat_state.player.hp,
+             combat_state.player.max_hp), static_cast<int>(layout.hud_x), y, 16, text);
+         draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
+             player_hp_ratio(combat_state.player), Color{77, 215, 127, 255});
+         y += layout.hud_line_step;
++        if (combat_state.player.max_barrier > 0) {
++            DrawText(TextFormat("Barrier %d/%d", combat_state.player.barrier,
++                combat_state.player.max_barrier), static_cast<int>(layout.hud_x), y, 16,
++                Color{119, 191, 255, 255});
++            draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
++                combat_state.player.max_barrier <= 0 ? 0.0F
++                    : static_cast<float>(combat_state.player.barrier)
++                        / static_cast<float>(combat_state.player.max_barrier),
++                Color{119, 191, 255, 255});
++            y += layout.hud_line_step;
++        }
+         static const progression::ProgressionRules kProgressionRules =
+             progression::default_progression_rules();
+         const ProgressionHudValues progression = progression_hud_values(current,
+             kProgressionRules);
+         DrawText(TextFormat("Level %u/100  Passive Points %u",
+             static_cast<unsigned>(progression.level),
+             static_cast<unsigned>(progression.unspent_passive_points)),
+             static_cast<int>(layout.hud_x), y, 16, text);
+         y += layout.hud_line_step;
+         if (progression.maximum_level) {
+diff --git a/src/platform/raylib/passive_tree_renderer.cpp b/src/platform/raylib/passive_tree_renderer.cpp
+new file mode 100644
+index 0000000..cf06b79
+--- /dev/null
++++ b/src/platform/raylib/passive_tree_renderer.cpp
+@@ -0,0 +1,223 @@
++#include "passive_tree_renderer.hpp"
++
++#include "dungeon_runtime.hpp"
++#include "passive_tree_view_math.hpp"
++#include "passives/passive_tree_catalog.hpp"
++
++#include <raylib.h>
++
++#include <algorithm>
++#include <cstddef>
++
++namespace arpg::platform {
++namespace {
++
++Color route_color(passives::PassiveNodeId node) noexcept {
++    if (node >= 8U && node <= 21U) return {239, 96, 69, 255};
++    if (node >= 22U && node <= 35U) return {78, 181, 240, 255};
++    if (node >= 36U && node <= 49U) return {246, 211, 76, 255};
++    if (node >= 50U) return {183, 82, 226, 255};
++    return {176, 195, 218, 255};
++}
++
++Color state_color(PassiveNodeVisualState state,
++    passives::PassiveNodeId node) noexcept {
++    switch (state) {
++    case PassiveNodeVisualState::available: return route_color(node);
++    case PassiveNodeVisualState::allocated: return {244, 248, 255, 255};
++    case PassiveNodeVisualState::rejected: return {244, 99, 99, 255};
++    case PassiveNodeVisualState::pending: return {255, 190, 79, 255};
++    case PassiveNodeVisualState::locked: return {76, 87, 106, 255};
++    }
++    return GRAY;
++}
++
++std::size_t route_index(passives::PassiveNodeId node) noexcept {
++    return node < 8U ? 0U : static_cast<std::size_t>((node - 8U) / 14U);
++}
++
++const char* passive_benefit_text(passives::PassiveNodeId node) noexcept {
++    constexpr const char* kFlat[] = {
++        u8"\u6536\u76ca: +3 Fire damage", u8"\u6536\u76ca: +3 Water damage",
++        u8"\u6536\u76ca: +3 Lightning damage", u8"\u6536\u76ca: +3 Chaos damage"};
++    constexpr const char* kDamage[] = {
++        u8"\u6536\u76ca: +8% Fire damage", u8"\u6536\u76ca: +8% Water damage",
++        u8"\u6536\u76ca: +8% Lightning damage", u8"\u6536\u76ca: +8% Chaos damage"};
++    constexpr const char* kResistance[] = {
++        u8"\u6536\u76ca: +7% Fire resistance", u8"\u6536\u76ca: +7% Water resistance",
++        u8"\u6536\u76ca: +7% Lightning resistance", u8"\u6536\u76ca: +7% Chaos resistance"};
++    constexpr const char* kNotableDamage[] = {
++        u8"\u6536\u76ca: +8 Fire, +15% Fire damage", u8"\u6536\u76ca: +8 Water, +15% Water damage",
++        u8"\u6536\u76ca: +8 Lightning, +15% Lightning damage", u8"\u6536\u76ca: +8 Chaos, +15% Chaos damage"};
++    constexpr const char* kNotableResistance[] = {
++        u8"\u6536\u76ca: +15% Fire resistance, +8 barrier",
++        u8"\u6536\u76ca: +15% Water resistance, +8 barrier",
++        u8"\u6536\u76ca: +15% Lightning resistance, +8 barrier",
++        u8"\u6536\u76ca: +15% Chaos resistance, +8 barrier"};
++    constexpr const char* kKeystone[] = {
++        u8"\u6536\u76ca: +30% Fire damage", u8"\u6536\u76ca: +25% Water damage, +24 barrier",
++        u8"\u6536\u76ca: +25% Lightning damage, +12% move/attack speed",
++        u8"\u6536\u76ca: +30% Chaos damage"};
++    switch (node) {
++    case 0U: return u8"\u6536\u76ca: \u8d77\u59cb\u8282\u70b9";
++    case 1U: return u8"\u6536\u76ca: +20 maximum health";
++    case 2U: return u8"\u6536\u76ca: +10 barrier, -3% damage taken";
++    case 3U: return u8"\u6536\u76ca: +6% melee damage";
++    case 4U: return u8"\u6536\u76ca: +5% attack speed";
++    case 5U: return u8"\u6536\u76ca: +10% knockback and launch";
++    case 6U: return u8"\u6536\u76ca: +6% move speed";
++    case 7U: return u8"\u6536\u76ca: +10% jump and air control";
++    default: break;
++    }
++    if (node < 8U || node >= passives::kPassiveNodeCount) return u8"\u6536\u76ca: \u65e0";
++    const std::size_t route = route_index(node);
++    switch ((node - 8U) % 14U) {
++    case 0U:
++    case 1U: return u8"\u6536\u76ca: \u8def\u7ebf\u8fde\u63a5";
++    case 2U:
++    case 3U: return kFlat[route];
++    case 4U:
++    case 7U: return kDamage[route];
++    case 5U:
++    case 6U: return kResistance[route];
++    case 8U: return u8"\u6536\u76ca: +4% melee damage";
++    case 9U: return u8"\u6536\u76ca: -2% damage taken";
++    case 10U: return kNotableDamage[route];
++    case 11U: return kNotableResistance[route];
++    case 12U: return u8"\u6536\u76ca: +12 maximum health, +3% move speed";
++    case 13U: return kKeystone[route];
++    default: return u8"\u6536\u76ca: \u65e0";
++    }
++}
++
++const char* passive_cost_text(passives::PassiveNodeId node) noexcept {
++    switch (node) {
++    case 21U: return u8"\u4ee3\u4ef7: -20% Water resistance";
++    case 35U: return u8"\u4ee3\u4ef7: -15% melee damage";
++    case 49U: return u8"\u4ee3\u4ef7: -20 maximum health";
++    case 63U: return u8"\u4ee3\u4ef7: +15% damage taken";
++    default: return u8"\u4ee3\u4ef7: \u65e0";
++    }
++}
++
++const char* type_label(passives::PassiveNodeType type) noexcept {
++    switch (type) {
++    case passives::PassiveNodeType::start: return "START";
++    case passives::PassiveNodeType::connector: return "CONNECTOR";
++    case passives::PassiveNodeType::small: return "SMALL";
++    case passives::PassiveNodeType::notable: return "NOTABLE";
++    case passives::PassiveNodeType::keystone: return "KEYSTONE";
++    }
++    return "NODE";
++}
++
++void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
++    passives::PassiveNodeId node) noexcept {
++    const passives::PassiveNode& source = passives::passive_nodes()[node];
++    const int panel_width = 290;
++    const bool detailed = source.type == passives::PassiveNodeType::notable
++        || source.type == passives::PassiveNodeType::keystone;
++    const int panel_height = detailed ? 112 : 90;
++    const int x = std::max(16, GetScreenWidth() - panel_width - 24);
++    const int y = std::max(76, GetScreenHeight() - panel_height - 26);
++    DrawRectangleRounded({static_cast<float>(x), static_cast<float>(y),
++        static_cast<float>(panel_width), static_cast<float>(panel_height)},
++        0.08F, 6, Color{9, 13, 22, 242});
++    DrawRectangleLinesEx({static_cast<float>(x), static_cast<float>(y),
++        static_cast<float>(panel_width), static_cast<float>(panel_height)},
++        2.0F, route_color(node));
++    DrawText(source.name, x + 14, y + 12, 20, RAYWHITE);
++    DrawText(type_label(source.type), x + 14, y + 38, 13, route_color(node));
++    DrawText(passive_benefit_text(node),
++        x + 14, y + 56, 14, Color{188, 222, 196, 255});
++    if (detailed) {
++        DrawText(passive_cost_text(node), x + 14, y + 76, 14,
++            Color{255, 174, 150, 255});
++    } else if (passive_node_visual_state(snapshot, node)
++        == PassiveNodeVisualState::allocated) {
++        DrawText("Click to refund (autosaves)", x + 14, y + 72, 13,
++            Color{189, 206, 229, 255});
++    } else {
++        DrawText("Click to allocate (autosaves)", x + 14, y + 72, 13,
++            Color{189, 206, 229, 255});
++    }
++}
++
++}  // namespace
++
++void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
++    const DungeonRenderStatus& runtime_status) noexcept {
++    const float width = static_cast<float>(GetScreenWidth());
++    const float height = static_cast<float>(GetScreenHeight());
++    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{5, 8, 17, 242});
++    DrawRectangleLinesEx({16.0F, 16.0F, width - 32.0F, height - 32.0F}, 2.0F,
++        Color{83, 115, 160, 220});
++
++    const auto& nodes = passives::passive_nodes();
++    for (const passives::PassiveNode& node : nodes) {
++        const PassiveNodeProjection from = project_passive_node(node.id, width, height);
++        for (std::size_t index = 0U; index < node.neighbor_count; ++index) {
++            const passives::PassiveNodeId neighbor = node.neighbors[index];
++            if (neighbor <= node.id) continue;
++            const PassiveNodeProjection to = project_passive_node(neighbor, width, height);
++            const bool lit = passive_node_visual_state(snapshot, node.id)
++                    == PassiveNodeVisualState::allocated
++                && passive_node_visual_state(snapshot, neighbor)
++                    == PassiveNodeVisualState::allocated;
++            DrawLineEx({from.center.x, from.center.y}, {to.center.x, to.center.y},
++                lit ? 3.0F : 1.0F, lit ? route_color(node.id) : Color{56, 67, 86, 210});
++        }
++    }
++
++    for (const passives::PassiveNode& node : nodes) {
++        const PassiveNodeProjection projection = project_passive_node(node.id, width, height);
++        const PassiveNodeVisualState state = passive_node_visual_state(snapshot, node.id);
++        const Color color = state_color(state, node.id);
++        DrawCircle(static_cast<int>(projection.center.x), static_cast<int>(projection.center.y),
++            projection.radius, Color{16, 23, 38, 255});
++        DrawCircleLines(static_cast<int>(projection.center.x), static_cast<int>(projection.center.y),
++            projection.radius, color);
++        if (node.type == passives::PassiveNodeType::notable
++            || node.type == passives::PassiveNodeType::keystone) {
++            constexpr int kNameFontSize = 12;
++            const int label_width = MeasureText(node.name, kNameFontSize);
++            DrawText(node.name, static_cast<int>(projection.center.x) - label_width / 2,
++                static_cast<int>(projection.center.y - projection.radius - 18.0F),
++                kNameFontSize, color);
++            const int benefit_font_size = node.type == passives::PassiveNodeType::keystone
++                ? 10 : 9;
++            const char* benefit = passive_benefit_text(node.id);
++            DrawText(benefit, static_cast<int>(projection.center.x)
++                    - MeasureText(benefit, benefit_font_size) / 2,
++                static_cast<int>(projection.center.y + projection.radius + 7.0F),
++                benefit_font_size, Color{188, 222, 196, 255});
++            if (node.type == passives::PassiveNodeType::keystone) {
++                const char* cost = passive_cost_text(node.id);
++                DrawText(cost, static_cast<int>(projection.center.x)
++                        - MeasureText(cost, benefit_font_size) / 2,
++                    static_cast<int>(projection.center.y + projection.radius + 20.0F),
++                    benefit_font_size, Color{248, 166, 145, 255});
++            }
++        }
++    }
++
++    DrawText("PASSIVE STAR CHART", 38, 34, 26, Color{226, 237, 255, 255});
++    DrawText(TextFormat("Passive Points %u",
++        static_cast<unsigned>(snapshot.progression.unspent_passive_points)),
++        40, 68, 18, Color{157, 220, 255, 255});
++    const bool saving = snapshot.passive_save_pending
++        || runtime_status.indicator == SaveIndicator::saving;
++    const bool error = runtime_status.indicator == SaveIndicator::error
++        || snapshot.passive_tree_error != passives::PassiveTreeError::none;
++    DrawText(saving ? "Autosave SAVING" : error ? "Autosave ERROR" : "Autosave READY",
++        40, 94, 16, error ? Color{255, 119, 119, 255}
++            : saving ? Color{255, 201, 98, 255} : Color{156, 224, 183, 255});
++    DrawText("P Close", GetScreenWidth() - 115, 38, 17, Color{201, 213, 232, 255});
++
++    const Vector2 mouse = GetMousePosition();
++    if (const auto hovered = hit_test_passive_node({mouse.x, mouse.y}, width, height)) {
++        draw_node_tooltip(snapshot, *hovered);
++    }
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/passive_tree_renderer.hpp b/src/platform/raylib/passive_tree_renderer.hpp
+new file mode 100644
+index 0000000..0e2af4b
+--- /dev/null
++++ b/src/platform/raylib/passive_tree_renderer.hpp
+@@ -0,0 +1,12 @@
++#pragma once
++
++#include "dungeon/dungeon_types.hpp"
++
++namespace arpg::platform {
++
++struct DungeonRenderStatus;
++
++void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
++    const DungeonRenderStatus& runtime_status) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/passive_tree_view_math.cpp b/src/platform/raylib/passive_tree_view_math.cpp
+new file mode 100644
+index 0000000..2027f15
+--- /dev/null
++++ b/src/platform/raylib/passive_tree_view_math.cpp
+@@ -0,0 +1,116 @@
++#include "passive_tree_view_math.hpp"
++
++#include "passives/passive_tree_catalog.hpp"
++
++#include <algorithm>
++
++namespace arpg::platform {
++namespace {
++
++constexpr float kDesignWidth = 1200.0F;
++constexpr float kDesignHeight = 760.0F;
++constexpr float kDesignCenterX = kDesignWidth * 0.5F;
++constexpr float kDesignCenterY = kDesignHeight * 0.5F;
++
++bool valid_viewport(float width, float height) noexcept {
++    return width > 0.0F && height > 0.0F;
++}
++
++float projection_scale(float width, float height) noexcept {
++    return std::min(width / kDesignWidth, height / kDesignHeight);
++}
++
++float node_radius(passives::PassiveNodeType type) noexcept {
++    switch (type) {
++    case passives::PassiveNodeType::start: return 17.0F;
++    case passives::PassiveNodeType::connector: return 12.0F;
++    case passives::PassiveNodeType::small: return 11.0F;
++    case passives::PassiveNodeType::notable: return 17.0F;
++    case passives::PassiveNodeType::keystone: return 23.0F;
++    }
++    return 0.0F;
++}
++
++PassiveScreenPoint route_layout_offset(passives::PassiveNodeId node) noexcept {
++    if (node < 8U || node >= passives::kPassiveNodeCount) return {};
++    switch ((node - 8U) / 14U) {
++    case 0U: return {-200.0F, -175.0F};
++    case 1U: return {200.0F, -175.0F};
++    case 2U: return {-200.0F, 175.0F};
++    case 3U: return {200.0F, 175.0F};
++    default: return {};
++    }
++}
++
++bool node_is_allocated(const passives::PassiveTreeState& state,
++    passives::PassiveNodeId node) noexcept {
++    return node < passives::kPassiveNodeCount
++        && (state.allocated_bits & (1ULL << node)) != 0U;
++}
++
++bool has_allocated_neighbor(const passives::PassiveTreeState& state,
++    const passives::PassiveNode& node) noexcept {
++    for (std::size_t index = 0U; index < node.neighbor_count; ++index) {
++        if (node_is_allocated(state, node.neighbors[index])) return true;
++    }
++    return false;
++}
++
++}  // namespace
++
++bool passive_tree_can_open(const dungeon::DungeonSnapshot& snapshot) noexcept {
++    return snapshot.phase == dungeon::RoomPhase::awaiting_exit
++        && !snapshot.passive_save_pending;
++}
++
++PassiveNodeProjection project_passive_node(passives::PassiveNodeId node,
++    float width, float height) noexcept {
++    if (node >= passives::kPassiveNodeCount || !valid_viewport(width, height)) {
++        return {};
++    }
++    const float scale = projection_scale(width, height);
++    const float offset_x = (width - kDesignWidth * scale) * 0.5F;
++    const float offset_y = (height - kDesignHeight * scale) * 0.5F;
++    const passives::PassiveNode& source = passives::passive_nodes()[node];
++    const PassiveScreenPoint route_offset = route_layout_offset(node);
++    return {{offset_x + (kDesignCenterX + source.x + route_offset.x) * scale,
++                offset_y + (kDesignCenterY + source.y + route_offset.y) * scale},
++        node_radius(source.type) * scale, true};
++}
++
++std::optional<passives::PassiveNodeId> hit_test_passive_node(
++    PassiveScreenPoint screen, float width, float height) noexcept {
++    for (std::size_t index = 0U; index < passives::kPassiveNodeCount; ++index) {
++        const auto node = static_cast<passives::PassiveNodeId>(index);
++        const PassiveNodeProjection projection = project_passive_node(node, width, height);
++        if (!projection.visible) return std::nullopt;
++        const float dx = screen.x - projection.center.x;
++        const float dy = screen.y - projection.center.y;
++        if (dx * dx + dy * dy <= projection.radius * projection.radius) return node;
++    }
++    return std::nullopt;
++}
++
++PassiveNodeVisualState passive_node_visual_state(
++    const dungeon::DungeonSnapshot& snapshot,
++    passives::PassiveNodeId node) noexcept {
++    if (node >= passives::kPassiveNodeCount) return PassiveNodeVisualState::locked;
++    if (snapshot.passive_save_pending) return PassiveNodeVisualState::pending;
++    if (snapshot.passive_tree_error != passives::PassiveTreeError::none) {
++        return PassiveNodeVisualState::rejected;
++    }
++    if (node_is_allocated(snapshot.passive_tree, node)) {
++        return PassiveNodeVisualState::allocated;
++    }
++    const passives::PassiveNode& candidate = passives::passive_nodes()[node];
++    return passive_tree_can_open(snapshot)
++            && snapshot.progression.unspent_passive_points > 0U
++            && has_allocated_neighbor(snapshot.passive_tree, candidate)
++        ? PassiveNodeVisualState::available : PassiveNodeVisualState::locked;
++}
++
++PassiveOverlayInputGate passive_overlay_input_gate(bool overlay_open) noexcept {
++    return { !overlay_open, !overlay_open, !overlay_open };
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/passive_tree_view_math.hpp b/src/platform/raylib/passive_tree_view_math.hpp
+new file mode 100644
+index 0000000..1b4d353
+--- /dev/null
++++ b/src/platform/raylib/passive_tree_view_math.hpp
+@@ -0,0 +1,48 @@
++#pragma once
++
++#include "dungeon/dungeon_types.hpp"
++#include "passives/passive_tree_types.hpp"
++
++#include <cstdint>
++#include <optional>
++
++namespace arpg::platform {
++
++struct PassiveScreenPoint final {
++    float x{};
++    float y{};
++};
++
++struct PassiveNodeProjection final {
++    PassiveScreenPoint center{};
++    float radius{};
++    bool visible{};
++};
++
++enum class PassiveNodeVisualState : std::uint8_t {
++    locked,
++    available,
++    allocated,
++    rejected,
++    pending,
++};
++
++struct PassiveOverlayInputGate final {
++    bool forward_actions{};
++    bool forward_movement{};
++    bool forward_descent{};
++};
++
++[[nodiscard]] bool passive_tree_can_open(
++    const dungeon::DungeonSnapshot& snapshot) noexcept;
++[[nodiscard]] PassiveNodeProjection project_passive_node(
++    passives::PassiveNodeId node, float width, float height) noexcept;
++[[nodiscard]] std::optional<passives::PassiveNodeId> hit_test_passive_node(
++    PassiveScreenPoint screen, float width, float height) noexcept;
++[[nodiscard]] PassiveNodeVisualState passive_node_visual_state(
++    const dungeon::DungeonSnapshot& snapshot,
++    passives::PassiveNodeId node) noexcept;
++[[nodiscard]] PassiveOverlayInputGate passive_overlay_input_gate(
++    bool overlay_open) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 9bb6a0b..c289d30 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -1,19 +1,21 @@
+ #include "raylib_host.hpp"
+ 
+ #include "combat_audio.hpp"
+ #include "combat_feedback.hpp"
+ #include "combat_key_bindings.hpp"
+ #include "combat_renderer.hpp"
+ #include "core/fixed_step.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "dungeon_view_math.hpp"
++#include "passive_tree_renderer.hpp"
++#include "passive_tree_view_math.hpp"
+ #include "persistence/save_paths.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <cstdint>
+ 
+ #if !defined(RAYLIB_VERSION_MAJOR) || !defined(RAYLIB_VERSION_MINOR) \
+     || !defined(RAYLIB_VERSION_PATCH)
+ #error "raylib version macros are unavailable"
+ #endif
+@@ -110,20 +112,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             TraceLog(LOG_WARNING, "failed to use application directory");
+         }
+         SetWindowMinSize(800, 450);
+         SetExitKey(KEY_ESCAPE);
+         core::FixedStepRunner fixed_step;
+         CombatRenderer renderer;
+         CombatFeedback feedback;
+         CombatAudio audio;
+         const bool audio_ready = audio.initialize();
+         bool draw_debug = false;
++        bool passive_overlay_open = false;
+         dungeon::DungeonSnapshot current{};
+         dungeon::DungeonSnapshot previous{};
+         if (runtime.session() != nullptr) {
+             current = runtime.session()->snapshot();
+             previous = current;
+             drain_events(*runtime.session(), renderer, feedback, audio);
+         }
+ 
+         while (!WindowShouldClose()) {
+             const FrameToggleInput frame_toggles = sample_frame_toggle_input();
+@@ -142,54 +145,84 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 draw_recovery_screen(runtime.render_status());
+                 if (frame_toggles.take_screenshot) {
+                     TakeScreenshot("stage3-dungeon-rules.png");
+                 }
+                 continue;
+             }
+             dungeon::DungeonSession* const session = runtime.session();
+             if (session == nullptr) {
+                 break;
+             }
+-            if (IsKeyPressed(KEY_R)) {
++            if (!passive_tree_can_open(current)) {
++                passive_overlay_open = false;
++            }
++            if (IsKeyPressed(KEY_P) && passive_tree_can_open(current)) {
++                passive_overlay_open = !passive_overlay_open;
++            }
++            const PassiveOverlayInputGate input_gate = passive_overlay_input_gate(
++                passive_overlay_open);
++            if (input_gate.forward_actions && IsKeyPressed(KEY_R)) {
+                 session->reset_current_room();
+                 current = session->snapshot();
+                 previous = current;
+                 drain_events(*session, renderer, feedback, audio);
+             }
+-            submit_frame_actions(*session);
+-            if (IsKeyPressed(KEY_E)) {
++            if (passive_overlay_open && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
++                const auto selected = hit_test_passive_node(
++                    {GetMousePosition().x, GetMousePosition().y},
++                    static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight()));
++                if (selected.has_value()) {
++                    const bool allocated = (current.passive_tree.allocated_bits
++                        & (1ULL << *selected)) != 0U;
++                    static_cast<void>(allocated
++                        ? session->request_passive_refund(*selected)
++                        : session->request_passive_allocation(*selected));
++                    current = session->snapshot();
++                }
++            }
++            if (input_gate.forward_actions) {
++                submit_frame_actions(*session);
++            }
++            if (input_gate.forward_descent && IsKeyPressed(KEY_E)) {
+                 const auto snapshot = session->snapshot();
+                 const bool in_range = snapshot.combat.has_value()
+                     && can_prompt_descent(
+                         snapshot, snapshot.combat->player.position);
+                 static_cast<void>(session->request_descent(in_range));
+             }
+ 
+-            const combat::MovementInput movement = sample_movement_input();
++            const combat::MovementInput movement = input_gate.forward_movement
++                ? sample_movement_input() : combat::MovementInput{};
+             const float frame_seconds = GetFrameTime();
+             feedback.update(frame_seconds);
+             renderer.update(frame_seconds);
+             const core::FixedStepFrame frame = fixed_step.advance(
+                 static_cast<double>(frame_seconds));
+             for (std::uint32_t step = 0; step < frame.steps; ++step) {
+                 previous = current;
+                 session->tick(movement);
+-                runtime.service_pending_transition();
++                runtime.service_pending_save();
+                 current = session->snapshot();
++                if (!passive_tree_can_open(current)) {
++                    passive_overlay_open = false;
++                }
+                 drain_events(*session, renderer, feedback, audio);
+             }
+ 
+             BeginDrawing();
+             ClearBackground(Color{13, 17, 27, 255});
+             renderer.draw(previous, current, runtime.render_status(),
+                 static_cast<float>(frame.interpolation_alpha), draw_debug,
+                 feedback, audio_ready);
++            if (passive_overlay_open) {
++                draw_passive_tree_overlay(current, runtime.render_status());
++            }
+             EndDrawing();
+             if (frame_toggles.take_screenshot) {
+                 TakeScreenshot("stage3-dungeon-rules.png");
+             }
+         }
+         audio.shutdown();
+         CloseWindow();
+         return HostExitCode::success;
+     } catch (...) {
+         if (window_ready) {
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 723007a..b1b3bd1 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,18 +1,19 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         platform_test_main.cpp
+         combat_key_bindings_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
++        passive_tree_view_tests.cpp
+         host_launch_options_tests.cpp
+         dungeon_runtime_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+     add_test(NAME platform.view_math COMMAND arpg_platform_tests)
+     set_tests_properties(
+diff --git a/tests/platform/passive_tree_view_tests.cpp b/tests/platform/passive_tree_view_tests.cpp
+new file mode 100644
+index 0000000..5b38236
+--- /dev/null
++++ b/tests/platform/passive_tree_view_tests.cpp
+@@ -0,0 +1,128 @@
++#include "passive_tree_view_math.hpp"
++
++#include "test_framework.hpp"
++
++#include <cmath>
++#include <optional>
++
++namespace {
++
++using arpg::dungeon::DungeonSnapshot;
++using arpg::dungeon::RoomPhase;
++using arpg::passives::PassiveNodeId;
++using arpg::platform::PassiveNodeVisualState;
++using arpg::platform::PassiveOverlayInputGate;
++
++arpg::test::Failure overlay_only_opens_for_clean_awaiting_exit() noexcept {
++    DungeonSnapshot snapshot{};
++    snapshot.phase = RoomPhase::awaiting_exit;
++    ARPG_REQUIRE(arpg::platform::passive_tree_can_open(snapshot));
++    snapshot.passive_save_pending = true;
++    ARPG_REQUIRE(!arpg::platform::passive_tree_can_open(snapshot));
++    snapshot.passive_save_pending = false;
++    snapshot.phase = RoomPhase::combat;
++    ARPG_REQUIRE(!arpg::platform::passive_tree_can_open(snapshot));
++    return {};
++}
++
++arpg::test::Failure node_projection_and_hit_test_are_stable() noexcept {
++    const auto projected = arpg::platform::project_passive_node(
++        static_cast<PassiveNodeId>(8U), 1280.0F, 720.0F);
++    ARPG_REQUIRE(projected.visible);
++    ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
++        projected.center, 1280.0F, 720.0F)
++        == std::optional<PassiveNodeId>{static_cast<PassiveNodeId>(8U)});
++    ARPG_REQUIRE(!arpg::platform::hit_test_passive_node(
++        {-1.0F, -1.0F}, 1280.0F, 720.0F));
++    return {};
++}
++
++arpg::test::Failure distinct_landmarks_keep_distinct_projections() noexcept {
++    const auto origin = arpg::platform::project_passive_node(0U, 1280.0F, 720.0F);
++    const auto cinder_vow = arpg::platform::project_passive_node(21U, 1280.0F, 720.0F);
++    const auto blood_pact = arpg::platform::project_passive_node(63U, 1280.0F, 720.0F);
++    ARPG_REQUIRE(origin.visible && cinder_vow.visible && blood_pact.visible);
++    ARPG_REQUIRE(origin.center.x != cinder_vow.center.x || origin.center.y != cinder_vow.center.y);
++    ARPG_REQUIRE(origin.center.x != blood_pact.center.x || origin.center.y != blood_pact.center.y);
++    ARPG_REQUIRE(cinder_vow.center.x != blood_pact.center.x
++        || cinder_vow.center.y != blood_pact.center.y);
++    return {};
++}
++
++arpg::test::Failure route_nodes_have_unique_projections_and_hit_themselves() noexcept {
++    struct Viewport final { float width{}; float height{}; };
++    constexpr Viewport kViewports[] = {{1280.0F, 720.0F}, {800.0F, 450.0F}};
++    constexpr float kHitMargin = 4.0F;
++    for (const Viewport viewport : kViewports) {
++        for (unsigned value = 8U; value < 64U; ++value) {
++            const auto node = static_cast<PassiveNodeId>(value);
++            const auto projection = arpg::platform::project_passive_node(
++                node, viewport.width, viewport.height);
++            ARPG_REQUIRE(projection.visible);
++            ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
++                projection.center, viewport.width, viewport.height)
++                == std::optional<PassiveNodeId>{node});
++            const unsigned route = (value - 8U) / 14U;
++            for (unsigned other_value = value + 1U; other_value < 64U; ++other_value) {
++                const unsigned other_route = (other_value - 8U) / 14U;
++                if (route == other_route) continue;
++                const auto other = arpg::platform::project_passive_node(
++                    static_cast<PassiveNodeId>(other_value), viewport.width, viewport.height);
++                const float dx = projection.center.x - other.center.x;
++                const float dy = projection.center.y - other.center.y;
++                ARPG_REQUIRE(std::sqrt(dx * dx + dy * dy)
++                    > projection.radius + other.radius + kHitMargin);
++            }
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure visual_state_reports_locked_available_allocated_and_feedback() noexcept {
++    DungeonSnapshot snapshot{};
++    snapshot.phase = RoomPhase::awaiting_exit;
++    snapshot.progression.level = 2U;
++    snapshot.progression.unspent_passive_points = 1U;
++    snapshot.passive_tree.allocated_bits = (1ULL << 0U) | (1ULL << 8U);
++    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 0U)
++        == PassiveNodeVisualState::allocated);
++    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 9U)
++        == PassiveNodeVisualState::available);
++    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 21U)
++        == PassiveNodeVisualState::locked);
++    snapshot.passive_tree_error = arpg::passives::PassiveTreeError::no_points;
++    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 9U)
++        == PassiveNodeVisualState::rejected);
++    snapshot.passive_tree_error = arpg::passives::PassiveTreeError::none;
++    snapshot.passive_save_pending = true;
++    ARPG_REQUIRE(arpg::platform::passive_node_visual_state(snapshot, 9U)
++        == PassiveNodeVisualState::pending);
++    return {};
++}
++
++arpg::test::Failure overlay_captures_all_gameplay_input() noexcept {
++    const PassiveOverlayInputGate open = arpg::platform::passive_overlay_input_gate(true);
++    ARPG_REQUIRE(!open.forward_actions);
++    ARPG_REQUIRE(!open.forward_movement);
++    ARPG_REQUIRE(!open.forward_descent);
++    const PassiveOverlayInputGate closed = arpg::platform::passive_overlay_input_gate(false);
++    ARPG_REQUIRE(closed.forward_actions);
++    ARPG_REQUIRE(closed.forward_movement);
++    ARPG_REQUIRE(closed.forward_descent);
++    return {};
++}
++
++const arpg::test::TestCase kCases[] = {
++    {"opens only for clean exit", &overlay_only_opens_for_clean_awaiting_exit},
++    {"projects and hits nodes", &node_projection_and_hit_test_are_stable},
++    {"keeps landmarks distinct", &distinct_landmarks_keep_distinct_projections},
++    {"separates route nodes and hits each", &route_nodes_have_unique_projections_and_hit_themselves},
++    {"reports visual states", &visual_state_reports_locked_available_allocated_and_feedback},
++    {"captures gameplay input", &overlay_captures_all_gameplay_input},
++};
++
++}  // namespace
++
++arpg::test::TestSuite passive_tree_view_suite() noexcept {
++    return arpg::test::make_suite("passive_tree_view", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index b49c4bb..5a9f945 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -1,23 +1,25 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
+ arpg::test::TestSuite combat_key_bindings_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
++arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
++        passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 45, "stage 6 platform");
++    return arpg::test::run_suites(suites, 51, "stage 7 platform");
+ }

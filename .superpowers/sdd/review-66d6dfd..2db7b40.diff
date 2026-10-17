@@ -1,0 +1,1303 @@
+# Review package: 66d6dfd..2db7b40
+
+## Commits
+2db7b40 fix: preserve passive max health multiplier
+30e7ed2 docs: preserve passive maximum health multiplier
+e37cec0 feat: add passive tree catalog and allocation rules
+
+## Files changed
+ CMakeLists.txt                                     |   2 +
+ .../plans/2026-07-14-stage7-passive-star-chart.md  |   9 +-
+ src/modifiers/modifier_math.cpp                    |   4 +-
+ src/modifiers/modifier_types.hpp                   |   3 +
+ src/modifiers/player_modifier_values.cpp           |   2 +
+ src/modifiers/player_modifier_values.hpp           |   2 +-
+ src/passives/CMakeLists.txt                        |   8 +
+ src/passives/passive_tree_catalog.cpp              | 281 +++++++++++++++++++++
+ src/passives/passive_tree_catalog.hpp              |  13 +
+ src/passives/passive_tree_rules.cpp                | 127 ++++++++++
+ src/passives/passive_tree_rules.hpp                |  25 ++
+ src/passives/passive_tree_types.hpp                |  59 +++++
+ tests/passives/CMakeLists.txt                      |  14 +
+ tests/passives/passive_test_main.cpp               |  10 +
+ tests/passives/passive_tree_catalog_tests.cpp      | 198 +++++++++++++++
+ tests/passives/passive_tree_rules_tests.cpp        |  97 +++++++
+ tests/platform/CMakeLists.txt                      |  35 +++
+ 17 files changed, 882 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9eb9bbb..7726b88 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -37,28 +37,30 @@ function(arpg_enable_project_warnings target_name)
+     if(MSVC)
+         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
+     endif()
+ endfunction()
+ 
+ include(CTest)
+ add_subdirectory(src/core)
+ add_subdirectory(src/combat)
+ add_subdirectory(src/progression)
+ add_subdirectory(src/modifiers)
++add_subdirectory(src/passives)
+ add_subdirectory(src/dungeon)
+ add_subdirectory(src/persistence)
+ 
+ if(ARPG_BUILD_GRAPHICS)
+     include(cmake/Dependencies.cmake)
+     add_subdirectory(src/platform/raylib)
+     add_subdirectory(src/app)
+ endif()
+ 
+ if(BUILD_TESTING)
+     add_subdirectory(tests/core)
+     add_subdirectory(tests/combat)
+     add_subdirectory(tests/dungeon)
+     add_subdirectory(tests/persistence)
+     add_subdirectory(tests/platform)
+     add_subdirectory(tests/progression)
+     add_subdirectory(tests/modifiers)
++    add_subdirectory(tests/passives)
+ endif()
+diff --git a/docs/superpowers/plans/2026-07-14-stage7-passive-star-chart.md b/docs/superpowers/plans/2026-07-14-stage7-passive-star-chart.md
+index 0638621..3e832ad 100644
+--- a/docs/superpowers/plans/2026-07-14-stage7-passive-star-chart.md
++++ b/docs/superpowers/plans/2026-07-14-stage7-passive-star-chart.md
+@@ -119,29 +119,30 @@ inline constexpr std::size_t kElementCount = 4U;
+     return static_cast<std::size_t>(type);
+ }
+ [[nodiscard]] constexpr bool is_elemental(DamageType type) noexcept {
+     return type != DamageType::physical && type != DamageType::count;
+ }
+ [[nodiscard]] constexpr std::size_t element_index(DamageType type) noexcept {
+     return static_cast<std::size_t>(type) - 1U;
+ }
+ ```
+ 
+-把 `StatId` 扩展为：`melee_damage`、`fire_flat_damage`、`water_flat_damage`、`lightning_flat_damage`、`chaos_flat_damage`、四个元素伤害提高、四个元素抗性、`max_health`、`max_barrier`、`damage_taken`、`move_speed`、`attack_speed`、`jump_speed`、`air_control`，保留已有 `impulse_scale` 和怪物 `shield`。`PlayerModifierValues` 的乘数默认 `kFixedOne`、抗性/平坦值默认 0，并以 `evaluate_stat()` 得出值；抗性钳制 `[-6000, 7500]`，`damage_taken` 钳制 `[5000, 20000]`，其余速度/冲量下限为 0。所有固定生命、护盾和附加伤害均以 `kFixedOne == 10000` 为单位：例如 +20 HP 写作 `200000`，+10 barrier 写作 `100000`，+3 火伤写作 `30000`；combat 只在投影时向下转换为整数游戏数值。
++把 `StatId` 扩展为：`melee_damage`、`fire_flat_damage`、`water_flat_damage`、`lightning_flat_damage`、`chaos_flat_damage`、四个元素伤害提高、四个元素抗性、`max_health`、`max_health_more`、`max_barrier`、`damage_taken`、`move_speed`、`attack_speed`、`jump_speed`、`air_control`，保留已有 `impulse_scale` 和怪物 `shield`。`PlayerModifierValues` 的乘数默认 `kFixedOne`、抗性/平坦值默认 0，并以 `evaluate_stat()` 得出值；抗性钳制 `[-6000, 7500]`，`damage_taken` 钳制 `[5000, 20000]`，其余速度/冲量下限为 0。所有固定生命、护盾和附加伤害均以 `kFixedOne == 10000` 为单位：例如 +20 HP 写作 `200000`，+10 barrier 写作 `100000`，+3 火伤写作 `30000`；combat 只在投影时向下转换为整数游戏数值。
+ 
+ ```cpp
+ struct PlayerModifierValues final {
+     std::array<FixedValue, kDamageTypeCount> flat_damage{};
+     std::array<FixedValue, kDamageTypeCount> damage_increased{{kFixedOne, kFixedOne, kFixedOne, kFixedOne, kFixedOne}};
+     std::array<FixedValue, kElementCount> resistance{};
+     FixedValue melee_damage{kFixedOne};
+     FixedValue max_health{};
++    FixedValue max_health_more{kFixedOne};
+     FixedValue max_barrier{};
+     FixedValue damage_taken{kFixedOne};
+     FixedValue movement_speed{kFixedOne};
+     FixedValue attack_speed{kFixedOne};
+     FixedValue impulse_scale{kFixedOne};
+     FixedValue jump_speed{kFixedOne};
+     FixedValue air_control{kFixedOne};
+     bool valid{true};
+ };
+ ```
+@@ -209,21 +210,21 @@ arpg::test::Failure allocation_requires_adjacency_and_refund_keeps_connectivity(
+     ARPG_REQUIRE(allocate_node(state, progress, 8U).changed);
+     ARPG_REQUIRE(allocate_node(state, progress, 9U).changed);
+     ARPG_REQUIRE(allocate_node(state, progress, 10U).changed);
+     ARPG_REQUIRE(!refund_node(state, progress, 8U).changed);
+     ARPG_REQUIRE(refund_node(state, progress, 10U).changed);
+     ARPG_REQUIRE(progress.unspent_passive_points == 7U);
+     return {};
+ }
+ ```
+ 
+-为两个 suite 的总 case 数设置为 9：目录 4 个、规则 5 个，包含重复节点、无点、未知 ID、断链、相同位图的确定性投影。
++为两个 suite 的总 case 数设置为 9 组：目录组除形状外逐项黄金断言 64 个节点的类型、名称、所有邻接和所有 Modifier；规则组 5 个，包含重复节点、无点、未知 ID、断链、相同位图的确定性投影。`catalog_is_valid()` 还必须拒绝自环、重复邻居、非对称边和超出邻接容量的目录。
+ 
+ - [ ] **Step 2: 运行 RED 测试**
+ 
+ Run:
+ 
+ ```powershell
+ cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug --target arpg_passive_tests'
+ ```
+ 
+ Expected: CMake 失败，因为 `src/passives/CMakeLists.txt` 和 target `arpg_passives` 尚不存在。
+@@ -255,21 +256,21 @@ struct PassiveNode final {
+     std::int16_t y{};
+     std::array<PassiveNodeId, 12> neighbors{};
+     std::uint8_t neighbor_count{};
+     std::array<modifiers::Modifier, 4> modifiers{};
+     std::uint8_t modifier_count{};
+ };
+ ```
+ 
+ 在 `passive_tree_catalog.cpp` 按已批准规格建立：中央 ID 0–7，路线入口 8/22/36/50，每条路线 `B+0..B+13`，关键节点 21/35/49/63。以 [已批准设计第 3.1–3.2 节](../specs/2026-07-14-stage7-passive-star-chart-design.md) 的两张节点表为唯一数据来源：0 同时连接 1–7 和四个路线入口；每条路线严格采用 `B+1` 的三叉、`B+2→3→4→10→13`、`B+5→6→7→11`、`B+8→9→12` 的无环路径，中央及路线数值、关键节点收益和代价逐项照表编码，不作改名或调参。每条边在两端同时出现，所有 Modifier ID 由 `1000U + node_id * 3U + local_index` 生成并唯一。
+ 
+-`passive_tree_rules.cpp` 用 `std::array<PassiveNodeId, 64>` 与 `std::array<bool, 64>` 实现 BFS，不使用 `vector`。`valid_passive_tree_state()` 检查 bit 0、没有超范围位、节点定义与已分配集合连通、以及 `popcount(bits & ~1ULL) + unspent == earned`。`evaluate_passive_tree()` 按节点 ID 顺序写入固定 `std::array<Modifier, 128>`，再调用 Task 1 的 `evaluate_player_modifiers()`。
++`passive_tree_rules.cpp` 用 `std::array<PassiveNodeId, 64>` 与 `std::array<bool, 64>` 实现 BFS，不使用 `vector`。`valid_passive_tree_state()` 检查 bit 0、没有超范围位、节点定义与已分配集合连通、以及 `popcount(bits & ~1ULL) + unspent == earned`。`evaluate_passive_tree()` 按节点 ID 顺序写入固定 `std::array<Modifier, 128>`，再调用 Task 1 的 `evaluate_player_modifiers()`；目录测试必须逐项锁定 64 个节点和每条边，避免“看起来正确”但数值漂移。
+ 
+ 增加根 CMake 的 `add_subdirectory(src/passives)`，在 `src/modifiers` 后、`src/dungeon` 前；添加 `tests/passives`，并在平台架构 CMake 增加 `architecture.passives_no_raylib` 和 passives 不可达 combat/dungeon/persistence 的边界断言。
+ 
+ - [ ] **Step 4: 验证星盘核心和边界**
+ 
+ Run:
+ 
+ ```powershell
+ cmake --build --preset windows-msvc-debug --target arpg_passive_tests
+ ctest --test-dir out/build/windows-msvc-debug -R "passives.units|architecture.passives" --output-on-failure
+@@ -385,21 +386,21 @@ static void apply_damage(
+     combat::CombatWorld& world,
+     combat::DamagePacket packet,
+     combat::Vec3 source_position,
+     combat::FeedbackLevel feedback) noexcept {
+     world.apply_player_damage(packet, source_position, feedback);
+ }
+ ```
+ 
+ 把 `AttackRuntime` 增加缓存的 `startup_ticks`、`recovery_ticks`。`start_attack()` 以 `scaled_phase_ticks()` 只计算这两项，至少为 1；`active_ticks` 继续使用目录的原值。为 `attack_phase_at()` 增加接收实际 startup/recovery 的重载，`simulate_player()`、`hit_resolution.cpp` 和 snapshot 都用该重载，确保同一攻击的 active tick 数和命中窗口不变。移动、跳跃、空中机动从 `build.values` 缩放；`target_simulation.cpp` 的水平击退和垂直 launch 共用同一 `impulse_scale`。
+ 
+-在 `hit_resolution.cpp` 用 `build_player_hit_packet(definition->damage, encounter_config_.player_build)` 扣怪物 HP，`CombatEvent::value` 写 packet 总值。
++在 `hit_resolution.cpp` 用 `build_player_hit_packet(definition->damage, encounter_config_.player_build)` 扣怪物 HP，`CombatEvent::value` 写 packet 总值。玩家最大生命必须按 `floor((base_hp + fixed_floor(values.max_health)) * values.max_health_more / kFixedOne)` 计算，确保 Stormstep 的 8000 乘数将基础生命降低 20%，而 core_vitality 的平坦生命仍独立生效。
+ 
+ - [ ] **Step 4: 验证 Combat 默认回归和新行为**
+ 
+ Run:
+ 
+ ```powershell
+ ctest --test-dir out/build/windows-msvc-debug -R "combat.units|architecture.combat" --output-on-failure
+ git diff --check
+ ```
+ 
+diff --git a/src/modifiers/modifier_math.cpp b/src/modifiers/modifier_math.cpp
+index cb6378e..7063db9 100644
+--- a/src/modifiers/modifier_math.cpp
++++ b/src/modifiers/modifier_math.cpp
+@@ -86,21 +86,21 @@ void stable_sort_by_priority(
+ }
+ 
+ }  // namespace
+ 
+ StatEvaluation evaluate_stat(
+     FixedValue base,
+     StatId stat,
+     ModifierSpan modifiers,
+     ModifierContext context,
+     StatBounds bounds) noexcept {
+-    constexpr std::size_t kCapacity = 32U;
++    constexpr std::size_t kCapacity = 128U;
+     if (bounds.minimum > bounds.maximum || modifiers.size > kCapacity
+         || (modifiers.size != 0U && modifiers.data == nullptr)) {
+         return {base, false, false};
+     }
+ 
+     std::array<const Modifier*, kCapacity> active{};
+     std::size_t count = 0U;
+     for (std::size_t index = 0; index < modifiers.size; ++index) {
+         const Modifier& candidate = modifiers.data[index];
+         if (!matches(candidate, stat, context)) continue;
+@@ -130,21 +130,21 @@ StatEvaluation evaluate_stat(
+             result = saturating_mul_div(result, active[index]->value);
+         }
+     }
+     return {std::clamp(result, bounds.minimum, bounds.maximum), true, false};
+ }
+ 
+ ConversionResult evaluate_conversions(
+     StatValues values,
+     ModifierSpan modifiers,
+     ModifierContext context) noexcept {
+-    constexpr std::size_t kCapacity = 32U;
++    constexpr std::size_t kCapacity = 128U;
+     ConversionResult result{values, false, 0};
+     if (modifiers.size > kCapacity
+         || (modifiers.size != 0U && modifiers.data == nullptr)) {
+         return result;
+     }
+     std::array<const Modifier*, kCapacity> active{};
+     std::size_t count = 0U;
+     for (std::size_t index = 0; index < modifiers.size; ++index) {
+         const Modifier& candidate = modifiers.data[index];
+         if (candidate.operation != ModifierOperation::conversion
+diff --git a/src/modifiers/modifier_types.hpp b/src/modifiers/modifier_types.hpp
+index 9ecacff..84df588 100644
+--- a/src/modifiers/modifier_types.hpp
++++ b/src/modifiers/modifier_types.hpp
+@@ -20,20 +20,21 @@ enum class StatId : std::uint16_t {
+     chaos_flat_damage,
+     fire_damage,
+     water_damage,
+     lightning_damage,
+     chaos_damage,
+     fire_resistance,
+     water_resistance,
+     lightning_resistance,
+     chaos_resistance,
+     max_health,
++    max_health_more,
+     max_barrier,
+     damage_taken,
+     move_speed,
+     attack_speed,
+     jump_speed,
+     air_control,
+     count,
+ };
+ 
+ enum class ModifierOperation : std::uint8_t {
+@@ -69,20 +70,22 @@ struct Modifier final {
+ struct ModifierContext final {
+     std::uint64_t tags{};
+     std::uint64_t conditions{};
+ };
+ 
+ struct ModifierSpan final {
+     const Modifier* data{};
+     std::size_t size{};
+ 
+     constexpr ModifierSpan() noexcept = default;
++    constexpr ModifierSpan(const Modifier* values, std::size_t count) noexcept
++        : data(values), size(count) {}
+     template <std::size_t N>
+     constexpr ModifierSpan(const std::array<Modifier, N>& values) noexcept
+         : data(values.data()), size(N) {}
+ };
+ 
+ struct StatBounds final {
+     FixedValue minimum{};
+     FixedValue maximum{};
+ };
+ 
+diff --git a/src/modifiers/player_modifier_values.cpp b/src/modifiers/player_modifier_values.cpp
+index 282fe5e..79d2d65 100644
+--- a/src/modifiers/player_modifier_values.cpp
++++ b/src/modifiers/player_modifier_values.cpp
+@@ -59,20 +59,22 @@ PlayerModifierValues evaluate_player_modifiers(
+         0, StatId::water_resistance, modifiers, kResistance, result.valid);
+     result.resistance[element_index(DamageType::lightning)] = evaluate(
+         0, StatId::lightning_resistance, modifiers, kResistance, result.valid);
+     result.resistance[element_index(DamageType::chaos)] = evaluate(
+         0, StatId::chaos_resistance, modifiers, kResistance, result.valid);
+ 
+     result.melee_damage = evaluate(
+         kFixedOne, StatId::melee_damage, modifiers, kNonNegative, result.valid);
+     result.max_health = evaluate(
+         0, StatId::max_health, modifiers, kNonNegative, result.valid);
++    result.max_health_more = evaluate(
++        kFixedOne, StatId::max_health_more, modifiers, kNonNegative, result.valid);
+     result.max_barrier = evaluate(
+         0, StatId::max_barrier, modifiers, kNonNegative, result.valid);
+     result.damage_taken = evaluate(
+         kFixedOne, StatId::damage_taken, modifiers, kDamageTaken, result.valid);
+     result.movement_speed = evaluate(
+         kFixedOne, StatId::move_speed, modifiers, kNonNegative, result.valid);
+     result.attack_speed = evaluate(
+         kFixedOne, StatId::attack_speed, modifiers, kNonNegative, result.valid);
+     result.impulse_scale = evaluate(
+         kFixedOne, StatId::impulse_scale, modifiers, kNonNegative, result.valid);
+diff --git a/src/modifiers/player_modifier_values.hpp b/src/modifiers/player_modifier_values.hpp
+index 3be1c16..b44d0c9 100644
+--- a/src/modifiers/player_modifier_values.hpp
++++ b/src/modifiers/player_modifier_values.hpp
+@@ -7,25 +7,25 @@
+ 
+ namespace arpg::modifiers {
+ 
+ struct PlayerModifierValues final {
+     std::array<FixedValue, kDamageTypeCount> flat_damage{};
+     std::array<FixedValue, kDamageTypeCount> damage_increased{{
+         kFixedOne, kFixedOne, kFixedOne, kFixedOne, kFixedOne}};
+     std::array<FixedValue, kElementCount> resistance{};
+     FixedValue melee_damage{kFixedOne};
+     FixedValue max_health{};
++    FixedValue max_health_more{kFixedOne};
+     FixedValue max_barrier{};
+     FixedValue damage_taken{kFixedOne};
+     FixedValue movement_speed{kFixedOne};
+     FixedValue attack_speed{kFixedOne};
+     FixedValue impulse_scale{kFixedOne};
+     FixedValue jump_speed{kFixedOne};
+     FixedValue air_control{kFixedOne};
+     bool valid{true};
+ };
+ 
+ [[nodiscard]] PlayerModifierValues evaluate_player_modifiers(
+     ModifierSpan modifiers) noexcept;
+ 
+ }  // namespace arpg::modifiers
+-
+diff --git a/src/passives/CMakeLists.txt b/src/passives/CMakeLists.txt
+new file mode 100644
+index 0000000..9a0c852
+--- /dev/null
++++ b/src/passives/CMakeLists.txt
+@@ -0,0 +1,8 @@
++add_library(arpg_passives STATIC
++    passive_tree_catalog.cpp
++    passive_tree_rules.cpp)
++
++target_include_directories(arpg_passives PUBLIC "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_passives PUBLIC cxx_std_17)
++target_link_libraries(arpg_passives PUBLIC arpg_modifiers arpg_progression)
++arpg_enable_project_warnings(arpg_passives)
+diff --git a/src/passives/passive_tree_catalog.cpp b/src/passives/passive_tree_catalog.cpp
+new file mode 100644
+index 0000000..dcf179c
+--- /dev/null
++++ b/src/passives/passive_tree_catalog.cpp
+@@ -0,0 +1,281 @@
++#include "passives/passive_tree_catalog.hpp"
++
++#include "modifiers/damage_types.hpp"
++
++#include <cstddef>
++
++namespace arpg::passives {
++namespace {
++
++using modifiers::DamageType;
++using modifiers::FixedValue;
++using modifiers::Modifier;
++using modifiers::ModifierOperation;
++using modifiers::ModifierId;
++using modifiers::StatId;
++
++constexpr FixedValue kOne = modifiers::kFixedOne;
++
++struct RouteSpec final {
++    DamageType damage;
++    const char* prefix;
++    std::int16_t x;
++};
++
++constexpr RouteSpec kRoutes[] = {
++    {DamageType::fire, "fire", -420},
++    {DamageType::water, "water", 420},
++    {DamageType::lightning, "lightning", -420},
++    {DamageType::chaos, "chaos", 420},
++};
++
++StatId flat_stat(DamageType type) noexcept {
++    switch (type) {
++    case DamageType::fire: return StatId::fire_flat_damage;
++    case DamageType::water: return StatId::water_flat_damage;
++    case DamageType::lightning: return StatId::lightning_flat_damage;
++    case DamageType::chaos: return StatId::chaos_flat_damage;
++    default: return StatId::fire_flat_damage;
++    }
++}
++
++StatId increased_stat(DamageType type) noexcept {
++    switch (type) {
++    case DamageType::fire: return StatId::fire_damage;
++    case DamageType::water: return StatId::water_damage;
++    case DamageType::lightning: return StatId::lightning_damage;
++    case DamageType::chaos: return StatId::chaos_damage;
++    default: return StatId::fire_damage;
++    }
++}
++
++StatId resistance_stat(DamageType type) noexcept {
++    switch (type) {
++    case DamageType::fire: return StatId::fire_resistance;
++    case DamageType::water: return StatId::water_resistance;
++    case DamageType::lightning: return StatId::lightning_resistance;
++    case DamageType::chaos: return StatId::chaos_resistance;
++    default: return StatId::fire_resistance;
++    }
++}
++
++void add_modifier(PassiveNode& node, StatId stat, ModifierOperation operation,
++    FixedValue value) noexcept {
++    const std::size_t index = node.modifier_count++;
++    node.modifiers[index] = Modifier{
++        static_cast<ModifierId>(1000U + node.id * 3U + index),
++        stat, operation, value};
++}
++
++void add_neighbor(PassiveNode& node, PassiveNodeId neighbor) noexcept {
++    node.neighbors[node.neighbor_count++] = neighbor;
++}
++
++void connect(std::array<PassiveNode, kPassiveNodeCount>& nodes,
++    PassiveNodeId left, PassiveNodeId right) noexcept {
++    add_neighbor(nodes[left], right);
++    add_neighbor(nodes[right], left);
++}
++
++void initialize_node(PassiveNode& node, PassiveNodeId id,
++    PassiveNodeType type, const char* name, std::int16_t x,
++    std::int16_t y) noexcept {
++    node = PassiveNode{};
++    node.id = id;
++    node.type = type;
++    node.name = name;
++    node.x = x;
++    node.y = y;
++}
++
++std::array<PassiveNode, kPassiveNodeCount> make_catalog() noexcept {
++    std::array<PassiveNode, kPassiveNodeCount> nodes{};
++    initialize_node(nodes[0], 0U, PassiveNodeType::start, "origin", 0, 0);
++    initialize_node(nodes[1], 1U, PassiveNodeType::small, "core_vitality", -90, -40);
++    initialize_node(nodes[2], 2U, PassiveNodeType::small, "core_guard", 0, -90);
++    initialize_node(nodes[3], 3U, PassiveNodeType::small, "core_strength", 90, -40);
++    initialize_node(nodes[4], 4U, PassiveNodeType::small, "core_cadence", 90, 40);
++    initialize_node(nodes[5], 5U, PassiveNodeType::small, "core_force", 0, 90);
++    initialize_node(nodes[6], 6U, PassiveNodeType::small, "core_stride", -90, 40);
++    initialize_node(nodes[7], 7U, PassiveNodeType::small, "core_aerial", -150, 0);
++    add_modifier(nodes[1], StatId::max_health, ModifierOperation::flat, 20 * kOne);
++    add_modifier(nodes[2], StatId::max_barrier, ModifierOperation::flat, 10 * kOne);
++    add_modifier(nodes[2], StatId::damage_taken, ModifierOperation::increased, -300);
++    add_modifier(nodes[3], StatId::melee_damage, ModifierOperation::increased, 600);
++    add_modifier(nodes[4], StatId::attack_speed, ModifierOperation::increased, 500);
++    add_modifier(nodes[5], StatId::impulse_scale, ModifierOperation::increased, 1000);
++    add_modifier(nodes[6], StatId::move_speed, ModifierOperation::increased, 600);
++    add_modifier(nodes[7], StatId::jump_speed, ModifierOperation::increased, 1000);
++    add_modifier(nodes[7], StatId::air_control, ModifierOperation::increased, 1000);
++
++    for (const auto& route : kRoutes) {
++        const PassiveNodeId base = static_cast<PassiveNodeId>(8U
++            + (&route - kRoutes) * 14U);
++        const auto index = static_cast<std::size_t>(&route - kRoutes);
++        const char* names[] = {"entry", "branch", "flat_a", "flat_b",
++            "damage_a", "res_a", "res_b", "damage_b", "melee",
++            "guard", "notable_damage", "notable_resistance",
++            "notable_vitality", "keystone"};
++        for (std::size_t offset = 0; offset < 14U; ++offset) {
++            const PassiveNodeType type = offset == 0U || offset == 1U
++                ? PassiveNodeType::connector
++                : offset == 10U || offset == 11U || offset == 12U
++                    ? PassiveNodeType::notable
++                    : offset == 13U ? PassiveNodeType::keystone
++                                    : PassiveNodeType::small;
++            const std::int16_t y = static_cast<std::int16_t>(
++                (static_cast<int>(offset % 3U) - 1) * 90);
++            initialize_node(nodes[base + offset],
++                static_cast<PassiveNodeId>(base + offset), type,
++                names[offset], route.x + static_cast<std::int16_t>(
++                    offset * (route.x < 0 ? 45 : -45)), y);
++        }
++        const char* keystone_name = index == 0U ? "cinder_vow"
++            : index == 1U ? "tide_bastion"
++            : index == 2U ? "stormstep" : "blood_pact";
++        nodes[base + 13U].name = keystone_name;
++        add_modifier(nodes[base + 2], flat_stat(route.damage),
++            ModifierOperation::flat, 3 * kOne);
++        add_modifier(nodes[base + 3], flat_stat(route.damage),
++            ModifierOperation::flat, 3 * kOne);
++        add_modifier(nodes[base + 4], increased_stat(route.damage),
++            ModifierOperation::increased, 800);
++        add_modifier(nodes[base + 5], resistance_stat(route.damage),
++            ModifierOperation::flat, 700);
++        add_modifier(nodes[base + 6], resistance_stat(route.damage),
++            ModifierOperation::flat, 700);
++        add_modifier(nodes[base + 7], increased_stat(route.damage),
++            ModifierOperation::increased, 800);
++        add_modifier(nodes[base + 8], StatId::melee_damage,
++            ModifierOperation::increased, 400);
++        add_modifier(nodes[base + 9], StatId::damage_taken,
++            ModifierOperation::increased, -200);
++        add_modifier(nodes[base + 10], flat_stat(route.damage),
++            ModifierOperation::flat, 8 * kOne);
++        add_modifier(nodes[base + 10], increased_stat(route.damage),
++            ModifierOperation::increased, 1500);
++        add_modifier(nodes[base + 11], resistance_stat(route.damage),
++            ModifierOperation::flat, 1500);
++        add_modifier(nodes[base + 11], StatId::max_barrier,
++            ModifierOperation::flat, 8 * kOne);
++        add_modifier(nodes[base + 12], StatId::max_health,
++            ModifierOperation::flat, 12 * kOne);
++        add_modifier(nodes[base + 12], StatId::move_speed,
++            ModifierOperation::increased, 300);
++
++        if (index == 0U) {
++            add_modifier(nodes[base + 13], StatId::fire_damage,
++                ModifierOperation::more, 13000);
++            add_modifier(nodes[base + 13], StatId::water_resistance,
++                ModifierOperation::flat, -2000);
++        } else if (index == 1U) {
++            add_modifier(nodes[base + 13], StatId::water_damage,
++                ModifierOperation::more, 12500);
++            add_modifier(nodes[base + 13], StatId::max_barrier,
++                ModifierOperation::flat, 24 * kOne);
++            add_modifier(nodes[base + 13], StatId::melee_damage,
++                ModifierOperation::more, 8500);
++        } else if (index == 2U) {
++            add_modifier(nodes[base + 13], StatId::lightning_damage,
++                ModifierOperation::more, 12500);
++            add_modifier(nodes[base + 13], StatId::move_speed,
++                ModifierOperation::increased, 1200);
++            add_modifier(nodes[base + 13], StatId::attack_speed,
++                ModifierOperation::increased, 1200);
++            add_modifier(nodes[base + 13], StatId::max_health_more,
++                ModifierOperation::more, 8000);
++        } else {
++            add_modifier(nodes[base + 13], StatId::chaos_damage,
++                ModifierOperation::more, 13000);
++            add_modifier(nodes[base + 13], StatId::damage_taken,
++                ModifierOperation::more, 11500);
++        }
++    }
++
++    for (PassiveNodeId id = 1U; id <= 7U; ++id) connect(nodes, 0U, id);
++    for (const PassiveNodeId entry : {PassiveNodeId{8U}, PassiveNodeId{22U},
++        PassiveNodeId{36U}, PassiveNodeId{50U}}) connect(nodes, 0U, entry);
++    for (PassiveNodeId base : {PassiveNodeId{8U}, PassiveNodeId{22U},
++        PassiveNodeId{36U}, PassiveNodeId{50U}}) {
++        connect(nodes, base, static_cast<PassiveNodeId>(base + 1U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 1U),
++            static_cast<PassiveNodeId>(base + 2U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 2U),
++            static_cast<PassiveNodeId>(base + 3U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 3U),
++            static_cast<PassiveNodeId>(base + 4U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 4U),
++            static_cast<PassiveNodeId>(base + 10U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 10U),
++            static_cast<PassiveNodeId>(base + 13U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 1U),
++            static_cast<PassiveNodeId>(base + 5U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 5U),
++            static_cast<PassiveNodeId>(base + 6U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 6U),
++            static_cast<PassiveNodeId>(base + 7U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 7U),
++            static_cast<PassiveNodeId>(base + 11U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 1U),
++            static_cast<PassiveNodeId>(base + 8U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 8U),
++            static_cast<PassiveNodeId>(base + 9U));
++        connect(nodes, static_cast<PassiveNodeId>(base + 9U),
++            static_cast<PassiveNodeId>(base + 12U));
++    }
++    return nodes;
++}
++
++}  // namespace
++
++const std::array<PassiveNode, kPassiveNodeCount>& passive_nodes() noexcept {
++    static const std::array<PassiveNode, kPassiveNodeCount> nodes = make_catalog();
++    return nodes;
++}
++
++bool catalog_is_valid() noexcept {
++    const auto& nodes = passive_nodes();
++    std::array<bool, kPassiveNodeCount> visited{};
++    std::array<PassiveNodeId, kPassiveNodeCount> queue{};
++    std::array<bool, 2048U> modifier_seen{};
++    std::size_t modifier_count = 0U;
++    for (std::size_t index = 0; index < nodes.size(); ++index) {
++        const auto& node = nodes[index];
++        if (node.id != index || node.neighbor_count > kPassiveNeighborCapacity
++            || node.modifier_count > kPassiveModifierCapacity) return false;
++        for (std::size_t modifier = 0; modifier < node.modifier_count; ++modifier) {
++            const auto id = node.modifiers[modifier].id;
++            if (id != 1000U + node.id * 3U + modifier || id >= modifier_seen.size()
++                || modifier_seen[id]) return false;
++            modifier_seen[id] = true;
++            ++modifier_count;
++        }
++        for (std::size_t neighbor = 0; neighbor < node.neighbor_count; ++neighbor) {
++            const auto other = node.neighbors[neighbor];
++            if (other >= nodes.size() || other == node.id) return false;
++            for (std::size_t prior = 0; prior < neighbor; ++prior)
++                if (node.neighbors[prior] == other) return false;
++            bool reverse = false;
++            for (std::size_t candidate = 0; candidate < nodes[other].neighbor_count; ++candidate)
++                reverse = reverse || nodes[other].neighbors[candidate] == node.id;
++            if (!reverse) return false;
++        }
++    }
++    (void)modifier_count;
++    std::size_t queue_head = 0U;
++    std::size_t queue_tail = 0U;
++    queue[queue_tail++] = 0U;
++    visited.fill(false);
++    visited[0] = true;
++    while (queue_head < queue_tail) {
++        const auto node = queue[queue_head++];
++        for (std::size_t index = 0; index < nodes[node].neighbor_count; ++index) {
++            const auto other = nodes[node].neighbors[index];
++            if (!visited[other]) { visited[other] = true; queue[queue_tail++] = other; }
++        }
++    }
++    for (const bool reachable : visited) if (!reachable) return false;
++    return true;
++}
++
++}  // namespace arpg::passives
+diff --git a/src/passives/passive_tree_catalog.hpp b/src/passives/passive_tree_catalog.hpp
+new file mode 100644
+index 0000000..b026fac
+--- /dev/null
++++ b/src/passives/passive_tree_catalog.hpp
+@@ -0,0 +1,13 @@
++#pragma once
++
++#include "passives/passive_tree_types.hpp"
++
++#include <array>
++
++namespace arpg::passives {
++
++[[nodiscard]] const std::array<PassiveNode, kPassiveNodeCount>&
++passive_nodes() noexcept;
++[[nodiscard]] bool catalog_is_valid() noexcept;
++
++}  // namespace arpg::passives
+diff --git a/src/passives/passive_tree_rules.cpp b/src/passives/passive_tree_rules.cpp
+new file mode 100644
+index 0000000..8d06e6f
+--- /dev/null
++++ b/src/passives/passive_tree_rules.cpp
+@@ -0,0 +1,127 @@
++#include "passives/passive_tree_rules.hpp"
++
++#include "modifiers/modifier_math.hpp"
++
++#include <array>
++
++namespace arpg::passives {
++namespace {
++
++bool allocated(PassiveTreeState state, PassiveNodeId node) noexcept {
++    return (state.allocated_bits & (std::uint64_t{1U} << node)) != 0U;
++}
++
++std::size_t count_bits(std::uint64_t value) noexcept {
++    std::size_t count = 0U;
++    while (value != 0U) { value &= value - 1U; ++count; }
++    return count;
++}
++
++bool connected(PassiveTreeState state) noexcept {
++    const auto& nodes = passive_nodes();
++    std::array<bool, kPassiveNodeCount> visited{};
++    std::array<PassiveNodeId, kPassiveNodeCount> queue{};
++    std::size_t head = 0U;
++    std::size_t tail = 0U;
++    queue[tail++] = 0U;
++    visited[0] = true;
++    while (head < tail) {
++        const auto node = queue[head++];
++        for (std::size_t index = 0; index < nodes[node].neighbor_count; ++index) {
++            const auto neighbor = nodes[node].neighbors[index];
++            if (allocated(state, neighbor) && !visited[neighbor]) {
++                visited[neighbor] = true;
++                queue[tail++] = neighbor;
++            }
++        }
++    }
++    for (PassiveNodeId node = 0U; node < kPassiveNodeCount; ++node)
++        if (allocated(state, node) && !visited[node]) return false;
++    return true;
++}
++
++PassiveTreeResult result_snapshot(const PassiveTreeState& state,
++    const progression::ProgressionState& progression,
++    PassiveTreeError error, bool changed) noexcept {
++    return {state, progression, error, changed};
++}
++
++bool adjacent_to_allocated(const PassiveTreeState& state,
++    const PassiveNode& node) noexcept {
++    for (std::size_t index = 0; index < node.neighbor_count; ++index)
++        if (allocated(state, node.neighbors[index])) return true;
++    return false;
++}
++
++}  // namespace
++
++bool valid_passive_tree_state(const PassiveTreeState& state,
++    const progression::ProgressionState& progression) noexcept {
++    if ((state.allocated_bits & 1U) == 0U) return false;
++    if (!catalog_is_valid() || !connected(state)) return false;
++    const std::size_t spent = count_bits(state.allocated_bits & ~std::uint64_t{1U});
++    return spent + progression.unspent_passive_points
++        == progression.earned_passive_points;
++}
++
++PassiveTreeResult allocate_node(PassiveTreeState& state,
++    progression::ProgressionState& progression, PassiveNodeId node) noexcept {
++    if (node >= kPassiveNodeCount)
++        return result_snapshot(state, progression, PassiveTreeError::unknown_node, false);
++    if (!valid_passive_tree_state(state, progression))
++        return result_snapshot(state, progression, PassiveTreeError::invalid_state, false);
++    const auto& definition = passive_nodes()[node];
++    if (allocated(state, node))
++        return result_snapshot(state, progression, PassiveTreeError::already_allocated, false);
++    if (progression.unspent_passive_points == 0U)
++        return result_snapshot(state, progression, PassiveTreeError::no_points, false);
++    if (!adjacent_to_allocated(state, definition))
++        return result_snapshot(state, progression, PassiveTreeError::not_adjacent, false);
++    state.allocated_bits |= std::uint64_t{1U} << node;
++    --progression.unspent_passive_points;
++    return result_snapshot(state, progression, PassiveTreeError::none, true);
++}
++
++PassiveTreeResult refund_node(PassiveTreeState& state,
++    progression::ProgressionState& progression, PassiveNodeId node) noexcept {
++    if (node >= kPassiveNodeCount)
++        return result_snapshot(state, progression, PassiveTreeError::unknown_node, false);
++    if (!valid_passive_tree_state(state, progression))
++        return result_snapshot(state, progression, PassiveTreeError::invalid_state, false);
++    if (node == 0U || !allocated(state, node))
++        return result_snapshot(state, progression, PassiveTreeError::not_allocated, false);
++    state.allocated_bits &= ~(std::uint64_t{1U} << node);
++    if (!connected(state)) {
++        state.allocated_bits |= std::uint64_t{1U} << node;
++        return result_snapshot(state, progression, PassiveTreeError::disconnects_tree, false);
++    }
++    ++progression.unspent_passive_points;
++    return result_snapshot(state, progression, PassiveTreeError::none, true);
++}
++
++modifiers::PlayerModifierValues evaluate_passive_tree(
++    const PassiveTreeState& state) noexcept {
++    if ((state.allocated_bits & 1U) == 0U || !connected(state)) {
++        modifiers::PlayerModifierValues invalid{};
++        invalid.valid = false;
++        return invalid;
++    }
++    std::array<modifiers::Modifier, 128U> modifiers{};
++    std::size_t count = 0U;
++    for (const auto& node : passive_nodes()) {
++        if (!allocated(state, node.id)) continue;
++        for (std::size_t index = 0; index < node.modifier_count; ++index) {
++            if (count >= modifiers.size()) {
++                modifiers::PlayerModifierValues invalid{};
++                invalid.valid = false;
++                return invalid;
++            }
++            modifiers[count++] = node.modifiers[index];
++        }
++    }
++    const auto result = modifiers::evaluate_player_modifiers(
++        modifiers::ModifierSpan{modifiers.data(), count});
++    return result;
++}
++
++}  // namespace arpg::passives
+diff --git a/src/passives/passive_tree_rules.hpp b/src/passives/passive_tree_rules.hpp
+new file mode 100644
+index 0000000..1bdb99e
+--- /dev/null
++++ b/src/passives/passive_tree_rules.hpp
+@@ -0,0 +1,25 @@
++#pragma once
++
++#include "modifiers/player_modifier_values.hpp"
++#include "passives/passive_tree_catalog.hpp"
++
++namespace arpg::passives {
++
++[[nodiscard]] bool valid_passive_tree_state(
++    const PassiveTreeState& state,
++    const progression::ProgressionState& progression) noexcept;
++
++[[nodiscard]] PassiveTreeResult allocate_node(
++    PassiveTreeState& state,
++    progression::ProgressionState& progression,
++    PassiveNodeId node) noexcept;
++
++[[nodiscard]] PassiveTreeResult refund_node(
++    PassiveTreeState& state,
++    progression::ProgressionState& progression,
++    PassiveNodeId node) noexcept;
++
++[[nodiscard]] modifiers::PlayerModifierValues evaluate_passive_tree(
++    const PassiveTreeState& state) noexcept;
++
++}  // namespace arpg::passives
+diff --git a/src/passives/passive_tree_types.hpp b/src/passives/passive_tree_types.hpp
+new file mode 100644
+index 0000000..9290a6c
+--- /dev/null
++++ b/src/passives/passive_tree_types.hpp
+@@ -0,0 +1,59 @@
++#pragma once
++
++#include "modifiers/modifier_types.hpp"
++#include "progression/progression_types.hpp"
++
++#include <array>
++#include <cstdint>
++
++namespace arpg::passives {
++
++inline constexpr std::size_t kPassiveNodeCount = 64U;
++inline constexpr std::size_t kPassiveNeighborCapacity = 12U;
++inline constexpr std::size_t kPassiveModifierCapacity = 4U;
++
++using PassiveNodeId = std::uint8_t;
++
++struct PassiveTreeState final {
++    std::uint64_t allocated_bits{1U};
++};
++
++enum class PassiveNodeType : std::uint8_t {
++    start,
++    small,
++    notable,
++    keystone,
++    connector,
++};
++
++enum class PassiveTreeError : std::uint8_t {
++    none,
++    unknown_node,
++    already_allocated,
++    not_allocated,
++    no_points,
++    not_adjacent,
++    disconnects_tree,
++    invalid_state,
++};
++
++struct PassiveTreeResult final {
++    PassiveTreeState state{};
++    progression::ProgressionState progression{};
++    PassiveTreeError error{PassiveTreeError::none};
++    bool changed{};
++};
++
++struct PassiveNode final {
++    PassiveNodeId id{};
++    PassiveNodeType type{};
++    const char* name{};
++    std::int16_t x{};
++    std::int16_t y{};
++    std::array<PassiveNodeId, kPassiveNeighborCapacity> neighbors{};
++    std::uint8_t neighbor_count{};
++    std::array<modifiers::Modifier, kPassiveModifierCapacity> modifiers{};
++    std::uint8_t modifier_count{};
++};
++
++}  // namespace arpg::passives
+diff --git a/tests/passives/CMakeLists.txt b/tests/passives/CMakeLists.txt
+new file mode 100644
+index 0000000..ebc2e75
+--- /dev/null
++++ b/tests/passives/CMakeLists.txt
+@@ -0,0 +1,14 @@
++add_executable(arpg_passive_tests
++    passive_test_main.cpp
++    passive_tree_catalog_tests.cpp
++    passive_tree_rules_tests.cpp)
++
++target_include_directories(arpg_passive_tests PRIVATE
++    "${PROJECT_SOURCE_DIR}/tests/core"
++    "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_passive_tests PRIVATE cxx_std_17)
++target_link_libraries(arpg_passive_tests PRIVATE arpg_passives)
++arpg_enable_project_warnings(arpg_passive_tests)
++
++add_test(NAME passives.units COMMAND arpg_passive_tests)
++set_tests_properties(passives.units PROPERTIES LABELS "headless;passives")
+diff --git a/tests/passives/passive_test_main.cpp b/tests/passives/passive_test_main.cpp
+new file mode 100644
+index 0000000..27c4b38
+--- /dev/null
++++ b/tests/passives/passive_test_main.cpp
+@@ -0,0 +1,10 @@
++#include "test_framework.hpp"
++
++arpg::test::TestSuite passive_tree_catalog_suite() noexcept;
++arpg::test::TestSuite passive_tree_rules_suite() noexcept;
++
++int main() {
++    const arpg::test::TestSuite suites[] = {
++        passive_tree_catalog_suite(), passive_tree_rules_suite()};
++    return arpg::test::run_suites(suites, 9, "stage 7 task 2");
++}
+diff --git a/tests/passives/passive_tree_catalog_tests.cpp b/tests/passives/passive_tree_catalog_tests.cpp
+new file mode 100644
+index 0000000..2ecc88c
+--- /dev/null
++++ b/tests/passives/passive_tree_catalog_tests.cpp
+@@ -0,0 +1,198 @@
++#include "test_framework.hpp"
++
++#include "passives/passive_tree_catalog.hpp"
++
++#include <array>
++#include <string>
++
++namespace {
++
++using namespace arpg::passives;
++using arpg::modifiers::ModifierOperation;
++using arpg::modifiers::StatId;
++
++arpg::test::Failure catalog_has_exact_stable_shape() noexcept {
++    const auto& nodes = passive_nodes();
++    ARPG_REQUIRE(nodes.size() == 64U);
++    ARPG_REQUIRE(nodes[0].id == 0U && nodes[0].type == PassiveNodeType::start);
++    ARPG_REQUIRE(nodes[8].type == PassiveNodeType::connector);
++    ARPG_REQUIRE(nodes[21].type == PassiveNodeType::keystone);
++    ARPG_REQUIRE(nodes[63].type == PassiveNodeType::keystone);
++    ARPG_REQUIRE(catalog_is_valid());
++    ARPG_REQUIRE(nodes[0].neighbor_count == 11U);
++    for (PassiveNodeId id = 1U; id <= 7U; ++id)
++        ARPG_REQUIRE(nodes[0].neighbors[id - 1U] == id);
++    ARPG_REQUIRE(nodes[0].neighbors[7] == 8U);
++    ARPG_REQUIRE(nodes[0].neighbors[8] == 22U);
++    ARPG_REQUIRE(nodes[0].neighbors[9] == 36U);
++    ARPG_REQUIRE(nodes[0].neighbors[10] == 50U);
++    const auto& expected_route_entries = std::array<PassiveNodeId, 4>{8U, 22U, 36U, 50U};
++    for (const auto entry : expected_route_entries) {
++        ARPG_REQUIRE(nodes[entry].type == PassiveNodeType::connector);
++        ARPG_REQUIRE(nodes[entry].neighbor_count == 2U);
++        ARPG_REQUIRE(nodes[entry].neighbors[0] == 0U);
++        ARPG_REQUIRE(nodes[entry].neighbors[1] == entry + 1U);
++    }
++    const std::array<std::array<PassiveNodeId, 4>, 14> expected_neighbors{{
++        {{0U, 1U, 0U, 0U}}, {{0U, 2U, 5U, 8U}}, {{1U, 3U, 0U, 0U}},
++        {{2U, 4U, 0U, 0U}}, {{3U, 10U, 0U, 0U}}, {{1U, 6U, 0U, 0U}},
++        {{5U, 7U, 0U, 0U}}, {{6U, 11U, 0U, 0U}}, {{1U, 9U, 0U, 0U}},
++        {{8U, 12U, 0U, 0U}}, {{4U, 13U, 0U, 0U}}, {{7U, 0U, 0U, 0U}},
++        {{9U, 0U, 0U, 0U}}, {{10U, 0U, 0U, 0U}}}};
++    const std::array<std::uint8_t, 14> expected_neighbor_counts{{2U, 4U, 2U,
++        2U, 2U, 2U, 2U, 2U, 2U, 2U, 2U, 1U, 1U, 1U}};
++    const char* central_names[] = {"origin", "core_vitality", "core_guard",
++        "core_strength", "core_cadence", "core_force", "core_stride", "core_aerial"};
++    for (std::size_t id = 0; id < 8U; ++id) {
++        ARPG_REQUIRE(std::string(nodes[id].name) == central_names[id]);
++        if (id != 0U) {
++            ARPG_REQUIRE(nodes[id].neighbor_count == 1U);
++            ARPG_REQUIRE(nodes[id].neighbors[0] == 0U);
++        }
++    }
++    const char* keystone_names[] = {"cinder_vow", "tide_bastion", "stormstep", "blood_pact"};
++    for (std::size_t route = 0; route < 4U; ++route) {
++        const PassiveNodeId base = expected_route_entries[route];
++        ARPG_REQUIRE(std::string(nodes[base + 13U].name) == keystone_names[route]);
++        for (std::size_t offset = 0; offset < 14U; ++offset) {
++            const auto& node = nodes[base + offset];
++            const auto expected_type = offset < 2U ? PassiveNodeType::connector
++                : offset >= 10U && offset <= 12U ? PassiveNodeType::notable
++                : offset == 13U ? PassiveNodeType::keystone : PassiveNodeType::small;
++            ARPG_REQUIRE(node.type == expected_type);
++            ARPG_REQUIRE(node.neighbor_count == expected_neighbor_counts[offset]);
++            for (std::size_t edge = 0; edge < node.neighbor_count; ++edge) {
++                const PassiveNodeId expected = static_cast<PassiveNodeId>(base
++                    + expected_neighbors[offset][edge]);
++                const PassiveNodeId adjusted = expected_neighbors[offset][edge] == 0U
++                    ? (offset == 0U ? 0U : base) : expected;
++                ARPG_REQUIRE(node.neighbors[edge] == adjusted);
++            }
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure catalog_has_symmetric_route_edges() noexcept {
++    const auto& nodes = passive_nodes();
++    for (const auto& node : nodes) {
++        for (std::size_t index = 0; index < node.neighbor_count; ++index) {
++            const auto neighbor = nodes[node.neighbors[index]];
++            bool found = false;
++            for (std::size_t reverse = 0; reverse < neighbor.neighbor_count; ++reverse) {
++                found = found || neighbor.neighbors[reverse] == node.id;
++            }
++            ARPG_REQUIRE(found);
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure central_and_keystone_modifiers_match_spec() noexcept {
++    const auto& nodes = passive_nodes();
++    ARPG_REQUIRE(nodes[1].modifiers[0].stat == StatId::max_health);
++    ARPG_REQUIRE(nodes[1].modifiers[0].value == 20 * arpg::modifiers::kFixedOne);
++    ARPG_REQUIRE(nodes[2].modifiers[0].stat == StatId::max_barrier);
++    ARPG_REQUIRE(nodes[2].modifiers[1].stat == StatId::damage_taken);
++    ARPG_REQUIRE(nodes[3].modifier_count == 1U);
++    ARPG_REQUIRE(nodes[3].modifiers[0].stat == StatId::melee_damage);
++    ARPG_REQUIRE(nodes[4].modifiers[0].stat == StatId::attack_speed);
++    ARPG_REQUIRE(nodes[5].modifiers[0].stat == StatId::impulse_scale);
++    ARPG_REQUIRE(nodes[6].modifiers[0].stat == StatId::move_speed);
++    ARPG_REQUIRE(nodes[7].modifier_count == 2U);
++    ARPG_REQUIRE(nodes[7].modifiers[0].stat == StatId::jump_speed);
++    ARPG_REQUIRE(nodes[7].modifiers[1].stat == StatId::air_control);
++    ARPG_REQUIRE(nodes[21].name != nullptr);
++    ARPG_REQUIRE(nodes[21].modifiers[0].stat == StatId::fire_damage);
++    ARPG_REQUIRE(nodes[21].modifiers[0].operation == ModifierOperation::more);
++    ARPG_REQUIRE(nodes[21].modifiers[0].value == 13000);
++    ARPG_REQUIRE(nodes[21].modifiers[1].stat == StatId::water_resistance);
++    ARPG_REQUIRE(nodes[21].modifiers[1].value == -2000);
++
++    const std::array<StatId, 4> flat_stats{{StatId::fire_flat_damage,
++        StatId::water_flat_damage, StatId::lightning_flat_damage,
++        StatId::chaos_flat_damage}};
++    const std::array<StatId, 4> damage_stats{{StatId::fire_damage,
++        StatId::water_damage, StatId::lightning_damage, StatId::chaos_damage}};
++    const std::array<StatId, 4> resistance_stats{{StatId::fire_resistance,
++        StatId::water_resistance, StatId::lightning_resistance,
++        StatId::chaos_resistance}};
++    const std::array<PassiveNodeId, 4> route_bases{{8U, 22U, 36U, 50U}};
++    for (std::size_t route = 0; route < route_bases.size(); ++route) {
++        const auto base = route_bases[route];
++        ARPG_REQUIRE(nodes[base + 2U].modifier_count == 1U);
++        ARPG_REQUIRE(nodes[base + 2U].modifiers[0].stat == flat_stats[route]);
++        ARPG_REQUIRE(nodes[base + 2U].modifiers[0].value == 3 * arpg::modifiers::kFixedOne);
++        ARPG_REQUIRE(nodes[base + 3U].modifiers[0].stat == flat_stats[route]);
++        ARPG_REQUIRE(nodes[base + 3U].modifiers[0].operation == ModifierOperation::flat);
++        ARPG_REQUIRE(nodes[base + 3U].modifiers[0].value == 3 * arpg::modifiers::kFixedOne);
++        ARPG_REQUIRE(nodes[base + 4U].modifiers[0].stat == damage_stats[route]);
++        ARPG_REQUIRE(nodes[base + 4U].modifiers[0].operation == ModifierOperation::increased);
++        ARPG_REQUIRE(nodes[base + 4U].modifiers[0].value == 800);
++        ARPG_REQUIRE(nodes[base + 5U].modifiers[0].stat == resistance_stats[route]);
++        ARPG_REQUIRE(nodes[base + 5U].modifiers[0].value == 700);
++        ARPG_REQUIRE(nodes[base + 6U].modifiers[0].stat == resistance_stats[route]);
++        ARPG_REQUIRE(nodes[base + 6U].modifiers[0].value == 700);
++        ARPG_REQUIRE(nodes[base + 7U].modifiers[0].stat == damage_stats[route]);
++        ARPG_REQUIRE(nodes[base + 7U].modifiers[0].value == 800);
++        ARPG_REQUIRE(nodes[base + 8U].modifiers[0].stat == StatId::melee_damage);
++        ARPG_REQUIRE(nodes[base + 8U].modifiers[0].value == 400);
++        ARPG_REQUIRE(nodes[base + 9U].modifiers[0].stat == StatId::damage_taken);
++        ARPG_REQUIRE(nodes[base + 9U].modifiers[0].value == -200);
++        ARPG_REQUIRE(nodes[base + 10U].modifier_count == 2U);
++        ARPG_REQUIRE(nodes[base + 10U].modifiers[0].stat == flat_stats[route]);
++        ARPG_REQUIRE(nodes[base + 10U].modifiers[0].value == 8 * arpg::modifiers::kFixedOne);
++        ARPG_REQUIRE(nodes[base + 10U].modifiers[1].stat == damage_stats[route]);
++        ARPG_REQUIRE(nodes[base + 10U].modifiers[1].value == 1500);
++        ARPG_REQUIRE(nodes[base + 11U].modifier_count == 2U);
++        ARPG_REQUIRE(nodes[base + 11U].modifiers[0].stat == resistance_stats[route]);
++        ARPG_REQUIRE(nodes[base + 11U].modifiers[0].value == 1500);
++        ARPG_REQUIRE(nodes[base + 11U].modifiers[1].stat == StatId::max_barrier);
++        ARPG_REQUIRE(nodes[base + 11U].modifiers[1].value == 8 * arpg::modifiers::kFixedOne);
++        ARPG_REQUIRE(nodes[base + 12U].modifiers[0].stat == StatId::max_health);
++        ARPG_REQUIRE(nodes[base + 12U].modifiers[0].value == 12 * arpg::modifiers::kFixedOne);
++        ARPG_REQUIRE(nodes[base + 12U].modifiers[1].stat == StatId::move_speed);
++        ARPG_REQUIRE(nodes[base + 12U].modifiers[1].value == 300);
++    }
++    ARPG_REQUIRE(nodes[35].modifiers[0].stat == StatId::water_damage);
++    ARPG_REQUIRE(nodes[35].modifiers[1].stat == StatId::max_barrier);
++    ARPG_REQUIRE(nodes[35].modifiers[2].stat == StatId::melee_damage);
++    ARPG_REQUIRE(nodes[49].modifier_count == 4U);
++    ARPG_REQUIRE(nodes[49].modifiers[0].stat == StatId::lightning_damage);
++    ARPG_REQUIRE(nodes[49].modifiers[1].stat == StatId::move_speed);
++    ARPG_REQUIRE(nodes[49].modifiers[2].stat == StatId::attack_speed);
++    ARPG_REQUIRE(nodes[49].modifiers[3].stat == StatId::max_health_more);
++    ARPG_REQUIRE(nodes[63].modifiers[0].stat == StatId::chaos_damage);
++    ARPG_REQUIRE(nodes[63].modifiers[1].stat == StatId::damage_taken);
++    return {};
++}
++
++arpg::test::Failure all_modifier_ids_are_stable_and_unique() noexcept {
++    const auto& nodes = passive_nodes();
++    std::array<std::uint32_t, 128> ids{};
++    std::size_t count = 0U;
++    for (const auto& node : nodes) {
++        for (std::size_t index = 0; index < node.modifier_count; ++index) {
++            const auto id = node.modifiers[index].id;
++            ARPG_REQUIRE(id == 1000U + node.id * 3U + index);
++            for (std::size_t prior = 0; prior < count; ++prior) {
++                ARPG_REQUIRE(ids[prior] != id);
++            }
++            ids[count++] = id;
++        }
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"catalog has exact stable shape", &catalog_has_exact_stable_shape},
++    {"catalog has symmetric route edges", &catalog_has_symmetric_route_edges},
++    {"central and keystone modifiers match spec", &central_and_keystone_modifiers_match_spec},
++    {"modifier ids are stable and unique", &all_modifier_ids_are_stable_and_unique},
++};
++
++}  // namespace
++
++arpg::test::TestSuite passive_tree_catalog_suite() noexcept {
++    return arpg::test::make_suite("passive_tree_catalog", kCases);
++}
+diff --git a/tests/passives/passive_tree_rules_tests.cpp b/tests/passives/passive_tree_rules_tests.cpp
+new file mode 100644
+index 0000000..3ab13e8
+--- /dev/null
++++ b/tests/passives/passive_tree_rules_tests.cpp
+@@ -0,0 +1,97 @@
++#include "test_framework.hpp"
++
++#include "passives/passive_tree_rules.hpp"
++
++namespace {
++
++using namespace arpg::passives;
++using arpg::progression::ProgressionState;
++
++arpg::test::Failure allocation_requires_adjacency_and_refund_keeps_connectivity() noexcept {
++    ProgressionState progress{10U, 0U, 9U, 9U};
++    PassiveTreeState state{};
++    ARPG_REQUIRE(!allocate_node(state, progress, 21U).changed);
++    ARPG_REQUIRE(allocate_node(state, progress, 8U).changed);
++    ARPG_REQUIRE(allocate_node(state, progress, 9U).changed);
++    ARPG_REQUIRE(allocate_node(state, progress, 10U).changed);
++    ARPG_REQUIRE(!refund_node(state, progress, 8U).changed);
++    ARPG_REQUIRE(refund_node(state, progress, 10U).changed);
++    ARPG_REQUIRE(progress.unspent_passive_points == 7U);
++    return {};
++}
++
++arpg::test::Failure duplicate_no_points_and_unknown_nodes_are_rejected() noexcept {
++    ProgressionState progress{1U, 0U, 1U, 1U};
++    PassiveTreeState state{};
++    ARPG_REQUIRE(allocate_node(state, progress, 8U).changed);
++    ARPG_REQUIRE(allocate_node(state, progress, 8U).error == PassiveTreeError::already_allocated);
++    ARPG_REQUIRE(allocate_node(state, progress, 9U).error == PassiveTreeError::no_points);
++    ARPG_REQUIRE(allocate_node(state, progress, 64U).error == PassiveTreeError::unknown_node);
++    return {};
++}
++
++arpg::test::Failure invalid_state_rejects_disconnected_bits() noexcept {
++    ProgressionState progress{10U, 0U, 9U, 0U};
++    PassiveTreeState state{};
++    state.allocated_bits = (std::uint64_t{1U} << 0U) | (std::uint64_t{1U} << 10U);
++    ARPG_REQUIRE(!valid_passive_tree_state(state, progress));
++    ARPG_REQUIRE(allocate_node(state, progress, 9U).error == PassiveTreeError::invalid_state);
++    return {};
++}
++
++arpg::test::Failure point_conservation_is_checked() noexcept {
++    ProgressionState progress{10U, 0U, 2U, 0U};
++    PassiveTreeState state{};
++    ARPG_REQUIRE(!valid_passive_tree_state(state, progress));
++    progress.unspent_passive_points = 2U;
++    ARPG_REQUIRE(valid_passive_tree_state(state, progress));
++    ARPG_REQUIRE(allocate_node(state, progress, 8U).changed);
++    ARPG_REQUIRE(progress.unspent_passive_points == 1U);
++    ARPG_REQUIRE(valid_passive_tree_state(state, progress));
++    return {};
++}
++
++arpg::test::Failure projection_is_deterministic_for_same_bitmap() noexcept {
++    PassiveTreeState state{};
++    ProgressionState progress{10U, 0U, 3U, 3U};
++    ARPG_REQUIRE(allocate_node(state, progress, 8U).changed);
++    ARPG_REQUIRE(allocate_node(state, progress, 9U).changed);
++    ARPG_REQUIRE(allocate_node(state, progress, 10U).changed);
++    const auto first = evaluate_passive_tree(state);
++    const auto second = evaluate_passive_tree(state);
++    ARPG_REQUIRE(first.valid && second.valid);
++    ARPG_REQUIRE(first.flat_damage == second.flat_damage);
++    ARPG_REQUIRE(first.damage_increased == second.damage_increased);
++    ARPG_REQUIRE(first.melee_damage == second.melee_damage);
++    ARPG_REQUIRE(first.flat_damage[arpg::modifiers::damage_index(
++        arpg::modifiers::DamageType::fire)] == 3 * arpg::modifiers::kFixedOne);
++    ARPG_REQUIRE(first.melee_damage == arpg::modifiers::kFixedOne);
++
++    const auto unallocated = evaluate_passive_tree(PassiveTreeState{});
++    ARPG_REQUIRE(unallocated.max_health_more == arpg::modifiers::kFixedOne);
++    PassiveTreeState stormstep{};
++    for (PassiveNodeId id = 36U; id <= 49U; ++id)
++        stormstep.allocated_bits |= std::uint64_t{1U} << id;
++    const auto storm_values = evaluate_passive_tree(stormstep);
++    ARPG_REQUIRE(storm_values.max_health_more == 8000);
++    PassiveTreeState vitality{};
++    vitality.allocated_bits |= std::uint64_t{1U} << 1U;
++    const auto vitality_values = evaluate_passive_tree(vitality);
++    ARPG_REQUIRE(vitality_values.max_health == 20 * arpg::modifiers::kFixedOne);
++    ARPG_REQUIRE(vitality_values.max_health_more == arpg::modifiers::kFixedOne);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"allocation requires adjacency and connected refund", &allocation_requires_adjacency_and_refund_keeps_connectivity},
++    {"duplicate no-points and unknown nodes are rejected", &duplicate_no_points_and_unknown_nodes_are_rejected},
++    {"invalid state rejects disconnected bits", &invalid_state_rejects_disconnected_bits},
++    {"point conservation is checked", &point_conservation_is_checked},
++    {"projection is deterministic", &projection_is_deterministic_for_same_bitmap},
++};
++
++}  // namespace
++
++arpg::test::TestSuite passive_tree_rules_suite() noexcept {
++    return arpg::test::make_suite("passive_tree_rules", kCases);
++}
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 47029df..723007a 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -816,25 +816,29 @@ if(_arpg_remaining_boundary_failures)
+         ${_arpg_remaining_boundary_failures})
+     message(FATAL_ERROR
+         "Remaining boundary detector self-tests failed: ${_arpg_remaining_boundary_failure_summary}")
+ endif()
+ 
+ arpg_assert_target_dependency_boundary(arpg_core)
+ arpg_assert_target_dependency_boundary(arpg_combat)
+ arpg_assert_target_dependency_boundary(arpg_dungeon)
+ arpg_assert_target_dependency_boundary(arpg_persistence)
+ arpg_assert_target_dependency_boundary(arpg_modifiers)
++arpg_assert_target_dependency_boundary(arpg_passives)
+ arpg_assert_target_not_reachable(arpg_combat arpg_dungeon)
+ arpg_assert_target_not_reachable(arpg_persistence arpg_dungeon)
+ arpg_assert_target_not_reachable(arpg_persistence arpg_combat)
+ arpg_assert_target_not_reachable(arpg_dungeon arpg_persistence)
+ arpg_assert_target_not_reachable(arpg_combat arpg_persistence)
++arpg_assert_target_not_reachable(arpg_passives arpg_combat)
++arpg_assert_target_not_reachable(arpg_passives arpg_dungeon)
++arpg_assert_target_not_reachable(arpg_passives arpg_persistence)
+ 
+ add_test(
+     NAME architecture.core_no_raylib
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/core"
+         "-DSOURCE_LABEL=Core"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+ set_tests_properties(
+     architecture.core_no_raylib
+     PROPERTIES LABELS "headless;architecture")
+@@ -882,20 +886,51 @@ set_tests_properties(
+ add_test(
+     NAME architecture.modifiers_no_raylib
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/modifiers"
+         "-DSOURCE_LABEL=Modifiers"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+ set_tests_properties(
+     architecture.modifiers_no_raylib
+     PROPERTIES LABELS "headless;architecture;modifiers")
+ 
++add_test(
++    NAME architecture.passives_no_raylib
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/passives"
++        "-DSOURCE_LABEL=Passives"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
++set_tests_properties(
++    architecture.passives_no_raylib
++    PROPERTIES LABELS "headless;architecture;passives")
++
++foreach(_arpg_passives_forbidden_module IN ITEMS combat dungeon persistence)
++    if(_arpg_passives_forbidden_module STREQUAL "combat")
++        set(_arpg_passives_forbidden_label "Combat")
++    elseif(_arpg_passives_forbidden_module STREQUAL "dungeon")
++        set(_arpg_passives_forbidden_label "Dungeon")
++    else()
++        set(_arpg_passives_forbidden_label "Persistence")
++    endif()
++    add_test(
++        NAME architecture.passives_no_${_arpg_passives_forbidden_module}
++        COMMAND "${CMAKE_COMMAND}"
++            "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/passives"
++            "-DSOURCE_LABEL=Passives"
++            "-DFORBIDDEN_MODULE=${_arpg_passives_forbidden_module}"
++            "-DFORBIDDEN_LABEL=${_arpg_passives_forbidden_label}"
++            -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
++    set_tests_properties(
++        architecture.passives_no_${_arpg_passives_forbidden_module}
++        PROPERTIES LABELS "headless;architecture;passives")
++endforeach()
++
+ foreach(_arpg_forbidden_module IN ITEMS combat dungeon progression persistence)
+     if(_arpg_forbidden_module STREQUAL "combat")
+         set(_arpg_forbidden_label "Combat")
+     elseif(_arpg_forbidden_module STREQUAL "dungeon")
+         set(_arpg_forbidden_label "Dungeon")
+     elseif(_arpg_forbidden_module STREQUAL "progression")
+         set(_arpg_forbidden_label "Progression")
+     else()
+         set(_arpg_forbidden_label "Persistence")
+     endif()
