@@ -1,0 +1,160 @@
+# Review package: 53056a976e9d0d6e02d22c40fb1bac7600dbab15..ec4560ef84f1b31f98d576de0ffa3f72fe1a3239
+
+## Commits
+ec4560e fix: isolate abyss environment hazard rendering
+
+## Files changed
+ src/platform/raylib/actor_renderer.cpp    |  1 +
+ src/platform/raylib/combat_view_math.cpp  |  6 ++++++
+ src/platform/raylib/combat_view_math.hpp  |  2 ++
+ tests/platform/combat_view_math_tests.cpp | 16 ++++++++++++++++
+ tests/platform/platform_test_main.cpp     |  2 +-
+ 5 files changed, 26 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index 636a153..e356550 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -93,20 +93,21 @@ void draw_effects(const CombatFeedback& feedback, float width, float height,
+         case VisualEffectKind::damage_number:
+             DrawText(TextFormat("%d", effect.value), static_cast<int>(projected.x + 8.0F),
+                 static_cast<int>(projected.y - 90.0F - progress * 32.0F), 20,
+                 Fade(Color{255, 238, 156, 255}, opacity)); break;
+         }
+     }
+ }
+ 
+ void draw_hazards(const CombatSnapshot& snapshot, float width, float height) noexcept {
+     for (const HazardSnapshot& hazard : snapshot.hazards) {
++        if (!uses_generic_hazard_pass(hazard)) continue;
+         const HazardVisualMode mode = hazard_visual_mode(hazard);
+         if (mode == HazardVisualMode::hidden) continue;
+         const ScreenProjection projected = project_hazard_center(hazard, width, height);
+         const float radius = std::max(9.0F, hazard.radius * 58.0F) * projected.scale;
+         const Color color = to_color(hazard_color(hazard.kind));
+         const Color draw_color = mode == HazardVisualMode::telegraph
+             ? Fade(color, 0.82F) : color;
+         if (mode == HazardVisualMode::active) {
+             DrawEllipse(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
+                 radius, radius * 0.36F, draw_color);
+diff --git a/src/platform/raylib/combat_view_math.cpp b/src/platform/raylib/combat_view_math.cpp
+index 540eb2f..55dbbba 100644
+--- a/src/platform/raylib/combat_view_math.cpp
++++ b/src/platform/raylib/combat_view_math.cpp
+@@ -217,20 +217,26 @@ HazardVisualMode hazard_visual_mode(
+     const combat::HazardSnapshot& hazard) noexcept {
+     if (!hazard.active) {
+         return HazardVisualMode::hidden;
+     }
+     return hazard.telegraph_ticks != 0U
+         ? HazardVisualMode::telegraph
+         : hazard.active_ticks != 0U
+             ? HazardVisualMode::active : HazardVisualMode::hidden;
+ }
+ 
++bool uses_generic_hazard_pass(
++    const combat::HazardSnapshot& hazard) noexcept {
++    return hazard.active
++        && hazard.source == combat::HazardSource::monster;
++}
++
+ Rgba8 hazard_color(combat::HazardKind kind) noexcept {
+     switch (kind) {
+     case combat::HazardKind::native: return {190U, 73U, 229U, 150U};
+     case combat::HazardKind::burning: return {242U, 92U, 54U, 210U};
+     case combat::HazardKind::chain_lightning: return {255U, 218U, 72U, 210U};
+     case combat::HazardKind::death_blast: return {245U, 68U, 68U, 220U};
+     }
+     return {190U, 73U, 229U, 150U};
+ }
+ 
+diff --git a/src/platform/raylib/combat_view_math.hpp b/src/platform/raylib/combat_view_math.hpp
+index 03832b4..d5df3c6 100644
+--- a/src/platform/raylib/combat_view_math.hpp
++++ b/src/platform/raylib/combat_view_math.hpp
+@@ -89,20 +89,22 @@ void sort_actor_draw_items(
+ [[nodiscard]] float blink_affix_warning_actor_radius(
+     const combat::MonsterSnapshot& monster) noexcept;
+ [[nodiscard]] float blink_affix_warning_ground_radius(
+     const combat::MonsterSnapshot& monster) noexcept;
+ [[nodiscard]] bool monster_visible(
+     const combat::MonsterSnapshot& monster) noexcept;
+ [[nodiscard]] float player_hp_ratio(
+     const combat::PlayerSnapshot& player) noexcept;
+ [[nodiscard]] HazardVisualMode hazard_visual_mode(
+     const combat::HazardSnapshot& hazard) noexcept;
++[[nodiscard]] bool uses_generic_hazard_pass(
++    const combat::HazardSnapshot& hazard) noexcept;
+ [[nodiscard]] Rgba8 hazard_color(combat::HazardKind kind) noexcept;
+ [[nodiscard]] ScreenProjection project_projectile_position(
+     const combat::ProjectileSnapshot& projectile,
+     float width,
+     float height) noexcept;
+ [[nodiscard]] ScreenProjection project_hazard_center(
+     const combat::HazardSnapshot& hazard,
+     float width,
+     float height) noexcept;
+ 
+diff --git a/tests/platform/combat_view_math_tests.cpp b/tests/platform/combat_view_math_tests.cpp
+index e98d9c5..755998d 100644
+--- a/tests/platform/combat_view_math_tests.cpp
++++ b/tests/platform/combat_view_math_tests.cpp
+@@ -115,23 +115,39 @@ arpg::test::Failure render_layout_keeps_baseline_projection_and_hud_values() noe
+     ARPG_REQUIRE(normal.hud_line_step == 23);
+     ARPG_REQUIRE(normal.hud_debug_start_step == 25);
+     ARPG_REQUIRE(arpg::test::near(normal.hud_panel_height, 400.0, 1.0e-4));
+ 
+     const auto debug = arpg::platform::render_layout(true);
+     ARPG_REQUIRE(arpg::test::near(debug.hud_panel_height, 660.0, 1.0e-4));
+     ARPG_REQUIRE(arpg::platform::debug_overlay_start_y(265) == 290);
+     return {};
+ }
+ 
++arpg::test::Failure generic_hazard_pass_excludes_abyss_environment() noexcept {
++    arpg::combat::HazardSnapshot hazard{};
++    hazard.active = true;
++    hazard.source = arpg::combat::HazardSource::monster;
++    ARPG_REQUIRE(arpg::platform::uses_generic_hazard_pass(hazard));
++
++    hazard.source = arpg::combat::HazardSource::abyss_environment;
++    ARPG_REQUIRE(!arpg::platform::uses_generic_hazard_pass(hazard));
++
++    hazard.active = false;
++    hazard.source = arpg::combat::HazardSource::monster;
++    ARPG_REQUIRE(!arpg::platform::uses_generic_hazard_pass(hazard));
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"back and front projection", &back_and_front_projection_are_exact},
+     {"expanded room corners", &expanded_room_corners_remain_in_viewport},
+     {"Z-only actor offset", &z_only_offsets_actor_screen_y},
+     {"stable actor draw order", &actor_order_is_y_z_x_then_index},
+     {"render layout baseline", &render_layout_keeps_baseline_projection_and_hud_values},
++    {"generic hazard pass routing", &generic_hazard_pass_excludes_abyss_environment},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept {
+     return arpg::test::make_suite("combat_view_math", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 43ef355..64cab12 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -30,12 +30,12 @@ int main() {
+         monster_view_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         inventory_view_math_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 84, "stage 10 task 11 abyss visuals");
++    return arpg::test::run_suites(suites, 85, "stage 10 task 11 abyss visuals");
+ }

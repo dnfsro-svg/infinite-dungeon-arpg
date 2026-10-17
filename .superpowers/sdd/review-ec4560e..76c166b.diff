@@ -1,0 +1,2291 @@
+# Review package: ec4560ef84f1b31f98d576de0ffa3f72fe1a3239..76c166be8e9030318e6193d1b862f0ae6ebcfa47
+
+## Commits
+76c166b test: add formal stage 10 abyss validation
+
+## Files changed
+ src/platform/raylib/raylib_host.cpp                | 258 ++++++++-
+ src/platform/raylib/raylib_host.hpp                |  21 +
+ tests/dungeon/CMakeLists.txt                       |  62 +++
+ tests/dungeon/dungeon_abyss_stress_tests.cpp       | 441 ++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp                |  25 +-
+ tests/dungeon/stage10_evidence_guard_test.cmake    |  45 ++
+ tests/dungeon/stage10_formal_game_capture_test.ps1 |  56 ++
+ tests/dungeon/stage10_formal_game_validation.cpp   | 302 +++++++++++
+ tests/dungeon/stage10_validation_capture_test.ps1  |  44 ++
+ tests/dungeon/stage10_validation_fixture.cpp       | 580 +++++++++++++++++++++
+ tests/dungeon/stage10_validation_game.cpp          |  73 +++
+ 11 files changed, 1904 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 24943dc..824583e 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -9,20 +9,21 @@
+ #include "dungeon_view_math.hpp"
+ #include "inventory_renderer.hpp"
+ #include "passive_tree_renderer.hpp"
+ #include "passive_tree_view_math.hpp"
+ #include "persistence/save_paths.hpp"
+ #include "raylib_input.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <cstdint>
++#include <cmath>
+ #include <filesystem>
+ #include <string>
+ 
+ #if !defined(RAYLIB_VERSION_MAJOR) || !defined(RAYLIB_VERSION_MINOR) \
+     || !defined(RAYLIB_VERSION_PATCH)
+ #error "raylib version macros are unavailable"
+ #endif
+ 
+ static_assert(RAYLIB_VERSION_MAJOR == 6, "raylib 6.0.0 is required");
+ static_assert(RAYLIB_VERSION_MINOR == 0, "raylib 6.0.0 is required");
+@@ -97,20 +98,235 @@ void export_screenshot(const char* path) noexcept {
+ void take_host_screenshot() noexcept {
+     try {
+         const std::string path = (std::filesystem::path{
+             GetApplicationDirectory()} / "stage8-equipment-loot.png").string();
+         export_screenshot(path.c_str());
+     } catch (...) {
+         TraceLog(LOG_WARNING, "failed to construct screenshot path");
+     }
+ }
+ 
++struct Stage10ValidationState final {
++    bool entered_abyss{};
++    bool reset_requested{};
++    bool descent_warning_seen{};
++    std::uint32_t chaos_presented_frames{};
++};
++
++const combat::MonsterSnapshot* nearest_living_monster(
++    const combat::CombatSnapshot& state) noexcept {
++    const combat::MonsterSnapshot* best = nullptr;
++    float best_distance = 0.0F;
++    for (const combat::MonsterSnapshot& monster : state.monsters) {
++        if (!monster.active || monster.hp <= 0) continue;
++        const float x = monster.position.x - state.player.position.x;
++        const float y = monster.position.y - state.player.position.y;
++        const float distance = x * x + y * y;
++        if (best == nullptr || distance < best_distance) {
++            best = &monster;
++            best_distance = distance;
++        }
++    }
++    return best;
++}
++
++combat::MovementInput validation_movement_toward(
++    combat::Vec3 from, combat::Vec3 to) noexcept {
++    combat::MovementInput movement{};
++    if (to.x - from.x > 0.45F) movement.x = 1;
++    else if (to.x - from.x < -0.45F) movement.x = -1;
++    if (to.y - from.y > 0.25F) movement.y = 1;
++    else if (to.y - from.y < -0.25F) movement.y = -1;
++    return movement;
++}
++
++combat::Vec3 validation_door_position(
++    dungeon::ExitDirection direction) noexcept {
++    switch (direction) {
++    case dungeon::ExitDirection::up: return {0.0F, -5.5F, 0.0F};
++    case dungeon::ExitDirection::down: return {0.0F, 5.5F, 0.0F};
++    case dungeon::ExitDirection::left: return {-12.0F, 0.0F, 0.0F};
++    case dungeon::ExitDirection::right: return {12.0F, 0.0F, 0.0F};
++    case dungeon::ExitDirection::none: return {};
++    }
++    return {};
++}
++
++combat::MovementInput validation_exit_movement(
++    combat::Vec3 player,
++    dungeon::ExitDirection direction) noexcept {
++    combat::MovementInput movement = validation_movement_toward(
++        player, validation_door_position(direction));
++    switch (direction) {
++    case dungeon::ExitDirection::up: movement.y = -1; break;
++    case dungeon::ExitDirection::down: movement.y = 1; break;
++    case dungeon::ExitDirection::left: movement.x = -1; break;
++    case dungeon::ExitDirection::right: movement.x = 1; break;
++    case dungeon::ExitDirection::none: break;
++    }
++    return movement;
++}
++
++bool validation_attack_lane(
++    const combat::CombatSnapshot& state,
++    const combat::MonsterSnapshot& target) noexcept {
++    const float x = target.position.x - state.player.position.x;
++    const float y = target.position.y - state.player.position.y;
++    const bool facing = std::fabs(x) <= 0.20F
++        || (x > 0.0F && state.player.facing == combat::Facing::right)
++        || (x < 0.0F && state.player.facing == combat::Facing::left);
++    return facing && std::fabs(x) <= 1.70F && std::fabs(y) <= 0.55F;
++}
++
++dungeon::ExitDirection validation_direction(
++    const RaylibHostConfig& config) noexcept {
++    return config.validation_abyss_direction < 4U
++        ? static_cast<dungeon::ExitDirection>(
++            config.validation_abyss_direction)
++        : dungeon::ExitDirection::none;
++}
++
++combat::MovementInput stage10_validation_input(
++    dungeon::DungeonSession& session,
++    const dungeon::DungeonSnapshot& snapshot,
++    const RaylibHostConfig& config,
++    Stage10ValidationState& state) noexcept {
++    const Stage10ValidationScenario scenario = config.stage10_validation;
++    state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
++    if (scenario == Stage10ValidationScenario::room_reset
++            && snapshot.is_abyss
++            && snapshot.phase == dungeon::RoomPhase::combat
++            && !state.reset_requested) {
++        state.reset_requested = session.reset_current_room()
++            != dungeon::RequestResult::rejected;
++        return {};
++    }
++    if (scenario == Stage10ValidationScenario::player_death
++            && snapshot.is_abyss) {
++        return {};
++    }
++    if (!snapshot.combat.has_value()) return {};
++    if (snapshot.phase == dungeon::RoomPhase::combat) {
++        const auto* const target = nearest_living_monster(*snapshot.combat);
++        if (target == nullptr) return {};
++        if (scenario == Stage10ValidationScenario::abyss_hole_descent
++                && snapshot.is_abyss && snapshot.remaining_targets == 1U) {
++            const auto& monster = target->position;
++            const float x = monster.x - kHoleCenter.x;
++            const float y = monster.y - kHoleCenter.y;
++            if (x * x + y * y > 1.44F) {
++                return validation_movement_toward(
++                    snapshot.combat->player.position, kHoleCenter);
++            }
++        }
++        const auto movement = validation_movement_toward(
++            snapshot.combat->player.position, target->position);
++        if (snapshot.combat->player.hurt_ticks == 0U
++                && snapshot.combat->player.active_attack
++                    == combat::AttackId::none
++                && snapshot.combat->diagnostics.input_size == 0U
++                && validation_attack_lane(*snapshot.combat, *target)) {
++            static_cast<void>(session.queue_action(combat::Action::light));
++        }
++        return movement;
++    }
++    if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
++    if (!snapshot.is_abyss) {
++        return validation_exit_movement(snapshot.combat->player.position,
++            validation_direction(config));
++    }
++    if (scenario == Stage10ValidationScenario::exit_confirmation) {
++        return snapshot.abyss_exit_confirmation_armed
++            ? combat::MovementInput{}
++            : validation_exit_movement(snapshot.combat->player.position,
++                dungeon::ExitDirection::right);
++    }
++    if (scenario == Stage10ValidationScenario::abyss_hole_descent) {
++        state.descent_warning_seen = state.descent_warning_seen
++            || snapshot.abyss_exit_confirmation_armed;
++        const combat::MovementInput movement = validation_movement_toward(
++            snapshot.combat->player.position, kHoleCenter);
++        if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
++            static_cast<void>(session.request_descent(true));
++        }
++        return movement;
++    }
++    return {};
++}
++
++bool has_environment_visual(
++    const dungeon::DungeonSnapshot& snapshot,
++    combat::HazardKind kind,
++    bool require_warning) noexcept {
++    if (!snapshot.combat.has_value()) return false;
++    for (std::size_t index = 0U;
++         index < snapshot.combat->hazard_count; ++index) {
++        const combat::HazardSnapshot& hazard = snapshot.combat->hazards[index];
++        if (hazard.active
++                && hazard.source == combat::HazardSource::abyss_environment
++                && hazard.kind == kind
++                && (!require_warning || hazard.telegraph_ticks != 0U)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++bool stage10_validation_reached(
++    const dungeon::DungeonSnapshot& snapshot,
++    const RaylibHostConfig& config,
++    const Stage10ValidationState& state) noexcept {
++    switch (config.stage10_validation) {
++    case Stage10ValidationScenario::none:
++        return false;
++    case Stage10ValidationScenario::abyss_door: {
++        const auto direction = validation_direction(config);
++        const std::size_t index = static_cast<std::size_t>(direction);
++        return !snapshot.is_abyss
++            && snapshot.phase == dungeon::RoomPhase::awaiting_exit
++            && index < snapshot.abyss_doors.size()
++            && snapshot.abyss_doors[index];
++    }
++    case Stage10ValidationScenario::thunderstorm_warning:
++        return snapshot.abyss_rule == abyss::AbyssRuleId::thunderstorm
++            && has_environment_visual(snapshot,
++                combat::HazardKind::thunderstorm, true);
++    case Stage10ValidationScenario::hunting_flames_warning:
++        return snapshot.abyss_rule == abyss::AbyssRuleId::hunting_flames
++            && has_environment_visual(snapshot,
++                combat::HazardKind::hunting_flame, true);
++    case Stage10ValidationScenario::chaos_expansion:
++        return snapshot.abyss_rule == abyss::AbyssRuleId::chaos_expansion
++            && has_environment_visual(snapshot,
++                combat::HazardKind::chaos_expansion, false);
++    case Stage10ValidationScenario::reward_chest:
++        return snapshot.is_abyss && snapshot.ground_item_count != 0U;
++    case Stage10ValidationScenario::pending_reward:
++        return snapshot.is_abyss && snapshot.abyss_pending_rewards != 0U;
++    case Stage10ValidationScenario::exit_confirmation:
++        return snapshot.is_abyss
++            && snapshot.abyss_exit_confirmation_armed;
++    case Stage10ValidationScenario::player_death:
++    case Stage10ValidationScenario::room_reset:
++        return state.entered_abyss && !snapshot.is_abyss;
++    case Stage10ValidationScenario::leave_started:
++        return snapshot.is_abyss
++            && snapshot.phase == dungeon::RoomPhase::combat;
++    case Stage10ValidationScenario::restarted_failed:
++        return !snapshot.is_abyss && snapshot.room_index == 1U;
++    case Stage10ValidationScenario::abyss_hole_descent:
++        return state.entered_abyss && state.descent_warning_seen
++            && snapshot.depth > 1U;
++    }
++    return false;
++}
++
+ }  // namespace
+ 
+ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+     bool window_ready = false;
+     try {
+         const auto save_directory = config.save_directory.has_value()
+             ? config.save_directory : persistence::default_save_directory();
+         if (!save_directory.has_value()) {
+             return HostExitCode::save_initialization_failed;
+         }
+@@ -143,20 +359,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+         CombatFeedback feedback;
+         CombatAudio audio;
+         InventoryRenderer inventory;
+         const bool audio_ready = audio.initialize();
+         bool draw_debug = false;
+         bool passive_overlay_open = false;
+         bool exit_requested = false;
+         std::uint32_t presented_frame_count = 0U;
+         unsigned validation_capture_tick = 0U;
+         unsigned validation_capture_count = 0U;
++        Stage10ValidationState stage10_validation_state{};
++        bool stage10_validation_captured = false;
+         const std::string validation_capture_prefix = config.validation_capture
+             ? (*save_directory / "stage8-validation-").string()
+             : std::string{};
+         const auto capture_validation_frame = [&]() noexcept {
+             if (!config.validation_capture
+                     || validation_capture_count >= 2000U
+                     || ++validation_capture_tick < 60U) {
+                 return;
+             }
+             validation_capture_tick = 0U;
+@@ -302,61 +520,99 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             }
+ 
+             const combat::MovementInput movement = forward_movement
+                 ? sample_movement_input() : combat::MovementInput{};
+             const float frame_seconds = GetFrameTime();
+             feedback.update(frame_seconds);
+             renderer.update(frame_seconds);
+             core::FixedStepFrame frame{};
+             if (!inventory.is_open() && !inventory_toggled_this_frame) {
+                 frame = fixed_step.advance(static_cast<double>(frame_seconds));
++                if (config.stage10_validation
++                            != Stage10ValidationScenario::none
++                        && config.validation_steps_per_frame != 0U) {
++                    frame.steps = config.validation_steps_per_frame;
++                    frame.interpolation_alpha = 0.0;
++                }
+             } else {
+                 previous = current;
+             }
+             for (std::uint32_t step = 0; step < frame.steps; ++step) {
+                 previous = current;
+-                session->tick(movement);
++                const combat::MovementInput step_movement =
++                    config.stage10_validation
++                            == Stage10ValidationScenario::none
++                        ? movement
++                        : stage10_validation_input(*session, current,
++                            config, stage10_validation_state);
++                session->tick(step_movement);
+                 runtime.service_pending_save();
+                 current = session->snapshot();
+                 if (!passive_tree_can_open(current)) {
+                     passive_overlay_open = false;
+                 }
+                 if (runtime.state() != DungeonRuntimeState::running
+                     && inventory.is_open()) {
+                     inventory.close();
+                     fixed_step.clear_accumulator();
+                 }
+                 drain_events(*session, renderer, feedback, audio);
++                if (stage10_validation_reached(
++                        current, config, stage10_validation_state)) {
++                    break;
++                }
+             }
+ 
+             BeginDrawing();
+             ClearBackground(Color{13, 17, 27, 255});
+             renderer.draw(previous, current, runtime.render_status(),
+                 static_cast<float>(frame.interpolation_alpha), draw_debug,
+                 feedback, audio_ready);
+             if (passive_overlay_open) {
+                 draw_passive_tree_overlay(current, runtime.render_status());
+             }
+             if (inventory.is_open()) {
+                 inventory.draw(*session, current, runtime.render_status());
+             }
+             EndDrawing();
+             ++presented_frame_count;
++            const bool stage10_target_visible = stage10_validation_reached(
++                current, config, stage10_validation_state);
++            if (config.stage10_validation
++                    == Stage10ValidationScenario::chaos_expansion
++                    && stage10_target_visible) {
++                ++stage10_validation_state.chaos_presented_frames;
++            }
++            const bool stage10_reached = stage10_target_visible
++                && (config.stage10_validation
++                        != Stage10ValidationScenario::chaos_expansion
++                    || stage10_validation_state.chaos_presented_frames >= 16U);
++            if (stage10_reached && !stage10_validation_captured
++                    && config.validation_capture_file.has_value()) {
++                export_screenshot(
++                    config.validation_capture_file->string().c_str());
++                stage10_validation_captured = true;
++            }
+             capture_validation_frame();
+             if (frame_toggles.take_screenshot) {
+                 take_host_screenshot();
+             }
+             if (config.validation_exit_after_presented_frames != 0U
+                     && presented_frame_count
+                         >= config.validation_exit_after_presented_frames) {
+                 exit_requested = true;
+             }
++            if (stage10_reached
++                    && (!config.validation_capture_file.has_value()
++                        || stage10_validation_captured)) {
++                exit_requested = true;
++            }
+         }
+         audio.shutdown();
+         CloseWindow();
+         return HostExitCode::success;
+     } catch (...) {
+         if (window_ready) {
+             CloseWindow();
+         }
+         return HostExitCode::save_initialization_failed;
+     }
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index fc1d6dd..d540f48 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -1,26 +1,47 @@
+ #pragma once
+ 
+ #include <cstdint>
+ #include <filesystem>
+ #include <optional>
+ 
+ namespace arpg::platform {
+ 
++enum class Stage10ValidationScenario : std::uint8_t {
++    none,
++    abyss_door,
++    thunderstorm_warning,
++    hunting_flames_warning,
++    chaos_expansion,
++    reward_chest,
++    pending_reward,
++    exit_confirmation,
++    player_death,
++    room_reset,
++    leave_started,
++    restarted_failed,
++    abyss_hole_descent,
++};
++
+ struct RaylibHostConfig final {
+     int window_width{1280};
+     int window_height{720};
+     const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
+     std::optional<std::filesystem::path> save_directory{};
+     std::optional<std::uint64_t> new_run_seed{};
+     bool validation_capture{};
+     std::uint32_t validation_exit_after_presented_frames{};
++    Stage10ValidationScenario stage10_validation{
++        Stage10ValidationScenario::none};
++    std::uint8_t validation_abyss_direction{0xFFU};
++    std::uint32_t validation_steps_per_frame{};
++    std::optional<std::filesystem::path> validation_capture_file{};
+ };
+ 
+ enum class HostExitCode : int {
+     success = 0,
+     window_initialization_failed = 1,
+     invalid_arguments = 2,
+     save_initialization_failed = 3,
+ };
+ 
+ [[nodiscard]] HostExitCode run_raylib_host(
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 56fe3fe..0fa428d 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -6,20 +6,21 @@ add_executable(arpg_dungeon_tests
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+     dungeon_transaction_tests.cpp
+     dungeon_abyss_reward_tests.cpp
++    dungeon_abyss_stress_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_progression_reward_tests.cpp
+     dungeon_affix_reward_tests.cpp
+     dungeon_affix_stress_tests.cpp)
+ 
+ target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_dungeon_tests
+     PRIVATE
+@@ -43,20 +44,33 @@ target_compile_features(arpg_stage9_validation_fixture PRIVATE cxx_std_17)
+ target_include_directories(arpg_stage9_validation_fixture
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
+ target_link_libraries(arpg_stage9_validation_fixture PRIVATE arpg_dungeon arpg_persistence)
+ arpg_enable_project_warnings(arpg_stage9_validation_fixture)
+ 
+ add_test(NAME stage9.validation_fixture.real_v4_reward_reload
+     COMMAND arpg_stage9_validation_fixture)
+ set_tests_properties(stage9.validation_fixture.real_v4_reward_reload PROPERTIES
+     LABELS "headless;dungeon;stage9;validation")
+ 
++add_executable(arpg_stage10_validation_fixture
++    stage10_validation_fixture.cpp)
++target_compile_features(arpg_stage10_validation_fixture PRIVATE cxx_std_17)
++target_link_libraries(arpg_stage10_validation_fixture
++    PRIVATE arpg_dungeon arpg_persistence)
++arpg_enable_project_warnings(arpg_stage10_validation_fixture)
++
++add_test(NAME stage10.validation_fixture.real_abyss_transactions
++    COMMAND arpg_stage10_validation_fixture)
++set_tests_properties(stage10.validation_fixture.real_abyss_transactions PROPERTIES
++    LABELS "headless;dungeon;stage10;validation"
++    TIMEOUT 30)
++
+ add_test(NAME stage9.evidence.no_injected_defeat_trace
+     COMMAND ${CMAKE_COMMAND}
+         -DTRACE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_affix_stress_tests.cpp
+         -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage9_validation_fixture.cpp
+         -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+         -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage9_evidence_guard_test.cmake)
+ set_tests_properties(stage9.evidence.no_injected_defeat_trace PROPERTIES
+     LABELS "headless;dungeon;stage9;evidence")
+ 
+@@ -72,37 +86,85 @@ if(TARGET arpg_raylib)
+     target_compile_features(arpg_stage9_validation_game PRIVATE cxx_std_17)
+     target_link_libraries(arpg_stage9_validation_game PRIVATE arpg_raylib)
+     arpg_enable_project_warnings(arpg_stage9_validation_game)
+ 
+     add_executable(arpg_stage9_formal_game_validation
+         stage9_formal_game_validation.cpp)
+     target_compile_features(arpg_stage9_formal_game_validation PRIVATE cxx_std_17)
+     target_link_libraries(arpg_stage9_formal_game_validation PRIVATE arpg_raylib)
+     arpg_enable_project_warnings(arpg_stage9_formal_game_validation)
+ 
++    add_executable(arpg_stage10_validation_game
++        stage10_validation_game.cpp)
++    target_compile_features(arpg_stage10_validation_game PRIVATE cxx_std_17)
++    target_link_libraries(arpg_stage10_validation_game PRIVATE arpg_raylib)
++    arpg_enable_project_warnings(arpg_stage10_validation_game)
++
++    add_executable(arpg_stage10_formal_game_validation
++        stage10_formal_game_validation.cpp)
++    target_compile_features(arpg_stage10_formal_game_validation PRIVATE cxx_std_17)
++    target_link_libraries(arpg_stage10_formal_game_validation
++        PRIVATE arpg_raylib arpg_persistence)
++    arpg_enable_project_warnings(arpg_stage10_formal_game_validation)
++
+     add_test(NAME stage9.validation_game.capture_after_present
+         COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+             -File "${CMAKE_CURRENT_SOURCE_DIR}/stage9_validation_capture_test.ps1"
+             -Executable "$<TARGET_FILE:arpg_stage9_validation_game>"
+             -CapturePath "$<TARGET_FILE_DIR:arpg_stage9_validation_game>/stage9-validation-capture.png")
+     set_tests_properties(stage9.validation_game.capture_after_present PROPERTIES
+         LABELS "graphics;stage9;validation"
+         TIMEOUT 5)
+ 
+     add_test(NAME stage9.formal_game.capture_after_present
+         COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+             -File "${CMAKE_CURRENT_SOURCE_DIR}/stage9_formal_game_capture_test.ps1"
+             -Executable "$<TARGET_FILE:arpg_stage9_formal_game_validation>"
+             -CapturePath "$<TARGET_FILE_DIR:arpg_stage9_formal_game_validation>/stage9-formal-game-validation/stage8-validation-001.png")
+     set_tests_properties(stage9.formal_game.capture_after_present PROPERTIES
+         LABELS "graphics;stage9;validation;formal-game"
+         TIMEOUT 15)
++
++    add_test(NAME stage10.validation_game.capture_after_present
++        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
++            -File "${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1"
++            -Executable "$<TARGET_FILE:arpg_stage10_validation_game>"
++            -CapturePath "$<TARGET_FILE_DIR:arpg_stage10_validation_game>/stage10-validation-capture.png")
++    set_tests_properties(stage10.validation_game.capture_after_present PROPERTIES
++        LABELS "graphics;stage10;validation"
++        TIMEOUT 60)
++
++    add_test(NAME stage10.formal_game.capture_after_present
++        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
++            -File "${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1"
++            -Executable "$<TARGET_FILE:arpg_stage10_formal_game_validation>"
++            -EvidenceDirectory "$<TARGET_FILE_DIR:arpg_stage10_formal_game_validation>/stage10-formal-game-validation")
++    set_tests_properties(stage10.formal_game.capture_after_present PROPERTIES
++        LABELS "graphics;stage10;validation;formal-game"
++        TIMEOUT 180)
+ endif()
+ 
+ if(WIN32)
+     add_executable(arpg_stage8_validation_input
+         stage8_validation_input.cpp)
+     target_compile_features(arpg_stage8_validation_input PRIVATE cxx_std_17)
+     target_link_libraries(arpg_stage8_validation_input PRIVATE user32)
+     arpg_enable_project_warnings(arpg_stage8_validation_input)
+ endif()
+ set_tests_properties(dungeon.units PROPERTIES LABELS "headless;dungeon")
++
++add_test(NAME stage10.abyss_stress.determinism_and_zero_alloc
++    COMMAND arpg_dungeon_tests)
++set_tests_properties(stage10.abyss_stress.determinism_and_zero_alloc PROPERTIES
++    LABELS "headless;dungeon;stage10;stress"
++    ENVIRONMENT "ARPG_STAGE10_ABYSS_STRESS_ONLY=1"
++    TIMEOUT 240)
++
++add_test(NAME stage10.evidence.no_private_injection
++    COMMAND ${CMAKE_COMMAND}
++        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_fixture.cpp
++        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
++        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
++        -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
++        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
++set_tests_properties(stage10.evidence.no_private_injection PROPERTIES
++    LABELS "headless;dungeon;stage10;evidence")
+diff --git a/tests/dungeon/dungeon_abyss_stress_tests.cpp b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+new file mode 100644
+index 0000000..5267cbd
+--- /dev/null
++++ b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+@@ -0,0 +1,441 @@
++#include "test_framework.hpp"
++
++#include "allocation_probe.hpp"
++#include "combat_test_support.hpp"
++
++#include "abyss/abyss_rewards.hpp"
++#include "abyss/abyss_rules.hpp"
++#include "combat/combat_world.hpp"
++#include "dungeon/abyss_reward.hpp"
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/encounter_director.hpp"
++#include "dungeon/room_generation.hpp"
++#include "persistence/checkpoint_codec.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <memory>
++
++namespace {
++
++namespace checkpoint = arpg::dungeon::checkpoint;
++
++constexpr std::uint64_t kRootSeed = 0xA8B550001000CAFEULL;
++constexpr std::size_t kRoomCount = 1000U;
++constexpr std::array<checkpoint::ExitDirection, 4> kRoute{{
++    checkpoint::ExitDirection::up,
++    checkpoint::ExitDirection::right,
++    checkpoint::ExitDirection::down,
++    checkpoint::ExitDirection::left,
++}};
++
++struct RewardTrace final {
++    std::uint8_t ordinal{};
++    arpg::items::ItemSlot slot{arpg::items::ItemSlot::weapon};
++    arpg::items::ItemRarity rarity{arpg::items::ItemRarity::normal};
++    std::uint8_t item_level{};
++    std::uint64_t item_seed{};
++    std::uint64_t item_id{};
++
++    friend bool operator==(const RewardTrace& lhs,
++        const RewardTrace& rhs) noexcept {
++        return lhs.ordinal == rhs.ordinal && lhs.slot == rhs.slot
++            && lhs.rarity == rhs.rarity
++            && lhs.item_level == rhs.item_level
++            && lhs.item_seed == rhs.item_seed && lhs.item_id == rhs.item_id;
++    }
++};
++
++struct ResolutionTrace final {
++    bool valid{};
++    std::uint64_t room_seed{};
++    arpg::abyss::AbyssRuleId rule{arpg::abyss::AbyssRuleId::none};
++    std::uint8_t total{};
++    std::uint8_t generated{};
++    std::uint8_t claimed{};
++    std::uint8_t abandoned{};
++
++    friend bool operator==(const ResolutionTrace& lhs,
++        const ResolutionTrace& rhs) noexcept {
++        return lhs.valid == rhs.valid && lhs.room_seed == rhs.room_seed
++            && lhs.rule == rhs.rule && lhs.total == rhs.total
++            && lhs.generated == rhs.generated && lhs.claimed == rhs.claimed
++            && lhs.abandoned == rhs.abandoned;
++    }
++};
++
++struct RoomTrace final {
++    std::array<bool, 4> door_preview{};
++    checkpoint::RoomDescriptor descriptor{};
++    arpg::abyss::AbyssLifecycle lifecycle{arpg::abyss::AbyssLifecycle::none};
++    arpg::abyss::AbyssDanger danger{arpg::abyss::AbyssDanger::low};
++    arpg::abyss::AbyssRuleId rule{arpg::abyss::AbyssRuleId::none};
++    std::uint32_t rules_version{};
++    arpg::dungeon::RoomEncounterPlan encounter{};
++    std::array<RewardTrace, 3> rewards{};
++    std::uint8_t reward_count{};
++    ResolutionTrace resolution{};
++};
++
++struct LongTrace final {
++    std::array<RoomTrace, kRoomCount> rooms{};
++    std::array<std::uint32_t, 4> door_trials{};
++    std::array<std::uint32_t, 4> door_hits{};
++    std::uint32_t reload_count{};
++    std::uint64_t hash{1469598103934665603ULL};
++    bool complete{};
++};
++
++bool same_descriptor(const checkpoint::RoomDescriptor& lhs,
++    const checkpoint::RoomDescriptor& rhs) noexcept {
++    return lhs.index == rhs.index && lhs.seed == rhs.seed
++        && lhs.depth == rhs.depth
++        && lhs.floor_room_index == rhs.floor_room_index
++        && lhs.entry == rhs.entry && lhs.ecology == rhs.ecology
++        && lhs.has_hole == rhs.has_hole && lhs.is_abyss == rhs.is_abyss;
++}
++
++bool same_encounter(const arpg::dungeon::RoomEncounterPlan& lhs,
++    const arpg::dungeon::RoomEncounterPlan& rhs) noexcept {
++    if (lhs.wave_count != rhs.wave_count
++            || lhs.total_budget != rhs.total_budget) return false;
++    for (std::size_t wave = 0U; wave < lhs.wave_count; ++wave) {
++        const auto& a = lhs.waves[wave];
++        const auto& b = rhs.waves[wave];
++        if (a.spawn_count != b.spawn_count
++                || a.spent_budget != b.spent_budget) return false;
++        for (std::size_t spawn = 0U; spawn < a.spawn_count; ++spawn) {
++            const auto& x = a.spawns[spawn];
++            const auto& y = b.spawns[spawn];
++            if (x.id != y.id || x.position.x != y.position.x
++                    || x.position.y != y.position.y
++                    || x.position.z != y.position.z
++                    || !(x.affixes == y.affixes)
++                    || x.spawn_ordinal != y.spawn_ordinal) return false;
++        }
++    }
++    return true;
++}
++
++bool same_room_trace(const RoomTrace& lhs, const RoomTrace& rhs) noexcept {
++    return lhs.door_preview == rhs.door_preview
++        && same_descriptor(lhs.descriptor, rhs.descriptor)
++        && lhs.lifecycle == rhs.lifecycle && lhs.danger == rhs.danger
++        && lhs.rule == rhs.rule && lhs.rules_version == rhs.rules_version
++        && same_encounter(lhs.encounter, rhs.encounter)
++        && lhs.rewards == rhs.rewards
++        && lhs.reward_count == rhs.reward_count
++        && lhs.resolution == rhs.resolution;
++}
++
++std::uint64_t fold(std::uint64_t hash, std::uint64_t value) noexcept {
++    return (hash ^ value) * 1099511628211ULL;
++}
++
++std::uint32_t float_bits(float value) noexcept {
++    std::uint32_t result{};
++    std::memcpy(&result, &value, sizeof(result));
++    return result;
++}
++
++void fold_room(LongTrace& trace, const RoomTrace& room) noexcept {
++    for (bool door : room.door_preview) trace.hash = fold(trace.hash, door);
++    trace.hash = fold(trace.hash, room.descriptor.index);
++    trace.hash = fold(trace.hash, room.descriptor.seed);
++    trace.hash = fold(trace.hash, room.descriptor.depth);
++    trace.hash = fold(trace.hash, room.descriptor.floor_room_index);
++    trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.descriptor.entry));
++    trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.descriptor.ecology));
++    trace.hash = fold(trace.hash, room.descriptor.has_hole);
++    trace.hash = fold(trace.hash, room.descriptor.is_abyss);
++    trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.lifecycle));
++    trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.danger));
++    trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.rule));
++    trace.hash = fold(trace.hash, room.rules_version);
++    trace.hash = fold(trace.hash, room.encounter.wave_count);
++    trace.hash = fold(trace.hash, room.encounter.total_budget);
++    for (std::size_t wave = 0U; wave < room.encounter.wave_count; ++wave) {
++        const auto& entries = room.encounter.waves[wave];
++        trace.hash = fold(trace.hash, entries.spawn_count);
++        trace.hash = fold(trace.hash, entries.spent_budget);
++        for (std::size_t spawn = 0U; spawn < entries.spawn_count; ++spawn) {
++            const auto& monster = entries.spawns[spawn];
++            trace.hash = fold(trace.hash, static_cast<std::uint8_t>(monster.id));
++            trace.hash = fold(trace.hash, monster.spawn_ordinal);
++            trace.hash = fold(trace.hash, float_bits(monster.position.x));
++            trace.hash = fold(trace.hash, float_bits(monster.position.y));
++            trace.hash = fold(trace.hash, float_bits(monster.position.z));
++            trace.hash = fold(trace.hash, monster.affixes.count);
++            for (std::size_t affix = 0U; affix < monster.affixes.count; ++affix) {
++                trace.hash = fold(trace.hash,
++                    static_cast<std::uint8_t>(monster.affixes.values[affix].id));
++                trace.hash = fold(trace.hash,
++                    static_cast<std::uint8_t>(monster.affixes.values[affix].tier));
++            }
++        }
++    }
++    trace.hash = fold(trace.hash, room.reward_count);
++    for (std::size_t index = 0U; index < room.reward_count; ++index) {
++        const RewardTrace& reward = room.rewards[index];
++        trace.hash = fold(trace.hash, reward.ordinal);
++        trace.hash = fold(trace.hash, static_cast<std::uint8_t>(reward.slot));
++        trace.hash = fold(trace.hash, static_cast<std::uint8_t>(reward.rarity));
++        trace.hash = fold(trace.hash, reward.item_level);
++        trace.hash = fold(trace.hash, reward.item_seed);
++        trace.hash = fold(trace.hash, reward.item_id);
++    }
++    trace.hash = fold(trace.hash, room.resolution.valid);
++    trace.hash = fold(trace.hash, room.resolution.room_seed);
++    trace.hash = fold(trace.hash,
++        static_cast<std::uint8_t>(room.resolution.rule));
++    trace.hash = fold(trace.hash, room.resolution.total);
++    trace.hash = fold(trace.hash, room.resolution.generated);
++    trace.hash = fold(trace.hash, room.resolution.claimed);
++    trace.hash = fold(trace.hash, room.resolution.abandoned);
++}
++
++bool encode_decode(checkpoint::DungeonRunState& state) noexcept {
++    const auto encoded = arpg::persistence::encode_checkpoint(state);
++    if (!encoded.has_value()) return false;
++    const auto decoded = arpg::persistence::decode_checkpoint(
++        encoded->data(), encoded->size());
++    if (decoded.error != arpg::persistence::CodecError::none
++            || !arpg::dungeon::same_run_state(state, decoded.state)) {
++        return false;
++    }
++    state = decoded.state;
++    return true;
++}
++
++bool generate_long_trace(LongTrace& trace) noexcept {
++    const arpg::dungeon::DungeonRules rules{};
++    auto initial = arpg::dungeon::make_initial_run_state(kRootSeed, rules);
++    if (initial.fault != arpg::dungeon::DungeonFault::none) return false;
++    checkpoint::DungeonRunState state = initial.state;
++
++    for (std::size_t room_index = 0U; room_index < kRoomCount; ++room_index) {
++        RoomTrace& room = trace.rooms[room_index];
++        room.door_preview = arpg::dungeon::preview_abyss_doors(
++            state.current_room);
++        for (std::size_t direction = 0U; direction < 4U; ++direction) {
++            ++trace.door_trials[direction];
++            if (room.door_preview[direction]) ++trace.door_hits[direction];
++        }
++
++        const checkpoint::ExitDirection direction =
++            kRoute[room_index % kRoute.size()];
++        const bool previewed = room.door_preview[
++            static_cast<std::size_t>(direction)];
++        auto next = arpg::dungeon::make_door_transition(state, direction, rules);
++        if (next.fault != arpg::dungeon::DungeonFault::none
++                || next.state.current_room.is_abyss != previewed) return false;
++        state = next.state;
++        room.descriptor = state.current_room;
++        room.lifecycle = state.abyss.lifecycle;
++        room.danger = state.abyss.danger;
++        room.rule = state.abyss.rule;
++        room.rules_version = state.abyss.rules_version;
++
++        const auto encounter = state.current_room.is_abyss
++            ? arpg::dungeon::build_abyss_encounter_plan(
++                state.current_room.seed, state.current_room.depth,
++                state.current_room.ecology, rules.encounter)
++            : arpg::dungeon::build_encounter_plan(
++                state.current_room.seed, state.current_room.depth,
++                state.current_room.ecology, rules.encounter);
++        if (encounter.fault != arpg::dungeon::DungeonFault::none) return false;
++        room.encounter = encounter.plan;
++
++        if (state.current_room.is_abyss) {
++            const auto selected = arpg::abyss::select_abyss_rule(
++                state.current_room.seed, state.current_room.depth);
++            if (!selected.has_value() || selected->danger != state.abyss.danger
++                    || selected->rule != state.abyss.rule
++                    || selected->rules_version != state.abyss.rules_version) {
++                return false;
++            }
++            const auto profile = arpg::abyss::reward_profile_for(
++                selected->danger, 1U);
++            if (profile.item_count == 0U
++                    || profile.item_count > room.rewards.size()) return false;
++            room.reward_count = profile.item_count;
++            for (std::uint8_t ordinal = 0U;
++                 ordinal < room.reward_count; ++ordinal) {
++                const auto reward = arpg::dungeon::derive_abyss_reward_slot(
++                    state.current_room.seed, selected->danger,
++                    1U, ordinal);
++                if (!reward.has_value()) return false;
++                room.rewards[ordinal] = {reward->slot_index,
++                    reward->item_slot, reward->rarity, reward->item_level,
++                    reward->item_seed, reward->item_id};
++            }
++            const std::uint8_t claimed = room.reward_count > 1U ? 1U : 0U;
++            room.resolution = {true, state.current_room.seed,
++                selected->rule, room.reward_count, claimed, claimed,
++                static_cast<std::uint8_t>(room.reward_count - claimed)};
++        }
++        fold_room(trace, room);
++
++        if ((room_index + 1U) % 37U == 0U) {
++            if (!encode_decode(state)) return false;
++            ++trace.reload_count;
++        }
++    }
++    trace.complete = true;
++    return true;
++}
++
++bool same_long_trace(const LongTrace& lhs, const LongTrace& rhs) noexcept {
++    if (lhs.door_trials != rhs.door_trials
++            || lhs.door_hits != rhs.door_hits
++            || lhs.reload_count != rhs.reload_count
++            || lhs.hash != rhs.hash || lhs.complete != rhs.complete) return false;
++    for (std::size_t room = 0U; room < kRoomCount; ++room) {
++        if (!same_room_trace(lhs.rooms[room], rhs.rooms[room])) return false;
++    }
++    return true;
++}
++
++arpg::combat::MonsterAffixSet extreme_affixes() noexcept {
++    arpg::combat::MonsterAffixSet result{};
++    result.values = {{
++        {arpg::combat::MonsterAffixId::multishot,
++            arpg::combat::MonsterAffixTier::m3},
++        {arpg::combat::MonsterAffixId::burning_ground,
++            arpg::combat::MonsterAffixTier::m3},
++        {arpg::combat::MonsterAffixId::chain_lightning,
++            arpg::combat::MonsterAffixTier::m3},
++    }};
++    result.count = 3U;
++    return result;
++}
++
++arpg::combat::CombatWorld make_extreme_world() noexcept {
++    arpg::combat::CombatEncounterConfig config{};
++    config.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::chaos_expansion);
++    config.wave.spawn_count = static_cast<std::uint8_t>(
++        arpg::combat::kMonsterCapacity);
++    for (std::size_t index = 0U; index < config.wave.spawn_count; ++index) {
++        config.wave.spawns[index] = {
++            arpg::combat::MonsterId::lightning_shooter,
++            {10.0F + static_cast<float>(index % 12U),
++             4.0F + static_cast<float>(index / 12U), 0.0F},
++            extreme_affixes(), static_cast<std::uint16_t>(index)};
++    }
++    return arpg::combat::CombatWorld{config};
++}
++
++std::array<arpg::dungeon::GroundItem,
++    arpg::dungeon::kGroundDropCapacity> make_full_ground_pool() noexcept {
++    std::array<arpg::dungeon::GroundItem,
++        arpg::dungeon::kGroundDropCapacity> result{};
++    for (std::size_t index = 0U; index < result.size(); ++index) {
++        arpg::items::ItemInstance item{};
++        item.id = 0xA800000000000000ULL + index + 1U;
++        item.item_level = 1U;
++        result[index] = {true, static_cast<std::uint16_t>(index),
++            arpg::dungeon::GroundItemSource::monster_drop, 0xFFU,
++            {100.0F + static_cast<float>(index), 100.0F, 0.0F}, item};
++    }
++    return result;
++}
++
++arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexcept {
++    auto first = std::make_unique<LongTrace>();
++    auto second = std::make_unique<LongTrace>();
++    ARPG_REQUIRE(generate_long_trace(*first));
++    ARPG_REQUIRE(generate_long_trace(*second));
++    ARPG_REQUIRE(first->complete && first->reload_count == 27U);
++    ARPG_REQUIRE(same_long_trace(*first, *second));
++
++    const std::uint32_t total_trials = first->door_trials[0]
++        + first->door_trials[1] + first->door_trials[2]
++        + first->door_trials[3];
++    const std::uint32_t total_hits = first->door_hits[0]
++        + first->door_hits[1] + first->door_hits[2] + first->door_hits[3];
++    std::printf("[stage10-abyss-stress] hits=%u/%u directions=%u/%u/%u/%u "
++        "reloads=%u hash=0x%016llx\n", total_hits, total_trials,
++        first->door_hits[0], first->door_hits[1], first->door_hits[2],
++        first->door_hits[3], first->reload_count,
++        static_cast<unsigned long long>(first->hash));
++
++    ARPG_REQUIRE(total_trials == 4000U);
++    ARPG_REQUIRE(total_hits >= 20U && total_hits <= 70U);
++    constexpr std::array<std::uint32_t, 4> kGoldenTrials{{
++        1000U, 1000U, 1000U, 1000U}};
++    constexpr std::array<std::uint32_t, 4> kGoldenHits{{12U, 6U, 5U, 8U}};
++    ARPG_REQUIRE(first->door_trials == kGoldenTrials);
++    ARPG_REQUIRE(first->door_hits == kGoldenHits);
++    ARPG_REQUIRE(first->hash == 0x51b4ebccf356d01bULL);
++    return {};
++}
++
++arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexcept {
++    arpg::combat::CombatWorld world = make_extreme_world();
++    auto ground = make_full_ground_pool();
++    const auto initial = world.snapshot();
++    ARPG_REQUIRE(initial.monster_count == arpg::combat::kMonsterCapacity);
++    const arpg::combat::MonsterHandle owner{
++        0U, initial.monsters[0].generation};
++    arpg::test::CombatWorldTestAccess::fill_projectiles(world, owner);
++    arpg::test::CombatWorldTestAccess::fill_hazards(world, owner);
++    const auto saturated = world.snapshot();
++    ARPG_REQUIRE(saturated.projectile_count
++        == arpg::combat::kProjectileCapacity);
++    ARPG_REQUIRE(saturated.hazard_count == arpg::combat::kHazardCapacity);
++    for (std::size_t index = 0U; index < ground.size(); ++index) {
++        ARPG_REQUIRE(ground[index].active);
++        ARPG_REQUIRE(ground[index].drop_ordinal == index);
++    }
++
++    const std::uint32_t projectile_saturation_before =
++        saturated.diagnostics.projectile_saturation_count;
++    const std::uint32_t hazard_saturation_before =
++        saturated.diagnostics.hazard_saturation_count;
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (int tick = 0; tick < 600; ++tick) world.tick({});
++    const std::uint64_t allocations = arpg::test::allocation_count() - before;
++    const auto after = world.snapshot();
++
++    ARPG_REQUIRE(allocations == 0U);
++    ARPG_REQUIRE(after.monster_count <= arpg::combat::kMonsterCapacity);
++    ARPG_REQUIRE(after.projectile_count
++        == arpg::combat::kProjectileCapacity);
++    ARPG_REQUIRE(after.hazard_count == arpg::combat::kHazardCapacity);
++    ARPG_REQUIRE(after.diagnostics.projectile_saturation_count
++        > projectile_saturation_before);
++    ARPG_REQUIRE(after.diagnostics.hazard_saturation_count
++        > hazard_saturation_before);
++    ARPG_REQUIRE(after.diagnostics.projectile_invalid_owner_count == 0U);
++    ARPG_REQUIRE(after.diagnostics.hazard_invalid_owner_count == 0U);
++    ARPG_REQUIRE(after.diagnostics.event_overflow_count == 0U);
++    for (std::size_t index = 0U; index < ground.size(); ++index) {
++        ARPG_REQUIRE(ground[index].active);
++        ARPG_REQUIRE(ground[index].item.id
++            == 0xA800000000000000ULL + index + 1U);
++    }
++    std::printf("[stage10-abyss-stress] ticks=600 allocations=%llu "
++        "pools=%zu/%zu/%zu saturation=%u/%u\n",
++        static_cast<unsigned long long>(allocations), after.monster_count,
++        after.projectile_count, after.hazard_count,
++        after.diagnostics.projectile_saturation_count,
++        after.diagnostics.hazard_saturation_count);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"1000 room abyss trace matches golden through reloads",
++        &thousand_room_abyss_trace_matches_golden_and_reload},
++    {"extreme abyss pools run 600 ticks without allocation",
++        &extreme_abyss_pools_run_600_ticks_without_allocation},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept {
++    return arpg::test::make_suite("dungeon_abyss_stress", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index c191619..3bd10e6 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -12,20 +12,21 @@ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
++arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
+ 
+ namespace {
+ 
+ bool stage9_affix_stress_only() noexcept {
+     char* value = nullptr;
+@@ -40,20 +41,30 @@ bool stage9_affix_stress_only() noexcept {
+ bool stage10_abyss_reward_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE10_ABYSS_REWARD_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool stage10_abyss_stress_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_STAGE10_ABYSS_STRESS_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ }  // namespace
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+@@ -65,20 +76,21 @@ int main() {
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_transaction_suite(),
+         dungeon_abyss_reward_suite(),
++        dungeon_abyss_stress_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+         dungeon_affix_stress_suite(),
+     };
+ 
+     if (stage9_affix_stress_only()) {
+         const arpg::test::TestSuite stress_only[] = {
+             dungeon_affix_stress_suite(),
+@@ -88,13 +100,22 @@ int main() {
+     }
+ 
+     if (stage10_abyss_reward_only()) {
+         const arpg::test::TestSuite reward_only[] = {
+             dungeon_abyss_reward_suite(),
+         };
+         return arpg::test::run_suites(reward_only, 27,
+             "stage 10 task 9 abyss rewards");
+     }
+ 
+-    return arpg::test::run_suites(suites, 197,
+-        "stage 10 task 9 deterministic abyss rewards");
++
++    if (stage10_abyss_stress_only()) {
++        const arpg::test::TestSuite stress_only[] = {
++            dungeon_abyss_stress_suite(),
++        };
++        return arpg::test::run_suites(stress_only, 2,
++            "stage 10 task 12 abyss stress");
++    }
++
++    return arpg::test::run_suites(suites, 199,
++        "stage 10 task 12 abyss stress validation");
+ }
+diff --git a/tests/dungeon/stage10_evidence_guard_test.cmake b/tests/dungeon/stage10_evidence_guard_test.cmake
+new file mode 100644
+index 0000000..c643272
+--- /dev/null
++++ b/tests/dungeon/stage10_evidence_guard_test.cmake
+@@ -0,0 +1,45 @@
++if(NOT DEFINED FIXTURE_SOURCE OR NOT DEFINED FORMAL_SOURCE
++        OR NOT DEFINED HOST_HEADER OR NOT DEFINED HOST_SOURCE)
++    message(FATAL_ERROR "Stage 10 evidence guard requires fixture, formal, and host sources")
++endif()
++
++file(READ "${FIXTURE_SOURCE}" fixture_source)
++file(READ "${FORMAL_SOURCE}" formal_source)
++file(READ "${HOST_HEADER}" host_header)
++file(READ "${HOST_SOURCE}" host_source)
++set(all_evidence "${fixture_source}\n${formal_source}\n${host_source}")
++
++foreach(forbidden
++        "DungeonSessionTestAccess"
++        "CombatWorldTestAccess"
++        "force_defeat"
++        "relay_defeated"
++        "defeat_monster\\("
++        "set_phase\\("
++        "stable_state_"
++        "phase_[ \\t]*="
++        "generated_mask[ \\t]*="
++        "claimed_mask[ \\t]*="
++        "abandoned_mask[ \\t]*=")
++    if(all_evidence MATCHES "${forbidden}")
++        message(FATAL_ERROR "Forbidden Stage 10 evidence injection: ${forbidden}")
++    endif()
++endforeach()
++
++if(NOT fixture_source MATCHES "SaveStore"
++        OR NOT fixture_source MATCHES "request_pickup"
++        OR NOT fixture_source MATCHES "MovementInput")
++    message(FATAL_ERROR "Stage 10 fixture must use SaveStore and public pickup/movement APIs")
++endif()
++if(NOT formal_source MATCHES "make_door_transition"
++        OR NOT formal_source MATCHES "run_raylib_host"
++        OR NOT host_source MATCHES "queue_action"
++        OR NOT host_source MATCHES "request_descent"
++        OR NOT host_source MATCHES "reset_current_room")
++    message(FATAL_ERROR "Formal Stage 10 evidence must use generation and normal host inputs")
++endif()
++if(NOT host_header MATCHES "validation_exit_after_presented_frames"
++        OR NOT host_source MATCHES "EndDrawing\\(\\)"
++        OR NOT host_source MATCHES "export_screenshot")
++    message(FATAL_ERROR "Stage 10 screenshots must come from a presented Raylib frame")
++endif()
+diff --git a/tests/dungeon/stage10_formal_game_capture_test.ps1 b/tests/dungeon/stage10_formal_game_capture_test.ps1
+new file mode 100644
+index 0000000..269199e
+--- /dev/null
++++ b/tests/dungeon/stage10_formal_game_capture_test.ps1
+@@ -0,0 +1,56 @@
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$Executable,
++    [Parameter(Mandatory = $true)]
++    [string]$EvidenceDirectory
++)
++
++$ErrorActionPreference = 'Stop'
++$started = [DateTime]::UtcNow
++& $Executable
++if ($LASTEXITCODE -ne 0) {
++    throw "Stage 10 formal game validation exited with code $LASTEXITCODE"
++}
++
++$names = @(
++    '01-abyss-door.png',
++    '02-thunderstorm-warning.png',
++    '03-hunting-flames-warning.png',
++    '04-chaos-expansion.png',
++    '05-reward-chest.png',
++    '06-pending-reward.png',
++    '07-exit-confirmation.png'
++)
++Add-Type -AssemblyName System.Drawing
++foreach ($name in $names) {
++    $path = Join-Path $EvidenceDirectory $name
++    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
++        throw "Missing formal Stage 10 capture: $path"
++    }
++    if ((Get-Item -LiteralPath $path).LastWriteTimeUtc -lt $started) {
++        throw "Formal Stage 10 capture is stale: $path"
++    }
++    $image = [System.Drawing.Bitmap]::new($path)
++    try {
++        if ($image.Width -ne 1280 -or $image.Height -ne 720) {
++            throw "Unexpected formal capture size: $path $($image.Width)x$($image.Height)"
++        }
++        $colors = [System.Collections.Generic.HashSet[int]]::new()
++        $nonBackground = 0
++        for ($y = 0; $y -lt $image.Height; $y += 16) {
++            for ($x = 0; $x -lt $image.Width; $x += 16) {
++                $pixel = $image.GetPixel($x, $y)
++                [void]$colors.Add(($pixel.R -shl 16) -bor ($pixel.G -shl 8) -bor $pixel.B)
++                if ($pixel.R -ne 13 -or $pixel.G -ne 17 -or $pixel.B -ne 27) {
++                    $nonBackground++
++                }
++            }
++        }
++        if ($colors.Count -lt 20 -or $nonBackground -lt 100) {
++            throw "Formal capture is blank: $path colors=$($colors.Count) non_background=$nonBackground"
++        }
++    } finally {
++        $image.Dispose()
++    }
++}
++Write-Output "stage10_formal_captures=PASS count=$($names.Count) directory=$EvidenceDirectory"
+diff --git a/tests/dungeon/stage10_formal_game_validation.cpp b/tests/dungeon/stage10_formal_game_validation.cpp
+new file mode 100644
+index 0000000..277737a
+--- /dev/null
++++ b/tests/dungeon/stage10_formal_game_validation.cpp
+@@ -0,0 +1,302 @@
++#include "abyss/abyss_rules.hpp"
++#include "combat/monster_catalog.hpp"
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/encounter_director.hpp"
++#include "dungeon/room_generation.hpp"
++#include "items/item_generation.hpp"
++#include "persistence/save_store.hpp"
++#include "raylib_host.hpp"
++
++#include <raylib.h>
++
++#include <array>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <optional>
++#include <string>
++#include <string_view>
++
++namespace {
++
++struct SelectedRun final {
++    std::uint64_t root{};
++    std::uint64_t target_seed{};
++    arpg::dungeon::ExitDirection direction{arpg::dungeon::ExitDirection::none};
++};
++
++std::optional<SelectedRun> find_run(
++    arpg::abyss::AbyssRuleId required_rule,
++    bool require_hole = false,
++    bool require_all_melee = false) noexcept {
++    constexpr std::array<arpg::dungeon::ExitDirection, 4> directions{{
++        arpg::dungeon::ExitDirection::up,
++        arpg::dungeon::ExitDirection::down,
++        arpg::dungeon::ExitDirection::left,
++        arpg::dungeon::ExitDirection::right,
++    }};
++    const arpg::dungeon::DungeonRules rules{};
++    for (std::uint64_t root = 1U; root < 500000U; ++root) {
++        const auto initial = arpg::dungeon::make_initial_run_state(root, rules);
++        if (initial.fault != arpg::dungeon::DungeonFault::none) continue;
++        const auto preview = arpg::dungeon::preview_abyss_doors(
++            initial.state.current_room);
++        for (std::size_t index = 0U; index < directions.size(); ++index) {
++            if (!preview[index]) continue;
++            const auto next = arpg::dungeon::make_door_transition(
++                initial.state, directions[index], rules);
++            if (next.fault == arpg::dungeon::DungeonFault::none
++                    && next.state.current_room.is_abyss
++                    && next.state.abyss.rule == required_rule
++                    && (!require_hole || next.state.current_room.has_hole)) {
++                if (require_all_melee) {
++                    const auto plan = arpg::dungeon::build_abyss_encounter_plan(
++                        next.state.current_room.seed,
++                        next.state.current_room.depth,
++                        next.state.current_room.ecology,
++                        rules.encounter);
++                    bool all_melee = plan.fault
++                        == arpg::dungeon::DungeonFault::none;
++                    for (std::size_t wave = 0U;
++                         all_melee && wave < plan.plan.wave_count; ++wave) {
++                        for (std::size_t spawn = 0U;
++                             spawn < plan.plan.waves[wave].spawn_count; ++spawn) {
++                            const auto* definition =
++                                arpg::combat::monster_definition(
++                                    plan.plan.waves[wave].spawns[spawn].id);
++                            all_melee = definition != nullptr
++                                && (definition->tags & static_cast<std::uint16_t>(
++                                    arpg::combat::MonsterTag::melee)) != 0U;
++                            if (!all_melee) break;
++                        }
++                    }
++                    if (!all_melee) continue;
++                }
++                return SelectedRun{root, next.state.current_room.seed,
++                    directions[index]};
++            }
++        }
++    }
++    return std::nullopt;
++}
++
++bool install_validation_build(arpg::dungeon::DungeonRunState& state) {
++    state.progression = {100U, 0U, 99U, 99U};
++    state.item_ownership = {};
++    state.item_ownership.items.reserve(6U);
++    for (std::uint8_t index = 0U; index < 6U; ++index) {
++        const std::uint64_t id = static_cast<std::uint64_t>(index) + 1U;
++        const auto item = arpg::items::generate_item({
++            0xA8100000ULL + index,
++            static_cast<arpg::items::ItemSlot>(index),
++            100U,
++            id,
++            arpg::items::ItemRarity::rare,
++        });
++        if (!item.has_value()) return false;
++        state.item_ownership.items.push_back(*item);
++        state.item_ownership.equipment.equipped_ids[index] = id;
++    }
++    state.item_ownership.next_item_sequence = 7U;
++    return true;
++}
++
++bool prepare_save(const std::filesystem::path& directory,
++    std::uint64_t root, bool geared) {
++    std::error_code error;
++    std::filesystem::remove_all(directory, error);
++    if (error) return false;
++    std::filesystem::create_directories(directory, error);
++    if (error) return false;
++    auto initial = arpg::dungeon::make_initial_run_state(
++        root, arpg::dungeon::DungeonRules{});
++    if (initial.fault != arpg::dungeon::DungeonFault::none
++            || (geared && !install_validation_build(initial.state))) {
++        return false;
++    }
++    arpg::persistence::SaveStore store({directory});
++    return store.commit(initial.state).state
++        == arpg::persistence::SaveCommitState::committed;
++}
++
++bool run_scenario(const std::filesystem::path& directory,
++    const SelectedRun& selected,
++    arpg::platform::Stage10ValidationScenario scenario,
++    const std::optional<std::filesystem::path>& capture = std::nullopt,
++    std::uint32_t maximum_frames = 1600U) noexcept {
++    arpg::platform::RaylibHostConfig config{};
++    config.window_title = "Infinite Dungeon - Stage 10 Formal Validation";
++    config.save_directory = directory;
++    config.new_run_seed = selected.root;
++    config.stage10_validation = scenario;
++    config.validation_abyss_direction = static_cast<std::uint8_t>(
++        selected.direction);
++    config.validation_steps_per_frame = 64U;
++    config.validation_exit_after_presented_frames = maximum_frames;
++    config.validation_capture_file = capture;
++    const auto result = arpg::platform::run_raylib_host(config);
++    return result == arpg::platform::HostExitCode::success
++        && (!capture.has_value()
++            || (std::filesystem::exists(*capture)
++                && std::filesystem::file_size(*capture) != 0U));
++}
++
++std::optional<arpg::dungeon::DungeonRunState> load_state(
++    const std::filesystem::path& directory) noexcept {
++    arpg::persistence::SaveStore store({directory});
++    auto loaded = store.load();
++    return loaded.state == arpg::persistence::SaveLoadState::ready
++        ? std::optional<arpg::dungeon::DungeonRunState>{
++            std::move(loaded.checkpoint)}
++        : std::nullopt;
++}
++
++bool failed_same_room(const std::filesystem::path& directory,
++    std::uint64_t target_seed) noexcept {
++    const auto state = load_state(directory);
++    return state.has_value()
++        && state->current_room.seed == target_seed
++        && !state->current_room.is_abyss
++        && state->abyss.lifecycle == arpg::abyss::AbyssLifecycle::failed;
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    if (argc < 1 || argv == nullptr || argv[0] == nullptr) return 2;
++    SetTraceLogLevel(LOG_WARNING);
++    const auto executable = std::filesystem::absolute(argv[0]);
++    const auto root_directory = executable.parent_path()
++        / "stage10-formal-game-validation";
++    std::error_code error;
++    std::filesystem::remove_all(root_directory, error);
++    if (error) return 3;
++    std::filesystem::create_directories(root_directory, error);
++    if (error) return 4;
++
++    const auto thunder = find_run(arpg::abyss::AbyssRuleId::thunderstorm);
++    const auto flames = find_run(arpg::abyss::AbyssRuleId::hunting_flames);
++    const auto chaos = find_run(arpg::abyss::AbyssRuleId::chaos_expansion);
++    const auto rewards = find_run(arpg::abyss::AbyssRuleId::life_sacrifice);
++    const auto hole = find_run(
++        arpg::abyss::AbyssRuleId::hunting_flames, true, true);
++    if (!thunder || !flames || !chaos || !rewards || !hole) return 5;
++
++    struct CaptureRun final {
++        const char* name{};
++        const SelectedRun* selected{};
++        arpg::platform::Stage10ValidationScenario scenario{};
++    };
++    const std::array<CaptureRun, 7> captures{{
++        {"01-abyss-door.png", &thunder.value(),
++            arpg::platform::Stage10ValidationScenario::abyss_door},
++        {"02-thunderstorm-warning.png", &thunder.value(),
++            arpg::platform::Stage10ValidationScenario::thunderstorm_warning},
++        {"03-hunting-flames-warning.png", &flames.value(),
++            arpg::platform::Stage10ValidationScenario::hunting_flames_warning},
++        {"04-chaos-expansion.png", &chaos.value(),
++            arpg::platform::Stage10ValidationScenario::chaos_expansion},
++        {"05-reward-chest.png", &rewards.value(),
++            arpg::platform::Stage10ValidationScenario::reward_chest},
++        {"06-pending-reward.png", &rewards.value(),
++            arpg::platform::Stage10ValidationScenario::pending_reward},
++        {"07-exit-confirmation.png", &rewards.value(),
++            arpg::platform::Stage10ValidationScenario::exit_confirmation},
++    }};
++    for (std::size_t index = 0U; index < captures.size(); ++index) {
++        const auto directory = root_directory
++            / ("capture-" + std::to_string(index + 1U));
++        if (!prepare_save(directory, captures[index].selected->root, true)
++                || !run_scenario(directory, *captures[index].selected,
++                    captures[index].scenario,
++                    root_directory / captures[index].name)) {
++            return static_cast<int>(10U + index);
++        }
++    }
++
++    const auto death_directory = root_directory / "path-death";
++    if (!prepare_save(death_directory, thunder->root, false)
++            || !run_scenario(death_directory, *thunder,
++                arpg::platform::Stage10ValidationScenario::player_death)
++            || !failed_same_room(death_directory, thunder->target_seed)) {
++        return 20;
++    }
++
++    const auto reset_directory = root_directory / "path-reset";
++    if (!prepare_save(reset_directory, rewards->root, true)
++            || !run_scenario(reset_directory, *rewards,
++                arpg::platform::Stage10ValidationScenario::room_reset)
++            || !failed_same_room(reset_directory, rewards->target_seed)) {
++        return 21;
++    }
++
++    const auto restart_directory = root_directory / "path-restart";
++    if (!prepare_save(restart_directory, rewards->root, true)
++            || !run_scenario(restart_directory, *rewards,
++                arpg::platform::Stage10ValidationScenario::leave_started)) {
++        return 22;
++    }
++    const auto started = load_state(restart_directory);
++    if (!started.has_value()
++            || started->abyss.lifecycle
++                != arpg::abyss::AbyssLifecycle::started
++            || !run_scenario(restart_directory, *rewards,
++                arpg::platform::Stage10ValidationScenario::restarted_failed)
++            || !failed_same_room(restart_directory, rewards->target_seed)) {
++        return 23;
++    }
++
++    const auto hole_directory = root_directory / "path-hole";
++    if (!prepare_save(hole_directory, hole->root, true)
++            || !run_scenario(hole_directory, *hole,
++                arpg::platform::Stage10ValidationScenario::abyss_hole_descent,
++                std::nullopt, 2400U)) {
++        return 24;
++    }
++    const auto descended = load_state(hole_directory);
++    if (!descended.has_value()) return 25;
++    {
++        std::ofstream summary(root_directory / "formal-path-summary.txt",
++            std::ios::trunc);
++        summary << "hole_room_seed=" << descended->current_room.seed
++                << " target_seed=" << hole->target_seed
++                << " depth=" << descended->current_room.depth
++                << " is_abyss=" << descended->current_room.is_abyss
++                << " lifecycle=" << static_cast<unsigned>(
++                    descended->abyss.lifecycle)
++                << " generated=" << static_cast<unsigned>(
++                    descended->abyss.generated_mask)
++                << " claimed=" << static_cast<unsigned>(
++                    descended->abyss.claimed_mask)
++                << " abandoned=" << static_cast<unsigned>(
++                    descended->abyss.abandoned_mask)
++                << " last_transition=" << static_cast<unsigned>(
++                    descended->last_transition)
++                << " resolution_valid="
++                << descended->last_abyss_resolution.valid
++                << " resolution_total=" << static_cast<unsigned>(
++                    descended->last_abyss_resolution.total)
++                << " resolution_generated=" << static_cast<unsigned>(
++                    descended->last_abyss_resolution.generated)
++                << " resolution_claimed=" << static_cast<unsigned>(
++                    descended->last_abyss_resolution.claimed)
++                << " resolution_abandoned=" << static_cast<unsigned>(
++                    descended->last_abyss_resolution.abandoned) << '\n';
++    }
++    if (descended->current_room.depth != 2U) return 26;
++    if (descended->last_transition
++            != arpg::dungeon::TransitionKind::descent) return 27;
++    if (!descended->last_abyss_resolution.valid
++            || descended->last_abyss_resolution.room_seed
++                != hole->target_seed
++            || descended->last_abyss_resolution.total == 0U
++            || descended->last_abyss_resolution.claimed
++                >= descended->last_abyss_resolution.total) {
++        return 28;
++    }
++
++    std::cout << "formal_captures=7 death=PASS reset=PASS restart=PASS "
++                 "abyss_hole_descent=PASS\n";
++    return 0;
++}
+diff --git a/tests/dungeon/stage10_validation_capture_test.ps1 b/tests/dungeon/stage10_validation_capture_test.ps1
+new file mode 100644
+index 0000000..ea29e96
+--- /dev/null
++++ b/tests/dungeon/stage10_validation_capture_test.ps1
+@@ -0,0 +1,44 @@
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$Executable,
++    [Parameter(Mandatory = $true)]
++    [string]$CapturePath
++)
++
++$ErrorActionPreference = 'Stop'
++Remove-Item -LiteralPath $CapturePath -Force -ErrorAction SilentlyContinue
++$started = [DateTime]::UtcNow
++& $Executable
++if ($LASTEXITCODE -ne 0) {
++    throw "Stage 10 validation game exited with code $LASTEXITCODE"
++}
++if (-not (Test-Path -LiteralPath $CapturePath -PathType Leaf)) {
++    throw "Stage 10 validation game did not produce $CapturePath"
++}
++if ((Get-Item -LiteralPath $CapturePath).LastWriteTimeUtc -lt $started) {
++    throw "Stage 10 capture is stale: $CapturePath"
++}
++
++Add-Type -AssemblyName System.Drawing
++$image = [System.Drawing.Bitmap]::new($CapturePath)
++try {
++    if ($image.Width -ne 1280 -or $image.Height -ne 720) {
++        throw "Unexpected Stage 10 capture size: $($image.Width)x$($image.Height)"
++    }
++    $colors = [System.Collections.Generic.HashSet[int]]::new()
++    $nonBackground = 0
++    for ($y = 0; $y -lt $image.Height; $y += 12) {
++        for ($x = 0; $x -lt $image.Width; $x += 12) {
++            $pixel = $image.GetPixel($x, $y)
++            [void]$colors.Add(($pixel.R -shl 16) -bor ($pixel.G -shl 8) -bor $pixel.B)
++            if ($pixel.R -ne 13 -or $pixel.G -ne 17 -or $pixel.B -ne 27) {
++                $nonBackground++
++            }
++        }
++    }
++    if ($colors.Count -lt 24 -or $nonBackground -lt 200) {
++        throw "Stage 10 capture is blank: colors=$($colors.Count) non_background=$nonBackground"
++    }
++} finally {
++    $image.Dispose()
++}
+diff --git a/tests/dungeon/stage10_validation_fixture.cpp b/tests/dungeon/stage10_validation_fixture.cpp
+new file mode 100644
+index 0000000..dd68cfe
+--- /dev/null
++++ b/tests/dungeon/stage10_validation_fixture.cpp
+@@ -0,0 +1,580 @@
++#include "abyss/abyss_rules.hpp"
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/dungeon_session.hpp"
++#include "dungeon/room_generation.hpp"
++#include "items/item_generation.hpp"
++#include "persistence/save_store.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++#include <filesystem>
++#include <iostream>
++#include <optional>
++
++namespace {
++
++using arpg::combat::Action;
++using arpg::combat::CombatSnapshot;
++using arpg::combat::MovementInput;
++using arpg::combat::MonsterSnapshot;
++using arpg::combat::Vec3;
++using arpg::dungeon::DungeonRules;
++using arpg::dungeon::DungeonRunState;
++using arpg::dungeon::DungeonSession;
++using arpg::dungeon::ExitDirection;
++using arpg::dungeon::PendingSaveKind;
++using arpg::dungeon::RequestResult;
++using arpg::dungeon::RoomPhase;
++
++struct AbyssEntry final {
++    DungeonRunState source{};
++    DungeonRunState target{};
++    ExitDirection direction{ExitDirection::none};
++};
++
++struct EnvironmentEvidence final {
++    int initial_hp{};
++    int minimum_hp{};
++    bool warning_seen{};
++    bool active_seen{};
++    bool active_damage_seen{};
++};
++
++DungeonRules validation_rules() noexcept {
++    return {};
++}
++
++bool install_validation_build(DungeonRunState& state) {
++    state.progression = {100U, 0U, 99U, 99U};
++    state.item_ownership = {};
++    state.item_ownership.items.reserve(6U);
++    for (std::uint8_t index = 0U; index < 6U; ++index) {
++        const std::uint64_t id = static_cast<std::uint64_t>(index) + 1U;
++        const auto item = arpg::items::generate_item({
++            0xA8100000ULL + index,
++            static_cast<arpg::items::ItemSlot>(index),
++            100U,
++            id,
++            arpg::items::ItemRarity::rare,
++        });
++        if (!item.has_value()) return false;
++        state.item_ownership.items.push_back(*item);
++        state.item_ownership.equipment.equipped_ids[index] = id;
++    }
++    state.item_ownership.next_item_sequence = 7U;
++    return true;
++}
++
++std::optional<AbyssEntry> find_entry(
++    arpg::abyss::AbyssRuleId required_rule) noexcept {
++    constexpr std::array<ExitDirection, 4> directions{{
++        ExitDirection::up, ExitDirection::down,
++        ExitDirection::left, ExitDirection::right,
++    }};
++    const DungeonRules rules = validation_rules();
++    for (std::uint64_t root = 1U; root < 200000U; ++root) {
++        const auto initial = arpg::dungeon::make_initial_run_state(root, rules);
++        if (initial.fault != arpg::dungeon::DungeonFault::none) continue;
++        const auto preview = arpg::dungeon::preview_abyss_doors(
++            initial.state.current_room);
++        for (std::size_t index = 0U; index < directions.size(); ++index) {
++            if (!preview[index]) continue;
++            const auto target = arpg::dungeon::make_door_transition(
++                initial.state, directions[index], rules);
++            if (target.fault == arpg::dungeon::DungeonFault::none
++                    && target.state.current_room.is_abyss
++                    && target.state.abyss.rule == required_rule) {
++                AbyssEntry result{initial.state, target.state, directions[index]};
++                if (!install_validation_build(result.target)) return std::nullopt;
++                return result;
++            }
++        }
++    }
++    return std::nullopt;
++}
++
++bool service_pending(DungeonSession& session,
++    arpg::persistence::SaveStore& store) noexcept {
++    const auto* const pending = session.pending_save_view();
++    if (pending == nullptr) return true;
++    auto committed = store.commit(pending->next_state);
++    arpg::dungeon::SaveDisposition disposition =
++        arpg::dungeon::SaveDisposition::indeterminate;
++    if (committed.state == arpg::persistence::SaveCommitState::committed) {
++        disposition = arpg::dungeon::SaveDisposition::committed;
++    } else if (committed.state
++            == arpg::persistence::SaveCommitState::not_committed) {
++        disposition = arpg::dungeon::SaveDisposition::not_committed;
++    }
++    session.resolve_pending_save({disposition,
++        committed.verified_state.commit_generation,
++        std::move(committed.verified_state)});
++    return disposition == arpg::dungeon::SaveDisposition::committed
++        && session.snapshot().phase != RoomPhase::faulted;
++}
++
++const MonsterSnapshot* nearest_monster(const CombatSnapshot& state) noexcept {
++    const MonsterSnapshot* best = nullptr;
++    float best_distance = 0.0F;
++    for (const MonsterSnapshot& monster : state.monsters) {
++        if (!monster.active || monster.hp <= 0) continue;
++        const float dx = monster.position.x - state.player.position.x;
++        const float dy = monster.position.y - state.player.position.y;
++        const float distance = dx * dx + dy * dy;
++        if (best == nullptr || distance < best_distance) {
++            best = &monster;
++            best_distance = distance;
++        }
++    }
++    return best;
++}
++
++MovementInput movement_toward(Vec3 from, Vec3 to) noexcept {
++    MovementInput movement{};
++    const float dx = to.x - from.x;
++    const float dy = to.y - from.y;
++    if (dx > 0.45F) movement.x = 1;
++    else if (dx < -0.45F) movement.x = -1;
++    if (dy > 0.25F) movement.y = 1;
++    else if (dy < -0.25F) movement.y = -1;
++    return movement;
++}
++
++bool in_attack_lane(const CombatSnapshot& state,
++    const MonsterSnapshot& target) noexcept {
++    const float dx = target.position.x - state.player.position.x;
++    const float dy = target.position.y - state.player.position.y;
++    const bool facing = std::fabs(dx) <= 0.2F
++        || (dx > 0.0F && state.player.facing == arpg::combat::Facing::right)
++        || (dx < 0.0F && state.player.facing == arpg::combat::Facing::left);
++    return facing && std::fabs(dx) <= 1.70F && std::fabs(dy) <= 0.55F;
++}
++
++bool drive_clear(DungeonSession& session,
++    arpg::persistence::SaveStore& store,
++    int& initial_hp, int& minimum_hp,
++    std::uint64_t& clear_generation,
++    arpg::abyss::AbyssRuleId expected_rule) noexcept {
++    initial_hp = 0;
++    minimum_hp = 0;
++    for (int tick = 0; tick < 12000; ++tick) {
++        if (!service_pending(session, store)) return false;
++        const auto state = session.snapshot();
++        if (state.combat.has_value()) {
++            if (initial_hp == 0) {
++                initial_hp = state.combat->player.hp;
++                minimum_hp = initial_hp;
++            }
++            minimum_hp = (std::min)(minimum_hp, state.combat->player.hp);
++        }
++        if (state.phase == RoomPhase::cleared
++                || state.phase == RoomPhase::awaiting_exit) {
++            clear_generation = state.commit_generation;
++            const bool expected = state.is_abyss
++                && state.abyss_rule == expected_rule;
++            if (!expected) {
++                std::cerr << "cleared unexpected room=" << state.room_index
++                          << " abyss=" << state.is_abyss
++                          << " rule=" << static_cast<unsigned>(state.abyss_rule)
++                          << " generation=" << state.commit_generation << '\n';
++            }
++            return expected;
++        }
++        if (state.phase == RoomPhase::faulted || !state.combat.has_value()) {
++            std::cerr << "combat stopped phase="
++                      << static_cast<unsigned>(state.phase)
++                      << " room=" << state.room_index
++                      << " abyss=" << state.is_abyss
++                      << " generation=" << state.commit_generation
++                      << " fault=" << static_cast<unsigned>(
++                            state.diagnostics.fault) << '\n';
++            return false;
++        }
++        MovementInput movement{};
++        if (state.phase == RoomPhase::combat) {
++            const auto* const target = nearest_monster(*state.combat);
++            if (target != nullptr) {
++                movement = movement_toward(
++                    state.combat->player.position, target->position);
++                if (state.combat->player.hurt_ticks == 0U
++                        && state.combat->player.active_attack
++                            == arpg::combat::AttackId::none
++                        && state.combat->diagnostics.input_size == 0U
++                        && in_attack_lane(*state.combat, *target)) {
++                    static_cast<void>(session.queue_action(Action::light));
++                }
++            }
++        }
++        session.tick(movement);
++        while (session.try_pop_event().has_value()) {}
++        while (session.try_pop_combat_event().has_value()) {}
++    }
++    const auto failed = session.snapshot();
++    std::cerr << "clear failed phase=" << static_cast<unsigned>(failed.phase)
++              << " abyss=" << failed.is_abyss
++              << " rule=" << static_cast<unsigned>(failed.abyss_rule)
++              << " lifecycle_pending=" << failed.abyss_pending_rewards
++              << " room=" << failed.room_index
++              << " hp=" << (failed.combat.has_value()
++                    ? failed.combat->player.hp : -1)
++              << " targets=" << static_cast<unsigned>(failed.remaining_targets)
++              << '\n';
++    return false;
++}
++
++bool wait_for_rewards(DungeonSession& session,
++    arpg::persistence::SaveStore& store,
++    std::array<std::uint64_t, 3>& ids) noexcept {
++    for (int tick = 0; tick < 64; ++tick) {
++        if (!service_pending(session, store)) return false;
++        const auto state = session.snapshot();
++        std::size_t found = 0U;
++        for (std::size_t index = 0U; index < state.ground_item_count; ++index) {
++            const auto& ground = state.ground_items[index];
++            if (ground.source != arpg::dungeon::GroundItemSource::abyss_chest
++                    || ground.abyss_reward_ordinal >= ids.size()) {
++                continue;
++            }
++            ids[ground.abyss_reward_ordinal] = ground.item_id;
++        }
++        for (const std::uint64_t id : ids) found += id != 0U;
++        if (found == ids.size()) return true;
++        session.tick({});
++    }
++    const auto failed = session.snapshot();
++    std::cerr << "reward wait failed phase="
++              << static_cast<unsigned>(failed.phase)
++              << " pending=" << failed.abyss_pending_rewards
++              << " unpicked=" << failed.abyss_unpicked_rewards
++              << " ground=" << failed.ground_item_count
++              << " fault=" << static_cast<unsigned>(failed.diagnostics.fault)
++              << '\n';
++    return false;
++}
++
++bool claim_reward(DungeonSession& session,
++    arpg::persistence::SaveStore& store,
++    std::uint8_t reward_ordinal) noexcept {
++    for (int tick = 0; tick < 500; ++tick) {
++        if (!service_pending(session, store)) return false;
++        const auto state = session.snapshot();
++        if (state.abyss_unpicked_rewards < 3U
++                && state.abyss_pending_rewards == 0U) {
++            return true;
++        }
++        if (!state.combat.has_value()) {
++            std::cerr << "claim has no combat phase="
++                      << static_cast<unsigned>(state.phase) << '\n';
++            return false;
++        }
++        const arpg::dungeon::GroundItemSnapshot* target = nullptr;
++        for (std::size_t index = 0U; index < state.ground_item_count; ++index) {
++            if (state.ground_items[index].source
++                    == arpg::dungeon::GroundItemSource::abyss_chest
++                    && state.ground_items[index].abyss_reward_ordinal
++                        == reward_ordinal) {
++                target = &state.ground_items[index];
++                break;
++            }
++        }
++        if (target == nullptr) {
++            std::cerr << "claim target missing inventory="
++                      << state.inventory_count << " ground="
++                      << state.ground_item_count << " pending="
++                      << state.abyss_pending_rewards << " unpicked="
++                      << state.abyss_unpicked_rewards << '\n';
++            return false;
++        }
++        const float dx = target->position.x - state.combat->player.position.x;
++        const float dy = target->position.y - state.combat->player.position.y;
++        if (dx * dx + dy * dy
++                <= arpg::dungeon::kPickupRadius * arpg::dungeon::kPickupRadius) {
++            const RequestResult requested = session.request_pickup(target->ordinal);
++            if (requested == RequestResult::faulted) return false;
++        }
++        session.tick(movement_toward(
++            state.combat->player.position, target->position));
++    }
++    const auto failed = session.snapshot();
++    std::cerr << "claim failed inventory=" << failed.inventory_count
++              << " ground=" << failed.ground_item_count
++              << " pending=" << failed.abyss_pending_rewards
++              << " unpicked=" << failed.abyss_unpicked_rewards
++              << " phase=" << static_cast<unsigned>(failed.phase)
++              << " fault=" << static_cast<unsigned>(failed.diagnostics.fault)
++              << '\n';
++    return false;
++}
++
++Vec3 door_position(ExitDirection direction) noexcept {
++    switch (direction) {
++    case ExitDirection::up: return {0.0F, -5.5F, 0.0F};
++    case ExitDirection::down: return {0.0F, 5.5F, 0.0F};
++    case ExitDirection::left: return {-12.0F, 0.0F, 0.0F};
++    case ExitDirection::right: return {12.0F, 0.0F, 0.0F};
++    case ExitDirection::none: return {};
++    }
++    return {};
++}
++
++MovementInput exit_movement(Vec3 player, ExitDirection direction) noexcept {
++    MovementInput movement = movement_toward(player, door_position(direction));
++    switch (direction) {
++    case ExitDirection::up: movement.y = -1; break;
++    case ExitDirection::down: movement.y = 1; break;
++    case ExitDirection::left: movement.x = -1; break;
++    case ExitDirection::right: movement.x = 1; break;
++    case ExitDirection::none: break;
++    }
++    return movement;
++}
++
++bool abandon_through_door(DungeonSession& session,
++    arpg::persistence::SaveStore& store,
++    ExitDirection direction) noexcept {
++    bool warned = false;
++    bool released = false;
++    for (int tick = 0; tick < 2000; ++tick) {
++        if (!service_pending(session, store)) return false;
++        const auto state = session.snapshot();
++        if (state.room_index > 1U) return true;
++        if (state.phase == RoomPhase::faulted || !state.combat.has_value()) {
++            std::cerr << "abandon stopped phase="
++                      << static_cast<unsigned>(state.phase)
++                      << " fault=" << static_cast<unsigned>(
++                            state.diagnostics.fault)
++                      << " pending=" << state.abyss_pending_rewards
++                      << " unpicked=" << state.abyss_unpicked_rewards << '\n';
++            return false;
++        }
++        if (state.abyss_exit_confirmation_armed) {
++            warned = true;
++            if (!released) {
++                session.tick({});
++                released = true;
++                continue;
++            }
++        }
++        session.tick(exit_movement(
++            state.combat->player.position, direction));
++    }
++    const auto failed = session.snapshot();
++    std::cerr << "abandon timed out phase="
++              << static_cast<unsigned>(failed.phase)
++              << " room=" << failed.room_index
++              << " armed=" << failed.abyss_exit_confirmation_armed
++              << " pending=" << failed.abyss_pending_rewards
++              << " unpicked=" << failed.abyss_unpicked_rewards << '\n';
++    return warned && false;
++}
++
++std::optional<EnvironmentEvidence> run_environment_probe(
++    const std::filesystem::path& save_directory) noexcept {
++    const auto entry = find_entry(arpg::abyss::AbyssRuleId::thunderstorm);
++    if (!entry.has_value()) return std::nullopt;
++    arpg::persistence::SaveStore store({save_directory});
++    const auto seeded = store.commit(entry->target);
++    if (seeded.state != arpg::persistence::SaveCommitState::committed) {
++        return std::nullopt;
++    }
++    DungeonSession session{validation_rules(), seeded.verified_state};
++    if (!service_pending(session, store)) return std::nullopt;
++    EnvironmentEvidence evidence{};
++    int previous_hp = 0;
++    bool previous_warning = false;
++    for (int tick = 0; tick < 1200; ++tick) {
++        if (!service_pending(session, store)) return std::nullopt;
++        const auto state = session.snapshot();
++        if (!state.combat.has_value() || !state.is_abyss) break;
++        if (evidence.initial_hp == 0) {
++            evidence.initial_hp = state.combat->player.hp;
++            evidence.minimum_hp = evidence.initial_hp;
++        }
++        evidence.minimum_hp = (std::min)(
++            evidence.minimum_hp, state.combat->player.hp);
++        bool active_this_tick = false;
++        bool warning_this_tick = false;
++        for (std::size_t index = 0U;
++             index < state.combat->hazard_count; ++index) {
++            const auto& hazard = state.combat->hazards[index];
++            if (!hazard.active
++                    || hazard.source
++                        != arpg::combat::HazardSource::abyss_environment) {
++                continue;
++            }
++            evidence.warning_seen = evidence.warning_seen
++                || hazard.telegraph_ticks != 0U;
++            warning_this_tick = warning_this_tick
++                || hazard.telegraph_ticks != 0U;
++            evidence.active_seen = evidence.active_seen
++                || hazard.telegraph_ticks == 0U;
++            active_this_tick = active_this_tick
++                || hazard.telegraph_ticks == 0U;
++        }
++        evidence.active_damage_seen = evidence.active_damage_seen
++            || (active_this_tick && previous_hp != 0
++                && state.combat->player.hp < previous_hp)
++            || (previous_warning && !warning_this_tick
++                && !active_this_tick && previous_hp != 0
++                && state.combat->player.hp < previous_hp);
++        evidence.active_seen = evidence.active_seen
++            || (previous_warning && !warning_this_tick);
++        if (evidence.active_damage_seen) {
++            return evidence;
++        }
++        previous_hp = state.combat->player.hp;
++        previous_warning = warning_this_tick;
++        MovementInput movement{};
++        if (!evidence.warning_seen) {
++            const int leg = tick % 240;
++            movement = leg < 60 ? MovementInput{1, 0}
++                : leg < 120 ? MovementInput{0, 1}
++                : leg < 180 ? MovementInput{-1, 0}
++                : MovementInput{0, -1};
++            if (state.combat->player.active_attack
++                    == arpg::combat::AttackId::none
++                    && state.combat->diagnostics.input_size == 0U) {
++                static_cast<void>(session.queue_action(Action::jump));
++            }
++        }
++        session.tick(movement);
++        while (session.try_pop_event().has_value()) {}
++        while (session.try_pop_combat_event().has_value()) {}
++    }
++    const auto stopped = session.snapshot();
++    std::cerr << "environment probe stopped phase="
++              << static_cast<unsigned>(stopped.phase)
++              << " room=" << stopped.room_index
++              << " abyss=" << stopped.is_abyss
++              << " warning=" << evidence.warning_seen
++              << " active=" << evidence.active_seen
++              << " active_damage=" << evidence.active_damage_seen
++              << " initial_hp=" << evidence.initial_hp
++              << " minimum_hp=" << evidence.minimum_hp << '\n';
++    return evidence.warning_seen && evidence.active_seen
++        && evidence.active_damage_seen
++        ? std::optional<EnvironmentEvidence>{evidence} : std::nullopt;
++}
++
++std::filesystem::path clean_fixture_directory(
++    const std::filesystem::path& executable) {
++    const auto directory = std::filesystem::absolute(executable).parent_path()
++        / "stage10-validation-fixture-save";
++    std::error_code error;
++    std::filesystem::remove_all(directory, error);
++    if (error) return {};
++    std::filesystem::create_directories(directory, error);
++    return error ? std::filesystem::path{} : directory;
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    if (argc < 1 || argv == nullptr || argv[0] == nullptr) return 2;
++    const auto entry = find_entry(arpg::abyss::AbyssRuleId::life_sacrifice);
++    if (!entry.has_value()) return 3;
++    const auto save_directory = clean_fixture_directory(argv[0]);
++    if (save_directory.empty()) return 4;
++    const DungeonRules rules = validation_rules();
++
++    arpg::persistence::SaveStore store({save_directory});
++    const auto seeded = store.commit(entry->target);
++    if (seeded.state != arpg::persistence::SaveCommitState::committed) return 5;
++    DungeonSession session{rules, seeded.verified_state};
++    if (!service_pending(session, store)) return 6;
++    const auto started = session.snapshot();
++    if (started.pending_save_kind.has_value()
++            || started.abyss_rule != arpg::abyss::AbyssRuleId::life_sacrifice) {
++        return 7;
++    }
++
++    int initial_hp = 0;
++    int minimum_hp = 0;
++    std::uint64_t clear_generation = 0U;
++    if (!drive_clear(session, store, initial_hp, minimum_hp, clear_generation,
++            arpg::abyss::AbyssRuleId::life_sacrifice)) {
++        return 8;
++    }
++    std::array<std::uint64_t, 3> reward_ids{};
++    if (!wait_for_rewards(session, store, reward_ids)) return 9;
++    if (!claim_reward(session, store, 1U)) return 10;
++    const auto claimed = session.snapshot();
++    const auto loaded = store.load();
++    if (loaded.state != arpg::persistence::SaveLoadState::ready) return 11;
++
++    arpg::persistence::SaveStore abandon_store({save_directory / "abandon"});
++    const auto abandon_seeded = abandon_store.commit(entry->target);
++    if (abandon_seeded.state
++            != arpg::persistence::SaveCommitState::committed) return 12;
++    DungeonSession abandon_session{rules, abandon_seeded.verified_state};
++    if (!service_pending(abandon_session, abandon_store)) return 13;
++    int abandon_initial_hp = 0;
++    int abandon_minimum_hp = 0;
++    std::uint64_t abandon_clear_generation = 0U;
++    if (!drive_clear(abandon_session, abandon_store,
++            abandon_initial_hp, abandon_minimum_hp,
++            abandon_clear_generation,
++            arpg::abyss::AbyssRuleId::life_sacrifice)) return 14;
++    if (!abandon_through_door(
++            abandon_session, abandon_store, ExitDirection::right)) return 15;
++    const auto abandoned = abandon_store.load();
++    if (abandoned.state != arpg::persistence::SaveLoadState::ready
++            || !abandoned.checkpoint.last_abyss_resolution.valid) return 16;
++    const auto environment = run_environment_probe(
++        save_directory / "environment");
++    if (!environment.has_value()) return 17;
++
++    const auto preview = arpg::dungeon::preview_abyss_doors(
++        entry->source.current_room);
++    const std::size_t direction_index = static_cast<std::size_t>(entry->direction);
++    std::cout << "door_preview source_seed=" << entry->source.current_room.seed
++              << " direction=" << direction_index
++              << " target_seed=" << entry->target.current_room.seed
++              << " marked=" << preview[direction_index] << '\n'
++              << "started generation=" << started.commit_generation
++              << " rule=" << static_cast<unsigned>(started.abyss_rule)
++              << " danger=" << static_cast<unsigned>(started.abyss_danger)
++              << '\n'
++              << "environment rule=" << static_cast<unsigned>(
++                    arpg::abyss::AbyssRuleId::thunderstorm)
++              << " initial_hp=" << environment->initial_hp
++              << " minimum_hp=" << environment->minimum_hp
++              << " warning=" << environment->warning_seen
++              << " active=" << environment->active_seen
++              << " active_damage=" << environment->active_damage_seen
++              << " damaged="
++              << (environment->minimum_hp < environment->initial_hp) << '\n'
++              << "combat initial_hp=" << initial_hp
++              << " minimum_hp=" << minimum_hp << '\n'
++              << "clear generation=" << clear_generation << '\n'
++              << "rewards ids=" << reward_ids[0] << ',' << reward_ids[1]
++              << ',' << reward_ids[2] << '\n'
++              << "reload generated="
++              << static_cast<unsigned>(loaded.checkpoint.abyss.generated_mask)
++              << " claimed="
++              << static_cast<unsigned>(loaded.checkpoint.abyss.claimed_mask)
++              << " abandoned="
++              << static_cast<unsigned>(loaded.checkpoint.abyss.abandoned_mask)
++              << " inventory=" << claimed.inventory_count << '\n'
++              << "abandon total="
++              << static_cast<unsigned>(
++                    abandoned.checkpoint.last_abyss_resolution.total)
++              << " generated="
++              << static_cast<unsigned>(
++                    abandoned.checkpoint.last_abyss_resolution.generated)
++              << " claimed="
++              << static_cast<unsigned>(
++                    abandoned.checkpoint.last_abyss_resolution.claimed)
++              << " abandoned="
++              << static_cast<unsigned>(
++                    abandoned.checkpoint.last_abyss_resolution.abandoned)
++              << '\n';
++    return preview[direction_index]
++            && started.commit_generation > entry->target.commit_generation
++            && reward_ids[0] != 0U && reward_ids[1] != 0U
++            && reward_ids[2] != 0U
++            && loaded.checkpoint.abyss.claimed_mask != 0U
++        ? 0 : 18;
++}
+diff --git a/tests/dungeon/stage10_validation_game.cpp b/tests/dungeon/stage10_validation_game.cpp
+new file mode 100644
+index 0000000..b8921df
+--- /dev/null
++++ b/tests/dungeon/stage10_validation_game.cpp
+@@ -0,0 +1,73 @@
++#include "abyss/abyss_rules.hpp"
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/room_generation.hpp"
++#include "raylib_host.hpp"
++
++#include <array>
++#include <cstdint>
++#include <filesystem>
++#include <optional>
++
++namespace {
++
++struct RootAndDirection final {
++    std::uint64_t root{};
++    arpg::dungeon::ExitDirection direction{arpg::dungeon::ExitDirection::none};
++};
++
++std::optional<RootAndDirection> find_root() noexcept {
++    constexpr std::array<arpg::dungeon::ExitDirection, 4> directions{{
++        arpg::dungeon::ExitDirection::up,
++        arpg::dungeon::ExitDirection::down,
++        arpg::dungeon::ExitDirection::left,
++        arpg::dungeon::ExitDirection::right,
++    }};
++    const arpg::dungeon::DungeonRules rules{};
++    for (std::uint64_t root = 1U; root < 200000U; ++root) {
++        const auto initial = arpg::dungeon::make_initial_run_state(root, rules);
++        if (initial.fault != arpg::dungeon::DungeonFault::none) continue;
++        const auto preview = arpg::dungeon::preview_abyss_doors(
++            initial.state.current_room);
++        for (std::size_t index = 0U; index < directions.size(); ++index) {
++            if (!preview[index]) continue;
++            const auto next = arpg::dungeon::make_door_transition(
++                initial.state, directions[index], rules);
++            if (next.fault == arpg::dungeon::DungeonFault::none
++                    && next.state.abyss.rule
++                        == arpg::abyss::AbyssRuleId::thunderstorm) {
++                return RootAndDirection{root, directions[index]};
++            }
++        }
++    }
++    return std::nullopt;
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    if (argc < 1 || argv == nullptr || argv[0] == nullptr) return 2;
++    const auto selected = find_root();
++    if (!selected.has_value()) return 3;
++    const auto executable = std::filesystem::absolute(argv[0]);
++    const auto save_directory = executable.parent_path()
++        / "stage10-validation-game";
++    std::error_code error;
++    std::filesystem::remove_all(save_directory, error);
++    if (error) return 4;
++    std::filesystem::create_directories(save_directory, error);
++    if (error) return 5;
++
++    arpg::platform::RaylibHostConfig config{};
++    config.window_title = "Infinite Dungeon - Stage 10 Door Validation";
++    config.save_directory = save_directory;
++    config.new_run_seed = selected->root;
++    config.stage10_validation =
++        arpg::platform::Stage10ValidationScenario::abyss_door;
++    config.validation_abyss_direction = static_cast<std::uint8_t>(
++        selected->direction);
++    config.validation_steps_per_frame = 24U;
++    config.validation_exit_after_presented_frames = 1200U;
++    config.validation_capture_file = executable.parent_path()
++        / "stage10-validation-capture.png";
++    return static_cast<int>(arpg::platform::run_raylib_host(config));
++}

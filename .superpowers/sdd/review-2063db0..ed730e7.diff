@@ -1,0 +1,2149 @@
+# Review package: 2063db005013041f26352cbf52aee9c4140c519d..ed730e76114573dbbe24cd47aca605cb86341251
+
+## Commits
+ed730e7 fix: harden abyss reward publication invariants
+5fe84cc feat: materialize deterministic abyss chest rewards
+
+## Files changed
+ .superpowers/sdd/task-9-report.md            | 116 ++++--
+ src/dungeon/CMakeLists.txt                   |   1 +
+ src/dungeon/abyss_reward.cpp                 | 160 ++++++++
+ src/dungeon/abyss_reward.hpp                 |  38 ++
+ src/dungeon/dungeon_session.cpp              | 246 +++++++++++-
+ src/dungeon/dungeon_session.hpp              |  15 +
+ src/dungeon/dungeon_snapshot.cpp             |   2 +
+ src/dungeon/dungeon_transition.cpp           |  80 +++-
+ src/dungeon/dungeon_types.hpp                |   9 +
+ tests/dungeon/CMakeLists.txt                 |   1 +
+ tests/dungeon/dungeon_abyss_reward_tests.cpp | 559 +++++++++++++++++++++++++++
+ tests/dungeon/dungeon_stress_tests.cpp       |  10 +-
+ tests/dungeon/dungeon_test_main.cpp          |  24 +-
+ tests/dungeon/dungeon_test_support.hpp       |  42 +-
+ 14 files changed, 1255 insertions(+), 48 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-9-report.md b/.superpowers/sdd/task-9-report.md
+index 71ae727..7024b8f 100644
+--- a/.superpowers/sdd/task-9-report.md
++++ b/.superpowers/sdd/task-9-report.md
+@@ -1,41 +1,105 @@
+-# Task 9 Report: raylib 徽标、预警与提示音
++# Stage 10 Task 9 实现报告
+ 
+ ## 范围
+ 
+-- 在 raylib 平台层新增 `monster_affix_badge()`、`monster_affix_outline()` 和
+-  `hazard_color()`；展示仅读取战斗快照与既有词缀目录，不修改 combat 规则。
+-- 怪物血条下最多绘制三条 `SHORT M#` 词缀标签；轮廓为额外叠加层，保持生态本体色。
+-- 高危词缀以 30 tick 周期的红色透明度脉冲显示；native/burning/chain/death
+-  hazard 分别保留紫色、橙红、黄色和红色。
+-- blink、chain、death 预警分别路由到独立的程序化短音；每一类声音独立限流为
+-  12 tick，同 tick 同类只播放一次，tick 回绕后允许播放。
++仅实现确定性深渊宝箱奖励的派生、原子物化和 cleared 重载重建。未实现 claim、abandon、离房确认或 UI。`abyss_chest` 在 Task 10 前由显式拾取和附近自动拾取路径直接拒绝，物品保留在地面。
++
++## 确定性命名域
++
++奖励内容只依赖 `room_seed`、`abyss::kAbyssRulesVersion`、`reward_ordinal`、danger 和 depth 导出的最终 item level：
++
++1. `ABYSSRW1`：深渊奖励总命名域。
++2. `ABYSSRVR1 ^ rules_version`：规则版本独立子域。
++3. `ABYSORD1 ^ reward_ordinal`：奖励位独立子域。
++4. `ABYSSLT1`（常量 `0x41425953534C5431`）：部位 roll。
++5. `ABYSRRT1`（常量 `0x4142595352525431`）：稀有度 roll。
++6. `ABYSSED1`（常量 `0x4142595353454431`）：item seed。
++7. `ABYSITD1`（常量 `0x4142595349544431`）：item id。
++
++每个输出从 ordinal root 的独立 stream 派生。时间、session tick、build、重试次数、commit generation 和 `next_item_sequence` 均不参与。item id 为 0 时固定映射为 1；任何 ownership 或 ground 冲突直接进入 `abyss_reward_collision`，不重投。
++
++最终等级先把 `uint64_t depth` 安全 cap 到 100，再应用 Task 1 profile，结果等价于 `min(depth + bonus, 100)`。稀有度先取 `items::rarity_weights(final_ilvl)`，再做 Task 1 danger shift，最后独立 weighted roll。最终 item 通过 `generate_item(..., forced_rarity)` 生成。
++
++## 物化事务表
++
++| 阶段 | stable mask/revision | pending cache | ground 可见性 | 结果 |
++|---|---|---|---|---|
++| 扫描 | 不变 | 无 | 不变 | 最多扫描 3 个 reward ordinal，选最小未 generated 且未 abandoned |
++| 资格准备 | 不变 | 本地 ground index + reward ordinal + 完整 item | 不变 | 先找 free ground，再 derive/generate/检查 ID、revision、generation |
++| `abyss_reward_materialized` pending | 不变 | 有 | 不变 | next state 仅推进 commit generation、generated bit、reward revision +1 |
++| exact committed receipt | 采用 next | 再校验后清空 | 写入预留 ground slot | 发布物品并恢复原 phase |
++| not committed | 不变 | 保留在 faulted session 内但不可见 | 不变 | `save_receipt_mismatch` |
++| indeterminate | 不变 | 不可见 | 不变 | `save_commit_indeterminate` |
++| generation/state/cache mismatch | 不变 | 不可见 | 不变 | `save_receipt_mismatch` |
++| checkpoint copy OOM | 不变 | 清空 | 不变 | 不 fault，后续 tick 可按相同内容重试 |
++
++`committing` 时 `tick()` 冻结，因此 ground pool 不变；exact receipt 前还会验证预留槽仍空、cached item 与纯派生结果逐字段相同，并重新扫描 ownership/ground ID。
++
++## cleared 重载算法
++
++1. 校验当前房是合法 cleared abyss，selection/danger/rule/version、reward_total 和三位 mask 合法。
++2. 不创建 `CombatWorld`、encounter 或怪物；phase 设为 `cleared`，保留 room descriptor、hole 和开门语义。
++3. 对最多 3 个 ordinal，处理 `generated && !claimed`：
++   - 若同 ordinal 已在 ground，逐字段验证；
++   - 否则重新执行同一纯派生和 forced-rarity item generation；
++   - ownership、另一 ground ID 或重复 ordinal 冲突立即 fault；
++   - 固定池无空位时停止，stable mask/revision 不变，后续 tick 再重建；
++   - 重建不创建保存请求，不推进 generated mask 或 revision。
++4. 重建后，正常 tick 对未 generated 项走物化事务。live clear 为保持既有 phase 契约，首 tick 先稳定进入 `awaiting_exit`，后续 tick 开始物化；无 combat 的 reload 可在首 tick 继续物化。
++
++## GroundItem 兼容性
++
++`GroundItem` 和轻量 snapshot 增加 `source` 与 `abyss_reward_ordinal`。普通 monster drop 显式写入 `monster_drop/0xFF`，其 drop seed、概率、affix score、item sequence 和 claimed bits 逻辑未改。深渊奖励的 `drop_ordinal` 始终是实际 fixed ground array 索引，奖励位单独存为 0..2。
+ 
+ ## TDD 证据
+ 
+-先在 `monster_view_tests.cpp` 添加 3 个失败用例，覆盖：
++### RED 1
++
++先加入 cleared abyss 首 tick 应产生 `abyss_reward_materialized` pending 的测试；当前实现实际没有 pending，断言按预期失败。
++
++### GREEN 1
+ 
+-1. 12 个短名、M1/M2/M3 和目录危险等级；
+-2. 基础/防御/火/水/电/混沌颜色及高危脉冲；
+-3. 四种 hazard 颜色、三种预警 cue、12 tick 限流和回绕。
++加入纯派生模块、cleared 无战斗构造、pending cache、保存后发布和拾取拒绝；最小集成测试通过。
+ 
+-RED 使用 MSVC Developer Command Prompt 运行：
++### RED 2 / GREEN 2
+ 
+-```text
+-cmake --build build-release --target arpg_platform_tests
+-```
++加入三档/cap/shift、独立 ordinal/重复部位、部分/满池、释放续跑、三类失败 receipt、exact receipt、reload 逐字段、collision/revision 和 pickup 保留测试；14 项专用 suite 通过。
+ 
+-编译按预期因缺少 `monster_affix_badge`、`monster_affix_outline`、
+-`hazard_color`、新 AudioCue 和 `WarningAudioThrottle` 失败。随后完成最小实现。
++额外 allocation RED 证明 ownership 非空时 checkpoint copy OOM 会错误进入 fault；修复为隐藏且可重试后通过。
++
++全回归首轮暴露 Task 8 phase 兼容问题：live clear 首 tick 被提前改为 committing，导致 lifecycle/千房 stress 失败。修复为首 tick保留 awaiting_exit，并让 stress save driver 识别 materialized kind 后，全回归通过。
+ 
+ ## 验证
+ 
+-```text
+-cmake --build build-release --target arpg_platform_tests arpg_game
+-ctest --test-dir build-release -R "platform.units|architecture.combat_no_raylib" --output-on-failure
+-git diff --check
+-```
++- Task 9 专用 suite：14 cases，0 failures。
++- `ctest --preset windows-msvc-debug -R "dungeon.units|items.units|persistence.units" --output-on-failure`：3/3，0 failures；包含 184 个 dungeon cases 和 Stage 9 千房/普通掉落回归。
++- `ctest --preset windows-msvc-debug -R "^architecture\." --output-on-failure`：18/18，0 failures。
++- `git diff --check`：无 whitespace error（仅 Git 的 LF/CRLF 提示）。
++
++## 疑虑与 Task 10 接口
++
++- Task 9 故意拒绝 `abyss_chest` pickup；Task 10 必须用 `abyss_reward_claim` 原子更新 ownership + claimed mask，并在 exact receipt 后移除 ground item。
++- Task 10 必须在离房前处理未 generated/未 claimed/未 abandoned 位；本任务不永久决定 abandon 或离房策略。
++- 保存 API 的 `DungeonRunState` 含 vector，资格准备在 ownership 非空时可能分配；已保证 OOM 不发布、不推进并可重试，exact receipt 发布路径经 allocation probe 证明不分配。
++
++## 复审 Important 修复（追加）
++
++### Important 1：cache position 完整语义
++
++- 新增公开纯函数 `abyss_reward_position(reward_ordinal)`，三个中心偏移只在 `abyss_reward.cpp` 的单一常量表中定义；ordinal 3 及以上返回空。
++- 新增纯 `derive_abyss_ground_item(...)`。prepare、cleared reload 和 exact receipt cache consistency 全部调用它，统一产生 `active`、实际 ground index、`abyss_chest` source、reward ordinal、position 和最终 item。
++- 新增 `same_ground_item`，exact receipt 前逐字段比较 active/index/source/reward ordinal、position 三个 float，以及完整 `ItemInstance`。任何 cache 漂移都在采用 pending next state 之前 fail closed。
++- RED：测试访问器同时篡改 cached position 的 x/y/z；旧实现仍提交，测试失败。GREEN：统一 helper 后返回 `save_receipt_mismatch`，stable generated mask/revision 保持 0，ground 不发布。
++
++### Important 2：统一 ID 冲突门禁
++
++- 新增统一 `item_id_in_use(ownership, ground_items, item_id, ignored_ground_index)`：扫描全部 ownership 和全部 active ground，可在 pickup/reload 验证时忽略当前槽。
++- normal monster drop、recipe、abyss prepare、abyss reload、abyss receipt cache 和 pickup 发布边界均使用该 helper。普通掉落 ID 派生、概率、seed 和 golden 行为未变。
++- recipe 在删除材料、递增 sequence 或创建 pending 之前检查全部 active ground，包括 `monster_drop` 和 `abyss_chest`；冲突进入既有 `item_id_collision`，不重投。
++- RED：先纯调用 `generate_recipe_item` 得到预期 product ID，再安装同 ID 的未拾取 `abyss_chest` ground。旧实现接受 recipe；GREEN 后请求 fault，三个材料、sequence、ground 和 stable ownership 原样保留。
+ 
+-结果：平台单元测试和 combat 无 raylib 架构检查均通过（2/2）；`arpg_game`
+-构建通过；差异检查通过。
++### 复审验证
+ 
+-备注：平台测试主程序使用固定 case count；新增 3 个用例后已将登记值从 69 同步为 72。
++- Task 9 专用：16 cases，0 failures。
++- Fresh `dungeon.units|items.units|persistence.units`：3/3，0 failures；`dungeon.units` 186 cases，含千房 stress 和普通掉落 golden。
++- Fresh architecture：18/18，0 failures。
+diff --git a/src/dungeon/CMakeLists.txt b/src/dungeon/CMakeLists.txt
+index dc8be9f..179b2cb 100644
+--- a/src/dungeon/CMakeLists.txt
++++ b/src/dungeon/CMakeLists.txt
+@@ -1,11 +1,12 @@
+ add_library(arpg_dungeon STATIC
++    abyss_reward.cpp
+     abyss_checkpoint_migration.cpp
+     dungeon_rules.cpp
+     encounter_director.cpp
+     encounter_budget.cpp
+     dungeon_session.cpp
+     dungeon_transition.cpp
+     dungeon_snapshot.cpp
+     dungeon_progression.cpp
+     room_generation.cpp
+     room_combat_template.cpp
+diff --git a/src/dungeon/abyss_reward.cpp b/src/dungeon/abyss_reward.cpp
+new file mode 100644
+index 0000000..bf60715
+--- /dev/null
++++ b/src/dungeon/abyss_reward.cpp
+@@ -0,0 +1,160 @@
++#include "dungeon/abyss_reward.hpp"
++
++#include "abyss/abyss_rewards.hpp"
++#include "core/deterministic_rng.hpp"
++#include "items/item_generation.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::dungeon {
++namespace {
++
++constexpr std::uint64_t kRewardNamespace = 0x4142595353525731ULL;
++constexpr std::uint64_t kRewardRulesVersionDomain = 0x4142595352565231ULL;
++constexpr std::uint64_t kRewardOrdinalDomain = 0x414259534F524431ULL;
++constexpr std::uint64_t kRewardSlotDomain = 0x41425953534C5431ULL;
++constexpr std::uint64_t kRewardRarityDomain = 0x4142595352525431ULL;
++constexpr std::uint64_t kRewardItemSeedDomain = 0x4142595353454431ULL;
++constexpr std::uint64_t kRewardItemIdDomain = 0x4142595349544431ULL;
++constexpr std::array<combat::Vec3, 3> kRewardPositions{{
++    {-0.75F, 0.0F, 0.0F},
++    {0.0F, 0.0F, 0.0F},
++    {0.75F, 0.0F, 0.0F},
++}};
++
++std::uint64_t ordinal_root(
++    std::uint64_t room_seed,
++    std::uint8_t reward_ordinal) noexcept {
++    auto namespaced = core::DeterministicRng::derive_stream(
++        room_seed, kRewardNamespace);
++    auto version = core::DeterministicRng::derive_stream(
++        namespaced.next_u64(),
++        kRewardRulesVersionDomain ^ abyss::kAbyssRulesVersion);
++    auto ordinal = core::DeterministicRng::derive_stream(
++        version.next_u64(),
++        kRewardOrdinalDomain ^ static_cast<std::uint64_t>(reward_ordinal));
++    return ordinal.next_u64();
++}
++
++items::ItemRarity roll_rarity(
++    std::uint64_t root,
++    const abyss::AbyssRarityWeights& weights) noexcept {
++    auto stream = core::DeterministicRng::derive_stream(
++        root, kRewardRarityDomain);
++    const std::uint64_t roll = stream.next_bounded(100U).value_or(0U);
++    if (roll < weights.normal) return items::ItemRarity::normal;
++    if (roll < static_cast<std::uint64_t>(weights.normal) + weights.magic)
++        return items::ItemRarity::magic;
++    return items::ItemRarity::rare;
++}
++
++bool same_item_instance(
++    const items::ItemInstance& left,
++    const items::ItemInstance& right) noexcept {
++    if (left.id != right.id || left.base_id != right.base_id
++            || left.rarity != right.rarity
++            || left.item_level != right.item_level
++            || left.required_level != right.required_level
++            || left.affix_count != right.affix_count
++            || left.reserved != right.reserved) {
++        return false;
++    }
++    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
++        if (left.affixes[index].affix_id != right.affixes[index].affix_id
++                || left.affixes[index].tier != right.affixes[index].tier
++                || left.affixes[index].variant
++                    != right.affixes[index].variant) {
++            return false;
++        }
++    }
++    return true;
++}
++
++}  // namespace
++
++std::optional<AbyssRewardSlot> derive_abyss_reward_slot(
++    std::uint64_t room_seed,
++    abyss::AbyssDanger danger,
++    std::uint8_t base_item_level,
++    std::uint8_t reward_ordinal) noexcept {
++    const abyss::AbyssRewardProfile profile =
++        abyss::reward_profile_for(danger, base_item_level);
++    if (profile.item_count == 0U || reward_ordinal >= profile.item_count)
++        return std::nullopt;
++    const auto base_weights = items::rarity_weights(profile.item_level);
++    if (!base_weights.has_value()) return std::nullopt;
++    const auto shifted = abyss::shift_abyss_rarity_weights({
++        base_weights->normal, base_weights->magic, base_weights->rare}, danger);
++    if (!shifted.has_value()) return std::nullopt;
++
++    const std::uint64_t root = ordinal_root(room_seed, reward_ordinal);
++    auto slot_stream = core::DeterministicRng::derive_stream(
++        root, kRewardSlotDomain);
++    auto seed_stream = core::DeterministicRng::derive_stream(
++        root, kRewardItemSeedDomain);
++    auto id_stream = core::DeterministicRng::derive_stream(
++        root, kRewardItemIdDomain);
++    std::uint64_t item_id = id_stream.next_u64();
++    if (item_id == 0U) item_id = 1U;
++    return AbyssRewardSlot{
++        reward_ordinal,
++        static_cast<items::ItemSlot>(
++            slot_stream.next_bounded(
++                static_cast<std::uint8_t>(items::ItemSlot::count)).value_or(0U)),
++        roll_rarity(root, *shifted),
++        profile.item_level,
++        seed_stream.next_u64(),
++        item_id,
++    };
++}
++
++std::optional<combat::Vec3> abyss_reward_position(
++    std::uint8_t reward_ordinal) noexcept {
++    if (reward_ordinal >= kRewardPositions.size()) return std::nullopt;
++    return kRewardPositions[reward_ordinal];
++}
++
++std::optional<GroundItem> derive_abyss_ground_item(
++    std::uint64_t room_seed,
++    abyss::AbyssDanger danger,
++    std::uint8_t base_item_level,
++    std::uint8_t reward_ordinal,
++    std::uint16_t ground_index) noexcept {
++    const auto slot = derive_abyss_reward_slot(
++        room_seed, danger, base_item_level, reward_ordinal);
++    const auto position = abyss_reward_position(reward_ordinal);
++    if (!slot.has_value() || !position.has_value()) return std::nullopt;
++    const auto item = items::generate_item({
++        slot->item_seed,
++        slot->item_slot,
++        slot->item_level,
++        slot->item_id,
++        slot->rarity,
++    });
++    if (!item.has_value()) return std::nullopt;
++    return GroundItem{
++        true,
++        ground_index,
++        GroundItemSource::abyss_chest,
++        reward_ordinal,
++        *position,
++        *item,
++    };
++}
++
++bool same_ground_item(
++    const GroundItem& left,
++    const GroundItem& right) noexcept {
++    return left.active == right.active
++        && left.drop_ordinal == right.drop_ordinal
++        && left.source == right.source
++        && left.abyss_reward_ordinal == right.abyss_reward_ordinal
++        && left.position.x == right.position.x
++        && left.position.y == right.position.y
++        && left.position.z == right.position.z
++        && same_item_instance(left.item, right.item);
++}
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/abyss_reward.hpp b/src/dungeon/abyss_reward.hpp
+new file mode 100644
+index 0000000..04ccaf8
+--- /dev/null
++++ b/src/dungeon/abyss_reward.hpp
+@@ -0,0 +1,38 @@
++#pragma once
++
++#include "abyss/abyss_types.hpp"
++#include "dungeon/dungeon_types.hpp"
++#include "items/item_types.hpp"
++
++#include <cstdint>
++#include <optional>
++
++namespace arpg::dungeon {
++
++struct AbyssRewardSlot final {
++    std::uint8_t slot_index{};
++    items::ItemSlot item_slot{items::ItemSlot::weapon};
++    items::ItemRarity rarity{items::ItemRarity::normal};
++    std::uint8_t item_level{1U};
++    std::uint64_t item_seed{};
++    std::uint64_t item_id{};
++};
++
++[[nodiscard]] std::optional<AbyssRewardSlot> derive_abyss_reward_slot(
++    std::uint64_t room_seed,
++    abyss::AbyssDanger danger,
++    std::uint8_t base_item_level,
++    std::uint8_t reward_ordinal) noexcept;
++[[nodiscard]] std::optional<combat::Vec3> abyss_reward_position(
++    std::uint8_t reward_ordinal) noexcept;
++[[nodiscard]] std::optional<GroundItem> derive_abyss_ground_item(
++    std::uint64_t room_seed,
++    abyss::AbyssDanger danger,
++    std::uint8_t base_item_level,
++    std::uint8_t reward_ordinal,
++    std::uint16_t ground_index) noexcept;
++[[nodiscard]] bool same_ground_item(
++    const GroundItem& left,
++    const GroundItem& right) noexcept;
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 6468afe..ff8c4af 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -1,29 +1,31 @@
+ #include "dungeon/dungeon_session.hpp"
+ 
++#include "dungeon/abyss_reward.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/room_combat_template.hpp"
+ #include "dungeon/room_navigation.hpp"
+ #include "abyss/abyss_rewards.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "core/deterministic_rng.hpp"
+ #include "items/item_catalog.hpp"
+ #include "items/item_generation.hpp"
+ #include "items/item_modifiers.hpp"
+ #include "modifiers/player_modifier_values.hpp"
+ #include "passives/passive_tree_rules.hpp"
+ 
+ #include <array>
+ #include <cassert>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
++#include <new>
+ #include <utility>
+ 
+ namespace arpg::dungeon {
+ namespace {
+ 
+ constexpr std::uint16_t kWaveDelayTicks = 45U;
+ constexpr std::uint64_t kPlayerEvasionSeedDomain = 0x45564153494F4E31ULL;
+ constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
+ constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
+ constexpr std::uint64_t kDropContentDomain = 0x44524F505F49544DULL;
+@@ -128,33 +130,34 @@ bool DungeonSession::queue_action(combat::Action action) noexcept {
+     return phase_ == RoomPhase::combat && combat_.has_value()
+         ? combat_->queue_action(action)
+         : false;
+ }
+ 
+ void DungeonSession::tick(combat::MovementInput movement) noexcept {
+     if (phase_ == RoomPhase::committing || phase_ == RoomPhase::faulted) {
+         ++session_tick_;
+         return;
+     }
++    const bool awaiting_at_tick_start = phase_ == RoomPhase::awaiting_exit;
+ 
+     if (phase_ == RoomPhase::locked) {
+         phase_ = RoomPhase::combat;
+         if (emit(DungeonEventKind::room_entered)
+                 && phase_ != RoomPhase::faulted) {
+             static_cast<void>(emit(DungeonEventKind::combat_started));
+         }
+     } else if (phase_ == RoomPhase::transitioning) {
+         construct_current_room();
++    } else if (phase_ == RoomPhase::cleared) {
++        phase_ = RoomPhase::awaiting_exit;
+     } else if (combat_.has_value()) {
+-        if (phase_ == RoomPhase::cleared) {
+-            phase_ = RoomPhase::awaiting_exit;
+-        } else if (phase_ == RoomPhase::wave_delay) {
++        if (phase_ == RoomPhase::wave_delay) {
+             if (wave_delay_ticks_ != 0U) {
+                 --wave_delay_ticks_;
+             }
+             if (wave_delay_ticks_ == 0U) {
+                 start_next_wave();
+             }
+         } else if (phase_ == RoomPhase::combat
+                 || phase_ == RoomPhase::awaiting_exit) {
+             combat_->tick(movement);
+             relay_combat_events();
+@@ -166,20 +169,30 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
+                     phase_ = RoomPhase::wave_delay;
+                     wave_delay_ticks_ = kWaveDelayTicks;
+                 } else {
+                     prepare_room_clear();
+                 }
+             }
+         }
+ 
+     }
+ 
++    if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::cleared
++            && (phase_ == RoomPhase::cleared
++                || phase_ == RoomPhase::awaiting_exit)
++            && (awaiting_at_tick_start || !combat_.has_value())) {
++        rebuild_committed_abyss_rewards();
++        if (phase_ != RoomPhase::faulted && !pending_save_.has_value()) {
++            attempt_abyss_reward_materialization();
++        }
++    }
++
+     if (combat_.has_value() && phase_ != RoomPhase::committing
+             && phase_ != RoomPhase::transitioning
+             && phase_ != RoomPhase::faulted) {
+         request_nearby_pickups(combat_->snapshot().player.position);
+     }
+ 
+     if (combat_.has_value() && phase_ == RoomPhase::awaiting_exit) {
+         const combat::CombatSnapshot state = combat_->snapshot();
+         if (const auto requested = requested_exit(
+                 state.player.position, movement)) {
+@@ -233,55 +246,265 @@ RequestResult DungeonSession::reset_current_room() noexcept {
+                 && stable_state_.abyss.lifecycle
+                     != abyss::AbyssLifecycle::failed)) {
+         enter_fault(DungeonFault::invalid_abyss_state);
+         return RequestResult::faulted;
+     }
+     reset_to_normal_room(true);
+     return phase_ == RoomPhase::faulted
+         ? RequestResult::faulted : RequestResult::accepted;
+ }
+ 
++bool item_id_in_use(
++    const items::ItemOwnershipState& ownership,
++    const std::array<GroundItem, kGroundDropCapacity>& ground_items,
++    std::uint64_t item_id,
++    std::uint16_t ignored_ground_index) noexcept {
++    if (item_id == 0U) return true;
++    for (const items::ItemInstance& item : ownership.items) {
++        if (item.id == item_id) return true;
++    }
++    for (std::uint16_t index = 0U; index < ground_items.size(); ++index) {
++        const GroundItem& ground = ground_items[index];
++        if (index != ignored_ground_index && ground.active
++                && ground.item.id == item_id) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ std::optional<DungeonEvent> DungeonSession::try_pop_event() noexcept {
+     return events_.try_pop();
+ }
+ 
+ std::optional<combat::CombatEvent>
+ DungeonSession::try_pop_combat_event() noexcept {
+     return combat_events_.try_pop();
+ }
+ 
+ void DungeonSession::construct_current_room() noexcept {
+     ground_items_ = {};
+     rolled_drop_bits_ = {};
+     if (stable_state_.current_room.depth == 0U) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+     pending_room_experience_ = 0U;
+     last_room_experience_ = 0U;
+     last_levels_gained_ = 0U;
++    if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::cleared) {
++        construct_cleared_abyss_room();
++        return;
++    }
+     if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::available) {
+         static_cast<void>(prepare_abyss_start());
+         return;
+     }
+     if (stable_state_.current_room.is_abyss
+             || (stable_state_.abyss.lifecycle
+                     != abyss::AbyssLifecycle::none
+                 && stable_state_.abyss.lifecycle
+                     != abyss::AbyssLifecycle::failed)) {
+         enter_fault(DungeonFault::invalid_abyss_state);
+         return;
+     }
+     construct_normal_room();
+ }
+ 
++void DungeonSession::construct_cleared_abyss_room() noexcept {
++    if (!stable_state_.current_room.is_abyss
++            || stable_state_.abyss.rules_version != abyss::kAbyssRulesVersion) {
++        enter_fault(DungeonFault::invalid_abyss_state);
++        return;
++    }
++    const auto selection = abyss::select_abyss_rule(
++        stable_state_.current_room.seed, stable_state_.current_room.depth);
++    const abyss::AbyssRewardProfile profile = abyss::reward_profile_for(
++        stable_state_.abyss.danger, 1U);
++    const auto valid_bits = static_cast<std::uint8_t>(
++        profile.item_count == 0U ? 0U : (1U << profile.item_count) - 1U);
++    const auto& reward = stable_state_.abyss;
++    if (!selection.has_value()
++            || selection->danger != reward.danger
++            || selection->rule != reward.rule
++            || reward.reward_total != profile.item_count
++            || reward.reward_total == 0U || reward.reward_total > 3U
++            || ((reward.generated_mask | reward.claimed_mask
++                    | reward.abandoned_mask)
++                & static_cast<std::uint8_t>(~valid_bits)) != 0U
++            || (reward.claimed_mask
++                & static_cast<std::uint8_t>(~reward.generated_mask)) != 0U
++            || (reward.abandoned_mask & reward.generated_mask) != 0U) {
++        enter_fault(DungeonFault::invalid_abyss_state);
++        return;
++    }
++    combat_.reset();
++    encounter_plan_ = {};
++    wave_index_ = 0U;
++    wave_delay_ticks_ = 0U;
++    phase_ = RoomPhase::cleared;
++    rebuild_committed_abyss_rewards();
++}
++
++void DungeonSession::rebuild_committed_abyss_rewards() noexcept {
++    if (phase_ == RoomPhase::faulted
++            || stable_state_.abyss.lifecycle
++                != abyss::AbyssLifecycle::cleared) {
++        return;
++    }
++    for (std::uint8_t reward_ordinal = 0U;
++         reward_ordinal < stable_state_.abyss.reward_total;
++         ++reward_ordinal) {
++        const std::uint8_t bit = static_cast<std::uint8_t>(1U << reward_ordinal);
++        if ((stable_state_.abyss.generated_mask & bit) == 0U
++                || (stable_state_.abyss.claimed_mask & bit) != 0U) {
++            continue;
++        }
++
++        const GroundItem* existing = nullptr;
++        for (const GroundItem& ground : ground_items_) {
++            if (ground.active
++                    && ground.source == GroundItemSource::abyss_chest
++                    && ground.abyss_reward_ordinal == reward_ordinal) {
++                existing = &ground;
++                break;
++            }
++        }
++        std::uint16_t target_index = existing == nullptr
++            ? 0xFFFFU : existing->drop_ordinal;
++        if (existing == nullptr) {
++            for (std::uint16_t index = 0U;
++                 index < ground_items_.size(); ++index) {
++                if (!ground_items_[index].active) {
++                    target_index = index;
++                    break;
++                }
++            }
++            if (target_index == 0xFFFFU) return;
++        }
++        const std::uint8_t base_item_level = static_cast<std::uint8_t>(
++            std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
++        const auto expected = derive_abyss_ground_item(
++            stable_state_.current_room.seed, stable_state_.abyss.danger,
++            base_item_level, reward_ordinal, target_index);
++        if (!expected.has_value()) {
++            enter_fault(DungeonFault::abyss_generation_failed);
++            return;
++        }
++        const std::uint16_t ignored_index = existing == nullptr
++            ? 0xFFFFU : existing->drop_ordinal;
++        if (item_id_in_use(stable_state_.item_ownership, ground_items_,
++                expected->item.id, ignored_index)) {
++            enter_fault(DungeonFault::abyss_reward_collision);
++            return;
++        }
++        for (const GroundItem& ground : ground_items_) {
++            if (!ground.active || &ground == existing) continue;
++            if (ground.source == GroundItemSource::abyss_chest
++                    && ground.abyss_reward_ordinal == reward_ordinal) {
++                enter_fault(DungeonFault::abyss_reward_collision);
++                return;
++            }
++        }
++        if (existing != nullptr) {
++            if (existing->drop_ordinal >= ground_items_.size()
++                    || !same_ground_item(*existing, *expected)) {
++                enter_fault(DungeonFault::abyss_reward_collision);
++                return;
++            }
++            continue;
++        }
++
++        ground_items_[target_index] = *expected;
++    }
++}
++
++void DungeonSession::attempt_abyss_reward_materialization() noexcept {
++    if (pending_save_.has_value() || pending_abyss_reward_.has_value()
++            || stable_state_.abyss.lifecycle
++                != abyss::AbyssLifecycle::cleared) {
++        return;
++    }
++    std::uint8_t reward_ordinal = 0xFFU;
++    for (std::uint8_t ordinal = 0U;
++         ordinal < stable_state_.abyss.reward_total && ordinal < 3U;
++         ++ordinal) {
++        const std::uint8_t bit = static_cast<std::uint8_t>(1U << ordinal);
++        if ((stable_state_.abyss.generated_mask & bit) == 0U
++                && (stable_state_.abyss.abandoned_mask & bit) == 0U) {
++            reward_ordinal = ordinal;
++            break;
++        }
++    }
++    if (reward_ordinal == 0xFFU) return;
++
++    std::uint16_t free_index = 0xFFFFU;
++    for (std::uint16_t index = 0U; index < ground_items_.size(); ++index) {
++        if (!ground_items_[index].active) {
++            free_index = index;
++            break;
++        }
++    }
++    if (free_index == 0xFFFFU) return;
++    const std::uint8_t base_item_level = static_cast<std::uint8_t>(
++        std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
++    const auto ground = derive_abyss_ground_item(
++        stable_state_.current_room.seed, stable_state_.abyss.danger,
++        base_item_level, reward_ordinal, free_index);
++    if (!ground.has_value()) {
++        enter_fault(DungeonFault::abyss_generation_failed);
++        return;
++    }
++    if (item_id_in_use(stable_state_.item_ownership, ground_items_,
++            ground->item.id)) {
++        enter_fault(DungeonFault::abyss_reward_collision);
++        return;
++    }
++    if (stable_state_.abyss.reward_revision
++            == (std::numeric_limits<std::uint32_t>::max)()) {
++        enter_fault(DungeonFault::abyss_reward_revision_overflow);
++        return;
++    }
++    if (stable_state_.commit_generation
++            == (std::numeric_limits<std::uint64_t>::max)()) {
++        enter_fault(DungeonFault::commit_generation_overflow);
++        return;
++    }
++
++    try {
++        DungeonRunState next = stable_state_;
++        ++next.commit_generation;
++        next.abyss.generated_mask |= static_cast<std::uint8_t>(
++            1U << reward_ordinal);
++        ++next.abyss.reward_revision;
++        pending_abyss_reward_.emplace(PendingAbyssReward{
++            free_index, reward_ordinal, *ground});
++        pending_save_.emplace(PendingSave{
++            PendingSaveKind::abyss_reward_materialized,
++            next.commit_generation,
++            std::move(next),
++            TransitionKind::none,
++            ExitDirection::none,
++            phase_,
++        });
++    } catch (const std::bad_alloc&) {
++        pending_abyss_reward_.reset();
++        return;
++    } catch (...) {
++        pending_abyss_reward_.reset();
++        enter_fault(DungeonFault::abyss_generation_failed);
++        return;
++    }
++    phase_ = RoomPhase::committing;
++}
++
+ void DungeonSession::construct_normal_room() noexcept {
+     const EncounterPlanResult plan = build_encounter_plan(
+         stable_state_.current_room.seed,
+         stable_state_.current_room.depth,
+         stable_state_.current_room.ecology,
+         rules_.encounter);
+     if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
+         enter_fault(plan.fault == DungeonFault::none
+             ? DungeonFault::invalid_rules : plan.fault);
+         return;
+@@ -316,20 +539,21 @@ void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
+     if (clear_queues) {
+         while (events_.try_pop().has_value()) {
+         }
+         while (combat_events_.try_pop().has_value()) {
+         }
+     }
+     combat_.reset();
+     pending_save_.reset();
+     pending_item_build_.reset();
+     pending_abyss_combat_.reset();
++    pending_abyss_reward_.reset();
+     last_passive_tree_error_ = passives::PassiveTreeError::none;
+     construct_current_room();
+     if (phase_ != RoomPhase::faulted) {
+         static_cast<void>(emit(DungeonEventKind::room_reset));
+     }
+ }
+ 
+ bool DungeonSession::prepare_abyss_start() noexcept {
+     if (pending_save_.has_value() || combat_.has_value()
+             || !stable_state_.current_room.is_abyss
+@@ -591,31 +815,23 @@ void DungeonSession::roll_ground_drop(
+         stable_state_.current_room.seed, ordinal, kDropSlotDomain);
+     auto content = drop_stream(
+         stable_state_.current_room.seed, ordinal, kDropContentDomain);
+     auto room_stream = core::DeterministicRng::derive_stream(
+         stable_state_.root_seed, stable_state_.current_room.index);
+     auto item_id_stream = drop_stream(
+         room_stream.next_u64(), ordinal, kDropItemIdDomain);
+     std::uint64_t item_id = item_id_stream.next_u64();
+     if (item_id == 0U) item_id = 1U;
+ 
+-    for (const items::ItemInstance& item : stable_state_.item_ownership.items) {
+-        if (item.id == item_id) {
+-            enter_fault(DungeonFault::item_id_collision);
+-            return;
+-        }
+-    }
+-    for (const GroundItem& ground : ground_items_) {
+-        if (ground.active && ground.item.id == item_id) {
+-            enter_fault(DungeonFault::item_id_collision);
+-            return;
+-        }
++    if (item_id_in_use(stable_state_.item_ownership, ground_items_, item_id)) {
++        enter_fault(DungeonFault::item_id_collision);
++        return;
+     }
+ 
+     const std::uint64_t depth = stable_state_.current_room.depth;
+     if (depth == 0U) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return;
+     }
+     const auto generated = items::generate_item({
+         content.next_u64(),
+         static_cast<items::ItemSlot>(slot.next_bounded(6U).value()),
+@@ -623,20 +839,22 @@ void DungeonSession::roll_ground_drop(
+         item_id,
+         std::nullopt,
+     });
+     if (!generated.has_value()) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return;
+     }
+     ground_items_[ordinal] = GroundItem{
+         true,
+         ordinal,
++        GroundItemSource::monster_drop,
++        0xFFU,
+         {event.position.x, event.position.y, 0.0F},
+         *generated,
+     };
+ }
+ 
+ void DungeonSession::settle_room_experience() noexcept {
+     saturating_add(pending_room_experience_,
+         progression_rules_.room_clear_experience);
+     last_room_experience_ = pending_room_experience_;
+     const progression::ProgressionAward award = progression::apply_experience(
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index c4253af..179743e 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -17,20 +17,25 @@ struct DungeonSessionTestAccess;
+ }
+ 
+ namespace arpg::dungeon {
+ 
+ [[nodiscard]] std::uint16_t affix_drop_chance_bp(
+     std::uint16_t score) noexcept;
+ [[nodiscard]] std::uint8_t affix_item_level(
+     std::uint64_t depth, std::uint16_t score) noexcept;
+ [[nodiscard]] std::uint64_t affix_experience(
+     std::uint64_t base_experience, std::uint16_t score) noexcept;
++[[nodiscard]] bool item_id_in_use(
++    const items::ItemOwnershipState& ownership,
++    const std::array<GroundItem, kGroundDropCapacity>& ground_items,
++    std::uint64_t item_id,
++    std::uint16_t ignored_ground_index = 0xFFFFU) noexcept;
+ 
+ class DungeonSession final {
+ public:
+     static constexpr std::size_t kDungeonEventCapacity = 32;
+     static constexpr std::size_t kCombatRelayCapacity = 64;
+ 
+     explicit DungeonSession(DungeonSessionConfig config = {}) noexcept;
+     explicit DungeonSession(
+         DungeonRules rules,
+         DungeonRunState stable_state) noexcept;
+@@ -72,21 +77,29 @@ private:
+     friend struct ::arpg::test::DungeonSessionTestAccess;
+     enum class PlayerBuildStatus : std::uint8_t {
+         valid,
+         invalid_state,
+         allocation_failure,
+     };
+     struct PlayerBuildResult final {
+         combat::PlayerCombatBuild build{};
+         PlayerBuildStatus status{PlayerBuildStatus::invalid_state};
+     };
++    struct PendingAbyssReward final {
++        std::uint16_t ground_index{0xFFFFU};
++        std::uint8_t reward_ordinal{0xFFU};
++        GroundItem ground{};
++    };
+     void construct_current_room() noexcept;
++    void construct_cleared_abyss_room() noexcept;
++    void rebuild_committed_abyss_rewards() noexcept;
++    void attempt_abyss_reward_materialization() noexcept;
+     void construct_normal_room() noexcept;
+     void reset_to_normal_room(bool clear_queues) noexcept;
+     [[nodiscard]] bool prepare_abyss_start() noexcept;
+     [[nodiscard]] RequestResult prepare_abyss_failure() noexcept;
+     void start_next_wave() noexcept;
+     void relay_combat_events() noexcept;
+     void handle_player_defeat() noexcept;
+     [[nodiscard]] bool claim_defeat_reward(
+         const combat::CombatEvent& event) noexcept;
+     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
+@@ -102,39 +115,41 @@ private:
+         passives::PassiveNodeId node, bool refund) noexcept;
+     [[nodiscard]] RequestResult prepare_item_save(
+         DungeonRunState&& next,
+         PendingSaveKind kind,
+         RoomPhase resume_phase) noexcept;
+     [[nodiscard]] PlayerBuildResult build_for(
+         const checkpoint::DungeonRunState& state,
+         const items::EquipmentState* equipment_override = nullptr) const noexcept;
+     [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
+     [[nodiscard]] bool pending_abyss_cache_consistent() const noexcept;
++    [[nodiscard]] bool pending_abyss_reward_cache_consistent() const noexcept;
+     void commit_pending_save(const PendingSaveResult& result) noexcept;
+     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
+     void enter_fault(DungeonFault fault) noexcept;
+     void emit_committed(
+         const checkpoint::RoomDescriptor& previous_room,
+         const DungeonRunState& current) noexcept;
+     bool emit(
+         DungeonEventKind kind,
+         const DungeonRunState* subject = nullptr,
+         const DungeonRunState* destination = nullptr,
+         TransitionKind transition = TransitionKind::none,
+         ExitDirection direction = ExitDirection::none) noexcept;
+     [[nodiscard]] std::uint8_t remaining_targets() const noexcept;
+ 
+     DungeonRules rules_{};
+     DungeonRunState stable_state_{};
+     std::optional<PendingSave> pending_save_{};
+     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
+     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
++    std::optional<PendingAbyssReward> pending_abyss_reward_{};
+     std::optional<combat::CombatWorld> combat_{};
+     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
+     std::array<std::uint64_t, 3> rolled_drop_bits_{};
+     RoomEncounterPlan encounter_plan_{};
+     std::uint8_t wave_index_{};
+     std::uint16_t wave_delay_ticks_{};
+     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
+     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
+         combat_events_{};
+     RoomPhase phase_{RoomPhase::locked};
+diff --git a/src/dungeon/dungeon_snapshot.cpp b/src/dungeon/dungeon_snapshot.cpp
+index 65d3f16..7425920 100644
+--- a/src/dungeon/dungeon_snapshot.cpp
++++ b/src/dungeon/dungeon_snapshot.cpp
+@@ -55,20 +55,22 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
+     for (const items::ItemInstance& item : stable_state_.item_ownership.items) {
+         if (!equipped(stable_state_.item_ownership.equipment, item.id)) {
+             ++result.inventory_count;
+         }
+     }
+     for (const GroundItem& ground : ground_items_) {
+         if (!ground.active) continue;
+         GroundItemSnapshot& packed =
+             result.ground_items[result.ground_item_count++];
+         packed.ordinal = ground.drop_ordinal;
++        packed.source = ground.source;
++        packed.abyss_reward_ordinal = ground.abyss_reward_ordinal;
+         packed.position = ground.position;
+         packed.item_id = ground.item.id;
+         const items::BaseDefinition* base =
+             items::base_definition(ground.item.base_id);
+         if (base != nullptr) packed.slot = base->slot;
+         packed.rarity = ground.item.rarity;
+     }
+     if (pending_save_.has_value()) {
+         result.pending_save_kind = pending_save_->kind;
+     }
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index 22ddc1f..241d3e0 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -1,12 +1,13 @@
+ #include "dungeon/dungeon_session.hpp"
+ 
++#include "dungeon/abyss_reward.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "items/item_catalog.hpp"
+ #include "items/item_generation.hpp"
+ #include "passives/passive_tree_rules.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ #include <new>
+@@ -278,20 +279,72 @@ bool DungeonSession::pending_item_cache_consistent() const noexcept {
+             || pending_save_->kind == PendingSaveKind::recipe);
+     return item_pending == pending_item_build_.has_value();
+ }
+ 
+ bool DungeonSession::pending_abyss_cache_consistent() const noexcept {
+     const bool start_pending = pending_save_.has_value()
+         && pending_save_->kind == PendingSaveKind::abyss_start;
+     return start_pending == pending_abyss_combat_.has_value();
+ }
+ 
++bool DungeonSession::pending_abyss_reward_cache_consistent() const noexcept {
++    const bool reward_pending = pending_save_.has_value()
++        && pending_save_->kind
++            == PendingSaveKind::abyss_reward_materialized;
++    if (reward_pending != pending_abyss_reward_.has_value()) return false;
++    if (!reward_pending) return true;
++
++    const PendingAbyssReward& cache = *pending_abyss_reward_;
++    if (stable_state_.abyss.lifecycle != abyss::AbyssLifecycle::cleared
++            || cache.ground_index >= ground_items_.size()
++            || ground_items_[cache.ground_index].active
++            || cache.reward_ordinal >= stable_state_.abyss.reward_total
++            || cache.reward_ordinal >= 3U
++            || !cache.ground.active
++            || cache.ground.drop_ordinal != cache.ground_index
++            || cache.ground.source != GroundItemSource::abyss_chest
++            || cache.ground.abyss_reward_ordinal != cache.reward_ordinal) {
++        return false;
++    }
++    const std::uint8_t bit = static_cast<std::uint8_t>(
++        1U << cache.reward_ordinal);
++    const auto& next = pending_save_->next_state;
++    if ((stable_state_.abyss.generated_mask & bit) != 0U
++            || (stable_state_.abyss.abandoned_mask & bit) != 0U
++            || next.abyss.generated_mask
++                != static_cast<std::uint8_t>(
++                    stable_state_.abyss.generated_mask | bit)
++            || next.abyss.claimed_mask != stable_state_.abyss.claimed_mask
++            || next.abyss.abandoned_mask != stable_state_.abyss.abandoned_mask
++            || next.abyss.lifecycle != stable_state_.abyss.lifecycle
++            || next.abyss.danger != stable_state_.abyss.danger
++            || next.abyss.rule != stable_state_.abyss.rule
++            || next.abyss.rules_version != stable_state_.abyss.rules_version
++            || next.abyss.reward_total != stable_state_.abyss.reward_total
++            || stable_state_.abyss.reward_revision
++                == (std::numeric_limits<std::uint32_t>::max)()
++            || next.abyss.reward_revision
++                != stable_state_.abyss.reward_revision + 1U) {
++        return false;
++    }
++    const std::uint8_t base_item_level = static_cast<std::uint8_t>(
++        (std::min)(stable_state_.current_room.depth, std::uint64_t{100U}));
++    const auto expected = derive_abyss_ground_item(
++        stable_state_.current_room.seed, stable_state_.abyss.danger,
++        base_item_level, cache.reward_ordinal, cache.ground_index);
++    if (!expected.has_value()
++            || !same_ground_item(*expected, cache.ground))
++        return false;
++    return !item_id_in_use(stable_state_.item_ownership, ground_items_,
++        expected->item.id);
++}
++
+ RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
+     if (!pending_item_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return RequestResult::faulted;
+     }
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value() || item_id == 0U) {
+         return RequestResult::rejected;
+     }
+     const items::OwnershipValidationResult stable_validation =
+@@ -416,21 +469,22 @@ RequestResult DungeonSession::request_recipe(
+         return RequestResult::faulted;
+     }
+     const auto product = items::generate_recipe_item(
+         stable_state_.root_seed,
+         stable_state_.item_ownership.next_item_sequence,
+         *a, *b, *c);
+     if (!product.has_value()) {
+         enter_fault(DungeonFault::item_id_collision);
+         return RequestResult::faulted;
+     }
+-    if (find_item(stable_state_.item_ownership, product->id) != nullptr) {
++    if (item_id_in_use(stable_state_.item_ownership,
++            ground_items_, product->id)) {
+         enter_fault(DungeonFault::item_id_collision);
+         return RequestResult::faulted;
+     }
+ 
+     try {
+         DungeonRunState next = stable_state_;
+         next.progression = room_progression_;
+         auto& owned = next.item_ownership.items;
+         std::size_t write = 0U;
+         for (std::size_t read = 0U; read < owned.size(); ++read) {
+@@ -457,38 +511,40 @@ RequestResult DungeonSession::request_pickup(
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return RequestResult::faulted;
+     }
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value()
+             || drop_ordinal >= ground_items_.size()) {
+         return RequestResult::rejected;
+     }
+     const GroundItem& ground = ground_items_[drop_ordinal];
+     if (!ground.active || ground.drop_ordinal != drop_ordinal
++            || ground.source == GroundItemSource::abyss_chest
+             || !pickup_distance_ok(
+                 combat_->snapshot().player.position, ground.position)) {
+         return RequestResult::rejected;
+     }
+     const items::OwnershipValidationResult stable_validation =
+         items::validate_ownership_detailed(stable_state_.item_ownership);
+     if (stable_validation
+             == items::OwnershipValidationResult::allocation_failure) {
+         return RequestResult::rejected;
+     }
+     if (stable_validation != items::OwnershipValidationResult::valid
+             || !items::validate_item(ground.item)
+             || !passives::valid_passive_tree_state(
+                 stable_state_.passive_tree, room_progression_)) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return RequestResult::faulted;
+     }
+-    if (find_item(stable_state_.item_ownership, ground.item.id) != nullptr) {
++    if (item_id_in_use(stable_state_.item_ownership, ground_items_,
++            ground.item.id, drop_ordinal)) {
+         enter_fault(DungeonFault::item_id_collision);
+         return RequestResult::faulted;
+     }
+     if (stable_state_.commit_generation
+             == (std::numeric_limits<std::uint64_t>::max)()) {
+         enter_fault(DungeonFault::commit_generation_overflow);
+         return RequestResult::faulted;
+     }
+ 
+     try {
+@@ -527,21 +583,21 @@ RequestResult DungeonSession::request_pickup(
+ 
+ void DungeonSession::request_nearby_pickups(
+     combat::Vec3 player_position) noexcept {
+     if (!item_request_phase(phase_) || !combat_.has_value()
+             || pending_save_.has_value()) {
+         return;
+     }
+     for (std::uint16_t ordinal = 0U;
+          ordinal < ground_items_.size(); ++ordinal) {
+         const GroundItem& ground = ground_items_[ordinal];
+-        if (!ground.active
++        if (!ground.active || ground.source == GroundItemSource::abyss_chest
+                 || !pickup_distance_ok(player_position, ground.position)) {
+             continue;
+         }
+         const RequestResult result = request_pickup(ordinal);
+         if (result != RequestResult::rejected) return;
+     }
+ }
+ 
+ void DungeonSession::commit_pending_save(
+     const PendingSaveResult& result) noexcept {
+@@ -550,27 +606,33 @@ void DungeonSession::commit_pending_save(
+         return;
+     }
+     if (!pending_item_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+     if (!pending_abyss_cache_consistent()) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
++    if (!pending_abyss_reward_cache_consistent()) {
++        enter_fault(DungeonFault::save_receipt_mismatch);
++        return;
++    }
+     if (result.disposition == SaveDisposition::indeterminate) {
+         enter_fault(DungeonFault::save_commit_indeterminate);
+         return;
+     }
+     const bool abyss_commit = pending_save_->kind == PendingSaveKind::abyss_start
+         || pending_save_->kind == PendingSaveKind::abyss_fail
+-        || pending_save_->kind == PendingSaveKind::abyss_clear;
++        || pending_save_->kind == PendingSaveKind::abyss_clear
++        || pending_save_->kind
++            == PendingSaveKind::abyss_reward_materialized;
+     if (result.disposition == SaveDisposition::not_committed && abyss_commit) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+         return;
+     }
+     if (result.disposition == SaveDisposition::not_committed) {
+         const RoomPhase resume_phase = pending_save_->resume_phase;
+         phase_ = resume_phase;
+         saturating_increment(diagnostics_.save_failure_count);
+         static_cast<void>(emit(
+             DungeonEventKind::save_failed,
+@@ -591,20 +653,22 @@ void DungeonSession::commit_pending_save(
+         return;
+     }
+ 
+     const PendingSaveKind kind = pending_save_->kind;
+     const bool item_commit = kind == PendingSaveKind::equipment
+         || kind == PendingSaveKind::recipe;
+     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+     const bool start_commit = kind == PendingSaveKind::abyss_start;
+     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
+     const bool clear_commit = kind == PendingSaveKind::abyss_clear;
++    const bool reward_commit = kind
++        == PendingSaveKind::abyss_reward_materialized;
+     const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
+     if (pickup_commit) {
+         if (pickup_ordinal >= ground_items_.size()) {
+             enter_fault(DungeonFault::save_receipt_mismatch);
+             return;
+         }
+         const GroundItem& ground = ground_items_[pickup_ordinal];
+         const items::ItemInstance* published = find_item(
+             pending_save_->next_state.item_ownership, ground.item.id);
+         if (!ground.active || ground.drop_ordinal != pickup_ordinal
+@@ -618,27 +682,30 @@ void DungeonSession::commit_pending_save(
+         }
+     }
+     combat::PlayerCombatBuild published_build{};
+     if (item_commit) {
+         if (!combat_.has_value()) {
+             enter_fault(DungeonFault::invalid_item_state);
+             return;
+         }
+         published_build = *pending_item_build_;
+     }
++    PendingAbyssReward published_reward{};
++    if (reward_commit) published_reward = *pending_abyss_reward_;
+ 
+     const checkpoint::RoomDescriptor previous_room =
+         stable_state_.current_room;
+     stable_state_ = std::move(pending_save_->next_state);
+     const RoomPhase resume_phase = pending_save_->resume_phase;
+     pending_save_.reset();
+     pending_item_build_.reset();
++    pending_abyss_reward_.reset();
+     if (start_commit) {
+         combat_.emplace(*pending_abyss_combat_);
+         pending_abyss_combat_.reset();
+         room_progression_ = stable_state_.progression;
+         phase_ = RoomPhase::locked;
+         return;
+     }
+     pending_abyss_combat_.reset();
+     if (fail_commit) {
+         reset_to_normal_room(false);
+@@ -646,20 +713,25 @@ void DungeonSession::commit_pending_save(
+     }
+     if (clear_commit) {
+         settle_room_experience();
+         room_progression_ = stable_state_.progression;
+         combat_->clear_abyss_rule_preserving_resources();
+         // prepare_room_clear reserved both publication slots. While committing,
+         // tick() is frozen and no other dungeon-event producer can consume them.
+         publish_room_clear();
+         return;
+     }
++    if (reward_commit) {
++        ground_items_[published_reward.ground_index] = published_reward.ground;
++        phase_ = resume_phase;
++        return;
++    }
+     if (kind == PendingSaveKind::transition) {
+         ground_items_ = {};
+         rolled_drop_bits_ = {};
+         combat_.reset();
+         phase_ = RoomPhase::transitioning;
+         emit_committed(previous_room, stable_state_);
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+     if (item_commit) {
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index b521a28..266c25c 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -92,29 +92,38 @@ struct DungeonSessionConfig final {
+ struct RoomDescriptor final {
+     std::uint64_t index{};
+     std::uint64_t seed{};
+     EntrySide entry{EntrySide::initial};
+     combat::CombatLabConfig combat{};
+ };
+ 
+ inline constexpr std::size_t kGroundDropCapacity = 192U;
+ inline constexpr float kPickupRadius = 1.5F;
+ 
++enum class GroundItemSource : std::uint8_t {
++    monster_drop,
++    abyss_chest,
++};
++
+ struct GroundItem final {
+     bool active{};
+     std::uint16_t drop_ordinal{};
++    GroundItemSource source{GroundItemSource::monster_drop};
++    std::uint8_t abyss_reward_ordinal{0xFFU};
+     combat::Vec3 position{};
+     items::ItemInstance item{};
+ };
+ 
+ struct GroundItemSnapshot final {
+     std::uint16_t ordinal{};
++    GroundItemSource source{GroundItemSource::monster_drop};
++    std::uint8_t abyss_reward_ordinal{0xFFU};
+     combat::Vec3 position{};
+     std::uint64_t item_id{};
+     items::ItemSlot slot{items::ItemSlot::weapon};
+     items::ItemRarity rarity{items::ItemRarity::normal};
+ };
+ 
+ struct DungeonSnapshot final {
+     std::uint64_t session_tick{};
+     std::uint64_t root_seed{};
+     std::uint64_t commit_generation{};
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index d36515f..56fe3fe 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -5,20 +5,21 @@ add_executable(arpg_dungeon_tests
+     dungeon_navigation_tests.cpp
+     dungeon_stress_tests.cpp
+     room_generation_tests.cpp
+     dungeon_rules_tests.cpp
+     dungeon_progression_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+     dungeon_transaction_tests.cpp
++    dungeon_abyss_reward_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_progression_reward_tests.cpp
+     dungeon_affix_reward_tests.cpp
+     dungeon_affix_stress_tests.cpp)
+ 
+ target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_dungeon_tests
+     PRIVATE
+diff --git a/tests/dungeon/dungeon_abyss_reward_tests.cpp b/tests/dungeon/dungeon_abyss_reward_tests.cpp
+new file mode 100644
+index 0000000..22f75b5
+--- /dev/null
++++ b/tests/dungeon/dungeon_abyss_reward_tests.cpp
+@@ -0,0 +1,559 @@
++#include "test_framework.hpp"
++
++#include "allocation_probe.hpp"
++#include "dungeon_test_support.hpp"
++
++#include "dungeon/abyss_reward.hpp"
++#include "dungeon/dungeon_progression.hpp"
++#include "dungeon/dungeon_session.hpp"
++#include "abyss/abyss_rewards.hpp"
++#include "abyss/abyss_rules.hpp"
++#include "items/item_generation.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++
++namespace {
++
++using arpg::abyss::AbyssDanger;
++using arpg::dungeon::DungeonFault;
++using arpg::dungeon::DungeonRules;
++using arpg::dungeon::DungeonRunState;
++using arpg::dungeon::DungeonSession;
++using arpg::dungeon::GroundItem;
++using arpg::dungeon::GroundItemSource;
++using arpg::dungeon::PendingSaveKind;
++using arpg::dungeon::RoomPhase;
++using arpg::dungeon::SaveDisposition;
++
++arpg::dungeon::DungeonRunState cleared_abyss_state(
++    AbyssDanger wanted,
++    std::uint64_t depth = 20U) noexcept {
++    DungeonRunState state = arpg::dungeon::make_initial_run_state(
++        0xA9B9555EEDULL, DungeonRules{}).state;
++    for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
++        const auto selection = arpg::abyss::select_abyss_rule(seed, depth);
++        if (!selection.has_value() || selection->danger != wanted) continue;
++        state.current_room.seed = seed;
++        state.current_room.depth = depth;
++        state.current_room.is_abyss = true;
++        state.current_room.has_hole = true;
++        state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
++        state.abyss.danger = selection->danger;
++        state.abyss.rule = selection->rule;
++        state.abyss.rules_version = selection->rules_version;
++        state.abyss.reward_total = arpg::abyss::reward_profile_for(
++            selection->danger, 1U).item_count;
++        return state;
++    }
++    return {};
++}
++
++arpg::items::ItemInstance normal_item(std::uint64_t id) noexcept {
++    return arpg::items::generate_item({
++        id ^ 0x91E10DA5ULL,
++        arpg::items::ItemSlot::weapon,
++        20U,
++        id,
++        arpg::items::ItemRarity::normal,
++    }).value();
++}
++
++bool same_item(
++    const arpg::items::ItemInstance& left,
++    const arpg::items::ItemInstance& right) noexcept {
++    if (left.id != right.id || left.base_id != right.base_id
++            || left.rarity != right.rarity
++            || left.item_level != right.item_level
++            || left.required_level != right.required_level
++            || left.affix_count != right.affix_count
++            || left.reserved != right.reserved) return false;
++    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
++        if (left.affixes[index].affix_id != right.affixes[index].affix_id
++                || left.affixes[index].tier != right.affixes[index].tier
++                || left.affixes[index].variant
++                    != right.affixes[index].variant) return false;
++    }
++    return true;
++}
++
++bool same_ground(const GroundItem& left, const GroundItem& right) noexcept {
++    return left.active == right.active
++        && left.drop_ordinal == right.drop_ordinal
++        && left.source == right.source
++        && left.abyss_reward_ordinal == right.abyss_reward_ordinal
++        && left.position.x == right.position.x
++        && left.position.y == right.position.y
++        && left.position.z == right.position.z
++        && same_item(left.item, right.item);
++}
++
++const GroundItem* abyss_ground(
++    const DungeonSession& session,
++    std::uint8_t reward_ordinal) noexcept {
++    for (const GroundItem& ground : arpg::test::ground_items(session)) {
++        if (ground.active && ground.source == GroundItemSource::abyss_chest
++                && ground.abyss_reward_ordinal == reward_ordinal) {
++            return &ground;
++        }
++    }
++    return nullptr;
++}
++
++bool commit_pending(DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) return false;
++    session.resolve_pending_save({SaveDisposition::committed,
++        pending->expected_generation, pending->next_state});
++    return session.snapshot().phase != RoomPhase::faulted;
++}
++
++void fill_ground_pool(DungeonSession& session,
++    std::uint16_t except = 0xFFFFU) noexcept {
++    for (std::uint16_t index = 0U;
++         index < arpg::dungeon::kGroundDropCapacity; ++index) {
++        if (index == except) continue;
++        arpg::test::install_ground_item(session, index,
++            normal_item(0x100000U + index), {9.0F, 4.0F, 0.0F});
++    }
++}
++
++arpg::test::Failure reward_profiles_levels_and_ordinals_are_exact() noexcept {
++    const auto left = arpg::dungeon::abyss_reward_position(0U);
++    const auto center = arpg::dungeon::abyss_reward_position(1U);
++    const auto right = arpg::dungeon::abyss_reward_position(2U);
++    ARPG_REQUIRE(left.has_value() && center.has_value() && right.has_value());
++    ARPG_REQUIRE(left->x == -0.75F && left->y == 0.0F && left->z == 0.0F);
++    ARPG_REQUIRE(center->x == 0.0F && center->y == 0.0F
++        && center->z == 0.0F);
++    ARPG_REQUIRE(right->x == 0.75F && right->y == 0.0F
++        && right->z == 0.0F);
++    ARPG_REQUIRE(!arpg::dungeon::abyss_reward_position(3U).has_value());
++
++    constexpr std::array<AbyssDanger, 3> dangers{{
++        AbyssDanger::low, AbyssDanger::medium, AbyssDanger::high}};
++    constexpr std::array<std::uint8_t, 3> counts{{1U, 2U, 3U}};
++    constexpr std::array<std::uint8_t, 3> levels{{21U, 23U, 25U}};
++    for (std::size_t danger = 0U; danger < dangers.size(); ++danger) {
++        for (std::uint8_t ordinal = 0U; ordinal < counts[danger]; ++ordinal) {
++            const auto slot = arpg::dungeon::derive_abyss_reward_slot(
++                0x12345678ULL, dangers[danger], 20U, ordinal);
++            ARPG_REQUIRE(slot.has_value());
++            ARPG_REQUIRE(slot->slot_index == ordinal);
++            ARPG_REQUIRE(slot->item_level == levels[danger]);
++            ARPG_REQUIRE(slot->item_id != 0U);
++        }
++        ARPG_REQUIRE(!arpg::dungeon::derive_abyss_reward_slot(
++            0x12345678ULL, dangers[danger], 20U, counts[danger]).has_value());
++        const auto capped = arpg::dungeon::derive_abyss_reward_slot(
++            0x12345678ULL, dangers[danger], 100U, 0U);
++        ARPG_REQUIRE(capped.has_value());
++        ARPG_REQUIRE(capped->item_level == 100U);
++    }
++    ARPG_REQUIRE(!arpg::dungeon::derive_abyss_reward_slot(
++        1U, AbyssDanger::low, 0U, 0U).has_value());
++
++    DungeonSession maximum_depth{DungeonRules{}, cleared_abyss_state(
++        AbyssDanger::high,
++        (std::numeric_limits<std::uint64_t>::max)())};
++    maximum_depth.tick({});
++    ARPG_REQUIRE(commit_pending(maximum_depth));
++    ARPG_REQUIRE(abyss_ground(maximum_depth, 0U)->item.item_level == 100U);
++    return {};
++}
++
++arpg::test::Failure shifted_rarity_rolls_follow_danger_ordering() noexcept {
++    std::array<std::uint32_t, 3> normal{};
++    std::array<std::uint32_t, 3> rare{};
++    for (std::uint64_t seed = 1U; seed <= 4096U; ++seed) {
++        for (std::size_t danger = 0U; danger < 3U; ++danger) {
++            const auto slot = arpg::dungeon::derive_abyss_reward_slot(
++                seed, static_cast<AbyssDanger>(danger), 20U, 0U);
++            ARPG_REQUIRE(slot.has_value());
++            if (slot->rarity == arpg::items::ItemRarity::normal)
++                ++normal[danger];
++            if (slot->rarity == arpg::items::ItemRarity::rare)
++                ++rare[danger];
++        }
++    }
++    ARPG_REQUIRE(normal[0] > normal[1]);
++    ARPG_REQUIRE(normal[1] > normal[2]);
++    ARPG_REQUIRE(rare[0] < rare[1]);
++    ARPG_REQUIRE(rare[1] < rare[2]);
++    return {};
++}
++
++arpg::test::Failure ordinal_streams_are_stable_and_allow_repeated_slots() noexcept {
++    bool found_repeat = false;
++    for (std::uint64_t seed = 1U; seed <= 4096U; ++seed) {
++        const auto first = arpg::dungeon::derive_abyss_reward_slot(
++            seed, AbyssDanger::high, 50U, 0U);
++        const auto second = arpg::dungeon::derive_abyss_reward_slot(
++            seed, AbyssDanger::high, 50U, 1U);
++        const auto third = arpg::dungeon::derive_abyss_reward_slot(
++            seed, AbyssDanger::high, 50U, 2U);
++        ARPG_REQUIRE(first.has_value() && second.has_value()
++            && third.has_value());
++        const auto repeat = arpg::dungeon::derive_abyss_reward_slot(
++            seed, AbyssDanger::high, 50U, 1U);
++        ARPG_REQUIRE(repeat->item_slot == second->item_slot);
++        ARPG_REQUIRE(repeat->rarity == second->rarity);
++        ARPG_REQUIRE(repeat->item_seed == second->item_seed);
++        ARPG_REQUIRE(repeat->item_id == second->item_id);
++        if (first->item_slot == second->item_slot
++                || first->item_slot == third->item_slot
++                || second->item_slot == third->item_slot) {
++            found_repeat = true;
++            break;
++        }
++    }
++    ARPG_REQUIRE(found_repeat);
++    return {};
++}
++
++arpg::test::Failure cleared_abyss_starts_hidden_reward_transaction() noexcept {
++    DungeonSession session{DungeonRules{}, cleared_abyss_state(AbyssDanger::low)};
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::cleared);
++    ARPG_REQUIRE(!session.snapshot().has_active_room);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++
++    session.tick({});
++
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(session.pending_save()->kind
++        == PendingSaveKind::abyss_reward_materialized);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++    const auto& stable = arpg::test::stable_state(session);
++    ARPG_REQUIRE(stable.abyss.generated_mask == 0U);
++    ARPG_REQUIRE(stable.abyss.reward_revision == 0U);
++    ARPG_REQUIRE(session.pending_save()->next_state.abyss.generated_mask == 1U);
++    ARPG_REQUIRE(session.pending_save()->next_state.abyss.reward_revision == 1U);
++    return {};
++}
++
++arpg::test::Failure partial_pool_uses_actual_free_ground_index() noexcept {
++    DungeonSession session{DungeonRules{}, cleared_abyss_state(AbyssDanger::low)};
++    fill_ground_pool(session, 17U);
++    session.tick({});
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 191U);
++    ARPG_REQUIRE(commit_pending(session));
++    const GroundItem* reward = abyss_ground(session, 0U);
++    ARPG_REQUIRE(reward != nullptr);
++    ARPG_REQUIRE(reward->drop_ordinal == 17U);
++    ARPG_REQUIRE(reward->source == GroundItemSource::abyss_chest);
++    ARPG_REQUIRE(reward->abyss_reward_ordinal == 0U);
++    return {};
++}
++
++arpg::test::Failure full_pool_waits_without_advancing_then_continues() noexcept {
++    DungeonSession session{
++        DungeonRules{}, cleared_abyss_state(AbyssDanger::medium)};
++    fill_ground_pool(session);
++    session.tick({});
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 0U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 0U);
++
++    arpg::test::clear_ground_item(session, 42U);
++    session.tick({});
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(commit_pending(session));
++    ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal == 42U);
++    session.tick({});
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 1U);
++
++    arpg::test::clear_ground_item(session, 41U);
++    session.tick({});
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(session.pending_save()->next_state.abyss.generated_mask == 3U);
++    return {};
++}
++
++arpg::test::Failure reward_receipts_fail_closed_without_publication() noexcept {
++    const auto state = cleared_abyss_state(AbyssDanger::low);
++    DungeonSession not_committed{DungeonRules{}, state};
++    not_committed.tick({});
++    const auto failed = *not_committed.pending_save();
++    not_committed.resolve_pending_save({SaveDisposition::not_committed,
++        failed.expected_generation, failed.next_state});
++    ARPG_REQUIRE(not_committed.snapshot().phase == RoomPhase::faulted);
++    ARPG_REQUIRE(not_committed.snapshot().diagnostics.fault
++        == DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(not_committed.snapshot().ground_item_count == 0U);
++    ARPG_REQUIRE(arpg::test::stable_state(not_committed).abyss.generated_mask == 0U);
++
++    DungeonSession indeterminate{DungeonRules{}, state};
++    indeterminate.tick({});
++    indeterminate.resolve_pending_save({SaveDisposition::indeterminate, 0U, {}});
++    ARPG_REQUIRE(indeterminate.snapshot().diagnostics.fault
++        == DungeonFault::save_commit_indeterminate);
++    ARPG_REQUIRE(indeterminate.snapshot().ground_item_count == 0U);
++
++    DungeonSession mismatch{DungeonRules{}, state};
++    mismatch.tick({});
++    auto wrong = *mismatch.pending_save();
++    ++wrong.next_state.abyss.reward_revision;
++    mismatch.resolve_pending_save({SaveDisposition::committed,
++        wrong.expected_generation, wrong.next_state});
++    ARPG_REQUIRE(mismatch.snapshot().diagnostics.fault
++        == DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(mismatch.snapshot().ground_item_count == 0U);
++
++    DungeonSession occupied{DungeonRules{}, state};
++    occupied.tick({});
++    const auto exact = *occupied.pending_save();
++    arpg::test::install_ground_item(
++        occupied, 0U, normal_item(0x999999U), {8.0F, 4.0F, 0.0F});
++    occupied.resolve_pending_save({SaveDisposition::committed,
++        exact.expected_generation, exact.next_state});
++    ARPG_REQUIRE(occupied.snapshot().diagnostics.fault
++        == DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(occupied.snapshot().ground_item_count == 1U);
++    ARPG_REQUIRE(arpg::test::ground_items(occupied)[0U].source
++        == GroundItemSource::monster_drop);
++    return {};
++}
++
++arpg::test::Failure exact_receipt_publishes_without_allocation() noexcept {
++    DungeonSession session{DungeonRules{}, cleared_abyss_state(AbyssDanger::low)};
++    session.tick({});
++    const auto pending = *session.pending_save();
++    const arpg::dungeon::PendingSaveResult receipt{
++        SaveDisposition::committed,
++        pending.expected_generation,
++        pending.next_state,
++    };
++    const std::uint64_t before = arpg::test::allocation_count();
++    {
++        arpg::test::ScopedAllocationFailure fail{0U};
++        session.resolve_pending_save(receipt);
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == before);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 1U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 1U);
++    return {};
++}
++
++arpg::test::Failure reload_rebuilds_exact_items_without_save_or_combat() noexcept {
++    DungeonSession original{
++        DungeonRules{}, cleared_abyss_state(AbyssDanger::medium)};
++    original.tick({});
++    ARPG_REQUIRE(commit_pending(original));
++    original.tick({});
++    ARPG_REQUIRE(commit_pending(original));
++    const GroundItem first = *abyss_ground(original, 0U);
++    const GroundItem second = *abyss_ground(original, 1U);
++    const DungeonRunState saved = arpg::test::stable_state(original);
++
++    DungeonSession reloaded{DungeonRules{}, saved};
++    ARPG_REQUIRE(reloaded.snapshot().phase == RoomPhase::cleared);
++    ARPG_REQUIRE(!reloaded.snapshot().has_active_room);
++    ARPG_REQUIRE(!reloaded.pending_save().has_value());
++    ARPG_REQUIRE(reloaded.snapshot().ground_item_count == 2U);
++    ARPG_REQUIRE(same_ground(first, *abyss_ground(reloaded, 0U)));
++    ARPG_REQUIRE(same_ground(second, *abyss_ground(reloaded, 1U)));
++    ARPG_REQUIRE(arpg::test::stable_state(reloaded).abyss.generated_mask == 3U);
++    ARPG_REQUIRE(arpg::test::stable_state(reloaded).abyss.reward_revision == 2U);
++    reloaded.tick({});
++    ARPG_REQUIRE(!reloaded.pending_save().has_value());
++    ARPG_REQUIRE(reloaded.snapshot().phase == RoomPhase::awaiting_exit);
++
++    DungeonRunState claimed = saved;
++    claimed.abyss.claimed_mask = 1U;
++    DungeonSession claimed_reload{DungeonRules{}, claimed};
++    ARPG_REQUIRE(claimed_reload.snapshot().ground_item_count == 1U);
++    ARPG_REQUIRE(abyss_ground(claimed_reload, 0U) == nullptr);
++    ARPG_REQUIRE(abyss_ground(claimed_reload, 1U) != nullptr);
++    return {};
++}
++
++arpg::test::Failure retry_content_is_independent_of_pool_and_runtime_state() noexcept {
++    DungeonRunState state = cleared_abyss_state(AbyssDanger::low, 35U);
++    state.item_ownership.next_item_sequence = 9001U;
++    DungeonSession delayed{DungeonRules{}, state};
++    fill_ground_pool(delayed);
++    delayed.tick({});
++    ARPG_REQUIRE(!delayed.pending_save().has_value());
++    arpg::test::clear_ground_item(delayed, 77U);
++    delayed.tick({});
++    ARPG_REQUIRE(commit_pending(delayed));
++
++    state.commit_generation += 99U;
++    state.item_ownership.next_item_sequence = 1U;
++    DungeonSession immediate{DungeonRules{}, state};
++    immediate.tick({});
++    ARPG_REQUIRE(commit_pending(immediate));
++    ARPG_REQUIRE(same_item(
++        abyss_ground(delayed, 0U)->item,
++        abyss_ground(immediate, 0U)->item));
++    return {};
++}
++
++arpg::test::Failure collision_and_revision_overflow_fault_without_retry() noexcept {
++    DungeonRunState collision = cleared_abyss_state(AbyssDanger::low);
++    const auto plan = arpg::dungeon::derive_abyss_reward_slot(
++        collision.current_room.seed, collision.abyss.danger,
++        static_cast<std::uint8_t>(collision.current_room.depth), 0U);
++    ARPG_REQUIRE(plan.has_value());
++    collision.item_ownership.items.push_back(*arpg::items::generate_item({
++        plan->item_seed, plan->item_slot, plan->item_level,
++        plan->item_id, plan->rarity}));
++    DungeonSession collided{DungeonRules{}, collision};
++    collided.tick({});
++    ARPG_REQUIRE(collided.snapshot().diagnostics.fault
++        == DungeonFault::abyss_reward_collision);
++    ARPG_REQUIRE(collided.snapshot().ground_item_count == 0U);
++
++    DungeonRunState overflow = cleared_abyss_state(AbyssDanger::low);
++    overflow.abyss.reward_revision =
++        (std::numeric_limits<std::uint32_t>::max)();
++    DungeonSession revision{DungeonRules{}, overflow};
++    revision.tick({});
++    ARPG_REQUIRE(revision.snapshot().diagnostics.fault
++        == DungeonFault::abyss_reward_revision_overflow);
++    ARPG_REQUIRE(revision.snapshot().ground_item_count == 0U);
++    return {};
++}
++
++arpg::test::Failure abyss_pickup_is_reserved_for_task_ten() noexcept {
++    DungeonSession session{};
++    session.tick({});
++    const auto player = session.snapshot().combat->player.position;
++    const auto item = normal_item(0xABCDEFU);
++    arpg::test::install_abyss_ground_item(
++        session, 5U, 0U, item, player);
++    ARPG_REQUIRE(session.request_pickup(5U)
++        == arpg::dungeon::RequestResult::rejected);
++    session.request_nearby_pickups(player);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(arpg::test::ground_items(session)[5U].active);
++    return {};
++}
++
++arpg::test::Failure allocation_failure_is_hidden_and_retryable() noexcept {
++    DungeonRunState state = cleared_abyss_state(AbyssDanger::low);
++    state.item_ownership.items.push_back(normal_item(0x777777U));
++    DungeonSession session{DungeonRules{}, state};
++    {
++        arpg::test::ScopedAllocationFailure fail{0U};
++        session.tick({});
++    }
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault == DungeonFault::none);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 0U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 0U);
++
++    session.tick({});
++    ARPG_REQUIRE(session.pending_save().has_value());
++    ARPG_REQUIRE(session.pending_save()->kind
++        == PendingSaveKind::abyss_reward_materialized);
++    return {};
++}
++
++arpg::test::Failure committed_reward_waits_for_reload_pool_space() noexcept {
++    DungeonRunState state = cleared_abyss_state(AbyssDanger::low);
++    state.abyss.generated_mask = 1U;
++    state.abyss.reward_revision = 1U;
++    DungeonSession session{DungeonRules{}, state};
++    const GroundItem* initial = abyss_ground(session, 0U);
++    ARPG_REQUIRE(initial != nullptr);
++    arpg::test::clear_ground_item(session, initial->drop_ordinal);
++    fill_ground_pool(session);
++    session.tick({});
++    ARPG_REQUIRE(abyss_ground(session, 0U) == nullptr);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 1U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 1U);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++
++    arpg::test::clear_ground_item(session, 88U);
++    session.tick({});
++    ARPG_REQUIRE(abyss_ground(session, 0U) != nullptr);
++    ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal == 88U);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 1U);
++    return {};
++}
++
++arpg::test::Failure tampered_cached_position_rejects_exact_receipt() noexcept {
++    DungeonSession session{DungeonRules{}, cleared_abyss_state(AbyssDanger::low)};
++    session.tick({});
++    const auto pending = *session.pending_save();
++    arpg::test::offset_pending_abyss_reward_position(
++        session, {0.25F, -0.5F, 1.0F});
++
++    session.resolve_pending_save({SaveDisposition::committed,
++        pending.expected_generation, pending.next_state});
++
++    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == DungeonFault::save_receipt_mismatch);
++    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 0U);
++    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 0U);
++    return {};
++}
++
++arpg::test::Failure recipe_product_colliding_with_abyss_ground_is_atomic() noexcept {
++    DungeonRunState state = arpg::dungeon::make_initial_run_state(
++        0x51515151ULL, DungeonRules{}).state;
++    const auto a = normal_item(0x5101U);
++    const auto b = normal_item(0x5102U);
++    const auto c = normal_item(0x5103U);
++    state.item_ownership.items = {a, b, c};
++    state.item_ownership.next_item_sequence = 9U;
++    const auto product = arpg::items::generate_recipe_item(
++        state.root_seed, state.item_ownership.next_item_sequence, a, b, c);
++    ARPG_REQUIRE(product.has_value());
++
++    DungeonSession session{DungeonRules{}, state};
++    arpg::test::install_abyss_ground_item(
++        session, 17U, 0U, normal_item(product->id), {8.0F, 4.0F, 0.0F});
++
++    ARPG_REQUIRE(session.request_recipe({{a.id, b.id, c.id}})
++        == arpg::dungeon::RequestResult::faulted);
++    ARPG_REQUIRE(session.snapshot().diagnostics.fault
++        == DungeonFault::item_id_collision);
++    ARPG_REQUIRE(!session.pending_save().has_value());
++    ARPG_REQUIRE(session.item_state().items.size() == 3U);
++    ARPG_REQUIRE(session.item_state().items[0].id == a.id);
++    ARPG_REQUIRE(session.item_state().items[1].id == b.id);
++    ARPG_REQUIRE(session.item_state().items[2].id == c.id);
++    ARPG_REQUIRE(session.item_state().next_item_sequence == 9U);
++    ARPG_REQUIRE(arpg::test::ground_items(session)[17U].active);
++    ARPG_REQUIRE(arpg::test::ground_items(session)[17U].item.id == product->id);
++    ARPG_REQUIRE(arpg::test::ground_items(session)[17U].source
++        == GroundItemSource::abyss_chest);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"reward profiles levels and ordinals", &reward_profiles_levels_and_ordinals_are_exact},
++    {"shifted rarity danger ordering", &shifted_rarity_rolls_follow_danger_ordering},
++    {"stable independent ordinal streams", &ordinal_streams_are_stable_and_allow_repeated_slots},
++    {"cleared starts hidden transaction", &cleared_abyss_starts_hidden_reward_transaction},
++    {"partial pool uses free index", &partial_pool_uses_actual_free_ground_index},
++    {"full pool waits and continues", &full_pool_waits_without_advancing_then_continues},
++    {"reward receipts fail closed", &reward_receipts_fail_closed_without_publication},
++    {"exact receipt no allocation", &exact_receipt_publishes_without_allocation},
++    {"reload rebuilds exact items", &reload_rebuilds_exact_items_without_save_or_combat},
++    {"retry content stable", &retry_content_is_independent_of_pool_and_runtime_state},
++    {"collision and revision overflow", &collision_and_revision_overflow_fault_without_retry},
++    {"abyss pickup reserved", &abyss_pickup_is_reserved_for_task_ten},
++    {"allocation failure retryable", &allocation_failure_is_hidden_and_retryable},
++    {"reload pool space wait", &committed_reward_waits_for_reload_pool_space},
++    {"tampered cached position", &tampered_cached_position_rejects_exact_receipt},
++    {"recipe collides with abyss ground", &recipe_product_colliding_with_abyss_ground_is_atomic},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept {
++    return arpg::test::make_suite("dungeon_abyss_reward", kCases);
++}
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index d90e054..942bd96 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -319,21 +319,23 @@ void tracked_tick(
+     const DungeonSnapshot state = session.snapshot();
+     const bool save_boundary = state.phase == RoomPhase::committing
+         && state.pending_save_kind.has_value()
+         && (*state.pending_save_kind
+                 == arpg::dungeon::PendingSaveKind::transition
+             || *state.pending_save_kind
+                 == arpg::dungeon::PendingSaveKind::loot_pickup
+             || *state.pending_save_kind
+                 == arpg::dungeon::PendingSaveKind::abyss_start
+             || *state.pending_save_kind
+-                == arpg::dungeon::PendingSaveKind::abyss_clear);
++                == arpg::dungeon::PendingSaveKind::abyss_clear
++            || *state.pending_save_kind
++                == arpg::dungeon::PendingSaveKind::abyss_reward_materialized);
+     const bool room_load = phase_before == RoomPhase::transitioning
+         && (state.phase == RoomPhase::locked
+             || (state.phase == RoomPhase::committing
+                 && state.pending_save_kind.has_value()
+                 && *state.pending_save_kind
+                     == arpg::dungeon::PendingSaveKind::abyss_start));
+     const std::uint64_t delta = arpg::test::allocation_count() - before;
+     if (save_boundary) {
+         ++summary.save_boundaries;
+         summary.save_boundary_allocations += delta;
+@@ -458,20 +460,26 @@ bool confirm_pending_save(
+             && saved.has_active_room && saved.combat.has_value()
+             && !saved.pending_save_kind.has_value()
+             && saved.commit_generation == expected_generation;
+     }
+     if (kind == arpg::dungeon::PendingSaveKind::abyss_clear) {
+         return saved.phase == RoomPhase::cleared
+             && saved.has_active_room && saved.combat.has_value()
+             && !saved.pending_save_kind.has_value()
+             && saved.commit_generation == expected_generation;
+     }
++    if (kind
++            == arpg::dungeon::PendingSaveKind::abyss_reward_materialized) {
++        return saved.phase == resume_phase
++            && !saved.pending_save_kind.has_value()
++            && saved.commit_generation == expected_generation;
++    }
+     return kind == arpg::dungeon::PendingSaveKind::transition
+         && saved.phase == RoomPhase::transitioning
+         && !saved.has_pending_transition
+         && saved.commit_generation == expected_generation
+         && saved.room_index == next_room_index
+         && saved.room_seed == next_room_seed
+         && !saved.has_active_room && !saved.combat.has_value();
+ }
+ 
+ MovementInput outward(ExitDirection direction) noexcept {
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index d559b72..7e89521 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -11,38 +11,49 @@ arpg::test::TestSuite room_generation_suite() noexcept;
+ arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
+ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
+ arpg::test::TestSuite dungeon_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
++arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
+ 
+ namespace {
+ 
+ bool stage9_affix_stress_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE9_AFFIX_STRESS_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool stage10_abyss_reward_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_STAGE10_ABYSS_REWARD_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ }  // namespace
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+@@ -53,28 +64,37 @@ int main() {
+         dungeon_lifecycle_suite(),
+         dungeon_navigation_suite(),
+         dungeon_stress_suite(),
+         dungeon_rules_suite(),
+         dungeon_progression_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_transaction_suite(),
++        dungeon_abyss_reward_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+         dungeon_affix_stress_suite(),
+     };
+ 
+     if (stage9_affix_stress_only()) {
+         const arpg::test::TestSuite stress_only[] = {
+             dungeon_affix_stress_suite(),
+         };
+         return arpg::test::run_suites(stress_only, 2,
+             "stage 9 task 10 affix stress");
+     }
+ 
+-    return arpg::test::run_suites(suites, 170,
+-        "stage 10 task 8 abyss clear event reservation");
++    if (stage10_abyss_reward_only()) {
++        const arpg::test::TestSuite reward_only[] = {
++            dungeon_abyss_reward_suite(),
++        };
++        return arpg::test::run_suites(reward_only, 16,
++            "stage 10 task 9 abyss rewards");
++    }
++
++    return arpg::test::run_suites(suites, 186,
++        "stage 10 task 9 deterministic abyss rewards");
+ }
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index c118f66..1b1f703 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -173,30 +173,53 @@ struct DungeonSessionTestAccess final {
+             session.ground_items_[ordinal] = {};
+         }
+     }
+     static void install_ground_item(
+         dungeon::DungeonSession& session,
+         std::uint16_t ordinal,
+         const items::ItemInstance& item,
+         combat::Vec3 position) noexcept {
+         if (ordinal < session.ground_items_.size()) {
+             session.ground_items_[ordinal] = {
+-                true, ordinal, position, item};
++                true, ordinal, dungeon::GroundItemSource::monster_drop,
++                0xFFU, position, item};
++        }
++    }
++    static void install_abyss_ground_item(
++        dungeon::DungeonSession& session,
++        std::uint16_t ordinal,
++        std::uint8_t reward_ordinal,
++        const items::ItemInstance& item,
++        combat::Vec3 position) noexcept {
++        if (ordinal < session.ground_items_.size()) {
++            session.ground_items_[ordinal] = {
++                true, ordinal, dungeon::GroundItemSource::abyss_chest,
++                reward_ordinal, position, item};
+         }
+     }
+     static void set_pending_pickup_ordinal(
+         dungeon::DungeonSession& session,
+         std::uint16_t ordinal) noexcept {
+         if (session.pending_save_.has_value()) {
+             session.pending_save_->pickup_ordinal = ordinal;
+         }
+     }
++    static void offset_pending_abyss_reward_position(
++        dungeon::DungeonSession& session,
++        combat::Vec3 offset) noexcept {
++        if (session.pending_abyss_reward_.has_value()) {
++            auto& position = session.pending_abyss_reward_->ground.position;
++            position.x += offset.x;
++            position.y += offset.y;
++            position.z += offset.z;
++        }
++    }
+     static const std::array<std::uint64_t, 3>& rolled_drop_bits(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.rolled_drop_bits_;
+     }
+     static const dungeon::DungeonRunState& stable_state(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.stable_state_;
+     }
+     static const std::array<dungeon::GroundItem,
+         dungeon::kGroundDropCapacity>& ground_items(
+@@ -294,26 +317,43 @@ inline void clear_ground_item(
+ 
+ inline void install_ground_item(
+     dungeon::DungeonSession& session,
+     std::uint16_t ordinal,
+     const items::ItemInstance& item,
+     combat::Vec3 position) noexcept {
+     DungeonSessionTestAccess::install_ground_item(
+         session, ordinal, item, position);
+ }
+ 
++inline void install_abyss_ground_item(
++    dungeon::DungeonSession& session,
++    std::uint16_t ordinal,
++    std::uint8_t reward_ordinal,
++    const items::ItemInstance& item,
++    combat::Vec3 position) noexcept {
++    DungeonSessionTestAccess::install_abyss_ground_item(
++        session, ordinal, reward_ordinal, item, position);
++}
++
+ inline void set_pending_pickup_ordinal(
+     dungeon::DungeonSession& session,
+     std::uint16_t ordinal) noexcept {
+     DungeonSessionTestAccess::set_pending_pickup_ordinal(session, ordinal);
+ }
+ 
++inline void offset_pending_abyss_reward_position(
++    dungeon::DungeonSession& session,
++    combat::Vec3 offset) noexcept {
++    DungeonSessionTestAccess::offset_pending_abyss_reward_position(
++        session, offset);
++}
++
+ inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::rolled_drop_bits(session);
+ }
+ 
+ inline const dungeon::DungeonRunState& stable_state(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::stable_state(session);
+ }
+ 

@@ -1,0 +1,859 @@
+# Review package: eb5f9be9f37b54d9b5eee8bcaff45c08973807fe..53056a976e9d0d6e02d22c40fb1bac7600dbab15
+
+## Commits
+53056a9 feat: render abyss combat and reward state
+
+## Files changed
+ src/dungeon/dungeon_snapshot.cpp           |   4 +
+ src/dungeon/dungeon_types.hpp              |   2 +
+ src/platform/raylib/combat_renderer.hpp    |   5 +
+ src/platform/raylib/dungeon_view_math.cpp  | 128 +++++++++++++++++++++++++
+ src/platform/raylib/dungeon_view_math.hpp  |  36 +++++++
+ src/platform/raylib/hud_renderer.cpp       |  58 +++++++++++
+ src/platform/raylib/room_renderer.cpp      |  58 +++++++++++
+ tests/dungeon/dungeon_navigation_tests.cpp |  22 +++++
+ tests/platform/dungeon_view_math_tests.cpp | 149 +++++++++++++++++++++++++++++
+ tests/platform/platform_test_main.cpp      |   2 +-
+ 10 files changed, 463 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_snapshot.cpp b/src/dungeon/dungeon_snapshot.cpp
+index 6682501..b258ba8 100644
+--- a/src/dungeon/dungeon_snapshot.cpp
++++ b/src/dungeon/dungeon_snapshot.cpp
+@@ -38,20 +38,24 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
+     result.wave_index = wave_index_;
+     result.wave_count = encounter_plan_.wave_count;
+     result.wave_delay_ticks = wave_delay_ticks_;
+     result.remaining_targets = remaining_targets();
+     result.entry_side = stable_state_.current_room.entry;
+     result.last_exit = last_exit_;
+     result.last_transition = stable_state_.last_transition;
+     result.ecology = stable_state_.current_room.ecology;
+     result.has_hole = stable_state_.current_room.has_hole;
+     result.is_abyss = stable_state_.current_room.is_abyss;
++    if (result.is_abyss) {
++        result.abyss_danger = stable_state_.abyss.danger;
++        result.abyss_rule = stable_state_.abyss.rule;
++    }
+     result.abyss_pending_rewards = abyss_pending_reward_count();
+     result.abyss_unpicked_rewards = abyss_unpicked_reward_count();
+     result.abyss_exit_confirmation_armed = abyss_exit_confirmation_.armed;
+     result.abyss_exit_confirmation_transition =
+         abyss_exit_confirmation_.transition;
+     result.abyss_exit_confirmation_direction =
+         abyss_exit_confirmation_.direction;
+     result.has_pending_transition = pending_save_.has_value()
+         && (pending_save_->kind == PendingSaveKind::transition
+             || pending_save_->kind == PendingSaveKind::abyss_abandon);
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index d639c3f..5703191 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -150,20 +150,22 @@ struct DungeonSnapshot final {
+     std::uint8_t wave_index{};
+     std::uint8_t wave_count{};
+     std::uint16_t wave_delay_ticks{};
+     std::uint8_t remaining_targets{};
+     EntrySide entry_side{EntrySide::initial};
+     ExitDirection last_exit{ExitDirection::none};
+     TransitionKind last_transition{TransitionKind::none};
+     DungeonElement ecology{DungeonElement::fire};
+     bool has_hole{};
+     bool is_abyss{};
++    abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
++    abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
+     std::uint8_t abyss_pending_rewards{};
+     std::uint8_t abyss_unpicked_rewards{};
+     bool abyss_exit_confirmation_armed{};
+     TransitionKind abyss_exit_confirmation_transition{TransitionKind::none};
+     ExitDirection abyss_exit_confirmation_direction{ExitDirection::none};
+     bool has_pending_transition{};
+     passives::PassiveTreeState passive_tree{};
+     bool passive_save_pending{};
+     passives::PassiveTreeError passive_tree_error{
+         passives::PassiveTreeError::none};
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 10ee961..65e1533 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -40,20 +40,25 @@ private:
+     void draw_actors(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback) const noexcept;
+     void draw_hud(
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         bool draw_debug) const noexcept;
++    void draw_abyss_hud(
++        const dungeon::DungeonSnapshot& current,
++        float x,
++        int& y,
++        int line_step) const noexcept;
+     void draw_debug_world_volumes(
+         const combat::CombatSnapshot& snapshot,
+         float width,
+         float height) const noexcept;
+     void draw_debug_overlay(
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         const CombatFeedback& feedback,
+         bool audio_ready) const noexcept;
+ 
+diff --git a/src/platform/raylib/dungeon_view_math.cpp b/src/platform/raylib/dungeon_view_math.cpp
+index 18e0d2a..c8644f8 100644
+--- a/src/platform/raylib/dungeon_view_math.cpp
++++ b/src/platform/raylib/dungeon_view_math.cpp
+@@ -39,20 +39,148 @@ DoorTheme door_theme(dungeon::ExitDirection direction) noexcept {
+     case dungeon::ExitDirection::left:
+         return {dungeon::DungeonElement::lightning, "LIGHTNING", "\xE2\x86\x90", kLightningFrame};
+     case dungeon::ExitDirection::right:
+         return {dungeon::DungeonElement::chaos, "CHAOS", "\xE2\x86\x92", kChaosFrame};
+     case dungeon::ExitDirection::none:
+         return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
+     }
+     return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
+ }
+ 
++bool abyss_door_marker(
++    const dungeon::DungeonSnapshot& snapshot,
++    dungeon::ExitDirection direction) noexcept {
++    const auto index = static_cast<std::size_t>(direction);
++    return index < snapshot.abyss_doors.size()
++        && snapshot.abyss_doors[index];
++}
++
++EnvironmentHazardVisual environment_hazard_visual(
++    const combat::HazardSnapshot& hazard) noexcept {
++    if (!hazard.active
++            || hazard.source != combat::HazardSource::abyss_environment
++            || hazard.radius <= 0.0F) {
++        return {};
++    }
++
++    Rgba8 active_outline{};
++    Rgba8 active_fill{};
++    switch (hazard.kind) {
++    case combat::HazardKind::thunderstorm:
++        active_outline = {132U, 211U, 255U, 235U};
++        active_fill = {65U, 149U, 230U, 76U};
++        break;
++    case combat::HazardKind::hunting_flame:
++        active_outline = {255U, 91U, 48U, 235U};
++        active_fill = {224U, 49U, 30U, 88U};
++        break;
++    case combat::HazardKind::chaos_expansion:
++        active_outline = {221U, 62U, 188U, 235U};
++        active_fill = {145U, 25U, 126U, 84U};
++        break;
++    default:
++        return {};
++    }
++
++    const bool warning = hazard.telegraph_ticks != 0U;
++    return {
++        warning ? EnvironmentHazardVisualMode::warning
++                : EnvironmentHazardVisualMode::active,
++        hazard.center,
++        hazard.radius,
++        warning ? Rgba8{255U, 203U, 91U, 48U} : active_fill,
++        warning ? Rgba8{255U, 203U, 91U, 235U} : active_outline,
++    };
++}
++
++namespace {
++
++const char* abyss_danger_label(abyss::AbyssDanger danger) noexcept {
++    switch (danger) {
++    case abyss::AbyssDanger::low: return "ABYSS LOW";
++    case abyss::AbyssDanger::medium: return "ABYSS MED";
++    case abyss::AbyssDanger::high: return "ABYSS HIGH";
++    }
++    return "ABYSS";
++}
++
++const char* abyss_rule_label(abyss::AbyssRuleId rule) noexcept {
++    switch (rule) {
++    case abyss::AbyssRuleId::thunderstorm: return "THUNDERSTORM";
++    case abyss::AbyssRuleId::hunting_flames: return "HUNTING FLAMES";
++    case abyss::AbyssRuleId::chaos_expansion: return "CHAOS EXPANSION";
++    case abyss::AbyssRuleId::swift_pursuit: return "SWIFT PURSUIT";
++    case abyss::AbyssRuleId::abyss_bulwark: return "ABYSS BULWARK";
++    case abyss::AbyssRuleId::abyss_fury: return "ABYSS FURY";
++    case abyss::AbyssRuleId::heavy_steps: return "HEAVY STEPS";
++    case abyss::AbyssRuleId::exhausted_recovery:
++        return "EXHAUSTED RECOVERY";
++    case abyss::AbyssRuleId::life_sacrifice: return "LIFE SACRIFICE";
++    case abyss::AbyssRuleId::none: return "NO RULE";
++    }
++    return "NO RULE";
++}
++
++const char* abyss_effect_label(abyss::AbyssRuleId rule) noexcept {
++    switch (rule) {
++    case abyss::AbyssRuleId::thunderstorm:
++        return "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning";
++    case abyss::AbyssRuleId::hunting_flames:
++        return "Every 240t: warn 45t/radius 1.0, burn 10% max HP/60t for 180t";
++    case abyss::AbyssRuleId::chaos_expansion:
++        return "Radius 1.0/2.3/3.6/4.9/6.2 per 180t, 8% max HP chaos/60t";
++    case abyss::AbyssRuleId::swift_pursuit:
++        return "Monsters: move +15%, cooldown x85%";
++    case abyss::AbyssRuleId::abyss_bulwark:
++        return "Monsters: armor x130%, shield +30% max HP";
++    case abyss::AbyssRuleId::abyss_fury:
++        return "Monsters: damage and attack speed x145%";
++    case abyss::AbyssRuleId::heavy_steps:
++        return "Player: ground move x85%";
++    case abyss::AbyssRuleId::exhausted_recovery:
++        return "Player: entry resources and future recovery x70%";
++    case abyss::AbyssRuleId::life_sacrifice:
++        return "Player: max HP x55%";
++    case abyss::AbyssRuleId::none:
++        return "";
++    }
++    return "";
++}
++
++}  // namespace
++
++AbyssHudValues abyss_hud_values(
++    const dungeon::DungeonSnapshot& snapshot) noexcept {
++    AbyssHudValues values{};
++    values.visible = snapshot.is_abyss
++        && snapshot.abyss_rule != abyss::AbyssRuleId::none;
++    values.danger_label = abyss_danger_label(snapshot.abyss_danger);
++    values.rule_label = abyss_rule_label(snapshot.abyss_rule);
++    values.effect_label = abyss_effect_label(snapshot.abyss_rule);
++    values.pending_rewards = snapshot.abyss_pending_rewards;
++    values.unpicked_rewards = snapshot.abyss_unpicked_rewards;
++    values.confirmation_visible = values.visible
++        && snapshot.abyss_exit_confirmation_armed;
++    values.confirmation_transition =
++        snapshot.abyss_exit_confirmation_transition;
++    values.confirmation_direction =
++        snapshot.abyss_exit_confirmation_direction;
++    if (values.confirmation_transition == dungeon::TransitionKind::descent) {
++        values.confirmation_label =
++            "Press E again to abandon remaining rewards and descend";
++    } else {
++        values.confirmation_label =
++            "Touch the SAME door again to abandon ALL remaining rewards";
++    }
++    return values;
++}
++
+ HoleVisualMode hole_visual_mode(
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+     if (!snapshot.has_active_room || !snapshot.has_hole) {
+         return HoleVisualMode::hidden;
+     }
+     switch (snapshot.phase) {
+     case dungeon::RoomPhase::locked:
+     case dungeon::RoomPhase::combat:
+         return HoleVisualMode::sealed;
+     case dungeon::RoomPhase::cleared:
+diff --git a/src/platform/raylib/dungeon_view_math.hpp b/src/platform/raylib/dungeon_view_math.hpp
+index 6a4d904..5bce530 100644
+--- a/src/platform/raylib/dungeon_view_math.hpp
++++ b/src/platform/raylib/dungeon_view_math.hpp
+@@ -50,28 +50,64 @@ struct TransitionVisualState final {
+ 
+ struct ProgressionHudValues final {
+     std::uint8_t level{};
+     std::uint64_t experience{};
+     std::uint64_t required_experience{};
+     std::uint8_t unspent_passive_points{};
+     std::uint64_t pending_room_experience{};
+     bool maximum_level{};
+ };
+ 
++enum class EnvironmentHazardVisualMode : std::uint8_t {
++    hidden,
++    warning,
++    active,
++};
++
++struct EnvironmentHazardVisual final {
++    EnvironmentHazardVisualMode mode{EnvironmentHazardVisualMode::hidden};
++    combat::Vec3 center{};
++    float radius{};
++    Rgba8 fill{};
++    Rgba8 outline{};
++};
++
++struct AbyssHudValues final {
++    bool visible{};
++    const char* danger_label{};
++    const char* rule_label{};
++    const char* effect_label{};
++    std::uint8_t pending_rewards{};
++    std::uint8_t unpicked_rewards{};
++    bool confirmation_visible{};
++    dungeon::TransitionKind confirmation_transition{
++        dungeon::TransitionKind::none};
++    dungeon::ExitDirection confirmation_direction{
++        dungeon::ExitDirection::none};
++    const char* confirmation_label{};
++};
++
+ inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
+ inline constexpr float kHoleInteractionRadius = 2.0F;
+ 
+ [[nodiscard]] DoorVisualMode door_visual_mode(
+     dungeon::RoomPhase phase,
+     bool has_active_room) noexcept;
+ [[nodiscard]] DoorTheme door_theme(
+     dungeon::ExitDirection direction) noexcept;
++[[nodiscard]] bool abyss_door_marker(
++    const dungeon::DungeonSnapshot& snapshot,
++    dungeon::ExitDirection direction) noexcept;
++[[nodiscard]] EnvironmentHazardVisual environment_hazard_visual(
++    const combat::HazardSnapshot& hazard) noexcept;
++[[nodiscard]] AbyssHudValues abyss_hud_values(
++    const dungeon::DungeonSnapshot& snapshot) noexcept;
+ [[nodiscard]] HoleVisualMode hole_visual_mode(
+     const dungeon::DungeonSnapshot& snapshot) noexcept;
+ [[nodiscard]] bool player_in_hole_range(
+     combat::Vec3 position,
+     combat::Vec3 center,
+     float radius) noexcept;
+ [[nodiscard]] bool can_prompt_descent(
+     const dungeon::DungeonSnapshot& snapshot,
+     combat::Vec3 player_position) noexcept;
+ [[nodiscard]] Rgba8 ecosystem_tint(
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index b34980f..99a3184 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -24,20 +24,77 @@ const char* ecology_name(dungeon::DungeonElement element) noexcept {
+ 
+ void draw_bar(float x, float y, float width, float ratio, Color color) noexcept {
+     if (ratio < 0.0F) ratio = 0.0F;
+     else if (ratio > 1.0F) ratio = 1.0F;
+     DrawRectangleRec({x, y, width, 5.0F}, Color{20, 23, 31, 230});
+     DrawRectangleRec({x + 1.0F, y + 1.0F, (width - 2.0F) * ratio, 3.0F}, color);
+ }
+ 
+ }  // namespace
+ 
++void CombatRenderer::draw_abyss_hud(
++    const dungeon::DungeonSnapshot& current,
++    float x,
++    int& y,
++    int line_step) const noexcept {
++    const AbyssHudValues abyss = abyss_hud_values(current);
++    if (!abyss.visible) return;
++
++    constexpr Color kAbyss{255, 126, 206, 255};
++    constexpr Color kReward{255, 211, 111, 255};
++    DrawText(TextFormat("%s  Rule %s",
++        abyss.danger_label, abyss.rule_label),
++        static_cast<int>(x), y, 16, kAbyss);
++    y += line_step;
++    DrawText(abyss.effect_label, static_cast<int>(x), y, 14,
++        Color{232, 190, 220, 255});
++    y += line_step;
++    DrawText(TextFormat("Reward pending %u / unpicked %u",
++        static_cast<unsigned>(abyss.pending_rewards),
++        static_cast<unsigned>(abyss.unpicked_rewards)),
++        static_cast<int>(x), y, 16, kReward);
++    y += line_step;
++
++    if (!abyss.confirmation_visible) return;
++    const int font_size = 18;
++    const bool door_confirmation = abyss.confirmation_transition
++        == dungeon::TransitionKind::door;
++    const char* direction = door_confirmation
++        ? exit_direction_label(abyss.confirmation_direction) : "";
++    constexpr const char* kDoorSeparator = " door: ";
++    const int direction_width = door_confirmation
++        ? MeasureText(direction, font_size) : 0;
++    const int separator_width = door_confirmation
++        ? MeasureText(kDoorSeparator, font_size) : 0;
++    const int prompt_width = direction_width + separator_width
++        + MeasureText(abyss.confirmation_label, font_size);
++    const float panel_width = static_cast<float>(prompt_width + 36);
++    const float panel_x = (static_cast<float>(GetScreenWidth()) - panel_width)
++        * 0.5F;
++    const float panel_y = static_cast<float>(GetScreenHeight() - 72);
++    DrawRectangleRounded({panel_x, panel_y, panel_width, 42.0F},
++        0.18F, 6, Color{45, 8, 34, 238});
++    DrawRectangleRoundedLines({panel_x, panel_y, panel_width, 42.0F},
++        0.18F, 6, Color{255, 98, 190, 255});
++    int prompt_x = static_cast<int>(panel_x + 18.0F);
++    if (door_confirmation) {
++        DrawText(direction, prompt_x, static_cast<int>(panel_y + 11.0F),
++            font_size, kAbyss);
++        prompt_x += direction_width;
++        DrawText(kDoorSeparator, prompt_x,
++            static_cast<int>(panel_y + 11.0F), font_size, RAYWHITE);
++        prompt_x += separator_width;
++    }
++    DrawText(abyss.confirmation_label, prompt_x,
++        static_cast<int>(panel_y + 11.0F), font_size, RAYWHITE);
++}
++
+ void CombatRenderer::draw_hud(
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     bool draw_debug) const noexcept {
+     const RenderLayout layout = render_layout(draw_debug);
+     const std::uint64_t room_ordinal = current.room_index
+             == (std::numeric_limits<std::uint64_t>::max)()
+         ? current.room_index : current.room_index + 1U;
+     const bool doors_open = current.phase == dungeon::RoomPhase::cleared
+         || current.phase == dungeon::RoomPhase::awaiting_exit;
+@@ -124,20 +181,21 @@ void CombatRenderer::draw_hud(
+             combat_state.diagnostics.hazard_saturation_count,
+             combat_state.diagnostics.projectile_invalid_owner_count,
+             combat_state.diagnostics.hazard_invalid_owner_count),
+             static_cast<int>(layout.hud_x), y, 16, text);
+         y += layout.hud_line_step;
+     } else {
+         DrawText("HP / wave / encounter diagnostics unavailable",
+             static_cast<int>(layout.hud_x), y, 16, Color{255, 151, 117, 255});
+         y += layout.hud_line_step;
+     }
++    draw_abyss_hud(current, layout.hud_x, y, layout.hud_line_step);
+     DrawText(TextFormat("ABYSS %s  Hole %s  Autosave %s",
+         current.is_abyss ? "YES" : "NO", current.has_hole
+             ? (current.phase == dungeon::RoomPhase::committing ? "SAVING"
+                 : doors_open ? "READY" : "SEALED") : "NONE",
+         save_indicator_label(runtime_status.indicator)),
+         static_cast<int>(layout.hud_x), y, 16,
+         runtime_status.indicator == SaveIndicator::error ? Color{255, 120, 120, 255} : text);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index 1a3a388..20a45dc 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -1,19 +1,21 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/room_bounds.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "render_layout.hpp"
+ 
+ #include <raylib.h>
+ 
++#include <algorithm>
+ #include <array>
++#include <cmath>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ Vector2 lerp(Vector2 from, Vector2 to, float amount) noexcept {
+     return {
+         from.x + (to.x - from.x) * amount,
+         from.y + (to.y - from.y) * amount,
+     };
+@@ -86,26 +88,73 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+                 frame.y + 7.0F * projected.scale,
+                 frame.width - 14.0F * projected.scale,
+                 frame.height - 7.0F * projected.scale},
+                 Color{visual.locked_interior.r, visual.locked_interior.g,
+                     visual.locked_interior.b, visual.locked_interior.a});
+         }
+         const int font_size = static_cast<int>(22.0F * projected.scale);
+         const int arrow_width = MeasureText(visual.arrow, font_size);
+         DrawText(visual.arrow, static_cast<int>(projected.x) - arrow_width / 2,
+             static_cast<int>(frame.y + 17.0F * projected.scale), font_size, text_color);
++        if (abyss_door_marker(snapshot, kDirections[index])) {
++            const Vector2 marker{
++                frame.x + frame.width - 12.0F * projected.scale,
++                frame.y + 13.0F * projected.scale,
++            };
++            DrawPoly(marker, 4, 9.0F * projected.scale, 45.0F,
++                Color{231, 46, 157, 245});
++            DrawPolyLinesEx(marker, 4, 9.0F * projected.scale, 45.0F,
++                2.0F * projected.scale, Color{255, 155, 221, 255});
++        }
+         DrawText(visual.label, static_cast<int>(frame.x),
+             static_cast<int>(frame.y - 15.0F * projected.scale),
+             static_cast<int>(11.0F * projected.scale), text_color);
+     }
+ }
+ 
++void draw_environment_hazards(const dungeon::DungeonSnapshot& snapshot,
++    float width, float height) noexcept {
++    if (!snapshot.combat.has_value()) return;
++    for (const combat::HazardSnapshot& hazard : snapshot.combat->hazards) {
++        const EnvironmentHazardVisual visual =
++            environment_hazard_visual(hazard);
++        if (visual.mode == EnvironmentHazardVisualMode::hidden) continue;
++
++        const RenderProjection center = project_render_world(
++            visual.center.x, visual.center.y, 0.0F, width, height);
++        const RenderProjection x_edge = project_render_world(
++            visual.center.x + visual.radius, visual.center.y, 0.0F,
++            width, height);
++        const RenderProjection y_edge = project_render_world(
++            visual.center.x, visual.center.y + visual.radius, 0.0F,
++            width, height);
++        const float radius_x = std::max(
++            1.0F, std::fabs(x_edge.x - center.x));
++        const float radius_y = std::max(
++            1.0F, std::fabs(y_edge.ground_y - center.ground_y));
++        const Color fill{visual.fill.r, visual.fill.g,
++            visual.fill.b, visual.fill.a};
++        const Color outline{visual.outline.r, visual.outline.g,
++            visual.outline.b, visual.outline.a};
++        DrawEllipse(static_cast<int>(center.x),
++            static_cast<int>(center.ground_y), radius_x, radius_y, fill);
++        DrawEllipseLines(static_cast<int>(center.x),
++            static_cast<int>(center.ground_y), radius_x, radius_y, outline);
++        if (visual.mode == EnvironmentHazardVisualMode::warning) {
++            DrawEllipseLines(static_cast<int>(center.x),
++                static_cast<int>(center.ground_y),
++                std::max(1.0F, radius_x - 4.0F),
++                std::max(1.0F, radius_y - 2.0F), outline);
++        }
++    }
++}
++
+ Color ground_item_color(items::ItemRarity rarity) noexcept {
+     switch (rarity) {
+     case items::ItemRarity::normal: return Color{222, 228, 236, 255};
+     case items::ItemRarity::magic: return Color{70, 139, 255, 255};
+     case items::ItemRarity::rare: return Color{255, 193, 52, 255};
+     }
+     return RAYWHITE;
+ }
+ 
+ void draw_ground_item_shape(items::ItemSlot slot, Vector2 center,
+@@ -175,20 +224,28 @@ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
+ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
+     if (!snapshot.is_abyss) {
+         return;
+     }
+     const float pulse = abyss_pulse_alpha(elapsed_seconds);
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));
+     DrawRectangleLinesEx({8.0F, 8.0F, static_cast<float>(GetScreenWidth() - 16),
+         static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
+         Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
++    const AbyssHudValues values = abyss_hud_values(snapshot);
++    if (values.visible) {
++        const char* label = TextFormat("%s  |  %s",
++            values.danger_label, values.rule_label);
++        const int font_size = 20;
++        DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
++            18, font_size, Color{255, 164, 221, 255});
++    }
+ }
+ 
+ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
+     const HoleVisualMode hole = hole_visual_mode(snapshot);
+     if (hole == HoleVisualMode::hidden) {
+         return;
+     }
+     const RenderProjection projected = project_render_world(kHoleCenter.x,
+         kHoleCenter.y, kHoleCenter.z, static_cast<float>(GetScreenWidth()),
+         static_cast<float>(GetScreenHeight()));
+@@ -210,16 +267,17 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
+     }
+ }
+ 
+ }  // namespace
+ 
+ void CombatRenderer::draw_room(const dungeon::DungeonSnapshot& current) const noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     draw_graybox_room(current.ecology);
+     draw_abyss(current, static_cast<float>(GetTime()));
++    draw_environment_hazards(current, width, height);
+     draw_ground_items(current, width, height);
+     draw_doors(current, width, height);
+     draw_hole(current);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/dungeon/dungeon_navigation_tests.cpp b/tests/dungeon/dungeon_navigation_tests.cpp
+index a602497..e09eda8 100644
+--- a/tests/dungeon/dungeon_navigation_tests.cpp
++++ b/tests/dungeon/dungeon_navigation_tests.cpp
+@@ -373,20 +373,42 @@ arpg::test::Failure maximum_index_faults_once_without_destroying() noexcept {
+ 
+ arpg::test::Failure snapshot_exposes_only_boolean_door_preview() noexcept {
+     static_assert(std::is_same_v<
+         decltype(DungeonSnapshot{}.abyss_doors),
+         std::array<bool, 4>>);
+     DungeonSession session;
+     const DungeonSnapshot snapshot = session.snapshot();
+     ARPG_REQUIRE(snapshot.abyss_doors
+         == arpg::dungeon::preview_abyss_doors(
+             arpg::test::stable_state(session).current_room));
++    ARPG_REQUIRE(snapshot.abyss_rule == arpg::abyss::AbyssRuleId::none);
++    ARPG_REQUIRE(snapshot.abyss_danger == arpg::abyss::AbyssDanger::low);
++
++    auto state = arpg::dungeon::make_initial_run_state(
++        7U, arpg::dungeon::DungeonRules{}).state;
++    state.current_room.index = 1U;
++    state.current_room.entry = arpg::dungeon::EntrySide::top;
++    while (!arpg::abyss::is_abyss_roll(state.current_room.seed)) {
++        ++state.current_room.seed;
++    }
++    const auto selection = arpg::abyss::select_abyss_rule(
++        state.current_room.seed, state.current_room.depth);
++    ARPG_REQUIRE(selection.has_value());
++    state.current_room.is_abyss = true;
++    state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::available;
++    state.abyss.rule = selection->rule;
++    state.abyss.danger = selection->danger;
++    state.abyss.rules_version = selection->rules_version;
++    DungeonSession abyss_session{arpg::dungeon::DungeonRules{}, state};
++    const DungeonSnapshot abyss_snapshot = abyss_session.snapshot();
++    ARPG_REQUIRE(abyss_snapshot.abyss_rule == state.abyss.rule);
++    ARPG_REQUIRE(abyss_snapshot.abyss_danger == state.abyss.danger);
+     return {};
+ }
+ 
+ arpg::test::Failure ordinary_door_preview_matches_pending_target() noexcept {
+     using namespace arpg::dungeon;
+     auto state = make_initial_run_state(7U, DungeonRules{}).state;
+     state.current_room.index = 0U;
+     state.current_room.seed = 0U;
+     state.current_room.depth = 27U;
+     state.current_room.floor_room_index = 1U;
+diff --git a/tests/platform/dungeon_view_math_tests.cpp b/tests/platform/dungeon_view_math_tests.cpp
+index 03ed7bb..9088b13 100644
+--- a/tests/platform/dungeon_view_math_tests.cpp
++++ b/tests/platform/dungeon_view_math_tests.cpp
+@@ -7,20 +7,21 @@
+ #include <cstring>
+ 
+ namespace {
+ 
+ using arpg::dungeon::DungeonEventKind;
+ using arpg::dungeon::DungeonSnapshot;
+ using arpg::dungeon::ExitDirection;
+ using arpg::dungeon::RoomPhase;
+ using arpg::platform::DoorTheme;
+ using arpg::platform::DoorVisualMode;
++using arpg::platform::EnvironmentHazardVisualMode;
+ using arpg::platform::HoleVisualMode;
+ using arpg::platform::Rgba8;
+ using arpg::platform::SaveIndicator;
+ 
+ DungeonSnapshot active_snapshot(
+     std::uint64_t room_index,
+     std::uint64_t room_seed) noexcept {
+     DungeonSnapshot snapshot{};
+     snapshot.has_active_room = true;
+     snapshot.room_index = room_index;
+@@ -78,20 +79,164 @@ arpg::test::Failure door_themes_match_directional_elements() noexcept {
+         const auto locked = arpg::platform::door_render_decision(
+             DoorVisualMode::closed, direction);
+         ARPG_REQUIRE(locked.draw_locked_interior);
+         ARPG_REQUIRE(std::strcmp(locked.label, theme.label) == 0);
+         ARPG_REQUIRE(std::strcmp(locked.arrow, theme.arrow) == 0);
+         ARPG_REQUIRE(rgba_equals(locked.frame, theme.frame));
+     }
+     return {};
+ }
+ 
++arpg::test::Failure abyss_door_markers_follow_only_directional_preview() noexcept {
++    DungeonSnapshot snapshot = active_snapshot(3U, 4U);
++    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::life_sacrifice;
++    snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
++    for (const ExitDirection direction : {ExitDirection::up,
++             ExitDirection::down, ExitDirection::left,
++             ExitDirection::right, ExitDirection::none}) {
++        ARPG_REQUIRE(!arpg::platform::abyss_door_marker(snapshot, direction));
++    }
++
++    for (const ExitDirection selected : {ExitDirection::up,
++             ExitDirection::down, ExitDirection::left,
++             ExitDirection::right}) {
++        snapshot.abyss_doors.fill(false);
++        snapshot.abyss_doors[static_cast<std::size_t>(selected)] = true;
++        for (const ExitDirection direction : {ExitDirection::up,
++                 ExitDirection::down, ExitDirection::left,
++                 ExitDirection::right}) {
++            ARPG_REQUIRE(arpg::platform::abyss_door_marker(snapshot, direction)
++                == (direction == selected));
++        }
++        const auto closed = arpg::platform::door_render_decision(
++            DoorVisualMode::closed, selected);
++        const auto open = arpg::platform::door_render_decision(
++            DoorVisualMode::open, selected);
++        ARPG_REQUIRE(closed.draw_locked_interior);
++        ARPG_REQUIRE(!open.draw_locked_interior);
++    }
++    return {};
++}
++
++arpg::test::Failure environment_hazards_use_snapshot_geometry_and_phase() noexcept {
++    struct Expected final {
++        arpg::combat::HazardKind kind;
++        Rgba8 active_outline;
++    };
++    constexpr Expected cases[] = {
++        {arpg::combat::HazardKind::thunderstorm,
++            {132U, 211U, 255U, 235U}},
++        {arpg::combat::HazardKind::hunting_flame,
++            {255U, 91U, 48U, 235U}},
++        {arpg::combat::HazardKind::chaos_expansion,
++            {221U, 62U, 188U, 235U}},
++    };
++    float radius = 0.8F;
++    for (const Expected& expected : cases) {
++        arpg::combat::HazardSnapshot hazard{};
++        hazard.active = true;
++        hazard.source = arpg::combat::HazardSource::abyss_environment;
++        hazard.kind = expected.kind;
++        hazard.center = {2.25F, -3.5F, 0.0F};
++        hazard.radius = radius;
++        hazard.telegraph_ticks = 12U;
++        auto visual = arpg::platform::environment_hazard_visual(hazard);
++        ARPG_REQUIRE(visual.mode == EnvironmentHazardVisualMode::warning);
++        ARPG_REQUIRE(arpg::test::near(visual.center.x, 2.25, 1.0e-6));
++        ARPG_REQUIRE(arpg::test::near(visual.center.y, -3.5, 1.0e-6));
++        ARPG_REQUIRE(arpg::test::near(visual.radius, radius, 1.0e-6));
++        ARPG_REQUIRE(rgba_equals(visual.outline, {255U, 203U, 91U, 235U}));
++
++        hazard.telegraph_ticks = 0U;
++        hazard.active_ticks = 60U;
++        visual = arpg::platform::environment_hazard_visual(hazard);
++        ARPG_REQUIRE(visual.mode == EnvironmentHazardVisualMode::active);
++        ARPG_REQUIRE(rgba_equals(visual.outline, expected.active_outline));
++        ARPG_REQUIRE(arpg::test::near(visual.radius, radius, 1.0e-6));
++        radius += 0.2F;
++    }
++
++    arpg::combat::HazardSnapshot monster_hazard{};
++    monster_hazard.active = true;
++    monster_hazard.source = arpg::combat::HazardSource::monster;
++    monster_hazard.kind = arpg::combat::HazardKind::thunderstorm;
++    ARPG_REQUIRE(arpg::platform::environment_hazard_visual(monster_hazard).mode
++        == EnvironmentHazardVisualMode::hidden);
++    return {};
++}
++
++arpg::test::Failure abyss_hud_uses_committed_snapshot_labels_and_counts() noexcept {
++    DungeonSnapshot snapshot = active_snapshot(5U, 6U);
++    auto hidden = arpg::platform::abyss_hud_values(snapshot);
++    ARPG_REQUIRE(!hidden.visible);
++
++    snapshot.is_abyss = true;
++    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
++    snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
++    snapshot.abyss_pending_rewards = 2U;
++    snapshot.abyss_unpicked_rewards = 1U;
++    const auto values = arpg::platform::abyss_hud_values(snapshot);
++    ARPG_REQUIRE(values.visible);
++    ARPG_REQUIRE(std::strcmp(values.danger_label, "ABYSS HIGH") == 0);
++    ARPG_REQUIRE(std::strcmp(values.rule_label, "ABYSS FURY") == 0);
++    ARPG_REQUIRE(std::strcmp(values.effect_label,
++        "Monsters: damage and attack speed x145%") == 0);
++    ARPG_REQUIRE(values.pending_rewards == 2U);
++    ARPG_REQUIRE(values.unpicked_rewards == 1U);
++    ARPG_REQUIRE(!values.confirmation_visible);
++
++    snapshot.abyss_danger = arpg::abyss::AbyssDanger::low;
++    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::thunderstorm;
++    const auto low = arpg::platform::abyss_hud_values(snapshot);
++    ARPG_REQUIRE(std::strcmp(low.danger_label, "ABYSS LOW") == 0);
++    ARPG_REQUIRE(std::strcmp(low.rule_label, "THUNDERSTORM") == 0);
++    ARPG_REQUIRE(std::strcmp(low.effect_label,
++        "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning") == 0);
++    snapshot.abyss_danger = arpg::abyss::AbyssDanger::medium;
++    ARPG_REQUIRE(std::strcmp(
++        arpg::platform::abyss_hud_values(snapshot).danger_label,
++        "ABYSS MED") == 0);
++    return {};
++}
++
++arpg::test::Failure abyss_confirmation_prompt_preserves_transition_and_direction() noexcept {
++    DungeonSnapshot snapshot = active_snapshot(7U, 8U);
++    snapshot.is_abyss = true;
++    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::hunting_flames;
++    snapshot.abyss_danger = arpg::abyss::AbyssDanger::medium;
++    snapshot.abyss_pending_rewards = 1U;
++    snapshot.abyss_unpicked_rewards = 2U;
++    snapshot.abyss_exit_confirmation_armed = true;
++    snapshot.abyss_exit_confirmation_transition =
++        arpg::dungeon::TransitionKind::door;
++    snapshot.abyss_exit_confirmation_direction = ExitDirection::left;
++    auto values = arpg::platform::abyss_hud_values(snapshot);
++    ARPG_REQUIRE(values.confirmation_visible);
++    ARPG_REQUIRE(values.confirmation_transition
++        == arpg::dungeon::TransitionKind::door);
++    ARPG_REQUIRE(values.confirmation_direction == ExitDirection::left);
++    ARPG_REQUIRE(std::strcmp(values.confirmation_label,
++        "Touch the SAME door again to abandon ALL remaining rewards") == 0);
++
++    snapshot.abyss_exit_confirmation_transition =
++        arpg::dungeon::TransitionKind::descent;
++    snapshot.abyss_exit_confirmation_direction = ExitDirection::none;
++    values = arpg::platform::abyss_hud_values(snapshot);
++    ARPG_REQUIRE(std::strcmp(values.confirmation_label,
++        "Press E again to abandon remaining rewards and descend") == 0);
++
++    snapshot.abyss_exit_confirmation_armed = false;
++    ARPG_REQUIRE(!arpg::platform::abyss_hud_values(snapshot)
++        .confirmation_visible);
++    return {};
++}
++
+ arpg::test::Failure ecosystem_tints_are_stable() noexcept {
+     const Rgba8 fire = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::fire);
+     const Rgba8 water = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::water);
+     const Rgba8 lightning = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::lightning);
+     const Rgba8 chaos = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::chaos);
+     ARPG_REQUIRE(rgba_equals(fire, {88U, 43U, 34U, 255U}));
+@@ -298,20 +443,24 @@ arpg::test::Failure progression_hud_values_follow_snapshot() noexcept {
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"door lifecycle modes", &door_modes_follow_room_lifecycle},
+     {"same room interpolation", &same_room_snapshots_can_interpolate},
+     {"cross and missing room rejection", &cross_room_and_missing_room_reject_interpolation},
+     {"cleanup routing and labels", &cleanup_routing_and_labels_are_stable},
+     {"transition fade alpha", &fade_alpha_clamps_to_transition_window},
+     {"directional door themes", &door_themes_match_directional_elements},
++    {"abyss door marker preview", &abyss_door_markers_follow_only_directional_preview},
++    {"environment hazard snapshot visuals", &environment_hazards_use_snapshot_geometry_and_phase},
++    {"abyss HUD snapshot values", &abyss_hud_uses_committed_snapshot_labels_and_counts},
++    {"abyss confirmation prompt values", &abyss_confirmation_prompt_preserves_transition_and_direction},
+     {"ecosystem tints", &ecosystem_tints_are_stable},
+     {"abyss pulse bounds", &abyss_pulse_is_bounded_and_periodic},
+     {"hole visual modes", &hole_modes_follow_room_phase},
+     {"XY hole range", &player_hole_range_uses_xy_radius},
+     {"save indicators and labels", &indicators_and_phase_labels_are_stable},
+     {"recovery request gate", &recovery_requires_fault_and_n_press},
+     {"progression HUD values", &progression_hud_values_follow_snapshot},
+ };
+ 
+ }  // namespace
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 2ac6edc..43ef355 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -30,12 +30,12 @@ int main() {
+         monster_view_suite(),
+         combat_feedback_suite(),
+         combat_key_bindings_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         inventory_view_math_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 80, "stage 10 task 4 runtime");
++    return arpg::test::run_suites(suites, 84, "stage 10 task 11 abyss visuals");
+ }

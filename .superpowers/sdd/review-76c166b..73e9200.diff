@@ -1,0 +1,1075 @@
+# Review package: 76c166be8e9030318e6193d1b862f0ae6ebcfa47..73e9200
+
+## Commits
+73e9200 fix: harden stage 10 validation evidence
+
+## Files changed
+ src/dungeon/dungeon_session.cpp                    |   5 +-
+ src/dungeon/dungeon_types.hpp                      |   1 +
+ src/platform/raylib/raylib_host.cpp                |  10 +-
+ tests/dungeon/CMakeLists.txt                       |  34 +++
+ tests/dungeon/dungeon_abyss_stress_tests.cpp       | 268 ++++++++++++++++-----
+ tests/dungeon/dungeon_test_support.hpp             |  40 +++
+ .../dungeon/stage10_evidence_bad_capture_order.txt |   6 +
+ tests/dungeon/stage10_evidence_bad_injection.txt   |   1 +
+ tests/dungeon/stage10_evidence_guard_test.cmake    |  91 ++++++-
+ tests/dungeon/stage10_validation_fixture.cpp       |  86 ++++++-
+ 10 files changed, 456 insertions(+), 86 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index b5405c9..3792708 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -476,21 +476,24 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
+     }
+     if (reward_ordinal == 0xFFU) return;
+ 
+     std::uint16_t free_index = 0xFFFFU;
+     for (std::uint16_t index = 0U; index < ground_items_.size(); ++index) {
+         if (!ground_items_[index].active) {
+             free_index = index;
+             break;
+         }
+     }
+-    if (free_index == 0xFFFFU) return;
++    if (free_index == 0xFFFFU) {
++        saturating_increment(diagnostics_.ground_saturation_count);
++        return;
++    }
+     const std::uint8_t base_item_level = static_cast<std::uint8_t>(
+         std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
+     const auto ground = derive_abyss_ground_item(
+         stable_state_.current_room.seed, stable_state_.abyss.danger,
+         base_item_level, reward_ordinal, free_index);
+     if (!ground.has_value()) {
+         enter_fault(DungeonFault::abyss_generation_failed);
+         return;
+     }
+     if (item_id_in_use(stable_state_.item_ownership, ground_items_,
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index 5703191..e8f34c8 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -77,20 +77,21 @@ struct AbyssExitConfirmation final {
+     ExitDirection direction{ExitDirection::none};
+     bool door_input_released{};
+     std::uint32_t reward_revision{};
+ };
+ 
+ struct DungeonDiagnostics final {
+     std::uint32_t event_overflow_count{};
+     std::uint32_t combat_relay_overflow_count{};
+     std::uint32_t rejected_exit_count{};
+     std::uint32_t save_failure_count{};
++    std::uint32_t ground_saturation_count{};
+     DungeonFault fault{DungeonFault::none};
+     bool room_index_overflow{};
+ };
+ 
+ struct DungeonEncounterDiagnostics final {
+     std::uint8_t total_budget{};
+     std::uint8_t current_wave_budget{};
+     std::uint8_t current_wave_spawn_count{};
+     bool plan_valid{};
+ };
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 824583e..e2e8957 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -88,25 +88,29 @@ void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
+     EndDrawing();
+ }
+ 
+ void export_screenshot(const char* path) noexcept {
+     Image image = LoadImageFromScreen();
+     if (image.data == nullptr) return;
+     static_cast<void>(ExportImage(image, path));
+     UnloadImage(image);
+ }
+ 
++void capture_after_presented_frame(const char* path) noexcept {
++    export_screenshot(path);
++}
++
+ void take_host_screenshot() noexcept {
+     try {
+         const std::string path = (std::filesystem::path{
+             GetApplicationDirectory()} / "stage8-equipment-loot.png").string();
+-        export_screenshot(path.c_str());
++        capture_after_presented_frame(path.c_str());
+     } catch (...) {
+         TraceLog(LOG_WARNING, "failed to construct screenshot path");
+     }
+ }
+ 
+ struct Stage10ValidationState final {
+     bool entered_abyss{};
+     bool reset_requested{};
+     bool descent_warning_seen{};
+     std::uint32_t chaos_presented_frames{};
+@@ -372,21 +376,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             ? (*save_directory / "stage8-validation-").string()
+             : std::string{};
+         const auto capture_validation_frame = [&]() noexcept {
+             if (!config.validation_capture
+                     || validation_capture_count >= 2000U
+                     || ++validation_capture_tick < 60U) {
+                 return;
+             }
+             validation_capture_tick = 0U;
+             ++validation_capture_count;
+-            export_screenshot(TextFormat("%s%03u.png",
++            capture_after_presented_frame(TextFormat("%s%03u.png",
+                 validation_capture_prefix.c_str(), validation_capture_count));
+         };
+         dungeon::DungeonSnapshot current{};
+         dungeon::DungeonSnapshot previous{};
+         if (runtime.session() != nullptr) {
+             current = runtime.session()->snapshot();
+             previous = current;
+             drain_events(*runtime.session(), renderer, feedback, audio);
+         }
+ 
+@@ -581,21 +585,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     == Stage10ValidationScenario::chaos_expansion
+                     && stage10_target_visible) {
+                 ++stage10_validation_state.chaos_presented_frames;
+             }
+             const bool stage10_reached = stage10_target_visible
+                 && (config.stage10_validation
+                         != Stage10ValidationScenario::chaos_expansion
+                     || stage10_validation_state.chaos_presented_frames >= 16U);
+             if (stage10_reached && !stage10_validation_captured
+                     && config.validation_capture_file.has_value()) {
+-                export_screenshot(
++                capture_after_presented_frame(
+                     config.validation_capture_file->string().c_str());
+                 stage10_validation_captured = true;
+             }
+             capture_validation_frame();
+             if (frame_toggles.take_screenshot) {
+                 take_host_screenshot();
+             }
+             if (config.validation_exit_after_presented_frames != 0U
+                     && presented_frame_count
+                         >= config.validation_exit_after_presented_frames) {
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 0fa428d..4b8dc76 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -155,16 +155,50 @@ set_tests_properties(dungeon.units PROPERTIES LABELS "headless;dungeon")
+ add_test(NAME stage10.abyss_stress.determinism_and_zero_alloc
+     COMMAND arpg_dungeon_tests)
+ set_tests_properties(stage10.abyss_stress.determinism_and_zero_alloc PROPERTIES
+     LABELS "headless;dungeon;stage10;stress"
+     ENVIRONMENT "ARPG_STAGE10_ABYSS_STRESS_ONLY=1"
+     TIMEOUT 240)
+ 
+ add_test(NAME stage10.evidence.no_private_injection
+     COMMAND ${CMAKE_COMMAND}
+         -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_fixture.cpp
++        -DVALIDATION_GAME_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_game.cpp
+         -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
++        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
++        -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
++        -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+         -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+         -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
+ set_tests_properties(stage10.evidence.no_private_injection PROPERTIES
+     LABELS "headless;dungeon;stage10;evidence")
++
++add_test(NAME stage10.evidence.rejects_private_injection
++    COMMAND ${CMAKE_COMMAND}
++        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_injection.txt
++        -DVALIDATION_GAME_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_game.cpp
++        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
++        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
++        -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
++        -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
++        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
++        -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
++        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
++set_tests_properties(stage10.evidence.rejects_private_injection PROPERTIES
++    LABELS "headless;dungeon;stage10;evidence;negative"
++    WILL_FAIL TRUE)
++
++add_test(NAME stage10.evidence.rejects_pre_present_capture
++    COMMAND ${CMAKE_COMMAND}
++        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_fixture.cpp
++        -DVALIDATION_GAME_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_game.cpp
++        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
++        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
++        -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
++        -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
++        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
++        -DHOST_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_capture_order.txt
++        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
++set_tests_properties(stage10.evidence.rejects_pre_present_capture PROPERTIES
++    LABELS "headless;dungeon;stage10;evidence;negative"
++    WILL_FAIL TRUE)
+diff --git a/tests/dungeon/dungeon_abyss_stress_tests.cpp b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+index 5267cbd..6d2de56 100644
+--- a/tests/dungeon/dungeon_abyss_stress_tests.cpp
++++ b/tests/dungeon/dungeon_abyss_stress_tests.cpp
+@@ -1,23 +1,25 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "combat_test_support.hpp"
++#include "dungeon_test_support.hpp"
+ 
+ #include "abyss/abyss_rewards.hpp"
+ #include "abyss/abyss_rules.hpp"
+ #include "combat/combat_world.hpp"
+ #include "dungeon/abyss_reward.hpp"
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/encounter_director.hpp"
+ #include "dungeon/room_generation.hpp"
+ #include "persistence/checkpoint_codec.hpp"
++#include "items/item_generation.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstdio>
+ #include <cstring>
+ #include <memory>
+ 
+ namespace {
+ 
+@@ -203,21 +205,122 @@ bool encode_decode(checkpoint::DungeonRunState& state) noexcept {
+     const auto decoded = arpg::persistence::decode_checkpoint(
+         encoded->data(), encoded->size());
+     if (decoded.error != arpg::persistence::CodecError::none
+             || !arpg::dungeon::same_run_state(state, decoded.state)) {
+         return false;
+     }
+     state = decoded.state;
+     return true;
+ }
+ 
+-bool generate_long_trace(LongTrace& trace) noexcept {
++bool commit_pending(arpg::dungeon::DungeonSession& session) noexcept {
++    const auto pending = session.pending_save();
++    if (!pending.has_value()) return false;
++    session.resolve_pending_save({
++        arpg::dungeon::SaveDisposition::committed,
++        pending->expected_generation,
++        pending->next_state,
++    });
++    return session.snapshot().phase != arpg::dungeon::RoomPhase::faulted;
++}
++
++arpg::items::ItemInstance ground_prototype() noexcept {
++    return arpg::items::generate_item({
++        0xD10A600DULL,
++        arpg::items::ItemSlot::weapon,
++        1U,
++        0xD100000000000001ULL,
++        arpg::items::ItemRarity::normal,
++    }).value();
++}
++
++ResolutionTrace production_resolution(
++    checkpoint::DungeonRunState& state,
++    const arpg::dungeon::DungeonRules& rules) noexcept {
++    const auto fail = [&state](int step) noexcept {
++        std::fprintf(stderr,
++            "[stage10-production-resolution] step=%d seed=%llu\n", step,
++            static_cast<unsigned long long>(state.current_room.seed));
++        return ResolutionTrace{};
++    };
++    const auto profile = arpg::abyss::reward_profile_for(
++        state.abyss.danger,
++        static_cast<std::uint8_t>((std::min)(
++            state.current_room.depth, std::uint64_t{100U})));
++    if (profile.item_count == 0U || profile.item_count > 3U) return fail(1);
++    state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
++    state.abyss.reward_total = profile.item_count;
++    state.abyss.generated_mask = 0U;
++    state.abyss.claimed_mask = 0U;
++    state.abyss.abandoned_mask = 0U;
++    state.abyss.reward_revision = 0U;
++
++    arpg::dungeon::DungeonSession session{rules, state};
++    session.tick({});
++    if (!commit_pending(session)) return fail(2);
++    const auto materialized = session.snapshot();
++    if (materialized.abyss_unpicked_rewards != 1U
++            || materialized.abyss_pending_rewards
++                != static_cast<std::uint8_t>(profile.item_count - 1U)) {
++        return fail(3);
++    }
++
++    if (profile.item_count > 1U) {
++        std::uint16_t reward_index = 0xFFFFU;
++        arpg::combat::Vec3 reward_position{};
++        for (std::size_t index = 0U;
++             index < materialized.ground_item_count; ++index) {
++            if (materialized.ground_items[index].source
++                    == arpg::dungeon::GroundItemSource::abyss_chest) {
++                reward_index = materialized.ground_items[index].ordinal;
++                reward_position = materialized.ground_items[index].position;
++                break;
++            }
++        }
++        arpg::test::set_player_position(session, reward_position);
++        if (reward_index == 0xFFFFU
++                || session.request_pickup(reward_index)
++                    != arpg::dungeon::RequestResult::accepted
++                || !commit_pending(session)) {
++            return fail(4);
++        }
++    }
++
++    arpg::test::fill_ground_pool(session, ground_prototype());
++    arpg::test::set_player_position(session, {12.0F, 0.0F, 0.0F});
++    session.tick({1, 0});
++    const auto warned = session.snapshot();
++    bool warning_event = false;
++    while (const auto event = session.try_pop_event()) {
++        if (event->kind == arpg::dungeon::DungeonEventKind::abyss_exit_warning
++                && event->transition
++                    == arpg::dungeon::TransitionKind::door
++                && event->direction
++                    == arpg::dungeon::ExitDirection::right) {
++            warning_event = true;
++        }
++    }
++    if (!warning_event || !warned.abyss_exit_confirmation_armed) return fail(5);
++    session.tick({});
++    if (!session.snapshot().abyss_exit_confirmation_armed) return fail(6);
++    session.tick({1, 0});
++    if (!session.pending_save().has_value() || !commit_pending(session)) {
++        return fail(7);
++    }
++    state = arpg::test::stable_state(session);
++    const auto& resolution = state.last_abyss_resolution;
++    return {resolution.valid, resolution.room_seed, resolution.rule,
++        resolution.total, resolution.generated, resolution.claimed,
++        resolution.abandoned};
++}
++
++bool generate_long_trace(LongTrace& trace, std::size_t restart_interval) noexcept {
+     const arpg::dungeon::DungeonRules rules{};
+     auto initial = arpg::dungeon::make_initial_run_state(kRootSeed, rules);
+     if (initial.fault != arpg::dungeon::DungeonFault::none) return false;
+     checkpoint::DungeonRunState state = initial.state;
+ 
+     for (std::size_t room_index = 0U; room_index < kRoomCount; ++room_index) {
+         RoomTrace& room = trace.rooms[room_index];
+         room.door_preview = arpg::dungeon::preview_abyss_doors(
+             state.current_room);
+         for (std::size_t direction = 0U; direction < 4U; ++direction) {
+@@ -265,40 +368,55 @@ bool generate_long_trace(LongTrace& trace) noexcept {
+             for (std::uint8_t ordinal = 0U;
+                  ordinal < room.reward_count; ++ordinal) {
+                 const auto reward = arpg::dungeon::derive_abyss_reward_slot(
+                     state.current_room.seed, selected->danger,
+                     1U, ordinal);
+                 if (!reward.has_value()) return false;
+                 room.rewards[ordinal] = {reward->slot_index,
+                     reward->item_slot, reward->rarity, reward->item_level,
+                     reward->item_seed, reward->item_id};
+             }
+-            const std::uint8_t claimed = room.reward_count > 1U ? 1U : 0U;
+-            room.resolution = {true, state.current_room.seed,
+-                selected->rule, room.reward_count, claimed, claimed,
+-                static_cast<std::uint8_t>(room.reward_count - claimed)};
++            room.resolution = production_resolution(state, rules);
++            if (!room.resolution.valid
++                    || room.resolution.room_seed != room.descriptor.seed
++                    || room.resolution.rule != selected->rule
++                    || room.resolution.total != room.reward_count) {
++                std::fprintf(stderr,
++                    "[stage10-resolution-fail] room=%zu seed=%llu valid=%u "
++                    "resolution_seed=%llu rule=%u/%u total=%u/%u\n",
++                    room_index,
++                    static_cast<unsigned long long>(room.descriptor.seed),
++                    static_cast<unsigned>(room.resolution.valid),
++                    static_cast<unsigned long long>(
++                        room.resolution.room_seed),
++                    static_cast<unsigned>(room.resolution.rule),
++                    static_cast<unsigned>(selected->rule),
++                    static_cast<unsigned>(room.resolution.total),
++                    static_cast<unsigned>(room.reward_count));
++                return false;
++            }
+         }
+         fold_room(trace, room);
+ 
+-        if ((room_index + 1U) % 37U == 0U) {
++        if (restart_interval != 0U
++                && (room_index + 1U) % restart_interval == 0U) {
+             if (!encode_decode(state)) return false;
+             ++trace.reload_count;
+         }
+     }
+     trace.complete = true;
+     return true;
+ }
+ 
+ bool same_long_trace(const LongTrace& lhs, const LongTrace& rhs) noexcept {
+     if (lhs.door_trials != rhs.door_trials
+             || lhs.door_hits != rhs.door_hits
+-            || lhs.reload_count != rhs.reload_count
+             || lhs.hash != rhs.hash || lhs.complete != rhs.complete) return false;
+     for (std::size_t room = 0U; room < kRoomCount; ++room) {
+         if (!same_room_trace(lhs.rooms[room], rhs.rooms[room])) return false;
+     }
+     return true;
+ }
+ 
+ arpg::combat::MonsterAffixSet extreme_affixes() noexcept {
+     arpg::combat::MonsterAffixSet result{};
+     result.values = {{
+@@ -306,131 +424,159 @@ arpg::combat::MonsterAffixSet extreme_affixes() noexcept {
+             arpg::combat::MonsterAffixTier::m3},
+         {arpg::combat::MonsterAffixId::burning_ground,
+             arpg::combat::MonsterAffixTier::m3},
+         {arpg::combat::MonsterAffixId::chain_lightning,
+             arpg::combat::MonsterAffixTier::m3},
+     }};
+     result.count = 3U;
+     return result;
+ }
+ 
+-arpg::combat::CombatWorld make_extreme_world() noexcept {
++arpg::combat::CombatEncounterConfig extreme_config() noexcept {
+     arpg::combat::CombatEncounterConfig config{};
+     config.abyss = arpg::abyss::combat_config_for(
+         arpg::abyss::AbyssRuleId::chaos_expansion);
+     config.wave.spawn_count = static_cast<std::uint8_t>(
+         arpg::combat::kMonsterCapacity);
+     for (std::size_t index = 0U; index < config.wave.spawn_count; ++index) {
+         config.wave.spawns[index] = {
+             arpg::combat::MonsterId::lightning_shooter,
+             {10.0F + static_cast<float>(index % 12U),
+              4.0F + static_cast<float>(index / 12U), 0.0F},
+             extreme_affixes(), static_cast<std::uint16_t>(index)};
+     }
+-    return arpg::combat::CombatWorld{config};
++    return config;
+ }
+ 
+-std::array<arpg::dungeon::GroundItem,
+-    arpg::dungeon::kGroundDropCapacity> make_full_ground_pool() noexcept {
+-    std::array<arpg::dungeon::GroundItem,
+-        arpg::dungeon::kGroundDropCapacity> result{};
+-    for (std::size_t index = 0U; index < result.size(); ++index) {
+-        arpg::items::ItemInstance item{};
+-        item.id = 0xA800000000000000ULL + index + 1U;
+-        item.item_level = 1U;
+-        result[index] = {true, static_cast<std::uint16_t>(index),
+-            arpg::dungeon::GroundItemSource::monster_drop, 0xFFU,
+-            {100.0F + static_cast<float>(index), 100.0F, 0.0F}, item};
++checkpoint::DungeonRunState extreme_cleared_state() noexcept {
++    auto state = arpg::dungeon::make_initial_run_state(
++        0xA8E600DULL, arpg::dungeon::DungeonRules{}).state;
++    for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
++        const auto selected = arpg::abyss::select_abyss_rule(seed, 1U);
++        if (!selected.has_value()
++                || selected->rule
++                    != arpg::abyss::AbyssRuleId::chaos_expansion) {
++            continue;
++        }
++        state.current_room.seed = seed;
++        state.current_room.is_abyss = true;
++        state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
++        state.abyss.danger = selected->danger;
++        state.abyss.rule = selected->rule;
++        state.abyss.rules_version = selected->rules_version;
++        state.abyss.reward_total = 3U;
++        return state;
+     }
+-    return result;
++    return {};
+ }
+ 
+ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexcept {
+     auto first = std::make_unique<LongTrace>();
+     auto second = std::make_unique<LongTrace>();
+-    ARPG_REQUIRE(generate_long_trace(*first));
+-    ARPG_REQUIRE(generate_long_trace(*second));
+-    ARPG_REQUIRE(first->complete && first->reload_count == 27U);
++    ARPG_REQUIRE(generate_long_trace(*first, 0U));
++    ARPG_REQUIRE(generate_long_trace(*second, 37U));
++    ARPG_REQUIRE(first->complete && first->reload_count == 0U);
++    ARPG_REQUIRE(second->complete && second->reload_count == 27U);
+     ARPG_REQUIRE(same_long_trace(*first, *second));
+ 
+     const std::uint32_t total_trials = first->door_trials[0]
+         + first->door_trials[1] + first->door_trials[2]
+         + first->door_trials[3];
+     const std::uint32_t total_hits = first->door_hits[0]
+         + first->door_hits[1] + first->door_hits[2] + first->door_hits[3];
+     std::printf("[stage10-abyss-stress] hits=%u/%u directions=%u/%u/%u/%u "
+         "reloads=%u hash=0x%016llx\n", total_hits, total_trials,
+         first->door_hits[0], first->door_hits[1], first->door_hits[2],
+-        first->door_hits[3], first->reload_count,
++        first->door_hits[3], second->reload_count,
+         static_cast<unsigned long long>(first->hash));
+ 
+     ARPG_REQUIRE(total_trials == 4000U);
+     ARPG_REQUIRE(total_hits >= 20U && total_hits <= 70U);
+     constexpr std::array<std::uint32_t, 4> kGoldenTrials{{
+         1000U, 1000U, 1000U, 1000U}};
+-    constexpr std::array<std::uint32_t, 4> kGoldenHits{{12U, 6U, 5U, 8U}};
++    constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
+     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
+     ARPG_REQUIRE(first->door_hits == kGoldenHits);
+-    ARPG_REQUIRE(first->hash == 0x51b4ebccf356d01bULL);
++    ARPG_REQUIRE(first->hash == 0xe102b17e6423351bULL);
+     return {};
+ }
+ 
+ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexcept {
+-    arpg::combat::CombatWorld world = make_extreme_world();
+-    auto ground = make_full_ground_pool();
+-    const auto initial = world.snapshot();
+-    ARPG_REQUIRE(initial.monster_count == arpg::combat::kMonsterCapacity);
++    arpg::dungeon::DungeonSession session{
++        arpg::dungeon::DungeonRules{}, extreme_cleared_state()};
++    arpg::test::install_combat_world(session, extreme_config());
++    arpg::combat::CombatWorld* const world =
++        arpg::test::mutable_combat_world(session);
++    ARPG_REQUIRE(world != nullptr);
++    const auto initial_world = world->snapshot();
++    ARPG_REQUIRE(initial_world.monster_count
++        == arpg::combat::kMonsterCapacity);
+     const arpg::combat::MonsterHandle owner{
+-        0U, initial.monsters[0].generation};
+-    arpg::test::CombatWorldTestAccess::fill_projectiles(world, owner);
+-    arpg::test::CombatWorldTestAccess::fill_hazards(world, owner);
+-    const auto saturated = world.snapshot();
+-    ARPG_REQUIRE(saturated.projectile_count
++        0U, initial_world.monsters[0].generation};
++    arpg::test::CombatWorldTestAccess::fill_projectiles(*world, owner);
++    arpg::test::CombatWorldTestAccess::fill_hazards(*world, owner);
++    arpg::test::fill_ground_pool(session, ground_prototype());
++    session.tick({});
++    const auto saturated = session.snapshot();
++    ARPG_REQUIRE(saturated.combat.has_value());
++    ARPG_REQUIRE(saturated.combat->monster_count
++        == arpg::combat::kMonsterCapacity);
++    ARPG_REQUIRE(saturated.combat->projectile_count
+         == arpg::combat::kProjectileCapacity);
+-    ARPG_REQUIRE(saturated.hazard_count == arpg::combat::kHazardCapacity);
+-    for (std::size_t index = 0U; index < ground.size(); ++index) {
+-        ARPG_REQUIRE(ground[index].active);
+-        ARPG_REQUIRE(ground[index].drop_ordinal == index);
++    ARPG_REQUIRE(saturated.combat->hazard_count
++        == arpg::combat::kHazardCapacity);
++    std::size_t ground_count = 0U;
++    for (const auto& ground : arpg::test::ground_items(session)) {
++        ground_count += ground.active;
+     }
++    ARPG_REQUIRE(ground_count == arpg::dungeon::kGroundDropCapacity);
+ 
+     const std::uint32_t projectile_saturation_before =
+-        saturated.diagnostics.projectile_saturation_count;
++        saturated.combat->diagnostics.projectile_saturation_count;
+     const std::uint32_t hazard_saturation_before =
+-        saturated.diagnostics.hazard_saturation_count;
++        saturated.combat->diagnostics.hazard_saturation_count;
++    const std::uint32_t ground_saturation_before =
++        saturated.diagnostics.ground_saturation_count;
+     const std::uint64_t before = arpg::test::allocation_count();
+-    for (int tick = 0; tick < 600; ++tick) world.tick({});
++    for (int tick = 0; tick < 600; ++tick) session.tick({});
+     const std::uint64_t allocations = arpg::test::allocation_count() - before;
+-    const auto after = world.snapshot();
++    const auto after = session.snapshot();
+ 
+     ARPG_REQUIRE(allocations == 0U);
+-    ARPG_REQUIRE(after.monster_count <= arpg::combat::kMonsterCapacity);
+-    ARPG_REQUIRE(after.projectile_count
++    ARPG_REQUIRE(after.combat.has_value());
++    ARPG_REQUIRE(after.combat->monster_count <= arpg::combat::kMonsterCapacity);
++    ARPG_REQUIRE(after.combat->projectile_count
+         == arpg::combat::kProjectileCapacity);
+-    ARPG_REQUIRE(after.hazard_count == arpg::combat::kHazardCapacity);
+-    ARPG_REQUIRE(after.diagnostics.projectile_saturation_count
++    ARPG_REQUIRE(after.combat->hazard_count == arpg::combat::kHazardCapacity);
++    ARPG_REQUIRE(after.combat->diagnostics.projectile_saturation_count
+         > projectile_saturation_before);
+-    ARPG_REQUIRE(after.diagnostics.hazard_saturation_count
++    ARPG_REQUIRE(after.combat->diagnostics.hazard_saturation_count
+         > hazard_saturation_before);
+-    ARPG_REQUIRE(after.diagnostics.projectile_invalid_owner_count == 0U);
+-    ARPG_REQUIRE(after.diagnostics.hazard_invalid_owner_count == 0U);
+-    ARPG_REQUIRE(after.diagnostics.event_overflow_count == 0U);
+-    for (std::size_t index = 0U; index < ground.size(); ++index) {
+-        ARPG_REQUIRE(ground[index].active);
+-        ARPG_REQUIRE(ground[index].item.id
+-            == 0xA800000000000000ULL + index + 1U);
++    ARPG_REQUIRE(after.diagnostics.ground_saturation_count
++        > ground_saturation_before);
++    ARPG_REQUIRE(after.combat->diagnostics.projectile_invalid_owner_count == 0U);
++    ARPG_REQUIRE(after.combat->diagnostics.hazard_invalid_owner_count == 0U);
++    ARPG_REQUIRE(after.combat->diagnostics.event_overflow_count == 0U);
++    ground_count = 0U;
++    for (const auto& ground : arpg::test::ground_items(session)) {
++        ground_count += ground.active;
+     }
++    ARPG_REQUIRE(ground_count == arpg::dungeon::kGroundDropCapacity);
++    ARPG_REQUIRE(after.abyss_pending_rewards == 3U);
+     std::printf("[stage10-abyss-stress] ticks=600 allocations=%llu "
+-        "pools=%zu/%zu/%zu saturation=%u/%u\n",
+-        static_cast<unsigned long long>(allocations), after.monster_count,
+-        after.projectile_count, after.hazard_count,
+-        after.diagnostics.projectile_saturation_count,
+-        after.diagnostics.hazard_saturation_count);
++        "pools=%zu/%zu/%zu/%zu saturation=%u/%u/%u\n",
++        static_cast<unsigned long long>(allocations),
++        after.combat->monster_count, after.combat->projectile_count,
++        after.combat->hazard_count, ground_count,
++        after.combat->diagnostics.projectile_saturation_count,
++        after.combat->diagnostics.hazard_saturation_count,
++        after.diagnostics.ground_saturation_count);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"1000 room abyss trace matches golden through reloads",
+         &thousand_room_abyss_trace_matches_golden_and_reload},
+     {"extreme abyss pools run 600 ticks without allocation",
+         &extreme_abyss_pools_run_600_ticks_without_allocation},
+ };
+ 
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index 1b1f703..a5b261c 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -189,20 +189,42 @@ struct DungeonSessionTestAccess final {
+         std::uint16_t ordinal,
+         std::uint8_t reward_ordinal,
+         const items::ItemInstance& item,
+         combat::Vec3 position) noexcept {
+         if (ordinal < session.ground_items_.size()) {
+             session.ground_items_[ordinal] = {
+                 true, ordinal, dungeon::GroundItemSource::abyss_chest,
+                 reward_ordinal, position, item};
+         }
+     }
++    static combat::CombatWorld* mutable_combat_world(
++        dungeon::DungeonSession& session) noexcept {
++        return session.combat_.has_value() ? &*session.combat_ : nullptr;
++    }
++    static void install_combat_world(
++        dungeon::DungeonSession& session,
++        const combat::CombatEncounterConfig& config) noexcept {
++        session.combat_.emplace(config);
++    }
++    static void fill_ground_pool(
++        dungeon::DungeonSession& session,
++        const items::ItemInstance& prototype) noexcept {
++        for (std::uint16_t index = 0U;
++             index < session.ground_items_.size(); ++index) {
++            items::ItemInstance item = prototype;
++            item.id += index;
++            session.ground_items_[index] = {
++                true, index, dungeon::GroundItemSource::monster_drop,
++                0xFFU, {100.0F + static_cast<float>(index),
++                    100.0F, 0.0F}, item};
++        }
++    }
+     static void set_pending_pickup_ordinal(
+         dungeon::DungeonSession& session,
+         std::uint16_t ordinal) noexcept {
+         if (session.pending_save_.has_value()) {
+             session.pending_save_->pickup_ordinal = ordinal;
+         }
+     }
+     static void offset_pending_abyss_reward_position(
+         dungeon::DungeonSession& session,
+         combat::Vec3 offset) noexcept {
+@@ -327,20 +349,38 @@ inline void install_ground_item(
+ inline void install_abyss_ground_item(
+     dungeon::DungeonSession& session,
+     std::uint16_t ordinal,
+     std::uint8_t reward_ordinal,
+     const items::ItemInstance& item,
+     combat::Vec3 position) noexcept {
+     DungeonSessionTestAccess::install_abyss_ground_item(
+         session, ordinal, reward_ordinal, item, position);
+ }
+ 
++inline void install_combat_world(
++    dungeon::DungeonSession& session,
++    const combat::CombatEncounterConfig& config) noexcept {
++    DungeonSessionTestAccess::install_combat_world(
++        session, config);
++}
++
++inline combat::CombatWorld* mutable_combat_world(
++    dungeon::DungeonSession& session) noexcept {
++    return DungeonSessionTestAccess::mutable_combat_world(session);
++}
++
++inline void fill_ground_pool(
++    dungeon::DungeonSession& session,
++    const items::ItemInstance& prototype) noexcept {
++    DungeonSessionTestAccess::fill_ground_pool(session, prototype);
++}
++
+ inline void set_pending_pickup_ordinal(
+     dungeon::DungeonSession& session,
+     std::uint16_t ordinal) noexcept {
+     DungeonSessionTestAccess::set_pending_pickup_ordinal(session, ordinal);
+ }
+ 
+ inline void offset_pending_abyss_reward_position(
+     dungeon::DungeonSession& session,
+     combat::Vec3 offset) noexcept {
+     DungeonSessionTestAccess::offset_pending_abyss_reward_position(
+diff --git a/tests/dungeon/stage10_evidence_bad_capture_order.txt b/tests/dungeon/stage10_evidence_bad_capture_order.txt
+new file mode 100644
+index 0000000..c430da0
+--- /dev/null
++++ b/tests/dungeon/stage10_evidence_bad_capture_order.txt
+@@ -0,0 +1,6 @@
++void capture_after_presented_frame(const char* path) noexcept { export_screenshot(path); }
++capture_after_presented_frame("fake.png");
++EndDrawing();
++queue_action(Action::light);
++request_descent(true);
++reset_current_room();
+diff --git a/tests/dungeon/stage10_evidence_bad_injection.txt b/tests/dungeon/stage10_evidence_bad_injection.txt
+new file mode 100644
+index 0000000..5edea07
+--- /dev/null
++++ b/tests/dungeon/stage10_evidence_bad_injection.txt
+@@ -0,0 +1 @@
++DungeonSessionTestAccess::set_phase(session, RoomPhase::cleared);
+diff --git a/tests/dungeon/stage10_evidence_guard_test.cmake b/tests/dungeon/stage10_evidence_guard_test.cmake
+index c643272..63681c2 100644
+--- a/tests/dungeon/stage10_evidence_guard_test.cmake
++++ b/tests/dungeon/stage10_evidence_guard_test.cmake
+@@ -1,45 +1,112 @@
+-if(NOT DEFINED FIXTURE_SOURCE OR NOT DEFINED FORMAL_SOURCE
+-        OR NOT DEFINED HOST_HEADER OR NOT DEFINED HOST_SOURCE)
+-    message(FATAL_ERROR "Stage 10 evidence guard requires fixture, formal, and host sources")
+-endif()
++foreach(required FIXTURE_SOURCE VALIDATION_GAME_SOURCE FORMAL_SOURCE
++        CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE HOST_HEADER HOST_SOURCE)
++    if(NOT DEFINED ${required})
++        message(FATAL_ERROR "Stage 10 evidence guard missing ${required}")
++    endif()
++endforeach()
+ 
+ file(READ "${FIXTURE_SOURCE}" fixture_source)
++file(READ "${VALIDATION_GAME_SOURCE}" validation_game_source)
+ file(READ "${FORMAL_SOURCE}" formal_source)
++file(READ "${CAPTURE_SCRIPT}" capture_script)
++file(READ "${FORMAL_CAPTURE_SCRIPT}" formal_capture_script)
++file(READ "${STRESS_SOURCE}" stress_source)
+ file(READ "${HOST_HEADER}" host_header)
+ file(READ "${HOST_SOURCE}" host_source)
+-set(all_evidence "${fixture_source}\n${formal_source}\n${host_source}")
++set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_source}")
+ 
+ foreach(forbidden
+         "DungeonSessionTestAccess"
+         "CombatWorldTestAccess"
+         "force_defeat"
+         "relay_defeated"
+         "defeat_monster\\("
+         "set_phase\\("
+         "stable_state_"
+         "phase_[ \\t]*="
+         "generated_mask[ \\t]*="
+         "claimed_mask[ \\t]*="
+         "abandoned_mask[ \\t]*=")
+-    if(all_evidence MATCHES "${forbidden}")
++    if(formal_evidence MATCHES "${forbidden}")
+         message(FATAL_ERROR "Forbidden Stage 10 evidence injection: ${forbidden}")
+     endif()
+ endforeach()
+ 
+ if(NOT fixture_source MATCHES "SaveStore"
+         OR NOT fixture_source MATCHES "request_pickup"
++        OR NOT fixture_source MATCHES "abyss_exit_warning"
++        OR NOT fixture_source MATCHES "abyss_exit_confirmation_armed"
+         OR NOT fixture_source MATCHES "MovementInput")
+-    message(FATAL_ERROR "Stage 10 fixture must use SaveStore and public pickup/movement APIs")
++    message(FATAL_ERROR "Stage 10 fixture must use real save, pickup, warning, confirmation, and movement APIs")
+ endif()
+-if(NOT formal_source MATCHES "make_door_transition"
++if(NOT validation_game_source MATCHES "run_raylib_host"
++        OR NOT formal_source MATCHES "make_door_transition"
+         OR NOT formal_source MATCHES "run_raylib_host"
+         OR NOT host_source MATCHES "queue_action"
+         OR NOT host_source MATCHES "request_descent"
+         OR NOT host_source MATCHES "reset_current_room")
+     message(FATAL_ERROR "Formal Stage 10 evidence must use generation and normal host inputs")
+ endif()
+-if(NOT host_header MATCHES "validation_exit_after_presented_frames"
+-        OR NOT host_source MATCHES "EndDrawing\\(\\)"
+-        OR NOT host_source MATCHES "export_screenshot")
+-    message(FATAL_ERROR "Stage 10 screenshots must come from a presented Raylib frame")
++
++if(stress_source MATCHES "make_full_ground_pool"
++        OR stress_source MATCHES "std::array<[^>]*GroundItem")
++    message(FATAL_ERROR "Stage 10 stress may not substitute a local GroundItem array for the production session pool")
++endif()
++if(NOT stress_source MATCHES "DungeonSession"
++        OR NOT stress_source MATCHES "fill_ground_pool"
++        OR NOT stress_source MATCHES "ground_items\\(session\\)"
++        OR NOT stress_source MATCHES "session.tick\\("
++        OR NOT stress_source MATCHES "ground_saturation_count"
++        OR NOT stress_source MATCHES "production_resolution"
++        OR NOT stress_source MATCHES "last_abyss_resolution"
++        OR NOT stress_source MATCHES "encode_checkpoint"
++        OR NOT stress_source MATCHES "generate_long_trace\\(\\*first, 0U\\)"
++        OR NOT stress_source MATCHES "generate_long_trace\\(\\*second, 37U\\)")
++    message(FATAL_ERROR "Stage 10 stress must exercise production session ground, resolution, and restarted traces")
++endif()
++
++string(ASCII 9 whitespace_tab)
++string(ASCII 10 whitespace_lf)
++string(ASCII 13 whitespace_cr)
++string(REPLACE " " "" host_compact "${host_source}")
++string(REPLACE "${whitespace_tab}" "" host_compact "${host_compact}")
++string(REPLACE "${whitespace_lf}" "" host_compact "${host_compact}")
++string(REPLACE "${whitespace_cr}" "" host_compact "${host_compact}")
++set(capture_helper
++    "voidcapture_after_presented_frame(constchar*path)noexcept{")
++string(FIND "${host_compact}" "${capture_helper}" capture_helper_index)
++set(helper_export_index -1)
++if(NOT capture_helper_index EQUAL -1)
++    string(SUBSTRING "${host_compact}" ${capture_helper_index} 160 capture_helper_body)
++    string(FIND "${capture_helper_body}" "export_screenshot(path)" helper_export_index)
++endif()
++set(after_present_anchor "EndDrawing();++presented_frame_count;")
++string(FIND "${host_compact}" "${after_present_anchor}" after_present_index)
++set(capture_after_present_index -1)
++if(NOT after_present_index EQUAL -1)
++    string(SUBSTRING "${host_compact}" ${after_present_index} -1 host_after_present)
++    string(FIND "${host_after_present}"
++        "capture_after_presented_frame(" capture_after_present_index)
++endif()
++if(NOT host_header MATCHES "validation_exit_after_presented_frames")
++    message(FATAL_ERROR "Stage 10 host lacks presented-frame exit control")
++endif()
++if(capture_helper_index EQUAL -1 OR helper_export_index EQUAL -1)
++    message(FATAL_ERROR
++        "Stage 10 host lacks the post-present capture helper "
++        "(helper=${capture_helper_index}, export=${helper_export_index})")
++endif()
++if(after_present_index EQUAL -1 OR capture_after_present_index EQUAL -1)
++    message(FATAL_ERROR
++        "Stage 10 screenshot capture is not structurally after EndDrawing "
++        "(present=${after_present_index}, capture=${capture_after_present_index})")
+ endif()
++
++foreach(script_text capture_script formal_capture_script)
++    if(NOT ${script_text} MATCHES "LastWriteTimeUtc"
++            OR NOT ${script_text} MATCHES "System.Drawing"
++            OR NOT ${script_text} MATCHES "HashSet"
++            OR NOT ${script_text} MATCHES "nonBackground")
++        message(FATAL_ERROR "Stage 10 capture script lacks freshness and pixel-content checks")
++    endif()
++endforeach()
+diff --git a/tests/dungeon/stage10_validation_fixture.cpp b/tests/dungeon/stage10_validation_fixture.cpp
+index dd68cfe..82f54db 100644
+--- a/tests/dungeon/stage10_validation_fixture.cpp
++++ b/tests/dungeon/stage10_validation_fixture.cpp
+@@ -35,20 +35,30 @@ struct AbyssEntry final {
+ };
+ 
+ struct EnvironmentEvidence final {
+     int initial_hp{};
+     int minimum_hp{};
+     bool warning_seen{};
+     bool active_seen{};
+     bool active_damage_seen{};
+ };
+ 
++struct AbandonEvidence final {
++    bool warning_event{};
++    bool armed{};
++    bool neutral_release{};
++    arpg::dungeon::checkpoint::AbyssCheckpoint before{};
++    std::uint32_t inventory_before{};
++    std::uint16_t ground_before{};
++    std::uint16_t abyss_ground_before{};
++};
++
+ DungeonRules validation_rules() noexcept {
+     return {};
+ }
+ 
+ bool install_validation_build(DungeonRunState& state) {
+     state.progression = {100U, 0U, 99U, 99U};
+     state.item_ownership = {};
+     state.item_ownership.items.reserve(6U);
+     for (std::uint8_t index = 0U; index < 6U; ++index) {
+         const std::uint64_t id = static_cast<std::uint64_t>(index) + 1U;
+@@ -326,55 +336,89 @@ MovementInput exit_movement(Vec3 player, ExitDirection direction) noexcept {
+     case ExitDirection::down: movement.y = 1; break;
+     case ExitDirection::left: movement.x = -1; break;
+     case ExitDirection::right: movement.x = 1; break;
+     case ExitDirection::none: break;
+     }
+     return movement;
+ }
+ 
+ bool abandon_through_door(DungeonSession& session,
+     arpg::persistence::SaveStore& store,
+-    ExitDirection direction) noexcept {
+-    bool warned = false;
++    ExitDirection direction,
++    AbandonEvidence& evidence) noexcept {
+     bool released = false;
+     for (int tick = 0; tick < 2000; ++tick) {
+         if (!service_pending(session, store)) return false;
+         const auto state = session.snapshot();
+-        if (state.room_index > 1U) return true;
++        if (state.room_index > 1U) {
++            return evidence.warning_event && evidence.armed
++                && evidence.neutral_release && released;
++        }
+         if (state.phase == RoomPhase::faulted || !state.combat.has_value()) {
+             std::cerr << "abandon stopped phase="
+                       << static_cast<unsigned>(state.phase)
+                       << " fault=" << static_cast<unsigned>(
+                             state.diagnostics.fault)
+                       << " pending=" << state.abyss_pending_rewards
+                       << " unpicked=" << state.abyss_unpicked_rewards << '\n';
+             return false;
+         }
+         if (state.abyss_exit_confirmation_armed) {
+-            warned = true;
++            evidence.armed = true;
++            while (const auto event = session.try_pop_event()) {
++                evidence.warning_event = evidence.warning_event
++                    || (event->kind
++                        == arpg::dungeon::DungeonEventKind::abyss_exit_warning
++                        && event->transition
++                            == arpg::dungeon::TransitionKind::door
++                        && event->direction == direction);
++            }
+             if (!released) {
++                const auto loaded = store.load();
++                if (loaded.state != arpg::persistence::SaveLoadState::ready) {
++                    return false;
++                }
++                evidence.before = loaded.checkpoint.abyss;
++                evidence.inventory_before = state.inventory_count;
++                evidence.ground_before = state.ground_item_count;
++                for (const auto& ground : state.ground_items) {
++                    evidence.abyss_ground_before +=
++                        ground.source
++                        == arpg::dungeon::GroundItemSource::abyss_chest;
++                }
+                 session.tick({});
+                 released = true;
++                evidence.neutral_release =
++                    session.snapshot().abyss_exit_confirmation_armed;
+                 continue;
+             }
+         }
+         session.tick(exit_movement(
+             state.combat->player.position, direction));
+     }
+     const auto failed = session.snapshot();
+     std::cerr << "abandon timed out phase="
+               << static_cast<unsigned>(failed.phase)
+               << " room=" << failed.room_index
+               << " armed=" << failed.abyss_exit_confirmation_armed
+               << " pending=" << failed.abyss_pending_rewards
+               << " unpicked=" << failed.abyss_unpicked_rewards << '\n';
+-    return warned && false;
++    return false;
++}
++
++std::uint8_t popcount8(std::uint8_t value) noexcept {
++    std::uint8_t result = 0U;
++    while (value != 0U) {
++        result = static_cast<std::uint8_t>(result + (value & 1U));
++        value = static_cast<std::uint8_t>(value >> 1U);
++    }
++    return result;
+ }
+ 
+ std::optional<EnvironmentEvidence> run_environment_probe(
+     const std::filesystem::path& save_directory) noexcept {
+     const auto entry = find_entry(arpg::abyss::AbyssRuleId::thunderstorm);
+     if (!entry.has_value()) return std::nullopt;
+     arpg::persistence::SaveStore store({save_directory});
+     const auto seeded = store.commit(entry->target);
+     if (seeded.state != arpg::persistence::SaveCommitState::committed) {
+         return std::nullopt;
+@@ -510,28 +554,52 @@ int main(int argc, char** argv) {
+             != arpg::persistence::SaveCommitState::committed) return 12;
+     DungeonSession abandon_session{rules, abandon_seeded.verified_state};
+     if (!service_pending(abandon_session, abandon_store)) return 13;
+     int abandon_initial_hp = 0;
+     int abandon_minimum_hp = 0;
+     std::uint64_t abandon_clear_generation = 0U;
+     if (!drive_clear(abandon_session, abandon_store,
+             abandon_initial_hp, abandon_minimum_hp,
+             abandon_clear_generation,
+             arpg::abyss::AbyssRuleId::life_sacrifice)) return 14;
+-    if (!abandon_through_door(
+-            abandon_session, abandon_store, ExitDirection::right)) return 15;
++    AbandonEvidence abandon_evidence{};
++    if (!abandon_through_door(abandon_session, abandon_store,
++            ExitDirection::right, abandon_evidence)) return 15;
+     const auto abandoned = abandon_store.load();
+     if (abandoned.state != arpg::persistence::SaveLoadState::ready
+             || !abandoned.checkpoint.last_abyss_resolution.valid) return 16;
++    const std::uint8_t valid_mask = static_cast<std::uint8_t>(
++        (1U << abandon_evidence.before.reward_total) - 1U);
++    const std::uint8_t expected_generated = popcount8(static_cast<std::uint8_t>(
++        abandon_evidence.before.generated_mask & valid_mask));
++    const std::uint8_t expected_claimed = popcount8(static_cast<std::uint8_t>(
++        abandon_evidence.before.claimed_mask & valid_mask));
++    const std::uint8_t expected_abandoned = popcount8(static_cast<std::uint8_t>(
++        valid_mask & static_cast<std::uint8_t>(
++            ~abandon_evidence.before.generated_mask)));
++    const auto& resolution = abandoned.checkpoint.last_abyss_resolution;
++    if (!abandon_evidence.warning_event || !abandon_evidence.armed
++            || !abandon_evidence.neutral_release
++            || resolution.total != abandon_evidence.before.reward_total
++            || resolution.generated != expected_generated
++            || resolution.claimed != expected_claimed
++            || resolution.abandoned != expected_abandoned
++            || abandon_evidence.abyss_ground_before
++                != static_cast<std::uint16_t>(
++                    expected_generated - expected_claimed)
++            || abandon_evidence.ground_before
++                < abandon_evidence.abyss_ground_before
++            || abandoned.checkpoint.item_ownership.items.size()
++                != abandon_evidence.inventory_before + 6U) return 17;
+     const auto environment = run_environment_probe(
+         save_directory / "environment");
+-    if (!environment.has_value()) return 17;
++    if (!environment.has_value()) return 18;
+ 
+     const auto preview = arpg::dungeon::preview_abyss_doors(
+         entry->source.current_room);
+     const std::size_t direction_index = static_cast<std::size_t>(entry->direction);
+     std::cout << "door_preview source_seed=" << entry->source.current_room.seed
+               << " direction=" << direction_index
+               << " target_seed=" << entry->target.current_room.seed
+               << " marked=" << preview[direction_index] << '\n'
+               << "started generation=" << started.commit_generation
+               << " rule=" << static_cast<unsigned>(started.abyss_rule)
+@@ -569,12 +637,12 @@ int main(int argc, char** argv) {
+                     abandoned.checkpoint.last_abyss_resolution.claimed)
+               << " abandoned="
+               << static_cast<unsigned>(
+                     abandoned.checkpoint.last_abyss_resolution.abandoned)
+               << '\n';
+     return preview[direction_index]
+             && started.commit_generation > entry->target.commit_generation
+             && reward_ids[0] != 0U && reward_ids[1] != 0U
+             && reward_ids[2] != 0U
+             && loaded.checkpoint.abyss.claimed_mask != 0U
+-        ? 0 : 18;
++        ? 0 : 19;
+ }

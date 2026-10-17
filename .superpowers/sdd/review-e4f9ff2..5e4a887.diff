@@ -1,0 +1,2123 @@
+# Review package: e4f9ff2df9dbea147df64d32a00d793fd87dabec..5e4a887c6ea0547d9275f8a9cecbad64495a8b70
+
+## Commits
+5e4a887 feat: apply abyss combat stat rules
+
+## Files changed
+ .superpowers/sdd/task-6-report.md           | 115 ++++++++++++++++----
+ src/combat/CMakeLists.txt                   |   4 +-
+ src/combat/combat_types.hpp                 |   2 +
+ src/combat/combat_world.cpp                 |  77 +++++++++++--
+ src/combat/combat_world.hpp                 |   2 +
+ src/combat/monster_ai.cpp                   |   6 +-
+ src/combat/monster_ai_common.hpp            |  90 ++++++++++++++++
+ src/combat/monster_ai_melee.cpp             |  28 +++--
+ src/combat/monster_ai_ranged.cpp            |  62 +++++------
+ src/combat/monster_ai_special.cpp           |  57 +++++-----
+ src/combat/monster_pool.cpp                 |  23 +++-
+ src/combat/monster_pool.hpp                 |   3 +
+ src/combat/player_simulation.cpp            |   7 +-
+ src/dungeon/dungeon_session.cpp             |   2 +
+ src/dungeon/room_combat_template.cpp        |   2 +
+ src/dungeon/room_combat_template.hpp        |   1 +
+ tests/combat/combat_config_tests.cpp        |  37 +++++++
+ tests/combat/combat_test_main.cpp           |   2 +-
+ tests/combat/combat_test_support.hpp        |  21 ++++
+ tests/combat/monster_melee_tests.cpp        | 161 ++++++++++++++++++++++++++++
+ tests/combat/movement_jump_tests.cpp        |  52 +++++++++
+ tests/combat/player_health_tests.cpp        |  74 +++++++++++++
+ tests/dungeon/dungeon_test_support.hpp      |  12 +++
+ tests/dungeon/dungeon_transaction_tests.cpp |  27 ++++-
+ 24 files changed, 752 insertions(+), 115 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-6-report.md b/.superpowers/sdd/task-6-report.md
+index 4b168ed..b474c9c 100644
+--- a/.superpowers/sdd/task-6-report.md
++++ b/.superpowers/sdd/task-6-report.md
+@@ -1,26 +1,103 @@
+-# Task 6 report: active monster affix triggers
++# Stage 10 Task 6 报告：六条深渊战斗数值规则
+ 
+-Baseline: `1296fac6034cb2ab8949a0da1bdf0c2c6df50c92`
++## 状态
+ 
+-## Implemented
++- 基线 HEAD：`e4f9ff2df9dbea147df64d32a00d793fd87dabec`
++- 范围：只实现 combat 数值与 Dungeon config 接线；未实现环境 runtime、清房调用、奖励或 UI。
++- 结果：六条规则已通过 `CombatEncounterConfig::abyss` 消费；CombatWorld 不读取 checkpoint、save、room seed 或奖励状态。
+ 
+-- Fixed-array multishot fan (`std::array<Vec3, 4>`), M1/M2/M3 counts 2/3/4 and per-projectile 75/60/50% damage.
+-- Burning-ground periodic fire hazards with frozen interval, radius, lifetime, 30-tick damage cadence, kind projection, and fixed pool allocation.
+-- Chain-lightning warning hazards for successful direct melee hits and for each chain-marked projectile end; projectile state carries the owner affix snapshot and chain hazards cannot recursively trigger.
+-- Blink-assault cooldown/warning state, AI pause, bounded teleport, next-direct-hit empowerment, and multiplicative Frenzy interaction.
+-- `HazardKind`, hazard persistence projection, warning event kinds, and safe full-pool downgrade. Warning events are emitted only after the corresponding warning state/hazard is created.
++## TDD：RED 证据
+ 
+-## Tests and verification
++1. 配置契约 RED：新增 `CombatEncounterConfig::abyss` 测试后，MSVC 明确报错 `CombatEncounterConfig` 没有成员 `abyss`。
++2. 100% 行为基线 RED（145 cases, 5 failures）：
++   - Heavy Steps：期望 `4.59`，实际仍为地面速度 `5.4`。
++   - Swift Pursuit：期望移动位移 `1.15x`，实际仍为 `1.0x`。
++   - Abyss Bulwark：期望 armor `1007`，实际仍为 Stage 9 的 `775`。
++   - Abyss Fury：期望接触伤害 `65`，实际仍为 `45`。
++   - Exhausted Recovery：期望初始 hp `700`，实际仍为 `1000`。
++3. 资源 API RED：测试先引用 `restore_player_resources` 与 `clear_abyss_rule_preserving_resources`，编译明确因两个成员不存在而失败。
++4. Dungeon exact-receipt RED：固定选中 `abyss_fury` 后，receipt 前缓存 config 的 `rule` 仍为 `none`。
++5. 自审补强 RED：Fury 下 death-blast hazard 仍为 `120`，未达到 `174`。
+ 
+-1. Wrote four active-trigger tests first and ran the requested RED cycle: all four failed for missing multishot, burning, chain, and blink behavior.
+-2. Added tiered M1/M2/M3 value checks and full 384-projectile / 96-hazard pool downgrade checks.
+-3. Ran with the Visual Studio developer environment and `WindowsSDKVersion=10.0.26100.0\\`:
++## GREEN 与倍率组合顺序
+ 
+-   ```text
+-   cmake --build build-release --target arpg_combat_tests
+-   ctest --test-dir build-release -R combat.units --output-on-failure
+-   125 cases, 0 failures
+-   git diff --check
+-   ```
++统一顺序为：
+ 
+-The normal PowerShell session did not export the required MSVC/SDK environment; the developer-command prompt supplied it for each verified build.
++1. 先完整求值 Stage 9 affix runtime profile。
++2. 再顺序应用 Abyss basis points；不覆盖 Stage 9 结果。
++3. 正整数资源/盾值需要上取整时使用统一 ceil helper；armor 与 damage 延续整数 floor。
++4. tick 统一使用 ceil，非零 base 的结果至少为 1 tick。
++
++统一 helper 位于 `monster_ai_common.hpp`：`scale_basis_points`、`scale_ticks_ratio`、Stage 9 packet 缩放、Abyss outgoing damage boundary、move/attack/cooldown 组合函数。三个 AI 文件不再各自复制 tick/packet 浮点逻辑。
++
++## 六条规则精确证据
++
++### Swift Pursuit
++
++- chaos chaser 地面移动：`1.15x`。
++- cooldown：`ceil(42 * 8500 / 10000) = 36`。
++- 与 Stage 9 Swift M3 组合：Stage 9 cooldown `32`，再乘 Abyss 得 `ceil(32 * 0.85) = 28`。
++- telegraph/recovery/active 不受 Swift 改动。
++
++### Abyss Bulwark
++
++- Armored M3：`floor(775 * 1.30) = 1007`；无 armor 时仍为 `0`。
++- 基础 chaos chaser 实际 max hp `260`，额外盾 `ceil(260 * 0.30) = 78`；加入既有 fallback max shield 后为 `168`，current shield 增加 `78`。
++- Mighty M3 先把实际 max hp 求为 `520`，再给额外盾 `156`，max/current 分别为 `246/156`。
++- Shielding M2 的 Stage 9 max shield `91` 保留并叠加，得到 max/current `169/78`，没有把 Stage 9 shielding 免费激活或覆盖。
++
++### Abyss Fury
++
++- 接触：`floor(45 * 1.45) = 65`。
++- projectile：`floor(40 * 1.45) = 58`。
++- native monster hazard：`floor(35 * 1.45) = 50`。
++- death-blast affix hazard：`floor(120 * 1.45) = 174`；chain/burning 也在生成边界走同一函数。
++- Stage 9 Frenzy M3 先算 `floor(45 * 1.5) = 67`，再算 `floor(67 * 1.45) = 97`。
++- telegraph/active/recovery/cooldown：`7/4/9/21`（Frenzy M3 后再除 Fury 1.45）；active ticks 保持 `4`。
++- damage 只在生成/出手边界乘一次，projectile/hazard 命中时不再乘；environment 未接入该边界。
++
++### Heavy Steps
++
++- 仅非 airborne 的水平地面速度：`5.4 * 0.85 = 4.59`。
++- jump impulse/弧线不变；空中横移仍为 `3.78`；逐 tick 比较攻击 ID/phase 完全相同。
++
++### Exhausted Recovery
++
++- 初次进入：hp `1000 -> 700`，barrier `101 -> 71`（ceil）。
++- `reset_player_health=false` 跨 wave 保留受损后的当前 hp/barrier，不重复乘 `0.7`。
++- 显式 restore amount：`1 -> 1`、`10 -> 7`；`reset_player_health=true` 先清零再走同一 restore API，恢复到 `700/71`。
++
++### Life Sacrifice
++
++- base max hp `1001` 经 ceil 得 `551`，进入时按同一 ratio mapping 保持满血比例。
++- 退出前 `276/551`，调用 `clear_abyss_rule_preserving_resources()` 后为 `501/1001`（最近整数公式）。
++- barrier `37/101` 退出后仍为 `37/101`，只 clamp，不 refill。
++- clear API 只提供 Task 8 可测试接线点；本任务没有在清房时调用。
++
++## Dungeon 接线与依赖
++
++- `make_combat_encounter_config` 新增显式 `AbyssCombatConfig` 参数并原样缓存。
++- normal room 显式传 `combat_config_for(none)`。
++- abyss start 在 checkpoint selection 的 seed/depth/danger/rule/rules_version 全部匹配后，传 `combat_config_for(selection->rule)`；exact receipt 前只缓存，receipt 成功后才构造 CombatWorld。
++- `arpg_combat` PUBLIC 链接 `arpg_abyss`；`arpg_abyss` 仍只 PRIVATE 链接 `arpg_core`，无反向 combat 依赖。
++
++## 修改文件
++
++- Combat public config/API/CMake：`combat_types.hpp`、`combat_world.hpp/.cpp`、`CMakeLists.txt`。
++- 统一缩放与运行路径：`monster_ai_common.hpp`、三个 monster AI、`monster_ai.cpp`、`monster_pool.hpp/.cpp`、`player_simulation.cpp`。
++- Dungeon config/cached receipt 接线：`room_combat_template.hpp/.cpp`、`dungeon_session.cpp`。
++- 测试：combat config/health/movement/melee/support/main，以及 Dungeon transaction/support。
++
++## 最终验证
++
++- `ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure`
++  - `combat.units` passed，`dungeon.units` passed。
++  - 2/2 tests，0 failures，fresh 总耗时 `143.32 sec`。
++- `ctest --preset windows-msvc-debug -R '^abyss.units$|^architecture\.' --output-on-failure`
++  - 19/19 tests，0 failures；包括 combat no-raylib/no-dungeon/no-persistence 与 persistence checkpoint-only。
++
++## 疑虑与边界
++
++- 无已知 Task 6 功能缺口。
++- Task 7 的三条 environment runtime 仍未实现；当前 Fury boundary 不会误缩放未来 environment damage。
++- Task 8 必须显式调用 `clear_abyss_rule_preserving_resources()`；本任务只提供并测试 API，没有提前接清房 lifecycle。
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+index 7dda1a0..c7d9824 100644
+--- a/src/combat/CMakeLists.txt
++++ b/src/combat/CMakeLists.txt
+@@ -14,13 +14,15 @@ add_library(arpg_combat STATIC
+     monster_affix_generation.cpp
+     monster_affix_runtime.cpp
+     monster_catalog.cpp
+     monster_pool.cpp
+     player_simulation.cpp
+     target_simulation.cpp)
+ 
+ target_include_directories(arpg_combat
+     PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_combat PUBLIC cxx_std_17)
+-target_link_libraries(arpg_combat PRIVATE arpg_core arpg_modifiers)
++target_link_libraries(arpg_combat
++    PUBLIC arpg_abyss
++    PRIVATE arpg_core arpg_modifiers)
+ 
+ arpg_enable_project_warnings(arpg_combat)
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+index 61ff257..6b0552b 100644
+--- a/src/combat/combat_types.hpp
++++ b/src/combat/combat_types.hpp
+@@ -1,17 +1,18 @@
+ #pragma once
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
++#include "abyss/abyss_types.hpp"
+ #include "combat/monster_affix_types.hpp"
+ #include "modifiers/damage_types.hpp"
+ #include "modifiers/player_modifier_values.hpp"
+ 
+ namespace arpg::test {
+ struct CombatWorldTestAccess;
+ }
+ 
+ namespace arpg::combat {
+ 
+@@ -346,20 +347,21 @@ struct CombatLabConfig final {
+     bool respawn_defeated_dummies{true};
+ };
+ 
+ struct CombatEncounterConfig final {
+     Vec3 player_spawn{};
+     Facing initial_facing{Facing::right};
+     EncounterWave wave{};
+     bool reset_player_health{true};
+     PlayerCombatBuild player_build{};
+     std::uint64_t evasion_seed{};
++    abyss::AbyssCombatConfig abyss{};
+ };
+ 
+ struct PlayerSnapshot final {
+     Vec3 position{};
+     Vec3 velocity{};
+     Facing facing{Facing::right};
+     PlayerState state{PlayerState::idle};
+     AttackId active_attack{AttackId::none};
+     AttackPhase attack_phase{AttackPhase::finished};
+     std::uint16_t attack_elapsed_ticks{};
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index b069e5c..af30d3e 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -1,16 +1,18 @@
+ #include "combat/combat_world.hpp"
+ 
++#include "abyss/abyss_rules.hpp"
+ #include "combat/attack_catalog.hpp"
+ #include "combat/monster_affix_catalog.hpp"
+ #include "combat/monster_affix_generation.hpp"
+ #include "combat/monster_catalog.hpp"
++#include "combat/monster_ai_common.hpp"
+ #include "combat/room_bounds.hpp"
+ 
+ #include <array>
+ #include <algorithm>
+ #include <cmath>
+ #include <limits>
+ 
+ namespace arpg::combat {
+ 
+ namespace {
+@@ -492,32 +494,74 @@ void CombatWorld::reset() noexcept {
+     reset_event.tick = 0;
+     reset_event.position = player_.position;
+     emit_event(reset_event);
+ }
+ 
+ void CombatWorld::apply_player_build(PlayerCombatBuild build) noexcept {
+     DerivedPlayerBuild derived{};
+     if (!derive_player_build(build, derived)) return;
+ 
+     encounter_config_.player_build = build;
+-    player_.max_hp = derived.max_hp;
++    player_.max_hp = scale_basis_points(
++        derived.max_hp,
++        encounter_config_.abyss.player_max_health_bp,
++        BasisPointRounding::ceil);
+     player_.max_barrier = derived.max_barrier;
+     player_.damage_reduction = derived.damage_reduction;
+     player_.damage_reduction_cap = derived.damage_reduction_cap;
+     player_.armor = derived.armor;
+     player_.evasion = derived.evasion;
+     player_.armor_reduction_bp = derived.armor_reduction_bp;
+     player_.evasion_rate_bp = derived.evasion_rate_bp;
+     player_.hp = std::clamp(player_.hp, 0, player_.max_hp);
+     player_.barrier = std::clamp(player_.barrier, 0, player_.max_barrier);
+ }
+ 
++void CombatWorld::restore_player_resources(int hp, int barrier) noexcept {
++    const int restored_hp = scale_basis_points(
++        hp,
++        encounter_config_.abyss.player_resource_restore_bp,
++        BasisPointRounding::ceil);
++    const int restored_barrier = scale_basis_points(
++        barrier,
++        encounter_config_.abyss.player_resource_restore_bp,
++        BasisPointRounding::ceil);
++    player_.hp = restored_hp >= player_.max_hp - player_.hp
++        ? player_.max_hp
++        : player_.hp + restored_hp;
++    player_.barrier = restored_barrier >= player_.max_barrier - player_.barrier
++        ? player_.max_barrier
++        : player_.barrier + restored_barrier;
++}
++
++void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
++    DerivedPlayerBuild derived{};
++    if (!derive_player_build(encounter_config_.player_build, derived)) return;
++
++    const int old_max_hp = player_.max_hp;
++    const int old_hp = player_.hp;
++    const bool alive = old_hp > 0;
++    encounter_config_.abyss = {};
++    player_.max_hp = derived.max_hp;
++    player_.max_barrier = derived.max_barrier;
++    player_.damage_reduction = derived.damage_reduction;
++    player_.damage_reduction_cap = derived.damage_reduction_cap;
++    player_.armor = derived.armor;
++    player_.evasion = derived.evasion;
++    player_.armor_reduction_bp = derived.armor_reduction_bp;
++    player_.evasion_rate_bp = derived.evasion_rate_bp;
++    player_.hp = abyss::map_resource_ratio(
++        old_hp, old_max_hp, player_.max_hp, alive).value_or(
++            std::clamp(old_hp, 0, player_.max_hp));
++    player_.barrier = std::clamp(player_.barrier, 0, player_.max_barrier);
++}
++
+ void CombatWorld::initialize_runtime() noexcept {
+     evasion_rng_ = core::DeterministicRng{encounter_config_.evasion_seed};
+     initialize_player();
+     monsters_.clear();
+     for (auto& owner : effect_owners_) owner = {};
+     projectiles_.clear();
+     hazards_.clear();
+     if (legacy_mode_) {
+         initialize_legacy_monsters();
+     } else {
+@@ -541,30 +585,39 @@ void CombatWorld::initialize_runtime() noexcept {
+ void CombatWorld::initialize_player() noexcept {
+     player_ = PlayerRuntime{};
+     player_.position = encounter_config_.player_spawn;
+     player_.facing = encounter_config_.initial_facing;
+     DerivedPlayerBuild derived{};
+     if (!derive_player_build(encounter_config_.player_build, derived)) {
+         encounter_config_.player_build = PlayerCombatBuild{};
+         static_cast<void>(derive_player_build(
+             encounter_config_.player_build, derived));
+     }
+-    player_.max_hp = derived.max_hp;
++    const int base_max_hp = derived.max_hp;
++    player_.max_hp = scale_basis_points(
++        base_max_hp,
++        encounter_config_.abyss.player_max_health_bp,
++        BasisPointRounding::ceil);
+     player_.max_barrier = derived.max_barrier;
+     player_.damage_reduction = derived.damage_reduction;
+     player_.damage_reduction_cap = derived.damage_reduction_cap;
+     player_.armor = derived.armor;
+     player_.evasion = derived.evasion;
+     player_.armor_reduction_bp = derived.armor_reduction_bp;
+     player_.evasion_rate_bp = derived.evasion_rate_bp;
+-    player_.barrier = player_.max_barrier;
+-    player_.hp = player_.max_hp;
++    player_.barrier = 0;
++    player_.hp = abyss::map_resource_ratio(
++        base_max_hp, base_max_hp, player_.max_hp, true).value_or(
++            player_.max_hp);
++    const int mapped_hp = player_.hp;
++    player_.hp = 0;
++    restore_player_resources(mapped_hp, player_.max_barrier);
+ }
+ 
+ void CombatWorld::initialize_legacy_monsters() noexcept {
+     for (std::size_t index = 0; index < kDummyCount; ++index) {
+         const auto handle = monsters_.spawn(
+             index == 0U ? MonsterId::fire_bomber
+                         : index == 1U ? MonsterId::fire_charger
+                                       : MonsterId::water_bulwark,
+             legacy_config_.dummy_spawns[index]);
+         if (!handle.has_value()) {
+@@ -594,21 +647,22 @@ bool CombatWorld::load_wave(
+         if (monster_definition(wave.spawns[index].id) == nullptr) {
+             return false;
+         }
+     }
+ 
+     monsters_.clear();
+     for (auto& owner : effect_owners_) owner = {};
+     projectiles_.clear();
+     hazards_.clear();
+     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
+-        const auto handle = monsters_.spawn(wave.spawns[index]);
++        const auto handle = monsters_.spawn(
++            wave.spawns[index], encounter_config_.abyss);
+         if (!handle.has_value()) {
+             monsters_.clear();
+             return false;
+         }
+     }
+     attack_ = AttackRuntime{};
+     input_buffer_.clear();
+     input_buffer_.reset_diagnostics();
+     while (events_.try_pop().has_value()) {
+     }
+@@ -617,31 +671,32 @@ bool CombatWorld::load_wave(
+     projectile_invalid_owner_count_ = 0U;
+     hazard_saturation_count_ = 0U;
+     hazard_invalid_owner_count_ = 0U;
+     encounter_config_.wave = wave;
+     encounter_config_.reset_player_health = reset_player_health;
+     legacy_mode_ = false;
+     if (reset_player_health) {
+         const bool health_changed = player_.hp != player_.max_hp
+                                  || player_.hurt_ticks != 0
+                                  || player_.invulnerability_ticks != 0;
+-        player_.hp = player_.max_hp;
+-        player_.barrier = player_.max_barrier;
++        player_.hp = 0;
++        player_.barrier = 0;
++        restore_player_resources(player_.max_hp, player_.max_barrier);
+         player_.hurt_ticks = 0;
+         player_.invulnerability_ticks = 0;
+ 
+         if (health_changed) {
+             CombatEvent health_reset{};
+             health_reset.kind = CombatEventKind::player_health_reset;
+             health_reset.tick = tick_;
+             health_reset.position = player_.position;
+-            health_reset.value = player_.max_hp;
++            health_reset.value = player_.hp;
+             emit_event(health_reset);
+         }
+     }
+     return true;
+ }
+ 
+ std::size_t CombatWorld::active_monster_count() const noexcept {
+     return monsters_.active_count();
+ }
+ 
+@@ -749,20 +804,22 @@ void CombatWorld::defeat_monster(
+     const DefeatPayload payload{
+         monster.id, monster.spawn_ordinal,
+         monster_affix_danger_score(monster.affixes), reward_eligible};
+     const Vec3 position = monster.position;
+ 
+     if (const MonsterAffixTierValues* death = affix_values(
+             monster.affixes, MonsterAffixId::death_blast)) {
+         DamagePacket damage{};
+         damage.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
+             death->damage;
++        damage = scale_monster_outgoing_damage(
++            damage, encounter_config_.abyss.monster_damage_bp);
+         if (spawn_hazard(owner, HazardKind::death_blast, position,
+                          death->radius, death->interval_ticks, 1U, 1U,
+                          damage, true)) {
+             CombatEvent warning{};
+             warning.kind = CombatEventKind::affix_death_warning;
+             warning.tick = tick_;
+             warning.target_index = static_cast<std::uint8_t>(slot);
+             warning.position = position;
+             warning.monster_id = payload.monster_id;
+             warning.spawn_ordinal = payload.spawn_ordinal;
+@@ -977,20 +1034,22 @@ bool CombatWorld::spawn_hazard(
+ }
+ 
+ bool CombatWorld::trigger_chain_lightning(
+     MonsterHandle owner, MonsterAffixSet affixes, Vec3 center) noexcept {
+     const MonsterAffixTierValues* values = affix_values(
+         affixes, MonsterAffixId::chain_lightning);
+     if (values == nullptr) return false;
+     DamagePacket damage{};
+     damage.amount[modifiers::damage_index(modifiers::DamageType::lightning)] =
+         values->damage;
++    damage = scale_monster_outgoing_damage(
++        damage, encounter_config_.abyss.monster_damage_bp);
+     if (!spawn_hazard(owner, HazardKind::chain_lightning, center,
+                       values->radius,
+                       static_cast<std::uint16_t>(values->interval_ticks + 1U),
+                       1U, 1U,
+                       damage)) {
+         return false;
+     }
+     CombatEvent warning{};
+     warning.kind = CombatEventKind::affix_chain_warning;
+     warning.tick = tick_;
+@@ -1006,20 +1065,22 @@ void CombatWorld::tick_active_affixes(
+     if (const MonsterAffixTierValues* burning = affix_values(
+             monster.affixes, MonsterAffixId::burning_ground)) {
+         if (monster.burning_ground_ticks < burning->interval_ticks) {
+             ++monster.burning_ground_ticks;
+         }
+         if (monster.burning_ground_ticks >= burning->interval_ticks) {
+             monster.burning_ground_ticks = 0U;
+             DamagePacket damage{};
+             damage.amount[modifiers::damage_index(modifiers::DamageType::fire)] =
+                 burning->damage;
++            damage = scale_monster_outgoing_damage(
++                damage, encounter_config_.abyss.monster_damage_bp);
+             static_cast<void>(spawn_hazard(owner, HazardKind::burning,
+                 monster.position, burning->radius, 0U, burning->duration_ticks,
+                 30U, damage));
+         }
+     }
+ 
+     const MonsterAffixTierValues* blink = affix_values(
+         monster.affixes, MonsterAffixId::blink_assault);
+     if (blink == nullptr) return;
+     if (monster.affix_warning == MonsterAffixWarning::blink) {
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index 8bc2035..02bfc44 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -20,20 +20,22 @@ namespace arpg::combat {
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+ 
+     [[nodiscard]] bool queue_action(Action action) noexcept;
+     void tick(MovementInput movement) noexcept;
+     void reset() noexcept;
+     void apply_player_build(PlayerCombatBuild build) noexcept;
++    void restore_player_resources(int hp, int barrier) noexcept;
++    void clear_abyss_rule_preserving_resources() noexcept;
+     [[nodiscard]] bool load_wave(
+         const EncounterWave& wave,
+         bool reset_player_health = true) noexcept;
+     [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_monster_count() const noexcept;
+     [[nodiscard]] std::size_t active_projectile_count() const noexcept;
+     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
+     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+     [[nodiscard]] bool player_defeated() const noexcept;
+ 
+diff --git a/src/combat/monster_ai.cpp b/src/combat/monster_ai.cpp
+index 8e15b9a..0e08464 100644
+--- a/src/combat/monster_ai.cpp
++++ b/src/combat/monster_ai.cpp
+@@ -96,28 +96,30 @@ void CombatWorld::resolve_monster_contact_attack(
+ 
+     const Aabb player_hurtbox{
+         {player_.position.x - kPlayerHalfWidth,
+          player_.position.y - kPlayerHalfDepth,
+          player_.position.z - kPlayerHalfHeight},
+         {player_.position.x + kPlayerHalfWidth,
+          player_.position.y + kPlayerHalfDepth,
+          player_.position.z + kPlayerHalfHeight},
+     };
+     if (overlaps_inclusive(contact, player_hurtbox)) {
+-        DamagePacket packet = definition->contact_damage;
++        DamagePacket packet = scale_monster_affix_damage(
++            definition->contact_damage, monster.affix_profile);
+         for (int& amount : packet.amount) {
+-            amount = scaled_monster_damage(amount, monster.affix_profile);
+             if (monster.blink_empowered) {
+                 amount = static_cast<int>((static_cast<std::int64_t>(amount)
+                     * blink_damage_bp(monster.affixes)) / 10000);
+             }
+         }
++        packet = scale_monster_outgoing_damage(
++            packet, encounter_config_.abyss.monster_damage_bp);
+         if (apply_monster_direct_hit(slot, packet,
+             monster.position,
+             definition->feedback)) {
+             monster.blink_empowered = false;
+         }
+     }
+ }
+ 
+ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
+     if (slot >= monsters_.slots_.size()) {
+diff --git a/src/combat/monster_ai_common.hpp b/src/combat/monster_ai_common.hpp
+index 9516129..cdefbc5 100644
+--- a/src/combat/monster_ai_common.hpp
++++ b/src/combat/monster_ai_common.hpp
+@@ -1,19 +1,109 @@
+ #pragma once
+ 
+ #include "combat/monster_pool.hpp"
+ 
++#include <algorithm>
+ #include <cmath>
+ #include <cstdint>
++#include <limits>
+ 
+ namespace arpg::combat {
+ 
++enum class BasisPointRounding : std::uint8_t {
++    floor,
++    ceil,
++};
++
++inline int scale_basis_points(
++    int value,
++    std::uint32_t basis_points,
++    BasisPointRounding rounding = BasisPointRounding::floor) noexcept {
++    if (value <= 0 || basis_points == 0U) return 0;
++    const std::uint64_t product = static_cast<std::uint64_t>(value)
++        * static_cast<std::uint64_t>(basis_points);
++    const std::uint64_t scaled = rounding == BasisPointRounding::ceil
++        ? (product + 9999U) / 10000U
++        : product / 10000U;
++    return static_cast<int>(std::min<std::uint64_t>(
++        scaled,
++        static_cast<std::uint64_t>((std::numeric_limits<int>::max)())));
++}
++
++inline float scale_basis_points(float value, std::uint32_t basis_points) noexcept {
++    return value * static_cast<float>(basis_points) / 10000.0F;
++}
++
++inline std::uint16_t scale_ticks_ratio(
++    std::uint16_t base,
++    std::uint32_t numerator,
++    std::uint32_t denominator = 10000U) noexcept {
++    if (base == 0U) return 0U;
++    if (numerator == 0U || denominator == 0U) return 1U;
++    const std::uint64_t product = static_cast<std::uint64_t>(base)
++        * static_cast<std::uint64_t>(numerator);
++    const std::uint64_t scaled = (product + denominator - 1U) / denominator;
++    return static_cast<std::uint16_t>(std::clamp<std::uint64_t>(
++        scaled,
++        1U,
++        (std::numeric_limits<std::uint16_t>::max)()));
++}
++
++inline DamagePacket scale_monster_affix_damage(
++    DamagePacket packet,
++    const MonsterAffixProfile& profile) noexcept {
++    for (int& amount : packet.amount) {
++        amount = scaled_monster_damage(amount, profile);
++    }
++    return packet;
++}
++
++inline DamagePacket scale_monster_outgoing_damage(
++    DamagePacket packet,
++    std::uint32_t basis_points) noexcept {
++    for (int& amount : packet.amount) {
++        amount = scale_basis_points(amount, basis_points);
++    }
++    return packet;
++}
++
++inline float abyss_monster_move_step(
++    float base,
++    const MonsterAffixProfile& profile,
++    const abyss::AbyssCombatConfig& config) noexcept {
++    return scale_basis_points(
++        monster_move_step(base, profile), config.monster_move_bp);
++}
++
++inline std::uint16_t abyss_monster_attack_ticks(
++    std::uint16_t base,
++    const MonsterAffixProfile& profile,
++    const abyss::AbyssCombatConfig& config) noexcept {
++    const std::uint16_t stage9 = scaled_monster_ticks(
++        base, profile.attack_timing_bp);
++    return scale_ticks_ratio(stage9, 10000U, config.monster_attack_speed_bp);
++}
++
++inline std::uint16_t abyss_monster_cooldown_ticks(
++    std::uint16_t base,
++    const MonsterAffixProfile& profile,
++    const abyss::AbyssCombatConfig& config) noexcept {
++    const std::uint16_t stage9_attack = scaled_monster_ticks(
++        base, profile.attack_timing_bp);
++    const std::uint16_t stage9_cooldown = scaled_monster_ticks(
++        stage9_attack, profile.cooldown_bp);
++    const std::uint16_t abyss_cooldown = scale_ticks_ratio(
++        stage9_cooldown, config.monster_cooldown_bp);
++    return scale_ticks_ratio(
++        abyss_cooldown, 10000U, config.monster_attack_speed_bp);
++}
++
+ inline float target_distance(Vec3 from, Vec3 to) noexcept {
+     const float dx = to.x - from.x;
+     const float dy = to.y - from.y;
+     return std::sqrt(dx * dx + dy * dy);
+ }
+ 
+ inline void face_toward(MonsterRuntime& monster, Vec3 target) noexcept {
+     if (target.x < monster.position.x) {
+         monster.facing = Facing::left;
+     } else if (target.x > monster.position.x) {
+diff --git a/src/combat/monster_ai_melee.cpp b/src/combat/monster_ai_melee.cpp
+index 17d70ff..f5ca8e0 100644
+--- a/src/combat/monster_ai_melee.cpp
++++ b/src/combat/monster_ai_melee.cpp
+@@ -6,56 +6,48 @@
+ #include <algorithm>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+ void clamp_position(Vec3& position) noexcept {
+     position.x = std::clamp(position.x, room_bounds::min_x, room_bounds::max_x);
+     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
+ }
+ 
+-std::uint16_t frenzy_ticks(
+-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+-    return scaled_monster_ticks(base, monster.affix_profile.attack_timing_bp);
+-}
+-
+-std::uint16_t cooldown_ticks(
+-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+-    return scaled_monster_ticks(frenzy_ticks(base, monster),
+-                                monster.affix_profile.cooldown_bp);
+-}
+-
+ }  // namespace
+ 
+ void CombatWorld::simulate_melee_ai(
+     std::size_t slot,
+     MonsterRuntime& monster,
+     const MonsterDefinition& definition) noexcept {
+     switch (monster.ai_phase) {
+     case MonsterAiPhase::move: {
+         face_toward(monster, player_.position);
+         const float distance = target_distance(monster.position, player_.position);
+         if (distance > definition.preferred_range && distance > 0.0001F) {
+-            const float speed = monster_move_step(
+-                definition.move_speed, monster.affix_profile);
++            const float speed = abyss_monster_move_step(
++                definition.move_speed, monster.affix_profile,
++                encounter_config_.abyss);
+             monster.velocity.x = (player_.position.x - monster.position.x)
+                 / distance * speed;
+             monster.velocity.y = (player_.position.y - monster.position.y)
+                 / distance * speed;
+             monster.position.x += monster.velocity.x;
+             monster.position.y += monster.velocity.y;
+             clamp_position(monster.position);
+             return;
+         }
+         monster.velocity = Vec3{};
+         monster.ai_phase = MonsterAiPhase::telegraph;
+-        monster.ai_ticks = frenzy_ticks(definition.telegraph_ticks, monster);
++        monster.ai_ticks = abyss_monster_attack_ticks(
++            definition.telegraph_ticks, monster.affix_profile,
++            encounter_config_.abyss);
+         monster.attack_target_position = player_.position;
+         const float active_ticks = static_cast<float>(
+             std::max<std::uint16_t>(1U, definition.active_ticks));
+         monster.attack_vector = Vec3{
+             (monster.attack_target_position.x - monster.position.x) / active_ticks,
+             (monster.attack_target_position.y - monster.position.y) / active_ticks,
+             (monster.attack_target_position.z - monster.position.z) / active_ticks,
+         };
+         return;
+     }
+@@ -70,28 +62,32 @@ void CombatWorld::simulate_melee_ai(
+         }
+         return;
+     case MonsterAiPhase::active:
+         monster.velocity = Vec3{};
+         if (!monster.contact_attack_resolved) {
+             resolve_monster_contact_attack(slot);
+             monster.contact_attack_resolved = true;
+         }
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::recovery;
+-            monster.ai_ticks = frenzy_ticks(definition.recovery_ticks, monster);
++            monster.ai_ticks = abyss_monster_attack_ticks(
++                definition.recovery_ticks, monster.affix_profile,
++                encounter_config_.abyss);
+         }
+         return;
+     case MonsterAiPhase::recovery:
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::cooldown;
+-            monster.ai_ticks = cooldown_ticks(definition.cooldown_ticks, monster);
++            monster.ai_ticks = abyss_monster_cooldown_ticks(
++                definition.cooldown_ticks, monster.affix_profile,
++                encounter_config_.abyss);
+         }
+         return;
+     case MonsterAiPhase::cooldown:
+         face_toward(monster, player_.position);
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) monster.ai_phase = MonsterAiPhase::move;
+         return;
+     case MonsterAiPhase::defeated:
+         monster.velocity = Vec3{};
+         return;
+diff --git a/src/combat/monster_ai_ranged.cpp b/src/combat/monster_ai_ranged.cpp
+index 59474fb..7aa09fb 100644
+--- a/src/combat/monster_ai_ranged.cpp
++++ b/src/combat/monster_ai_ranged.cpp
+@@ -15,39 +15,20 @@ namespace {
+ constexpr float kRangeSlack = 0.20F;
+ constexpr float kProjectileRadius = 0.16F;
+ constexpr std::uint16_t kProjectileLifetime = 120;
+ constexpr std::uint16_t kSupportFallbackCooldown = 12;
+ 
+ void clamp_position(Vec3& position) noexcept {
+     position.x = std::clamp(position.x, room_bounds::min_x, room_bounds::max_x);
+     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
+ }
+ 
+-std::uint16_t frenzy_ticks(
+-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+-    return scaled_monster_ticks(base, monster.affix_profile.attack_timing_bp);
+-}
+-
+-std::uint16_t cooldown_ticks(
+-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+-    return scaled_monster_ticks(frenzy_ticks(base, monster),
+-                                monster.affix_profile.cooldown_bp);
+-}
+-
+-DamagePacket scaled_packet(
+-    DamagePacket packet, const MonsterRuntime& monster) noexcept {
+-    for (int& amount : packet.amount) {
+-        amount = scaled_monster_damage(amount, monster.affix_profile);
+-    }
+-    return packet;
+-}
+-
+ const MonsterAffixTierValues* affix_values(
+     const MonsterAffixSet& affixes, MonsterAffixId id) noexcept {
+     for (std::size_t index = 0; index < affixes.count
+          && index < affixes.values.size(); ++index) {
+         const MonsterAffixInstance& instance = affixes.values[index];
+         if (instance.id != id) continue;
+         const MonsterAffixDefinition* definition =
+             monster_affix_definition(instance.id);
+         const std::size_t tier = static_cast<std::size_t>(instance.tier);
+         if (definition != nullptr && tier < definition->tiers.size()) {
+@@ -62,62 +43,67 @@ DamagePacket scaled_multishot_packet(
+     for (int& amount : packet.amount) {
+         amount = static_cast<int>((static_cast<std::int64_t>(amount)
+             * percentage_bp) / 10000);
+     }
+     return packet;
+ }
+ 
+ bool move_to_preferred_range(
+     MonsterRuntime& monster,
+     const MonsterDefinition& definition,
+-    Vec3 player) noexcept {
++    Vec3 player,
++    const abyss::AbyssCombatConfig& abyss_config) noexcept {
+     const float distance = target_distance(monster.position, player);
+     if (distance > definition.preferred_range + kRangeSlack
+         || distance < definition.preferred_range - kRangeSlack) {
+         float dx = player.x - monster.position.x;
+         float dy = player.y - monster.position.y;
+         if (distance < definition.preferred_range - kRangeSlack) {
+             dx = -dx;
+             dy = -dy;
+         }
+         if (distance <= 0.0001F) {
+             dx = monster.facing == Facing::right ? -1.0F : 1.0F;
+             dy = 0.0F;
+         }
+         const float magnitude = std::sqrt(dx * dx + dy * dy);
+-        const float speed = monster_move_step(
+-            definition.move_speed, monster.affix_profile);
++        const float speed = abyss_monster_move_step(
++            definition.move_speed, monster.affix_profile,
++            abyss_config);
+         monster.velocity.x = dx / magnitude * speed;
+         monster.velocity.y = dy / magnitude * speed;
+         monster.position.x += monster.velocity.x;
+         monster.position.y += monster.velocity.y;
+         clamp_position(monster.position);
+         return true;
+     }
+     monster.velocity = Vec3{};
+     monster.ai_phase = MonsterAiPhase::telegraph;
+-    monster.ai_ticks = frenzy_ticks(definition.telegraph_ticks, monster);
++    monster.ai_ticks = abyss_monster_attack_ticks(
++        definition.telegraph_ticks, monster.affix_profile,
++        abyss_config);
+     monster.attack_target_position = player;
+     return false;
+ }
+ 
+ }  // namespace
+ 
+ void CombatWorld::simulate_ranged_ai(
+     std::size_t slot,
+     MonsterRuntime& monster,
+     const MonsterDefinition& definition) noexcept {
+     const bool is_shooter = monster.id == MonsterId::lightning_shooter;
+     switch (monster.ai_phase) {
+     case MonsterAiPhase::move:
+         face_toward(monster, player_.position);
+-        static_cast<void>(move_to_preferred_range(monster, definition, player_.position));
++        static_cast<void>(move_to_preferred_range(
++            monster, definition, player_.position, encounter_config_.abyss));
+         return;
+     case MonsterAiPhase::telegraph:
+         face_toward(monster, player_.position);
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::active;
+             monster.ai_ticks = std::max<std::uint16_t>(1U, definition.active_ticks);
+             ++monster.attack_serial;
+             monster.contact_attack_resolved = false;
+         }
+@@ -156,26 +142,28 @@ void CombatWorld::simulate_ranged_ai(
+                     const float sine = std::sin(angle);
+                     fanned_velocities[projectile_index] = Vec3{
+                         velocity.x * cosine - velocity.y * sine,
+                         velocity.x * sine + velocity.y * cosine,
+                         velocity.z};
+                 }
+                 for (std::size_t projectile_index = 0U;
+                      projectile_index < count
+                          && projectile_index < fanned_velocities.size();
+                      ++projectile_index) {
+-                    DamagePacket packet = scaled_packet(
+-                        definition.contact_damage, monster);
++                    DamagePacket packet = scale_monster_affix_damage(
++                        definition.contact_damage, monster.affix_profile);
+                     if (multishot != nullptr) {
+                         packet = scaled_multishot_packet(
+                             packet, multishot->primary_bp);
+                     }
++                    packet = scale_monster_outgoing_damage(
++                        packet, encounter_config_.abyss.monster_damage_bp);
+                     if (!spawn_projectile(
+                             MonsterHandle{static_cast<std::uint16_t>(slot),
+                                           monster.generation},
+                             monster.position, fanned_velocities[projectile_index],
+                             kProjectileLifetime, packet, kProjectileRadius,
+                             chain != nullptr, monster.affixes)) {
+                         break;
+                     }
+                 }
+             } else {
+@@ -197,45 +185,51 @@ void CombatWorld::simulate_ranged_ai(
+                     MonsterRuntime& target = monsters_.slots_[target_index];
+                     modifiers::EffectSet* effects = ensure_effects(target_index);
+                     if (effects != nullptr) {
+                         const modifiers::EffectDefinition barrier = water_barrier_effect(target);
+                         static_cast<void>(effects->apply(barrier));
+                         apply_effect_commands(target, *effects);
+                     }
+                 } else {
+                     const float distance = target_distance(monster.position, player_.position);
+                     if (distance < definition.preferred_range && distance > 0.0001F) {
++                        const float retreat_step = abyss_monster_move_step(
++                            definition.move_speed, monster.affix_profile,
++                            encounter_config_.abyss);
+                         monster.position.x += (monster.position.x - player_.position.x)
+-                            / distance * monster_move_step(
+-                                definition.move_speed, monster.affix_profile);
++                            / distance * retreat_step;
+                         monster.position.y += (monster.position.y - player_.position.y)
+-                            / distance * monster_move_step(
+-                                definition.move_speed, monster.affix_profile);
++                            / distance * retreat_step;
+                         clamp_position(monster.position);
+                     }
+                     monster.ai_phase = MonsterAiPhase::cooldown;
+-                    monster.ai_ticks = cooldown_ticks(
+-                        kSupportFallbackCooldown, monster);
++                    monster.ai_ticks = abyss_monster_cooldown_ticks(
++                        kSupportFallbackCooldown, monster.affix_profile,
++                        encounter_config_.abyss);
+                 }
+             }
+             monster.contact_attack_resolved = true;
+         }
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::recovery;
+-            monster.ai_ticks = frenzy_ticks(definition.recovery_ticks, monster);
++            monster.ai_ticks = abyss_monster_attack_ticks(
++                definition.recovery_ticks, monster.affix_profile,
++                encounter_config_.abyss);
+         }
+         return;
+     case MonsterAiPhase::recovery:
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::cooldown;
+-            monster.ai_ticks = cooldown_ticks(definition.cooldown_ticks, monster);
++            monster.ai_ticks = abyss_monster_cooldown_ticks(
++                definition.cooldown_ticks, monster.affix_profile,
++                encounter_config_.abyss);
+         }
+         return;
+     case MonsterAiPhase::cooldown:
+         face_toward(monster, player_.position);
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) monster.ai_phase = MonsterAiPhase::move;
+         return;
+     case MonsterAiPhase::defeated:
+         monster.velocity = Vec3{};
+         return;
+diff --git a/src/combat/monster_ai_special.cpp b/src/combat/monster_ai_special.cpp
+index 83f49eb..db7bf9c 100644
+--- a/src/combat/monster_ai_special.cpp
++++ b/src/combat/monster_ai_special.cpp
+@@ -8,103 +8,96 @@
+ namespace arpg::combat {
+ namespace {
+ 
+ constexpr std::uint16_t kHazardDamageIntervalTicks = 30;
+ 
+ void clamp_position(Vec3& position) noexcept {
+     position.x = std::clamp(position.x, room_bounds::min_x, room_bounds::max_x);
+     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
+ }
+ 
+-std::uint16_t frenzy_ticks(
+-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+-    return scaled_monster_ticks(base, monster.affix_profile.attack_timing_bp);
+-}
+-
+-std::uint16_t cooldown_ticks(
+-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+-    return scaled_monster_ticks(frenzy_ticks(base, monster),
+-                                monster.affix_profile.cooldown_bp);
+-}
+-
+-DamagePacket scaled_packet(
+-    DamagePacket packet, const MonsterRuntime& monster) noexcept {
+-    for (int& amount : packet.amount) {
+-        amount = scaled_monster_damage(amount, monster.affix_profile);
+-    }
+-    return packet;
+-}
+-
+ }  // namespace
+ 
+ void CombatWorld::simulate_special_ai(
+     std::size_t slot,
+     MonsterRuntime& monster,
+     const MonsterDefinition& definition) noexcept {
+     const bool is_bomber = monster.id == MonsterId::fire_bomber;
+     const bool is_charger = monster.id == MonsterId::fire_charger;
+     const bool is_dasher = monster.id == MonsterId::lightning_dasher;
+     const bool is_hazard = monster.id == MonsterId::chaos_hazard;
+     switch (monster.ai_phase) {
+     case MonsterAiPhase::move: {
+         face_toward(monster, player_.position);
+         const float distance = target_distance(monster.position, player_.position);
+         if (distance > definition.preferred_range && distance > 0.0001F) {
+             monster.velocity.x = (player_.position.x - monster.position.x)
+-                / distance * monster_move_step(
+-                    definition.move_speed, monster.affix_profile);
++                / distance * abyss_monster_move_step(
++                    definition.move_speed, monster.affix_profile,
++                    encounter_config_.abyss);
+             monster.velocity.y = (player_.position.y - monster.position.y)
+-                / distance * monster_move_step(
+-                    definition.move_speed, monster.affix_profile);
++                / distance * abyss_monster_move_step(
++                    definition.move_speed, monster.affix_profile,
++                    encounter_config_.abyss);
+             monster.position.x += monster.velocity.x;
+             monster.position.y += monster.velocity.y;
+             clamp_position(monster.position);
+             return;
+         }
+         monster.velocity = Vec3{};
+         monster.ai_phase = MonsterAiPhase::telegraph;
+-        monster.ai_ticks = frenzy_ticks(definition.telegraph_ticks, monster);
++        monster.ai_ticks = abyss_monster_attack_ticks(
++            definition.telegraph_ticks, monster.affix_profile,
++            encounter_config_.abyss);
+         monster.attack_target_position = player_.position;
+         const float active_ticks = static_cast<float>(
+             std::max<std::uint16_t>(1U, definition.active_ticks));
+         monster.attack_vector = Vec3{
+             (monster.attack_target_position.x - monster.position.x) / active_ticks,
+             (monster.attack_target_position.y - monster.position.y) / active_ticks,
+             (monster.attack_target_position.z - monster.position.z) / active_ticks,
+         };
+         if (is_hazard) {
+             static_cast<void>(spawn_hazard(
+                 MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
+                 HazardKind::native, monster.attack_target_position, 1.25F,
+-                frenzy_ticks(definition.telegraph_ticks, monster),
++                abyss_monster_attack_ticks(
++                    definition.telegraph_ticks, monster.affix_profile,
++                    encounter_config_.abyss),
+                 definition.hazard_ticks, kHazardDamageIntervalTicks,
+-                scaled_packet(definition.contact_damage, monster)));
++                scale_monster_outgoing_damage(
++                    scale_monster_affix_damage(
++                        definition.contact_damage, monster.affix_profile),
++                    encounter_config_.abyss.monster_damage_bp)));
+         }
+         return;
+     }
+     case MonsterAiPhase::telegraph:
+         if (!is_charger && !is_dasher) face_toward(monster, player_.position);
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::active;
+             monster.ai_ticks = std::max<std::uint16_t>(1U, definition.active_ticks);
+             ++monster.attack_serial;
+             monster.contact_attack_resolved = false;
+         }
+         return;
+     case MonsterAiPhase::active:
+         monster.velocity = Vec3{};
+         if (is_bomber) {
+             if (!monster.contact_attack_resolved) {
+                 if (target_distance(monster.position, player_.position) <= 1.60F) {
+-                    apply_monster_direct_hit(slot, scaled_packet(
+-                                                definition.contact_damage, monster),
++                    apply_monster_direct_hit(slot, scale_monster_outgoing_damage(
++                                                scale_monster_affix_damage(
++                                                    definition.contact_damage,
++                                                    monster.affix_profile),
++                                                encounter_config_.abyss.monster_damage_bp),
+                                              monster.position, definition.feedback);
+                 }
+                 monster.contact_attack_resolved = true;
+                 monster.hp = 0;
+                 defeat_monster(slot, AttackId::none, false);
+             }
+             return;
+         }
+         if (is_charger || is_dasher) {
+             monster.velocity = monster.attack_vector;
+@@ -112,28 +105,32 @@ void CombatWorld::simulate_special_ai(
+             monster.position.y += monster.attack_vector.y;
+             monster.position.z += monster.attack_vector.z;
+             clamp_position(monster.position);
+         }
+         if (!monster.contact_attack_resolved) {
+             if (!is_hazard) resolve_monster_contact_attack(slot);
+             monster.contact_attack_resolved = true;
+         }
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::recovery;
+-            monster.ai_ticks = frenzy_ticks(definition.recovery_ticks, monster);
++            monster.ai_ticks = abyss_monster_attack_ticks(
++                definition.recovery_ticks, monster.affix_profile,
++                encounter_config_.abyss);
+         }
+         return;
+     case MonsterAiPhase::recovery:
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) {
+             monster.ai_phase = MonsterAiPhase::cooldown;
+-            monster.ai_ticks = cooldown_ticks(definition.cooldown_ticks, monster);
++            monster.ai_ticks = abyss_monster_cooldown_ticks(
++                definition.cooldown_ticks, monster.affix_profile,
++                encounter_config_.abyss);
+         }
+         return;
+     case MonsterAiPhase::cooldown:
+         face_toward(monster, player_.position);
+         monster.velocity = Vec3{};
+         if (tick_down(monster.ai_ticks)) monster.ai_phase = MonsterAiPhase::move;
+         return;
+     case MonsterAiPhase::defeated:
+         monster.velocity = Vec3{};
+         return;
+diff --git a/src/combat/monster_pool.cpp b/src/combat/monster_pool.cpp
+index 9b8408b..fa551ee 100644
+--- a/src/combat/monster_pool.cpp
++++ b/src/combat/monster_pool.cpp
+@@ -1,15 +1,18 @@
+ #include "combat/monster_pool.hpp"
+ 
+ #include "combat/monster_catalog.hpp"
++#include "combat/monster_ai_common.hpp"
+ 
++#include <algorithm>
+ #include <cstddef>
++#include <limits>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+ DummyKind kind_for(MonsterId id) noexcept {
+     switch (id) {
+     case MonsterId::fire_bomber:
+     case MonsterId::lightning_shooter:
+     case MonsterId::water_support:
+         return DummyKind::normal;
+@@ -43,27 +46,35 @@ void MonsterPool::clear() noexcept {
+     for (MonsterRuntime& runtime : slots_) {
+         advance_generation(runtime);
+         const std::uint16_t generation = runtime.generation;
+         runtime = MonsterRuntime{};
+         runtime.generation = generation;
+     }
+ }
+ 
+ std::optional<MonsterHandle> MonsterPool::spawn(
+     const MonsterSpawnSpec& spec) noexcept {
++    return spawn(spec, abyss::AbyssCombatConfig{});
++}
++
++std::optional<MonsterHandle> MonsterPool::spawn(
++    const MonsterSpawnSpec& spec,
++    const abyss::AbyssCombatConfig& abyss_config) noexcept {
+     const MonsterDefinition* definition = monster_definition(spec.id);
+     if (definition == nullptr) {
+         return std::nullopt;
+     }
+ 
+-    const MonsterAffixProfile profile = evaluate_monster_affixes(
++    MonsterAffixProfile profile = evaluate_monster_affixes(
+         *definition, spec.affixes);
++    profile.armor_rating = scale_basis_points(
++        profile.armor_rating, abyss_config.monster_armor_bp);
+ 
+     for (std::size_t index = 0; index < slots_.size(); ++index) {
+         MonsterRuntime& runtime = slots_[index];
+         if (runtime.active) {
+             continue;
+         }
+ 
+         advance_generation(runtime);
+         const std::uint16_t generation = runtime.generation;
+         runtime = MonsterRuntime{};
+@@ -80,21 +91,29 @@ std::optional<MonsterHandle> MonsterPool::spawn(
+         runtime.hp = profile.max_hp;
+         runtime.max_break = definition->max_break;
+         runtime.break_value = definition->max_break;
+         runtime.max_shield = profile.max_shield != 0
+             ? profile.max_shield
+             : definition->shield_points != 0 ? definition->shield_points : 90;
+         runtime.max_shield_ticks = profile.shield_recharge_delay_ticks != 0U
+             ? profile.shield_recharge_delay_ticks
+             : definition->shield_duration_ticks != 0
+                 ? definition->shield_duration_ticks : 120;
+-        runtime.shield = 0;
++        const int extra_shield = scale_basis_points(
++            runtime.max_hp,
++            abyss_config.monster_extra_shield_bp,
++            BasisPointRounding::ceil);
++        runtime.max_shield = extra_shield
++                > (std::numeric_limits<int>::max)() - runtime.max_shield
++            ? (std::numeric_limits<int>::max)()
++            : runtime.max_shield + extra_shield;
++        runtime.shield = extra_shield;
+         runtime.shield_ticks = 0;
+         runtime.armor = definition->max_break > 0
+             ? ArmorState::armored : ArmorState::none;
+         ++active_count_;
+         return MonsterHandle{
+             static_cast<std::uint16_t>(index), generation};
+     }
+     return std::nullopt;
+ }
+ 
+diff --git a/src/combat/monster_pool.hpp b/src/combat/monster_pool.hpp
+index 11bb1b8..643eaac 100644
+--- a/src/combat/monster_pool.hpp
++++ b/src/combat/monster_pool.hpp
+@@ -55,20 +55,23 @@ struct MonsterRuntime final {
+     Vec3 attack_vector{};
+     MonsterAffixWarning affix_warning{MonsterAffixWarning::none};
+     std::uint16_t affix_warning_ticks{};
+ };
+ 
+ class MonsterPool final {
+ public:
+     void clear() noexcept;
+     [[nodiscard]] std::optional<MonsterHandle> spawn(
+         const MonsterSpawnSpec& spec) noexcept;
++    [[nodiscard]] std::optional<MonsterHandle> spawn(
++        const MonsterSpawnSpec& spec,
++        const abyss::AbyssCombatConfig& abyss_config) noexcept;
+     [[nodiscard]] std::optional<MonsterHandle> spawn(
+         MonsterId id, Vec3 position) noexcept;
+     [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
+     [[nodiscard]] std::size_t active_count() const noexcept;
+     [[nodiscard]] MonsterRuntime* get(MonsterHandle handle) noexcept;
+     [[nodiscard]] const MonsterRuntime* get(MonsterHandle handle) const noexcept;
+     [[nodiscard]] const std::array<MonsterRuntime, kMonsterCapacity>&
+     slots() const noexcept;
+ 
+ private:
+diff --git a/src/combat/player_simulation.cpp b/src/combat/player_simulation.cpp
+index a564b8d..dc71a93 100644
+--- a/src/combat/player_simulation.cpp
++++ b/src/combat/player_simulation.cpp
+@@ -1,13 +1,14 @@
+ #include "combat/combat_world.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
++#include "combat/monster_ai_common.hpp"
+ #include "combat/room_bounds.hpp"
+ 
+ #include <algorithm>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+ constexpr float kTickSeconds = 1.0F / 60.0F;
+ constexpr float kGroundSpeed = 5.4F;
+ constexpr float kAirRatio = 0.70F;
+@@ -219,21 +220,25 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
+     const int x_direction = direction(movement.x);
+     const int y_direction = direction(movement.y);
+     const float diagonal = x_direction != 0 && y_direction != 0
+                                ? kDiagonal
+                                : 1.0F;
+     const auto& values = encounter_config_.player_build.values;
+     const float movement_scale = static_cast<float>(values.movement_speed)
+         / static_cast<float>(modifiers::kFixedOne);
+     const float air_scale = static_cast<float>(values.air_control)
+         / static_cast<float>(modifiers::kFixedOne);
+-    const float speed = kGroundSpeed * movement_scale
++    const float abyss_ground_scale = airborne
++        ? 1.0F
++        : scale_basis_points(
++              1.0F, encounter_config_.abyss.player_ground_move_bp);
++    const float speed = kGroundSpeed * movement_scale * abyss_ground_scale
+         * (airborne ? kAirRatio * air_scale : 1.0F)
+         * static_cast<float>(10000 - std::clamp(player_.status.slow_bp, 0, 10000))
+         / 10000.0F;
+     player_.velocity.x = static_cast<float>(x_direction) * speed * diagonal;
+     player_.velocity.y = static_cast<float>(y_direction) * speed * diagonal;
+     if (x_direction < 0) {
+         player_.facing = Facing::left;
+     } else if (x_direction > 0) {
+         player_.facing = Facing::right;
+     }
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 86e1e28..2777258 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -296,20 +296,21 @@ void DungeonSession::construct_normal_room() noexcept {
+         enter_fault(DungeonFault::invalid_item_state);
+         return;
+     }
+     auto evasion_stream = core::DeterministicRng::derive_stream(
+         stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+     const auto config = make_combat_encounter_config(
+         stable_state_.current_room.entry,
+         rules_.rules_version,
+         plan.plan.waves[0],
+         true,
++        abyss::combat_config_for(abyss::AbyssRuleId::none),
+         player_build.build,
+         evasion_stream.next_u64());
+     if (!config.has_value()) {
+         enter_fault(DungeonFault::invalid_rules);
+         return;
+     }
+     encounter_plan_ = plan.plan;
+     wave_index_ = 0U;
+     wave_delay_ticks_ = 0U;
+     combat_.emplace(*config);
+@@ -376,20 +377,21 @@ bool DungeonSession::prepare_abyss_start() noexcept {
+         enter_fault(DungeonFault::invalid_item_state);
+         return false;
+     }
+     auto evasion_stream = core::DeterministicRng::derive_stream(
+         stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+     const auto combat_config = make_combat_encounter_config(
+         stable_state_.current_room.entry,
+         rules_.rules_version,
+         built.plan.waves[0],
+         true,
++        abyss::combat_config_for(selection->rule),
+         player_build.build,
+         evasion_stream.next_u64());
+     if (!combat_config.has_value()) {
+         enter_fault(DungeonFault::abyss_generation_failed);
+         return false;
+     }
+     if (stable_state_.commit_generation
+             == (std::numeric_limits<std::uint64_t>::max)()) {
+         enter_fault(DungeonFault::commit_generation_overflow);
+         return false;
+diff --git a/src/dungeon/room_combat_template.cpp b/src/dungeon/room_combat_template.cpp
+index 99c1d34..05cf5f9 100644
+--- a/src/dungeon/room_combat_template.cpp
++++ b/src/dungeon/room_combat_template.cpp
+@@ -45,27 +45,29 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
+         break;
+     }
+     return config;
+ }
+ 
+ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
+     checkpoint::EntrySide entry,
+     std::uint32_t rules_version,
+     const combat::EncounterWave& wave,
+     bool reset_player_health,
++    abyss::AbyssCombatConfig abyss_config,
+     combat::PlayerCombatBuild player_build,
+     std::uint64_t evasion_seed) noexcept {
+     const auto legacy = make_combat_lab_config(entry, rules_version);
+     if (!legacy.has_value()) {
+         return std::nullopt;
+     }
+     combat::CombatEncounterConfig config{};
+     config.player_spawn = legacy->player_spawn;
+     config.initial_facing = legacy->initial_facing;
+     config.wave = wave;
+     config.reset_player_health = reset_player_health;
++    config.abyss = abyss_config;
+     config.player_build = player_build;
+     config.evasion_seed = evasion_seed;
+     return config;
+ }
+ 
+ }  // namespace arpg::dungeon
+diff --git a/src/dungeon/room_combat_template.hpp b/src/dungeon/room_combat_template.hpp
+index cf0e67f..0ee3bbc 100644
+--- a/src/dungeon/room_combat_template.hpp
++++ b/src/dungeon/room_combat_template.hpp
+@@ -12,14 +12,15 @@ namespace arpg::dungeon {
+ make_combat_lab_config(
+     checkpoint::EntrySide entry,
+     std::uint32_t rules_version) noexcept;
+ 
+ [[nodiscard]] std::optional<combat::CombatEncounterConfig>
+ make_combat_encounter_config(
+     checkpoint::EntrySide entry,
+     std::uint32_t rules_version,
+     const combat::EncounterWave& wave,
+     bool reset_player_health,
++    abyss::AbyssCombatConfig abyss_config,
+     combat::PlayerCombatBuild player_build = {},
+     std::uint64_t evasion_seed = 0U) noexcept;
+ 
+ }  // namespace arpg::dungeon
+diff --git a/tests/combat/combat_config_tests.cpp b/tests/combat/combat_config_tests.cpp
+index 052c218..105c5a2 100644
+--- a/tests/combat/combat_config_tests.cpp
++++ b/tests/combat/combat_config_tests.cpp
+@@ -1,15 +1,20 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
++#include "combat/monster_ai_common.hpp"
++
++#include "abyss/abyss_rules.hpp"
++
++#include <limits>
+ 
+ namespace {
+ 
+ arpg::test::Failure configured_facing_survives_reset() noexcept {
+     using namespace arpg::combat;
+     CombatLabConfig config;
+     config.initial_facing = Facing::left;
+     CombatWorld world{config};
+     ARPG_REQUIRE(world.snapshot().player.facing == Facing::left);
+     world.tick(MovementInput{1, 0});
+@@ -37,20 +42,52 @@ arpg::test::Failure disabled_respawn_stays_defeated() noexcept {
+     }
+     const CombatSnapshot snapshot = world.snapshot();
+     ARPG_REQUIRE(snapshot.monsters[0].hp == 0);
+     ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::defeated);
+     while (const auto event = world.try_pop_event()) {
+         ARPG_REQUIRE(event->kind != CombatEventKind::respawned);
+     }
+     return {};
+ }
+ 
++arpg::test::Failure encounter_config_exposes_neutral_abyss_rules() noexcept {
++    using namespace arpg::combat;
++    const CombatEncounterConfig config{};
++    ARPG_REQUIRE(config.abyss.rule == arpg::abyss::AbyssRuleId::none);
++    ARPG_REQUIRE(config.abyss.monster_move_bp == 10000U);
++    ARPG_REQUIRE(config.abyss.player_max_health_bp == 10000U);
++    return {};
++}
++
++arpg::test::Failure basis_point_scaling_has_locked_integer_edges() noexcept {
++    using namespace arpg::combat;
++    ARPG_REQUIRE(scale_basis_points(1, 5500U) == 0);
++    ARPG_REQUIRE(scale_basis_points(
++        1, 5500U, BasisPointRounding::ceil) == 1);
++    ARPG_REQUIRE(scale_basis_points(
++        101, 7000U, BasisPointRounding::ceil) == 71);
++    ARPG_REQUIRE(scale_ticks_ratio(0U, 8500U) == 0U);
++    ARPG_REQUIRE(scale_ticks_ratio(1U, 1U) == 1U);
++    ARPG_REQUIRE(scale_ticks_ratio(42U, 8500U) == 36U);
++    ARPG_REQUIRE(scale_ticks_ratio(12U, 10000U, 14500U) == 9U);
++    ARPG_REQUIRE(scale_ticks_ratio(
++        (std::numeric_limits<std::uint16_t>::max)(), 65535U)
++        == (std::numeric_limits<std::uint16_t>::max)());
++    ARPG_REQUIRE(scale_basis_points(
++        (std::numeric_limits<int>::max)(), 65535U)
++        == (std::numeric_limits<int>::max)());
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"configured facing survives reset", &configured_facing_survives_reset},
+     {"disabled respawn stays defeated", &disabled_respawn_stays_defeated},
++    {"encounter exposes neutral abyss config",
++     &encounter_config_exposes_neutral_abyss_rules},
++    {"basis point integer edges", &basis_point_scaling_has_locked_integer_edges},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite combat_config_suite() noexcept {
+     return arpg::test::make_suite("combat_config", kCases);
+ }
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index e366a9a..6e9989f 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -38,12 +38,12 @@ int main() {
+         monster_affix_trigger_suite(),
+         monster_melee_suite(),
+         monster_ranged_suite(),
+         monster_special_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+         player_build_suite(),
+         player_defense_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 139, "stage 10 task 4 review fixes");
++    return arpg::test::run_suites(suites, 148, "stage 10 task 6 abyss combat rules");
+ }
+diff --git a/tests/combat/combat_test_support.hpp b/tests/combat/combat_test_support.hpp
+index d4202c2..642d272 100644
+--- a/tests/combat/combat_test_support.hpp
++++ b/tests/combat/combat_test_support.hpp
+@@ -114,20 +114,41 @@ struct CombatWorldTestAccess final {
+ 
+     static void set_monster_shield(
+         combat::CombatWorld& world,
+         std::size_t index,
+         int shield) noexcept {
+         if (index < world.monsters_.slots_.size()) {
+             world.monsters_.slots_[index].shield = shield;
+         }
+     }
+ 
++    static combat::MonsterAffixProfile monster_affix_profile(
++        const combat::CombatWorld& world,
++        std::size_t index) noexcept {
++        return index < world.monsters_.slots_.size()
++            ? world.monsters_.slots_[index].affix_profile
++            : combat::MonsterAffixProfile{};
++    }
++
++    static void set_player_resources(
++        combat::CombatWorld& world,
++        int hp,
++        int barrier) noexcept {
++        world.player_.hp = hp;
++        world.player_.barrier = barrier;
++    }
++
++    static const abyss::AbyssCombatConfig& abyss_config(
++        const combat::CombatWorld& world) noexcept {
++        return world.encounter_config_.abyss;
++    }
++
+     static void apply_monster_direct_hit(
+         combat::CombatWorld& world,
+         std::size_t slot,
+         combat::DamagePacket packet,
+         combat::Vec3 source_position,
+         combat::FeedbackLevel feedback) noexcept {
+         world.apply_monster_direct_hit(slot, packet, source_position, feedback);
+     }
+ 
+     static void defeat_monster(
+diff --git a/tests/combat/monster_melee_tests.cpp b/tests/combat/monster_melee_tests.cpp
+index 6843329..e2fcb6a 100644
+--- a/tests/combat/monster_melee_tests.cpp
++++ b/tests/combat/monster_melee_tests.cpp
+@@ -1,17 +1,20 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ #include "combat/monster_catalog.hpp"
+ 
++#include "abyss/abyss_rules.hpp"
++#include "combat/monster_affix_runtime.hpp"
++
+ #include <cmath>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::tick_n;
+ 
+ CombatEncounterConfig encounter_for(
+     MonsterId id,
+     float monster_x,
+@@ -19,20 +22,55 @@ CombatEncounterConfig encounter_for(
+     float player_y = 0.0F) noexcept {
+     CombatEncounterConfig config{};
+     config.player_spawn = Vec3{player_x, player_y, 0.0F};
+     config.initial_facing = Facing::right;
+     config.wave.spawn_count = 1U;
+     config.wave.spawns[0] = MonsterSpawnSpec{
+         id, Vec3{monster_x, 0.0F, 0.0F}};
+     return config;
+ }
+ 
++MonsterAffixSet one_affix(
++    MonsterAffixId id,
++    MonsterAffixTier tier) noexcept {
++    MonsterAffixSet result{};
++    result.values[0] = {id, tier};
++    result.count = 1U;
++    return result;
++}
++
++int ticks_in_phase(CombatWorld& world, MonsterAiPhase phase) noexcept {
++    int ticks = 0;
++    while (ticks < 300
++           && world.snapshot().monsters[0].ai_phase == phase) {
++        world.tick({});
++        ++ticks;
++    }
++    return ticks;
++}
++
++bool has_abyss_phase_timing(
++    CombatEncounterConfig config,
++    std::uint16_t telegraph,
++    std::uint16_t active,
++    std::uint16_t recovery,
++    std::uint16_t cooldown) noexcept {
++    config.wave.spawns[0].position = Vec3{0.90F, 0.0F, 0.0F};
++    CombatWorld world{config};
++    world.tick({});
++    return world.snapshot().monsters[0].ai_phase == MonsterAiPhase::telegraph
++        && ticks_in_phase(world, MonsterAiPhase::telegraph) == telegraph
++        && ticks_in_phase(world, MonsterAiPhase::active) == active
++        && ticks_in_phase(world, MonsterAiPhase::recovery) == recovery
++        && ticks_in_phase(world, MonsterAiPhase::cooldown) == cooldown;
++}
++
+ arpg::test::Failure chaos_chaser_moves_then_stops_for_telegraph() noexcept {
+     CombatWorld world{encounter_for(MonsterId::chaos_chaser, 2.0F)};
+     const float initial_x = world.snapshot().monsters[0].position.x;
+     world.tick(MovementInput{});
+     const auto moving = world.snapshot();
+     ARPG_REQUIRE(moving.monsters[0].ai_phase == MonsterAiPhase::move);
+     ARPG_REQUIRE(moving.monsters[0].position.x < initial_x);
+ 
+     bool reached_telegraph = false;
+     for (int tick = 0; tick < 120; ++tick) {
+@@ -205,24 +243,147 @@ arpg::test::Failure launcher_gives_stage4_monster_minimum_airtime() noexcept {
+     tick_n(world, 7);
+     auto target = world.snapshot().monsters[0];
+     ARPG_REQUIRE(target.reaction == ReactionState::airborne);
+     tick_n(world, 60);
+     target = world.snapshot().monsters[0];
+     ARPG_REQUIRE(target.reaction == ReactionState::airborne);
+     ARPG_REQUIRE(target.position.z > 0.0F);
+     return {};
+ }
+ 
++arpg::test::Failure swift_pursuit_composes_move_and_cooldown() noexcept {
++    CombatEncounterConfig normal_config = encounter_for(
++        MonsterId::chaos_chaser, 3.0F);
++    CombatEncounterConfig swift_config = normal_config;
++    swift_config.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::swift_pursuit);
++    CombatWorld normal{normal_config};
++    CombatWorld swift{swift_config};
++    const float normal_start = normal.snapshot().monsters[0].position.x;
++    const float swift_start = swift.snapshot().monsters[0].position.x;
++    normal.tick({});
++    swift.tick({});
++    ARPG_REQUIRE(arpg::test::near(
++        swift_start - swift.snapshot().monsters[0].position.x,
++        (normal_start - normal.snapshot().monsters[0].position.x) * 1.15F,
++        1.0e-5));
++
++    CombatEncounterConfig timing = encounter_for(
++        MonsterId::chaos_chaser, 0.90F);
++    timing.abyss = swift_config.abyss;
++    ARPG_REQUIRE(has_abyss_phase_timing(timing, 12U, 4U, 18U, 36U));
++
++    timing.wave.spawns[0].affixes = one_affix(
++        MonsterAffixId::swift, MonsterAffixTier::m3);
++    ARPG_REQUIRE(has_abyss_phase_timing(timing, 12U, 4U, 18U, 28U));
++    return {};
++}
++
++arpg::test::Failure abyss_bulwark_adds_to_stage9_profile() noexcept {
++    CombatEncounterConfig config = encounter_for(
++        MonsterId::chaos_chaser, 2.0F);
++    config.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::abyss_bulwark);
++    config.wave.spawns[0].affixes = one_affix(
++        MonsterAffixId::armored, MonsterAffixTier::m3);
++    CombatWorld armored{config};
++    const MonsterAffixProfile armored_profile =
++        arpg::test::CombatWorldTestAccess::monster_affix_profile(armored, 0U);
++    ARPG_REQUIRE(armored_profile.armor_rating == 1007);
++    ARPG_REQUIRE(armored.snapshot().monsters[0].max_shield == 168);
++    ARPG_REQUIRE(armored.snapshot().monsters[0].shield == 78);
++
++    config.wave.spawns[0].affixes = one_affix(
++        MonsterAffixId::mighty, MonsterAffixTier::m3);
++    CombatWorld mighty{config};
++    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_hp == 520);
++    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_shield == 246);
++    ARPG_REQUIRE(mighty.snapshot().monsters[0].shield == 156);
++
++    config.wave.spawns[0].affixes = one_affix(
++        MonsterAffixId::shielding, MonsterAffixTier::m2);
++    CombatWorld shielding{config};
++    ARPG_REQUIRE(shielding.snapshot().monsters[0].max_shield == 169);
++    ARPG_REQUIRE(shielding.snapshot().monsters[0].shield == 78);
++
++    config.wave.spawns[0].affixes = {};
++    CombatWorld zero_armor{config};
++    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_affix_profile(
++        zero_armor, 0U).armor_rating == 0);
++    return {};
++}
++
++arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
++    CombatEncounterConfig melee = encounter_for(
++        MonsterId::chaos_chaser, 0.0F);
++    melee.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::abyss_fury);
++    CombatWorld contact{melee};
++    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(contact, 0U);
++    const int contact_before = contact.snapshot().player.hp;
++    arpg::test::CombatWorldTestAccess::simulate_monster(contact, 0U);
++    ARPG_REQUIRE(contact_before - contact.snapshot().player.hp == 65);
++
++    CombatEncounterConfig projectile = encounter_for(
++        MonsterId::lightning_shooter, 4.0F);
++    projectile.abyss = melee.abyss;
++    CombatWorld shooter{projectile};
++    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(shooter, 0U);
++    arpg::test::CombatWorldTestAccess::simulate_monster(shooter, 0U);
++    ARPG_REQUIRE(shooter.snapshot().projectile_count == 1U);
++    ARPG_REQUIRE(shooter.snapshot().projectiles[0].damage.amount[
++        arpg::modifiers::damage_index(
++            arpg::modifiers::DamageType::lightning)] == 58);
++
++    CombatEncounterConfig hazard = encounter_for(
++        MonsterId::chaos_hazard, 0.0F);
++    hazard.abyss = melee.abyss;
++    CombatWorld hazard_world{hazard};
++    hazard_world.tick({});
++    ARPG_REQUIRE(hazard_world.snapshot().hazard_count == 1U);
++    ARPG_REQUIRE(hazard_world.snapshot().hazards[0].damage.amount[
++        arpg::modifiers::damage_index(
++            arpg::modifiers::DamageType::chaos)] == 50);
++
++    CombatEncounterConfig death = melee;
++    death.wave.spawns[0].position = Vec3{2.0F, 0.0F, 0.0F};
++    death.wave.spawns[0].affixes = one_affix(
++        MonsterAffixId::death_blast, MonsterAffixTier::m1);
++    CombatWorld death_world{death};
++    arpg::test::CombatWorldTestAccess::defeat_monster(death_world, 0U, true);
++    ARPG_REQUIRE(death_world.snapshot().hazard_count == 1U);
++    ARPG_REQUIRE(death_world.snapshot().hazards[0].damage.amount[
++        arpg::modifiers::damage_index(
++            arpg::modifiers::DamageType::physical)] == 174);
++
++    CombatEncounterConfig frenzy = melee;
++    frenzy.wave.spawns[0].affixes = one_affix(
++        MonsterAffixId::frenzy, MonsterAffixTier::m3);
++    CombatWorld composed_damage{frenzy};
++    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(
++        composed_damage, 0U);
++    const int composed_before = composed_damage.snapshot().player.hp;
++    arpg::test::CombatWorldTestAccess::simulate_monster(composed_damage, 0U);
++    ARPG_REQUIRE(composed_before - composed_damage.snapshot().player.hp == 97);
++    ARPG_REQUIRE(has_abyss_phase_timing(frenzy, 7U, 4U, 9U, 21U));
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
+     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
+     {"bulwark slow armored profile", &water_bulwark_is_slow_and_has_front_armor},
+     {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
+     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},
+     {"launcher minimum airtime", &launcher_gives_stage4_monster_minimum_airtime},
++    {"swift pursuit composes move and cooldown",
++     &swift_pursuit_composes_move_and_cooldown},
++    {"abyss bulwark composes profile", &abyss_bulwark_adds_to_stage9_profile},
++    {"abyss fury scales outgoing paths once",
++     &abyss_fury_scales_all_monster_paths_once},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite monster_melee_suite() noexcept {
+     return arpg::test::make_suite("monster_melee", kCases);
+ }
+diff --git a/tests/combat/movement_jump_tests.cpp b/tests/combat/movement_jump_tests.cpp
+index 00ca98a..3a26890 100644
+--- a/tests/combat/movement_jump_tests.cpp
++++ b/tests/combat/movement_jump_tests.cpp
+@@ -1,14 +1,16 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ 
++#include "abyss/abyss_rules.hpp"
++
+ #include <cmath>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ 
+ constexpr double kFloatTolerance = 1.0e-4;
+ 
+ arpg::test::Failure ground_motion_is_fixed_and_diagonal_is_normalized() noexcept {
+@@ -159,24 +161,74 @@ arpg::test::Failure airborne_motion_uses_seventy_percent_control() noexcept {
+     const CombatSnapshot snapshot = world.snapshot();
+     ARPG_REQUIRE(snapshot.player.state == PlayerState::jump_rise);
+     ARPG_REQUIRE(arpg::test::near(
+         snapshot.player.position.x, 0.63, kFloatTolerance));
+     ARPG_REQUIRE(arpg::test::near(
+         snapshot.player.velocity.x, 3.78, kFloatTolerance));
+     ARPG_REQUIRE(snapshot.player.facing == Facing::right);
+     return {};
+ }
+ 
++arpg::test::Failure heavy_steps_scales_only_ground_horizontal_motion() noexcept {
++    CombatEncounterConfig normal_config{};
++    normal_config.wave = {};
++    CombatEncounterConfig heavy_config = normal_config;
++    heavy_config.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::heavy_steps);
++    CombatWorld normal{normal_config};
++    CombatWorld heavy{heavy_config};
++
++    normal.tick(MovementInput{1, 0});
++    heavy.tick(MovementInput{1, 0});
++    ARPG_REQUIRE(arpg::test::near(
++        normal.snapshot().player.velocity.x, 5.4, kFloatTolerance));
++    ARPG_REQUIRE(arpg::test::near(
++        heavy.snapshot().player.velocity.x, 4.59, kFloatTolerance));
++
++    ARPG_REQUIRE(normal.queue_action(Action::jump));
++    ARPG_REQUIRE(heavy.queue_action(Action::jump));
++    normal.tick({});
++    heavy.tick({});
++    ARPG_REQUIRE(arpg::test::near(
++        heavy.snapshot().player.velocity.z,
++        normal.snapshot().player.velocity.z));
++    ARPG_REQUIRE(arpg::test::near(
++        heavy.snapshot().player.position.z,
++        normal.snapshot().player.position.z));
++    normal.tick(MovementInput{1, 0});
++    heavy.tick(MovementInput{1, 0});
++    ARPG_REQUIRE(arpg::test::near(
++        normal.snapshot().player.velocity.x, 3.78, kFloatTolerance));
++    ARPG_REQUIRE(arpg::test::near(
++        heavy.snapshot().player.velocity.x, 3.78, kFloatTolerance));
++
++    CombatWorld normal_attack{normal_config};
++    CombatWorld heavy_attack{heavy_config};
++    ARPG_REQUIRE(normal_attack.queue_action(Action::light));
++    ARPG_REQUIRE(heavy_attack.queue_action(Action::light));
++    for (int tick = 0; tick < 40; ++tick) {
++        normal_attack.tick({});
++        heavy_attack.tick({});
++        ARPG_REQUIRE(normal_attack.snapshot().player.active_attack
++                     == heavy_attack.snapshot().player.active_attack);
++        ARPG_REQUIRE(normal_attack.snapshot().player.attack_phase
++                     == heavy_attack.snapshot().player.attack_phase);
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"fixed ground motion and normalized diagonal",
+      &ground_motion_is_fixed_and_diagonal_is_normalized},
+     {"room clamps, facing, and reset", &room_clamps_facing_and_reset_are_stable},
+     {"deterministic jump apex and landing",
+      &jump_arc_has_deterministic_apex_and_one_landing_tick},
+     {"seventy percent air control", &airborne_motion_uses_seventy_percent_control},
++    {"heavy steps only scales ground movement",
++     &heavy_steps_scales_only_ground_horizontal_motion},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite movement_jump_suite() noexcept {
+     return arpg::test::make_suite("movement_jump", kCases);
+ }
+diff --git a/tests/combat/player_health_tests.cpp b/tests/combat/player_health_tests.cpp
+index b73657c..d91dbad 100644
+--- a/tests/combat/player_health_tests.cpp
++++ b/tests/combat/player_health_tests.cpp
+@@ -1,16 +1,18 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_test_support.hpp"
+ 
+ #include "combat/combat_world.hpp"
+ 
++#include "abyss/abyss_rules.hpp"
++
+ #include <cstddef>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ using arpg::test::tick_n;
+ 
+ CombatEncounterConfig single_chaser_encounter() noexcept {
+     CombatEncounterConfig config{};
+     config.player_spawn = Vec3{0.0F, 0.0F, 0.0F};
+@@ -174,25 +176,97 @@ arpg::test::Failure load_wave_reset_restores_full_health() noexcept {
+     ARPG_REQUIRE(world.snapshot().player.hp == world.snapshot().player.max_hp);
+     ARPG_REQUIRE(world.snapshot().player.hurt_ticks == 0);
+     ARPG_REQUIRE(world.snapshot().player.invulnerability_ticks == 0);
+     const auto reset = world.try_pop_event();
+     ARPG_REQUIRE(reset.has_value());
+     ARPG_REQUIRE(reset->kind == CombatEventKind::player_health_reset);
+     ARPG_REQUIRE(reset->value == world.snapshot().player.max_hp);
+     return {};
+ }
+ 
++arpg::test::Failure exhausted_recovery_caps_initial_resources_once() noexcept {
++    CombatEncounterConfig config = single_chaser_encounter();
++    config.player_build.values.max_barrier = 1010000;
++    config.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::exhausted_recovery);
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.snapshot().player.max_hp == 1000);
++    ARPG_REQUIRE(world.snapshot().player.hp == 700);
++    ARPG_REQUIRE(world.snapshot().player.max_barrier == 101);
++    ARPG_REQUIRE(world.snapshot().player.barrier == 71);
++
++    arpg::test::CombatWorldTestAccess::apply_damage(
++        world, 100, Vec3{}, FeedbackLevel::light);
++    const PlayerSnapshot damaged = world.snapshot().player;
++    EncounterWave next = config.wave;
++    next.spawns[0].position.x = 3.0F;
++    ARPG_REQUIRE(world.load_wave(next, false));
++    ARPG_REQUIRE(world.snapshot().player.hp == damaged.hp);
++    ARPG_REQUIRE(world.snapshot().player.barrier == damaged.barrier);
++    return {};
++}
++
++arpg::test::Failure exhausted_recovery_scales_explicit_and_wave_restore() noexcept {
++    CombatEncounterConfig config = single_chaser_encounter();
++    config.player_build.values.max_barrier = 1010000;
++    config.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::exhausted_recovery);
++    CombatWorld world{config};
++    arpg::test::CombatWorldTestAccess::set_player_resources(world, 600, 50);
++    world.restore_player_resources(1, 1);
++    ARPG_REQUIRE(world.snapshot().player.hp == 601);
++    ARPG_REQUIRE(world.snapshot().player.barrier == 51);
++    world.restore_player_resources(10, 10);
++    ARPG_REQUIRE(world.snapshot().player.hp == 608);
++    ARPG_REQUIRE(world.snapshot().player.barrier == 58);
++
++    ARPG_REQUIRE(world.load_wave(config.wave, true));
++    ARPG_REQUIRE(world.snapshot().player.hp == 700);
++    ARPG_REQUIRE(world.snapshot().player.barrier == 71);
++    return {};
++}
++
++arpg::test::Failure life_sacrifice_maps_ratio_and_clear_does_not_refill() noexcept {
++    CombatEncounterConfig config = single_chaser_encounter();
++    config.wave = {};
++    config.player_build.values.max_health = 10000;
++    config.player_build.values.max_barrier = 1010000;
++    config.abyss = arpg::abyss::combat_config_for(
++        arpg::abyss::AbyssRuleId::life_sacrifice);
++    CombatWorld world{config};
++    ARPG_REQUIRE(world.snapshot().player.max_hp == 551);
++    ARPG_REQUIRE(world.snapshot().player.hp == 551);
++    ARPG_REQUIRE(world.snapshot().player.max_barrier == 101);
++    ARPG_REQUIRE(world.snapshot().player.barrier == 101);
++
++    arpg::test::CombatWorldTestAccess::set_player_resources(world, 276, 37);
++    world.clear_abyss_rule_preserving_resources();
++    ARPG_REQUIRE(world.snapshot().player.max_hp == 1001);
++    ARPG_REQUIRE(world.snapshot().player.hp == 501);
++    ARPG_REQUIRE(world.snapshot().player.max_barrier == 101);
++    ARPG_REQUIRE(world.snapshot().player.barrier == 37);
++    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::abyss_config(world).rule
++                 == arpg::abyss::AbyssRuleId::none);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"damage reaches zero", &player_damage_reaches_zero},
+     {"accepted hit payload and hurt event", &accepted_hit_emits_payload_and_hurt_started},
+     {"player defeat event emits once", &player_defeat_event_emits_once},
+     {"player defeat latch survives event overflow", &player_defeat_latch_survives_event_overflow},
+     {"defeated player rejects and discards input", &defeated_player_rejects_and_discards_input},
+     {"hurt movement lock", &hurt_ticks_lock_movement_until_expired},
+     {"wave load restores full health", &load_wave_reset_restores_full_health},
++    {"exhausted initial cap applied once",
++     &exhausted_recovery_caps_initial_resources_once},
++    {"exhausted explicit and wave restore",
++     &exhausted_recovery_scales_explicit_and_wave_restore},
++    {"life sacrifice ratio and clear",
++     &life_sacrifice_maps_ratio_and_clear_does_not_refill},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite player_health_suite() noexcept {
+     return arpg::test::make_suite("player_health", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index a71e306..190cd0a 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -30,20 +30,32 @@ struct DungeonSessionTestAccess final {
+         dungeon::ExitDirection direction) noexcept {
+         session.attempt_exit(direction);
+     }
+     static void damage_current_player(
+         dungeon::DungeonSession& session, int damage) noexcept {
+         if (session.combat_.has_value()) {
+             session.combat_->apply_player_damage(
+                 damage, combat::Vec3{}, combat::FeedbackLevel::light);
+         }
+     }
++    static const abyss::AbyssCombatConfig* pending_abyss_config(
++        const dungeon::DungeonSession& session) noexcept {
++        return session.pending_abyss_combat_.has_value()
++            ? &session.pending_abyss_combat_->abyss
++            : nullptr;
++    }
++    static const abyss::AbyssCombatConfig* active_abyss_config(
++        const dungeon::DungeonSession& session) noexcept {
++        return session.combat_.has_value()
++            ? &session.combat_->encounter_config_.abyss
++            : nullptr;
++    }
+     static void fill_current_combat_events(
+         dungeon::DungeonSession& session, std::size_t count) noexcept {
+         if (!session.combat_.has_value()) return;
+         combat::CombatEvent event{};
+         event.kind = combat::CombatEventKind::reset;
+         for (std::size_t index = 0U; index < count; ++index) {
+             session.combat_->emit_event(event);
+         }
+     }
+     static void force_fault(
+diff --git a/tests/dungeon/dungeon_transaction_tests.cpp b/tests/dungeon/dungeon_transaction_tests.cpp
+index fb6eb29..82a78fa 100644
+--- a/tests/dungeon/dungeon_transaction_tests.cpp
++++ b/tests/dungeon/dungeon_transaction_tests.cpp
+@@ -41,20 +41,30 @@ DungeonRunState available_state(std::uint64_t seed = 1U) noexcept {
+         state.current_room.seed, state.current_room.depth);
+     if (selection.has_value()) {
+         state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::available;
+         state.abyss.danger = selection->danger;
+         state.abyss.rule = selection->rule;
+         state.abyss.rules_version = selection->rules_version;
+     }
+     return state;
+ }
+ 
++DungeonRunState available_state_for_rule(
++    arpg::abyss::AbyssRuleId rule) noexcept {
++    std::uint64_t seed = 1U;
++    for (;;) {
++        DungeonRunState state = available_state(seed);
++        if (state.abyss.rule == rule) return state;
++        seed = state.current_room.seed + 1U;
++    }
++}
++
+ arpg::test::Failure available_room_precomputes_then_queues_start() noexcept {
+     const DungeonRunState available = available_state();
+     DungeonSession session{DungeonRules{}, available};
+     const auto snapshot = session.snapshot();
+     const auto pending = session.pending_save();
+     ARPG_REQUIRE(snapshot.phase == RoomPhase::committing);
+     ARPG_REQUIRE(!snapshot.combat.has_value());
+     ARPG_REQUIRE(pending.has_value());
+     ARPG_REQUIRE(pending->kind == arpg::dungeon::PendingSaveKind::abyss_start);
+     ARPG_REQUIRE(pending->next_state.current_room.seed
+@@ -117,30 +127,45 @@ arpg::test::Failure abyss_start_state_mismatch_faults() noexcept {
+     session.resolve_pending_save({SaveDisposition::committed,
+         pending.expected_generation, wrong});
+     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+     ARPG_REQUIRE(session.snapshot().diagnostics.fault
+         == DungeonFault::save_receipt_mismatch);
+     ARPG_REQUIRE(!session.snapshot().combat.has_value());
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_start_commit_creates_combat_after_receipt() noexcept {
+-    DungeonSession session{DungeonRules{}, available_state()};
++    const DungeonRunState available = available_state_for_rule(
++        arpg::abyss::AbyssRuleId::abyss_fury);
++    DungeonSession session{DungeonRules{}, available};
++    const auto* pending_config =
++        arpg::test::DungeonSessionTestAccess::pending_abyss_config(session);
++    ARPG_REQUIRE(pending_config != nullptr);
++    ARPG_REQUIRE(pending_config->rule == available.abyss.rule);
++    ARPG_REQUIRE(pending_config->danger == available.abyss.danger);
++    ARPG_REQUIRE(pending_config->monster_damage_bp == 14500U);
++    ARPG_REQUIRE(pending_config->monster_attack_speed_bp == 14500U);
+     const auto pending = *session.pending_save();
+     session.resolve_pending_save({SaveDisposition::committed,
+         pending.expected_generation, pending.next_state});
+     const auto snapshot = session.snapshot();
+     ARPG_REQUIRE(snapshot.phase == RoomPhase::locked);
+     ARPG_REQUIRE(snapshot.combat.has_value());
+     ARPG_REQUIRE(snapshot.commit_generation == pending.expected_generation);
+     ARPG_REQUIRE(arpg::test::DungeonSessionTestAccess::stable_state(session)
+         .abyss.lifecycle == arpg::abyss::AbyssLifecycle::started);
++    const auto* active_config =
++        arpg::test::DungeonSessionTestAccess::active_abyss_config(session);
++    ARPG_REQUIRE(active_config != nullptr);
++    ARPG_REQUIRE(active_config->rule == available.abyss.rule);
++    ARPG_REQUIRE(active_config->monster_damage_bp == 14500U);
++    ARPG_REQUIRE(active_config->monster_attack_speed_bp == 14500U);
+     return {};
+ }
+ 
+ bool clear_and_await(DungeonSession& session) noexcept {
+     arpg::test::EventSummary summary;
+     if (!arpg::test::drive_until_cleared(session, summary)) {
+         return false;
+     }
+     if (session.snapshot().phase == RoomPhase::cleared) {
+         session.tick(MovementInput{});

@@ -1,0 +1,1113 @@
+# Review package: 8ec2861..491bf6073acbb49f5568bb169f4a2620553c0ebd
+
+## Commits
+491bf60 fix: fully evaluate abyss environment rules
+b9495da feat: add deterministic abyss rules core
+
+## Files changed
+ CMakeLists.txt                      |   2 +
+ src/abyss/CMakeLists.txt            |  10 +
+ src/abyss/abyss_rewards.cpp         |  88 ++++++++
+ src/abyss/abyss_rewards.hpp         |  28 +++
+ src/abyss/abyss_rules.cpp           | 218 ++++++++++++++++++
+ src/abyss/abyss_rules.hpp           |  29 +++
+ src/abyss/abyss_types.hpp           |  77 +++++++
+ tests/abyss/CMakeLists.txt          |  14 ++
+ tests/abyss/abyss_rewards_tests.cpp |  83 +++++++
+ tests/abyss/abyss_rules_tests.cpp   | 431 ++++++++++++++++++++++++++++++++++++
+ tests/abyss/abyss_test_main.cpp     |  12 +
+ 11 files changed, 992 insertions(+)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9d2b2f8..7240a5e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -34,35 +34,37 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ 
+ function(arpg_enable_project_warnings target_name)
+     if(MSVC)
+         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
+     endif()
+ endfunction()
+ 
+ include(CTest)
+ add_subdirectory(src/core)
++add_subdirectory(src/abyss)
+ add_subdirectory(src/combat)
+ add_subdirectory(src/progression)
+ add_subdirectory(src/modifiers)
+ add_subdirectory(src/items)
+ add_subdirectory(src/passives)
+ add_subdirectory(src/dungeon)
+ add_subdirectory(src/persistence)
+ 
+ if(ARPG_BUILD_GRAPHICS)
+     include(cmake/Dependencies.cmake)
+     add_subdirectory(src/platform/raylib)
+     add_subdirectory(src/app)
+ endif()
+ 
+ if(BUILD_TESTING)
+     add_subdirectory(tests/core)
++    add_subdirectory(tests/abyss)
+     add_subdirectory(tests/combat)
+     add_subdirectory(tests/dungeon)
+     add_subdirectory(tests/persistence)
+     add_subdirectory(tests/platform)
+     add_subdirectory(tests/progression)
+     add_subdirectory(tests/modifiers)
+     add_subdirectory(tests/passives)
+     add_subdirectory(tests/items)
+ endif()
+diff --git a/src/abyss/CMakeLists.txt b/src/abyss/CMakeLists.txt
+new file mode 100644
+index 0000000..e03f9c1
+--- /dev/null
++++ b/src/abyss/CMakeLists.txt
+@@ -0,0 +1,10 @@
++add_library(arpg_abyss STATIC
++    abyss_rules.cpp
++    abyss_rewards.cpp)
++
++target_include_directories(arpg_abyss
++    PUBLIC "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_abyss PUBLIC cxx_std_17)
++target_link_libraries(arpg_abyss PRIVATE arpg_core)
++
++arpg_enable_project_warnings(arpg_abyss)
+diff --git a/src/abyss/abyss_rewards.cpp b/src/abyss/abyss_rewards.cpp
+new file mode 100644
+index 0000000..d90c70e
+--- /dev/null
++++ b/src/abyss/abyss_rewards.cpp
+@@ -0,0 +1,88 @@
++#include "abyss/abyss_rewards.hpp"
++
++#include <algorithm>
++#include <cstdint>
++
++namespace arpg::abyss {
++namespace {
++
++struct RewardDeltas final {
++    std::uint8_t item_count{};
++    std::uint8_t item_level{};
++    std::uint8_t normal_transfer{};
++    std::uint8_t magic_gain{};
++    std::uint8_t rare_gain{};
++};
++
++bool reward_deltas_for(
++    AbyssDanger danger,
++    RewardDeltas& deltas) noexcept {
++    switch (danger) {
++    case AbyssDanger::low:
++        deltas = {1U, 1U, 10U, 5U, 5U};
++        return true;
++    case AbyssDanger::medium:
++        deltas = {2U, 3U, 20U, 10U, 10U};
++        return true;
++    case AbyssDanger::high:
++        deltas = {3U, 5U, 30U, 10U, 20U};
++        return true;
++    default:
++        return false;
++    }
++}
++
++}  // namespace
++
++AbyssRewardProfile reward_profile_for(
++    AbyssDanger danger,
++    std::uint8_t base_item_level) noexcept {
++    RewardDeltas deltas{};
++    if (base_item_level == 0U || !reward_deltas_for(danger, deltas))
++        return {};
++    const std::uint16_t level = static_cast<std::uint16_t>(base_item_level)
++        + static_cast<std::uint16_t>(deltas.item_level);
++    return {deltas.item_count, static_cast<std::uint8_t>(
++        (std::min)(level, std::uint16_t{100U}))};
++}
++
++std::optional<AbyssRarityWeights> shift_abyss_rarity_weights(
++    AbyssRarityWeights base,
++    AbyssDanger danger) noexcept {
++    const std::uint64_t base_total = static_cast<std::uint64_t>(base.normal)
++        + static_cast<std::uint64_t>(base.magic)
++        + static_cast<std::uint64_t>(base.rare);
++    RewardDeltas deltas{};
++    if (base_total != 100U || !reward_deltas_for(danger, deltas))
++        return std::nullopt;
++
++    const std::uint32_t transfer = (std::min)(
++        base.normal,
++        static_cast<std::uint32_t>(deltas.normal_transfer));
++    const std::uint32_t ratio_total = static_cast<std::uint32_t>(
++        deltas.magic_gain + deltas.rare_gain);
++    const std::uint64_t magic_product = static_cast<std::uint64_t>(transfer)
++        * static_cast<std::uint64_t>(deltas.magic_gain);
++    const std::uint64_t rare_product = static_cast<std::uint64_t>(transfer)
++        * static_cast<std::uint64_t>(deltas.rare_gain);
++    std::uint32_t magic_add = static_cast<std::uint32_t>(
++        magic_product / ratio_total);
++    std::uint32_t rare_add = static_cast<std::uint32_t>(
++        rare_product / ratio_total);
++    const std::uint32_t assigned = magic_add + rare_add;
++    if (assigned < transfer) {
++        const std::uint64_t magic_remainder = magic_product % ratio_total;
++        const std::uint64_t rare_remainder = rare_product % ratio_total;
++        if (magic_remainder >= rare_remainder)
++            ++magic_add;
++        else
++            ++rare_add;
++    }
++
++    return AbyssRarityWeights{
++        base.normal - transfer,
++        base.magic + magic_add,
++        base.rare + rare_add};
++}
++
++}  // namespace arpg::abyss
+diff --git a/src/abyss/abyss_rewards.hpp b/src/abyss/abyss_rewards.hpp
+new file mode 100644
+index 0000000..3d32efd
+--- /dev/null
++++ b/src/abyss/abyss_rewards.hpp
+@@ -0,0 +1,28 @@
++#pragma once
++
++#include "abyss/abyss_types.hpp"
++
++#include <cstdint>
++#include <optional>
++
++namespace arpg::abyss {
++
++struct AbyssRewardProfile final {
++    std::uint8_t item_count{};
++    std::uint8_t item_level{};
++};
++
++struct AbyssRarityWeights final {
++    std::uint32_t normal{};
++    std::uint32_t magic{};
++    std::uint32_t rare{};
++};
++
++[[nodiscard]] AbyssRewardProfile reward_profile_for(
++    AbyssDanger danger,
++    std::uint8_t base_item_level) noexcept;
++[[nodiscard]] std::optional<AbyssRarityWeights> shift_abyss_rarity_weights(
++    AbyssRarityWeights base,
++    AbyssDanger danger) noexcept;
++
++}  // namespace arpg::abyss
+diff --git a/src/abyss/abyss_rules.cpp b/src/abyss/abyss_rules.cpp
+new file mode 100644
+index 0000000..bf084b5
+--- /dev/null
++++ b/src/abyss/abyss_rules.cpp
+@@ -0,0 +1,218 @@
++#include "abyss/abyss_rules.hpp"
++
++#include "core/deterministic_rng.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++
++namespace arpg::abyss {
++namespace {
++
++constexpr std::uint64_t kAbyssRollDomain = 0x41425953535F3031ULL;
++constexpr std::uint64_t kRulesVersionDomain = 0x4142595352563031ULL;
++constexpr std::uint64_t kDangerDomain = 0x414259535F444E47ULL;
++constexpr std::uint64_t kRuleDomain = 0x414259535F52554CULL;
++
++struct DangerWeights final {
++    std::uint8_t low{};
++    std::uint8_t medium{};
++    std::uint8_t high{};
++};
++
++DangerWeights weights_for_depth(std::uint64_t depth) noexcept {
++    if (depth < 10U) return {70U, 25U, 5U};
++    if (depth < 20U) return {45U, 40U, 15U};
++    if (depth < 40U) return {25U, 45U, 30U};
++    return {10U, 35U, 55U};
++}
++
++AbyssDanger danger_for_roll(
++    std::uint64_t roll,
++    DangerWeights weights) noexcept {
++    if (roll < weights.low) return AbyssDanger::low;
++    if (roll < static_cast<std::uint64_t>(weights.low) + weights.medium)
++        return AbyssDanger::medium;
++    return AbyssDanger::high;
++}
++
++AbyssRuleId rule_for_slot(
++    AbyssDanger danger,
++    std::size_t slot) noexcept {
++    constexpr std::array<std::array<AbyssRuleId, 3>, 3> rules{{
++        {{AbyssRuleId::thunderstorm,
++          AbyssRuleId::swift_pursuit,
++          AbyssRuleId::heavy_steps}},
++        {{AbyssRuleId::hunting_flames,
++          AbyssRuleId::abyss_bulwark,
++          AbyssRuleId::exhausted_recovery}},
++        {{AbyssRuleId::chaos_expansion,
++          AbyssRuleId::abyss_fury,
++          AbyssRuleId::life_sacrifice}},
++    }};
++    return rules[static_cast<std::size_t>(danger)][slot];
++}
++
++bool valid_rule(AbyssRuleId rule) noexcept {
++    return static_cast<std::uint8_t>(rule)
++        <= static_cast<std::uint8_t>(AbyssRuleId::life_sacrifice);
++}
++
++AbyssDanger danger_for_rule(AbyssRuleId rule) noexcept {
++    switch (rule) {
++    case AbyssRuleId::thunderstorm:
++    case AbyssRuleId::swift_pursuit:
++    case AbyssRuleId::heavy_steps:
++        return AbyssDanger::low;
++    case AbyssRuleId::hunting_flames:
++    case AbyssRuleId::abyss_bulwark:
++    case AbyssRuleId::exhausted_recovery:
++        return AbyssDanger::medium;
++    case AbyssRuleId::chaos_expansion:
++    case AbyssRuleId::abyss_fury:
++    case AbyssRuleId::life_sacrifice:
++        return AbyssDanger::high;
++    default:
++        return AbyssDanger::low;
++    }
++}
++
++}  // namespace
++
++bool is_abyss_roll(std::uint64_t room_seed) noexcept {
++    auto stream = core::DeterministicRng::derive_stream(
++        room_seed, kAbyssRollDomain);
++    return stream.next_bounded(10000U).value_or(10000U) < 100U;
++}
++
++std::optional<AbyssSelection> select_abyss_rule(
++    std::uint64_t room_seed,
++    std::uint64_t depth) noexcept {
++    if (depth == 0U) return std::nullopt;
++
++    auto version = core::DeterministicRng::derive_stream(
++        room_seed, kRulesVersionDomain ^ kAbyssRulesVersion);
++    const std::uint64_t root = version.next_u64();
++    auto danger_stream = core::DeterministicRng::derive_stream(
++        root, kDangerDomain);
++    auto rule_stream = core::DeterministicRng::derive_stream(
++        root, kRuleDomain);
++    const std::uint64_t danger_roll =
++        danger_stream.next_bounded(100U).value_or(0U);
++    const std::size_t rule_slot = static_cast<std::size_t>(
++        rule_stream.next_bounded(3U).value_or(0U));
++    const AbyssDanger danger = danger_for_roll(
++        danger_roll, weights_for_depth(depth));
++    return AbyssSelection{
++        danger, rule_for_slot(danger, rule_slot), kAbyssRulesVersion};
++}
++
++std::uint8_t abyss_encounter_budget(
++    std::uint8_t normal_budget) noexcept {
++    const std::uint64_t scaled =
++        (static_cast<std::uint64_t>(normal_budget) * 3U + 1U) / 2U;
++    return static_cast<std::uint8_t>((std::min)(
++        scaled,
++        static_cast<std::uint64_t>((std::numeric_limits<std::uint8_t>::max)())));
++}
++
++std::uint8_t minimum_abyss_affixes(std::uint64_t depth) noexcept {
++    if (depth == 0U) return 0U;
++    if (depth < 20U) return 1U;
++    if (depth < 40U) return 2U;
++    return 3U;
++}
++
++std::optional<int> map_resource_ratio(
++    int current,
++    int old_max,
++    int new_max,
++    bool alive) noexcept {
++    if (old_max <= 0 || new_max <= 0 || current < 0 || current > old_max)
++        return std::nullopt;
++    const std::uint64_t numerator = static_cast<std::uint64_t>(current)
++            * static_cast<std::uint64_t>(new_max)
++        + static_cast<std::uint64_t>(old_max / 2);
++    const std::uint64_t mapped = numerator / static_cast<std::uint64_t>(old_max);
++    const std::uint64_t minimum = alive ? 1U : 0U;
++    const std::uint64_t clamped = (std::min)(
++        (std::max)(mapped, minimum),
++        static_cast<std::uint64_t>(new_max));
++    return static_cast<int>(clamped);
++}
++
++std::optional<int> percent_of_actual_max_hp(
++    int actual_max_hp,
++    std::uint16_t basis_points) noexcept {
++    if (actual_max_hp <= 0 || basis_points == 0U || basis_points > 10000U)
++        return std::nullopt;
++    const std::uint64_t numerator = static_cast<std::uint64_t>(actual_max_hp)
++            * static_cast<std::uint64_t>(basis_points)
++        + 9999U;
++    const std::uint64_t result = numerator / 10000U;
++    return static_cast<int>((std::max)(std::uint64_t{1U}, result));
++}
++
++AbyssCombatConfig combat_config_for(AbyssRuleId rule) noexcept {
++    AbyssCombatConfig config{};
++    if (!valid_rule(rule)) return config;
++    config.rule = rule;
++    config.danger = danger_for_rule(rule);
++    switch (rule) {
++    case AbyssRuleId::thunderstorm:
++        config.environment.damage_type = AbyssDamageType::lightning;
++        config.environment.damage_bp = 1500U;
++        config.environment.cycle_ticks = 180U;
++        config.environment.warning_ticks = 45U;
++        config.environment.radius_milliunits[0] = 800U;
++        config.environment.radius_count = 1U;
++        break;
++    case AbyssRuleId::hunting_flames:
++        config.environment.damage_type = AbyssDamageType::fire;
++        config.environment.damage_bp = 1000U;
++        config.environment.cycle_ticks = 240U;
++        config.environment.warning_ticks = 45U;
++        config.environment.duration_ticks = 180U;
++        config.environment.damage_interval_ticks = 60U;
++        config.environment.radius_milliunits[0] = 1000U;
++        config.environment.radius_count = 1U;
++        break;
++    case AbyssRuleId::chaos_expansion:
++        config.environment.damage_type = AbyssDamageType::chaos;
++        config.environment.damage_bp = 800U;
++        config.environment.damage_interval_ticks = 60U;
++        config.environment.expansion_interval_ticks = 180U;
++        config.environment.radius_milliunits = {
++            1000U, 2300U, 3600U, 4900U, 6200U};
++        config.environment.radius_count = 5U;
++        break;
++    case AbyssRuleId::swift_pursuit:
++        config.monster_move_bp = 11500U;
++        config.monster_cooldown_bp = 8500U;
++        break;
++    case AbyssRuleId::abyss_bulwark:
++        config.monster_armor_bp = 13000U;
++        config.monster_extra_shield_bp = 3000U;
++        break;
++    case AbyssRuleId::abyss_fury:
++        config.monster_damage_bp = 14500U;
++        config.monster_attack_speed_bp = 14500U;
++        break;
++    case AbyssRuleId::heavy_steps:
++        config.player_ground_move_bp = 8500U;
++        break;
++    case AbyssRuleId::exhausted_recovery:
++        config.player_resource_restore_bp = 7000U;
++        break;
++    case AbyssRuleId::life_sacrifice:
++        config.player_max_health_bp = 5500U;
++        break;
++    default:
++        break;
++    }
++    return config;
++}
++
++}  // namespace arpg::abyss
+diff --git a/src/abyss/abyss_rules.hpp b/src/abyss/abyss_rules.hpp
+new file mode 100644
+index 0000000..7a5196f
+--- /dev/null
++++ b/src/abyss/abyss_rules.hpp
+@@ -0,0 +1,29 @@
++#pragma once
++
++#include "abyss/abyss_types.hpp"
++
++#include <cstdint>
++#include <optional>
++
++namespace arpg::abyss {
++
++[[nodiscard]] bool is_abyss_roll(std::uint64_t room_seed) noexcept;
++[[nodiscard]] std::optional<AbyssSelection> select_abyss_rule(
++    std::uint64_t room_seed,
++    std::uint64_t depth) noexcept;
++[[nodiscard]] std::uint8_t abyss_encounter_budget(
++    std::uint8_t normal_budget) noexcept;
++[[nodiscard]] std::uint8_t minimum_abyss_affixes(
++    std::uint64_t depth) noexcept;
++[[nodiscard]] std::optional<int> map_resource_ratio(
++    int current,
++    int old_max,
++    int new_max,
++    bool alive) noexcept;
++[[nodiscard]] std::optional<int> percent_of_actual_max_hp(
++    int actual_max_hp,
++    std::uint16_t basis_points) noexcept;
++[[nodiscard]] AbyssCombatConfig combat_config_for(
++    AbyssRuleId rule) noexcept;
++
++}  // namespace arpg::abyss
+diff --git a/src/abyss/abyss_types.hpp b/src/abyss/abyss_types.hpp
+new file mode 100644
+index 0000000..a14fec1
+--- /dev/null
++++ b/src/abyss/abyss_types.hpp
+@@ -0,0 +1,77 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++
++namespace arpg::abyss {
++
++inline constexpr std::uint32_t kAbyssRulesVersion = 1U;
++
++enum class AbyssDanger : std::uint8_t {
++    low = 0,
++    medium = 1,
++    high = 2,
++};
++
++enum class AbyssRuleId : std::uint8_t {
++    thunderstorm = 0,
++    hunting_flames = 1,
++    chaos_expansion = 2,
++    swift_pursuit = 3,
++    abyss_bulwark = 4,
++    abyss_fury = 5,
++    heavy_steps = 6,
++    exhausted_recovery = 7,
++    life_sacrifice = 8,
++    none = 0xFF,
++};
++
++enum class AbyssLifecycle : std::uint8_t {
++    none = 0,
++    available = 1,
++    started = 2,
++    cleared = 3,
++    failed = 4,
++};
++
++enum class AbyssDamageType : std::uint8_t {
++    none = 0,
++    fire = 1,
++    lightning = 2,
++    chaos = 3,
++};
++
++struct AbyssEnvironmentConfig final {
++    AbyssDamageType damage_type{AbyssDamageType::none};
++    std::uint16_t damage_bp{};
++    std::uint16_t cycle_ticks{};
++    std::uint16_t warning_ticks{};
++    std::uint16_t duration_ticks{};
++    std::uint16_t damage_interval_ticks{};
++    std::uint16_t expansion_interval_ticks{};
++    std::array<std::uint16_t, 5> radius_milliunits{};
++    std::uint8_t radius_count{};
++};
++
++struct AbyssCombatConfig final {
++    AbyssRuleId rule{AbyssRuleId::none};
++    AbyssDanger danger{AbyssDanger::low};
++    AbyssEnvironmentConfig environment{};
++    std::uint16_t player_ground_move_bp{10000};
++    std::uint16_t player_resource_restore_bp{10000};
++    std::uint16_t player_max_health_bp{10000};
++    std::uint16_t monster_move_bp{10000};
++    std::uint16_t monster_cooldown_bp{10000};
++    std::uint16_t monster_armor_bp{10000};
++    std::uint16_t monster_extra_shield_bp{};
++    std::uint16_t monster_damage_bp{10000};
++    std::uint16_t monster_attack_speed_bp{10000};
++};
++
++struct AbyssSelection final {
++    AbyssDanger danger{AbyssDanger::low};
++    AbyssRuleId rule{AbyssRuleId::thunderstorm};
++    std::uint32_t rules_version{kAbyssRulesVersion};
++};
++
++}  // namespace arpg::abyss
+diff --git a/tests/abyss/CMakeLists.txt b/tests/abyss/CMakeLists.txt
+new file mode 100644
+index 0000000..4bad52a
+--- /dev/null
++++ b/tests/abyss/CMakeLists.txt
+@@ -0,0 +1,14 @@
++add_executable(arpg_abyss_tests
++    abyss_test_main.cpp
++    abyss_rules_tests.cpp
++    abyss_rewards_tests.cpp)
++
++target_include_directories(arpg_abyss_tests PRIVATE
++    "${PROJECT_SOURCE_DIR}/tests/core"
++    "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_abyss_tests PRIVATE cxx_std_17)
++target_link_libraries(arpg_abyss_tests PRIVATE arpg_abyss)
++arpg_enable_project_warnings(arpg_abyss_tests)
++
++add_test(NAME abyss.units COMMAND arpg_abyss_tests)
++set_tests_properties(abyss.units PROPERTIES LABELS "headless;abyss")
+diff --git a/tests/abyss/abyss_rewards_tests.cpp b/tests/abyss/abyss_rewards_tests.cpp
+new file mode 100644
+index 0000000..6a58426
+--- /dev/null
++++ b/tests/abyss/abyss_rewards_tests.cpp
+@@ -0,0 +1,83 @@
++#include "test_framework.hpp"
++
++#include "abyss/abyss_rewards.hpp"
++
++namespace {
++
++using arpg::abyss::AbyssDanger;
++using arpg::abyss::AbyssRarityWeights;
++
++arpg::test::Failure low_reward_profile_is_fixed() noexcept {
++    const auto profile = arpg::abyss::reward_profile_for(AbyssDanger::low, 20U);
++    ARPG_REQUIRE(profile.item_count == 1U);
++    ARPG_REQUIRE(profile.item_level == 21U);
++    return {};
++}
++
++arpg::test::Failure medium_reward_profile_is_fixed() noexcept {
++    const auto profile = arpg::abyss::reward_profile_for(AbyssDanger::medium, 20U);
++    ARPG_REQUIRE(profile.item_count == 2U);
++    ARPG_REQUIRE(profile.item_level == 23U);
++    return {};
++}
++
++arpg::test::Failure high_reward_profile_is_fixed_and_capped() noexcept {
++    const auto profile = arpg::abyss::reward_profile_for(AbyssDanger::high, 98U);
++    ARPG_REQUIRE(profile.item_count == 3U);
++    ARPG_REQUIRE(profile.item_level == 100U);
++    const auto invalid = arpg::abyss::reward_profile_for(
++        static_cast<AbyssDanger>(99U), 20U);
++    ARPG_REQUIRE(invalid.item_count == 0U);
++    ARPG_REQUIRE(invalid.item_level == 0U);
++    return {};
++}
++
++arpg::test::Failure rarity_shifts_match_all_three_profiles() noexcept {
++    constexpr AbyssRarityWeights base{40U, 40U, 20U};
++    const auto low = arpg::abyss::shift_abyss_rarity_weights(
++        base, AbyssDanger::low);
++    const auto medium = arpg::abyss::shift_abyss_rarity_weights(
++        base, AbyssDanger::medium);
++    const auto high = arpg::abyss::shift_abyss_rarity_weights(
++        base, AbyssDanger::high);
++    ARPG_REQUIRE(low.has_value());
++    ARPG_REQUIRE(low->normal == 30U && low->magic == 45U && low->rare == 25U);
++    ARPG_REQUIRE(medium.has_value());
++    ARPG_REQUIRE(medium->normal == 20U
++        && medium->magic == 50U && medium->rare == 30U);
++    ARPG_REQUIRE(high.has_value());
++    ARPG_REQUIRE(high->normal == 10U
++        && high->magic == 50U && high->rare == 40U);
++    return {};
++}
++
++arpg::test::Failure rarity_shortfall_uses_largest_remainder() noexcept {
++    const auto one = arpg::abyss::shift_abyss_rarity_weights(
++        {1U, 40U, 59U}, AbyssDanger::high);
++    ARPG_REQUIRE(one.has_value());
++    ARPG_REQUIRE(one->normal == 0U && one->magic == 40U && one->rare == 60U);
++    const auto tied = arpg::abyss::shift_abyss_rarity_weights(
++        {5U, 45U, 50U}, AbyssDanger::low);
++    ARPG_REQUIRE(tied.has_value());
++    ARPG_REQUIRE(tied->normal == 0U
++        && tied->magic == 48U && tied->rare == 52U);
++    ARPG_REQUIRE(!arpg::abyss::shift_abyss_rarity_weights(
++        {40U, 40U, 19U}, AbyssDanger::low).has_value());
++    ARPG_REQUIRE(!arpg::abyss::shift_abyss_rarity_weights(
++        {40U, 40U, 20U}, static_cast<AbyssDanger>(99U)).has_value());
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"low reward profile", &low_reward_profile_is_fixed},
++    {"medium reward profile", &medium_reward_profile_is_fixed},
++    {"high reward profile", &high_reward_profile_is_fixed_and_capped},
++    {"rarity profile shifts", &rarity_shifts_match_all_three_profiles},
++    {"rarity largest remainder", &rarity_shortfall_uses_largest_remainder},
++};
++
++}  // namespace
++
++arpg::test::TestSuite abyss_rewards_suite() noexcept {
++    return arpg::test::make_suite("abyss_rewards", kCases);
++}
+diff --git a/tests/abyss/abyss_rules_tests.cpp b/tests/abyss/abyss_rules_tests.cpp
+new file mode 100644
+index 0000000..29c5f5d
+--- /dev/null
++++ b/tests/abyss/abyss_rules_tests.cpp
+@@ -0,0 +1,431 @@
++#include "test_framework.hpp"
++
++#include "abyss/abyss_rules.hpp"
++#include "core/deterministic_rng.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++#include <type_traits>
++
++namespace {
++
++using arpg::abyss::AbyssDanger;
++using arpg::abyss::AbyssRuleId;
++
++constexpr std::uint64_t kAbyssRollDomain = 0x41425953535F3031ULL;
++constexpr std::uint64_t kRulesVersionDomain = 0x4142595352563031ULL;
++constexpr std::uint64_t kDangerDomain = 0x414259535F444E47ULL;
++constexpr std::uint64_t kRuleDomain = 0x414259535F52554CULL;
++
++std::uint64_t selection_root(std::uint64_t room_seed) noexcept {
++    auto version = arpg::core::DeterministicRng::derive_stream(
++        room_seed, kRulesVersionDomain ^ arpg::abyss::kAbyssRulesVersion);
++    return version.next_u64();
++}
++
++std::uint64_t expected_danger_roll(std::uint64_t room_seed) noexcept {
++    auto danger = arpg::core::DeterministicRng::derive_stream(
++        selection_root(room_seed), kDangerDomain);
++    return danger.next_bounded(100U).value();
++}
++
++std::uint64_t expected_rule_slot(std::uint64_t room_seed) noexcept {
++    auto rule = arpg::core::DeterministicRng::derive_stream(
++        selection_root(room_seed), kRuleDomain);
++    return rule.next_bounded(3U).value();
++}
++
++AbyssDanger expected_danger(
++    std::uint64_t roll,
++    std::uint8_t low,
++    std::uint8_t medium) noexcept {
++    if (roll < low) return AbyssDanger::low;
++    if (roll < static_cast<std::uint64_t>(low) + medium)
++        return AbyssDanger::medium;
++    return AbyssDanger::high;
++}
++
++arpg::test::Failure verify_danger_band(
++    std::uint64_t depth,
++    std::uint8_t low,
++    std::uint8_t medium) noexcept {
++    std::array<bool, 100> observed{};
++    for (std::uint64_t seed = 0U; seed < 200000U; ++seed) {
++        const std::uint64_t roll = expected_danger_roll(seed);
++        observed[static_cast<std::size_t>(roll)] = true;
++        const auto selection = arpg::abyss::select_abyss_rule(seed, depth);
++        ARPG_REQUIRE(selection.has_value());
++        ARPG_REQUIRE(selection->danger == expected_danger(roll, low, medium));
++        ARPG_REQUIRE(selection->rules_version == arpg::abyss::kAbyssRulesVersion);
++    }
++    for (const bool value : observed) ARPG_REQUIRE(value);
++    return {};
++}
++
++std::uint8_t rule_category(AbyssRuleId rule) noexcept {
++    return static_cast<std::uint8_t>(rule) / 3U;
++}
++
++arpg::test::Failure stable_public_values_and_defaults() noexcept {
++    using arpg::abyss::AbyssLifecycle;
++    static_assert(arpg::abyss::kAbyssRulesVersion == 1U);
++    static_assert(static_cast<std::uint8_t>(AbyssDanger::low) == 0U);
++    static_assert(static_cast<std::uint8_t>(AbyssDanger::medium) == 1U);
++    static_assert(static_cast<std::uint8_t>(AbyssDanger::high) == 2U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::thunderstorm) == 0U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::hunting_flames) == 1U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::chaos_expansion) == 2U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::swift_pursuit) == 3U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::abyss_bulwark) == 4U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::abyss_fury) == 5U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::heavy_steps) == 6U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::exhausted_recovery) == 7U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::life_sacrifice) == 8U);
++    static_assert(static_cast<std::uint8_t>(AbyssRuleId::none) == 0xFFU);
++    static_assert(static_cast<std::uint8_t>(AbyssLifecycle::none) == 0U);
++    static_assert(static_cast<std::uint8_t>(AbyssLifecycle::available) == 1U);
++    static_assert(static_cast<std::uint8_t>(AbyssLifecycle::started) == 2U);
++    static_assert(static_cast<std::uint8_t>(AbyssLifecycle::cleared) == 3U);
++    static_assert(static_cast<std::uint8_t>(AbyssLifecycle::failed) == 4U);
++    const arpg::abyss::AbyssCombatConfig config{};
++    static_assert(std::is_trivially_copyable_v<
++        arpg::abyss::AbyssEnvironmentConfig>);
++    static_assert(std::is_trivially_copyable_v<
++        arpg::abyss::AbyssCombatConfig>);
++    ARPG_REQUIRE(config.rule == AbyssRuleId::none);
++    ARPG_REQUIRE(config.player_ground_move_bp == 10000U);
++    ARPG_REQUIRE(config.monster_extra_shield_bp == 0U);
++    ARPG_REQUIRE(config.environment.damage_type
++        == arpg::abyss::AbyssDamageType::none);
++    return {};
++}
++
++arpg::test::Failure abyss_roll_uses_frozen_one_percent_domain() noexcept {
++    bool saw_hit = false;
++    bool saw_miss = false;
++    for (std::uint64_t seed = 0U; seed < 10000U; ++seed) {
++        auto stream = arpg::core::DeterministicRng::derive_stream(
++            seed, kAbyssRollDomain);
++        const bool expected = stream.next_bounded(10000U).value() < 100U;
++        ARPG_REQUIRE(arpg::abyss::is_abyss_roll(seed) == expected);
++        saw_hit = saw_hit || expected;
++        saw_miss = saw_miss || !expected;
++    }
++    ARPG_REQUIRE(saw_hit);
++    ARPG_REQUIRE(saw_miss);
++    return {};
++}
++
++arpg::test::Failure depth_zero_is_not_selectable() noexcept {
++    ARPG_REQUIRE(!arpg::abyss::select_abyss_rule(1U, 0U).has_value());
++    return {};
++}
++
++arpg::test::Failure weights_depth_1() noexcept {
++    return verify_danger_band(1U, 70U, 25U);
++}
++arpg::test::Failure weights_depth_9() noexcept {
++    return verify_danger_band(9U, 70U, 25U);
++}
++arpg::test::Failure weights_depth_10() noexcept {
++    return verify_danger_band(10U, 45U, 40U);
++}
++arpg::test::Failure weights_depth_19() noexcept {
++    return verify_danger_band(19U, 45U, 40U);
++}
++arpg::test::Failure weights_depth_20() noexcept {
++    return verify_danger_band(20U, 25U, 45U);
++}
++arpg::test::Failure weights_depth_39() noexcept {
++    return verify_danger_band(39U, 25U, 45U);
++}
++arpg::test::Failure weights_depth_40() noexcept {
++    return verify_danger_band(40U, 10U, 35U);
++}
++arpg::test::Failure weights_depth_max() noexcept {
++    return verify_danger_band(
++        (std::numeric_limits<std::uint64_t>::max)(), 10U, 35U);
++}
++
++arpg::test::Failure rules_for_danger_are_reachable(
++    AbyssDanger wanted,
++    std::uint64_t depth,
++    const std::array<AbyssRuleId, 3>& expected) noexcept {
++    std::array<bool, 3> observed{};
++    for (std::uint64_t seed = 0U; seed < 10000U; ++seed) {
++        const auto selected = arpg::abyss::select_abyss_rule(seed, depth);
++        ARPG_REQUIRE(selected.has_value());
++        if (selected->danger != wanted) continue;
++        bool belongs_to_exact_set = false;
++        for (std::size_t index = 0U; index < expected.size(); ++index) {
++            if (selected->rule == expected[index]) {
++                observed[index] = true;
++                belongs_to_exact_set = true;
++            }
++        }
++        ARPG_REQUIRE(belongs_to_exact_set);
++    }
++    ARPG_REQUIRE(observed[0]);
++    ARPG_REQUIRE(observed[1]);
++    ARPG_REQUIRE(observed[2]);
++    return {};
++}
++
++arpg::test::Failure low_rules_are_reachable() noexcept {
++    constexpr std::array<AbyssRuleId, 3> expected{{
++        AbyssRuleId::thunderstorm,
++        AbyssRuleId::swift_pursuit,
++        AbyssRuleId::heavy_steps,
++    }};
++    return rules_for_danger_are_reachable(AbyssDanger::low, 1U, expected);
++}
++arpg::test::Failure medium_rules_are_reachable() noexcept {
++    constexpr std::array<AbyssRuleId, 3> expected{{
++        AbyssRuleId::hunting_flames,
++        AbyssRuleId::abyss_bulwark,
++        AbyssRuleId::exhausted_recovery,
++    }};
++    return rules_for_danger_are_reachable(AbyssDanger::medium, 20U, expected);
++}
++arpg::test::Failure high_rules_are_reachable() noexcept {
++    constexpr std::array<AbyssRuleId, 3> expected{{
++        AbyssRuleId::chaos_expansion,
++        AbyssRuleId::abyss_fury,
++        AbyssRuleId::life_sacrifice,
++    }};
++    return rules_for_danger_are_reachable(AbyssDanger::high, 40U, expected);
++}
++
++arpg::test::Failure selection_is_stable_for_identical_inputs() noexcept {
++    const auto first = arpg::abyss::select_abyss_rule(0x123456789ABCDEF0ULL, 27U);
++    const auto second = arpg::abyss::select_abyss_rule(0x123456789ABCDEF0ULL, 27U);
++    ARPG_REQUIRE(first.has_value());
++    ARPG_REQUIRE(second.has_value());
++    ARPG_REQUIRE(first->danger == second->danger);
++    ARPG_REQUIRE(first->rule == second->rule);
++    ARPG_REQUIRE(first->rules_version == second->rules_version);
++    return {};
++}
++
++arpg::test::Failure named_domains_are_independent() noexcept {
++    for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
++        const auto selected = arpg::abyss::select_abyss_rule(seed, 20U);
++        ARPG_REQUIRE(selected.has_value());
++        ARPG_REQUIRE(rule_category(selected->rule) == expected_rule_slot(seed));
++        ARPG_REQUIRE(selected->danger == expected_danger(
++            expected_danger_roll(seed), 25U, 45U));
++    }
++    return {};
++}
++
++arpg::test::Failure encounter_budget_uses_ceiling_three_halves() noexcept {
++    ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(0U) == 0U);
++    ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(1U) == 2U);
++    ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(2U) == 3U);
++    ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(169U) == 254U);
++    ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(170U) == 255U);
++    ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(255U) == 255U);
++    return {};
++}
++
++arpg::test::Failure affix_minimum_follows_depth_bands() noexcept {
++    ARPG_REQUIRE(arpg::abyss::minimum_abyss_affixes(0U) == 0U);
++    ARPG_REQUIRE(arpg::abyss::minimum_abyss_affixes(1U) == 1U);
++    ARPG_REQUIRE(arpg::abyss::minimum_abyss_affixes(19U) == 1U);
++    ARPG_REQUIRE(arpg::abyss::minimum_abyss_affixes(20U) == 2U);
++    ARPG_REQUIRE(arpg::abyss::minimum_abyss_affixes(39U) == 2U);
++    ARPG_REQUIRE(arpg::abyss::minimum_abyss_affixes(40U) == 3U);
++    ARPG_REQUIRE(arpg::abyss::minimum_abyss_affixes(
++        (std::numeric_limits<std::uint64_t>::max)()) == 3U);
++    return {};
++}
++
++arpg::test::Failure resource_ratio_rejects_invalid_ranges() noexcept {
++    ARPG_REQUIRE(!arpg::abyss::map_resource_ratio(1, 0, 10, true).has_value());
++    ARPG_REQUIRE(!arpg::abyss::map_resource_ratio(1, 10, 0, true).has_value());
++    ARPG_REQUIRE(!arpg::abyss::map_resource_ratio(-1, 10, 10, false).has_value());
++    ARPG_REQUIRE(!arpg::abyss::map_resource_ratio(11, 10, 10, true).has_value());
++    return {};
++}
++
++arpg::test::Failure resource_ratio_rounds_and_clamps_exactly() noexcept {
++    ARPG_REQUIRE(arpg::abyss::map_resource_ratio(1, 2, 3, true).value() == 2);
++    ARPG_REQUIRE(arpg::abyss::map_resource_ratio(1, 3, 2, true).value() == 1);
++    ARPG_REQUIRE(arpg::abyss::map_resource_ratio(0, 100, 55, false).value() == 0);
++    ARPG_REQUIRE(arpg::abyss::map_resource_ratio(0, 100, 55, true).value() == 1);
++    ARPG_REQUIRE(arpg::abyss::map_resource_ratio(100, 100, 55, true).value() == 55);
++    return {};
++}
++
++arpg::test::Failure percent_damage_rejects_invalid_values() noexcept {
++    ARPG_REQUIRE(!arpg::abyss::percent_of_actual_max_hp(0, 1500U).has_value());
++    ARPG_REQUIRE(!arpg::abyss::percent_of_actual_max_hp(-1, 1500U).has_value());
++    ARPG_REQUIRE(!arpg::abyss::percent_of_actual_max_hp(100, 0U).has_value());
++    ARPG_REQUIRE(!arpg::abyss::percent_of_actual_max_hp(100, 10001U).has_value());
++    return {};
++}
++
++arpg::test::Failure percent_damage_uses_ceiling_and_minimum_one() noexcept {
++    ARPG_REQUIRE(arpg::abyss::percent_of_actual_max_hp(1, 800U).value() == 1);
++    ARPG_REQUIRE(arpg::abyss::percent_of_actual_max_hp(101, 1500U).value() == 16);
++    ARPG_REQUIRE(arpg::abyss::percent_of_actual_max_hp(100, 1000U).value() == 10);
++    ARPG_REQUIRE(arpg::abyss::percent_of_actual_max_hp(
++        (std::numeric_limits<int>::max)(), 10000U).value()
++        == (std::numeric_limits<int>::max)());
++    return {};
++}
++
++arpg::test::Failure combat_stat_config_catalog_matches_six_rules() noexcept {
++    const auto swift = arpg::abyss::combat_config_for(AbyssRuleId::swift_pursuit);
++    ARPG_REQUIRE(swift.rule == AbyssRuleId::swift_pursuit);
++    ARPG_REQUIRE(swift.danger == AbyssDanger::low);
++    ARPG_REQUIRE(swift.monster_move_bp == 11500U);
++    ARPG_REQUIRE(swift.monster_cooldown_bp == 8500U);
++
++    const auto bulwark = arpg::abyss::combat_config_for(AbyssRuleId::abyss_bulwark);
++    ARPG_REQUIRE(bulwark.danger == AbyssDanger::medium);
++    ARPG_REQUIRE(bulwark.monster_armor_bp == 13000U);
++    ARPG_REQUIRE(bulwark.monster_extra_shield_bp == 3000U);
++
++    const auto fury = arpg::abyss::combat_config_for(AbyssRuleId::abyss_fury);
++    ARPG_REQUIRE(fury.danger == AbyssDanger::high);
++    ARPG_REQUIRE(fury.monster_damage_bp == 14500U);
++    ARPG_REQUIRE(fury.monster_attack_speed_bp == 14500U);
++
++    const auto heavy = arpg::abyss::combat_config_for(AbyssRuleId::heavy_steps);
++    ARPG_REQUIRE(heavy.danger == AbyssDanger::low);
++    ARPG_REQUIRE(heavy.player_ground_move_bp == 8500U);
++
++    const auto exhausted = arpg::abyss::combat_config_for(
++        AbyssRuleId::exhausted_recovery);
++    ARPG_REQUIRE(exhausted.danger == AbyssDanger::medium);
++    ARPG_REQUIRE(exhausted.player_resource_restore_bp == 7000U);
++
++    const auto sacrifice = arpg::abyss::combat_config_for(AbyssRuleId::life_sacrifice);
++    ARPG_REQUIRE(sacrifice.danger == AbyssDanger::high);
++    ARPG_REQUIRE(sacrifice.player_max_health_bp == 5500U);
++
++    ARPG_REQUIRE(arpg::abyss::combat_config_for(AbyssRuleId::none).rule
++        == AbyssRuleId::none);
++    ARPG_REQUIRE(arpg::abyss::combat_config_for(
++        static_cast<AbyssRuleId>(99U)).rule == AbyssRuleId::none);
++    return {};
++}
++
++arpg::test::Failure thunderstorm_environment_is_fully_evaluated() noexcept {
++    using arpg::abyss::AbyssDamageType;
++    const auto config = arpg::abyss::combat_config_for(
++        AbyssRuleId::thunderstorm);
++    ARPG_REQUIRE(config.danger == AbyssDanger::low);
++    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::lightning);
++    ARPG_REQUIRE(config.environment.damage_bp == 1500U);
++    ARPG_REQUIRE(config.environment.cycle_ticks == 180U);
++    ARPG_REQUIRE(config.environment.warning_ticks == 45U);
++    ARPG_REQUIRE(config.environment.duration_ticks == 0U);
++    ARPG_REQUIRE(config.environment.damage_interval_ticks == 0U);
++    ARPG_REQUIRE(config.environment.expansion_interval_ticks == 0U);
++    ARPG_REQUIRE(config.environment.radius_count == 1U);
++    ARPG_REQUIRE(config.environment.radius_milliunits[0] == 800U);
++    return {};
++}
++
++arpg::test::Failure hunting_flames_environment_is_fully_evaluated() noexcept {
++    using arpg::abyss::AbyssDamageType;
++    const auto config = arpg::abyss::combat_config_for(
++        AbyssRuleId::hunting_flames);
++    ARPG_REQUIRE(config.danger == AbyssDanger::medium);
++    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::fire);
++    ARPG_REQUIRE(config.environment.damage_bp == 1000U);
++    ARPG_REQUIRE(config.environment.cycle_ticks == 240U);
++    ARPG_REQUIRE(config.environment.warning_ticks == 45U);
++    ARPG_REQUIRE(config.environment.duration_ticks == 180U);
++    ARPG_REQUIRE(config.environment.damage_interval_ticks == 60U);
++    ARPG_REQUIRE(config.environment.expansion_interval_ticks == 0U);
++    ARPG_REQUIRE(config.environment.radius_count == 1U);
++    ARPG_REQUIRE(config.environment.radius_milliunits[0] == 1000U);
++    return {};
++}
++
++arpg::test::Failure chaos_expansion_environment_is_fully_evaluated() noexcept {
++    using arpg::abyss::AbyssDamageType;
++    const auto config = arpg::abyss::combat_config_for(
++        AbyssRuleId::chaos_expansion);
++    ARPG_REQUIRE(config.danger == AbyssDanger::high);
++    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::chaos);
++    ARPG_REQUIRE(config.environment.damage_bp == 800U);
++    ARPG_REQUIRE(config.environment.cycle_ticks == 0U);
++    ARPG_REQUIRE(config.environment.warning_ticks == 0U);
++    ARPG_REQUIRE(config.environment.duration_ticks == 0U);
++    ARPG_REQUIRE(config.environment.damage_interval_ticks == 60U);
++    ARPG_REQUIRE(config.environment.expansion_interval_ticks == 180U);
++    ARPG_REQUIRE(config.environment.radius_count == 5U);
++    constexpr std::array<std::uint16_t, 5> expected{{
++        1000U, 2300U, 3600U, 4900U, 6200U,
++    }};
++    ARPG_REQUIRE(config.environment.radius_milliunits == expected);
++    return {};
++}
++
++arpg::test::Failure non_environment_rules_have_explicit_sentinel() noexcept {
++    using arpg::abyss::AbyssDamageType;
++    constexpr std::array<AbyssRuleId, 6> rules{{
++        AbyssRuleId::swift_pursuit,
++        AbyssRuleId::abyss_bulwark,
++        AbyssRuleId::abyss_fury,
++        AbyssRuleId::heavy_steps,
++        AbyssRuleId::exhausted_recovery,
++        AbyssRuleId::life_sacrifice,
++    }};
++    constexpr std::array<std::uint16_t, 5> no_radii{};
++    for (const AbyssRuleId rule : rules) {
++        const auto environment = arpg::abyss::combat_config_for(rule).environment;
++        ARPG_REQUIRE(environment.damage_type == AbyssDamageType::none);
++        ARPG_REQUIRE(environment.damage_bp == 0U);
++        ARPG_REQUIRE(environment.cycle_ticks == 0U);
++        ARPG_REQUIRE(environment.warning_ticks == 0U);
++        ARPG_REQUIRE(environment.duration_ticks == 0U);
++        ARPG_REQUIRE(environment.damage_interval_ticks == 0U);
++        ARPG_REQUIRE(environment.expansion_interval_ticks == 0U);
++        ARPG_REQUIRE(environment.radius_count == 0U);
++        ARPG_REQUIRE(environment.radius_milliunits == no_radii);
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"stable public values", &stable_public_values_and_defaults},
++    {"frozen one percent roll", &abyss_roll_uses_frozen_one_percent_domain},
++    {"depth zero rejected", &depth_zero_is_not_selectable},
++    {"weights depth 1", &weights_depth_1},
++    {"weights depth 9", &weights_depth_9},
++    {"weights depth 10", &weights_depth_10},
++    {"weights depth 19", &weights_depth_19},
++    {"weights depth 20", &weights_depth_20},
++    {"weights depth 39", &weights_depth_39},
++    {"weights depth 40", &weights_depth_40},
++    {"weights depth max", &weights_depth_max},
++    {"low rules reachable", &low_rules_are_reachable},
++    {"medium rules reachable", &medium_rules_are_reachable},
++    {"high rules reachable", &high_rules_are_reachable},
++    {"selection stable", &selection_is_stable_for_identical_inputs},
++    {"named domains independent", &named_domains_are_independent},
++    {"encounter budget", &encounter_budget_uses_ceiling_three_halves},
++    {"affix minimum", &affix_minimum_follows_depth_bands},
++    {"resource ratio invalid", &resource_ratio_rejects_invalid_ranges},
++    {"resource ratio exact", &resource_ratio_rounds_and_clamps_exactly},
++    {"percent damage invalid", &percent_damage_rejects_invalid_values},
++    {"percent damage exact", &percent_damage_uses_ceiling_and_minimum_one},
++    {"combat stat config catalog", &combat_stat_config_catalog_matches_six_rules},
++    {"thunderstorm environment", &thunderstorm_environment_is_fully_evaluated},
++    {"hunting flames environment", &hunting_flames_environment_is_fully_evaluated},
++    {"chaos expansion environment", &chaos_expansion_environment_is_fully_evaluated},
++    {"non environment sentinel", &non_environment_rules_have_explicit_sentinel},
++};
++
++}  // namespace
++
++arpg::test::TestSuite abyss_rules_suite() noexcept {
++    return arpg::test::make_suite("abyss_rules", kCases);
++}
+diff --git a/tests/abyss/abyss_test_main.cpp b/tests/abyss/abyss_test_main.cpp
+new file mode 100644
+index 0000000..b00d360
+--- /dev/null
++++ b/tests/abyss/abyss_test_main.cpp
+@@ -0,0 +1,12 @@
++#include "test_framework.hpp"
++
++arpg::test::TestSuite abyss_rules_suite() noexcept;
++arpg::test::TestSuite abyss_rewards_suite() noexcept;
++
++int main() {
++    const arpg::test::TestSuite suites[] = {
++        abyss_rules_suite(),
++        abyss_rewards_suite(),
++    };
++    return arpg::test::run_suites(suites, 32, "stage 10 task 1 abyss");
++}
