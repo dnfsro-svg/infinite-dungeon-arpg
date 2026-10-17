@@ -1,0 +1,1480 @@
+# Review package: b5b2457a0eec67a086a8f99072f3f7d6d735714f..4e6aaa23dd9b637c28e72d6162bb759c98a6894d
+
+## Commits
+4e6aaa2 fix: sync runtime assets on asset changes
+6b32ad4 test: cover corrupt published door frames
+b44cfd7 fix: rebuild transparent environment frames
+b02e50b feat: add keyed environment subject pipeline
+63084b5 docs: plan transparent environment frames
+f1f21ea docs: design transparent environment frames
+
+## Files changed
+ assets/stage12/chaos_environment.png               | Bin 762462 -> 741168 bytes
+ assets/stage12/chaos_environment_material.png      | Bin 622588 -> 605983 bytes
+ assets/stage12/element_doors.png                   | Bin 344648 -> 198859 bytes
+ assets/stage12/element_doors_material.png          | Bin 275461 -> 156887 bytes
+ assets/stage12/environment-props-build.json        |  28 +--
+ assets/stage12/lightning_environment.png           | Bin 937990 -> 850936 bytes
+ assets/stage12/lightning_environment_material.png  | Bin 803956 -> 721636 bytes
+ assets/stage12/water_environment.png               | Bin 841609 -> 820502 bytes
+ assets/stage12/water_environment_material.png      | Bin 717484 -> 700758 bytes
+ cmake/ArpgRuntimeAssets.cmake                      |  87 +++++++++
+ cmake/SyncRuntimeAssets.cmake                      |  71 ++++++++
+ .../2026-08-08-transparent-environment-frames.md   | 197 +++++++++++++++++++++
+ ...-08-08-transparent-environment-frames-design.md |  52 ++++++
+ src/app/CMakeLists.txt                             |  55 ++----
+ tests/platform/CMakeLists.txt                      |   9 +
+ .../environment_prop_asset_pipeline_tests.py       | 125 +++++++++----
+ tests/platform/runtime_asset_sync_self_test.cmake  |  99 +++++++++++
+ .../platform/stage14_audio_integration_guard.cmake |  39 ++--
+ .../platform/stage15_audio_integration_guard.cmake |  10 +-
+ tests/platform/ui_material_asset_pipeline_tests.py |   3 +-
+ tools/build_environment_props.py                   | 143 ++++++++-------
+ 21 files changed, 734 insertions(+), 184 deletions(-)
+
+## Diff
+diff --git a/assets/stage12/chaos_environment.png b/assets/stage12/chaos_environment.png
+index 261615c..26deb99 100644
+Binary files a/assets/stage12/chaos_environment.png and b/assets/stage12/chaos_environment.png differ
+diff --git a/assets/stage12/chaos_environment_material.png b/assets/stage12/chaos_environment_material.png
+index 10718cd..d03998f 100644
+Binary files a/assets/stage12/chaos_environment_material.png and b/assets/stage12/chaos_environment_material.png differ
+diff --git a/assets/stage12/element_doors.png b/assets/stage12/element_doors.png
+index cb23df7..2f73cb8 100644
+Binary files a/assets/stage12/element_doors.png and b/assets/stage12/element_doors.png differ
+diff --git a/assets/stage12/element_doors_material.png b/assets/stage12/element_doors_material.png
+index 6cdb9e7..f7abacb 100644
+Binary files a/assets/stage12/element_doors_material.png and b/assets/stage12/element_doors_material.png differ
+diff --git a/assets/stage12/environment-props-build.json b/assets/stage12/environment-props-build.json
+index 5eb2f9c..3afc352 100644
+--- a/assets/stage12/environment-props-build.json
++++ b/assets/stage12/environment-props-build.json
+@@ -1,19 +1,19 @@
+ {
+   "ecologies": {
+     "chaos": {
+       "objects": {
+         "hole": {
+           "alpha_bbox": [
+-            53,
+-            46,
+-            203,
++            10,
++            105,
++            246,
+             244
+           ],
+           "foot_anchor": [
+             128,
+             244
+           ],
+           "source_rect": [
+             0,
+             512,
+             256,
+@@ -91,27 +91,27 @@
+             256,
+             256
+           ]
+         }
+       }
+     },
+     "lightning": {
+       "objects": {
+         "hole": {
+           "alpha_bbox": [
+-            14,
+-            8,
+-            241,
++            10,
++            105,
++            246,
+             244
+           ],
+           "foot_anchor": [
+-            127,
++            128,
+             244
+           ],
+           "source_rect": [
+             0,
+             512,
+             256,
+             256
+           ]
+         },
+         "light": {
+@@ -185,27 +185,27 @@
+             256,
+             256
+           ]
+         }
+       }
+     },
+     "water": {
+       "objects": {
+         "hole": {
+           "alpha_bbox": [
+-            13,
+-            119,
++            10,
++            105,
+             246,
+             244
+           ],
+           "foot_anchor": [
+-            129,
++            128,
+             244
+           ],
+           "source_rect": [
+             0,
+             512,
+             256,
+             256
+           ]
+         },
+         "light": {
+@@ -277,14 +277,18 @@
+             512,
+             0,
+             256,
+             256
+           ]
+         }
+       }
+     }
+   },
+   "element_doors": {
+-    "rgba_sha256": "d280b4cd1f6dc621ed16ad395656e71b571e58e8a7cfd75f12eda73d3c84124a"
++    "rgba_sha256": "e44f109db018e4178e797ea2455149bde156083893a4e099cbe4ac07ea809b7d"
+   },
+-  "schema_version": 1
++  "schema_version": 2,
++  "sources": {
++    "abyss-hole-concept-v1.png": "724c76b60ba683982823d86996fd9bcd6eceb3321a55a52da1c85392f3d0bc37",
++    "door-concept-v1.png": "35ed6447c5de901d01dca83e78cb7cc36d86b1182d7ee8e4b1bc19f32b4dcc32"
++  }
+ }
+diff --git a/assets/stage12/lightning_environment.png b/assets/stage12/lightning_environment.png
+index d934ba4..dec3d64 100644
+Binary files a/assets/stage12/lightning_environment.png and b/assets/stage12/lightning_environment.png differ
+diff --git a/assets/stage12/lightning_environment_material.png b/assets/stage12/lightning_environment_material.png
+index 5b2b32e..1f5624a 100644
+Binary files a/assets/stage12/lightning_environment_material.png and b/assets/stage12/lightning_environment_material.png differ
+diff --git a/assets/stage12/water_environment.png b/assets/stage12/water_environment.png
+index a90899d..bc76129 100644
+Binary files a/assets/stage12/water_environment.png and b/assets/stage12/water_environment.png differ
+diff --git a/assets/stage12/water_environment_material.png b/assets/stage12/water_environment_material.png
+index b5383d0..111e6d6 100644
+Binary files a/assets/stage12/water_environment_material.png and b/assets/stage12/water_environment_material.png differ
+diff --git a/cmake/ArpgRuntimeAssets.cmake b/cmake/ArpgRuntimeAssets.cmake
+new file mode 100644
+index 0000000..51a9b7a
+--- /dev/null
++++ b/cmake/ArpgRuntimeAssets.cmake
+@@ -0,0 +1,87 @@
++include_guard(GLOBAL)
++
++function(arpg_add_runtime_asset_sync)
++    cmake_parse_arguments(
++        ARGS
++        ""
++        "TARGET;SOURCE_ROOT;DESTINATION_ROOT"
++        "DIRECTORIES"
++        ${ARGN})
++
++    foreach(required_argument IN ITEMS TARGET SOURCE_ROOT DESTINATION_ROOT)
++        if(NOT DEFINED ARGS_${required_argument}
++                OR ARGS_${required_argument} STREQUAL "")
++            message(FATAL_ERROR
++                "arpg_add_runtime_asset_sync requires ${required_argument}")
++        endif()
++    endforeach()
++    if(NOT TARGET "${ARGS_TARGET}")
++        message(FATAL_ERROR
++            "arpg_add_runtime_asset_sync target does not exist: ${ARGS_TARGET}")
++    endif()
++    if(NOT ARGS_DIRECTORIES)
++        message(FATAL_ERROR
++            "arpg_add_runtime_asset_sync requires at least one DIRECTORY")
++    endif()
++
++    get_filename_component(asset_source_root "${ARGS_SOURCE_ROOT}" ABSOLUTE)
++    set(asset_files)
++    set(manifest_content "")
++    foreach(asset_directory IN LISTS ARGS_DIRECTORIES)
++        if(IS_ABSOLUTE "${asset_directory}"
++                OR asset_directory MATCHES "(^|[/\\\\])\\.\\.([/\\\\]|$)")
++            message(FATAL_ERROR
++                "Runtime asset directory must stay below SOURCE_ROOT: ${asset_directory}")
++        endif()
++        file(TO_CMAKE_PATH "${asset_directory}" normalized_directory)
++        string(REGEX REPLACE "^\\./" "" normalized_directory
++            "${normalized_directory}")
++        if(normalized_directory STREQUAL "")
++            message(FATAL_ERROR "Runtime asset directory must not be empty")
++        endif()
++
++        set(source_directory "${asset_source_root}/${normalized_directory}")
++        if(NOT IS_DIRECTORY "${source_directory}")
++            message(FATAL_ERROR
++                "Runtime asset source directory is missing: ${source_directory}")
++        endif()
++        string(APPEND manifest_content "D|${normalized_directory}\n")
++
++        file(GLOB_RECURSE directory_files
++            CONFIGURE_DEPENDS
++            LIST_DIRECTORIES false
++            "${source_directory}/*")
++        list(APPEND asset_files ${directory_files})
++    endforeach()
++
++    list(REMOVE_DUPLICATES asset_files)
++    list(SORT asset_files)
++    foreach(asset_file IN LISTS asset_files)
++        file(RELATIVE_PATH relative_asset "${asset_source_root}" "${asset_file}")
++        file(TO_CMAKE_PATH "${relative_asset}" relative_asset)
++        string(APPEND manifest_content "F|${relative_asset}\n")
++    endforeach()
++
++    set(manifest
++        "${CMAKE_CURRENT_BINARY_DIR}/${ARGS_TARGET}-runtime-assets.manifest")
++    set(stamp
++        "${CMAKE_CURRENT_BINARY_DIR}/${ARGS_TARGET}-runtime-assets.stamp")
++    file(GENERATE OUTPUT "${manifest}" CONTENT "${manifest_content}")
++
++    set(sync_script "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SyncRuntimeAssets.cmake")
++    add_custom_command(
++        OUTPUT "${stamp}"
++        COMMAND "${CMAKE_COMMAND}"
++            "-DSOURCE_ROOT=${asset_source_root}"
++            "-DDESTINATION_ROOT=${ARGS_DESTINATION_ROOT}"
++            "-DMANIFEST=${manifest}"
++            "-DSTAMP=${stamp}"
++            -P "${sync_script}"
++        DEPENDS ${asset_files} "${manifest}" "${sync_script}"
++        COMMENT "Synchronizing runtime assets for ${ARGS_TARGET}"
++        VERBATIM)
++
++    set(sync_target "${ARGS_TARGET}_runtime_assets")
++    add_custom_target("${sync_target}" ALL DEPENDS "${stamp}")
++    add_dependencies("${ARGS_TARGET}" "${sync_target}")
++endfunction()
+diff --git a/cmake/SyncRuntimeAssets.cmake b/cmake/SyncRuntimeAssets.cmake
+new file mode 100644
+index 0000000..164c5dd
+--- /dev/null
++++ b/cmake/SyncRuntimeAssets.cmake
+@@ -0,0 +1,71 @@
++cmake_minimum_required(VERSION 3.25)
++
++foreach(required_variable IN ITEMS SOURCE_ROOT DESTINATION_ROOT MANIFEST STAMP)
++    if(NOT DEFINED ${required_variable} OR "${${required_variable}}" STREQUAL "")
++        message(FATAL_ERROR "${required_variable} is required")
++    endif()
++endforeach()
++if(NOT EXISTS "${MANIFEST}")
++    message(FATAL_ERROR "Runtime asset manifest is missing: ${MANIFEST}")
++endif()
++
++file(STRINGS "${MANIFEST}" manifest_lines ENCODING UTF-8)
++set(managed_directories)
++set(desired_assets)
++foreach(manifest_line IN LISTS manifest_lines)
++    if(manifest_line MATCHES "^D\\|(.+)$")
++        list(APPEND managed_directories "${CMAKE_MATCH_1}")
++    elseif(manifest_line MATCHES "^F\\|(.+)$")
++        list(APPEND desired_assets "${CMAKE_MATCH_1}")
++    elseif(NOT manifest_line STREQUAL "")
++        message(FATAL_ERROR "Malformed runtime asset manifest line: ${manifest_line}")
++    endif()
++endforeach()
++
++foreach(relative_path IN LISTS managed_directories desired_assets)
++    if(IS_ABSOLUTE "${relative_path}"
++            OR relative_path MATCHES "(^|/)\\.\\.(/|$)")
++        message(FATAL_ERROR
++            "Runtime asset path escapes the managed root: ${relative_path}")
++    endif()
++endforeach()
++
++file(MAKE_DIRECTORY "${DESTINATION_ROOT}")
++foreach(relative_asset IN LISTS desired_assets)
++    set(source "${SOURCE_ROOT}/${relative_asset}")
++    set(destination "${DESTINATION_ROOT}/${relative_asset}")
++    if(NOT EXISTS "${source}")
++        message(FATAL_ERROR "Manifest source asset is missing: ${source}")
++    endif()
++    get_filename_component(destination_directory "${destination}" DIRECTORY)
++    file(MAKE_DIRECTORY "${destination_directory}")
++    file(COPY_FILE "${source}" "${destination}"
++        ONLY_IF_DIFFERENT RESULT copy_result)
++    if(NOT copy_result EQUAL 0)
++        message(FATAL_ERROR
++            "Failed to copy runtime asset ${source}: ${copy_result}")
++    endif()
++endforeach()
++
++foreach(managed_directory IN LISTS managed_directories)
++    set(destination_directory "${DESTINATION_ROOT}/${managed_directory}")
++    if(NOT IS_DIRECTORY "${destination_directory}")
++        continue()
++    endif()
++    file(GLOB_RECURSE published_assets
++        LIST_DIRECTORIES false
++        "${destination_directory}/*")
++    foreach(published_asset IN LISTS published_assets)
++        file(RELATIVE_PATH relative_asset
++            "${DESTINATION_ROOT}" "${published_asset}")
++        file(TO_CMAKE_PATH "${relative_asset}" relative_asset)
++        list(FIND desired_assets "${relative_asset}" desired_index)
++        if(desired_index EQUAL -1)
++            file(REMOVE "${published_asset}")
++        endif()
++    endforeach()
++endforeach()
++
++get_filename_component(stamp_directory "${STAMP}" DIRECTORY)
++file(MAKE_DIRECTORY "${stamp_directory}")
++file(TOUCH "${STAMP}")
+diff --git a/docs/superpowers/plans/2026-08-08-transparent-environment-frames.md b/docs/superpowers/plans/2026-08-08-transparent-environment-frames.md
+new file mode 100644
+index 0000000..ae6b831
+--- /dev/null
++++ b/docs/superpowers/plans/2026-08-08-transparent-environment-frames.md
+@@ -0,0 +1,197 @@
++# Transparent Environment Frames Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
++
++**Goal:** 用现有高分辨率键色源确定性重建四元素门与水/雷/混沌洞口，消除方形墙地背板。
++
++**Architecture:** 只改 Stage 12 离线资产管线和输出 PNG/JSON；运行时 manifest、atlas 帧坐标、selector、renderer 和玩法保持不变。管线先从洋红/绿色键色源生成平滑 alpha，保留最大主体轮廓，再以固定色板生成元素变体；色图和 material map 复用同一 alpha。
++
++**Tech Stack:** Python 3，Pillow，`unittest`，CMake/MSVC Release，raylib 6.0 内部 F12 截图。
++
++## Global Constraints
++
++- 保持 C++17 与 raylib 6.0；本任务不改 C++ 运行时接口。
++- 保持 256×256 帧尺寸、`element_doors` 顺序、生态 `hole=(0,512)` 与现有 manifest ID。
++- 色图与 material map alpha 必须逐像素一致。
++- 不改 500 只怪物、25% 开门、碰撞、门位置、洞口交互或任何玩法规则。
++- 不重置 Git，不覆盖无关工作树改动；每次提交只包含本任务明列文件。
++- 只运行资产管线窄测，不跑全量 Dungeon/平台压力测试。
++- Windows 视觉结论只来自安装版内部 F12 图像；音频继续使用全 0 设置。
++
++---
++
++### Task 1: 键色主体提取与元素调色原语
++
++**Files:**
++- Modify: `tools/build_environment_props.py:13-177`
++- Test: `tests/platform/environment_prop_asset_pipeline_tests.py:32-70`
++- Test: `tests/platform/environment_prop_asset_pipeline_tests.py:62-110`
++
++**Interfaces:**
++- Consumes: `PIL.Image.Image`，键色源图左上角 RGB，元素名 `fire|water|lightning|chaos`。
++- Produces: `_keyed_subject(path: Path) -> Image.Image` 和 `_element_variant(subject: Image.Image, element: str) -> Image.Image`。
++
++- [ ] **Step 1: Write the failing primitive tests**
++
++  在测试文件动态加载 builder，对两张真实键色源断言角点 alpha 为 0、主体非空、bbox 占比非近乎实心矩形，并断言四个变体 alpha 完全一致且 RGB 互不相同：
++
++  ```python
++  door = module._keyed_subject(ROOT / "art_source/stage12/door-concept-v1.png")
++  hole = module._keyed_subject(ROOT / "art_source/stage12/abyss-hole-concept-v1.png")
++  for subject in (door, hole):
++      alpha = subject.getchannel("A")
++      self.assertEqual(alpha.getpixel((0, 0)), 0)
++      self.assertIsNotNone(alpha.getbbox())
++  variants = [module._element_variant(door, name)
++              for name in ("fire", "water", "lightning", "chaos")]
++  self.assertEqual(len({image.getchannel("A").tobytes() for image in variants}), 1)
++  self.assertEqual(len({image.convert("RGB").tobytes() for image in variants}), 4)
++  ```
++
++- [ ] **Step 2: Run the primitive test to verify RED**
++
++  Run: `python -m unittest tests.platform.environment_prop_asset_pipeline_tests.EnvironmentPropAssetPipelineTests.test_keyed_sources_produce_shared_isolated_element_variants -v`
++
++  Expected: `ERROR` because `_keyed_subject` / `_element_variant` do not exist.
++
++- [ ] **Step 3: Implement deterministic keyed extraction and tinting**
++
++  在 builder 中导入 `ImageOps`，加入固定色板：
++
++  ```python
++  ELEMENT_PALETTES = {
++      "fire": ((52, 14, 8), (255, 120, 36)),
++      "water": ((7, 28, 58), (58, 196, 255)),
++      "lightning": ((38, 32, 5), (255, 226, 72)),
++      "chaos": ((35, 8, 52), (208, 72, 255)),
++  }
++  ```
++
++  `_keyed_subject` 必须使用左上角键色，RGB 距离平方 `<=12**2` 设 alpha 0，`>=96**2` 保留原 alpha，中间做整数线性过渡；只保留阈值 8 以上的最大 8 连通主体，用 2px GaussianBlur 恢复抗锯齿，最后按 alpha bbox 加 8px 裁剪。`_element_variant` 用 `ImageOps.colorize(subject.convert("L"), dark, light)` 生成 RGB，再原样写回 subject alpha。
++
++- [ ] **Step 4: Run primitive GREEN**
++
++  Run: `python -m unittest tests.platform.environment_prop_asset_pipeline_tests.EnvironmentPropAssetPipelineTests.test_keyed_sources_produce_shared_isolated_element_variants -v`
++
++  Expected: `OK` with `Ran 1 test`.
++
++- [ ] **Step 5: Commit the primitive**
++
++  ```powershell
++  git add -- tools/build_environment_props.py tests/platform/environment_prop_asset_pipeline_tests.py
++  git commit -m "feat: add keyed environment subject pipeline"
++  ```
++
++### Task 2: 重建公共门与生态洞口输出
++
++**Files:**
++- Modify: `tools/build_environment_props.py:196-369`
++- Modify: `tests/platform/environment_prop_asset_pipeline_tests.py:72-248`
++- Modify: `assets/stage12/element_doors.png`
++- Modify: `assets/stage12/element_doors_material.png`
++- Modify: `assets/stage12/water_environment.png`
++- Modify: `assets/stage12/water_environment_material.png`
++- Modify: `assets/stage12/lightning_environment.png`
++- Modify: `assets/stage12/lightning_environment_material.png`
++- Modify: `assets/stage12/chaos_environment.png`
++- Modify: `assets/stage12/chaos_environment_material.png`
++- Modify: `assets/stage12/environment-props-build.json`
++
++**Interfaces:**
++- Consumes: Task 1 `_keyed_subject` / `_element_variant`，`_fit_to_cell`，`_material_map`，现有 `LAYOUT` / `ECOLOGIES`。
++- Produces: 现有尺寸的 `element_doors*.png`、三张生态 atlas/material map，以及 schema 2 的 `environment-props-build.json`。
++
++- [ ] **Step 1: Write failing public-output contracts**
++
++  新增 `assert_isolated_silhouette(cell, margin)`：获取 alpha bbox，计算 `opaque(alpha>8) / bbox_area`，要求 `<0.88`；要求 bbox 四边安全边距不小于 margin；统计 bbox 内 alpha>8 覆盖超过 95% 宽/高的行列，各自不得超过 bbox 高/宽的 25%。将它应用到四个门 cell 与水/雷/混沌 `hole=(0,512)` cell。同时把 manifest 契约改为：
++
++  ```python
++  self.assertEqual(manifest["schema_version"], 2)
++  self.assertEqual(manifest["sources"], {
++      "door-concept-v1.png": sha256(ROOT / "art_source/stage12/door-concept-v1.png"),
++      "abyss-hole-concept-v1.png": sha256(ROOT / "art_source/stage12/abyss-hole-concept-v1.png"),
++  })
++  ```
++
++  将旧的“从生态 atlas bootstrap 门”用例改为“修改生态门 cell 不改变键色源生成结果”；将“无效旧 report hash 必须失败”改为“旧 report 不能冻结已发布错误帧，builder 必须从键色源重生成”。
++
++- [ ] **Step 2: Run the asset suite to verify RED**
++
++  Run: `python -m unittest tests.platform.environment_prop_asset_pipeline_tests -v`
++
++  Expected: public door/hole isolation and schema 2/source provenance assertions fail on the current published assets; atomic-publication tests remain green.
++
++- [ ] **Step 3: Wire keyed variants into the existing atlas layout**
++
++  - Remove `_canonical_element_doors`; `build_element_doors` always reads `door-concept-v1.png`, generates four variants in order `fire, water, lightning, chaos`, and fits each with `_fit_to_cell(subject, 12, 244)`.
++  - In `build_ecology_environment`, build the keyed hole subject once from `abyss-hole-concept-v1.png`, use `_element_variant(..., ecology)` for `object_sources["hole"]`, and bypass `_retain_subject` only for `wall` and the already-isolated `hole`; fit the hole into the unchanged `(0,512,256,256)` cell.
++  - Keep all non-hole ecology props and the opaque authored wall path unchanged.
++  - Set report `schema_version` to `2` and add exact SHA-256 source provenance under `sources`; update `_validate_staged_outputs` to require schema 2 and exact source keys/hashes.
++  - Do not add runtime selectors, shader branches, new texture files, or manifest entries.
++
++- [ ] **Step 4: Regenerate assets atomically and run GREEN**
++
++  Run:
++
++  ```powershell
++  python tools/build_environment_props.py --root E:\game
++  python -m unittest tests.platform.environment_prop_asset_pipeline_tests -v
++  python tools/build_environment_props.py --root E:\game
++  python -m unittest tests.platform.environment_prop_asset_pipeline_tests.EnvironmentPropAssetPipelineTests.test_builder_repeat_generation_is_byte_for_byte_stable -v
++  ```
++
++  Expected: full asset suite `OK`; repeat generation leaves every PNG/JSON SHA-256 unchanged; forced staged-validation test proves destination files remain unchanged on failure.
++
++- [ ] **Step 5: Inspect generated frames before commit**
++
++  Open `assets/stage12/element_doors.png` and each ecology atlas. Confirm no visible rectangular wall/floor plate in the four door cells or three hole cells, all subjects fit within their cells, and no alpha halo is clipped. Run `git diff --check` on the Python/JSON files.
++
++- [ ] **Step 6: Commit only pipeline and generated outputs**
++
++  ```powershell
++  git add -- tools/build_environment_props.py tests/platform/environment_prop_asset_pipeline_tests.py assets/stage12/element_doors.png assets/stage12/element_doors_material.png assets/stage12/water_environment.png assets/stage12/water_environment_material.png assets/stage12/lightning_environment.png assets/stage12/lightning_environment_material.png assets/stage12/chaos_environment.png assets/stage12/chaos_environment_material.png assets/stage12/environment-props-build.json
++  git commit -m "fix: rebuild transparent environment frames"
++  ```
++
++### Task 3: Windows Release 视觉验收与问题记录
++
++**Files:**
++- Modify: `out/play-continuous-20260808-120721/issues.md`
++- Create: `out/cplay019-transparent-environment-<timestamp>/screenshots/*.png`
++
++**Interfaces:**
++- Consumes: Task 2 生成的现有 atlas 文件和已有静音设置。
++- Produces: 安装版哈希读回、门/洞口内部 F12 图片、CPLAY-019 闭环记录。
++
++- [ ] **Step 1: Build and deploy exactly once**
++
++  Run:
++
++  ```powershell
++  .\scripts\Build.ps1 -Preset windows-msvc-release
++  .\scripts\DeployLauncher.ps1 -GameBuildDirectory E:\game\out\build\windows-msvc-release\bin
++  ```
++
++  Expected: both commands exit 0; build/install `arpg_game.exe` SHA-256 values are identical.
++
++- [ ] **Step 2: Capture the affected visuals with muted audio**
++
++  Launch the installed game with an isolated copied save, `--settings-dir E:\game\out\play-cycle5-20260808-171507\settings`, and a new screenshot directory. Use the PID-targeted keyboard driver only to resume/move/F12 as required. Capture at least one lightning door/hole and one chaos door/hole frame; do not use external CopyFromScreen as visual evidence.
++
++- [ ] **Step 3: Review against explicit acceptance criteria**
++
++  PASS only if the subject silhouettes have transparent surroundings, no square floor/wall plate, no clipped glow, no atlas bleed, and unchanged world scale/position. If any criterion fails, stop before logging completion and return to Task 2 with the screenshot as a new RED fixture.
++
++- [ ] **Step 4: Close the game and append CPLAY-019**
++
++  Gracefully close the tested game process, confirm no `arpg_game`, compiler, CMake, Ninja, or CTest process remains, and append root cause, exact asset/test/build results, SHA-256, and screenshot paths to `out/play-continuous-20260808-120721/issues.md`.
++
++- [ ] **Step 5: Commit the issue-log update only if tracked**
++
++  ```powershell
++  git status --short -- out/play-continuous-20260808-120721/issues.md
++  git add -- out/play-continuous-20260808-120721/issues.md
++  git commit -m "docs: record transparent environment validation"
++  ```
++
++  If the log is intentionally ignored/untracked, retain it locally and do not force-add it.
+diff --git a/docs/superpowers/specs/2026-08-08-transparent-environment-frames-design.md b/docs/superpowers/specs/2026-08-08-transparent-environment-frames-design.md
+new file mode 100644
+index 0000000..52ecc09
+--- /dev/null
++++ b/docs/superpowers/specs/2026-08-08-transparent-environment-frames-design.md
+@@ -0,0 +1,52 @@
++# CPLAY-019 透明环境门与洞口材质设计
++
++## 目标
++
++消除元素门和深渊洞口周围的方形墙面/地板背景，保留现有元素语义、世界尺寸、碰撞、门位置、atlas ID、帧坐标和渲染接口。
++
++## 已确认根因
++
++- 渲染器正常绘制 manifest 的完整帧；shader 正常相乘色图和 material map 的 alpha。
++- 现有水/雷/混沌门与多个生态洞口本身就包含近乎不透明的房间地面/墙面。
++- 现有构建脚本只删除接近边缘中位色的像素；渐变石墙和地板与主体连通，因此会被保留为大矩形。
++
++## 方案对比
++
++### A. 从现有高分辨率键色源确定性重建（采用）
++
++- 门使用 `art_source/stage12/door-concept-v1.png`。
++- 洞口使用 `art_source/stage12/abyss-hole-concept-v1.png`。
++- 先对鲜色键色背景生成透明 alpha，再用确定性色相/明度参数生成火、水、雷、混沌变体。
++- 色图与 material map 共用完全相同的 alpha mask。
++- 保持现有 256×256 帧尺寸、atlas 顺序与 manifest，运行时无新分支。
++
++### B. 继续清理现有合成帧（不采用）
++
++需要为每张地面和墙面反复调阈值，容易留下暗边、光晕矩形或误删主体，四种元素也难以保持一致轮廓。
++
++### C. 运行时 shader 掩码（不采用）
++
++污染背景和主体都是不透明像素，shader 没有可靠的语义边界；会增加每帧复杂度且仍无法保证视觉结果。
++
++## 数据流与范围
++
++1. `tools/build_environment_props.py` 读取两张现有键色源。
++2. 生成单一透明轮廓，完成四元素调色。
++3. 组装回现有 `element_doors` 及各生态洞口帧位，同步 material map alpha。
++4. 更新构建报告 schema/来源标识，禁止旧错误哈希直接复用。
++5. 运行时 selector、renderer、碰撞和玩法代码不改。
++
++本子卡只修复方形背板的门与洞口。混沌普通环境小物件的语义映射问题单独记录，不与本次透明度修复捆绑。
++
++## 验收
++
++- 每帧四周有安全透明边距。
++- alpha bbox 内不允许近乎全宽/全高的连续不透明横行或纵列，不允许近乎实心的大矩形。
++- 色图与 material map alpha 逐像素一致。
++- 四元素门与相关洞口在 1280×720 安装版画面中无方形墙地背板、无贴图越界，主体轮廓清楚。
++
++## 验证边界
++
++- 先用 Python 资产管线单测观察 RED，再实施并运行同一窄测 GREEN。
++- manifest 和 C++ selector 不变时，不跑全量平台/地下城测试。
++- 最后只构建一次 Release，部署后用内部 F12 截图做 Windows 视觉验收，验收后立即关闭游戏。
+diff --git a/src/app/CMakeLists.txt b/src/app/CMakeLists.txt
+index 9864260..7ffafdc 100644
+--- a/src/app/CMakeLists.txt
++++ b/src/app/CMakeLists.txt
+@@ -2,53 +2,22 @@ add_executable(arpg_game main.cpp)
+ 
+ if(WIN32)
+     target_sources(arpg_game PRIVATE arpg_game.manifest)
+ endif()
+ 
+ target_compile_features(arpg_game PRIVATE cxx_std_17)
+ target_link_libraries(arpg_game PRIVATE arpg_raylib)
+ 
+ arpg_enable_project_warnings(arpg_game)
+ 
+-add_custom_command(TARGET arpg_game POST_BUILD
+-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+-        "${PROJECT_SOURCE_DIR}/assets/fonts"
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/fonts"
+-    COMMENT "Copying bundled Noto Sans SC font and OFL license"
+-    VERBATIM)
+-
+-add_custom_command(TARGET arpg_game POST_BUILD
+-    COMMAND "${CMAKE_COMMAND}" -E make_directory
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/stage12"
+-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+-        "${PROJECT_SOURCE_DIR}/assets/stage12"
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/stage12"
+-    COMMENT "Copying Stage 12 material-pack assets"
+-    VERBATIM)
+-
+-add_custom_command(TARGET arpg_game POST_BUILD
+-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+-        "${PROJECT_SOURCE_DIR}/assets/player"
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/player"
+-    COMMENT "Copying player base-animation material atlases"
+-    VERBATIM)
+-
+-add_custom_command(TARGET arpg_game POST_BUILD
+-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+-        "${PROJECT_SOURCE_DIR}/assets/skills"
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/skills"
+-    COMMENT "Copying active-skill frame atlases"
+-    VERBATIM)
+-
+-add_custom_command(TARGET arpg_game POST_BUILD
+-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+-        "${PROJECT_SOURCE_DIR}/assets/stage14/audio"
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/stage14/audio"
+-    COMMENT "Copying Stage 14 combat audio assets"
+-    VERBATIM)
+-
+-add_custom_command(TARGET arpg_game POST_BUILD
+-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+-        "${PROJECT_SOURCE_DIR}/assets/stage15/audio"
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/stage15/audio"
+-    COMMENT "Copying Stage 15 music, ambience, and UI audio assets"
+-    VERBATIM)
++include("${PROJECT_SOURCE_DIR}/cmake/ArpgRuntimeAssets.cmake")
++arpg_add_runtime_asset_sync(
++    TARGET arpg_game
++    SOURCE_ROOT "${PROJECT_SOURCE_DIR}/assets"
++    DESTINATION_ROOT "$<TARGET_FILE_DIR:arpg_game>/assets"
++    DIRECTORIES
++        fonts
++        player
++        skills
++        stage12
++        stage14/audio
++        stage15/audio)
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index c689831..b00afe0 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,10 +1,19 @@
++add_test(NAME app.runtime_asset_sync
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/runtime-asset-sync-self-test"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime_asset_sync_self_test.cmake")
++set_tests_properties(app.runtime_asset_sync PROPERTIES
++    LABELS "headless;platform;assets;app"
++    TIMEOUT 60)
++
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         host_input_tests.cpp
+         host_validation_exit_tests.cpp
+         active_skill_input_tests.cpp
+         raylib_input_tests.cpp
+         active_skill_view_tests.cpp
+         active_skill_asset_tests.cpp
+diff --git a/tests/platform/environment_prop_asset_pipeline_tests.py b/tests/platform/environment_prop_asset_pipeline_tests.py
+index f6035fd..9254490 100644
+--- a/tests/platform/environment_prop_asset_pipeline_tests.py
++++ b/tests/platform/environment_prop_asset_pipeline_tests.py
+@@ -1,15 +1,16 @@
+ """Contract tests for isolated Stage 12 ecology props and public doors."""
+ 
+ from __future__ import annotations
+ 
+ import hashlib
++import importlib.util
+ import json
+ import os
+ import shutil
+ import subprocess
+ import sys
+ import tempfile
+ import unittest
+ from collections import deque
+ from pathlib import Path
+ 
+@@ -53,121 +54,179 @@ def alpha_components(image: Image.Image, threshold: int = 8) -> list[int]:
+                 neighbor = (x + dx, y + dy)
+                 if neighbor in remaining:
+                     remaining.remove(neighbor)
+                     queue.append(neighbor)
+                     size += 1
+         sizes.append(size)
+     return sorted(sizes, reverse=True)
+ 
+ 
+ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
++    def assert_isolated_silhouette(self, cell: Image.Image, margin: int) -> None:
++        alpha = cell.getchannel("A")
++        bbox = alpha.getbbox()
++        self.assertIsNotNone(bbox, "isolated cell is empty")
++        assert bbox is not None
++        left, top, right, bottom = bbox
++        width = right - left
++        height = bottom - top
++        self.assertGreaterEqual(min(left, top, cell.width - right, cell.height - bottom), margin)
++        opaque = sum(value > 8 for value in alpha.get_flattened_data())
++        self.assertLess(opaque / (width * height), 0.88)
++        rows = sum(sum(alpha.getpixel((x, y)) > 8 for x in range(left, right)) * 100 > width * 95
++                   for y in range(top, bottom))
++        columns = sum(sum(alpha.getpixel((x, y)) > 8 for y in range(top, bottom)) * 100 > height * 95
++                      for x in range(left, right))
++        self.assertLessEqual(rows * 100, height * 25)
++        self.assertLessEqual(columns * 100, width * 25)
++
++    def test_keyed_sources_produce_shared_isolated_element_variants(self) -> None:
++        spec = importlib.util.spec_from_file_location("environment_prop_builder", BUILDER)
++        assert spec is not None
++        assert spec.loader is not None
++        module = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(module)
++        door = module._keyed_subject(ROOT / "art_source/stage12/door-concept-v1.png")
++        hole = module._keyed_subject(ROOT / "art_source/stage12/abyss-hole-concept-v1.png")
++        for subject in (door, hole):
++            alpha = subject.getchannel("A")
++            self.assertEqual(alpha.getpixel((0, 0)), 0)
++            bbox = alpha.getbbox()
++            self.assertIsNotNone(bbox)
++            assert bbox is not None
++            self.assertLess(sum(value > 8 for value in alpha.get_flattened_data()) * 100,
++                            (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) * 95)
++        variants = [module._element_variant(door, name)
++                    for name in ("fire", "water", "lightning", "chaos")]
++        self.assertEqual(len({image.getchannel("A").tobytes() for image in variants}), 1)
++        self.assertEqual(len({image.convert("RGB").tobytes() for image in variants}), 4)
++
+     def test_chaos_wall_cell_preserves_complete_authored_tile_coverage(self) -> None:
+         color_path = ROOT / "assets/stage12/chaos_environment.png"
+         with Image.open(color_path).convert("RGBA") as atlas:
+             bbox = atlas.crop((512, 0, 768, 256)).getchannel("A").getbbox()
+         self.assertIsNotNone(bbox)
+         assert bbox is not None
+         self.assertGreaterEqual(bbox[2] - bbox[0], 224)
+         self.assertGreaterEqual(bbox[3] - bbox[1], 224)
+ 
+-    def test_bootstrap_doors_read_old_ecology_atlas_cells(self) -> None:
++    def test_ecology_door_cells_do_not_change_keyed_source_output(self) -> None:
+         with tempfile.TemporaryDirectory() as temporary:
+             root = Path(temporary)
+             assets = root / "assets" / "stage12"
+             sources = root / "art_source" / "stage12"
+             assets.mkdir(parents=True)
+             sources.mkdir(parents=True)
+             colors = {
+                 "fire": (201, 31, 29, 255),
+                 "water": (23, 151, 213, 255),
+                 "lightning": (240, 205, 31, 255),
+                 "chaos": (160, 44, 196, 255),
+             }
+             for ecology, color in colors.items():
+                 size = (1024, 1024) if ecology == "fire" else (768, 768)
+                 atlas = Image.new("RGBA", size)
+                 rect = (768, 0, 1024, 256) if ecology == "fire" else (512, 0, 768, 256)
+                 atlas.paste(color, rect)
+                 atlas.save(assets / f"{ecology}_environment.png")
+-                # Old code re-crops these concept files instead of the atlas.
+-                Image.new("RGBA", (1254, 1254), (255, 0, 255, 255)).save(
+-                    sources / f"{ecology}-environment-concept-v1.png")
++            shutil.copy2(ROOT / "art_source/stage12/door-concept-v1.png",
++                         sources / "door-concept-v1.png")
+             source = ROOT / "tools" / "build_environment_props.py"
+-            result = subprocess.run(
+-                [sys.executable, "-c", (
++            command = [sys.executable, "-c", (
+                     "import importlib.util, pathlib; "
+                     f"spec=importlib.util.spec_from_file_location('builder', r'{source}'); "
+                     "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                     f"image, _ = module.build_element_doors(pathlib.Path(r'{root}')); "
+-                    f"image.save(pathlib.Path(r'{root}') / 'doors.png')")],
+-                text=True, capture_output=True)
++                    f"image.save(pathlib.Path(r'{root}') / 'doors.png')")]
++            result = subprocess.run(command, text=True, capture_output=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            first = sha256(root / "doors.png")
++            for ecology, color in colors.items():
++                path = assets / f"{ecology}_environment.png"
++                with Image.open(path).convert("RGBA") as atlas:
++                    rect = (768, 0, 1024, 256) if ecology == "fire" else (512, 0, 768, 256)
++                    atlas.paste(tuple(reversed(color[:3])) + (255,), rect)
++                    atlas.save(path)
++            result = subprocess.run(command, text=True, capture_output=True)
+             self.assertEqual(result.returncode, 0, result.stderr)
+-            with Image.open(root / "doors.png").convert("RGBA") as doors:
+-                for index, ecology in enumerate(("water", "lightning", "chaos"), 1):
+-                    cell = doors.crop((index * 256, 0, (index + 1) * 256, 256))
+-                    pixels = [pixel for pixel in cell.get_flattened_data() if pixel[3] > 128]
+-                    self.assertTrue(pixels)
+-                    self.assertEqual(max(set(pixels), key=pixels.count), colors[ecology])
++            self.assertEqual(sha256(root / "doors.png"), first)
+ 
+     def test_forced_staged_validation_failure_leaves_destinations_unchanged(self) -> None:
+         outputs = [
+             ROOT / "assets/stage12/element_doors.png",
+             ROOT / "assets/stage12/element_doors_material.png",
+             REPORT,
+         ]
+         for ecology in ECOLOGIES:
+             outputs.extend((ROOT / f"assets/stage12/{ecology}_environment.png",
+                             ROOT / f"assets/stage12/{ecology}_environment_material.png"))
+         before = {path: sha256(path) for path in outputs}
+         environment = os.environ | {"ARPG_ENVIRONMENT_PROPS_FAIL_VALIDATION": "1"}
+         result = subprocess.run([sys.executable, str(BUILDER), "--root", str(ROOT)],
+                                 cwd=ROOT, text=True, capture_output=True, env=environment)
+         self.assertNotEqual(result.returncode, 0)
+         self.assertIn("forced staged validation failure", result.stderr)
+         self.assertEqual({path: sha256(path) for path in outputs}, before)
+ 
+-    def test_invalid_published_door_hash_fails_closed_without_reusing_wall_cells(self) -> None:
++    def test_old_report_cannot_freeze_published_incorrect_frames(self) -> None:
+         with tempfile.TemporaryDirectory() as temporary:
+             root = Path(temporary)
+             assets = root / "assets" / "stage12"
+             assets.mkdir(parents=True)
+             outputs = [assets / "element_doors.png", assets / "element_doors_material.png",
+                        assets / "environment-props-build.json"]
+             for ecology in ECOLOGIES:
+                 outputs.extend((assets / f"{ecology}_environment.png",
+                                 assets / f"{ecology}_environment_material.png"))
+             for output in outputs:
+                 shutil.copy2(ROOT / "assets/stage12" / output.name, output)
+-            shutil.copy2(ROOT / "assets/stage12/fire_environment.png",
+-                         assets / "fire_environment.png")
+             source_root = ROOT / "art_source" / "stage12"
++            target = root / "art_source" / "stage12"
+             for ecology in ECOLOGIES:
+-                target = root / "art_source" / "stage12"
+                 (target / "backgrounds" / ecology).mkdir(parents=True, exist_ok=True)
+                 shutil.copy2(source_root / f"{ecology}-environment-concept-v1.png",
+                              target / f"{ecology}-environment-concept-v1.png")
+                 shutil.copy2(source_root / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png",
+                              target / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png")
+-                with Image.open(assets / f"{ecology}_environment.png").convert("RGBA") as image:
+-                    image.paste((17, 19, 23, 255), (512, 0, 768, 256))
+-                    image.save(assets / f"{ecology}_environment.png")
++            shutil.copy2(source_root / "door-concept-v1.png", target / "door-concept-v1.png")
++            shutil.copy2(source_root / "abyss-hole-concept-v1.png", target / "abyss-hole-concept-v1.png")
++            color_path = assets / "element_doors.png"
++            material_path = assets / "element_doors_material.png"
++            expected_color_bytes = color_path.read_bytes()
++            expected_color_hash = sha256(color_path)
++            wrong_color = Image.new("RGBA", (1024, 256), (1, 2, 3, 255))
++            wrong_material = Image.new("RGBA", (1024, 256), (4, 5, 6, 255))
++            wrong_color.save(color_path)
++            wrong_material.save(material_path)
+             report_path = assets / "environment-props-build.json"
+             report = json.loads(report_path.read_text(encoding="utf-8"))
+-            report["element_doors"]["rgba_sha256"] = "0" * 64
++            report["element_doors"]["rgba_sha256"] = hashlib.sha256(
++                wrong_color.tobytes()).hexdigest()
+             report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
+                                    encoding="utf-8")
+-            before = {path: sha256(path) for path in outputs}
+             result = subprocess.run([sys.executable, str(BUILDER), "--root", str(root)],
+                                     cwd=root, text=True, capture_output=True)
+-            self.assertNotEqual(result.returncode, 0)
+-            self.assertIn("published element doors validation failed", result.stderr)
+-            self.assertEqual({path: sha256(path) for path in outputs}, before)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(color_path.read_bytes(), expected_color_bytes)
++            self.assertEqual(sha256(color_path), expected_color_hash)
++            with Image.open(color_path).convert("RGBA") as color, \
++                    Image.open(material_path).convert("RGBA") as material:
++                self.assertEqual(color.getpixel((0, 0)), (0, 0, 0, 0))
++                self.assertNotEqual(color.getpixel((0, 0)), (1, 2, 3, 255))
++                self.assertEqual(color.getchannel("A").tobytes(),
++                                 material.getchannel("A").tobytes())
++            rebuilt = json.loads(report_path.read_text(encoding="utf-8"))
++            self.assertEqual(rebuilt["schema_version"], 2)
++            self.assertEqual(rebuilt["sources"], {
++                "door-concept-v1.png": sha256(target / "door-concept-v1.png"),
++                "abyss-hole-concept-v1.png": sha256(target / "abyss-hole-concept-v1.png"),
++            })
+ 
+     def test_builder_repeat_generation_is_byte_for_byte_stable(self) -> None:
+         self.assertTrue(BUILDER.is_file(), "shared environment prop builder is missing")
+         outputs = [
+             ROOT / "assets/stage12/element_doors.png",
+             ROOT / "assets/stage12/element_doors_material.png",
+             REPORT,
+         ]
+         for ecology in ECOLOGIES:
+             outputs.extend((
+@@ -193,31 +252,31 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
+                 Image.open(material_path).convert("RGBA") as material:
+             self.assertEqual(color.size, material.size)
+             self.assertEqual(color.size, (1024, 256))
+             self.assertEqual(color.getchannel("A").tobytes(),
+                              material.getchannel("A").tobytes())
+             door_cells = [
+                 color.crop((cell * 256, 0, (cell + 1) * 256, 256))
+                 for cell in range(4)
+             ]
+             for tile in door_cells:
+-                bbox = tile.getchannel("A").getbbox()
+-                self.assertIsNotNone(bbox)
+-                assert bbox is not None
+-                self.assertGreaterEqual(
+-                    min(bbox[0], bbox[1], 256 - bbox[2], 256 - bbox[3]), 12)
++                self.assert_isolated_silhouette(tile, 12)
+             self.assertEqual(len({cell.tobytes() for cell in door_cells}), 4)
+ 
+     def test_ecology_prop_manifest_matches_isolated_outputs(self) -> None:
+         self.assertTrue(REPORT.is_file(), REPORT)
+         manifest = json.loads(REPORT.read_text(encoding="utf-8"))
+-        self.assertEqual(manifest["schema_version"], 1)
++        self.assertEqual(manifest["schema_version"], 2)
++        self.assertEqual(manifest["sources"], {
++            "door-concept-v1.png": sha256(ROOT / "art_source/stage12/door-concept-v1.png"),
++            "abyss-hole-concept-v1.png": sha256(ROOT / "art_source/stage12/abyss-hole-concept-v1.png"),
++        })
+         self.assertEqual(set(manifest["ecologies"]), set(ECOLOGIES))
+         for ecology in ECOLOGIES:
+             color_path = ROOT / f"assets/stage12/{ecology}_environment.png"
+             material_path = ROOT / f"assets/stage12/{ecology}_environment_material.png"
+             with self.subTest(ecology=ecology), \
+                     Image.open(color_path).convert("RGBA") as color, \
+                     Image.open(material_path).convert("RGBA") as material:
+                 self.assertEqual(color.size, material.size)
+                 self.assertEqual(color.size, (768, 768))
+                 self.assertEqual(color.getchannel("A").tobytes(),
+@@ -229,20 +288,22 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
+                     self.assertEqual(record["source_rect"], [x, y, 256, 256])
+                     cell = color.crop((x, y, x + 256, y + 256))
+                     material_cell = material.crop((x, y, x + 256, y + 256))
+                     bbox = cell.getchannel("A").getbbox()
+                     self.assertIsNotNone(bbox, f"{ecology}/{name} is empty")
+                     assert bbox is not None
+                     self.assertGreaterEqual(
+                         min(bbox[0], bbox[1], 256 - bbox[2], 256 - bbox[3]), 8)
+                     self.assertEqual(cell.getchannel("A").tobytes(),
+                                      material_cell.getchannel("A").tobytes())
++                    if name == "hole":
++                        self.assert_isolated_silhouette(cell, 8)
+                     components = alpha_components(cell)
+                     self.assertTrue(components)
+                     if len(components) > 1:
+                         self.assertLessEqual(components[1] * 100,
+                                              components[0] * 2)
+                     self.assertGreaterEqual(components[0] * 100,
+                                             sum(components) * 95)
+                     self.assertEqual(record["alpha_bbox"], list(bbox))
+                     expected_anchor = [(bbox[0] + bbox[2]) // 2, bbox[3]]
+                     self.assertEqual(record["foot_anchor"], expected_anchor)
+diff --git a/tests/platform/runtime_asset_sync_self_test.cmake b/tests/platform/runtime_asset_sync_self_test.cmake
+new file mode 100644
+index 0000000..9ca4617
+--- /dev/null
++++ b/tests/platform/runtime_asset_sync_self_test.cmake
+@@ -0,0 +1,99 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
++    message(FATAL_ERROR "SOURCE_ROOT is required")
++endif()
++if(NOT DEFINED TEST_ROOT OR TEST_ROOT STREQUAL "")
++    set(TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/runtime-asset-sync-self-test")
++endif()
++
++function(run_checked label)
++    execute_process(
++        COMMAND ${ARGN}
++        RESULT_VARIABLE result
++        OUTPUT_VARIABLE output
++        ERROR_VARIABLE error)
++    if(NOT result EQUAL 0)
++        message(FATAL_ERROR
++            "${label} failed (${result})\nstdout:\n${output}\nstderr:\n${error}")
++    endif()
++    set(RUN_OUTPUT "${output}${error}" PARENT_SCOPE)
++endfunction()
++
++function(require_file_content path expected)
++    if(NOT EXISTS "${path}")
++        message(FATAL_ERROR "Expected copied asset is missing: ${path}")
++    endif()
++    file(READ "${path}" actual)
++    if(NOT actual STREQUAL expected)
++        message(FATAL_ERROR
++            "Unexpected asset content at ${path}: '${actual}', expected '${expected}'")
++    endif()
++endfunction()
++
++file(REMOVE_RECURSE "${TEST_ROOT}")
++file(MAKE_DIRECTORY
++    "${TEST_ROOT}/fixture/assets/fonts"
++    "${TEST_ROOT}/fixture/assets/stage12")
++file(WRITE "${TEST_ROOT}/fixture/assets/fonts/font.txt" "font-v1")
++file(WRITE "${TEST_ROOT}/fixture/assets/stage12/changed.txt" "asset-v1")
++
++file(TO_CMAKE_PATH "${SOURCE_ROOT}/cmake/ArpgRuntimeAssets.cmake" module_path)
++file(WRITE "${TEST_ROOT}/fixture/CMakeLists.txt" [=[
++cmake_minimum_required(VERSION 3.25)
++project(runtime_asset_sync_fixture NONE)
++include("@MODULE_PATH@")
++add_custom_target(fake_game ALL)
++arpg_add_runtime_asset_sync(
++    TARGET fake_game
++    SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/assets"
++    DESTINATION_ROOT "${CMAKE_CURRENT_BINARY_DIR}/runtime/assets"
++    DIRECTORIES fonts stage12)
++]=])
++file(READ "${TEST_ROOT}/fixture/CMakeLists.txt" fixture_cmake)
++string(REPLACE "@MODULE_PATH@" "${module_path}" fixture_cmake "${fixture_cmake}")
++file(WRITE "${TEST_ROOT}/fixture/CMakeLists.txt" "${fixture_cmake}")
++
++set(fixture_root "${TEST_ROOT}/fixture")
++set(build_root "${TEST_ROOT}/build")
++set(destination_root "${build_root}/runtime/assets")
++set(stamp "${build_root}/fake_game-runtime-assets.stamp")
++
++run_checked("configure fixture" "${CMAKE_COMMAND}"
++    -S "${fixture_root}" -B "${build_root}" -G Ninja)
++run_checked("initial asset build" "${CMAKE_COMMAND}" --build "${build_root}")
++require_file_content("${destination_root}/fonts/font.txt" "font-v1")
++require_file_content("${destination_root}/stage12/changed.txt" "asset-v1")
++if(NOT EXISTS "${stamp}")
++    message(FATAL_ERROR "Runtime asset stamp is missing after initial build")
++endif()
++
++file(TIMESTAMP "${stamp}" unchanged_stamp_before "%s" UTC)
++execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
++run_checked("no-change reconfigure" "${CMAKE_COMMAND}"
++    -S "${fixture_root}" -B "${build_root}" -G Ninja)
++run_checked("no-change asset build" "${CMAKE_COMMAND}" --build "${build_root}")
++file(TIMESTAMP "${stamp}" unchanged_stamp_after "%s" UTC)
++if(NOT unchanged_stamp_before STREQUAL unchanged_stamp_after)
++    message(FATAL_ERROR "No-change build reran runtime asset synchronization")
++endif()
++
++execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
++file(WRITE "${fixture_root}/assets/stage12/changed.txt" "asset-v2")
++run_checked("modified asset build" "${CMAKE_COMMAND}" --build "${build_root}")
++require_file_content("${destination_root}/stage12/changed.txt" "asset-v2")
++
++execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
++file(WRITE "${fixture_root}/assets/stage12/added.txt" "asset-added")
++run_checked("added asset build" "${CMAKE_COMMAND}" --build "${build_root}")
++require_file_content("${destination_root}/stage12/added.txt" "asset-added")
++
++execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
++file(REMOVE "${fixture_root}/assets/stage12/changed.txt")
++run_checked("deleted asset build" "${CMAKE_COMMAND}" --build "${build_root}")
++if(EXISTS "${destination_root}/stage12/changed.txt")
++    message(FATAL_ERROR "Deleted source asset remained in runtime output")
++endif()
++require_file_content("${destination_root}/stage12/added.txt" "asset-added")
++
++message(STATUS "Runtime asset sync self-test passed")
+diff --git a/tests/platform/stage14_audio_integration_guard.cmake b/tests/platform/stage14_audio_integration_guard.cmake
+index 39e17ab..20e42ef 100644
+--- a/tests/platform/stage14_audio_integration_guard.cmake
++++ b/tests/platform/stage14_audio_integration_guard.cmake
+@@ -132,41 +132,26 @@ endforeach()
+ file(READ "${_stage14_combat_audio}" _stage14_combat_audio_text)
+ if(_stage14_combat_audio_text MATCHES
+         "(^|[^A-Za-z0-9_])Load(Wave|Sound)[A-Za-z0-9_]*[ \\t\\r\\n]*\\(")
+     message(FATAL_ERROR
+         "Stage14 combat_audio.cpp must not directly load audio on its event path")
+ endif()
+ 
+ file(READ "${_stage14_app_cmake}" _stage14_app_cmake_text)
+ string(REGEX REPLACE "#[^\\r\\n]*" "" _stage14_app_cmake_without_comments
+     "${_stage14_app_cmake_text}")
+-string(REPLACE "add_custom_command(TARGET arpg_game POST_BUILD" ";"
+-    _stage14_post_build_sections "${_stage14_app_cmake_without_comments}")
+-set(_stage14_copy_rule_found FALSE)
+-foreach(_stage14_post_build_section IN LISTS _stage14_post_build_sections)
+-    string(FIND "${_stage14_post_build_section}" "VERBATIM)"
+-        _stage14_post_build_end)
+-    if(_stage14_post_build_end EQUAL -1)
+-        continue()
+-    endif()
+-    string(SUBSTRING "${_stage14_post_build_section}" 0
+-        ${_stage14_post_build_end} _stage14_post_build_command)
+-    string(FIND "${_stage14_post_build_command}" "copy_directory"
+-        _stage14_copy_directory_index)
+-    string(FIND "${_stage14_post_build_command}"
+-        [=[${PROJECT_SOURCE_DIR}/assets/stage14/audio]=]
+-        _stage14_copy_source_index)
+-    string(FIND "${_stage14_post_build_command}"
+-        [=[$<TARGET_FILE_DIR:arpg_game>/assets/stage14/audio]=]
+-        _stage14_copy_destination_index)
+-    if(NOT _stage14_copy_directory_index EQUAL -1
+-            AND NOT _stage14_copy_source_index EQUAL -1
+-            AND NOT _stage14_copy_destination_index EQUAL -1)
+-        set(_stage14_copy_rule_found TRUE)
++foreach(_stage14_sync_token IN ITEMS
++        "ArpgRuntimeAssets.cmake"
++        "arpg_add_runtime_asset_sync("
++        "TARGET arpg_game"
++        [=[${PROJECT_SOURCE_DIR}/assets]=]
++        [=[$<TARGET_FILE_DIR:arpg_game>/assets]=]
++        "stage14/audio")
++    string(FIND "${_stage14_app_cmake_without_comments}"
++        "${_stage14_sync_token}" _stage14_sync_token_index)
++    if(_stage14_sync_token_index EQUAL -1)
++        message(FATAL_ERROR
++            "Stage14 runtime asset sync rule missing: ${_stage14_sync_token}")
+     endif()
+ endforeach()
+-if(NOT _stage14_copy_rule_found)
+-    message(FATAL_ERROR
+-        "Stage14 audio integration guard missing Stage14 copy rule in src/app/CMakeLists.txt")
+-endif()
+ 
+ message(STATUS "[stage14-audio-integration] source and packaging boundaries passed")
+diff --git a/tests/platform/stage15_audio_integration_guard.cmake b/tests/platform/stage15_audio_integration_guard.cmake
+index 22c8a5e..e653eeb 100644
+--- a/tests/platform/stage15_audio_integration_guard.cmake
++++ b/tests/platform/stage15_audio_integration_guard.cmake
+@@ -87,19 +87,23 @@ if(NOT _legacy_audio EQUAL -1)
+ endif()
+ 
+ file(READ "${_raylib_cmake}" _cmake_text)
+ string(FIND "${_cmake_text}" "game_audio.cpp" _cmake_found)
+ if(_cmake_found EQUAL -1)
+     message(FATAL_ERROR "Stage15 arpg_raylib target omits game_audio.cpp")
+ endif()
+ 
+ file(READ "${_app_cmake}" _app_cmake_text)
+ foreach(_token IN ITEMS
+-        "assets/stage15/audio"
+-        "$<TARGET_FILE_DIR:arpg_game>/assets/stage15/audio")
++        "ArpgRuntimeAssets.cmake"
++        "arpg_add_runtime_asset_sync("
++        "TARGET arpg_game"
++        [=[${PROJECT_SOURCE_DIR}/assets]=]
++        [=[$<TARGET_FILE_DIR:arpg_game>/assets]=]
++        "stage15/audio")
+     string(FIND "${_app_cmake_text}" "${_token}" _copy_found)
+     if(_copy_found EQUAL -1)
+-        message(FATAL_ERROR "Stage15 release copy rule missing: ${_token}")
++        message(FATAL_ERROR "Stage15 runtime asset sync rule missing: ${_token}")
+     endif()
+ endforeach()
+ 
+ message(STATUS "[stage15-audio-integration] ownership, boundary, and host wiring passed")
+diff --git a/tests/platform/ui_material_asset_pipeline_tests.py b/tests/platform/ui_material_asset_pipeline_tests.py
+index e191b33..248a63e 100644
+--- a/tests/platform/ui_material_asset_pipeline_tests.py
++++ b/tests/platform/ui_material_asset_pipeline_tests.py
+@@ -78,21 +78,22 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
+         self.assertIn("SIL OPEN FONT LICENSE Version 1.1",
+                       license_file.read_text(encoding="utf-8"))
+ 
+         font_source = (ROOT / "src/platform/raylib/death_overlay_font.cpp").read_text(
+             encoding="utf-8")
+         app_cmake = (ROOT / "src/app/CMakeLists.txt").read_text(encoding="utf-8")
+         formal_cmake = (ROOT / "tests/platform/CMakeLists.txt").read_text(
+             encoding="utf-8")
+         self.assertIn('assets/fonts/NotoSansCJKsc-Medium.otf', font_source)
+         self.assertNotIn('NotoSansSC[wght].ttf', font_source)
+-        self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', app_cmake)
++        self.assertIn('${PROJECT_SOURCE_DIR}/assets', app_cmake)
++        self.assertRegex(app_cmake, r"DIRECTORIES[\s\S]*\bfonts\b")
+         self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', formal_cmake)
+ 
+         contract = (ROOT / "src/platform/raylib/death_overlay_font.hpp").read_text(
+             encoding="utf-8")
+         self.assertIn("kUiFontSourceBaseSize = 96", contract)
+         self.assertIn("kUiFontMaximumDisplaySize = 39", contract)
+         self.assertIn("kUiFontAtlasByteBudget", contract)
+         for filename in ("hud_renderer.cpp", "pause_menu_renderer.cpp",
+                          "death_overlay_renderer.cpp"):
+             renderer = (ROOT / "src/platform/raylib" / filename).read_text(
+diff --git a/tools/build_environment_props.py b/tools/build_environment_props.py
+index 8cb7137..9c373f7 100644
+--- a/tools/build_environment_props.py
++++ b/tools/build_environment_props.py
+@@ -3,24 +3,30 @@
+ from __future__ import annotations
+ 
+ import argparse
+ import hashlib
+ import json
+ import os
+ from collections import deque
+ from pathlib import Path
+ from tempfile import NamedTemporaryFile
+ 
+-from PIL import Image, ImageChops, ImageEnhance, ImageFilter
++from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
+ 
+ 
+ ECOLOGIES = ("water", "lightning", "chaos")
++ELEMENT_PALETTES = {
++    "fire": ((52, 14, 8), (255, 120, 36)),
++    "water": ((7, 28, 58), (58, 196, 255)),
++    "lightning": ((38, 32, 5), (255, 226, 72)),
++    "chaos": ((35, 8, 52), (208, 72, 255)),
++}
+ CELL = 256
+ LAYOUT = {
+     "wall": (512, 0),
+     "surface_prop": (512, 256),
+     "hole": (0, 512),
+     "light": (256, 512),
+     "solid_prop": (512, 512),
+ }
+ CONCEPT_CROPS = {
+     "water": {
+@@ -102,20 +108,65 @@ def _background_to_alpha(image: Image.Image) -> Image.Image:
+             next_point = (x + dx, y + dy)
+             if 0 <= next_point[0] < rgb.width and 0 <= next_point[1] < rgb.height:
+                 queue.append(next_point)
+     alpha = image.getchannel("A").copy()
+     for point in transparent:
+         alpha.putpixel(point, 0)
+     image.putalpha(alpha)
+     return image
+ 
+ 
++def _keyed_subject(path: Path) -> Image.Image:
++    """Extract the largest subject from a source keyed by its top-left RGB."""
++    with Image.open(path) as source:
++        image = source.convert("RGBA")
++    key = image.convert("RGB").getpixel((0, 0))
++    alpha = image.getchannel("A").copy()
++    pixels = image.load()
++    alpha_pixels = alpha.load()
++    transparent_distance = 12 ** 2
++    opaque_distance = 96 ** 2
++    for y in range(image.height):
++        for x in range(image.width):
++            red, green, blue, _ = pixels[x, y]
++            distance = ((red - key[0]) ** 2 + (green - key[1]) ** 2 +
++                        (blue - key[2]) ** 2)
++            if distance <= transparent_distance:
++                alpha_pixels[x, y] = 0
++            elif distance < opaque_distance:
++                alpha_pixels[x, y] = (alpha_pixels[x, y] *
++                                      (distance - transparent_distance) //
++                                      (opaque_distance - transparent_distance))
++    components = _components(alpha)
++    if not components:
++        raise RuntimeError("keyed source has no foreground component")
++    retained = Image.new("L", image.size)
++    retained_pixels = retained.load()
++    for point in components[0]:
++        retained_pixels[point[0], point[1]] = alpha_pixels[point[0], point[1]]
++    retained = retained.filter(ImageFilter.GaussianBlur(2))
++    bbox = retained.getbbox()
++    if bbox is None:
++        raise RuntimeError("foreground disappeared during keyed alpha cleanup")
++    image.putalpha(retained)
++    return image.crop((max(0, bbox[0] - 8), max(0, bbox[1] - 8),
++                       min(image.width, bbox[2] + 8), min(image.height, bbox[3] + 8)))
++
++
++def _element_variant(subject: Image.Image, element: str) -> Image.Image:
++    """Apply a deterministic element palette without changing subject alpha."""
++    dark, light = ELEMENT_PALETTES[element]
++    color = ImageOps.colorize(subject.convert("L"), dark, light).convert("RGBA")
++    color.putalpha(subject.getchannel("A"))
++    return color
++
++
+ def _retain_subject(image: Image.Image, pad: int, keep_small: bool) -> Image.Image:
+     # The exported cell is 256px square; scanning larger concept crops only
+     # changes work, not the retained silhouette at its final sampling rate.
+     if max(image.size) > CELL:
+         scale = CELL / max(image.size)
+         image = image.resize((round(image.width * scale), round(image.height * scale)),
+                              Image.Resampling.LANCZOS)
+     image = _background_to_alpha(image)
+     components = _components(image.getchannel("A"))
+     if not components:
+@@ -190,102 +241,51 @@ def _stage_json(path: Path, value: dict) -> Path:
+         json.dump(value, temporary, indent=2, sort_keys=True)
+         temporary.write("\n")
+         temp = Path(temporary.name)
+     return temp
+ 
+ 
+ def _rgba_hash(image: Image.Image) -> str:
+     return hashlib.sha256(image.convert("RGBA").tobytes()).hexdigest()
+ 
+ 
+-def _canonical_element_doors(root: Path) -> Image.Image | None:
+-    assets = root / "assets" / "stage12"
+-    report_path = assets / "environment-props-build.json"
+-    color_path = assets / "element_doors.png"
+-    material_path = assets / "element_doors_material.png"
+-    # Legacy atlas bootstrap is legal only for a root with no published report.
+-    if not report_path.exists():
+-        return None
+-    try:
+-        if not report_path.is_file() or not color_path.is_file() or not material_path.is_file():
+-            raise RuntimeError("published report or public door files are missing")
+-        report = json.loads(report_path.read_text(encoding="utf-8"))
+-        if (report.get("schema_version") != 1
+-                or set(report.get("ecologies", {})) != set(ECOLOGIES)):
+-            raise RuntimeError("published report schema is invalid")
+-        expected_hash = report["element_doors"]["rgba_sha256"]
+-        if not isinstance(expected_hash, str) or len(expected_hash) != 64:
+-            raise RuntimeError("published public door hash is invalid")
+-        color = Image.open(color_path).convert("RGBA")
+-        material = Image.open(material_path).convert("RGBA")
+-    except (OSError, KeyError, TypeError, json.JSONDecodeError, RuntimeError) as error:
+-        raise RuntimeError(f"published element doors validation failed: {error}") from error
+-    if (color.size != (1024, 256) or material.size != color.size
+-            or color.getchannel("A").tobytes() != material.getchannel("A").tobytes()
+-            or material.tobytes() != _material_map(color).tobytes()
+-            or _rgba_hash(color) != expected_hash):
+-        raise RuntimeError("published element doors validation failed")
+-    return color.copy()
++def _file_hash(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
+ 
+ 
+ def build_element_doors(root: Path) -> tuple[Image.Image, Image.Image]:
+-    canonical = _canonical_element_doors(root)
+-    if canonical is not None:
+-        return canonical, _material_map(canonical)
+     output = Image.new("RGBA", (CELL * 4, CELL))
+-    sources = (("fire", root / "assets" / "stage12" / "fire_environment.png",
+-                (768, 0, 1024, 256)),
+-               ("water", root / "assets" / "stage12" / "water_environment.png",
+-                (512, 0, 768, 256)),
+-               ("lightning", root / "assets" / "stage12" / "lightning_environment.png",
+-                (512, 0, 768, 256)),
+-               ("chaos", root / "assets" / "stage12" / "chaos_environment.png",
+-                (512, 0, 768, 256)))
+-    assets = root / "assets" / "stage12"
+-    # Capture every legacy source before callers can replace an ecology atlas.
+-    captured = [(name, Image.open(path).convert("RGBA").crop(box))
+-                for name, path, box in sources]
+-    for index, (name, source) in enumerate(captured):
+-        if max(source.size) > CELL:
+-            scale = CELL / max(source.size)
+-            source = source.resize((round(source.width * scale), round(source.height * scale)),
+-                                   Image.Resampling.LANCZOS)
+-        components = _components(source.getchannel("A"))
+-        if not components:
+-            raise RuntimeError(f"{name}: door source is empty")
+-        alpha = Image.new("L", source.size)
+-        for point in components[0]: alpha.putpixel(point, source.getchannel("A").getpixel(point))
+-        source.putalpha(alpha)
+-        bbox = alpha.getbbox()
+-        assert bbox is not None
+-        source = source.crop((max(0, bbox[0] - 12), max(0, bbox[1] - 12),
+-                              min(CELL, bbox[2] + 12), min(CELL, bbox[3] + 12)))
+-        output.alpha_composite(_fit_to_cell(source, 12, 244), (index * CELL, 0))
++    subject = _keyed_subject(root / "art_source" / "stage12" / "door-concept-v1.png")
++    for index, ecology in enumerate(("fire", *ECOLOGIES)):
++        output.alpha_composite(_fit_to_cell(_element_variant(subject, ecology), 12, 244),
++                               (index * CELL, 0))
+     return output, _material_map(output)
+ 
+ 
+ def build_ecology_environment(ecology: str, root: Path) -> tuple[Image.Image, Image.Image, dict]:
+     if ecology not in ECOLOGIES:
+         raise ValueError(f"unknown ecology: {ecology}")
+     source_root = root / "art_source" / "stage12"
+     concept = Image.open(source_root / f"{ecology}-environment-concept-v1.png").convert("RGBA")
+     atlas = Image.new("RGBA", (768, 768))
+     room = ImageEnhance.Contrast(concept.resize((512, 512), Image.Resampling.LANCZOS)).enhance(1.08)
+     atlas.alpha_composite(room, (0, 0))
+     objects: dict[str, dict] = {}
+     wall = Image.open(source_root / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png").convert("RGBA")
+-    object_sources = {"wall": wall}
+-    object_sources.update({name: concept.crop(box) for name, box in CONCEPT_CROPS[ecology].items()})
++    hole = _element_variant(_keyed_subject(source_root / "abyss-hole-concept-v1.png"), ecology)
++    object_sources = {"wall": wall, "hole": hole}
++    object_sources.update({name: concept.crop(box) for name, box in CONCEPT_CROPS[ecology].items()
++                           if name != "hole"})
+     for name, position in LAYOUT.items():
+         # A wall tile is authored as a complete opaque background surface;
+         # unlike isolated concept props it must not be reduced to one fragment.
+-        isolated = (object_sources[name] if name == "wall"
++        isolated = (object_sources[name] if name in {"wall", "hole"}
+                     else _retain_subject(object_sources[name], 8, keep_small=False))
+         cell = _fit_to_cell(isolated, 8, 244)
+         atlas.alpha_composite(cell, position)
+         bbox = cell.getchannel("A").getbbox()
+         if bbox is None:
+             raise RuntimeError(f"{ecology}/{name}: empty output")
+         components = _components(cell.getchannel("A"))
+         if len(components) > 1 and len(components[1]) * 100 > len(components[0]) * 2:
+             raise RuntimeError(f"{ecology}/{name}: unrelated second component")
+         objects[name] = {"source_rect": [position[0], position[1], CELL, CELL],
+@@ -302,21 +302,27 @@ def _validate_staged_outputs(staged: dict[Path, Path]) -> None:
+     color = image(assets / "element_doors.png")
+     material = image(assets / "element_doors_material.png")
+     if color.size != (1024, 256) or color.getchannel("A").tobytes() != material.getchannel("A").tobytes():
+         raise RuntimeError("element doors color/material validation failed")
+     for ecology in ECOLOGIES:
+         color = image(assets / f"{ecology}_environment.png")
+         material = image(assets / f"{ecology}_environment_material.png")
+         if color.size != (768, 768) or color.getchannel("A").tobytes() != material.getchannel("A").tobytes():
+             raise RuntimeError(f"{ecology}: color/material validation failed")
+     report = json.loads(staged[assets / "environment-props-build.json"].read_text(encoding="utf-8"))
+-    if report.get("schema_version") != 1 or set(report.get("ecologies", {})) != set(ECOLOGIES):
++    source_root = assets.parent.parent / "art_source" / "stage12"
++    expected_sources = {
++        "door-concept-v1.png": _file_hash(source_root / "door-concept-v1.png"),
++        "abyss-hole-concept-v1.png": _file_hash(source_root / "abyss-hole-concept-v1.png"),
++    }
++    if (report.get("schema_version") != 2 or set(report.get("ecologies", {})) != set(ECOLOGIES)
++            or report.get("sources") != expected_sources):
+         raise RuntimeError("environment props report schema validation failed")
+     if report.get("element_doors", {}).get("rgba_sha256") != _rgba_hash(image(assets / "element_doors.png")):
+         raise RuntimeError("element doors hash validation failed")
+     for ecology in ECOLOGIES:
+         color = image(assets / f"{ecology}_environment.png")
+         objects = report["ecologies"][ecology].get("objects", {})
+         if set(objects) != set(LAYOUT):
+             raise RuntimeError(f"{ecology}: report object set validation failed")
+         for name, (x, y) in LAYOUT.items():
+             record = objects[name]
+@@ -344,22 +350,27 @@ def validate_outputs(root: Path) -> None:
+ def main() -> None:
+     parser = argparse.ArgumentParser()
+     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+     args = parser.parse_args()
+     root = args.root.resolve()
+     assets = root / "assets" / "stage12"
+     assets.mkdir(parents=True, exist_ok=True)
+     door_color, door_material = build_element_doors(root)
+     staged: list[tuple[Path, Image.Image]] = [(assets / "element_doors.png", door_color),
+                                                 (assets / "element_doors_material.png", door_material)]
+-    report = {"schema_version": 1, "element_doors": {"rgba_sha256": _rgba_hash(door_color)},
+-              "ecologies": {}}
++    source_root = root / "art_source" / "stage12"
++    report = {"schema_version": 2,
++              "sources": {
++                  "door-concept-v1.png": _file_hash(source_root / "door-concept-v1.png"),
++                  "abyss-hole-concept-v1.png": _file_hash(source_root / "abyss-hole-concept-v1.png"),
++              },
++              "element_doors": {"rgba_sha256": _rgba_hash(door_color)}, "ecologies": {}}
+     for ecology in ECOLOGIES:
+         color, material, record = build_ecology_environment(ecology, root)
+         staged.extend(((assets / f"{ecology}_environment.png", color),
+                        (assets / f"{ecology}_environment_material.png", material)))
+         report["ecologies"][ecology] = record
+     temporary: dict[Path, Path] = {}
+     try:
+         for path, image in staged:
+             temporary[path] = _stage_image(path, image)
+         report_path = assets / "environment-props-build.json"
