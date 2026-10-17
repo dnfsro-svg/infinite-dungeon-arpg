@@ -10,7 +10,117 @@ namespace {
 
 using arpg::combat::Vec3;
 using arpg::platform::ActorDrawItem;
+using arpg::platform::CombatCameraView;
 using arpg::platform::ScreenProjection;
+
+arpg::test::Failure
+camera_tracks_player_immediately_inside_hundredfold_room() noexcept {
+    constexpr float kWidth = 1280.0F;
+    constexpr float kHeight = 720.0F;
+    constexpr std::array<Vec3, 2U> kPlayers{{
+        {18.0F, -13.0F, 0.0F},
+        {-27.0F, 19.0F, 0.0F},
+    }};
+    for (const Vec3 player : kPlayers) {
+        const CombatCameraView camera =
+            arpg::platform::make_combat_camera_view(
+                player, kWidth, kHeight);
+        const ScreenProjection projected =
+            arpg::platform::project_combat_position(
+                player, camera, kWidth, kHeight);
+        ARPG_REQUIRE(arpg::test::near(camera.center.x, player.x, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(camera.center.y, player.y, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(projected.x, 640.0, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(
+            projected.ground_y, 453.6, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(
+            projected.y, projected.ground_y, 1.0e-4));
+    }
+    return {};
+}
+
+arpg::test::Failure
+camera_clamps_at_all_hundredfold_room_edges() noexcept {
+    constexpr float kWidth = 1280.0F;
+    constexpr float kHeight = 720.0F;
+    struct ClampCase final {
+        Vec3 player{};
+        Vec3 expected_center{};
+        float expected_x{};
+        float expected_ground_y{};
+    };
+    constexpr std::array<ClampCase, 4U> kCases{{
+        {{81.24038696F, 0.0F, 0.0F},
+            {69.24038696F, 0.0F, 0.0F}, 1140.48F, 453.6F},
+        {{-81.24038696F, 0.0F, 0.0F},
+            {-69.24038696F, 0.0F, 0.0F}, 139.52F, 453.6F},
+        {{0.0F, 81.24038696F, 0.0F},
+            {0.0F, 75.74038696F, 0.0F}, 640.0F, 633.6F},
+        {{0.0F, -81.24038696F, 0.0F},
+            {0.0F, -75.74038696F, 0.0F}, 640.0F, 273.6F},
+    }};
+    for (const ClampCase& item : kCases) {
+        const CombatCameraView camera =
+            arpg::platform::make_combat_camera_view(
+                item.player, kWidth, kHeight);
+        const ScreenProjection projected =
+            arpg::platform::project_combat_position(
+                item.player, camera, kWidth, kHeight);
+        ARPG_REQUIRE(arpg::test::near(
+            camera.center.x, item.expected_center.x, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(
+            camera.center.y, item.expected_center.y, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(
+            projected.x, item.expected_x, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(
+            projected.ground_y, item.expected_ground_y, 1.0e-4));
+    }
+    return {};
+}
+
+arpg::test::Failure
+ultrawide_expands_visible_width_without_stretching_world() noexcept {
+    constexpr float kStandardWidth = 1280.0F;
+    constexpr float kStandardHeight = 720.0F;
+    constexpr float kUltrawideWidth = 2560.0F;
+    constexpr float kUltrawideHeight = 1080.0F;
+    const CombatCameraView standard =
+        arpg::platform::make_combat_camera_view(
+            {0.0F, 0.0F, 0.0F}, kStandardWidth, kStandardHeight);
+    const CombatCameraView ultrawide =
+        arpg::platform::make_combat_camera_view(
+            {30.0F, 0.0F, 0.0F}, kUltrawideWidth, kUltrawideHeight);
+    ARPG_REQUIRE(arpg::test::near(standard.visible_width, 24.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(ultrawide.visible_width, 32.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(standard.visible_depth, 11.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(ultrawide.visible_depth, 11.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(ultrawide.center.x, 30.0, 1.0e-4));
+
+    const ScreenProjection standard_center =
+        arpg::platform::project_combat_position(
+            {0.0F, 0.0F, 0.0F}, standard,
+            kStandardWidth, kStandardHeight);
+    const ScreenProjection standard_step =
+        arpg::platform::project_combat_position(
+            {1.0F, 0.0F, 0.0F}, standard,
+            kStandardWidth, kStandardHeight);
+    const ScreenProjection ultrawide_center =
+        arpg::platform::project_combat_position(
+            {30.0F, 0.0F, 0.0F}, ultrawide,
+            kUltrawideWidth, kUltrawideHeight);
+    const ScreenProjection ultrawide_step =
+        arpg::platform::project_combat_position(
+            {31.0F, 0.0F, 0.0F}, ultrawide,
+            kUltrawideWidth, kUltrawideHeight);
+    const double standard_pixels_per_height =
+        (standard_step.x - standard_center.x) / kStandardHeight;
+    const double ultrawide_pixels_per_height =
+        (ultrawide_step.x - ultrawide_center.x) / kUltrawideHeight;
+    ARPG_REQUIRE(arpg::test::near(
+        standard_pixels_per_height,
+        ultrawide_pixels_per_height, 1.0e-4));
+    return {};
+}
 
 arpg::test::Failure back_and_front_projection_are_exact() noexcept {
     const ScreenProjection back = arpg::platform::project_combat_position(
@@ -147,6 +257,12 @@ arpg::test::Failure generic_hazard_pass_excludes_abyss_environment() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"camera follows player in hundredfold room",
+        &camera_tracks_player_immediately_inside_hundredfold_room},
+    {"camera clamps at hundredfold room edges",
+        &camera_clamps_at_all_hundredfold_room_edges},
+    {"ultrawide camera preserves world scale",
+        &ultrawide_expands_visible_width_without_stretching_world},
     {"back and front projection", &back_and_front_projection_are_exact},
     {"expanded room corners", &expanded_room_corners_remain_in_viewport},
     {"Z-only actor offset", &z_only_offsets_actor_screen_y},

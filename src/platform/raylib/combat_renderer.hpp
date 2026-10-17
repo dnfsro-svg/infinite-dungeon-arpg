@@ -74,6 +74,15 @@ struct RoomBackgroundDrawRuntimeStatus final {
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
     float interpolation_alpha,
+    CombatCameraView camera,
+    CameraOffset camera_offset,
+    settings::LootFilterMode mode,
+    float width,
+    float height) noexcept;
+[[nodiscard]] CombatRenderPlan make_combat_render_plan(
+    const dungeon::DungeonSnapshot& previous,
+    const dungeon::DungeonSnapshot& current,
+    float interpolation_alpha,
     CameraOffset camera_offset,
     settings::LootFilterMode mode,
     float width,
@@ -164,11 +173,14 @@ private:
     void draw_room(
         const dungeon::DungeonSnapshot& current,
         const GroundLootView& ground_loot,
-        const MaterialLootView& material_loot) noexcept;
+        const MaterialLootView& material_loot,
+        CombatCameraView camera) noexcept;
     [[nodiscard]] bool draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
         const ActiveSkillEffectPlan& active_skill_plan,
+        CombatCameraView camera,
+        combat::Vec3 interpolated_player,
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback) noexcept;
@@ -180,6 +192,7 @@ private:
         int line_step) const noexcept;
     void draw_debug_world_volumes(
         const combat::CombatSnapshot& snapshot,
+        CombatCameraView camera,
         float width,
         float height) const noexcept;
     combat::CombatEvent last_event_{};

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dungeon/dungeon_types.hpp"
+#include "combat_view_math.hpp"
 #include "dungeon_view_math.hpp"
 #include "material_asset_types.hpp"
 #include "platform/settings/settings_types.hpp"
@@ -74,6 +75,19 @@ struct GroundLootView final {
 [[nodiscard]] MaterialSpriteId ground_loot_rarity_sprite(
     items::ItemRarity rarity, bool abyss) noexcept;
 
+[[nodiscard]] GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    CombatCameraView camera,
+    float width,
+    float height) noexcept;
+[[nodiscard]] GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    CombatCameraView camera,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept;
 [[nodiscard]] GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,

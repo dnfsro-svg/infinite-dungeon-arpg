@@ -198,6 +198,18 @@ void layout_labels(GroundLootView& view, float width, float height,
 
 }  // namespace
 
+namespace {
+
+GroundLootView build_ground_loot_view_internal(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    const CombatCameraView* camera,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept;
+
+}  // namespace
+
 bool ground_loot_visible(const dungeon::GroundItemSnapshot& item,
     settings::LootFilterMode mode) noexcept {
     if (item.source == dungeon::GroundItemSource::abyss_chest) {
@@ -242,15 +254,51 @@ MaterialSpriteId ground_loot_rarity_sprite(
 GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
+    CombatCameraView camera,
     float width,
     float height) noexcept {
     LootLabelObstacleSet obstacles{};
-    return build_ground_loot_view(snapshot, mode, width, height, obstacles);
+    return build_ground_loot_view_internal(
+        snapshot, mode, &camera, width, height, obstacles);
 }
 
 GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
+    CombatCameraView camera,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept {
+    return build_ground_loot_view_internal(
+        snapshot, mode, &camera, width, height, obstacles);
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height) noexcept {
+    LootLabelObstacleSet obstacles{};
+    return build_ground_loot_view_internal(
+        snapshot, mode, nullptr, width, height, obstacles);
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept {
+    return build_ground_loot_view_internal(
+        snapshot, mode, nullptr, width, height, obstacles);
+}
+
+namespace {
+
+GroundLootView build_ground_loot_view_internal(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    const CombatCameraView* camera,
     float width,
     float height,
     LootLabelObstacleSet& obstacles) noexcept {
@@ -278,8 +326,10 @@ GroundLootView build_ground_loot_view(
         label.item_sprite = ground_loot_item_sprite(item.slot);
         label.rarity_sprite = ground_loot_rarity_sprite(
             item.rarity, label.abyss);
-        const ScreenProjection projection =
-            project_combat_position(item.position, width, height);
+        const ScreenProjection projection = camera == nullptr
+            ? project_combat_position(item.position, width, height)
+            : project_combat_position(
+                item.position, *camera, width, height);
         label.anchor_x = projection.x;
         label.anchor_y = projection.y;
         format_label_text(label, item, view.diagnostics);
@@ -289,5 +339,7 @@ GroundLootView build_ground_loot_view(
     layout_labels(view, width, height, obstacles);
     return view;
 }
+
+}  // namespace
 
 }  // namespace arpg::platform
