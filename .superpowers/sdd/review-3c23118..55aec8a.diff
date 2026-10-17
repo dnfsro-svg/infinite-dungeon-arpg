@@ -1,0 +1,888 @@
+# Review package: 3c23118..55aec8a
+
+## Commits
+55aec8a feat: add versioned dungeon checkpoint codec
+
+## Files changed
+ CMakeLists.txt                                 |   2 +
+ src/persistence/CMakeLists.txt                 |   7 +
+ src/persistence/checkpoint_codec.cpp           | 197 +++++++++++++++++++++++++
+ src/persistence/checkpoint_codec.hpp           |  43 ++++++
+ src/persistence/crc32.cpp                      |  23 +++
+ src/persistence/crc32.hpp                      |  11 ++
+ tests/persistence/CMakeLists.txt               |  13 ++
+ tests/persistence/checkpoint_codec_tests.cpp   | 192 ++++++++++++++++++++++++
+ tests/persistence/persistence_test_main.cpp    |  11 ++
+ tests/platform/CMakeLists.txt                  |  51 +++++++
+ tests/platform/module_boundary_test.cmake      |  40 ++---
+ tests/platform/persistence_boundary_test.cmake |  45 ++++++
+ 12 files changed, 618 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 60247a7..327b5ee 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -36,23 +36,25 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ function(arpg_enable_project_warnings target_name)
+     if(MSVC)
+         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
+     endif()
+ endfunction()
+ 
+ include(CTest)
+ add_subdirectory(src/core)
+ add_subdirectory(src/combat)
+ add_subdirectory(src/dungeon)
++add_subdirectory(src/persistence)
+ 
+ if(ARPG_BUILD_GRAPHICS)
+     include(cmake/Dependencies.cmake)
+     add_subdirectory(src/platform/raylib)
+     add_subdirectory(src/app)
+ endif()
+ 
+ if(BUILD_TESTING)
+     add_subdirectory(tests/core)
+     add_subdirectory(tests/combat)
+     add_subdirectory(tests/dungeon)
++    add_subdirectory(tests/persistence)
+     add_subdirectory(tests/platform)
+ endif()
+diff --git a/src/persistence/CMakeLists.txt b/src/persistence/CMakeLists.txt
+new file mode 100644
+index 0000000..b9effe8
+--- /dev/null
++++ b/src/persistence/CMakeLists.txt
+@@ -0,0 +1,7 @@
++add_library(arpg_persistence STATIC
++    crc32.cpp
++    checkpoint_codec.cpp)
++
++target_include_directories(arpg_persistence PUBLIC "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_persistence PUBLIC cxx_std_17)
++arpg_enable_project_warnings(arpg_persistence)
+diff --git a/src/persistence/checkpoint_codec.cpp b/src/persistence/checkpoint_codec.cpp
+new file mode 100644
+index 0000000..d3c597a
+--- /dev/null
++++ b/src/persistence/checkpoint_codec.cpp
+@@ -0,0 +1,197 @@
++#include "persistence/checkpoint_codec.hpp"
++
++#include <algorithm>
++
++namespace arpg::persistence {
++namespace {
++
++namespace checkpoint = arpg::dungeon::checkpoint;
++using checkpoint::DungeonElement;
++using checkpoint::EntrySide;
++using checkpoint::ExitDirection;
++using checkpoint::TransitionKind;
++
++constexpr std::array<std::uint8_t, 8> kMagic{{
++    'I', 'A', 'R', 'P', 'G', 'S', '0', '3'}};
++constexpr std::size_t kCrcCoverageSize = 84U;
++constexpr std::size_t kCrcHeaderOffset = 8U;
++constexpr std::size_t kCrcHeaderSize = 20U;
++constexpr std::size_t kCrcPayloadOffset = 32U;
++constexpr std::size_t kCrcPayloadSize = 64U;
++
++void write_u32(std::uint8_t* destination, std::uint32_t value) noexcept {
++    for (std::size_t index = 0; index < 4U; ++index) {
++        destination[index] = static_cast<std::uint8_t>(value >> (index * 8U));
++    }
++}
++
++void write_u64(std::uint8_t* destination, std::uint64_t value) noexcept {
++    for (std::size_t index = 0; index < 8U; ++index) {
++        destination[index] = static_cast<std::uint8_t>(value >> (index * 8U));
++    }
++}
++
++std::uint32_t read_u32(const std::uint8_t* source) noexcept {
++    std::uint32_t value = 0U;
++    for (std::size_t index = 0; index < 4U; ++index) {
++        value |= static_cast<std::uint32_t>(source[index]) << (index * 8U);
++    }
++    return value;
++}
++
++std::uint64_t read_u64(const std::uint8_t* source) noexcept {
++    std::uint64_t value = 0U;
++    for (std::size_t index = 0; index < 8U; ++index) {
++        value |= static_cast<std::uint64_t>(source[index]) << (index * 8U);
++    }
++    return value;
++}
++
++bool valid_entry(std::uint8_t value) noexcept {
++    return value <= static_cast<std::uint8_t>(EntrySide::right);
++}
++
++bool valid_element(std::uint8_t value) noexcept {
++    return value <= static_cast<std::uint8_t>(DungeonElement::chaos);
++}
++
++bool valid_transition(std::uint8_t value) noexcept {
++    return value == static_cast<std::uint8_t>(TransitionKind::door)
++        || value == static_cast<std::uint8_t>(TransitionKind::descent)
++        || value == static_cast<std::uint8_t>(TransitionKind::none);
++}
++
++bool valid_direction(std::uint8_t value) noexcept {
++    return value <= static_cast<std::uint8_t>(ExitDirection::right)
++        || value == static_cast<std::uint8_t>(ExitDirection::none);
++}
++
++bool valid_state(const dungeon::checkpoint::DungeonRunState& state) noexcept {
++    return state.commit_generation != 0U
++        && state.current_room.depth != 0U
++        && state.current_room.floor_room_index != 0U
++        && valid_entry(static_cast<std::uint8_t>(state.current_room.entry))
++        && valid_element(static_cast<std::uint8_t>(state.current_room.ecology))
++        && valid_transition(static_cast<std::uint8_t>(state.last_transition))
++        && valid_direction(static_cast<std::uint8_t>(state.last_direction));
++}
++
++std::uint32_t checkpoint_crc(
++    const std::uint8_t* bytes) noexcept {
++    std::array<std::uint8_t, kCrcCoverageSize> covered{};
++    std::copy_n(
++        bytes + kCrcHeaderOffset,
++        kCrcHeaderSize,
++        covered.begin());
++    std::copy_n(
++        bytes + kCrcPayloadOffset,
++        kCrcPayloadSize,
++        covered.begin() + kCrcHeaderSize);
++    return crc32(covered.data(), covered.size());
++}
++
++DecodeResult error_result(CodecError error) noexcept {
++    DecodeResult result{};
++    result.error = error;
++    return result;
++}
++
++}  // namespace
++
++bool encode_checkpoint(
++    const dungeon::checkpoint::DungeonRunState& state,
++    std::array<std::uint8_t, kEncodedCheckpointSize>& out) noexcept {
++    if (!valid_state(state)) {
++        return false;
++    }
++
++    out.fill(0U);
++    std::copy(kMagic.begin(), kMagic.end(), out.begin());
++    write_u32(out.data() + 8U, kCheckpointFormatVersion);
++    write_u32(out.data() + 12U, kCheckpointRulesVersion);
++    write_u64(out.data() + 16U, state.commit_generation);
++    write_u32(out.data() + 24U, static_cast<std::uint32_t>(kCheckpointPayloadSize));
++
++    write_u64(out.data() + 32U, state.root_seed);
++    for (std::size_t index = 0; index < state.biases.size(); ++index) {
++        write_u32(out.data() + 40U + index * 4U, state.biases[index]);
++    }
++    write_u64(out.data() + 56U, state.current_room.index);
++    write_u64(out.data() + 64U, state.current_room.seed);
++    write_u64(out.data() + 72U, state.current_room.depth);
++    write_u64(out.data() + 80U, state.current_room.floor_room_index);
++    out[88U] = static_cast<std::uint8_t>(state.current_room.entry);
++    out[89U] = static_cast<std::uint8_t>(state.current_room.ecology);
++    out[90U] = state.current_room.has_hole ? 1U : 0U;
++    out[91U] = state.current_room.is_abyss ? 1U : 0U;
++    out[92U] = static_cast<std::uint8_t>(state.last_transition);
++    out[93U] = static_cast<std::uint8_t>(state.last_direction);
++
++    write_u32(out.data() + 28U, checkpoint_crc(out.data()));
++    return true;
++}
++
++DecodeResult decode_checkpoint(
++    const std::uint8_t* bytes, std::size_t size) noexcept {
++    if (bytes == nullptr || size != kEncodedCheckpointSize) {
++        return error_result(CodecError::wrong_size);
++    }
++    if (!std::equal(kMagic.begin(), kMagic.end(), bytes)) {
++        return error_result(CodecError::bad_magic);
++    }
++    if (read_u32(bytes + 8U) != kCheckpointFormatVersion) {
++        return error_result(CodecError::unsupported_format);
++    }
++    if (read_u32(bytes + 12U) != kCheckpointRulesVersion) {
++        return error_result(CodecError::unsupported_rules);
++    }
++    if (read_u32(bytes + 24U) != kCheckpointPayloadSize) {
++        return error_result(CodecError::bad_payload_length);
++    }
++    if (read_u32(bytes + 28U) != checkpoint_crc(bytes)) {
++        return error_result(CodecError::bad_crc);
++    }
++
++    const auto entry = bytes[88U];
++    const auto ecology = bytes[89U];
++    const auto has_hole = bytes[90U];
++    const auto is_abyss = bytes[91U];
++    const auto transition = bytes[92U];
++    const auto direction = bytes[93U];
++    if (!valid_entry(entry)
++            || !valid_element(ecology)
++            || !valid_transition(transition)
++            || !valid_direction(direction)) {
++        return error_result(CodecError::invalid_enum);
++    }
++    if (has_hole > 1U || is_abyss > 1U) {
++        return error_result(CodecError::invalid_boolean);
++    }
++    if (bytes[94U] != 0U || bytes[95U] != 0U) {
++        return error_result(CodecError::invalid_state);
++    }
++
++    DecodeResult result{};
++    auto& state = result.state;
++    state.root_seed = read_u64(bytes + 32U);
++    for (std::size_t index = 0; index < state.biases.size(); ++index) {
++        state.biases[index] = read_u32(bytes + 40U + index * 4U);
++    }
++    state.commit_generation = read_u64(bytes + 16U);
++    state.current_room.index = read_u64(bytes + 56U);
++    state.current_room.seed = read_u64(bytes + 64U);
++    state.current_room.depth = read_u64(bytes + 72U);
++    state.current_room.floor_room_index = read_u64(bytes + 80U);
++    state.current_room.entry = static_cast<EntrySide>(entry);
++    state.current_room.ecology = static_cast<DungeonElement>(ecology);
++    state.current_room.has_hole = has_hole != 0U;
++    state.current_room.is_abyss = is_abyss != 0U;
++    state.last_transition = static_cast<TransitionKind>(transition);
++    state.last_direction = static_cast<ExitDirection>(direction);
++    if (!valid_state(state)) {
++        return error_result(CodecError::invalid_state);
++    }
++    return result;
++}
++
++}  // namespace arpg::persistence
+diff --git a/src/persistence/checkpoint_codec.hpp b/src/persistence/checkpoint_codec.hpp
+new file mode 100644
+index 0000000..7c8a2f6
+--- /dev/null
++++ b/src/persistence/checkpoint_codec.hpp
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include "dungeon/dungeon_checkpoint.hpp"
++#include "persistence/crc32.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::persistence {
++
++inline constexpr std::size_t kCheckpointHeaderSize = 32U;
++inline constexpr std::size_t kCheckpointPayloadSize = 64U;
++inline constexpr std::size_t kEncodedCheckpointSize = 96U;
++inline constexpr std::uint32_t kCheckpointFormatVersion = 1U;
++inline constexpr std::uint32_t kCheckpointRulesVersion = 1U;
++
++enum class CodecError : std::uint8_t {
++    none,
++    wrong_size,
++    bad_magic,
++    unsupported_format,
++    unsupported_rules,
++    bad_payload_length,
++    bad_crc,
++    invalid_enum,
++    invalid_boolean,
++    invalid_state
++};
++
++struct DecodeResult final {
++    CodecError error{CodecError::none};
++    dungeon::checkpoint::DungeonRunState state{};
++};
++
++[[nodiscard]] bool encode_checkpoint(
++    const dungeon::checkpoint::DungeonRunState& state,
++    std::array<std::uint8_t, kEncodedCheckpointSize>& out) noexcept;
++
++[[nodiscard]] DecodeResult decode_checkpoint(
++    const std::uint8_t* bytes, std::size_t size) noexcept;
++
++}  // namespace arpg::persistence
+diff --git a/src/persistence/crc32.cpp b/src/persistence/crc32.cpp
+new file mode 100644
+index 0000000..d6d225f
+--- /dev/null
++++ b/src/persistence/crc32.cpp
+@@ -0,0 +1,23 @@
++#include "persistence/crc32.hpp"
++
++namespace arpg::persistence {
++
++std::uint32_t crc32(
++    const std::uint8_t* bytes, std::size_t size) noexcept {
++    std::uint32_t crc = 0xFFFFFFFFU;
++    if (bytes == nullptr) {
++        return crc ^ 0xFFFFFFFFU;
++    }
++
++    for (std::size_t index = 0; index < size; ++index) {
++        crc ^= bytes[index];
++        for (int bit = 0; bit < 8; ++bit) {
++            const std::uint32_t mask =
++                0U - static_cast<std::uint32_t>(crc & 1U);
++            crc = (crc >> 1U) ^ (0xEDB88320U & mask);
++        }
++    }
++    return crc ^ 0xFFFFFFFFU;
++}
++
++}  // namespace arpg::persistence
+diff --git a/src/persistence/crc32.hpp b/src/persistence/crc32.hpp
+new file mode 100644
+index 0000000..636fcc5
+--- /dev/null
++++ b/src/persistence/crc32.hpp
+@@ -0,0 +1,11 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::persistence {
++
++[[nodiscard]] std::uint32_t crc32(
++    const std::uint8_t* bytes, std::size_t size) noexcept;
++
++}  // namespace arpg::persistence
+diff --git a/tests/persistence/CMakeLists.txt b/tests/persistence/CMakeLists.txt
+new file mode 100644
+index 0000000..612b450
+--- /dev/null
++++ b/tests/persistence/CMakeLists.txt
+@@ -0,0 +1,13 @@
++add_executable(arpg_persistence_tests
++    persistence_test_main.cpp
++    checkpoint_codec_tests.cpp)
++
++target_compile_features(arpg_persistence_tests PRIVATE cxx_std_17)
++target_include_directories(arpg_persistence_tests
++    PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
++target_link_libraries(arpg_persistence_tests PRIVATE arpg_persistence)
++arpg_enable_project_warnings(arpg_persistence_tests)
++
++add_test(NAME persistence.units COMMAND arpg_persistence_tests)
++set_tests_properties(
++    persistence.units PROPERTIES LABELS "headless;persistence")
+diff --git a/tests/persistence/checkpoint_codec_tests.cpp b/tests/persistence/checkpoint_codec_tests.cpp
+new file mode 100644
+index 0000000..c59436c
+--- /dev/null
++++ b/tests/persistence/checkpoint_codec_tests.cpp
+@@ -0,0 +1,192 @@
++#include "test_framework.hpp"
++
++#include "persistence/checkpoint_codec.hpp"
++
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <cstring>
++
++namespace {
++
++namespace checkpoint = arpg::dungeon::checkpoint;
++namespace persistence = arpg::persistence;
++
++checkpoint::DungeonRunState make_fixture() noexcept {
++    checkpoint::DungeonRunState state{};
++    state.root_seed = 0x0102030405060708ULL;
++    state.commit_generation = 0x1112131415161718ULL;
++    state.biases = {{0x21222324U, 0x25262728U, 0x292A2B2CU, 0x2D2E2F30U}};
++    state.current_room.index = 0x3132333435363738ULL;
++    state.current_room.seed = 0x4142434445464748ULL;
++    state.current_room.depth = 2U;
++    state.current_room.floor_room_index = 3U;
++    state.current_room.entry = checkpoint::EntrySide::right;
++    state.current_room.ecology = checkpoint::DungeonElement::chaos;
++    state.current_room.has_hole = true;
++    state.current_room.is_abyss = true;
++    state.last_transition = checkpoint::TransitionKind::descent;
++    state.last_direction = checkpoint::ExitDirection::left;
++    return state;
++}
++
++bool same_state(
++    const checkpoint::DungeonRunState& lhs,
++    const checkpoint::DungeonRunState& rhs) noexcept {
++    return lhs.root_seed == rhs.root_seed
++        && lhs.commit_generation == rhs.commit_generation
++        && lhs.biases == rhs.biases
++        && lhs.current_room.index == rhs.current_room.index
++        && lhs.current_room.seed == rhs.current_room.seed
++        && lhs.current_room.depth == rhs.current_room.depth
++        && lhs.current_room.floor_room_index == rhs.current_room.floor_room_index
++        && lhs.current_room.entry == rhs.current_room.entry
++        && lhs.current_room.ecology == rhs.current_room.ecology
++        && lhs.current_room.has_hole == rhs.current_room.has_hole
++        && lhs.current_room.is_abyss == rhs.current_room.is_abyss
++        && lhs.last_transition == rhs.last_transition
++        && lhs.last_direction == rhs.last_direction;
++}
++
++bool encoded_fixture(
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize>& bytes) noexcept {
++    return persistence::encode_checkpoint(make_fixture(), bytes);
++}
++
++void refresh_crc(
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize>& bytes) noexcept {
++    std::array<std::uint8_t, 84U> covered{};
++    std::copy_n(bytes.begin() + 8U, 20U, covered.begin());
++    std::copy_n(bytes.begin() + 32U, 64U, covered.begin() + 20U);
++    const auto checksum = persistence::crc32(covered.data(), covered.size());
++    for (std::size_t index = 0; index < 4U; ++index) {
++        bytes[28U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
++    }
++}
++
++arpg::test::Failure all_nonzero_fields_round_trip() noexcept {
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    ARPG_REQUIRE(persistence::encode_checkpoint(make_fixture(), bytes));
++    const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
++    ARPG_REQUIRE(same_state(decoded.state, make_fixture()));
++    return {};
++}
++
++arpg::test::Failure encoded_sizes_and_generation_are_little_endian() noexcept {
++    static_assert(persistence::kCheckpointHeaderSize == 32U);
++    static_assert(persistence::kCheckpointPayloadSize == 64U);
++    static_assert(persistence::kEncodedCheckpointSize == 96U);
++
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    ARPG_REQUIRE(encoded_fixture(bytes));
++    ARPG_REQUIRE(bytes.size() == 96U);
++    ARPG_REQUIRE(bytes[16] == 0x18U);
++    ARPG_REQUIRE(bytes[17] == 0x17U);
++    ARPG_REQUIRE(bytes[18] == 0x16U);
++    ARPG_REQUIRE(bytes[19] == 0x15U);
++    ARPG_REQUIRE(bytes[20] == 0x14U);
++    ARPG_REQUIRE(bytes[21] == 0x13U);
++    ARPG_REQUIRE(bytes[22] == 0x12U);
++    ARPG_REQUIRE(bytes[23] == 0x11U);
++    return {};
++}
++
++arpg::test::Failure crc32_known_value_and_covered_flip_are_detected() noexcept {
++    constexpr char kInput[] = "123456789";
++    ARPG_REQUIRE(persistence::crc32(
++        reinterpret_cast<const std::uint8_t*>(kInput), 9U) == 0xCBF43926U);
++
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    ARPG_REQUIRE(encoded_fixture(bytes));
++    bytes[32] ^= 0x01U;
++    const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++    ARPG_REQUIRE(decoded.error == persistence::CodecError::bad_crc);
++    return {};
++}
++
++arpg::test::Failure wrong_magic_is_rejected() noexcept {
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    ARPG_REQUIRE(encoded_fixture(bytes));
++    bytes[0] ^= 0x01U;
++    const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++    ARPG_REQUIRE(decoded.error == persistence::CodecError::bad_magic);
++    return {};
++}
++
++arpg::test::Failure unsupported_format_and_rules_are_rejected() noexcept {
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    ARPG_REQUIRE(encoded_fixture(bytes));
++    bytes[8] = 2U;
++    auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++    ARPG_REQUIRE(decoded.error == persistence::CodecError::unsupported_format);
++
++    ARPG_REQUIRE(encoded_fixture(bytes));
++    bytes[12] = 2U;
++    decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++    ARPG_REQUIRE(decoded.error == persistence::CodecError::unsupported_rules);
++    return {};
++}
++
++arpg::test::Failure invalid_payload_length_is_rejected() noexcept {
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    ARPG_REQUIRE(encoded_fixture(bytes));
++    bytes[24] = 63U;
++    const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++    ARPG_REQUIRE(decoded.error == persistence::CodecError::bad_payload_length);
++    return {};
++}
++
++arpg::test::Failure invalid_enum_values_are_rejected() noexcept {
++    constexpr std::array<std::size_t, 4> kOffsets{{88U, 89U, 92U, 93U}};
++    for (const auto offset : kOffsets) {
++        std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++        ARPG_REQUIRE(encoded_fixture(bytes));
++        bytes[offset] = 0xFEU;
++        refresh_crc(bytes);
++        const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++        ARPG_REQUIRE(decoded.error == persistence::CodecError::invalid_enum);
++    }
++    return {};
++}
++
++arpg::test::Failure invalid_booleans_and_zero_state_are_rejected() noexcept {
++    for (const auto offset : std::array<std::size_t, 2>{{90U, 91U}}) {
++        std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++        ARPG_REQUIRE(encoded_fixture(bytes));
++        bytes[offset] = 2U;
++        refresh_crc(bytes);
++        const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++        ARPG_REQUIRE(decoded.error == persistence::CodecError::invalid_boolean);
++    }
++
++    for (const auto offset : std::array<std::size_t, 3>{{16U, 72U, 80U}}) {
++        std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++        ARPG_REQUIRE(encoded_fixture(bytes));
++        std::fill(
++            bytes.begin() + offset,
++            bytes.begin() + offset + 8U,
++            static_cast<std::uint8_t>(0U));
++        refresh_crc(bytes);
++        const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
++        ARPG_REQUIRE(decoded.error == persistence::CodecError::invalid_state);
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"all nonzero fields round trip", &all_nonzero_fields_round_trip},
++    {"encoded sizes and generation are little endian", &encoded_sizes_and_generation_are_little_endian},
++    {"crc32 known value and covered flip are detected", &crc32_known_value_and_covered_flip_are_detected},
++    {"wrong magic is rejected", &wrong_magic_is_rejected},
++    {"unsupported format and rules are rejected", &unsupported_format_and_rules_are_rejected},
++    {"invalid payload length is rejected", &invalid_payload_length_is_rejected},
++    {"invalid enum values are rejected", &invalid_enum_values_are_rejected},
++    {"invalid booleans and zero state are rejected", &invalid_booleans_and_zero_state_are_rejected},
++};
++
++}  // namespace
++
++arpg::test::TestSuite checkpoint_codec_suite() noexcept {
++    return arpg::test::make_suite("checkpoint_codec", kCases);
++}
+diff --git a/tests/persistence/persistence_test_main.cpp b/tests/persistence/persistence_test_main.cpp
+new file mode 100644
+index 0000000..f4aeb86
+--- /dev/null
++++ b/tests/persistence/persistence_test_main.cpp
+@@ -0,0 +1,11 @@
++#include "test_framework.hpp"
++
++arpg::test::TestSuite checkpoint_codec_suite() noexcept;
++
++int main() {
++    const arpg::test::TestSuite suites[] = {
++        checkpoint_codec_suite(),
++    };
++
++    return arpg::test::run_suites(suites, 8, "persistence");
++}
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index cde0013..934c6fd 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -811,21 +811,26 @@ if(_arpg_remaining_boundary_failures)
+     string(JOIN
+         ", " _arpg_remaining_boundary_failure_summary
+         ${_arpg_remaining_boundary_failures})
+     message(FATAL_ERROR
+         "Remaining boundary detector self-tests failed: ${_arpg_remaining_boundary_failure_summary}")
+ endif()
+ 
+ arpg_assert_target_dependency_boundary(arpg_core)
+ arpg_assert_target_dependency_boundary(arpg_combat)
+ arpg_assert_target_dependency_boundary(arpg_dungeon)
++arpg_assert_target_dependency_boundary(arpg_persistence)
+ arpg_assert_target_not_reachable(arpg_combat arpg_dungeon)
++arpg_assert_target_not_reachable(arpg_persistence arpg_dungeon)
++arpg_assert_target_not_reachable(arpg_persistence arpg_combat)
++arpg_assert_target_not_reachable(arpg_dungeon arpg_persistence)
++arpg_assert_target_not_reachable(arpg_combat arpg_persistence)
+ 
+ add_test(
+     NAME architecture.core_no_raylib
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/core"
+         "-DSOURCE_LABEL=Core"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+ set_tests_properties(
+     architecture.core_no_raylib
+     PROPERTIES LABELS "headless;architecture")
+@@ -843,19 +848,65 @@ set_tests_properties(
+ add_test(
+     NAME architecture.dungeon_no_raylib
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
+         "-DSOURCE_LABEL=Dungeon"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+ set_tests_properties(
+     architecture.dungeon_no_raylib
+     PROPERTIES LABELS "headless;architecture")
+ 
++add_test(
++    NAME architecture.persistence_no_raylib
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/persistence"
++        "-DSOURCE_LABEL=Persistence"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
++set_tests_properties(
++    architecture.persistence_no_raylib
++    PROPERTIES LABELS "headless;architecture")
++
+ add_test(
+     NAME architecture.combat_no_dungeon
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
+         "-DSOURCE_LABEL=Combat"
++        "-DFORBIDDEN_MODULE=dungeon"
++        "-DFORBIDDEN_LABEL=Dungeon"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+ set_tests_properties(
+     architecture.combat_no_dungeon
+     PROPERTIES LABELS "headless;architecture")
++
++add_test(
++    NAME architecture.dungeon_no_persistence
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
++        "-DSOURCE_LABEL=Dungeon"
++        "-DFORBIDDEN_MODULE=persistence"
++        "-DFORBIDDEN_LABEL=Persistence"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
++set_tests_properties(
++    architecture.dungeon_no_persistence
++    PROPERTIES LABELS "headless;architecture")
++
++add_test(
++    NAME architecture.combat_no_persistence
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
++        "-DSOURCE_LABEL=Combat"
++        "-DFORBIDDEN_MODULE=persistence"
++        "-DFORBIDDEN_LABEL=Persistence"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
++set_tests_properties(
++    architecture.combat_no_persistence
++    PROPERTIES LABELS "headless;architecture")
++
++add_test(
++    NAME architecture.persistence_checkpoint_only
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/persistence"
++        "-DSOURCE_LABEL=Persistence"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/persistence_boundary_test.cmake")
++set_tests_properties(
++    architecture.persistence_checkpoint_only
++    PROPERTIES LABELS "headless;architecture")
+diff --git a/tests/platform/module_boundary_test.cmake b/tests/platform/module_boundary_test.cmake
+index 9b80f9b..8bbbde8 100644
+--- a/tests/platform/module_boundary_test.cmake
++++ b/tests/platform/module_boundary_test.cmake
+@@ -1,40 +1,46 @@
+ if(NOT DEFINED SOURCE_DIR)
+     message(FATAL_ERROR "SOURCE_DIR is required")
+ endif()
+ if(NOT DEFINED SOURCE_LABEL)
+     message(FATAL_ERROR "SOURCE_LABEL is required")
+ endif()
++if(NOT DEFINED FORBIDDEN_MODULE)
++    set(FORBIDDEN_MODULE "dungeon")
++endif()
++if(NOT DEFINED FORBIDDEN_LABEL)
++    set(FORBIDDEN_LABEL "Dungeon")
++endif()
+ 
+-set(ARPG_DUNGEON_INCLUDE_REGEX
+-    [=[^[ \t]*#[ \t]*include[ \t]*[<"]dungeon[/\\][^>"]+[>"]]=])
++set(ARPG_MODULE_INCLUDE_REGEX
++    "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]${FORBIDDEN_MODULE}[/\\\\][^>\"]+[>\"]")
+ 
+-function(arpg_line_has_dungeon_include INPUT_LINE OUT_FOUND)
++function(arpg_line_has_module_include INPUT_LINE OUT_FOUND)
+     string(TOLOWER "${INPUT_LINE}" _arpg_line_lower)
+-    if(_arpg_line_lower MATCHES "${ARPG_DUNGEON_INCLUDE_REGEX}")
++    if(_arpg_line_lower MATCHES "${ARPG_MODULE_INCLUDE_REGEX}")
+         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+     else()
+         set("${OUT_FOUND}" FALSE PARENT_SCOPE)
+     endif()
+ endfunction()
+ 
+ macro(arpg_finish_module_source_line)
+-    arpg_line_has_dungeon_include("${_arpg_line}" _arpg_line_found)
++    arpg_line_has_module_include("${_arpg_line}" _arpg_line_found)
+     if(_arpg_line_found)
+         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+         set("${OUT_LINE}" "${_arpg_line}" PARENT_SCOPE)
+         return()
+     endif()
+     set(_arpg_line "")
+ endmacro()
+ 
+-function(arpg_source_has_dungeon_include SOURCE_TEXT OUT_FOUND OUT_LINE)
++function(arpg_source_has_module_include SOURCE_TEXT OUT_FOUND OUT_LINE)
+     set(_arpg_state CODE)
+     set(_arpg_line "")
+     string(LENGTH "${SOURCE_TEXT}" _arpg_source_length)
+     set(_arpg_index 0)
+ 
+     while(_arpg_index LESS _arpg_source_length)
+         string(SUBSTRING "${SOURCE_TEXT}" ${_arpg_index} 1 _arpg_char)
+         math(EXPR _arpg_next_index "${_arpg_index} + 1")
+         set(_arpg_next_char "")
+         if(_arpg_next_index LESS _arpg_source_length)
+@@ -132,57 +138,57 @@ function(arpg_source_has_dungeon_include SOURCE_TEXT OUT_FOUND OUT_LINE)
+                 set(_arpg_state CODE)
+             endif()
+             if(_arpg_char STREQUAL "\n")
+                 arpg_finish_module_source_line()
+                 set(_arpg_state CODE)
+             endif()
+             set(_arpg_index ${_arpg_next_index})
+         endif()
+     endwhile()
+ 
+-    arpg_line_has_dungeon_include("${_arpg_line}" _arpg_line_found)
++    arpg_line_has_module_include("${_arpg_line}" _arpg_line_found)
+     if(_arpg_line_found)
+         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+         set("${OUT_LINE}" "${_arpg_line}" PARENT_SCOPE)
+         return()
+     endif()
+     set("${OUT_FOUND}" FALSE PARENT_SCOPE)
+     set("${OUT_LINE}" "" PARENT_SCOPE)
+ endfunction()
+ 
+ function(arpg_expect_module_boundary LABEL EXPECTED_FOUND SOURCE_TEXT)
+-    arpg_source_has_dungeon_include(
++    arpg_source_has_module_include(
+         "${SOURCE_TEXT}" _arpg_found _arpg_line)
+     if(EXPECTED_FOUND AND NOT _arpg_found)
+         set_property(GLOBAL APPEND PROPERTY
+             ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES "missed:${LABEL}")
+     endif()
+     if(NOT EXPECTED_FOUND AND _arpg_found)
+         set_property(GLOBAL APPEND PROPERTY
+             ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES "false-positive:${LABEL}")
+     endif()
+ endfunction()
+ 
+ set_property(GLOBAL PROPERTY ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES "")
+ arpg_expect_module_boundary(
+-    "real angle include" TRUE [=[#include <dungeon/dungeon_types.hpp>]=])
++    "real angle include" TRUE "#include <${FORBIDDEN_MODULE}/sample.hpp>")
+ arpg_expect_module_boundary(
+-    "real quoted include" TRUE [=[#include "dungeon/dungeon_session.hpp"]=])
++    "real quoted include" TRUE "#include \"${FORBIDDEN_MODULE}/sample.hpp\"")
+ arpg_expect_module_boundary(
+-    "line comment" FALSE [=[// #include <dungeon/dungeon_types.hpp>]=])
++    "line comment" FALSE "// #include <${FORBIDDEN_MODULE}/sample.hpp>")
+ arpg_expect_module_boundary(
+     "block comment" FALSE [=[/*
+-#include "dungeon/dungeon_session.hpp"
++#include "${FORBIDDEN_MODULE}/sample.hpp"
+ */]=])
+ arpg_expect_module_boundary(
+     "ordinary string" FALSE
+-    [=[const char* text = "#include <dungeon/dungeon_types.hpp>";]=])
++    "const char* text = \"#include <${FORBIDDEN_MODULE}/sample.hpp>\";")
+ arpg_expect_module_boundary(
+     "unrelated include" FALSE [=[#include <combat/combat_types.hpp>]=])
+ 
+ get_property(ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES
+     GLOBAL PROPERTY ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES)
+ if(ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES)
+     string(JOIN ", " ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURE_SUMMARY
+         ${ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES})
+     message(FATAL_ERROR
+         "Module source scanner self-tests failed: ${ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURE_SUMMARY}")
+@@ -202,17 +208,17 @@ file(GLOB_RECURSE SOURCE_FILES
+     "${SOURCE_DIR}/*.c"
+     "${SOURCE_DIR}/*.cc"
+     "${SOURCE_DIR}/*.cpp"
+     "${SOURCE_DIR}/*.cxx"
+     "${SOURCE_DIR}/*.ixx"
+     "${SOURCE_DIR}/*.cppm"
+     "${SOURCE_DIR}/*.mpp")
+ 
+ foreach(SOURCE_FILE IN LISTS SOURCE_FILES)
+     file(READ "${SOURCE_FILE}" SOURCE_CONTENT)
+-    arpg_source_has_dungeon_include(
+-        "${SOURCE_CONTENT}" SOURCE_HAS_DUNGEON_INCLUDE SOURCE_DUNGEON_LINE)
+-    if(SOURCE_HAS_DUNGEON_INCLUDE)
++    arpg_source_has_module_include(
++        "${SOURCE_CONTENT}" SOURCE_HAS_MODULE_INCLUDE SOURCE_MODULE_LINE)
++    if(SOURCE_HAS_MODULE_INCLUDE)
+         message(FATAL_ERROR
+-            "${SOURCE_LABEL} file depends on Dungeon: ${SOURCE_FILE}: ${SOURCE_DUNGEON_LINE}")
++            "${SOURCE_LABEL} file depends on ${FORBIDDEN_LABEL}: ${SOURCE_FILE}: ${SOURCE_MODULE_LINE}")
+     endif()
+ endforeach()
+diff --git a/tests/platform/persistence_boundary_test.cmake b/tests/platform/persistence_boundary_test.cmake
+new file mode 100644
+index 0000000..2b14798
+--- /dev/null
++++ b/tests/platform/persistence_boundary_test.cmake
+@@ -0,0 +1,45 @@
++if(NOT DEFINED SOURCE_DIR)
++    message(FATAL_ERROR "SOURCE_DIR is required")
++endif()
++if(NOT DEFINED SOURCE_LABEL)
++    message(FATAL_ERROR "SOURCE_LABEL is required")
++endif()
++
++file(GLOB_RECURSE SOURCE_FILES
++    LIST_DIRECTORIES FALSE
++    "${SOURCE_DIR}/*.h"
++    "${SOURCE_DIR}/*.hh"
++    "${SOURCE_DIR}/*.hpp"
++    "${SOURCE_DIR}/*.hxx"
++    "${SOURCE_DIR}/*.inl"
++    "${SOURCE_DIR}/*.inc"
++    "${SOURCE_DIR}/*.ipp"
++    "${SOURCE_DIR}/*.tpp"
++    "${SOURCE_DIR}/*.tcc"
++    "${SOURCE_DIR}/*.c"
++    "${SOURCE_DIR}/*.cc"
++    "${SOURCE_DIR}/*.cpp"
++    "${SOURCE_DIR}/*.cxx"
++    "${SOURCE_DIR}/*.ixx"
++    "${SOURCE_DIR}/*.cppm"
++    "${SOURCE_DIR}/*.mpp")
++
++foreach(SOURCE_FILE IN LISTS SOURCE_FILES)
++    file(STRINGS "${SOURCE_FILE}" SOURCE_LINES)
++    foreach(SOURCE_LINE IN LISTS SOURCE_LINES)
++        string(TOLOWER "${SOURCE_LINE}" SOURCE_LINE_LOWER)
++        if(SOURCE_LINE_LOWER MATCHES
++                "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]dungeon[/\\\\][^>\"]+[>\"]")
++            if(NOT SOURCE_LINE_LOWER MATCHES
++                    "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]dungeon[/\\\\]dungeon_checkpoint\\.hpp[>\"]")
++                message(FATAL_ERROR
++                    "${SOURCE_LABEL} file includes a forbidden Dungeon header: ${SOURCE_FILE}: ${SOURCE_LINE}")
++            endif()
++        endif()
++        if(SOURCE_LINE_LOWER MATCHES
++                "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]combat[/\\\\][^>\"]+[>\"]")
++            message(FATAL_ERROR
++                "${SOURCE_LABEL} file depends on Combat: ${SOURCE_FILE}: ${SOURCE_LINE}")
++        endif()
++    endforeach()
++endforeach()

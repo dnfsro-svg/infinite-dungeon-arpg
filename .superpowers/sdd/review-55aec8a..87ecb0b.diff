@@ -1,0 +1,1340 @@
+# Review package: 55aec8a..87ecb0b
+
+## Commits
+87ecb0b feat: add atomic dual-slot dungeon saves
+
+## Files changed
+ src/persistence/CMakeLists.txt               |   4 +-
+ src/persistence/save_paths.cpp               |  51 +++
+ src/persistence/save_paths.hpp               |  15 +
+ src/persistence/save_store.cpp               | 562 +++++++++++++++++++++++++++
+ src/persistence/save_store.hpp               |  91 +++++
+ tests/persistence/CMakeLists.txt             |   4 +-
+ tests/persistence/persistence_test_main.cpp  |   6 +-
+ tests/persistence/save_store_fault_tests.cpp | 244 ++++++++++++
+ tests/persistence/save_store_tests.cpp       | 266 +++++++++++++
+ 9 files changed, 1240 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/persistence/CMakeLists.txt b/src/persistence/CMakeLists.txt
+index b9effe8..6d64c74 100644
+--- a/src/persistence/CMakeLists.txt
++++ b/src/persistence/CMakeLists.txt
+@@ -1,7 +1,9 @@
+ add_library(arpg_persistence STATIC
+     crc32.cpp
+-    checkpoint_codec.cpp)
++    checkpoint_codec.cpp
++    save_paths.cpp
++    save_store.cpp)
+ 
+ target_include_directories(arpg_persistence PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_persistence PUBLIC cxx_std_17)
+ arpg_enable_project_warnings(arpg_persistence)
+diff --git a/src/persistence/save_paths.cpp b/src/persistence/save_paths.cpp
+new file mode 100644
+index 0000000..929446a
+--- /dev/null
++++ b/src/persistence/save_paths.cpp
+@@ -0,0 +1,51 @@
++#include "persistence/save_paths.hpp"
++
++#include <cstdlib>
++#include <random>
++
++namespace arpg::persistence {
++
++std::optional<std::filesystem::path> default_save_directory() noexcept {
++    try {
++#if defined(_MSC_VER)
++        char* owned_local_app_data = nullptr;
++        std::size_t owned_size = 0U;
++        if (_dupenv_s(&owned_local_app_data, &owned_size, "LOCALAPPDATA") != 0) {
++            return std::nullopt;
++        }
++        const char* local_app_data = owned_local_app_data;
++#else
++        const char* local_app_data = std::getenv("LOCALAPPDATA");
++#endif
++        if (local_app_data == nullptr || *local_app_data == '\0') {
++#if defined(_MSC_VER)
++            std::free(owned_local_app_data);
++#endif
++            return std::nullopt;
++        }
++#if defined(_MSC_VER)
++        const auto result = std::filesystem::path(local_app_data)
++            / "InfiniteDungeon" / "save";
++        std::free(owned_local_app_data);
++        return result;
++#else
++        return std::filesystem::path(local_app_data)
++            / "InfiniteDungeon" / "save";
++#endif
++    } catch (...) {
++        return std::nullopt;
++    }
++}
++
++std::optional<std::uint64_t> system_root_seed() noexcept {
++    try {
++        std::random_device device;
++        const auto high = static_cast<std::uint64_t>(device());
++        const auto low = static_cast<std::uint64_t>(device());
++        return (high << 32U) | low;
++    } catch (...) {
++        return std::nullopt;
++    }
++}
++
++}  // namespace arpg::persistence
+diff --git a/src/persistence/save_paths.hpp b/src/persistence/save_paths.hpp
+new file mode 100644
+index 0000000..58ae7be
+--- /dev/null
++++ b/src/persistence/save_paths.hpp
+@@ -0,0 +1,15 @@
++#pragma once
++
++#include <cstdint>
++#include <filesystem>
++#include <optional>
++
++namespace arpg::persistence {
++
++[[nodiscard]] std::optional<std::filesystem::path>
++default_save_directory() noexcept;
++
++[[nodiscard]] std::optional<std::uint64_t>
++system_root_seed() noexcept;
++
++}  // namespace arpg::persistence
+diff --git a/src/persistence/save_store.cpp b/src/persistence/save_store.cpp
+new file mode 100644
+index 0000000..b12e653
+--- /dev/null
++++ b/src/persistence/save_store.cpp
+@@ -0,0 +1,562 @@
++#include "persistence/save_store.hpp"
++
++#include "persistence/checkpoint_codec.hpp"
++#include "persistence/save_paths.hpp"
++
++#include <array>
++#include <chrono>
++#include <cstddef>
++#include <cstdint>
++#include <fstream>
++#include <string>
++#include <system_error>
++#include <vector>
++
++namespace arpg::persistence {
++namespace {
++
++namespace checkpoint = arpg::dungeon::checkpoint;
++
++enum class SlotFileState : std::uint8_t { missing, valid, invalid, unavailable };
++
++struct SlotInfo final {
++    SlotFileState state{SlotFileState::missing};
++    SaveError error{SaveError::none};
++    checkpoint::DungeonRunState checkpoint{};
++};
++
++struct ScanResult final {
++    SlotInfo a{};
++    SlotInfo b{};
++    bool temp_a{};
++    bool temp_b{};
++    bool any_file{};
++    bool directory_error{};
++    bool faulted{};
++};
++
++struct ArchiveResult final {
++    bool ok{};
++    SaveError error{SaveError::archive_failed};
++};
++
++const std::filesystem::path& slot_name(SaveSlot slot) noexcept {
++    static const std::filesystem::path a{"run_a.sav"};
++    static const std::filesystem::path b{"run_b.sav"};
++    return slot == SaveSlot::a ? a : b;
++}
++
++const std::filesystem::path& temp_name(SaveSlot slot) noexcept {
++    static const std::filesystem::path a{"run_a.tmp"};
++    static const std::filesystem::path b{"run_b.tmp"};
++    return slot == SaveSlot::a ? a : b;
++}
++
++SaveFaultPoint final_scan_point(SaveSlot slot) noexcept {
++    return slot == SaveSlot::a
++        ? SaveFaultPoint::final_scan_a
++        : SaveFaultPoint::final_scan_b;
++}
++
++bool same_state(const checkpoint::DungeonRunState& lhs,
++    const checkpoint::DungeonRunState& rhs) noexcept {
++    return lhs.root_seed == rhs.root_seed
++        && lhs.commit_generation == rhs.commit_generation
++        && lhs.biases == rhs.biases
++        && lhs.current_room.index == rhs.current_room.index
++        && lhs.current_room.seed == rhs.current_room.seed
++        && lhs.current_room.depth == rhs.current_room.depth
++        && lhs.current_room.floor_room_index == rhs.current_room.floor_room_index
++        && lhs.current_room.entry == rhs.current_room.entry
++        && lhs.current_room.ecology == rhs.current_room.ecology
++        && lhs.current_room.has_hole == rhs.current_room.has_hole
++        && lhs.current_room.is_abyss == rhs.current_room.is_abyss
++        && lhs.last_transition == rhs.last_transition
++        && lhs.last_direction == rhs.last_direction;
++}
++
++SlotInfo read_slot(const std::filesystem::path& path) noexcept {
++    SlotInfo info{};
++    std::error_code error;
++    if (!std::filesystem::exists(path, error)) {
++        if (error) {
++            info.state = SlotFileState::unavailable;
++            info.error = SaveError::read_failed;
++        }
++        return info;
++    }
++
++    std::ifstream input(path, std::ios::binary);
++    if (!input) {
++        info.state = SlotFileState::unavailable;
++        info.error = SaveError::read_failed;
++        return info;
++    }
++    std::vector<std::uint8_t> bytes(
++        (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
++    if (!input.eof() && input.fail()) {
++        info.state = SlotFileState::unavailable;
++        info.error = SaveError::read_failed;
++        return info;
++    }
++    const auto decoded = decode_checkpoint(bytes.data(), bytes.size());
++    if (decoded.error != CodecError::none) {
++        info.state = SlotFileState::invalid;
++        info.error = SaveError::read_failed;
++        return info;
++    }
++    info.state = SlotFileState::valid;
++    info.checkpoint = decoded.state;
++    return info;
++}
++
++bool hook_failed(const SaveStoreConfig& config,
++    SaveFaultPoint point) noexcept {
++    return config.fault_hook != nullptr
++        && config.fault_hook(point, config.fault_context);
++}
++
++ScanResult scan_directory(const SaveStoreConfig& config,
++    bool final_scan) noexcept {
++    ScanResult result{};
++    try {
++        std::error_code error;
++        if (!std::filesystem::exists(config.directory, error)) {
++            if (error) {
++                result.directory_error = true;
++            }
++            return result;
++        }
++        if (!std::filesystem::is_directory(config.directory, error) || error) {
++            result.directory_error = true;
++            return result;
++        }
++
++        const auto a_path = config.directory / slot_name(SaveSlot::a);
++        const auto b_path = config.directory / slot_name(SaveSlot::b);
++        const auto a_tmp = config.directory / temp_name(SaveSlot::a);
++        const auto b_tmp = config.directory / temp_name(SaveSlot::b);
++        result.any_file = std::filesystem::exists(a_path, error)
++            || std::filesystem::exists(b_path, error)
++            || std::filesystem::exists(a_tmp, error)
++            || std::filesystem::exists(b_tmp, error);
++        if (error) {
++            result.directory_error = true;
++            return result;
++        }
++        result.temp_a = std::filesystem::exists(a_tmp, error);
++        result.temp_b = std::filesystem::exists(b_tmp, error);
++        if (error) {
++            result.directory_error = true;
++            return result;
++        }
++
++        if (final_scan && hook_failed(config, SaveFaultPoint::final_scan_a)) {
++            result.a.state = SlotFileState::unavailable;
++            result.a.error = SaveError::final_scan_failed;
++            result.faulted = true;
++        } else {
++            result.a = read_slot(a_path);
++        }
++        if (final_scan && hook_failed(config, SaveFaultPoint::final_scan_b)) {
++            result.b.state = SlotFileState::unavailable;
++            result.b.error = SaveError::final_scan_failed;
++            result.faulted = true;
++        } else {
++            result.b = read_slot(b_path);
++        }
++    } catch (...) {
++        result.directory_error = true;
++    }
++    return result;
++}
++
++SaveSlot highest_slot(const ScanResult& scan) noexcept {
++    if (scan.a.state != SlotFileState::valid
++            && scan.b.state != SlotFileState::valid) {
++        return SaveSlot::none;
++    }
++    if (scan.a.state == SlotFileState::valid
++            && scan.b.state != SlotFileState::valid) {
++        return SaveSlot::a;
++    }
++    if (scan.b.state == SlotFileState::valid
++            && scan.a.state != SlotFileState::valid) {
++        return SaveSlot::b;
++    }
++    if (scan.a.checkpoint.commit_generation
++            > scan.b.checkpoint.commit_generation) {
++        return SaveSlot::a;
++    }
++    if (scan.b.checkpoint.commit_generation
++            > scan.a.checkpoint.commit_generation) {
++        return SaveSlot::b;
++    }
++    return same_state(scan.a.checkpoint, scan.b.checkpoint)
++        ? SaveSlot::a
++        : SaveSlot::none;
++}
++
++std::uint64_t archive_stamp(const SaveStoreConfig& config) noexcept {
++    try {
++        if (config.stamp_provider != nullptr) {
++            return config.stamp_provider(config.stamp_context);
++        }
++        return static_cast<std::uint64_t>(
++            std::chrono::duration_cast<std::chrono::seconds>(
++                std::chrono::system_clock::now().time_since_epoch()).count());
++    } catch (...) {
++        return 0U;
++    }
++}
++
++ArchiveResult archive_files(const SaveStoreConfig& config,
++    const std::vector<std::filesystem::path>& files) noexcept {
++    if (files.empty()) {
++        return {true, SaveError::none};
++    }
++    if (hook_failed(config, SaveFaultPoint::before_archive)) {
++        return {false, SaveError::archive_failed};
++    }
++
++    std::vector<std::filesystem::path> destinations;
++    std::vector<std::filesystem::path> copied;
++    try {
++        const auto stamp = archive_stamp(config);
++        std::size_t suffix = 0U;
++        for (const auto& source : files) {
++            std::filesystem::path destination;
++            do {
++                destination = config.directory
++                    / ("corrupt_" + std::to_string(stamp) + "_"
++                        + source.filename().string()
++                        + (suffix == 0U ? "" : "_" + std::to_string(suffix)));
++                ++suffix;
++            } while (std::filesystem::exists(destination));
++            std::error_code error;
++            std::filesystem::copy_file(
++                source, destination,
++                std::filesystem::copy_options::none, error);
++            if (error) {
++                for (const auto& path : copied) {
++                    std::filesystem::remove(path, error);
++                }
++                return {false, SaveError::archive_failed};
++            }
++            destinations.push_back(destination);
++            copied.push_back(destination);
++        }
++        for (const auto& source : files) {
++            std::error_code error;
++            std::filesystem::remove(source, error);
++            if (error) {
++                for (const auto& path : destinations) {
++                    std::filesystem::remove(path, error);
++                }
++                return {false, SaveError::archive_failed};
++            }
++        }
++    } catch (...) {
++        std::error_code error;
++        for (const auto& path : copied) {
++            std::filesystem::remove(path, error);
++        }
++        return {false, SaveError::archive_failed};
++    }
++    return {true, SaveError::none};
++}
++
++std::vector<std::filesystem::path> invalid_files(
++    const SaveStoreConfig& config, const ScanResult& scan,
++    bool include_temps) {
++    std::vector<std::filesystem::path> files;
++    if (scan.a.state == SlotFileState::invalid
++            || scan.a.state == SlotFileState::unavailable) {
++        files.push_back(config.directory / slot_name(SaveSlot::a));
++    }
++    if (scan.b.state == SlotFileState::invalid
++            || scan.b.state == SlotFileState::unavailable) {
++        files.push_back(config.directory / slot_name(SaveSlot::b));
++    }
++    if (include_temps) {
++        if (scan.temp_a) {
++            files.push_back(config.directory / temp_name(SaveSlot::a));
++        }
++        if (scan.temp_b) {
++            files.push_back(config.directory / temp_name(SaveSlot::b));
++        }
++    }
++    return files;
++}
++
++void remove_temps(const SaveStoreConfig& config, const ScanResult& scan) noexcept {
++    std::error_code error;
++    if (scan.temp_a) {
++        std::filesystem::remove(config.directory / temp_name(SaveSlot::a), error);
++    }
++    if (scan.temp_b) {
++        std::filesystem::remove(config.directory / temp_name(SaveSlot::b), error);
++    }
++}
++
++SaveLoadResult ready_result(const ScanResult& scan, SaveSlot slot,
++    bool recovered = false) noexcept {
++    SaveLoadResult result{};
++    result.state = SaveLoadState::ready;
++    result.active_slot = slot;
++    result.recovered = recovered;
++    result.checkpoint = slot == SaveSlot::a ? scan.a.checkpoint : scan.b.checkpoint;
++    return result;
++}
++
++SaveCommitResult commit_failure(SaveCommitState state, SaveError error,
++    SaveSlot slot = SaveSlot::none) noexcept {
++    SaveCommitResult result{};
++    result.state = state;
++    result.error = error;
++    result.active_slot = slot;
++    return result;
++}
++
++}  // namespace
++
++SaveStore::SaveStore(SaveStoreConfig config)
++    : config_(std::move(config)) {
++    if (config_.directory.empty()) {
++        const auto fallback = default_save_directory();
++        if (fallback.has_value()) {
++            config_.directory = *fallback;
++        }
++    }
++}
++
++SaveLoadResult SaveStore::load() noexcept {
++    try {
++        if (config_.directory.empty()) {
++            return {SaveLoadState::blocked, SaveError::directory_unavailable,
++                SaveSlot::none, {}, false};
++        }
++        auto scan = scan_directory(config_, false);
++        if (scan.directory_error) {
++            return {SaveLoadState::blocked, SaveError::directory_unavailable,
++                SaveSlot::none, {}, false};
++        }
++        if (scan.a.state == SlotFileState::valid
++                && scan.b.state == SlotFileState::valid) {
++            if (scan.a.checkpoint.commit_generation
++                    == scan.b.checkpoint.commit_generation
++                && !same_state(scan.a.checkpoint, scan.b.checkpoint)) {
++                return {SaveLoadState::recovery_required,
++                    SaveError::conflicting_slots, SaveSlot::none, {}, false};
++            }
++            remove_temps(config_, scan);
++            return ready_result(scan, highest_slot(scan));
++        }
++
++        const auto valid_count = (scan.a.state == SlotFileState::valid ? 1 : 0)
++            + (scan.b.state == SlotFileState::valid ? 1 : 0);
++        if (valid_count == 1) {
++            const auto invalid = invalid_files(config_, scan, false);
++            if (!invalid.empty()) {
++                const auto archive = archive_files(config_, invalid);
++                if (!archive.ok) {
++                    return {SaveLoadState::blocked, archive.error,
++                        SaveSlot::none, {}, false};
++                }
++                scan = scan_directory(config_, false);
++                if (scan.directory_error) {
++                    return {SaveLoadState::blocked,
++                        SaveError::directory_unavailable, SaveSlot::none, {}, false};
++                }
++                remove_temps(config_, scan);
++                return ready_result(scan, highest_slot(scan), true);
++            }
++            remove_temps(config_, scan);
++            return ready_result(scan, highest_slot(scan));
++        }
++        if (!scan.any_file) {
++            return {SaveLoadState::empty, SaveError::none,
++                SaveSlot::none, {}, false};
++        }
++        return {SaveLoadState::recovery_required, SaveError::read_failed,
++            SaveSlot::none, {}, false};
++    } catch (...) {
++        return {SaveLoadState::blocked, SaveError::read_failed,
++            SaveSlot::none, {}, false};
++    }
++}
++
++SaveCommitResult SaveStore::commit(
++    const checkpoint::DungeonRunState& expected) noexcept {
++    try {
++        std::array<std::uint8_t, kEncodedCheckpointSize> encoded_state{};
++        if (!encode_checkpoint(expected, encoded_state)) {
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::invalid_checkpoint);
++        }
++        if (config_.directory.empty()) {
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::directory_unavailable);
++        }
++        std::error_code directory_error;
++        std::filesystem::create_directories(config_.directory, directory_error);
++        if (directory_error) {
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::directory_unavailable);
++        }
++
++        const auto loaded = load();
++        if (loaded.state == SaveLoadState::blocked
++                || loaded.state == SaveLoadState::recovery_required) {
++            return commit_failure(SaveCommitState::not_committed,
++                loaded.error == SaveError::none
++                    ? SaveError::read_failed : loaded.error,
++                loaded.active_slot);
++        }
++        const auto active = loaded.active_slot;
++        const auto target = active == SaveSlot::a ? SaveSlot::b : SaveSlot::a;
++        const auto target_path = config_.directory / slot_name(target);
++        const auto temp_path = config_.directory / temp_name(target);
++
++        std::error_code error;
++        std::filesystem::remove(temp_path, error);
++        if (hook_failed(config_, SaveFaultPoint::before_temp_write)) {
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::write_failed, active);
++        }
++
++        {
++            std::ofstream output(temp_path, std::ios::binary | std::ios::trunc);
++            if (!output) {
++                return commit_failure(SaveCommitState::not_committed,
++                    SaveError::write_failed, active);
++            }
++            output.write(reinterpret_cast<const char*>(encoded_state.data()),
++                static_cast<std::streamsize>(encoded_state.size()));
++            if (!output) {
++                std::filesystem::remove(temp_path, error);
++                return commit_failure(SaveCommitState::not_committed,
++                    SaveError::write_failed, active);
++            }
++            output.flush();
++            if (!output) {
++                std::filesystem::remove(temp_path, error);
++                return commit_failure(SaveCommitState::not_committed,
++                    SaveError::flush_failed, active);
++            }
++        }
++        if (hook_failed(config_, SaveFaultPoint::after_temp_write)) {
++            std::filesystem::remove(temp_path, error);
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::write_failed, active);
++        }
++
++        const auto validated = read_slot(temp_path);
++        if (validated.state != SlotFileState::valid
++                || !same_state(validated.checkpoint, expected)) {
++            std::filesystem::remove(temp_path, error);
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::read_failed, active);
++        }
++        if (hook_failed(config_, SaveFaultPoint::after_temp_validation)
++                || hook_failed(config_, SaveFaultPoint::before_publish)) {
++            std::filesystem::remove(temp_path, error);
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::publish_failed, active);
++        }
++
++        std::filesystem::remove(target_path, error);
++        if (error) {
++            std::filesystem::remove(temp_path, error);
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::publish_failed, active);
++        }
++        std::filesystem::rename(temp_path, target_path, error);
++        if (error) {
++            std::filesystem::remove(temp_path, error);
++            return commit_failure(SaveCommitState::not_committed,
++                SaveError::publish_failed, active);
++        }
++        if (hook_failed(config_, SaveFaultPoint::after_publish)) {
++            return commit_failure(SaveCommitState::indeterminate,
++                SaveError::publish_failed, target);
++        }
++
++        const auto final_scan = scan_directory(config_, true);
++        const auto& target_info = target == SaveSlot::a
++            ? final_scan.a : final_scan.b;
++        if (target_info.state == SlotFileState::valid
++                && same_state(target_info.checkpoint, expected)) {
++            const auto& other_info = target == SaveSlot::a
++                ? final_scan.b : final_scan.a;
++            if (other_info.state == SlotFileState::valid) {
++                if (other_info.checkpoint.commit_generation
++                        > expected.commit_generation
++                    || (other_info.checkpoint.commit_generation
++                            == expected.commit_generation
++                        && !same_state(other_info.checkpoint, expected))) {
++                    return commit_failure(SaveCommitState::indeterminate,
++                        SaveError::final_scan_failed, target);
++                }
++            }
++            SaveCommitResult result{};
++            result.state = SaveCommitState::committed;
++            result.active_slot = target;
++            result.verified_state = target_info.checkpoint;
++            return result;
++        }
++        return commit_failure(SaveCommitState::indeterminate,
++            SaveError::final_scan_failed, target);
++    } catch (...) {
++        return commit_failure(SaveCommitState::indeterminate,
++            SaveError::publish_failed);
++    }
++}
++
++SaveLoadResult SaveStore::archive_invalid_and_create(
++    const checkpoint::DungeonRunState& initial) noexcept {
++    try {
++        std::array<std::uint8_t, kEncodedCheckpointSize> bytes{};
++        if (!encode_checkpoint(initial, bytes)) {
++            return {SaveLoadState::blocked, SaveError::invalid_checkpoint,
++                SaveSlot::none, {}, false};
++        }
++        if (config_.directory.empty()) {
++            return {SaveLoadState::blocked, SaveError::directory_unavailable,
++                SaveSlot::none, {}, false};
++        }
++        std::error_code error;
++        std::filesystem::create_directories(config_.directory, error);
++        if (error) {
++            return {SaveLoadState::blocked, SaveError::directory_unavailable,
++                SaveSlot::none, {}, false};
++        }
++        const auto scan = scan_directory(config_, false);
++        if (scan.directory_error) {
++            return {SaveLoadState::blocked, SaveError::directory_unavailable,
++                SaveSlot::none, {}, false};
++        }
++        const auto files = invalid_files(config_, scan, true);
++        const auto archive = archive_files(config_, files);
++        if (!archive.ok) {
++            return {SaveLoadState::blocked, archive.error,
++                SaveSlot::none, {}, false};
++        }
++        const auto commit_result = commit(initial);
++        if (commit_result.state == SaveCommitState::committed) {
++            SaveLoadResult result{};
++            result.state = SaveLoadState::ready;
++            result.active_slot = commit_result.active_slot;
++            result.checkpoint = commit_result.verified_state;
++            result.recovered = true;
++            return result;
++        }
++        return {SaveLoadState::blocked, commit_result.error,
++            commit_result.active_slot, {}, true};
++    } catch (...) {
++        return {SaveLoadState::blocked, SaveError::archive_failed,
++            SaveSlot::none, {}, false};
++    }
++}
++
++}  // namespace arpg::persistence
+diff --git a/src/persistence/save_store.hpp b/src/persistence/save_store.hpp
+new file mode 100644
+index 0000000..f6ae4ff
+--- /dev/null
++++ b/src/persistence/save_store.hpp
+@@ -0,0 +1,91 @@
++#pragma once
++
++#include "dungeon/dungeon_checkpoint.hpp"
++
++#include <cstdint>
++#include <filesystem>
++
++namespace arpg::persistence {
++
++enum class SaveSlot : std::uint8_t { none, a, b };
++
++enum class SaveCommitState : std::uint8_t {
++    committed,
++    not_committed,
++    indeterminate
++};
++
++enum class SaveLoadState : std::uint8_t {
++    ready,
++    empty,
++    recovery_required,
++    blocked
++};
++
++enum class SaveError : std::uint8_t {
++    none,
++    directory_unavailable,
++    read_failed,
++    write_failed,
++    flush_failed,
++    publish_failed,
++    final_scan_failed,
++    conflicting_slots,
++    archive_failed,
++    invalid_checkpoint
++};
++
++enum class SaveFaultPoint : std::uint8_t {
++    before_temp_write,
++    after_temp_write,
++    after_temp_validation,
++    before_publish,
++    after_publish,
++    final_scan_a,
++    final_scan_b,
++    before_archive
++};
++
++using SaveFaultHook = bool (*)(SaveFaultPoint point, void* context) noexcept;
++using UtcStampProvider = std::uint64_t (*)(void* context) noexcept;
++
++struct SaveStoreConfig final {
++    std::filesystem::path directory{};
++    SaveFaultHook fault_hook{};
++    void* fault_context{};
++    UtcStampProvider stamp_provider{};
++    void* stamp_context{};
++};
++
++struct SaveLoadResult final {
++    SaveLoadState state{SaveLoadState::blocked};
++    SaveError error{SaveError::none};
++    SaveSlot active_slot{SaveSlot::none};
++    dungeon::checkpoint::DungeonRunState checkpoint{};
++    bool recovered{};
++};
++
++struct SaveCommitResult final {
++    SaveCommitState state{SaveCommitState::indeterminate};
++    SaveError error{SaveError::none};
++    SaveSlot active_slot{SaveSlot::none};
++    dungeon::checkpoint::DungeonRunState verified_state{};
++};
++
++class SaveStore final {
++public:
++    explicit SaveStore(SaveStoreConfig config);
++
++    [[nodiscard]] SaveLoadResult load() noexcept;
++
++    [[nodiscard]] SaveCommitResult commit(
++        const dungeon::checkpoint::DungeonRunState& expected) noexcept;
++
++    [[nodiscard]] SaveLoadResult archive_invalid_and_create(
++        const dungeon::checkpoint::DungeonRunState& initial) noexcept;
++
++private:
++    SaveStoreConfig config_{};
++};
++
++}  // namespace arpg::persistence
+diff --git a/tests/persistence/CMakeLists.txt b/tests/persistence/CMakeLists.txt
+index 612b450..7410128 100644
+--- a/tests/persistence/CMakeLists.txt
++++ b/tests/persistence/CMakeLists.txt
+@@ -1,13 +1,15 @@
+ add_executable(arpg_persistence_tests
+     persistence_test_main.cpp
+-    checkpoint_codec_tests.cpp)
++    checkpoint_codec_tests.cpp
++    save_store_tests.cpp
++    save_store_fault_tests.cpp)
+ 
+ target_compile_features(arpg_persistence_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_persistence_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_persistence_tests PRIVATE arpg_persistence)
+ arpg_enable_project_warnings(arpg_persistence_tests)
+ 
+ add_test(NAME persistence.units COMMAND arpg_persistence_tests)
+ set_tests_properties(
+     persistence.units PROPERTIES LABELS "headless;persistence")
+diff --git a/tests/persistence/persistence_test_main.cpp b/tests/persistence/persistence_test_main.cpp
+index f4aeb86..89aee62 100644
+--- a/tests/persistence/persistence_test_main.cpp
++++ b/tests/persistence/persistence_test_main.cpp
+@@ -1,11 +1,15 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite checkpoint_codec_suite() noexcept;
++arpg::test::TestSuite save_store_suite() noexcept;
++arpg::test::TestSuite save_store_fault_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         checkpoint_codec_suite(),
++        save_store_suite(),
++        save_store_fault_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 8, "persistence");
++    return arpg::test::run_suites(suites, 21, "persistence");
+ }
+diff --git a/tests/persistence/save_store_fault_tests.cpp b/tests/persistence/save_store_fault_tests.cpp
+new file mode 100644
+index 0000000..969fd11
+--- /dev/null
++++ b/tests/persistence/save_store_fault_tests.cpp
+@@ -0,0 +1,244 @@
++#include "test_framework.hpp"
++
++#include "persistence/checkpoint_codec.hpp"
++#include "persistence/save_store.hpp"
++
++#include <array>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <string>
++#include <vector>
++
++namespace {
++
++namespace checkpoint = arpg::dungeon::checkpoint;
++namespace persistence = arpg::persistence;
++
++struct TempDirectory final {
++    std::filesystem::path path;
++
++    TempDirectory() noexcept {
++        std::error_code error;
++        path = std::filesystem::temp_directory_path(error)
++            / "arpg_task7_save_store_fault_tests";
++        path /= std::to_string(static_cast<unsigned long long>(
++            std::hash<std::string>{}(path.string() + std::to_string(
++                reinterpret_cast<std::uintptr_t>(this)))));
++        std::filesystem::remove_all(path, error);
++        std::filesystem::create_directories(path, error);
++    }
++
++    ~TempDirectory() noexcept {
++        std::error_code error;
++        std::filesystem::remove_all(path, error);
++    }
++};
++
++checkpoint::DungeonRunState make_state(std::uint64_t generation,
++    std::uint64_t marker = 0U) noexcept {
++    checkpoint::DungeonRunState state{};
++    state.root_seed = 0x2000U + marker;
++    state.commit_generation = generation;
++    state.biases = {{5U, 6U, 7U, 8U}};
++    state.current_room.index = 30U + marker;
++    state.current_room.seed = 40U + marker;
++    state.current_room.depth = 1U + marker;
++    state.current_room.floor_room_index = 1U;
++    state.current_room.entry = checkpoint::EntrySide::initial;
++    state.current_room.ecology = checkpoint::DungeonElement::water;
++    state.last_transition = checkpoint::TransitionKind::none;
++    state.last_direction = checkpoint::ExitDirection::none;
++    return state;
++}
++
++bool same_state(const checkpoint::DungeonRunState& lhs,
++    const checkpoint::DungeonRunState& rhs) noexcept {
++    return lhs.root_seed == rhs.root_seed
++        && lhs.commit_generation == rhs.commit_generation
++        && lhs.biases == rhs.biases
++        && lhs.current_room.index == rhs.current_room.index
++        && lhs.current_room.seed == rhs.current_room.seed
++        && lhs.current_room.depth == rhs.current_room.depth
++        && lhs.current_room.floor_room_index == rhs.current_room.floor_room_index
++        && lhs.current_room.entry == rhs.current_room.entry
++        && lhs.current_room.ecology == rhs.current_room.ecology
++        && lhs.current_room.has_hole == rhs.current_room.has_hole
++        && lhs.current_room.is_abyss == rhs.current_room.is_abyss
++        && lhs.last_transition == rhs.last_transition
++        && lhs.last_direction == rhs.last_direction;
++}
++
++std::vector<std::uint8_t> read_bytes(const std::filesystem::path& path) {
++    std::ifstream input(path, std::ios::binary);
++    return std::vector<std::uint8_t>(
++        std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
++}
++
++void write_bytes(const std::filesystem::path& path,
++    const std::vector<std::uint8_t>& bytes) noexcept {
++    std::ofstream output(path, std::ios::binary | std::ios::trunc);
++    output.write(reinterpret_cast<const char*>(bytes.data()),
++        static_cast<std::streamsize>(bytes.size()));
++}
++
++std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    const auto ok = persistence::encode_checkpoint(state, bytes);
++    (void)ok;
++    return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
++}
++
++struct FaultContext final {
++    persistence::SaveFaultPoint point{};
++    bool persistent{};
++    bool triggered{};
++};
++
++bool fail_at(persistence::SaveFaultPoint point, void* opaque) noexcept {
++    auto* context = static_cast<FaultContext*>(opaque);
++    if (point != context->point) {
++        return false;
++    }
++    if (context->persistent || !context->triggered) {
++        context->triggered = true;
++        return true;
++    }
++    return false;
++}
++
++persistence::SaveStore make_store(const std::filesystem::path& path,
++    FaultContext* fault = nullptr) noexcept {
++    persistence::SaveStoreConfig config{};
++    config.directory = path;
++    if (fault != nullptr) {
++        config.fault_hook = &fail_at;
++        config.fault_context = fault;
++    }
++    return persistence::SaveStore(config);
++}
++
++arpg::test::Failure before_temp_write_is_not_committed_and_old_bytes_unchanged() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto first = make_state(1U, 1U);
++    ARPG_REQUIRE(store.commit(first).state == persistence::SaveCommitState::committed);
++    const auto old_a = read_bytes(directory.path / "run_a.sav");
++
++    FaultContext fault{persistence::SaveFaultPoint::before_temp_write, false, false};
++    auto faulty = make_store(directory.path, &fault);
++    const auto result = faulty.commit(make_state(2U, 2U));
++    ARPG_REQUIRE(result.state == persistence::SaveCommitState::not_committed);
++    ARPG_REQUIRE(result.error == persistence::SaveError::write_failed);
++    ARPG_REQUIRE(read_bytes(directory.path / "run_a.sav") == old_a);
++    ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.sav"));
++    return {};
++}
++
++arpg::test::Failure after_temp_validation_before_publish_is_not_committed() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto first = make_state(1U, 3U);
++    ARPG_REQUIRE(store.commit(first).state == persistence::SaveCommitState::committed);
++    const auto old_a = read_bytes(directory.path / "run_a.sav");
++
++    FaultContext fault{persistence::SaveFaultPoint::before_publish, false, false};
++    auto faulty = make_store(directory.path, &fault);
++    const auto result = faulty.commit(make_state(2U, 4U));
++    ARPG_REQUIRE(result.state == persistence::SaveCommitState::not_committed);
++    ARPG_REQUIRE(result.error == persistence::SaveError::publish_failed);
++    ARPG_REQUIRE(read_bytes(directory.path / "run_a.sav") == old_a);
++    ARPG_REQUIRE(store.load().state == persistence::SaveLoadState::ready);
++    return {};
++}
++
++arpg::test::Failure publish_final_scan_fault_is_committed_when_expected_proven() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    ARPG_REQUIRE(store.commit(make_state(1U, 5U)).state == persistence::SaveCommitState::committed);
++
++    FaultContext fault{persistence::SaveFaultPoint::final_scan_a, true, false};
++    auto faulty = make_store(directory.path, &fault);
++    const auto expected = make_state(2U, 6U);
++    const auto result = faulty.commit(expected);
++    ARPG_REQUIRE(result.state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(result.active_slot == persistence::SaveSlot::b);
++    ARPG_REQUIRE(same_state(result.verified_state, expected));
++
++    FaultContext indeterminate_fault{persistence::SaveFaultPoint::final_scan_a, true, false};
++    auto indeterminate = make_store(directory.path, &indeterminate_fault);
++    const auto second = make_state(3U, 7U);
++    indeterminate_fault.point = persistence::SaveFaultPoint::final_scan_a;
++    const auto uncertain = indeterminate.commit(second);
++    ARPG_REQUIRE(uncertain.state == persistence::SaveCommitState::indeterminate);
++    ARPG_REQUIRE(uncertain.state != persistence::SaveCommitState::not_committed);
++    return {};
++}
++
++arpg::test::Failure truncated_temp_without_valid_slot_requires_recovery() noexcept {
++    TempDirectory directory;
++    write_bytes(directory.path / "run_a.tmp", {0x01U, 0x02U});
++    auto store = make_store(directory.path);
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
++    ARPG_REQUIRE(loaded.error == persistence::SaveError::read_failed);
++    return {};
++}
++
++arpg::test::Failure four_invalid_files_are_archived_before_new_generation() noexcept {
++    TempDirectory directory;
++    const std::vector<std::uint8_t> invalid{0x10U, 0x11U, 0x12U};
++    write_bytes(directory.path / "run_a.sav", invalid);
++    write_bytes(directory.path / "run_b.sav", invalid);
++    write_bytes(directory.path / "run_a.tmp", invalid);
++    write_bytes(directory.path / "run_b.tmp", invalid);
++    auto store = make_store(directory.path);
++    ARPG_REQUIRE(store.load().state == persistence::SaveLoadState::recovery_required);
++
++    auto created = store.archive_invalid_and_create(make_state(1U, 8U));
++    ARPG_REQUIRE(created.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(created.active_slot == persistence::SaveSlot::a);
++    ARPG_REQUIRE(created.checkpoint.commit_generation == 1U);
++    std::size_t archive_count = 0U;
++    std::error_code error;
++    for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
++        if (entry.path().filename().string().find("corrupt_") == 0U) {
++            ++archive_count;
++        }
++    }
++    ARPG_REQUIRE(archive_count == 4U);
++    ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_a.tmp"));
++    ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.tmp"));
++    return {};
++}
++
++arpg::test::Failure archive_failure_blocks_and_preserves_corrupt_files() noexcept {
++    TempDirectory directory;
++    const std::vector<std::uint8_t> invalid_a{0x21U, 0x22U, 0x23U};
++    const std::vector<std::uint8_t> invalid_b{0x31U, 0x32U, 0x33U};
++    write_bytes(directory.path / "run_a.sav", invalid_a);
++    write_bytes(directory.path / "run_b.sav", invalid_b);
++    FaultContext fault{persistence::SaveFaultPoint::before_archive, true, false};
++    auto store = make_store(directory.path, &fault);
++    const auto result = store.archive_invalid_and_create(make_state(1U, 9U));
++    ARPG_REQUIRE(result.state == persistence::SaveLoadState::blocked);
++    ARPG_REQUIRE(result.error == persistence::SaveError::archive_failed);
++    ARPG_REQUIRE(read_bytes(directory.path / "run_a.sav") == invalid_a);
++    ARPG_REQUIRE(read_bytes(directory.path / "run_b.sav") == invalid_b);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"before temp write is not committed and old bytes unchanged", &before_temp_write_is_not_committed_and_old_bytes_unchanged},
++    {"after temp validation before publish is not committed", &after_temp_validation_before_publish_is_not_committed},
++    {"publish final scan fault is committed when expected proven", &publish_final_scan_fault_is_committed_when_expected_proven},
++    {"truncated temp without valid slot requires recovery", &truncated_temp_without_valid_slot_requires_recovery},
++    {"four invalid files are archived before new generation", &four_invalid_files_are_archived_before_new_generation},
++    {"archive failure blocks and preserves corrupt files", &archive_failure_blocks_and_preserves_corrupt_files},
++};
++
++}  // namespace
++
++arpg::test::TestSuite save_store_fault_suite() noexcept {
++    return arpg::test::make_suite("save_store_faults", kCases);
++}
+diff --git a/tests/persistence/save_store_tests.cpp b/tests/persistence/save_store_tests.cpp
+new file mode 100644
+index 0000000..4599bd2
+--- /dev/null
++++ b/tests/persistence/save_store_tests.cpp
+@@ -0,0 +1,266 @@
++#include "test_framework.hpp"
++
++#include "persistence/checkpoint_codec.hpp"
++#include "persistence/save_store.hpp"
++
++#include <array>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <functional>
++#include <string>
++#include <system_error>
++#include <vector>
++
++namespace {
++
++namespace checkpoint = arpg::dungeon::checkpoint;
++namespace persistence = arpg::persistence;
++
++struct TempDirectory final {
++    std::filesystem::path path;
++
++    TempDirectory() noexcept {
++        std::error_code error;
++        path = std::filesystem::temp_directory_path(error)
++            / "arpg_task7_save_store_tests";
++        path /= std::to_string(
++            static_cast<unsigned long long>(
++                std::hash<std::string>{}(path.string() + std::to_string(
++                    reinterpret_cast<std::uintptr_t>(this)))));
++        std::filesystem::remove_all(path, error);
++        std::filesystem::create_directories(path, error);
++    }
++
++    ~TempDirectory() noexcept {
++        std::error_code error;
++        std::filesystem::remove_all(path, error);
++    }
++};
++
++checkpoint::DungeonRunState make_state(std::uint64_t generation,
++    std::uint64_t marker = 0U) noexcept {
++    checkpoint::DungeonRunState state{};
++    state.root_seed = 0x1000U + marker;
++    state.commit_generation = generation;
++    state.biases = {{1U, 2U, 3U, 4U}};
++    state.current_room.index = 10U + marker;
++    state.current_room.seed = 20U + marker;
++    state.current_room.depth = 1U + marker;
++    state.current_room.floor_room_index = 1U;
++    state.current_room.entry = checkpoint::EntrySide::initial;
++    state.current_room.ecology = checkpoint::DungeonElement::fire;
++    state.last_transition = checkpoint::TransitionKind::none;
++    state.last_direction = checkpoint::ExitDirection::none;
++    return state;
++}
++
++bool same_state(const checkpoint::DungeonRunState& lhs,
++    const checkpoint::DungeonRunState& rhs) noexcept {
++    return lhs.root_seed == rhs.root_seed
++        && lhs.commit_generation == rhs.commit_generation
++        && lhs.biases == rhs.biases
++        && lhs.current_room.index == rhs.current_room.index
++        && lhs.current_room.seed == rhs.current_room.seed
++        && lhs.current_room.depth == rhs.current_room.depth
++        && lhs.current_room.floor_room_index == rhs.current_room.floor_room_index
++        && lhs.current_room.entry == rhs.current_room.entry
++        && lhs.current_room.ecology == rhs.current_room.ecology
++        && lhs.current_room.has_hole == rhs.current_room.has_hole
++        && lhs.current_room.is_abyss == rhs.current_room.is_abyss
++        && lhs.last_transition == rhs.last_transition
++        && lhs.last_direction == rhs.last_direction;
++}
++
++persistence::SaveStore make_store(const std::filesystem::path& path) noexcept {
++    persistence::SaveStoreConfig config{};
++    config.directory = path;
++    return persistence::SaveStore(config);
++}
++
++void write_bytes(const std::filesystem::path& path,
++    const std::vector<std::uint8_t>& bytes) noexcept {
++    std::ofstream output(path, std::ios::binary | std::ios::trunc);
++    output.write(reinterpret_cast<const char*>(bytes.data()),
++        static_cast<std::streamsize>(bytes.size()));
++}
++
++std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    const auto ok = persistence::encode_checkpoint(state, bytes);
++    (void)ok;
++    return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
++}
++
++bool has_only_allowed_files(const std::filesystem::path& directory) noexcept {
++    std::error_code error;
++    for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
++        if (error) {
++            return false;
++        }
++        const auto name = entry.path().filename().string();
++        if (name == "run_a.sav" || name == "run_b.sav") {
++            continue;
++        }
++        if (name.find("corrupt_") == 0U) {
++            continue;
++        }
++        if (name.find("run_a.tmp") == 0U || name.find("run_b.tmp") == 0U) {
++            return false;
++        }
++        return false;
++    }
++    return true;
++}
++
++arpg::test::Failure empty_commit_and_reload() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto empty = store.load();
++    ARPG_REQUIRE(empty.state == persistence::SaveLoadState::empty);
++
++    const auto first = make_state(1U);
++    const auto committed = store.commit(first);
++    ARPG_REQUIRE(committed.state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(committed.active_slot == persistence::SaveSlot::a);
++
++    const auto reloaded = store.load();
++    ARPG_REQUIRE(reloaded.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(reloaded.active_slot == persistence::SaveSlot::a);
++    ARPG_REQUIRE(same_state(reloaded.checkpoint, first));
++    ARPG_REQUIRE(has_only_allowed_files(directory.path));
++    return {};
++}
++
++arpg::test::Failure highest_generation_wins_and_alternates() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto one = make_state(1U, 1U);
++    const auto two = make_state(2U, 2U);
++    const auto three = make_state(3U, 3U);
++    ARPG_REQUIRE(store.commit(one).state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(store.commit(two).state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(store.commit(three).state == persistence::SaveCommitState::committed);
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
++    ARPG_REQUIRE(same_state(loaded.checkpoint, three));
++    ARPG_REQUIRE(has_only_allowed_files(directory.path));
++    return {};
++}
++
++arpg::test::Failure equal_generation_same_payload_prefers_a_then_writes_b() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto state = make_state(1U, 5U);
++    ARPG_REQUIRE(store.commit(state).active_slot == persistence::SaveSlot::a);
++
++    std::error_code error;
++    std::filesystem::copy_file(directory.path / "run_a.sav",
++        directory.path / "run_b.sav",
++        std::filesystem::copy_options::overwrite_existing, error);
++    ARPG_REQUIRE(!error);
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
++
++    const auto next = make_state(2U, 6U);
++    const auto committed = store.commit(next);
++    ARPG_REQUIRE(committed.state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(committed.active_slot == persistence::SaveSlot::b);
++    ARPG_REQUIRE(has_only_allowed_files(directory.path));
++    return {};
++}
++
++arpg::test::Failure missing_slot_is_created() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto first = make_state(1U, 7U);
++    ARPG_REQUIRE(store.commit(first).state == persistence::SaveCommitState::committed);
++    std::error_code error;
++    std::filesystem::remove(directory.path / "run_b.sav", error);
++    ARPG_REQUIRE(!error);
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
++    const auto second = make_state(2U, 8U);
++    ARPG_REQUIRE(store.commit(second).state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(std::filesystem::exists(directory.path / "run_b.sav"));
++    ARPG_REQUIRE(has_only_allowed_files(directory.path));
++    return {};
++}
++
++arpg::test::Failure damaged_slot_is_archived_before_two_saves() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto first = make_state(1U, 9U);
++    ARPG_REQUIRE(store.commit(first).state == persistence::SaveCommitState::committed);
++    std::error_code error;
++    write_bytes(directory.path / "run_b.sav", {0x01U, 0x02U, 0x03U});
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
++    bool archived = false;
++    for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
++        if (entry.path().filename().string().find("corrupt_") == 0U) {
++            archived = true;
++        }
++    }
++    ARPG_REQUIRE(archived);
++    ARPG_REQUIRE(store.commit(make_state(2U, 10U)).state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(store.commit(make_state(3U, 11U)).state == persistence::SaveCommitState::committed);
++    ARPG_REQUIRE(has_only_allowed_files(directory.path));
++    return {};
++}
++
++arpg::test::Failure conflicting_equal_generation_requires_recovery() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    ARPG_REQUIRE(store.commit(make_state(1U, 12U)).state == persistence::SaveCommitState::committed);
++    std::error_code error;
++    std::filesystem::copy_file(directory.path / "run_a.sav",
++        directory.path / "run_b.sav",
++        std::filesystem::copy_options::overwrite_existing, error);
++    ARPG_REQUIRE(!error);
++    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
++    std::ifstream input(directory.path / "run_b.sav", std::ios::binary);
++    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
++    auto altered = make_state(1U, 13U);
++    ARPG_REQUIRE(persistence::encode_checkpoint(altered, bytes));
++    write_bytes(directory.path / "run_b.sav",
++        std::vector<std::uint8_t>(bytes.begin(), bytes.end()));
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
++    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
++    ARPG_REQUIRE(has_only_allowed_files(directory.path));
++    return {};
++}
++
++arpg::test::Failure temp_files_do_not_participate_in_load() noexcept {
++    TempDirectory directory;
++    auto store = make_store(directory.path);
++    const auto first = make_state(4U, 14U);
++    ARPG_REQUIRE(store.commit(first).state == persistence::SaveCommitState::committed);
++    write_bytes(directory.path / "run_b.tmp", encoded(make_state(99U, 99U)));
++    const auto loaded = store.load();
++    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
++    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
++    ARPG_REQUIRE(same_state(loaded.checkpoint, first));
++    ARPG_REQUIRE(has_only_allowed_files(directory.path));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"empty commit and reload", &empty_commit_and_reload},
++    {"highest generation wins and alternates", &highest_generation_wins_and_alternates},
++    {"equal generation same payload prefers a then writes b", &equal_generation_same_payload_prefers_a_then_writes_b},
++    {"missing slot is created", &missing_slot_is_created},
++    {"damaged slot is archived before two saves", &damaged_slot_is_archived_before_two_saves},
++    {"conflicting equal generation requires recovery", &conflicting_equal_generation_requires_recovery},
++    {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
++};
++
++}  // namespace
++
++arpg::test::TestSuite save_store_suite() noexcept {
++    return arpg::test::make_suite("save_store", kCases);
++}
