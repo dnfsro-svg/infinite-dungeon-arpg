@@ -1,0 +1,599 @@
+# Review package: 5ff65e1..c16257e
+
+## Commits
+c16257e test: cover material pack lifecycle fallback
+cb6b0d7 feat: add stage 12 material pack lifecycle
+
+## Files changed
+ assets/stage12/README.md                           |   9 ++
+ src/app/CMakeLists.txt                             |   9 ++
+ src/platform/raylib/CMakeLists.txt                 |   1 +
+ src/platform/raylib/combat_renderer.cpp            |   2 +
+ src/platform/raylib/combat_renderer.hpp            |   2 +
+ src/platform/raylib/material_manifest.hpp          |  18 +++
+ src/platform/raylib/material_pack.cpp              | 158 +++++++++++++++++++++
+ src/platform/raylib/material_pack.hpp              |  48 +++++++
+ tests/platform/material_asset_validation_tests.cpp | 113 +++++++++++++++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ 10 files changed, 361 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/assets/stage12/README.md b/assets/stage12/README.md
+new file mode 100644
+index 0000000..5322e3e
+--- /dev/null
++++ b/assets/stage12/README.md
+@@ -0,0 +1,9 @@
++# Stage 12 材质包资源
++
++运行时材质包固定查找本目录下的三个内置图集：
++
++- `environment.png`：1024 × 1024
++- `actors.png`：2048 × 2048
++- `effects_ui.png`：1024 × 1024
++
++本 Task 2 尚未加入这些 PNG；它们将由 12-B、12-C、12-D 分别提供。因此当前构建发布时只会复制本说明文件，游戏启动会对每个缺失类别只警告一次，并安全保留现有程序绘制回退。图集到位后，发布后置步骤会将整个 `assets/stage12` 目录复制到可执行文件同级的 `bin/assets/stage12`，不需要运行时解析清单或在绘制热路径读取文件。
+diff --git a/src/app/CMakeLists.txt b/src/app/CMakeLists.txt
+index 6ead0e6..1e3c96f 100644
+--- a/src/app/CMakeLists.txt
++++ b/src/app/CMakeLists.txt
+@@ -1,6 +1,15 @@
+ add_executable(arpg_game main.cpp)
+ 
+ target_compile_features(arpg_game PRIVATE cxx_std_17)
+ target_link_libraries(arpg_game PRIVATE arpg_raylib)
+ 
+ arpg_enable_project_warnings(arpg_game)
++
++add_custom_command(TARGET arpg_game POST_BUILD
++    COMMAND "${CMAKE_COMMAND}" -E make_directory
++        "$<TARGET_FILE_DIR:arpg_game>/assets/stage12"
++    COMMAND "${CMAKE_COMMAND}" -E copy_directory
++        "${PROJECT_SOURCE_DIR}/assets/stage12"
++        "$<TARGET_FILE_DIR:arpg_game>/assets/stage12"
++    COMMENT "Copying Stage 12 material-pack assets"
++    VERBATIM)
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 7e94b3b..6c7d342 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -18,20 +18,21 @@ add_library(arpg_raylib STATIC
+     hud_font.cpp
+     hud_view_model.cpp
+     hud_notice_state.cpp
+     loot_pickup_feedback.cpp
+     hud_layout.cpp
+     hud_renderer.cpp
+     inventory_renderer.cpp
+     inventory_view_math.cpp
+     material_animation.cpp
+     material_asset_validation.cpp
++    material_pack.cpp
+     passive_tree_renderer.cpp
+     passive_tree_view_math.cpp
+     pause_menu_state.cpp
+     pause_menu_view.cpp
+     pause_menu_renderer.cpp
+     raylib_input.cpp
+     raylib_host.cpp
+     room_renderer.cpp
+     stable_key_raylib.cpp
+     window_settings.cpp)
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 1cc644a..2e8bf1f 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -29,28 +29,30 @@ CombatRenderPlan make_combat_render_plan(
+ std::optional<std::size_t> hud_presented_frame_index(
+     HudPresentedFrame frame) noexcept {
+     const std::size_t index = static_cast<std::size_t>(frame);
+     return index < static_cast<std::size_t>(HudPresentedFrame::count)
+         ? std::optional<std::size_t>{index} : std::nullopt;
+ }
+ 
+ bool CombatRenderer::initialize_resources() noexcept {
+     const bool death_font_ready = death_overlay_.initialize();
+     const bool hud_font_ready = hud_renderer_.initialize();
++    static_cast<void>(material_pack_.load());
+     if (!death_font_ready || !hud_font_ready) {
+         TraceLog(LOG_WARNING,
+             "HUD overlays are using a fallback font; formal CJK validation will fail");
+     }
+     return death_font_ready && hud_font_ready;
+ }
+ 
+ void CombatRenderer::shutdown_resources() noexcept {
++    material_pack_.unload();
+     hud_renderer_.shutdown();
+     death_overlay_.shutdown();
+ }
+ 
+ DoorRenderDecision door_render_decision(
+     DoorVisualMode mode,
+     dungeon::ExitDirection direction) noexcept {
+     const DoorTheme theme = door_theme(direction);
+     return {
+         theme.label,
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 72a20e0..ba94cba 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -1,20 +1,21 @@
+ #pragma once
+ 
+ #include "combat_feedback.hpp"
+ #include "death_overlay_renderer.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "ground_loot_view.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_renderer.hpp"
+ #include "loot_pickup_feedback.hpp"
++#include "material_pack.hpp"
+ 
+ #include <cstdint>
+ #include <array>
+ #include <optional>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ struct DungeonRenderStatus;
+ struct ControlHints;
+@@ -122,20 +123,21 @@ private:
+         float width,
+         float height) const noexcept;
+     combat::CombatEvent last_event_{};
+     bool has_last_event_{};
+     TransitionVisualState transition_{};
+     DeathOverlayRenderer death_overlay_{};
+     HudRenderer hud_renderer_{};
+     DebugOverlayRenderer debug_overlay_{};
+     HudNoticeState hud_notices_{};
+     LootPickupFeedbackState loot_pickup_feedback_{};
++    MaterialPack material_pack_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
+     HudLayout hud_layout_{};
+     std::uint64_t hud_binding_revision_{};
+     std::uint64_t hud_observation_count_{};
+     std::array<std::uint64_t,
+         static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
+     settings::LootFilterMode loot_filter_mode_{
+         settings::LootFilterMode::show_all};
+ };
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index 567e18a..3dd1550 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -13,11 +13,29 @@ struct MaterialAtlasDefinition final {
+     std::size_t rgba_bytes{};
+ };
+ 
+ struct MaterialManifestDefinition final {
+     const MaterialAtlasDefinition* atlases{};
+     std::size_t atlas_count{};
+     const MaterialFrameDefinition* frames{};
+     std::size_t frame_count{};
+ };
+ 
++namespace detail {
++
++inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
++    {MaterialAtlasId::environment, 1024, 1024, 4U * 1024U * 1024U},
++    {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U},
++    {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U},
++};
++
++}  // namespace detail
++
++[[nodiscard]] constexpr MaterialManifestDefinition
++default_material_manifest() noexcept {
++    return {detail::kDefaultMaterialAtlases,
++        sizeof(detail::kDefaultMaterialAtlases)
++            / sizeof(detail::kDefaultMaterialAtlases[0]),
++        nullptr, 0U};
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.cpp b/src/platform/raylib/material_pack.cpp
+new file mode 100644
+index 0000000..0a0412a
+--- /dev/null
++++ b/src/platform/raylib/material_pack.cpp
+@@ -0,0 +1,158 @@
++#include "material_pack.hpp"
++
++#include "material_asset_validation.hpp"
++
++#include <raylib.h>
++
++namespace arpg::platform {
++namespace {
++
++constexpr const char* kAtlasPaths[] = {
++    "assets/stage12/environment.png",
++    "assets/stage12/actors.png",
++    "assets/stage12/effects_ui.png",
++};
++
++[[nodiscard]] constexpr bool is_known_atlas(MaterialAtlasId id) noexcept {
++    return id < MaterialAtlasId::count;
++}
++
++[[nodiscard]] constexpr bool is_known_sprite(MaterialSpriteId id) noexcept {
++    return id > MaterialSpriteId::missing && id < MaterialSpriteId::count;
++}
++
++[[nodiscard]] constexpr std::size_t atlas_index(MaterialAtlasId id) noexcept {
++    return static_cast<std::size_t>(id);
++}
++
++[[nodiscard]] constexpr MaterialAtlasId atlas_for_sprite(
++    MaterialSpriteId id) noexcept {
++    static_cast<void>(id);
++    return MaterialAtlasId::actors;
++}
++
++[[nodiscard]] const MaterialFrameDefinition* find_frame(
++    const MaterialManifestDefinition& manifest, MaterialSpriteId id) noexcept {
++    for (std::size_t index = 0U; index < manifest.frame_count; ++index) {
++        if (manifest.frames[index].id == id) return &manifest.frames[index];
++    }
++    return nullptr;
++}
++
++[[nodiscard]] constexpr bool valid_texture_api(
++    MaterialTextureApi texture_api) noexcept {
++    return texture_api.load != nullptr && texture_api.valid != nullptr
++        && texture_api.unload != nullptr;
++}
++
++[[nodiscard]] MaterialTextureApi default_material_texture_api() noexcept {
++    return {&LoadTexture, &IsTextureValid, &UnloadTexture};
++}
++
++}  // namespace
++
++MaterialPack::MaterialPack() noexcept
++    : MaterialPack(default_material_texture_api()) {}
++
++MaterialPack::MaterialPack(MaterialTextureApi texture_api) noexcept
++    : texture_api_(texture_api) {}
++
++void MaterialPackState::set_available(MaterialAtlasId id, bool available) noexcept {
++    if (!is_known_atlas(id)) return;
++    available_[atlas_index(id)] = available;
++}
++
++bool MaterialPackState::available(MaterialAtlasId id) const noexcept {
++    return is_known_atlas(id) && available_[atlas_index(id)];
++}
++
++bool MaterialPackState::can_draw(MaterialSpriteId id) const noexcept {
++    return is_known_sprite(id) && available(atlas_for_sprite(id));
++}
++
++bool MaterialPackState::any_available() const noexcept {
++    for (const bool available : available_) {
++        if (available) return true;
++    }
++    return false;
++}
++
++void MaterialPackState::reset() noexcept {
++    available_.fill(false);
++}
++
++bool MaterialPack::load() noexcept {
++    unload();
++
++    if (!valid_texture_api(texture_api_)) {
++        TraceLog(LOG_WARNING,
++            "Stage 12 material texture API is incomplete; using program fallback");
++        return false;
++    }
++
++    const MaterialManifestDefinition manifest = default_material_manifest();
++    if (!validate_material_manifest(manifest).valid) {
++        TraceLog(LOG_WARNING, "Stage 12 material manifest is invalid; using program fallback");
++        return false;
++    }
++
++    for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
++        const MaterialAtlasDefinition& definition = manifest.atlases[index];
++        const std::size_t texture_index = atlas_index(definition.id);
++        Texture2D texture = texture_api_.load(kAtlasPaths[texture_index]);
++        const bool dimensions_match = texture_api_.valid(texture)
++            && texture.width == definition.width && texture.height == definition.height;
++        if (!dimensions_match) {
++            if (texture_api_.valid(texture)) texture_api_.unload(texture);
++            if (!warnings_emitted_[texture_index]) {
++                TraceLog(LOG_WARNING,
++                    "Stage 12 material atlas unavailable or has unexpected dimensions: %s; using program fallback",
++                    kAtlasPaths[texture_index]);
++                warnings_emitted_[texture_index] = true;
++            }
++            continue;
++        }
++        textures_[texture_index] = texture;
++        state_.set_available(definition.id, true);
++    }
++    return state_.any_available();
++}
++
++void MaterialPack::unload() noexcept {
++    for (Texture2D& texture : textures_) {
++        if (valid_texture_api(texture_api_) && texture_api_.valid(texture)) {
++            texture_api_.unload(texture);
++        }
++        texture = Texture2D{};
++    }
++    state_.reset();
++}
++
++bool MaterialPack::available(MaterialAtlasId id) const noexcept {
++    return state_.available(id);
++}
++
++bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
++    bool flip_x) const noexcept {
++    if (!state_.can_draw(id)) return false;
++
++    const MaterialManifestDefinition manifest = default_material_manifest();
++    const MaterialFrameDefinition* const frame = find_frame(manifest, id);
++    if (frame == nullptr || !state_.available(frame->atlas)) return false;
++
++    const Texture2D& texture = textures_[atlas_index(frame->atlas)];
++    if (!IsTextureValid(texture)) return false;
++
++    Rectangle source = frame->source;
++    if (flip_x) {
++        source.x += source.width;
++        source.width = -source.width;
++    }
++    const Rectangle destination{foot_position.x - frame->foot_anchor.x,
++        foot_position.y - frame->foot_anchor.y, frame->source.width,
++        frame->source.height};
++    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, WHITE);
++    return true;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.hpp b/src/platform/raylib/material_pack.hpp
+new file mode 100644
+index 0000000..3ad3126
+--- /dev/null
++++ b/src/platform/raylib/material_pack.hpp
+@@ -0,0 +1,48 @@
++#pragma once
++
++#include "material_manifest.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace arpg::platform {
++
++struct MaterialTextureApi final {
++    Texture2D (*load)(const char* path){};
++    bool (*valid)(Texture2D texture){};
++    void (*unload)(Texture2D texture){};
++};
++
++class MaterialPackState final {
++public:
++    void set_available(MaterialAtlasId id, bool available) noexcept;
++    [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
++    [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
++    [[nodiscard]] bool any_available() const noexcept;
++    void reset() noexcept;
++
++private:
++    std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
++        available_{};
++};
++
++class MaterialPack final {
++public:
++    MaterialPack() noexcept;
++    explicit MaterialPack(MaterialTextureApi texture_api) noexcept;
++    [[nodiscard]] bool load() noexcept;
++    void unload() noexcept;
++    [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
++    [[nodiscard]] bool draw(
++        MaterialSpriteId id, Vector2 foot_position, bool flip_x) const noexcept;
++
++private:
++    MaterialTextureApi texture_api_{};
++    MaterialPackState state_{};
++    std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
++        textures_{};
++    std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
++        warnings_emitted_{};
++};
++
++}  // namespace arpg::platform
+diff --git a/tests/platform/material_asset_validation_tests.cpp b/tests/platform/material_asset_validation_tests.cpp
+index 0c878a0..49aa9a3 100644
+--- a/tests/platform/material_asset_validation_tests.cpp
++++ b/tests/platform/material_asset_validation_tests.cpp
+@@ -1,26 +1,130 @@
+ #include "test_framework.hpp"
+ 
+ #include "material_asset_validation.hpp"
++#include "material_pack.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <limits>
+ 
+ namespace {
+ 
+ using arpg::platform::MaterialAtlasDefinition;
+ using arpg::platform::MaterialAtlasId;
+ using arpg::platform::MaterialFrameDefinition;
+ using arpg::platform::MaterialManifestDefinition;
++using arpg::platform::MaterialPackState;
+ using arpg::platform::MaterialSpriteId;
+ 
++struct FakeMaterialTextures final {
++    std::array<Texture2D, 3> loaded{};
++    std::array<unsigned int, 3> unloaded_ids{};
++    std::size_t load_count{};
++    std::size_t unload_count{};
++};
++
++FakeMaterialTextures* g_fake_material_textures{};
++
++Texture2D fake_load_texture(const char*) noexcept {
++    if (g_fake_material_textures == nullptr
++        || g_fake_material_textures->load_count
++            >= g_fake_material_textures->loaded.size()) {
++        return {};
++    }
++    return g_fake_material_textures->loaded[
++        g_fake_material_textures->load_count++];
++}
++
++bool fake_texture_valid(Texture2D texture) noexcept {
++    return texture.id != 0U;
++}
++
++void fake_unload_texture(Texture2D texture) noexcept {
++    if (g_fake_material_textures == nullptr
++        || g_fake_material_textures->unload_count
++            >= g_fake_material_textures->unloaded_ids.size()) {
++        return;
++    }
++    g_fake_material_textures->unloaded_ids[
++        g_fake_material_textures->unload_count++] = texture.id;
++}
++
++arpg::platform::MaterialTextureApi fake_material_texture_api() noexcept {
++    return {&fake_load_texture, &fake_texture_valid, &fake_unload_texture};
++}
++
++arpg::test::Failure material_pack_falls_back_when_atlas_is_unavailable() noexcept {
++    MaterialPackState state{};
++    state.set_available(MaterialAtlasId::actors, false);
++    ARPG_REQUIRE(!state.can_draw(MaterialSpriteId::player_idle));
++    return {};
++}
++
++arpg::test::Failure material_pack_allows_repeated_shutdown() noexcept {
++    MaterialPackState state{};
++    state.reset();
++    state.reset();
++    ARPG_REQUIRE(!state.any_available());
++    return {};
++}
++
++arpg::test::Failure material_pack_loads_missing_atlases_without_unloading() noexcept {
++    FakeMaterialTextures fake{};
++    g_fake_material_textures = &fake;
++    arpg::platform::MaterialPack pack{fake_material_texture_api()};
++    ARPG_REQUIRE(!pack.load());
++    ARPG_REQUIRE(fake.load_count == 3U);
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::environment));
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::actors));
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::effects_ui));
++    ARPG_REQUIRE(fake.unload_count == 0U);
++    pack.unload();
++    g_fake_material_textures = nullptr;
++    return {};
++}
++
++arpg::test::Failure material_pack_unloads_wrong_sized_valid_atlas_once() noexcept {
++    FakeMaterialTextures fake{};
++    fake.loaded[1] = {101U, 256, 256, 1, 7};
++    g_fake_material_textures = &fake;
++    arpg::platform::MaterialPack pack{fake_material_texture_api()};
++    ARPG_REQUIRE(!pack.load());
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::actors));
++    ARPG_REQUIRE(fake.unload_count == 1U);
++    ARPG_REQUIRE(fake.unloaded_ids[0] == 101U);
++    pack.unload();
++    ARPG_REQUIRE(fake.unload_count == 1U);
++    g_fake_material_textures = nullptr;
++    return {};
++}
++
++arpg::test::Failure material_pack_repeated_unload_releases_valid_atlas_once() noexcept {
++    FakeMaterialTextures fake{};
++    fake.loaded[0] = {201U, 1024, 1024, 1, 7};
++    g_fake_material_textures = &fake;
++    arpg::platform::MaterialPack pack{fake_material_texture_api()};
++    ARPG_REQUIRE(pack.load());
++    ARPG_REQUIRE(pack.available(MaterialAtlasId::environment));
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::actors));
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::effects_ui));
++    pack.unload();
++    pack.unload();
++    ARPG_REQUIRE(fake.unload_count == 1U);
++    ARPG_REQUIRE(fake.unloaded_ids[0] == 201U);
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::environment));
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::actors));
++    ARPG_REQUIRE(!pack.available(MaterialAtlasId::effects_ui));
++    g_fake_material_textures = nullptr;
++    return {};
++}
++
+ arpg::test::Failure material_manifest_rejects_frame_outside_atlas() noexcept {
+     const MaterialAtlasDefinition atlas{
+         MaterialAtlasId::actors, 256, 256, 4U * 256U * 256U};
+     const MaterialFrameDefinition frame{MaterialSpriteId::player_idle,
+         MaterialAtlasId::actors, {240, 0, 32, 32}, {16, 30}, 100};
+     ARPG_REQUIRE(!arpg::platform::validate_material_frame(atlas, frame).valid);
+     return {};
+ }
+ 
+ arpg::test::Failure material_manifest_rejects_invalid_frame_geometry_and_anchor() noexcept {
+@@ -149,20 +253,29 @@ arpg::test::Failure material_manifest_accepts_valid_unique_frames() noexcept {
+         {MaterialSpriteId::player_move, MaterialAtlasId::actors,
+             {32, 0, 32, 32}, {16, 30}, 100},
+     }};
+     const MaterialManifestDefinition manifest{
+         atlases.data(), atlases.size(), frames.data(), frames.size()};
+     ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).valid);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
++    {"falls back when atlas is unavailable",
++        &material_pack_falls_back_when_atlas_is_unavailable},
++    {"allows repeated shutdown", &material_pack_allows_repeated_shutdown},
++    {"loads missing atlases without unloading",
++        &material_pack_loads_missing_atlases_without_unloading},
++    {"unloads wrong-sized valid atlas once",
++        &material_pack_unloads_wrong_sized_valid_atlas_once},
++    {"repeated unload releases valid atlas once",
++        &material_pack_repeated_unload_releases_valid_atlas_once},
+     {"rejects frame outside atlas", &material_manifest_rejects_frame_outside_atlas},
+     {"rejects invalid frame geometry and anchor",
+         &material_manifest_rejects_invalid_frame_geometry_and_anchor},
+     {"rejects non-finite frame geometry and anchor",
+         &material_manifest_rejects_non_finite_frame_geometry_and_anchor},
+     {"rejects oversized atlas and memory budget",
+         &material_manifest_rejects_oversized_atlas_and_memory_budget},
+     {"rejects duplicate sprite ids", &material_manifest_rejects_duplicate_sprite_ids},
+     {"accepts valid unique frames", &material_manifest_accepts_valid_unique_frames},
+ };
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 2c6f2f7..fd774be 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -64,12 +64,12 @@ int main() {
+         loot_pickup_feedback_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 286, "stage 12 material manifest runtime");
++    return arpg::test::run_suites(suites, 291, "stage 12 material manifest runtime");
+ }

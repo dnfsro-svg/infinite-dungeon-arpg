@@ -1,0 +1,758 @@
+# Review package: ccc0f9e..e715448
+
+## Commits
+e715448 feat: add stage 12 comic actor material pack
+
+## Files changed
+ art_source/stage12/actors-concept-v1.png      | Bin 0 -> 2040140 bytes
+ assets/stage12/actors-source.md               |   7 ++
+ assets/stage12/actors.png                     | Bin 0 -> 3359611 bytes
+ src/platform/raylib/actor_renderer.cpp        | 123 ++++++++++++++++++--------
+ src/platform/raylib/material_animation.cpp    |  89 +++++++++++++++++--
+ src/platform/raylib/material_asset_types.hpp  |  48 ++++++++++
+ src/platform/raylib/material_manifest.hpp     |  75 ++++++++++++++++
+ tests/platform/CMakeLists.txt                 |   3 +-
+ tests/platform/material_animation_tests.cpp   |  12 +--
+ tests/platform/platform_test_main.cpp         |   4 +-
+ tests/platform/stage12_actor_render_tests.cpp |  67 ++++++++++++++
+ 11 files changed, 368 insertions(+), 60 deletions(-)
+
+## Diff
+diff --git a/art_source/stage12/actors-concept-v1.png b/art_source/stage12/actors-concept-v1.png
+new file mode 100644
+index 0000000..e7c440f
+Binary files /dev/null and b/art_source/stage12/actors-concept-v1.png differ
+diff --git a/assets/stage12/actors-source.md b/assets/stage12/actors-source.md
+new file mode 100644
+index 0000000..83d872f
+--- /dev/null
++++ b/assets/stage12/actors-source.md
+@@ -0,0 +1,7 @@
++# Stage 12 角色图集来源
++
++- 原创源图：`art_source/stage12/actors-concept-v1.png`
++- 上游文件：`E:\codex1\.codex\generated_images\019f4e7f-6318-75d2-b82a-d69ac1304f04\exec-8505f9a2-e206-41bd-9a2f-79f6f89b67f5.png`
++- 处理：按 3×3 概念图切出固定玩家和八种怪物，移除 `#00ff00` 及其抗锯齿绿边，排入 2048×2048、8 列×9 行的透明 PNG 图集。
++
++`actors.png` 的每格为 224×224，脚锚点为 `(112, 224)`，共 9 列×9 行（只使用前 68 格）。前 12 格依次为玩家 idle、move、J1、J2、J3、L 上挑、跳跃上升、跳跃下降、空中 J、落地、受击、死亡；其余每种怪物连续 7 格：idle、move、telegraph、active、recovery、cooldown、defeated。阶段格共享同一固定角色外观，并用位移、提亮、冷却暗化或败北淡出表达阶段，不另造角色。
+diff --git a/assets/stage12/actors.png b/assets/stage12/actors.png
+new file mode 100644
+index 0000000..1c229c4
+Binary files /dev/null and b/assets/stage12/actors.png differ
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index a770870..f4e81c4 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -1,15 +1,16 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat_view_math.hpp"
+ #include "hud_renderer.hpp"
+ #include "dungeon_view_math.hpp"
++#include "material_animation.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ namespace {
+@@ -164,20 +165,82 @@ void draw_blink_affix_warning(const MonsterSnapshot& monster, Vec3 position,
+     const ScreenProjection projected = project_combat_position(position, width, height);
+     const Color warning{255, 86, 214, 235};
+     const float actor_radius = blink_affix_warning_actor_radius(monster) * projected.scale;
+     const float ground_radius = blink_affix_warning_ground_radius(monster) * projected.scale;
+     DrawCircleLines(static_cast<int>(projected.x),
+         static_cast<int>(projected.y - 44.0F * projected.scale), actor_radius, warning);
+     DrawEllipseLines(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
+         ground_radius, ground_radius * 0.38F, warning);
+ }
+ 
++bool draw_material_actor(const MaterialPack& material_pack,
++    MaterialSpriteId sprite, Facing facing,
++    const ScreenProjection& projected) noexcept {
++    return material_pack.draw(sprite, {projected.x, projected.y},
++        facing == Facing::left, projected.scale);
++}
++
++void draw_player_geometry(const ScreenProjection& projected) noexcept {
++    const float body_width = 42.0F * projected.scale;
++    const float body_height = 82.0F * projected.scale;
++    DrawRectangleRounded({projected.x - body_width * .5F,
++        projected.y - body_height, body_width, body_height}, .20F, 6,
++        Color{65, 202, 223, 255});
++    DrawTriangle({projected.x, projected.y - body_height - 16.0F * projected.scale},
++        {projected.x - 12.0F * projected.scale,
++            projected.y - body_height + 5.0F * projected.scale},
++        {projected.x + 12.0F * projected.scale,
++            projected.y - body_height + 5.0F * projected.scale},
++        Color{134, 237, 255, 255});
++}
++
++void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
++    dungeon::DungeonElement ecology, float width, float height,
++    std::uint64_t tick) noexcept {
++    const ScreenProjection projected = project_combat_position(position, width, height);
++    const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
++    const float scale = projected.scale;
++    const float x = projected.x;
++    const float y = projected.y;
++    const std::size_t affix_count = std::min<std::size_t>(
++        monster.affixes.count, monster.affixes.values.size());
++    for (std::size_t index = 0U; index < affix_count; ++index) {
++        const AffixOutline outline = monster_affix_outline(
++            monster.affixes.values[index], tick);
++        const float radius = (35.0F + static_cast<float>(index) * 4.0F) * scale;
++        DrawEllipseLines(static_cast<int>(x), static_cast<int>(y - 42.0F * scale),
++            radius, radius * 1.18F,
++            Fade(to_color(outline.color), static_cast<float>(outline.alpha) / 255.0F));
++    }
++    const MonsterBarVisualPlan bar_visual = make_monster_bar_visual_plan(monster);
++    const float bar_width = 54.0F * scale;
++    constexpr float kBarOffsets[] = {102.0F, 95.0F, 88.0F};
++    for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
++        const MonsterBarPlan& bar = bar_visual.bars[index];
++        if (!bar.visible) continue;
++        draw_bar(x - bar_width * .5F, y - kBarOffsets[index] * scale,
++            bar_width, bar.ratio, hud_palette_color(bar.palette_id));
++    }
++    for (std::size_t index = 0U; index < affix_count; ++index) {
++        const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
++        DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
++            static_cast<int>(x - bar_width * .5F),
++            static_cast<int>(y - (80.0F - static_cast<float>(index) * 10.0F) * scale),
++            9, to_color(badge.color));
++    }
++    DrawText(visual.role_label, static_cast<int>(x - bar_width * .5F),
++        static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
++    DrawText(monster_phase_name(monster.ai_phase),
++        static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 19.0F), 10,
++        Color{184, 196, 213, 220});
++}
++
+ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
+     dungeon::DungeonElement ecology, float width, float height,
+     const CombatFeedback& feedback, std::size_t monster_index,
+     std::uint64_t tick) noexcept {
+     const ScreenProjection projected = project_combat_position(position, width, height);
+     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
+     Color body = to_color(visual.body);
+     if (feedback.target_flash_seconds(monster_index) > 0.0F) body = Color{255, 249, 220, 255};
+     const Color accent = to_color(visual.accent);
+     const float scale = projected.scale; const float x = projected.x; const float y = projected.y;
+@@ -206,49 +269,21 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
+     case MonsterShapeId::chaser:
+         DrawTriangle({x, y - 82.0F * scale}, {x - 27.0F * scale, y}, {x + 27.0F * scale, y}, body);
+         DrawLineEx({x - 25.0F * scale, y - 33.0F * scale}, {x - 43.0F * scale, y - 10.0F * scale}, 4.0F * scale, accent);
+         DrawLineEx({x + 25.0F * scale, y - 33.0F * scale}, {x + 43.0F * scale, y - 10.0F * scale}, 4.0F * scale, accent); break;
+     case MonsterShapeId::hazard_caster:
+         DrawRectangleRounded({x - 20.0F * scale, y - 73.0F * scale, 40.0F * scale, 73.0F * scale}, .20F, 5, body);
+         DrawLineEx({x + 12.0F * scale, y - 15.0F * scale}, {x + 25.0F * scale, y - 84.0F * scale}, 4.0F * scale, accent);
+         DrawCircleLines(static_cast<int>(x + 25.0F * scale), static_cast<int>(y - 88.0F * scale), 8.0F * scale, accent); break;
+     }
+ 
+-    const std::size_t affix_count = std::min<std::size_t>(
+-        monster.affixes.count, monster.affixes.values.size());
+-    for (std::size_t index = 0U; index < affix_count; ++index) {
+-        const AffixOutline outline = monster_affix_outline(
+-            monster.affixes.values[index], tick);
+-        const float radius = (35.0F + static_cast<float>(index) * 4.0F) * scale;
+-        DrawEllipseLines(static_cast<int>(x), static_cast<int>(y - 42.0F * scale),
+-            radius, radius * 1.18F,
+-            Fade(to_color(outline.color), static_cast<float>(outline.alpha) / 255.0F));
+-    }
+-    const MonsterBarVisualPlan bar_visual =
+-        make_monster_bar_visual_plan(monster);
+-    const float bar_width = 54.0F * scale;
+-    constexpr float kBarOffsets[] = {102.0F, 95.0F, 88.0F};
+-    for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
+-        const MonsterBarPlan& bar = bar_visual.bars[index];
+-        if (!bar.visible) continue;
+-        draw_bar(x - bar_width * .5F, y - kBarOffsets[index] * scale,
+-            bar_width, bar.ratio, hud_palette_color(bar.palette_id));
+-    }
+-    for (std::size_t index = 0U; index < affix_count; ++index) {
+-        const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
+-        DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
+-            static_cast<int>(x - bar_width * .5F),
+-            static_cast<int>(y - (80.0F - static_cast<float>(index) * 10.0F) * scale),
+-            9, to_color(badge.color));
+-    }
+-    DrawText(visual.role_label, static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
+-    DrawText(monster_phase_name(monster.ai_phase), static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 19.0F), 10, Color{184, 196, 213, 220});
++    draw_monster_presentation(monster, position, ecology, width, height, tick);
+ }
+ 
+ }  // namespace
+ 
+ MonsterBarVisualPlan make_monster_bar_visual_plan(
+     const combat::MonsterSnapshot& monster) noexcept {
+     MonsterBarVisualPlan plan{};
+     plan.bars[0] = {true, monster_bar_ratio(monster.hp, monster.max_hp),
+         HudPaletteId::health};
+     plan.bars[1] = {monster.max_shield > 0,
+@@ -290,27 +325,39 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+     for (std::size_t index = 0; index < draw_count; ++index) {
+         const RenderActor& item = draw_items[index];
+         const ScreenProjection ground = project_combat_position({item.position.x, item.position.y, 0.0F}, width, height);
+         const float shadow_width = (item.player ? 48.0F : 54.0F) * ground.scale;
+         DrawEllipse(static_cast<int>(ground.x), static_cast<int>(ground.ground_y + 3.0F), shadow_width, 10.0F * ground.scale, Color{3, 5, 8, 125});
+     }
+     for (std::size_t index = 0; index < draw_count; ++index) {
+         const RenderActor& item = draw_items[index];
+         const ScreenProjection projected = project_combat_position(item.position, width, height);
+         if (item.player) {
+-            const float body_width = 42.0F * projected.scale;
+-            const float body_height = 82.0F * projected.scale;
+-            DrawRectangleRounded({projected.x - body_width * .5F, projected.y - body_height, body_width, body_height}, .20F, 6, Color{65, 202, 223, 255});
+-            DrawTriangle({projected.x, projected.y - body_height - 16.0F * projected.scale},
+-                {projected.x - 12.0F * projected.scale, projected.y - body_height + 5.0F * projected.scale},
+-                {projected.x + 12.0F * projected.scale, projected.y - body_height + 5.0F * projected.scale}, Color{134, 237, 255, 255});
++            MaterialSpriteId sprite = select_player_sprite(
++                current_combat.player.state, current_combat.player.active_attack);
++            if (current_combat.player.hp <= 0) {
++                sprite = MaterialSpriteId::player_dead;
++            } else if (current_combat.player.hurt_ticks > 0) {
++                sprite = MaterialSpriteId::player_hurt;
++            }
++            if (!draw_material_actor(material_pack_, sprite,
++                    current_combat.player.facing, projected)) {
++                draw_player_geometry(projected);
++            }
+         } else {
+-            draw_monster_silhouette(current_combat.monsters[item.monster_index], item.position,
+-                current.ecology, width, height, feedback, item.monster_index,
+-                current_combat.tick);
++            const MonsterSnapshot& monster = current_combat.monsters[item.monster_index];
++            const MaterialSpriteId sprite = select_monster_sprite(monster.id,
++                monster.ai_phase);
++            if (draw_material_actor(material_pack_, sprite, monster.facing, projected)) {
++                draw_monster_presentation(monster, item.position, current.ecology,
++                    width, height, current_combat.tick);
++            } else {
++                draw_monster_silhouette(monster, item.position, current.ecology,
++                    width, height, feedback, item.monster_index, current_combat.tick);
++            }
+         }
+     }
+     draw_effects(feedback, width, height, true);
+     if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_animation.cpp b/src/platform/raylib/material_animation.cpp
+index 9819a0b..44f171b 100644
+--- a/src/platform/raylib/material_animation.cpp
++++ b/src/platform/raylib/material_animation.cpp
+@@ -42,38 +42,109 @@ MaterialSpriteId select_player_sprite(
+         return MaterialSpriteId::player_jump_fall;
+     case combat::PlayerState::landing:
+         return MaterialSpriteId::player_landing;
+     }
+     return MaterialSpriteId::missing;
+ }
+ 
+ MaterialSpriteId select_monster_sprite(
+     combat::MonsterId monster,
+     combat::MonsterAiPhase phase) noexcept {
+-    static_cast<void>(phase);
+     switch (monster) {
+     case combat::MonsterId::fire_bomber:
+-        return MaterialSpriteId::fire_bomber_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::fire_bomber_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::fire_bomber_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::fire_bomber_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::fire_bomber_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::fire_bomber_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::fire_bomber_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::fire_bomber_defeated;
++        }
++        break;
+     case combat::MonsterId::fire_charger:
+-        return MaterialSpriteId::fire_charger_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::fire_charger_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::fire_charger_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::fire_charger_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::fire_charger_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::fire_charger_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::fire_charger_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::fire_charger_defeated;
++        }
++        break;
+     case combat::MonsterId::water_bulwark:
+-        return MaterialSpriteId::water_bulwark_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::water_bulwark_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::water_bulwark_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::water_bulwark_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::water_bulwark_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::water_bulwark_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::water_bulwark_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::water_bulwark_defeated;
++        }
++        break;
+     case combat::MonsterId::water_support:
+-        return MaterialSpriteId::water_support_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::water_support_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::water_support_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::water_support_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::water_support_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::water_support_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::water_support_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::water_support_defeated;
++        }
++        break;
+     case combat::MonsterId::lightning_shooter:
+-        return MaterialSpriteId::lightning_shooter_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::lightning_shooter_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::lightning_shooter_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::lightning_shooter_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::lightning_shooter_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::lightning_shooter_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::lightning_shooter_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::lightning_shooter_defeated;
++        }
++        break;
+     case combat::MonsterId::lightning_dasher:
+-        return MaterialSpriteId::lightning_dasher_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::lightning_dasher_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::lightning_dasher_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::lightning_dasher_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::lightning_dasher_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::lightning_dasher_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::lightning_dasher_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::lightning_dasher_defeated;
++        }
++        break;
+     case combat::MonsterId::chaos_chaser:
+-        return MaterialSpriteId::chaos_chaser_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::chaos_chaser_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::chaos_chaser_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::chaos_chaser_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::chaos_chaser_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::chaos_chaser_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::chaos_chaser_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::chaos_chaser_defeated;
++        }
++        break;
+     case combat::MonsterId::chaos_hazard:
+-        return MaterialSpriteId::chaos_hazard_idle;
++        switch (phase) {
++        case combat::MonsterAiPhase::idle: return MaterialSpriteId::chaos_hazard_idle;
++        case combat::MonsterAiPhase::move: return MaterialSpriteId::chaos_hazard_move;
++        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::chaos_hazard_telegraph;
++        case combat::MonsterAiPhase::active: return MaterialSpriteId::chaos_hazard_active;
++        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::chaos_hazard_recovery;
++        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::chaos_hazard_cooldown;
++        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::chaos_hazard_defeated;
++        }
++        break;
+     case combat::MonsterId::count:
+         return MaterialSpriteId::missing;
+     }
+     return MaterialSpriteId::missing;
+ }
+ 
+ MaterialSpriteId select_floor_sprite(dungeon::DungeonElement element) noexcept {
+     switch (element) {
+     case dungeon::DungeonElement::fire:
+         return MaterialSpriteId::environment_floor_fire;
+diff --git a/src/platform/raylib/material_asset_types.hpp b/src/platform/raylib/material_asset_types.hpp
+index b6e22e0..6357fd1 100644
+--- a/src/platform/raylib/material_asset_types.hpp
++++ b/src/platform/raylib/material_asset_types.hpp
+@@ -21,27 +21,75 @@ enum class MaterialSpriteId : std::uint16_t {
+     player_j2,
+     player_j3,
+     player_launcher,
+     player_jump_rise,
+     player_jump_fall,
+     player_air_j,
+     player_landing,
+     player_hurt,
+     player_dead,
+     fire_bomber_idle,
++    fire_bomber_move,
++    fire_bomber_telegraph,
++    fire_bomber_active,
++    fire_bomber_recovery,
++    fire_bomber_cooldown,
++    fire_bomber_defeated,
+     fire_charger_idle,
++    fire_charger_move,
++    fire_charger_telegraph,
++    fire_charger_active,
++    fire_charger_recovery,
++    fire_charger_cooldown,
++    fire_charger_defeated,
+     water_bulwark_idle,
++    water_bulwark_move,
++    water_bulwark_telegraph,
++    water_bulwark_active,
++    water_bulwark_recovery,
++    water_bulwark_cooldown,
++    water_bulwark_defeated,
+     water_support_idle,
++    water_support_move,
++    water_support_telegraph,
++    water_support_active,
++    water_support_recovery,
++    water_support_cooldown,
++    water_support_defeated,
+     lightning_shooter_idle,
++    lightning_shooter_move,
++    lightning_shooter_telegraph,
++    lightning_shooter_active,
++    lightning_shooter_recovery,
++    lightning_shooter_cooldown,
++    lightning_shooter_defeated,
+     lightning_dasher_idle,
++    lightning_dasher_move,
++    lightning_dasher_telegraph,
++    lightning_dasher_active,
++    lightning_dasher_recovery,
++    lightning_dasher_cooldown,
++    lightning_dasher_defeated,
+     chaos_chaser_idle,
++    chaos_chaser_move,
++    chaos_chaser_telegraph,
++    chaos_chaser_active,
++    chaos_chaser_recovery,
++    chaos_chaser_cooldown,
++    chaos_chaser_defeated,
+     chaos_hazard_idle,
++    chaos_hazard_move,
++    chaos_hazard_telegraph,
++    chaos_hazard_active,
++    chaos_hazard_recovery,
++    chaos_hazard_cooldown,
++    chaos_hazard_defeated,
+     environment_floor_fire,
+     environment_floor_water,
+     environment_floor_lightning,
+     environment_floor_chaos,
+     environment_door_fire,
+     environment_door_water,
+     environment_door_lightning,
+     environment_door_chaos,
+     environment_hole,
+     count,
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index ad1b945..264da87 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -21,41 +21,116 @@ struct MaterialManifestDefinition final {
+ };
+ 
+ namespace detail {
+ 
+ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
+     {MaterialAtlasId::environment, 1024, 1024, 4U * 1024U * 1024U},
+     {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U},
+     {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U},
+ };
+ 
++#define ARPG_ACTOR_FRAME(sprite, column, row) \
++    {MaterialSpriteId::sprite, MaterialAtlasId::actors, \
++        {static_cast<float>((column) * 224), static_cast<float>((row) * 224), 224.0F, 224.0F}, \
++        {112.0F, 224.0F}, 0U}
++
+ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
++    ARPG_ACTOR_FRAME(player_idle, 0, 0),
++    ARPG_ACTOR_FRAME(player_move, 1, 0),
++    ARPG_ACTOR_FRAME(player_j1, 2, 0),
++    ARPG_ACTOR_FRAME(player_j2, 3, 0),
++    ARPG_ACTOR_FRAME(player_j3, 4, 0),
++    ARPG_ACTOR_FRAME(player_launcher, 5, 0),
++    ARPG_ACTOR_FRAME(player_jump_rise, 6, 0),
++    ARPG_ACTOR_FRAME(player_jump_fall, 7, 0),
++    ARPG_ACTOR_FRAME(player_air_j, 0, 1),
++    ARPG_ACTOR_FRAME(player_landing, 1, 1),
++    ARPG_ACTOR_FRAME(player_hurt, 2, 1),
++    ARPG_ACTOR_FRAME(player_dead, 3, 1),
++    ARPG_ACTOR_FRAME(fire_bomber_idle, 4, 1),
++    ARPG_ACTOR_FRAME(fire_bomber_move, 5, 1),
++    ARPG_ACTOR_FRAME(fire_bomber_telegraph, 6, 1),
++    ARPG_ACTOR_FRAME(fire_bomber_active, 7, 1),
++    ARPG_ACTOR_FRAME(fire_bomber_recovery, 0, 2),
++    ARPG_ACTOR_FRAME(fire_bomber_cooldown, 1, 2),
++    ARPG_ACTOR_FRAME(fire_bomber_defeated, 2, 2),
++    ARPG_ACTOR_FRAME(fire_charger_idle, 3, 2),
++    ARPG_ACTOR_FRAME(fire_charger_move, 4, 2),
++    ARPG_ACTOR_FRAME(fire_charger_telegraph, 5, 2),
++    ARPG_ACTOR_FRAME(fire_charger_active, 6, 2),
++    ARPG_ACTOR_FRAME(fire_charger_recovery, 7, 2),
++    ARPG_ACTOR_FRAME(fire_charger_cooldown, 0, 3),
++    ARPG_ACTOR_FRAME(fire_charger_defeated, 1, 3),
++    ARPG_ACTOR_FRAME(water_bulwark_idle, 2, 3),
++    ARPG_ACTOR_FRAME(water_bulwark_move, 3, 3),
++    ARPG_ACTOR_FRAME(water_bulwark_telegraph, 4, 3),
++    ARPG_ACTOR_FRAME(water_bulwark_active, 5, 3),
++    ARPG_ACTOR_FRAME(water_bulwark_recovery, 6, 3),
++    ARPG_ACTOR_FRAME(water_bulwark_cooldown, 7, 3),
++    ARPG_ACTOR_FRAME(water_bulwark_defeated, 0, 4),
++    ARPG_ACTOR_FRAME(water_support_idle, 1, 4),
++    ARPG_ACTOR_FRAME(water_support_move, 2, 4),
++    ARPG_ACTOR_FRAME(water_support_telegraph, 3, 4),
++    ARPG_ACTOR_FRAME(water_support_active, 4, 4),
++    ARPG_ACTOR_FRAME(water_support_recovery, 5, 4),
++    ARPG_ACTOR_FRAME(water_support_cooldown, 6, 4),
++    ARPG_ACTOR_FRAME(water_support_defeated, 7, 4),
++    ARPG_ACTOR_FRAME(lightning_shooter_idle, 0, 5),
++    ARPG_ACTOR_FRAME(lightning_shooter_move, 1, 5),
++    ARPG_ACTOR_FRAME(lightning_shooter_telegraph, 2, 5),
++    ARPG_ACTOR_FRAME(lightning_shooter_active, 3, 5),
++    ARPG_ACTOR_FRAME(lightning_shooter_recovery, 4, 5),
++    ARPG_ACTOR_FRAME(lightning_shooter_cooldown, 5, 5),
++    ARPG_ACTOR_FRAME(lightning_shooter_defeated, 6, 5),
++    ARPG_ACTOR_FRAME(lightning_dasher_idle, 7, 5),
++    ARPG_ACTOR_FRAME(lightning_dasher_move, 0, 6),
++    ARPG_ACTOR_FRAME(lightning_dasher_telegraph, 1, 6),
++    ARPG_ACTOR_FRAME(lightning_dasher_active, 2, 6),
++    ARPG_ACTOR_FRAME(lightning_dasher_recovery, 3, 6),
++    ARPG_ACTOR_FRAME(lightning_dasher_cooldown, 4, 6),
++    ARPG_ACTOR_FRAME(lightning_dasher_defeated, 5, 6),
++    ARPG_ACTOR_FRAME(chaos_chaser_idle, 6, 6),
++    ARPG_ACTOR_FRAME(chaos_chaser_move, 7, 6),
++    ARPG_ACTOR_FRAME(chaos_chaser_telegraph, 0, 7),
++    ARPG_ACTOR_FRAME(chaos_chaser_active, 1, 7),
++    ARPG_ACTOR_FRAME(chaos_chaser_recovery, 2, 7),
++    ARPG_ACTOR_FRAME(chaos_chaser_cooldown, 3, 7),
++    ARPG_ACTOR_FRAME(chaos_chaser_defeated, 4, 7),
++    ARPG_ACTOR_FRAME(chaos_hazard_idle, 5, 7),
++    ARPG_ACTOR_FRAME(chaos_hazard_move, 6, 7),
++    ARPG_ACTOR_FRAME(chaos_hazard_telegraph, 7, 7),
++    ARPG_ACTOR_FRAME(chaos_hazard_active, 0, 8),
++    ARPG_ACTOR_FRAME(chaos_hazard_recovery, 1, 8),
++    ARPG_ACTOR_FRAME(chaos_hazard_cooldown, 2, 8),
++    ARPG_ACTOR_FRAME(chaos_hazard_defeated, 3, 8),
+     {MaterialSpriteId::environment_floor_fire, MaterialAtlasId::environment,
+         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
+     {MaterialSpriteId::environment_floor_water, MaterialAtlasId::environment,
+         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
+     {MaterialSpriteId::environment_floor_lightning, MaterialAtlasId::environment,
+         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
+     {MaterialSpriteId::environment_floor_chaos, MaterialAtlasId::environment,
+         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
+     {MaterialSpriteId::environment_door_fire, MaterialAtlasId::environment,
+         {0.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_door_water, MaterialAtlasId::environment,
+         {112.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::environment,
+         {224.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_door_chaos, MaterialAtlasId::environment,
+         {336.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_hole, MaterialAtlasId::environment,
+         {448.0F, 704.0F, 192.0F, 160.0F}, {96.0F, 80.0F}, 0U},
+ };
+ 
++#undef ARPG_ACTOR_FRAME
++
+ }  // namespace detail
+ 
+ [[nodiscard]] constexpr MaterialManifestDefinition
+ default_material_manifest() noexcept {
+     return {detail::kDefaultMaterialAtlases,
+         sizeof(detail::kDefaultMaterialAtlases)
+             / sizeof(detail::kDefaultMaterialAtlases[0]),
+         detail::kDefaultMaterialFrames,
+         sizeof(detail::kDefaultMaterialFrames)
+             / sizeof(detail::kDefaultMaterialFrames[0])};
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index e2ed5a0..98878cb 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -20,21 +20,22 @@ if(TARGET arpg_raylib)
+         loot_pickup_feedback_tests.cpp
+         hud_layout_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+         hud_host_integration_tests.cpp
+         death_input_gate_tests.cpp
+         death_overlay_view_tests.cpp
+         ground_loot_view_tests.cpp
+         material_asset_validation_tests.cpp
+         material_animation_tests.cpp
+-        stage12_environment_render_tests.cpp)
++        stage12_environment_render_tests.cpp
++        stage12_actor_render_tests.cpp)
+     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+     endif()
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+diff --git a/tests/platform/material_animation_tests.cpp b/tests/platform/material_animation_tests.cpp
+index 8a4d72d..278a18a 100644
+--- a/tests/platform/material_animation_tests.cpp
++++ b/tests/platform/material_animation_tests.cpp
+@@ -50,39 +50,29 @@ arpg::test::Failure material_animation_covers_all_player_states_and_attacks() no
+     return {};
+ }
+ 
+ arpg::test::Failure material_animation_covers_monsters_and_ai_phases() noexcept {
+     constexpr std::array<MonsterId, 8> kMonsters{{
+         MonsterId::fire_bomber, MonsterId::fire_charger,
+         MonsterId::water_bulwark, MonsterId::water_support,
+         MonsterId::lightning_shooter, MonsterId::lightning_dasher,
+         MonsterId::chaos_chaser, MonsterId::chaos_hazard,
+     }};
+-    constexpr std::array<MaterialSpriteId, 8> kExpectedSprites{{
+-        MaterialSpriteId::fire_bomber_idle,
+-        MaterialSpriteId::fire_charger_idle,
+-        MaterialSpriteId::water_bulwark_idle,
+-        MaterialSpriteId::water_support_idle,
+-        MaterialSpriteId::lightning_shooter_idle,
+-        MaterialSpriteId::lightning_dasher_idle,
+-        MaterialSpriteId::chaos_chaser_idle,
+-        MaterialSpriteId::chaos_hazard_idle,
+-    }};
+     constexpr std::array<MonsterAiPhase, 7> kPhases{{
+         MonsterAiPhase::idle, MonsterAiPhase::move, MonsterAiPhase::telegraph,
+         MonsterAiPhase::active, MonsterAiPhase::recovery,
+         MonsterAiPhase::cooldown, MonsterAiPhase::defeated,
+     }};
+     for (std::size_t index = 0U; index < kMonsters.size(); ++index) {
+         for (const MonsterAiPhase phase : kPhases) {
+             ARPG_REQUIRE(arpg::platform::select_monster_sprite(
+-                kMonsters[index], phase) == kExpectedSprites[index]);
++                kMonsters[index], phase) != MaterialSpriteId::missing);
+         }
+     }
+     ARPG_REQUIRE(arpg::platform::select_monster_sprite(
+         MonsterId::count, MonsterAiPhase::idle) == MaterialSpriteId::missing);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"selects launcher active", &material_animation_selects_launcher_active},
+     {"covers player states and attacks",
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 85632d7..dc0dd35 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -25,20 +25,21 @@ arpg::test::TestSuite hud_view_model_suite() noexcept;
+ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
+ arpg::test::TestSuite ground_loot_view_suite() noexcept;
+ arpg::test::TestSuite material_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_animation_suite() noexcept;
+ arpg::test::TestSuite stage12_environment_render_suite() noexcept;
++arpg::test::TestSuite stage12_actor_render_suite() noexcept;
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+@@ -64,14 +65,15 @@ int main() {
+         hud_notice_state_suite(),
+         loot_pickup_feedback_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
++        stage12_actor_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 293, "stage 12 material manifest runtime");
++    return arpg::test::run_suites(suites, 295, "stage 12 material manifest runtime");
+ }
+diff --git a/tests/platform/stage12_actor_render_tests.cpp b/tests/platform/stage12_actor_render_tests.cpp
+new file mode 100644
+index 0000000..eb0b26a
+--- /dev/null
++++ b/tests/platform/stage12_actor_render_tests.cpp
+@@ -0,0 +1,67 @@
++#include "test_framework.hpp"
++
++#include "material_animation.hpp"
++
++#include <array>
++
++namespace {
++
++using arpg::combat::MonsterAiPhase;
++using arpg::combat::MonsterId;
++using arpg::platform::MaterialSpriteId;
++
++arpg::test::Failure stage12_monster_phases_use_distinct_material_frames() noexcept {
++    constexpr std::array<MonsterId, 8> kMonsters{{
++        MonsterId::fire_bomber, MonsterId::fire_charger,
++        MonsterId::water_bulwark, MonsterId::water_support,
++        MonsterId::lightning_shooter, MonsterId::lightning_dasher,
++        MonsterId::chaos_chaser, MonsterId::chaos_hazard,
++    }};
++    constexpr std::array<MonsterAiPhase, 7> kPhases{{
++        MonsterAiPhase::idle, MonsterAiPhase::move, MonsterAiPhase::telegraph,
++        MonsterAiPhase::active, MonsterAiPhase::recovery,
++        MonsterAiPhase::cooldown, MonsterAiPhase::defeated,
++    }};
++    for (const MonsterId monster : kMonsters) {
++        const MaterialSpriteId idle = arpg::platform::select_monster_sprite(
++            monster, MonsterAiPhase::idle);
++        ARPG_REQUIRE(idle != MaterialSpriteId::missing);
++        for (const MonsterAiPhase phase : kPhases) {
++            const MaterialSpriteId selected = arpg::platform::select_monster_sprite(
++                monster, phase);
++            ARPG_REQUIRE(selected != MaterialSpriteId::missing);
++            if (phase != MonsterAiPhase::idle) ARPG_REQUIRE(selected != idle);
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure stage12_player_attack_actions_have_distinct_material_frames() noexcept {
++    using arpg::combat::AttackId;
++    using arpg::combat::PlayerState;
++    const MaterialSpriteId j1 = arpg::platform::select_player_sprite(
++        PlayerState::attack_active, AttackId::j1);
++    ARPG_REQUIRE(j1 != MaterialSpriteId::missing);
++    ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
++        PlayerState::attack_active, AttackId::j2));
++    ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
++        PlayerState::attack_active, AttackId::j3));
++    ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
++        PlayerState::attack_active, AttackId::launcher));
++    ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
++        PlayerState::attack_active, AttackId::air_j));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"maps every monster phase to a distinct material frame",
++        &stage12_monster_phases_use_distinct_material_frames},
++    {"maps player attack actions to distinct material frames",
++        &stage12_player_attack_actions_have_distinct_material_frames},
++};
++
++}  // namespace
++
++arpg::test::TestSuite stage12_actor_render_suite() noexcept {
++    return arpg::test::make_suite("stage12_actor_render", kCases);
++}

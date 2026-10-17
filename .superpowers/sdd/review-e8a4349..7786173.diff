@@ -1,0 +1,332 @@
+# Review package: e8a4349..7786173
+
+## Commits
+7786173 fix: validate stage 12 actor atlas content
+
+## Files changed
+ assets/stage12/README.md                      |   2 +-
+ assets/stage12/actors-source.md               |   2 +-
+ assets/stage12/actors.png                     | Bin 2907612 -> 2902011 bytes
+ src/platform/raylib/material_animation.cpp    |  11 ++-
+ src/platform/raylib/material_manifest.hpp     |   3 +-
+ tests/platform/CMakeLists.txt                 |   2 +
+ tests/platform/platform_test_main.cpp         |   2 +-
+ tests/platform/stage12_actor_render_tests.cpp | 105 +++++++++++++++++++++++++-
+ 8 files changed, 119 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/assets/stage12/README.md b/assets/stage12/README.md
+index c8fdb9d..1ceb5f6 100644
+--- a/assets/stage12/README.md
++++ b/assets/stage12/README.md
+@@ -1,9 +1,9 @@
+ # Stage 12 材质包资源
+ 
+ 运行时材质包固定查找本目录下的三个内置图集：
+ 
+ - `environment.png`：1024 × 1024，Stage 12-B 房间、元素门框与深渊洞口
+ - `actors.png`：2048 × 2048
+ - `effects_ui.png`：1024 × 1024
+ 
+-本任务只交付 `environment.png`。`actors.png` 与 `effects_ui.png` 仍可缺失；游戏会对每个缺失类别只警告一次并安全回退。环境图集缺失、尺寸不匹配或任一帧不能绘制时，房间会整体回退为原有灰盒、矩形门和椭圆洞口。发布后置步骤会将整个 `assets/stage12` 目录复制到可执行文件同级的 `bin/assets/stage12`，不需要运行时解析清单或在绘制热路径读取文件。
++本阶段已交付 `environment.png` 与 `actors.png`；`effects_ui.png` 仍可缺失。游戏会对每个缺失类别只警告一次并安全回退：环境图集缺失、尺寸不匹配或任一帧不能绘制时，房间整体回退为原有灰盒、矩形门和椭圆洞口；角色图集或角色帧不能绘制时，玩家回退为既有几何绘制、怪物回退为既有剪影绘制。发布后置步骤会将整个 `assets/stage12` 目录复制到可执行文件同级的 `bin/assets/stage12`，不需要运行时解析清单或在绘制热路径读取文件。
+diff --git a/assets/stage12/actors-source.md b/assets/stage12/actors-source.md
+index cd53bc7..9bdb5aa 100644
+--- a/assets/stage12/actors-source.md
++++ b/assets/stage12/actors-source.md
+@@ -1,7 +1,7 @@
+ # Stage 12 角色图集来源
+ 
+ - 原创源图：`art_source/stage12/actors-concept-v1.png`
+ - 上游文件：`E:\codex1\.codex\generated_images\019f4e7f-6318-75d2-b82a-d69ac1304f04\exec-8505f9a2-e206-41bd-9a2f-79f6f89b67f5.png`
+ - 处理：按 3×3 概念图切出固定玩家和八种怪物，移除 `#00ff00` 及其抗锯齿绿边，排入 2048×2048、8 列×9 行的透明 PNG 图集。
+ 
+-`actors.png` 的清单布局为 **9 列×9 行**（并非 8 列）；每格为 224×224，脚锚点为 `(112, 224)`，只使用前 68 格。前 12 格依次为玩家 idle、move、J1、J2、J3、L 上挑、跳跃上升、跳跃下降、空中 J、落地、受击、死亡。玩家帧基于同一原创角色裁切作几何旋转、腾空、落地压缩、受击倾斜、倒地和剑弧合成；L 格含明确朝上的蓝白挥剑弧。其余每种怪物连续 7 格：idle、move、telegraph、active、recovery、cooldown、defeated。怪物阶段格保持同一固定角色外观，以位移、提亮、冷却暗化或败北淡出表达阶段。
++`actors.png` 画布为 2048×2048，按 224px 槽位可容纳 9×9；但 **manifest 和实际导出只使用左侧 8 列×9 行的 72 个有效格**，其中前 68 格有内容，脚锚点为 `(112, 224)`。前 12 格依次为玩家 idle、move、J1、J2、J3、L 上挑、跳跃上升、跳跃下降、空中 J、落地、受击、死亡。玩家帧基于同一原创角色裁切作几何旋转、腾空、落地压缩、受击倾斜、倒地和剑弧合成；L 格含明确朝上的蓝白挥剑弧。其余每种怪物连续 7 格：idle、move、telegraph、active、recovery、cooldown、defeated。怪物阶段格保持同一固定角色外观，以位移、提亮、冷却暗化或败北淡出表达阶段。
+diff --git a/assets/stage12/actors.png b/assets/stage12/actors.png
+index 0791a76..5e46b02 100644
+Binary files a/assets/stage12/actors.png and b/assets/stage12/actors.png differ
+diff --git a/src/platform/raylib/material_animation.cpp b/src/platform/raylib/material_animation.cpp
+index 0ab5ad1..7666a88 100644
+--- a/src/platform/raylib/material_animation.cpp
++++ b/src/platform/raylib/material_animation.cpp
+@@ -1,15 +1,20 @@
+ #include "material_animation.hpp"
+ 
+ namespace arpg::platform {
+ namespace {
+ 
++constexpr float kPlayerTrimmedHeight = 172.0F;
++constexpr float kPlayerTargetHeight = 82.0F;
++constexpr float kMonsterTrimmedHeight = 176.0F;
++constexpr float kMonsterTargetHeight = 78.0F;
++
+ [[nodiscard]] MaterialSpriteId select_attack_sprite(
+     combat::AttackId attack) noexcept {
+     switch (attack) {
+     case combat::AttackId::j1:
+         return MaterialSpriteId::player_j1;
+     case combat::AttackId::j2:
+         return MaterialSpriteId::player_j2;
+     case combat::AttackId::j3:
+         return MaterialSpriteId::player_j3;
+     case combat::AttackId::launcher:
+@@ -167,14 +172,18 @@ MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
+     case dungeon::DungeonElement::lightning:
+         return MaterialSpriteId::environment_door_lightning;
+     case dungeon::DungeonElement::chaos:
+         return MaterialSpriteId::environment_door_chaos;
+     }
+     return MaterialSpriteId::missing;
+ }
+ 
+ float material_actor_draw_scale(bool player, float projection_scale) noexcept {
+     if (projection_scale <= 0.0F) return 0.0F;
+-    return projection_scale * (player ? 0.36F : 0.34F);
++    const float trimmed_height = player ? kPlayerTrimmedHeight
++                                        : kMonsterTrimmedHeight;
++    const float target_height = player ? kPlayerTargetHeight
++                                       : kMonsterTargetHeight;
++    return projection_scale * target_height / trimmed_height;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index 264da87..da77ba1 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -23,21 +23,22 @@ struct MaterialManifestDefinition final {
+ namespace detail {
+ 
+ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
+     {MaterialAtlasId::environment, 1024, 1024, 4U * 1024U * 1024U},
+     {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U},
+     {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U},
+ };
+ 
+ #define ARPG_ACTOR_FRAME(sprite, column, row) \
+     {MaterialSpriteId::sprite, MaterialAtlasId::actors, \
+-        {static_cast<float>((column) * 224), static_cast<float>((row) * 224), 224.0F, 224.0F}, \
++        {static_cast<float>((column) * 224), static_cast<float>((row) * 224), \
++            224.0F, 224.0F}, \
+         {112.0F, 224.0F}, 0U}
+ 
+ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
+     ARPG_ACTOR_FRAME(player_idle, 0, 0),
+     ARPG_ACTOR_FRAME(player_move, 1, 0),
+     ARPG_ACTOR_FRAME(player_j1, 2, 0),
+     ARPG_ACTOR_FRAME(player_j2, 3, 0),
+     ARPG_ACTOR_FRAME(player_j3, 4, 0),
+     ARPG_ACTOR_FRAME(player_launcher, 5, 0),
+     ARPG_ACTOR_FRAME(player_jump_rise, 6, 0),
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 98878cb..9abe7c5 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -26,20 +26,22 @@ if(TARGET arpg_raylib)
+         death_overlay_view_tests.cpp
+         ground_loot_view_tests.cpp
+         material_asset_validation_tests.cpp
+         material_animation_tests.cpp
+         stage12_environment_render_tests.cpp
+         stage12_actor_render_tests.cpp)
+     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
++    target_compile_definitions(arpg_platform_tests
++        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+     endif()
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+     add_test(NAME platform.units COMMAND arpg_platform_tests)
+     set_tests_properties(
+         platform.units PROPERTIES LABELS "headless;platform")
+ 
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 57cb5b2..25a859f 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -68,12 +68,12 @@ int main() {
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 296, "stage 12 material manifest runtime");
++    return arpg::test::run_suites(suites, 298, "stage 12 material manifest runtime");
+ }
+diff --git a/tests/platform/stage12_actor_render_tests.cpp b/tests/platform/stage12_actor_render_tests.cpp
+index a000760..1fd19cf 100644
+--- a/tests/platform/stage12_actor_render_tests.cpp
++++ b/tests/platform/stage12_actor_render_tests.cpp
+@@ -1,17 +1,20 @@
+ #include "test_framework.hpp"
+ 
+ #include "material_animation.hpp"
+ #include "material_asset_validation.hpp"
+ #include "material_manifest.hpp"
+ 
++#include <raylib.h>
++
+ #include <array>
++#include <cstdint>
+ 
+ namespace {
+ 
+ using arpg::combat::MonsterAiPhase;
+ using arpg::combat::MonsterId;
+ using arpg::platform::MaterialSpriteId;
+ 
+ const arpg::platform::MaterialFrameDefinition* find_manifest_frame(
+     MaterialSpriteId id) noexcept {
+     const arpg::platform::MaterialManifestDefinition manifest =
+@@ -61,23 +64,115 @@ arpg::test::Failure stage12_monster_phases_use_distinct_material_frames() noexce
+             for (std::size_t prior = 0U; prior < phase_index; ++prior) {
+                 ARPG_REQUIRE(selected != frames[prior]);
+             }
+             frames[phase_index] = selected;
+         }
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure stage12_actor_material_scale_matches_existing_geometry() noexcept {
+-    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 1.0F) == 0.36F);
+-    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(false, 1.0F) == 0.34F);
+-    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 0.5F) == 0.18F);
++    constexpr float kPlayerTrimmedHeight = 172.0F;
++    constexpr float kPlayerTargetHeight = 82.0F;
++    constexpr float kMonsterTrimmedHeight = 176.0F;
++    constexpr float kMonsterTargetHeight = 78.0F;
++    const float player_scale = arpg::platform::material_actor_draw_scale(true, 1.0F);
++    const float monster_scale = arpg::platform::material_actor_draw_scale(false, 1.0F);
++    ARPG_REQUIRE(player_scale * kPlayerTrimmedHeight >= kPlayerTargetHeight - 0.1F);
++    ARPG_REQUIRE(player_scale * kPlayerTrimmedHeight <= kPlayerTargetHeight + 0.1F);
++    ARPG_REQUIRE(monster_scale * kMonsterTrimmedHeight >= kMonsterTargetHeight - 0.1F);
++    ARPG_REQUIRE(monster_scale * kMonsterTrimmedHeight <= kMonsterTargetHeight + 0.1F);
++    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 0.5F)
++        == player_scale * 0.5F);
++    return {};
++}
++
++std::uint64_t sprite_pixel_hash(const Color* pixels, int image_width,
++    const arpg::platform::MaterialFrameDefinition& frame) noexcept {
++    std::uint64_t hash = 1469598103934665603ULL;
++    const int left = static_cast<int>(frame.source.x);
++    const int top = static_cast<int>(frame.source.y);
++    const int right = left + static_cast<int>(frame.source.width);
++    const int bottom = top + static_cast<int>(frame.source.height);
++    for (int y = top; y < bottom; ++y) {
++        for (int x = left; x < right; ++x) {
++            const Color pixel = pixels[y * image_width + x];
++            hash ^= pixel.r; hash *= 1099511628211ULL;
++            hash ^= pixel.g; hash *= 1099511628211ULL;
++            hash ^= pixel.b; hash *= 1099511628211ULL;
++            hash ^= pixel.a; hash *= 1099511628211ULL;
++        }
++    }
++    return hash;
++}
++
++bool frame_has_opaque_pixel(const Color* pixels, int image_width,
++    const arpg::platform::MaterialFrameDefinition& frame) noexcept {
++    const int left = static_cast<int>(frame.source.x);
++    const int top = static_cast<int>(frame.source.y);
++    const int right = left + static_cast<int>(frame.source.width);
++    const int bottom = top + static_cast<int>(frame.source.height);
++    for (int y = top; y < bottom; ++y) {
++        for (int x = left; x < right; ++x) {
++            if (pixels[y * image_width + x].a > 0U) return true;
++        }
++    }
++    return false;
++}
++
++arpg::test::Failure stage12_all_actor_manifest_frames_have_exported_content() noexcept {
++    const Image image = LoadImage(ARPG_PROJECT_SOURCE_DIR "/assets/stage12/actors.png");
++    ARPG_REQUIRE(image.data != nullptr);
++    Color* const pixels = LoadImageColors(image);
++    ARPG_REQUIRE(pixels != nullptr);
++    const arpg::platform::MaterialManifestDefinition manifest =
++        arpg::platform::default_material_manifest();
++    for (std::size_t index = 0U; index < manifest.frame_count; ++index) {
++        const arpg::platform::MaterialFrameDefinition& frame = manifest.frames[index];
++        if (frame.atlas != arpg::platform::MaterialAtlasId::actors) continue;
++        ARPG_REQUIRE(frame_has_opaque_pixel(pixels, image.width, frame));
++    }
++    UnloadImageColors(pixels);
++    UnloadImage(image);
++    return {};
++}
++
++arpg::test::Failure stage12_monster_phase_frames_have_unique_exported_pixels() noexcept {
++    constexpr std::array<MonsterId, 8> kMonsters{{
++        MonsterId::fire_bomber, MonsterId::fire_charger,
++        MonsterId::water_bulwark, MonsterId::water_support,
++        MonsterId::lightning_shooter, MonsterId::lightning_dasher,
++        MonsterId::chaos_chaser, MonsterId::chaos_hazard,
++    }};
++    constexpr std::array<MonsterAiPhase, 7> kPhases{{
++        MonsterAiPhase::idle, MonsterAiPhase::move, MonsterAiPhase::telegraph,
++        MonsterAiPhase::active, MonsterAiPhase::recovery,
++        MonsterAiPhase::cooldown, MonsterAiPhase::defeated,
++    }};
++    const Image image = LoadImage(ARPG_PROJECT_SOURCE_DIR "/assets/stage12/actors.png");
++    ARPG_REQUIRE(image.data != nullptr);
++    Color* const pixels = LoadImageColors(image);
++    ARPG_REQUIRE(pixels != nullptr);
++    for (const MonsterId monster : kMonsters) {
++        std::array<std::uint64_t, kPhases.size()> hashes{};
++        for (std::size_t index = 0U; index < kPhases.size(); ++index) {
++            const arpg::platform::MaterialFrameDefinition* frame = find_manifest_frame(
++                arpg::platform::select_monster_sprite(monster, kPhases[index]));
++            ARPG_REQUIRE(frame != nullptr);
++            hashes[index] = sprite_pixel_hash(pixels, image.width, *frame);
++            for (std::size_t prior = 0U; prior < index; ++prior) {
++                ARPG_REQUIRE(hashes[index] != hashes[prior]);
++            }
++        }
++    }
++    UnloadImageColors(pixels);
++    UnloadImage(image);
+     return {};
+ }
+ 
+ arpg::test::Failure stage12_player_attack_actions_have_distinct_material_frames() noexcept {
+     using arpg::combat::AttackId;
+     using arpg::combat::PlayerState;
+     const MaterialSpriteId j1 = arpg::platform::select_player_sprite(
+         PlayerState::attack_active, AttackId::j1);
+     ARPG_REQUIRE(j1 != MaterialSpriteId::missing);
+     ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
+@@ -91,17 +186,21 @@ arpg::test::Failure stage12_player_attack_actions_have_distinct_material_frames(
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"maps every monster phase to a distinct material frame",
+         &stage12_monster_phases_use_distinct_material_frames},
+     {"maps player attack actions to distinct material frames",
+         &stage12_player_attack_actions_have_distinct_material_frames},
+     {"scales material actors to the existing geometry envelope",
+         &stage12_actor_material_scale_matches_existing_geometry},
++    {"exports distinct pixels for every monster phase frame",
++        &stage12_monster_phase_frames_have_unique_exported_pixels},
++    {"exports content for every actor manifest frame",
++        &stage12_all_actor_manifest_frames_have_exported_content},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite stage12_actor_render_suite() noexcept {
+     return arpg::test::make_suite("stage12_actor_render", kCases);
+ }

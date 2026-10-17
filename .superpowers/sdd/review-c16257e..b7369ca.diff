@@ -1,0 +1,723 @@
+# Review package: c16257e..b7369ca
+
+## Commits
+b7369ca feat: add stage 12 comic dungeon environment
+
+## Files changed
+ art_source/stage12/abyss-hole-concept-v1.png       | Bin 0 -> 1564016 bytes
+ art_source/stage12/door-concept-v1.png             | Bin 0 -> 1511105 bytes
+ art_source/stage12/environment-concept-v1.png      | Bin 0 -> 2147378 bytes
+ assets/stage12/README.md                           |   4 +-
+ assets/stage12/environment-source.md               |  59 ++++++++++++++++++
+ assets/stage12/environment.png                     | Bin 0 -> 1188998 bytes
+ src/platform/raylib/material_animation.cpp         |  28 +++++++++
+ src/platform/raylib/material_animation.hpp         |   7 +++
+ src/platform/raylib/material_asset_types.hpp       |   9 +++
+ src/platform/raylib/material_manifest.hpp          |  25 +++++++-
+ src/platform/raylib/material_pack.cpp              |  25 ++++++--
+ src/platform/raylib/material_pack.hpp              |   3 +-
+ src/platform/raylib/room_renderer.cpp              |  43 ++++++++++---
+ tests/platform/CMakeLists.txt                      |   3 +-
+ tests/platform/platform_test_main.cpp              |   4 +-
+ .../platform/stage12_environment_render_tests.cpp  |  32 ++++++++++
+ tools/build_stage12_environment_atlas.py           |  68 +++++++++++++++++++++
+ 17 files changed, 291 insertions(+), 19 deletions(-)
+
+## Diff
+diff --git a/art_source/stage12/abyss-hole-concept-v1.png b/art_source/stage12/abyss-hole-concept-v1.png
+new file mode 100644
+index 0000000..e35bba2
+Binary files /dev/null and b/art_source/stage12/abyss-hole-concept-v1.png differ
+diff --git a/art_source/stage12/door-concept-v1.png b/art_source/stage12/door-concept-v1.png
+new file mode 100644
+index 0000000..f34a1dd
+Binary files /dev/null and b/art_source/stage12/door-concept-v1.png differ
+diff --git a/art_source/stage12/environment-concept-v1.png b/art_source/stage12/environment-concept-v1.png
+new file mode 100644
+index 0000000..c569e44
+Binary files /dev/null and b/art_source/stage12/environment-concept-v1.png differ
+diff --git a/assets/stage12/README.md b/assets/stage12/README.md
+index 5322e3e..c8fdb9d 100644
+--- a/assets/stage12/README.md
++++ b/assets/stage12/README.md
+@@ -1,9 +1,9 @@
+ # Stage 12 材质包资源
+ 
+ 运行时材质包固定查找本目录下的三个内置图集：
+ 
+-- `environment.png`：1024 × 1024
++- `environment.png`：1024 × 1024，Stage 12-B 房间、元素门框与深渊洞口
+ - `actors.png`：2048 × 2048
+ - `effects_ui.png`：1024 × 1024
+ 
+-本 Task 2 尚未加入这些 PNG；它们将由 12-B、12-C、12-D 分别提供。因此当前构建发布时只会复制本说明文件，游戏启动会对每个缺失类别只警告一次，并安全保留现有程序绘制回退。图集到位后，发布后置步骤会将整个 `assets/stage12` 目录复制到可执行文件同级的 `bin/assets/stage12`，不需要运行时解析清单或在绘制热路径读取文件。
++本任务只交付 `environment.png`。`actors.png` 与 `effects_ui.png` 仍可缺失；游戏会对每个缺失类别只警告一次并安全回退。环境图集缺失、尺寸不匹配或任一帧不能绘制时，房间会整体回退为原有灰盒、矩形门和椭圆洞口。发布后置步骤会将整个 `assets/stage12` 目录复制到可执行文件同级的 `bin/assets/stage12`，不需要运行时解析清单或在绘制热路径读取文件。
+diff --git a/assets/stage12/environment-source.md b/assets/stage12/environment-source.md
+new file mode 100644
+index 0000000..f8b541e
+--- /dev/null
++++ b/assets/stage12/environment-source.md
+@@ -0,0 +1,59 @@
++# Stage 12 环境图集来源与打包记录
++
++## 来源与许可边界
++
++本图集只使用本任务提供的原创概念源图，原件无损保存在
++`art_source/stage12/`：
++
++- `environment-concept-v1.png`（1254 × 1254）：暗色石砌房间；
++- `door-concept-v1.png`（1254 × 1254）：石砌门，背景键色 `#ff00ff`；
++- `abyss-hole-concept-v1.png`（1536 × 1024）：紫色深渊洞口，背景键色 `#00ff00`。
++
++本次未重新调用图像生成服务。以下为随源图交接的可复现提示词基线（不是对原始生成历史的断言）：
++
++```text
++Use case: stylized-concept
++Asset type: comic dungeon game environment atlas
++Primary request: dark hand-painted stone dungeon chamber, frontal perspective,
++empty floor for combat, readable silhouettes, no character, no text, no watermark.
++Door variant: a single stone arch doorway on a perfectly flat #ff00ff chroma-key
++background, centered with generous padding, no shadow and no text.
++Abyss variant: a single oval stone-rimmed abyss hole with violet runes on a perfectly
++flat #00ff00 chroma-key background, centered with generous padding, no shadow and no text.
++Constraints: original artwork only; preserve floor perspective; avoid UI and logos.
++```
++
++## 去键色与打包步骤
++
++1. 用 imagegen 内置辅助脚本分别去除门与洞口的边框键色：
++
++```powershell
++python "$env:CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py" `
++  --input art_source/stage12/door-concept-v1.png `
++  --out out/stage12-art-temp/door-alpha.png `
++  --auto-key border --soft-matte --transparent-threshold 12 `
++  --opaque-threshold 220 --despill
++
++python "$env:CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py" `
++  --input art_source/stage12/abyss-hole-concept-v1.png `
++  --out out/stage12-art-temp/hole-alpha.png `
++  --auto-key border --soft-matte --transparent-threshold 12 `
++  --opaque-threshold 220 --despill
++```
++
++2. 运行 `python tools/build_stage12_environment_atlas.py`。脚本只读取原件与上述临时 alpha 图，写入 `assets/stage12/environment.png`。
++3. 用 Pillow 确认最终文件是 **1024 × 1024 RGBA**；清单的 RGBA 预算为
++   `4 × 1024 × 1024 = 4,194,304` 字节。
++
++## 帧表
++
++| 帧族 | 像素矩形 | 锚点 | 用途 |
++| --- | --- | --- | --- |
++| `environment_floor_{fire,water,lightning,chaos}` | `0,0,1024,704` | `512,704` | 透视房间底图 |
++| `environment_door_fire` | `0,704,112,112` | `56,112` | 火元素门框 |
++| `environment_door_water` | `112,704,112,112` | `56,112` | 水元素门框 |
++| `environment_door_lightning` | `224,704,112,112` | `56,112` | 雷元素门框 |
++| `environment_door_chaos` | `336,704,112,112` | `56,112` | 混沌元素门框 |
++| `environment_hole` | `448,704,192,160` | `96,80` | 深渊洞口主体 |
++
++下方未使用的透明区域留给后续道具帧；不被运行时读取。
+diff --git a/assets/stage12/environment.png b/assets/stage12/environment.png
+new file mode 100644
+index 0000000..701d466
+Binary files /dev/null and b/assets/stage12/environment.png differ
+diff --git a/src/platform/raylib/material_animation.cpp b/src/platform/raylib/material_animation.cpp
+index 38a4ca7..9819a0b 100644
+--- a/src/platform/raylib/material_animation.cpp
++++ b/src/platform/raylib/material_animation.cpp
+@@ -66,11 +66,39 @@ MaterialSpriteId select_monster_sprite(
+     case combat::MonsterId::chaos_chaser:
+         return MaterialSpriteId::chaos_chaser_idle;
+     case combat::MonsterId::chaos_hazard:
+         return MaterialSpriteId::chaos_hazard_idle;
+     case combat::MonsterId::count:
+         return MaterialSpriteId::missing;
+     }
+     return MaterialSpriteId::missing;
+ }
+ 
++MaterialSpriteId select_floor_sprite(dungeon::DungeonElement element) noexcept {
++    switch (element) {
++    case dungeon::DungeonElement::fire:
++        return MaterialSpriteId::environment_floor_fire;
++    case dungeon::DungeonElement::water:
++        return MaterialSpriteId::environment_floor_water;
++    case dungeon::DungeonElement::lightning:
++        return MaterialSpriteId::environment_floor_lightning;
++    case dungeon::DungeonElement::chaos:
++        return MaterialSpriteId::environment_floor_chaos;
++    }
++    return MaterialSpriteId::missing;
++}
++
++MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
++    switch (element) {
++    case dungeon::DungeonElement::fire:
++        return MaterialSpriteId::environment_door_fire;
++    case dungeon::DungeonElement::water:
++        return MaterialSpriteId::environment_door_water;
++    case dungeon::DungeonElement::lightning:
++        return MaterialSpriteId::environment_door_lightning;
++    case dungeon::DungeonElement::chaos:
++        return MaterialSpriteId::environment_door_chaos;
++    }
++    return MaterialSpriteId::missing;
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_animation.hpp b/src/platform/raylib/material_animation.hpp
+index b9c57ff..82ac380 100644
+--- a/src/platform/raylib/material_animation.hpp
++++ b/src/platform/raylib/material_animation.hpp
+@@ -1,17 +1,24 @@
+ #pragma once
+ 
+ #include "material_asset_types.hpp"
+ 
+ #include "combat/combat_types.hpp"
++#include "dungeon/dungeon_types.hpp"
+ 
+ namespace arpg::platform {
+ 
+ [[nodiscard]] MaterialSpriteId select_player_sprite(
+     combat::PlayerState state,
+     combat::AttackId attack) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId select_monster_sprite(
+     combat::MonsterId monster,
+     combat::MonsterAiPhase phase) noexcept;
+ 
++[[nodiscard]] MaterialSpriteId select_floor_sprite(
++    dungeon::DungeonElement element) noexcept;
++
++[[nodiscard]] MaterialSpriteId select_door_sprite(
++    dungeon::DungeonElement element) noexcept;
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_asset_types.hpp b/src/platform/raylib/material_asset_types.hpp
+index 4705f5f..b6e22e0 100644
+--- a/src/platform/raylib/material_asset_types.hpp
++++ b/src/platform/raylib/material_asset_types.hpp
+@@ -28,20 +28,29 @@ enum class MaterialSpriteId : std::uint16_t {
+     player_hurt,
+     player_dead,
+     fire_bomber_idle,
+     fire_charger_idle,
+     water_bulwark_idle,
+     water_support_idle,
+     lightning_shooter_idle,
+     lightning_dasher_idle,
+     chaos_chaser_idle,
+     chaos_hazard_idle,
++    environment_floor_fire,
++    environment_floor_water,
++    environment_floor_lightning,
++    environment_floor_chaos,
++    environment_door_fire,
++    environment_door_water,
++    environment_door_lightning,
++    environment_door_chaos,
++    environment_hole,
+     count,
+ };
+ 
+ struct MaterialFrameDefinition final {
+     MaterialSpriteId id{MaterialSpriteId::missing};
+     MaterialAtlasId atlas{MaterialAtlasId::actors};
+     Rectangle source{};
+     Vector2 foot_anchor{};
+     std::uint16_t duration_ms{};
+ };
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index 3dd1550..ad1b945 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -21,21 +21,44 @@ struct MaterialManifestDefinition final {
+ };
+ 
+ namespace detail {
+ 
+ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
+     {MaterialAtlasId::environment, 1024, 1024, 4U * 1024U * 1024U},
+     {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U},
+     {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U},
+ };
+ 
++inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
++    {MaterialSpriteId::environment_floor_fire, MaterialAtlasId::environment,
++        {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
++    {MaterialSpriteId::environment_floor_water, MaterialAtlasId::environment,
++        {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
++    {MaterialSpriteId::environment_floor_lightning, MaterialAtlasId::environment,
++        {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
++    {MaterialSpriteId::environment_floor_chaos, MaterialAtlasId::environment,
++        {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
++    {MaterialSpriteId::environment_door_fire, MaterialAtlasId::environment,
++        {0.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
++    {MaterialSpriteId::environment_door_water, MaterialAtlasId::environment,
++        {112.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
++    {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::environment,
++        {224.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
++    {MaterialSpriteId::environment_door_chaos, MaterialAtlasId::environment,
++        {336.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
++    {MaterialSpriteId::environment_hole, MaterialAtlasId::environment,
++        {448.0F, 704.0F, 192.0F, 160.0F}, {96.0F, 80.0F}, 0U},
++};
++
+ }  // namespace detail
+ 
+ [[nodiscard]] constexpr MaterialManifestDefinition
+ default_material_manifest() noexcept {
+     return {detail::kDefaultMaterialAtlases,
+         sizeof(detail::kDefaultMaterialAtlases)
+             / sizeof(detail::kDefaultMaterialAtlases[0]),
+-        nullptr, 0U};
++        detail::kDefaultMaterialFrames,
++        sizeof(detail::kDefaultMaterialFrames)
++            / sizeof(detail::kDefaultMaterialFrames[0])};
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.cpp b/src/platform/raylib/material_pack.cpp
+index 0a0412a..79012d7 100644
+--- a/src/platform/raylib/material_pack.cpp
++++ b/src/platform/raylib/material_pack.cpp
+@@ -20,21 +20,34 @@ constexpr const char* kAtlasPaths[] = {
+ [[nodiscard]] constexpr bool is_known_sprite(MaterialSpriteId id) noexcept {
+     return id > MaterialSpriteId::missing && id < MaterialSpriteId::count;
+ }
+ 
+ [[nodiscard]] constexpr std::size_t atlas_index(MaterialAtlasId id) noexcept {
+     return static_cast<std::size_t>(id);
+ }
+ 
+ [[nodiscard]] constexpr MaterialAtlasId atlas_for_sprite(
+     MaterialSpriteId id) noexcept {
+-    static_cast<void>(id);
++    switch (id) {
++    case MaterialSpriteId::environment_floor_fire:
++    case MaterialSpriteId::environment_floor_water:
++    case MaterialSpriteId::environment_floor_lightning:
++    case MaterialSpriteId::environment_floor_chaos:
++    case MaterialSpriteId::environment_door_fire:
++    case MaterialSpriteId::environment_door_water:
++    case MaterialSpriteId::environment_door_lightning:
++    case MaterialSpriteId::environment_door_chaos:
++    case MaterialSpriteId::environment_hole:
++        return MaterialAtlasId::environment;
++    default:
++        break;
++    }
+     return MaterialAtlasId::actors;
+ }
+ 
+ [[nodiscard]] const MaterialFrameDefinition* find_frame(
+     const MaterialManifestDefinition& manifest, MaterialSpriteId id) noexcept {
+     for (std::size_t index = 0U; index < manifest.frame_count; ++index) {
+         if (manifest.frames[index].id == id) return &manifest.frames[index];
+     }
+     return nullptr;
+ }
+@@ -126,33 +139,33 @@ void MaterialPack::unload() noexcept {
+         texture = Texture2D{};
+     }
+     state_.reset();
+ }
+ 
+ bool MaterialPack::available(MaterialAtlasId id) const noexcept {
+     return state_.available(id);
+ }
+ 
+ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
+-    bool flip_x) const noexcept {
+-    if (!state_.can_draw(id)) return false;
++    bool flip_x, float scale) const noexcept {
++    if (!state_.can_draw(id) || scale <= 0.0F) return false;
+ 
+     const MaterialManifestDefinition manifest = default_material_manifest();
+     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+     if (frame == nullptr || !state_.available(frame->atlas)) return false;
+ 
+     const Texture2D& texture = textures_[atlas_index(frame->atlas)];
+     if (!IsTextureValid(texture)) return false;
+ 
+     Rectangle source = frame->source;
+     if (flip_x) {
+         source.x += source.width;
+         source.width = -source.width;
+     }
+-    const Rectangle destination{foot_position.x - frame->foot_anchor.x,
+-        foot_position.y - frame->foot_anchor.y, frame->source.width,
+-        frame->source.height};
++    const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
++        foot_position.y - frame->foot_anchor.y * scale,
++        frame->source.width * scale, frame->source.height * scale};
+     DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, WHITE);
+     return true;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.hpp b/src/platform/raylib/material_pack.hpp
+index 3ad3126..dee5081 100644
+--- a/src/platform/raylib/material_pack.hpp
++++ b/src/platform/raylib/material_pack.hpp
+@@ -27,21 +27,22 @@ private:
+ };
+ 
+ class MaterialPack final {
+ public:
+     MaterialPack() noexcept;
+     explicit MaterialPack(MaterialTextureApi texture_api) noexcept;
+     [[nodiscard]] bool load() noexcept;
+     void unload() noexcept;
+     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
+     [[nodiscard]] bool draw(
+-        MaterialSpriteId id, Vector2 foot_position, bool flip_x) const noexcept;
++        MaterialSpriteId id, Vector2 foot_position, bool flip_x,
++        float scale = 1.0F) const noexcept;
+ 
+ private:
+     MaterialTextureApi texture_api_{};
+     MaterialPackState state_{};
+     std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
+         textures_{};
+     std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
+         warnings_emitted_{};
+ };
+ 
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index 1f34d8c..b8c2da6 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -1,14 +1,15 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/room_bounds.hpp"
+ #include "dungeon_view_math.hpp"
++#include "material_animation.hpp"
+ #include "render_layout.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+@@ -48,22 +49,34 @@ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
+             lerp(floor_left, floor_right, amount), 1.0F, grid);
+     }
+     for (int row = 0; row <= 8; ++row) {
+         const float linear = static_cast<float>(row) / 8.0F;
+         const float perspective = linear * linear;
+         DrawLineEx(lerp(back_left, floor_left, perspective),
+             lerp(back_right, floor_right, perspective), 1.0F, grid);
+     }
+ }
+ 
++bool draw_environment_room(const MaterialPack& material_pack,
++    dungeon::DungeonElement ecology) noexcept {
++    const float width = static_cast<float>(GetScreenWidth());
++    const float height = static_cast<float>(GetScreenHeight());
++    const float scale = (std::max)(width / 1024.0F, height / 704.0F);
++    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
++        Color{9, 12, 20, 255});
++    return material_pack.draw(select_floor_sprite(ecology),
++        {width * 0.5F, height}, false, scale);
++}
++
+ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+-    float width, float height) noexcept {
++    float width, float height, const MaterialPack& material_pack,
++    bool draw_material_environment) noexcept {
+     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
+         snapshot.has_active_room, snapshot.exits_open[0]);
+     if (mode == DoorVisualMode::hidden) {
+         return;
+     }
+     constexpr std::array<combat::Vec3, 4> kDoorCenters{{
+         {0.0F, combat::room_bounds::min_y, 0.0F},
+         {0.0F, combat::room_bounds::max_y, 0.0F},
+         {combat::room_bounds::min_x, 0.0F, 0.0F},
+         {combat::room_bounds::max_x, 0.0F, 0.0F},
+@@ -75,21 +88,27 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
+         const RenderProjection projected = project_render_world(
+             kDoorCenters[index].x, kDoorCenters[index].y, kDoorCenters[index].z,
+             width, height);
+         const DoorRenderDecision visual = door_render_decision(mode, kDirections[index]);
+         const Color frame_color{visual.frame.r, visual.frame.g, visual.frame.b, visual.frame.a};
+         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
+         const float door_width = 82.0F * projected.scale;
+         const float door_height = 70.0F * projected.scale;
+         const Rectangle frame{projected.x - door_width * 0.5F,
+             projected.ground_y - door_height, door_width, door_height};
+-        DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
++        const bool drew_material_door = draw_material_environment
++            && material_pack.draw(select_door_sprite(snapshot.ecology),
++                {projected.x, projected.ground_y}, false,
++                0.72F * projected.scale);
++        if (!drew_material_door) {
++            DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
++        }
+         if (visual.draw_locked_interior) {
+             DrawRectangleRec({frame.x + 7.0F * projected.scale,
+                 frame.y + 7.0F * projected.scale,
+                 frame.width - 14.0F * projected.scale,
+                 frame.height - 7.0F * projected.scale},
+                 Color{visual.locked_interior.r, visual.locked_interior.g,
+                     visual.locked_interior.b, visual.locked_interior.a});
+         }
+         const int font_size = static_cast<int>(22.0F * projected.scale);
+         const int arrow_width = MeasureText(visual.arrow, font_size);
+@@ -252,52 +271,62 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
+     const AbyssHudValues values = abyss_hud_values(snapshot);
+     if (values.visible) {
+         const char* label = TextFormat("%s  |  %s",
+             values.danger_label, values.rule_label);
+         const int font_size = 20;
+         DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
+             18, font_size, Color{255, 164, 221, 255});
+     }
+ }
+ 
+-void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
++void draw_hole(const dungeon::DungeonSnapshot& snapshot,
++    const MaterialPack& material_pack, bool draw_material_environment) noexcept {
+     const HoleVisualMode hole = hole_visual_mode(snapshot);
+     if (hole == HoleVisualMode::hidden) {
+         return;
+     }
+     const RenderProjection projected = project_render_world(kHoleCenter.x,
+         kHoleCenter.y, kHoleCenter.z, static_cast<float>(GetScreenWidth()),
+         static_cast<float>(GetScreenHeight()));
+     const int x = static_cast<int>(projected.x);
+     const int y = static_cast<int>(projected.ground_y);
+     Color color{43, 25, 55, 255};
+     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
+     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
+-    DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
++    const bool drew_material_hole = draw_material_environment
++        && material_pack.draw(MaterialSpriteId::environment_hole,
++            {projected.x, projected.ground_y}, false, 0.77F * projected.scale);
++    if (!drew_material_hole) {
++        DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
++    }
+     DrawEllipseLines(x, y, 74.0F, 25.0F, color);
+     const char* label = hole == HoleVisualMode::sealed ? "SEALED"
+         : hole == HoleVisualMode::ready ? "READY"
+         : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
+     DrawText(label, x - MeasureText(label, 16) / 2, y - 8, 16, color);
+     if (snapshot.combat.has_value()
+         && can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+         constexpr const char* kPrompt = "Press E to descend";
+         DrawText(kPrompt, x - MeasureText(kPrompt, 18) / 2, y + 34, 18, RAYWHITE);
+     }
+ }
+ 
+ }  // namespace
+ 
+ void CombatRenderer::draw_room(
+     const dungeon::DungeonSnapshot& current,
+     const GroundLootView& ground_loot) const noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+-    draw_graybox_room(current.ecology);
++    const bool draw_material_environment =
++        draw_environment_room(material_pack_, current.ecology);
++    if (!draw_material_environment) {
++        draw_graybox_room(current.ecology);
++    }
+     draw_abyss(current, static_cast<float>(GetTime()));
+     draw_environment_hazards(current, width, height);
+     draw_ground_items(current, ground_loot, width, height);
+-    draw_doors(current, width, height);
+-    draw_hole(current);
++    draw_doors(current, width, height, material_pack_, draw_material_environment);
++    draw_hole(current, material_pack_, draw_material_environment);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 571eb0b..e2ed5a0 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -19,21 +19,22 @@ if(TARGET arpg_raylib)
+         hud_notice_state_tests.cpp
+         loot_pickup_feedback_tests.cpp
+         hud_layout_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+         hud_host_integration_tests.cpp
+         death_input_gate_tests.cpp
+         death_overlay_view_tests.cpp
+         ground_loot_view_tests.cpp
+         material_asset_validation_tests.cpp
+-        material_animation_tests.cpp)
++        material_animation_tests.cpp
++        stage12_environment_render_tests.cpp)
+     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+     endif()
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index fd774be..5416567 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -24,20 +24,21 @@ arpg::test::TestSuite control_hints_suite() noexcept;
+ arpg::test::TestSuite hud_view_model_suite() noexcept;
+ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
+ arpg::test::TestSuite ground_loot_view_suite() noexcept;
+ arpg::test::TestSuite material_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_animation_suite() noexcept;
++arpg::test::TestSuite stage12_environment_render_suite() noexcept;
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+@@ -62,14 +63,15 @@ int main() {
+         hud_view_model_suite(),
+         hud_notice_state_suite(),
+         loot_pickup_feedback_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
++        stage12_environment_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 291, "stage 12 material manifest runtime");
++    return arpg::test::run_suites(suites, 292, "stage 12 material manifest runtime");
+ }
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+new file mode 100644
+index 0000000..30d2c49
+--- /dev/null
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -0,0 +1,32 @@
++#include "test_framework.hpp"
++
++#include "dungeon/dungeon_types.hpp"
++#include "material_animation.hpp"
++
++namespace {
++
++arpg::test::Failure environment_maps_each_dungeon_element_to_a_floor_sprite() noexcept {
++    using arpg::dungeon::DungeonElement;
++    using arpg::platform::MaterialSpriteId;
++
++    ARPG_REQUIRE(arpg::platform::select_floor_sprite(DungeonElement::fire)
++        != MaterialSpriteId::missing);
++    ARPG_REQUIRE(arpg::platform::select_floor_sprite(DungeonElement::water)
++        != MaterialSpriteId::missing);
++    ARPG_REQUIRE(arpg::platform::select_floor_sprite(DungeonElement::lightning)
++        != MaterialSpriteId::missing);
++    ARPG_REQUIRE(arpg::platform::select_floor_sprite(DungeonElement::chaos)
++        != MaterialSpriteId::missing);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"maps every dungeon element to a floor sprite",
++        &environment_maps_each_dungeon_element_to_a_floor_sprite},
++};
++
++}  // namespace
++
++arpg::test::TestSuite stage12_environment_render_suite() noexcept {
++    return arpg::test::make_suite("stage12_environment_render", kCases);
++}
+diff --git a/tools/build_stage12_environment_atlas.py b/tools/build_stage12_environment_atlas.py
+new file mode 100644
+index 0000000..6d084dd
+--- /dev/null
++++ b/tools/build_stage12_environment_atlas.py
+@@ -0,0 +1,68 @@
++"""Build the deterministic Stage 12 1024px RGBA environment atlas.
++
++Run the imagegen chroma-key helper first; see assets/stage12/environment-source.md.
++"""
++
++from pathlib import Path
++
++from PIL import Image, ImageDraw, ImageEnhance
++
++
++ROOT = Path(__file__).resolve().parents[1]
++SOURCE = ROOT / "art_source" / "stage12"
++TEMP = ROOT / "out" / "stage12-art-temp"
++OUTPUT = ROOT / "assets" / "stage12" / "environment.png"
++
++ATLAS_SIZE = (1024, 1024)
++BACKGROUND_BOX = (0, 0, 1024, 704)
++DOOR_BOXES = ((0, 704, 112, 112), (112, 704, 112, 112),
++              (224, 704, 112, 112), (336, 704, 112, 112))
++HOLE_BOX = (448, 704, 192, 160)
++ACCENTS = ((238, 86, 67), (67, 160, 234), (242, 204, 68), (210, 73, 205))
++
++
++def fit(image: Image.Image, size: tuple[int, int]) -> Image.Image:
++    """Fit image inside size without distorting its perspective."""
++    result = image.copy()
++    result.thumbnail(size, Image.Resampling.LANCZOS)
++    return result
++
++
++def centered(image: Image.Image, size: tuple[int, int]) -> Image.Image:
++    result = Image.new("RGBA", size)
++    result.alpha_composite(image, ((size[0] - image.width) // 2,
++        (size[1] - image.height) // 2))
++    return result
++
++
++def main() -> None:
++    background = Image.open(SOURCE / "environment-concept-v1.png").convert("RGBA")
++    door = Image.open(TEMP / "door-alpha.png").convert("RGBA")
++    hole = Image.open(TEMP / "hole-alpha.png").convert("RGBA")
++
++    atlas = Image.new("RGBA", ATLAS_SIZE, (0, 0, 0, 0))
++    room = ImageEnhance.Contrast(background).enhance(1.06)
++    atlas.alpha_composite(room.resize(BACKGROUND_BOX[2:], Image.Resampling.LANCZOS))
++
++    door_art = fit(door, (104, 108))
++    for box, accent in zip(DOOR_BOXES, ACCENTS, strict=True):
++        frame = centered(door_art, box[2:])
++        tint = Image.new("RGBA", box[2:], (*accent, 80))
++        tint.putalpha(frame.getchannel("A").point(lambda alpha: alpha * 80 // 255))
++        frame = Image.alpha_composite(frame, tint)
++        outline = ImageDraw.Draw(frame)
++        outline.rounded_rectangle((2, 2, box[2] - 3, box[3] - 3),
++            radius=12, outline=(*accent, 220), width=3)
++        atlas.alpha_composite(frame, box[:2])
++
++    hole_art = centered(fit(hole, (188, 150)), HOLE_BOX[2:])
++    atlas.alpha_composite(hole_art, HOLE_BOX[:2])
++
++    # The remaining lower strip deliberately stays transparent for future props.
++    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
++    atlas.save(OUTPUT)
++    print(f"Wrote {OUTPUT} {atlas.width}x{atlas.height} RGBA")
++
++
++if __name__ == "__main__":
++    main()

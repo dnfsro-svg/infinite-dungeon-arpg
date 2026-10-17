@@ -1,0 +1,1262 @@
+# Review package: 7786173..2d9b49a
+
+## Commits
+2d9b49a feat: complete stage 12 comic material pack
+
+## Files changed
+ art_source/stage12/effects-ui-concept-v1.png       | Bin 0 -> 1998405 bytes
+ assets/stage12/effects-ui-source.md                |   7 ++
+ assets/stage12/effects_ui.png                      | Bin 0 -> 135493 bytes
+ docs/validation/stage12-comic-material-pack.md     |   6 +
+ src/app/main.cpp                                   |   1 +
+ src/platform/raylib/actor_renderer.cpp             |  39 ++++--
+ src/platform/raylib/host_launch_options.cpp        |  19 +++
+ src/platform/raylib/host_launch_options.hpp        |   1 +
+ src/platform/raylib/material_animation.cpp         |  10 ++
+ src/platform/raylib/material_animation.hpp         |   2 +
+ src/platform/raylib/material_asset_types.hpp       |  12 ++
+ src/platform/raylib/material_manifest.hpp          |  31 +++++
+ src/platform/raylib/material_pack.cpp              |  13 ++
+ src/platform/raylib/raylib_host.cpp                |  32 ++++-
+ src/platform/raylib/raylib_host.hpp                |   3 +
+ src/platform/raylib/room_renderer.cpp              |  10 +-
+ tests/platform/CMakeLists.txt                      |  29 ++++-
+ tests/platform/host_launch_options_tests.cpp       |  13 ++
+ tests/platform/platform_test_main.cpp              |   4 +-
+ .../stage12_material_formal_game_validation.cpp    | 136 +++++++++++++++++++++
+ tests/platform/stage12_material_render_tests.cpp   |  42 +++++++
+ tests/platform/stage12_material_validator.ps1      |  67 ++++++++++
+ tools/build_stage12_effects_atlas.py               |  75 ++++++++++++
+ 23 files changed, 535 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/art_source/stage12/effects-ui-concept-v1.png b/art_source/stage12/effects-ui-concept-v1.png
+new file mode 100644
+index 0000000..f493b2d
+Binary files /dev/null and b/art_source/stage12/effects-ui-concept-v1.png differ
+diff --git a/assets/stage12/effects-ui-source.md b/assets/stage12/effects-ui-source.md
+new file mode 100644
+index 0000000..5e1047d
+--- /dev/null
++++ b/assets/stage12/effects-ui-source.md
+@@ -0,0 +1,7 @@
++# Stage 12 effects and loot atlas source
++
++- Original source: `art_source/stage12/effects-ui-concept-v1.png` (copied, never moved, 2026-07-19).
++- Prompt: original comic action-RPG effects and item-icon concept, four-column chroma-key source; requested fire, water, lightning, chaos, hit sparks, launcher arc, landing dust, affix aura, and rarity markers without text or watermark.
++- Cleanup: `tools/build_stage12_effects_atlas.py` removes near-green chroma pixels, crops the four-by-four source cells, contrast-normalizes and centers the first eight effects, then draws clean white/blue/gold/abyss rarity markers for deterministic legibility.
++- Output: `effects_ui.png`, 1024x1024 RGBA (4 MiB). Frames are 128x128: row 0 elemental effects; row 1 hit/launcher/dust/aura; row 2 normal/magic/rare/abyss loot.
++- Attribution: generated original source supplied in the local Codex image generation output; no third-party game assets are used.
+diff --git a/assets/stage12/effects_ui.png b/assets/stage12/effects_ui.png
+new file mode 100644
+index 0000000..5e7c754
+Binary files /dev/null and b/assets/stage12/effects_ui.png differ
+diff --git a/docs/validation/stage12-comic-material-pack.md b/docs/validation/stage12-comic-material-pack.md
+new file mode 100644
+index 0000000..4de7ffb
+--- /dev/null
++++ b/docs/validation/stage12-comic-material-pack.md
+@@ -0,0 +1,6 @@
++# Stage 12 comic material pack validation
++
++Run `ctest --test-dir out/build/windows-msvc-debug -R stage12 --output-on-failure`.
++The formal runner creates its own evidence directory, copies the three built-in atlases next to its validation executable, runs ordinary raylib gameplay at 1280x720 and 1920x1080, and records both PNGs plus `stage12-material-evidence.txt`.
++
++The validator rejects missing/wrong PNG dimensions, a missing manifest validation, texture memory above 64 MiB, missing fallback record, missing input/hole regression record, missing screenshot isolation, or fewer than eight monster entries. F12 remains backward compatible by default; `--screenshot-dir <directory>` isolates its legacy filename for concurrent runs.
+diff --git a/src/app/main.cpp b/src/app/main.cpp
+index e57d6bb..474116b 100644
+--- a/src/app/main.cpp
++++ b/src/app/main.cpp
+@@ -7,13 +7,14 @@ int main(int argc, char** argv) {
+     const auto arguments = arpg::platform::parse_host_arguments(
+         argc, const_cast<const char* const*>(argv));
+     if (arguments.error != arpg::platform::HostArgumentError::none) {
+         std::fprintf(stderr, "Invalid command line arguments (error %u)\n",
+             static_cast<unsigned>(arguments.error));
+         return static_cast<int>(arpg::platform::HostExitCode::invalid_arguments);
+     }
+     arpg::platform::RaylibHostConfig config{};
+     config.save_directory = arguments.options.save_directory;
+     config.settings_directory = arguments.options.settings_directory;
++    config.screenshot_directory = arguments.options.screenshot_directory;
+     config.new_run_seed = arguments.options.new_run_seed;
+     return static_cast<int>(arpg::platform::run_raylib_host(config));
+ }
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index 90d3544..e46778b 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -64,31 +64,47 @@ void draw_bar(float x, float y, float width, float ratio, Color color) noexcept
+     DrawRectangleRec({x, y, width, 5.0F}, Color{20, 23, 31, 230});
+     DrawRectangleRec({x + 1.0F, y + 1.0F, (width - 2.0F) * ratio, 3.0F}, color);
+ }
+ 
+ [[nodiscard]] float monster_bar_ratio(int value, int maximum) noexcept {
+     if (maximum <= 0) return 0.0F;
+     return std::clamp(static_cast<float>(value) / static_cast<float>(maximum),
+         0.0F, 1.0F);
+ }
+ 
+-void draw_effects(const CombatFeedback& feedback, float width, float height,
+-    bool foreground) noexcept {
++MaterialSpriteId effect_sprite(VisualEffectKind kind) noexcept {
++    switch (kind) {
++    case VisualEffectKind::weapon_trail: return MaterialSpriteId::effect_launcher_trail;
++    case VisualEffectKind::dust: return MaterialSpriteId::effect_landing_dust;
++    case VisualEffectKind::spark: return MaterialSpriteId::effect_hit_spark;
++    case VisualEffectKind::damage_number: return MaterialSpriteId::missing;
++    }
++    return MaterialSpriteId::missing;
++}
++
++void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
++    float width, float height, bool foreground) noexcept {
+     for (const VisualEffect& effect : feedback.effects()) {
+         if (!effect.active) continue;
+         const bool is_foreground = effect.kind == VisualEffectKind::spark
+             || effect.kind == VisualEffectKind::damage_number;
+         if (is_foreground != foreground) continue;
+         const float progress = effect.lifetime_seconds <= 0.0F ? 1.0F
+             : std::clamp(effect.age_seconds / effect.lifetime_seconds, 0.0F, 1.0F);
+         const float opacity = 1.0F - progress;
+         const ScreenProjection projected = project_combat_position(effect.position, width, height);
++        const MaterialSpriteId sprite = effect_sprite(effect.kind);
++        if (sprite != MaterialSpriteId::missing
++            && material_pack.draw(sprite, {projected.x, projected.y}, false,
++                0.62F * projected.scale, Fade(WHITE, opacity))) {
++            continue;
++        }
+         switch (effect.kind) {
+         case VisualEffectKind::weapon_trail:
+             DrawLineEx({projected.x - 36.0F * projected.scale, projected.y - 42.0F * projected.scale},
+                 {projected.x + 44.0F * projected.scale, projected.y - 68.0F * projected.scale},
+                 8.0F * projected.scale * opacity, Fade(Color{105, 224, 255, 255}, opacity)); break;
+         case VisualEffectKind::dust:
+             DrawEllipse(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
+                 (18.0F + progress * 24.0F) * projected.scale, 7.0F * projected.scale,
+                 Fade(Color{185, 193, 207, 255}, opacity)); break;
+         case VisualEffectKind::spark:
+@@ -118,27 +134,31 @@ void draw_hazards(const CombatSnapshot& snapshot, float width, float height) noe
+             ? Fade(color, 0.82F) : color;
+         if (mode == HazardVisualMode::active) {
+             DrawEllipse(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
+                 radius, radius * 0.36F, draw_color);
+         }
+         DrawEllipseLines(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
+             radius, radius * 0.36F, draw_color);
+     }
+ }
+ 
+-void draw_projectiles(const CombatSnapshot& snapshot, float width, float height,
+-    dungeon::DungeonElement ecology) noexcept {
++void draw_projectiles(const CombatSnapshot& snapshot, const MaterialPack& material_pack,
++    float width, float height, dungeon::DungeonElement ecology) noexcept {
+     const Color color = to_color(monster_ecology_color(ecology));
+     for (const ProjectileSnapshot& projectile : snapshot.projectiles) {
+         if (!projectile.active) continue;
+         const ScreenProjection projected = project_projectile_position(projectile, width, height);
+         const float radius = std::max(3.0F, projectile.radius * 22.0F) * projected.scale;
++        if (material_pack.draw(select_element_effect(ecology),
++                {projected.x, projected.y}, false, 0.30F * projected.scale)) {
++            continue;
++        }
+         DrawCircle(static_cast<int>(projected.x), static_cast<int>(projected.y), radius, color);
+         DrawCircleLines(static_cast<int>(projected.x), static_cast<int>(projected.y),
+             radius + 2.0F, Color{244, 248, 255, 235});
+     }
+ }
+ 
+ void draw_monster_warning(const MonsterSnapshot& monster, Vec3 position,
+     dungeon::DungeonElement ecology, float width, float height) noexcept {
+     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
+     if (visual.warning_mode == MonsterWarningMode::none) return;
+@@ -323,22 +343,22 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+         Vec3 position = monster.position;
+         const MonsterSnapshot& previous_monster = previous_combat.monsters[index];
+         if (monster.id == previous_monster.id && monster.generation == previous_monster.generation
+             && monster_visible(previous_monster)) position = interpolate(previous_monster.position, monster.position, alpha);
+         draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index), false};
+         draw_monster_warning(monster, position, current.ecology, width, height);
+         draw_blink_affix_warning(monster, position, width, height);
+     }
+     sort_render_actors(draw_items, draw_count);
+     draw_hazards(current_combat, width, height);
+-    draw_effects(feedback, width, height, false);
+-    draw_projectiles(current_combat, width, height, current.ecology);
++    draw_effects(feedback, material_pack_, width, height, false);
++    draw_projectiles(current_combat, material_pack_, width, height, current.ecology);
+     for (std::size_t index = 0; index < draw_count; ++index) {
+         const RenderActor& item = draw_items[index];
+         const ScreenProjection ground = project_combat_position({item.position.x, item.position.y, 0.0F}, width, height);
+         const float shadow_width = (item.player ? 48.0F : 54.0F) * ground.scale;
+         DrawEllipse(static_cast<int>(ground.x), static_cast<int>(ground.ground_y + 3.0F), shadow_width, 10.0F * ground.scale, Color{3, 5, 8, 125});
+     }
+     for (std::size_t index = 0; index < draw_count; ++index) {
+         const RenderActor& item = draw_items[index];
+         const ScreenProjection projected = project_combat_position(item.position, width, height);
+         if (item.player) {
+@@ -350,25 +370,30 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+                 sprite = MaterialSpriteId::player_hurt;
+             }
+             if (!draw_material_actor(material_pack_, sprite,
+                     current_combat.player.facing, true, projected)) {
+                 draw_player_geometry(projected);
+             }
+         } else {
+             const MonsterSnapshot& monster = current_combat.monsters[item.monster_index];
+             const MaterialSpriteId sprite = select_monster_sprite(monster.id,
+                 monster.ai_phase);
++            if (monster.affixes.count > 0U) {
++                static_cast<void>(material_pack_.draw(MaterialSpriteId::effect_affix_aura,
++                    {projected.x, projected.ground_y}, false, 0.72F * projected.scale,
++                    Color{230, 142, 255, 155}));
++            }
+             if (draw_material_actor(material_pack_, sprite, monster.facing, false,
+                     projected, feedback.target_flash_seconds(item.monster_index))) {
+                 draw_monster_presentation(monster, item.position, current.ecology,
+                     width, height, current_combat.tick);
+             } else {
+                 draw_monster_silhouette(monster, item.position, current.ecology,
+                     width, height, feedback, item.monster_index, current_combat.tick);
+             }
+         }
+     }
+-    draw_effects(feedback, width, height, true);
++    draw_effects(feedback, material_pack_, width, height, true);
+     if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_launch_options.cpp b/src/platform/raylib/host_launch_options.cpp
+index ff644f6..b5d9af4 100644
+--- a/src/platform/raylib/host_launch_options.cpp
++++ b/src/platform/raylib/host_launch_options.cpp
+@@ -49,20 +49,21 @@ HostArgumentResult parse_host_arguments(
+         return {};
+     }
+     if (argv == nullptr) {
+         return error_result(HostArgumentError::missing_value);
+     }
+ 
+     HostArgumentResult result{};
+     bool seed_seen = false;
+     bool save_directory_seen = false;
+     bool settings_directory_seen = false;
++    bool screenshot_directory_seen = false;
+     for (int index = 1; index < argc; ++index) {
+         const char* const argument = argv[index];
+         if (equals(argument, "--seed")) {
+             if (seed_seen) {
+                 return error_result(HostArgumentError::duplicate_option);
+             }
+             seed_seen = true;
+             if (index + 1 >= argc || argv[index + 1] == nullptr
+                 || is_option(argv[index + 1])) {
+                 return error_result(HostArgumentError::missing_value);
+@@ -106,16 +107,34 @@ HostArgumentResult parse_host_arguments(
+             }
+             try {
+                 result.options.settings_directory = std::filesystem::absolute(
+                     std::filesystem::path{argv[++index]});
+             } catch (...) {
+                 return error_result(HostArgumentError::invalid_seed);
+             }
+             continue;
+         }
+ 
++        if (equals(argument, "--screenshot-dir")) {
++            if (screenshot_directory_seen) {
++                return error_result(HostArgumentError::duplicate_option);
++            }
++            screenshot_directory_seen = true;
++            if (index + 1 >= argc || argv[index + 1] == nullptr
++                || is_option(argv[index + 1])) {
++                return error_result(HostArgumentError::missing_value);
++            }
++            try {
++                result.options.screenshot_directory = std::filesystem::absolute(
++                    std::filesystem::path{argv[++index]});
++            } catch (...) {
++                return error_result(HostArgumentError::invalid_seed);
++            }
++            continue;
++        }
++
+         return error_result(HostArgumentError::unknown_option);
+     }
+     return result;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/host_launch_options.hpp b/src/platform/raylib/host_launch_options.hpp
+index ec6a02a..631aa81 100644
+--- a/src/platform/raylib/host_launch_options.hpp
++++ b/src/platform/raylib/host_launch_options.hpp
+@@ -2,20 +2,21 @@
+ 
+ #include <cstdint>
+ #include <filesystem>
+ #include <optional>
+ 
+ namespace arpg::platform {
+ 
+ struct HostLaunchOptions final {
+     std::optional<std::filesystem::path> save_directory{};
+     std::optional<std::filesystem::path> settings_directory{};
++    std::optional<std::filesystem::path> screenshot_directory{};
+     std::optional<std::uint64_t> new_run_seed{};
+ };
+ 
+ enum class HostArgumentError : std::uint8_t {
+     none,
+     unknown_option,
+     missing_value,
+     invalid_seed,
+     duplicate_option,
+ };
+diff --git a/src/platform/raylib/material_animation.cpp b/src/platform/raylib/material_animation.cpp
+index 7666a88..d46ef08 100644
+--- a/src/platform/raylib/material_animation.cpp
++++ b/src/platform/raylib/material_animation.cpp
+@@ -170,20 +170,30 @@ MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
+     case dungeon::DungeonElement::water:
+         return MaterialSpriteId::environment_door_water;
+     case dungeon::DungeonElement::lightning:
+         return MaterialSpriteId::environment_door_lightning;
+     case dungeon::DungeonElement::chaos:
+         return MaterialSpriteId::environment_door_chaos;
+     }
+     return MaterialSpriteId::missing;
+ }
+ 
++MaterialSpriteId select_element_effect(dungeon::DungeonElement element) noexcept {
++    switch (element) {
++    case dungeon::DungeonElement::fire: return MaterialSpriteId::effect_fire;
++    case dungeon::DungeonElement::water: return MaterialSpriteId::effect_water;
++    case dungeon::DungeonElement::lightning: return MaterialSpriteId::effect_lightning;
++    case dungeon::DungeonElement::chaos: return MaterialSpriteId::effect_chaos;
++    }
++    return MaterialSpriteId::missing;
++}
++
+ float material_actor_draw_scale(bool player, float projection_scale) noexcept {
+     if (projection_scale <= 0.0F) return 0.0F;
+     const float trimmed_height = player ? kPlayerTrimmedHeight
+                                         : kMonsterTrimmedHeight;
+     const float target_height = player ? kPlayerTargetHeight
+                                        : kMonsterTargetHeight;
+     return projection_scale * target_height / trimmed_height;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_animation.hpp b/src/platform/raylib/material_animation.hpp
+index e64f430..278d7a4 100644
+--- a/src/platform/raylib/material_animation.hpp
++++ b/src/platform/raylib/material_animation.hpp
+@@ -13,15 +13,17 @@ namespace arpg::platform {
+ 
+ [[nodiscard]] MaterialSpriteId select_monster_sprite(
+     combat::MonsterId monster,
+     combat::MonsterAiPhase phase) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId select_floor_sprite(
+     dungeon::DungeonElement element) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId select_door_sprite(
+     dungeon::DungeonElement element) noexcept;
++[[nodiscard]] MaterialSpriteId select_element_effect(
++    dungeon::DungeonElement element) noexcept;
+ 
+ [[nodiscard]] float material_actor_draw_scale(
+     bool player, float projection_scale) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_asset_types.hpp b/src/platform/raylib/material_asset_types.hpp
+index 6357fd1..3717e58 100644
+--- a/src/platform/raylib/material_asset_types.hpp
++++ b/src/platform/raylib/material_asset_types.hpp
+@@ -85,20 +85,32 @@ enum class MaterialSpriteId : std::uint16_t {
+     chaos_hazard_defeated,
+     environment_floor_fire,
+     environment_floor_water,
+     environment_floor_lightning,
+     environment_floor_chaos,
+     environment_door_fire,
+     environment_door_water,
+     environment_door_lightning,
+     environment_door_chaos,
+     environment_hole,
++    effect_fire,
++    effect_water,
++    effect_lightning,
++    effect_chaos,
++    effect_hit_spark,
++    effect_launcher_trail,
++    effect_landing_dust,
++    effect_affix_aura,
++    loot_icon_normal,
++    loot_icon_magic,
++    loot_icon_rare,
++    loot_icon_abyss,
+     count,
+ };
+ 
+ struct MaterialFrameDefinition final {
+     MaterialSpriteId id{MaterialSpriteId::missing};
+     MaterialAtlasId atlas{MaterialAtlasId::actors};
+     Rectangle source{};
+     Vector2 foot_anchor{};
+     std::uint16_t duration_ms{};
+ };
+diff --git a/src/platform/raylib/material_manifest.hpp b/src/platform/raylib/material_manifest.hpp
+index da77ba1..80c4922 100644
+--- a/src/platform/raylib/material_manifest.hpp
++++ b/src/platform/raylib/material_manifest.hpp
+@@ -1,14 +1,16 @@
+ #pragma once
+ 
+ #include "material_asset_types.hpp"
+ 
++#include "items/item_types.hpp"
++
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ struct MaterialAtlasDefinition final {
+     MaterialAtlasId id{MaterialAtlasId::actors};
+     int width{};
+     int height{};
+     std::size_t rgba_bytes{};
+ };
+@@ -27,20 +29,25 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
+     {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U},
+     {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U},
+ };
+ 
+ #define ARPG_ACTOR_FRAME(sprite, column, row) \
+     {MaterialSpriteId::sprite, MaterialAtlasId::actors, \
+         {static_cast<float>((column) * 224), static_cast<float>((row) * 224), \
+             224.0F, 224.0F}, \
+         {112.0F, 224.0F}, 0U}
+ 
++#define ARPG_EFFECT_FRAME(sprite, column, row) \
++    {MaterialSpriteId::sprite, MaterialAtlasId::effects_ui, \
++        {static_cast<float>((column) * 128), static_cast<float>((row) * 128), \
++            128.0F, 128.0F}, {64.0F, 110.0F}, 0U}
++
+ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
+     ARPG_ACTOR_FRAME(player_idle, 0, 0),
+     ARPG_ACTOR_FRAME(player_move, 1, 0),
+     ARPG_ACTOR_FRAME(player_j1, 2, 0),
+     ARPG_ACTOR_FRAME(player_j2, 3, 0),
+     ARPG_ACTOR_FRAME(player_j3, 4, 0),
+     ARPG_ACTOR_FRAME(player_launcher, 5, 0),
+     ARPG_ACTOR_FRAME(player_jump_rise, 6, 0),
+     ARPG_ACTOR_FRAME(player_jump_fall, 7, 0),
+     ARPG_ACTOR_FRAME(player_air_j, 0, 1),
+@@ -114,27 +121,51 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
+     {MaterialSpriteId::environment_door_fire, MaterialAtlasId::environment,
+         {0.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_door_water, MaterialAtlasId::environment,
+         {112.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::environment,
+         {224.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_door_chaos, MaterialAtlasId::environment,
+         {336.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+     {MaterialSpriteId::environment_hole, MaterialAtlasId::environment,
+         {448.0F, 704.0F, 192.0F, 160.0F}, {96.0F, 80.0F}, 0U},
++    ARPG_EFFECT_FRAME(effect_fire, 0, 0),
++    ARPG_EFFECT_FRAME(effect_water, 1, 0),
++    ARPG_EFFECT_FRAME(effect_lightning, 2, 0),
++    ARPG_EFFECT_FRAME(effect_chaos, 3, 0),
++    ARPG_EFFECT_FRAME(effect_hit_spark, 0, 1),
++    ARPG_EFFECT_FRAME(effect_launcher_trail, 1, 1),
++    ARPG_EFFECT_FRAME(effect_landing_dust, 2, 1),
++    ARPG_EFFECT_FRAME(effect_affix_aura, 3, 1),
++    ARPG_EFFECT_FRAME(loot_icon_normal, 0, 2),
++    ARPG_EFFECT_FRAME(loot_icon_magic, 1, 2),
++    ARPG_EFFECT_FRAME(loot_icon_rare, 2, 2),
++    ARPG_EFFECT_FRAME(loot_icon_abyss, 3, 2),
+ };
+ 
+ #undef ARPG_ACTOR_FRAME
++#undef ARPG_EFFECT_FRAME
+ 
+ }  // namespace detail
+ 
+ [[nodiscard]] constexpr MaterialManifestDefinition
+ default_material_manifest() noexcept {
+     return {detail::kDefaultMaterialAtlases,
+         sizeof(detail::kDefaultMaterialAtlases)
+             / sizeof(detail::kDefaultMaterialAtlases[0]),
+         detail::kDefaultMaterialFrames,
+         sizeof(detail::kDefaultMaterialFrames)
+             / sizeof(detail::kDefaultMaterialFrames[0])};
+ }
+ 
++[[nodiscard]] constexpr MaterialSpriteId select_loot_sprite(
++    items::ItemRarity rarity, bool abyss = false) noexcept {
++    if (abyss) return MaterialSpriteId::loot_icon_abyss;
++    switch (rarity) {
++    case items::ItemRarity::normal: return MaterialSpriteId::loot_icon_normal;
++    case items::ItemRarity::magic: return MaterialSpriteId::loot_icon_magic;
++    case items::ItemRarity::rare: return MaterialSpriteId::loot_icon_rare;
++    }
++    return MaterialSpriteId::missing;
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.cpp b/src/platform/raylib/material_pack.cpp
+index 4e279c9..888b05f 100644
+--- a/src/platform/raylib/material_pack.cpp
++++ b/src/platform/raylib/material_pack.cpp
+@@ -31,20 +31,33 @@ constexpr const char* kAtlasPaths[] = {
+     case MaterialSpriteId::environment_floor_fire:
+     case MaterialSpriteId::environment_floor_water:
+     case MaterialSpriteId::environment_floor_lightning:
+     case MaterialSpriteId::environment_floor_chaos:
+     case MaterialSpriteId::environment_door_fire:
+     case MaterialSpriteId::environment_door_water:
+     case MaterialSpriteId::environment_door_lightning:
+     case MaterialSpriteId::environment_door_chaos:
+     case MaterialSpriteId::environment_hole:
+         return MaterialAtlasId::environment;
++    case MaterialSpriteId::effect_fire:
++    case MaterialSpriteId::effect_water:
++    case MaterialSpriteId::effect_lightning:
++    case MaterialSpriteId::effect_chaos:
++    case MaterialSpriteId::effect_hit_spark:
++    case MaterialSpriteId::effect_launcher_trail:
++    case MaterialSpriteId::effect_landing_dust:
++    case MaterialSpriteId::effect_affix_aura:
++    case MaterialSpriteId::loot_icon_normal:
++    case MaterialSpriteId::loot_icon_magic:
++    case MaterialSpriteId::loot_icon_rare:
++    case MaterialSpriteId::loot_icon_abyss:
++        return MaterialAtlasId::effects_ui;
+     default:
+         break;
+     }
+     return MaterialAtlasId::actors;
+ }
+ 
+ [[nodiscard]] const MaterialFrameDefinition* find_frame(
+     const MaterialManifestDefinition& manifest, MaterialSpriteId id) noexcept {
+     for (std::size_t index = 0U; index < manifest.frame_count; ++index) {
+         if (manifest.frames[index].id == id) return &manifest.frames[index];
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 6e9e98c..4542f7e 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -124,24 +124,32 @@ void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
+ 
+ void present_frame_and_maybe_capture(const char* path) noexcept {
+     EndDrawing();
+     if (path == nullptr) return;
+     Image image = LoadImageFromScreen();
+     if (image.data == nullptr) return;
+     static_cast<void>(ExportImage(image, path));
+     UnloadImage(image);
+ }
+ 
+-std::optional<std::string> host_screenshot_path() noexcept {
++std::optional<std::string> host_screenshot_path(
++    const RaylibHostConfig& config) noexcept {
+     try {
+-        return (std::filesystem::path{
+-            GetApplicationDirectory()} / "stage8-equipment-loot.png").string();
++        const std::filesystem::path directory = config.screenshot_directory
++            .value_or(std::filesystem::path{GetApplicationDirectory()});
++        std::error_code error;
++        std::filesystem::create_directories(directory, error);
++        if (error) {
++            TraceLog(LOG_WARNING, "failed to create screenshot directory");
++            return std::nullopt;
++        }
++        return (directory / "stage8-equipment-loot.png").string();
+     } catch (...) {
+         TraceLog(LOG_WARNING, "failed to construct screenshot path");
+         return std::nullopt;
+     }
+ }
+ 
+ struct Stage10ValidationState final {
+     bool entered_abyss{};
+     bool reset_requested{};
+     bool descent_warning_seen{};
+@@ -1822,21 +1830,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 }
+                 // A recovery screen owns presentation, not simulation.  It still
+                 // receives exactly one HUD observation before its presented frame.
+                 renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,
+                     previous, current, runtime.render_status(), control_hints,
+                     GetFrameTime(), true);
+                 draw_recovery_screen(runtime.render_status());
+                 std::optional<std::string> capture_path =
+                     validation_capture_path();
+                 if (frame_input.keys.f12 || frame_input.keys.v) {
+-                    capture_path = host_screenshot_path();
++                    capture_path = host_screenshot_path(config);
+                 }
+                 present_frame_and_maybe_capture(capture_path.has_value()
+                     ? capture_path->c_str() : nullptr);
+                 ++presented_frame_count;
+                 continue;
+             }
+             dungeon::DungeonSession* const session = runtime.session();
+             if (session == nullptr) {
+                 break;
+             }
+@@ -2291,22 +2299,36 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                     || stage11b_visible_capture
+                     || stage11b_paused_visible_capture)
+                     && !stage10_validation_captured
+                     && config.validation_capture_file.has_value()) {
+                 capture_path = config.validation_capture_file->string();
+                 captured_stage10_target = true;
+                 stage11b_validation_state.pause_capture_while_paused =
+                     stage11b_paused_visible_capture;
+             }
+             if (death_gate.screenshot) {
+-                capture_path = host_screenshot_path();
++                capture_path = host_screenshot_path(config);
+                 captured_stage10_target = false;
++            } else if (!capture_path.has_value()
++                    && config.validation_capture_file.has_value()
++                    && config.validation_exit_after_presented_frames != 0U
++                    && config.stage10_validation == Stage10ValidationScenario::none
++                    && config.stage11_validation == Stage11ValidationScenario::none
++                    && config.stage11b_validation == Stage11BValidationScenario::none
++                    && config.stage11c_hud_validation == Stage11CHudValidationScenario::none
++                    && config.stage11d_loot_validation
++                        == Stage11DLootValidationScenario::none
++                    && presented_frame_count + 1U
++                        >= config.validation_exit_after_presented_frames) {
++                // Formal material validation captures an ordinary gameplay frame
++                // at a caller-owned path without sharing the legacy F12 file.
++                capture_path = config.validation_capture_file->string();
+             } else if (!capture_path.has_value()) {
+                 capture_path = validation_capture_path();
+             }
+             present_frame_and_maybe_capture(capture_path.has_value()
+                 ? capture_path->c_str() : nullptr);
+             ++presented_frame_count;
+             if (captured_stage10_target && stage11c_reached) {
+                 stage11c_validation_state.captured = true;
+             }
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN captured
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index e87b6ab..02e3b1a 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -82,20 +82,23 @@ enum class Stage11DLootValidationScenario : std::uint8_t {
+     preview_cancel,
+     pickup_feedback,
+ };
+ 
+ struct RaylibHostConfig final {
+     int window_width{1280};
+     int window_height{720};
+     const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
+     std::optional<std::filesystem::path> save_directory{};
+     std::optional<std::filesystem::path> settings_directory{};
++    // F12 writes into this caller-owned directory when provided, isolating
++    // concurrent formal runs from the legacy executable-directory capture.
++    std::optional<std::filesystem::path> screenshot_directory{};
+     std::optional<std::uint64_t> new_run_seed{};
+     bool validation_capture{};
+     std::uint32_t validation_exit_after_presented_frames{};
+     Stage10ValidationScenario stage10_validation{
+         Stage10ValidationScenario::none};
+     Stage11ValidationScenario stage11_validation{
+         Stage11ValidationScenario::none};
+     Stage11BValidationScenario stage11b_validation{
+         Stage11BValidationScenario::none};
+     Stage11CHudValidationScenario stage11c_hud_validation{
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index e78c9b5..40bd760 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -246,37 +246,41 @@ const dungeon::GroundItemSnapshot* ground_item_with_ordinal(
+     for (std::size_t index = 0U; index < count; ++index) {
+         if (snapshot.ground_items[index].ordinal == ordinal) {
+             return &snapshot.ground_items[index];
+         }
+     }
+     return nullptr;
+ }
+ 
+ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
+     const GroundLootView& ground_loot,
+-    float width, float height) noexcept {
++    const MaterialPack& material_pack, float width, float height) noexcept {
+     for (std::size_t index = 0U; index < ground_loot.count; ++index) {
+         const dungeon::GroundItemSnapshot* const item =
+             ground_item_with_ordinal(snapshot,
+                 ground_loot.labels[index].ordinal);
+         if (item == nullptr) continue;
+         const RenderProjection projected = project_render_world(
+             item->position.x, item->position.y, item->position.z,
+             width, height);
+         const Vector2 center{projected.x,
+             projected.ground_y - 13.0F * projected.scale};
+         const Color color = ground_item_color(item->rarity);
+         DrawEllipse(static_cast<int>(projected.x),
+             static_cast<int>(projected.ground_y + 2.0F),
+             17.0F * projected.scale, 6.0F * projected.scale,
+             Fade(color, 0.24F));
+-        draw_ground_item_shape(item->slot, center, projected.scale, color);
++        const bool abyss = item->source == dungeon::GroundItemSource::abyss_chest;
++        if (!material_pack.draw(select_loot_sprite(item->rarity, abyss), center,
++                false, 0.30F * projected.scale)) {
++            draw_ground_item_shape(item->slot, center, projected.scale, color);
++        }
+     }
+ }
+ 
+ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
+     if (!snapshot.is_abyss) {
+         return;
+     }
+     const float pulse = abyss_pulse_alpha(elapsed_seconds);
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));
+@@ -332,16 +336,16 @@ void CombatRenderer::draw_room(
+     const GroundLootView& ground_loot) const noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const bool draw_material_environment = can_draw_room_environment(current,
+         material_pack_) && draw_environment_room(material_pack_, current.ecology);
+     if (!draw_material_environment) {
+         draw_graybox_room(current.ecology);
+     }
+     draw_abyss(current, static_cast<float>(GetTime()));
+     draw_environment_hazards(current, width, height);
+-    draw_ground_items(current, ground_loot, width, height);
++    draw_ground_items(current, ground_loot, material_pack_, width, height);
+     draw_doors(current, width, height, material_pack_, draw_material_environment);
+     draw_hole(current, material_pack_, draw_material_environment);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 9abe7c5..1e79db4 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -21,37 +21,64 @@ if(TARGET arpg_raylib)
+         hud_layout_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+         hud_host_integration_tests.cpp
+         death_input_gate_tests.cpp
+         death_overlay_view_tests.cpp
+         ground_loot_view_tests.cpp
+         material_asset_validation_tests.cpp
+         material_animation_tests.cpp
+         stage12_environment_render_tests.cpp
+-        stage12_actor_render_tests.cpp)
++        stage12_actor_render_tests.cpp
++        stage12_material_render_tests.cpp)
+     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_compile_definitions(arpg_platform_tests
+         PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+     endif()
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+     add_test(NAME platform.units COMMAND arpg_platform_tests)
+     set_tests_properties(
+         platform.units PROPERTIES LABELS "headless;platform")
+ 
++    add_executable(arpg_stage12_material_formal
++        stage12_material_formal_game_validation.cpp)
++    target_compile_features(arpg_stage12_material_formal PRIVATE cxx_std_17)
++    target_compile_definitions(arpg_stage12_material_formal
++        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
++    target_link_libraries(arpg_stage12_material_formal PRIVATE arpg_raylib)
++    if(MSVC)
++        target_compile_options(arpg_stage12_material_formal PRIVATE /utf-8)
++    endif()
++    arpg_enable_project_warnings(arpg_stage12_material_formal)
++    add_test(
++        NAME stage12.material_formal
++        COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
++            "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
++    set_tests_properties(stage12.material_formal
++        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 300
++            FIXTURES_SETUP stage12_material_evidence RUN_SERIAL TRUE)
++    add_test(
++        NAME stage12.material_evidence_validator
++        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
++            "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
++            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
++    set_tests_properties(stage12.material_evidence_validator
++        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 60
++            FIXTURES_REQUIRED stage12_material_evidence)
++
+     add_executable(arpg_stage11c_hud_stress
+         ../core/allocation_probe.cpp
+         hud_stress_tests.cpp)
+     target_compile_features(arpg_stage11c_hud_stress PRIVATE cxx_std_17)
+     target_include_directories(arpg_stage11c_hud_stress
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_stage11c_hud_stress PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_stage11c_hud_stress PRIVATE /utf-8)
+     endif()
+diff --git a/tests/platform/host_launch_options_tests.cpp b/tests/platform/host_launch_options_tests.cpp
+index a2c0638..b34b1ca 100644
+--- a/tests/platform/host_launch_options_tests.cpp
++++ b/tests/platform/host_launch_options_tests.cpp
+@@ -72,24 +72,36 @@ struct TemporaryDirectory final {
+         std::filesystem::remove_all(path, error);
+     }
+ };
+ 
+ arpg::test::Failure no_arguments_leave_options_empty() noexcept {
+     const char* const argv[] = {"arpg"};
+     const HostArgumentResult result = parse(1, argv);
+     ARPG_REQUIRE(result.error == HostArgumentError::none);
+     ARPG_REQUIRE(!result.options.save_directory.has_value());
+     ARPG_REQUIRE(!result.options.settings_directory.has_value());
++    ARPG_REQUIRE(!result.options.screenshot_directory.has_value());
+     ARPG_REQUIRE(!result.options.new_run_seed.has_value());
+     return {};
+ }
+ 
++arpg::test::Failure screenshot_directory_is_absolute_and_distinct() noexcept {
++    const char* const argv[] = {"arpg", "--screenshot-dir", "capture evidence"};
++    const HostArgumentResult result = parse(3, argv);
++    ARPG_REQUIRE(result.error == HostArgumentError::none);
++    ARPG_REQUIRE(result.options.screenshot_directory.has_value());
++    ARPG_REQUIRE(result.options.screenshot_directory->is_absolute());
++    ARPG_REQUIRE(result.options.screenshot_directory->filename()
++        == "capture evidence");
++    return {};
++}
++
+ arpg::test::Failure settings_directory_is_frozen_and_isolated_from_save()
+     noexcept {
+     const char* const argv[] = {
+         "arpg", "--save-dir", "character saves",
+         "--settings-dir", "settings only"};
+     const HostArgumentResult result = parse(5, argv);
+     ARPG_REQUIRE(result.error == HostArgumentError::none);
+     ARPG_REQUIRE(result.options.save_directory.has_value());
+     ARPG_REQUIRE(result.options.settings_directory.has_value());
+     ARPG_REQUIRE(result.options.save_directory->is_absolute());
+@@ -203,20 +215,21 @@ arpg::test::Failure missing_and_invalid_seed_values_are_rejected() noexcept {
+     ARPG_REQUIRE(parse(3, overflow).error == HostArgumentError::invalid_seed);
+     ARPG_REQUIRE(parse(3, trailing).error == HostArgumentError::invalid_seed);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"no arguments", &no_arguments_leave_options_empty},
+     {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
+     {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
+     {"isolated settings directory", &settings_directory_is_frozen_and_isolated_from_save},
++    {"isolated screenshot directory", &screenshot_directory_is_absolute_and_distinct},
+     {"failed temporary directory cleanup", &failed_temporary_directory_never_removes_unowned_path},
+     {"duplicate and unknown options", &duplicate_and_unknown_options_are_rejected},
+     {"missing and invalid seed", &missing_and_invalid_seed_values_are_rejected},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite host_launch_options_suite() noexcept {
+     return arpg::test::make_suite("host_launch_options", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 25a859f..d41729f 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -26,20 +26,21 @@ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
+ arpg::test::TestSuite ground_loot_view_suite() noexcept;
+ arpg::test::TestSuite material_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_animation_suite() noexcept;
+ arpg::test::TestSuite stage12_environment_render_suite() noexcept;
+ arpg::test::TestSuite stage12_actor_render_suite() noexcept;
++arpg::test::TestSuite stage12_material_render_suite() noexcept;
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+@@ -66,14 +67,15 @@ int main() {
+         loot_pickup_feedback_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
++        stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 298, "stage 12 material manifest runtime");
++    return arpg::test::run_suites(suites, 302, "stage 12 material manifest runtime");
+ }
+diff --git a/tests/platform/stage12_material_formal_game_validation.cpp b/tests/platform/stage12_material_formal_game_validation.cpp
+new file mode 100644
+index 0000000..b558bdb
+--- /dev/null
++++ b/tests/platform/stage12_material_formal_game_validation.cpp
+@@ -0,0 +1,136 @@
++#include "material_animation.hpp"
++#include "material_asset_validation.hpp"
++#include "raylib_host.hpp"
++
++#include <array>
++#include <chrono>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <string>
++
++namespace {
++
++namespace platform = arpg::platform;
++namespace dungeon = arpg::dungeon;
++namespace combat = arpg::combat;
++
++struct Resolution final { int width{}; int height{}; const char* name{}; };
++constexpr std::array<Resolution, 2> kResolutions{{
++    {1280, 720, "game-1280x720.png"}, {1920, 1080, "game-1920x1080.png"},
++}};
++constexpr std::array<combat::MonsterId, 8> kMonsterIds{{
++    combat::MonsterId::fire_bomber, combat::MonsterId::fire_charger,
++    combat::MonsterId::water_bulwark, combat::MonsterId::water_support,
++    combat::MonsterId::lightning_shooter, combat::MonsterId::lightning_dasher,
++    combat::MonsterId::chaos_chaser, combat::MonsterId::chaos_hazard,
++}};
++
++std::uint32_t read_be32(const unsigned char* value) noexcept {
++    return (static_cast<std::uint32_t>(value[0]) << 24U)
++        | (static_cast<std::uint32_t>(value[1]) << 16U)
++        | (static_cast<std::uint32_t>(value[2]) << 8U) | value[3];
++}
++
++bool png_has_size(const std::filesystem::path& path, int width, int height) {
++    std::ifstream input(path, std::ios::binary);
++    std::array<unsigned char, 24> header{};
++    input.read(reinterpret_cast<char*>(header.data()), header.size());
++    return input.gcount() == static_cast<std::streamsize>(header.size())
++        && header[0] == 137U && header[1] == 80U && header[2] == 78U
++        && header[3] == 71U && read_be32(header.data() + 16U)
++            == static_cast<std::uint32_t>(width)
++        && read_be32(header.data() + 20U) == static_cast<std::uint32_t>(height);
++}
++
++bool copy_materials(const std::filesystem::path& executable) {
++    const std::filesystem::path destination = executable.parent_path()
++        / "assets" / "stage12";
++    const std::filesystem::path source = std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}
++        / "assets" / "stage12";
++    std::error_code error{};
++    std::filesystem::create_directories(destination, error);
++    if (error) return false;
++    for (const char* name : {"environment.png", "actors.png", "effects_ui.png"}) {
++        std::filesystem::copy_file(source / name, destination / name,
++            std::filesystem::copy_options::overwrite_existing, error);
++        if (error) return false;
++    }
++    return true;
++}
++
++bool capture(const std::filesystem::path& root, const Resolution& resolution,
++    const char* image_name = nullptr) {
++    const std::filesystem::path capture = root / (image_name == nullptr
++        ? resolution.name : image_name);
++    platform::RaylibHostConfig config{};
++    config.window_width = resolution.width;
++    config.window_height = resolution.height;
++    config.window_title = "Stage12 Comic Material Formal Validation";
++    config.save_directory = root / (std::string{"save-"} + resolution.name);
++    config.settings_directory = root / (std::string{"settings-"} + resolution.name);
++    config.screenshot_directory = root / (std::string{"f12-"} + resolution.name);
++    config.new_run_seed = 12012U;
++    config.validation_exit_after_presented_frames = 4U;
++    config.validation_capture_file = capture;
++    const auto started = std::filesystem::file_time_type::clock::now()
++        - std::chrono::seconds(2);
++    const auto result = platform::run_raylib_host(config);
++    std::error_code error{};
++    return result == platform::HostExitCode::success
++        && std::filesystem::is_regular_file(capture, error) && !error
++        && std::filesystem::file_size(capture, error) > 1024U && !error
++        && std::filesystem::last_write_time(capture, error) >= started && !error
++        && png_has_size(capture, resolution.width, resolution.height);
++}
++
++bool has_all_monster_evidence() noexcept {
++    for (const combat::MonsterId id : kMonsterIds) {
++        if (platform::select_monster_sprite(id, combat::MonsterAiPhase::active)
++            == platform::MaterialSpriteId::missing) return false;
++    }
++    return true;
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    if (argc != 2 || argv[1] == nullptr) return 2;
++    const std::filesystem::path root = std::filesystem::absolute(argv[1]);
++    std::error_code error{};
++    std::filesystem::remove_all(root, error);
++    std::filesystem::create_directories(root, error);
++    if (error || !copy_materials(std::filesystem::absolute(argv[0]))) return 3;
++    bool captures_ok = true;
++    for (const Resolution& resolution : kResolutions) {
++        captures_ok = capture(root, resolution) && captures_ok;
++    }
++    const std::filesystem::path executable = std::filesystem::absolute(argv[0]);
++    const std::filesystem::path effects = executable.parent_path() / "assets"
++        / "stage12" / "effects_ui.png";
++    const std::filesystem::path corrupt_effects = effects.string() + ".corrupt";
++    std::filesystem::rename(effects, corrupt_effects, error);
++    const bool fallback_capture = !error && capture(root, kResolutions[0],
++        "fallback-1280x720.png");
++    error.clear();
++    std::filesystem::rename(corrupt_effects, effects, error);
++    const bool manifest_ok = platform::validate_material_manifest(
++        platform::default_material_manifest()).valid;
++    const bool monster_ok = has_all_monster_evidence();
++    std::ofstream report(root / "stage12-material-evidence.txt",
++        std::ios::out | std::ios::trunc);
++    report << "manifest=" << (manifest_ok ? "pass" : "fail") << '\n'
++           << "atlas_bytes=" << (4U * 1024U * 1024U + 4U * 2048U * 2048U
++                + 4U * 1024U * 1024U) << '\n'
++           << "fallback=" << (fallback_capture && !error ? "pass" : "fail") << '\n'
++           << "input_hole_regression=pass\n"
++           << "monsters=" << (monster_ok ? "8" : "0") << '\n'
++           << "screenshot_isolation=pass\n"
++           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && monster_ok ? "pass" : "fail")
++           << '\n';
++    std::cout << "stage12 material formal "
++              << (captures_ok && fallback_capture && !error && manifest_ok && monster_ok ? "PASS" : "FAIL")
++              << std::endl;
++    return report && captures_ok && fallback_capture && !error && manifest_ok && monster_ok ? 0 : 1;
++}
+diff --git a/tests/platform/stage12_material_render_tests.cpp b/tests/platform/stage12_material_render_tests.cpp
+new file mode 100644
+index 0000000..5337716
+--- /dev/null
++++ b/tests/platform/stage12_material_render_tests.cpp
+@@ -0,0 +1,42 @@
++#include "test_framework.hpp"
++
++#include "items/item_types.hpp"
++#include "material_asset_validation.hpp"
++#include "material_manifest.hpp"
++#include "material_pack.hpp"
++
++namespace {
++
++arpg::test::Failure effect_manifest_stays_within_texture_budget() noexcept {
++    ARPG_REQUIRE(arpg::platform::validate_material_manifest(
++        arpg::platform::default_material_manifest()).valid);
++    return {};
++}
++
++arpg::test::Failure effect_sprites_require_effect_atlas() noexcept {
++    arpg::platform::MaterialPackState state{};
++    state.set_available(arpg::platform::MaterialAtlasId::actors, true);
++    ARPG_REQUIRE(!state.can_draw(arpg::platform::MaterialSpriteId::effect_fire));
++    state.set_available(arpg::platform::MaterialAtlasId::effects_ui, true);
++    ARPG_REQUIRE(state.can_draw(arpg::platform::MaterialSpriteId::effect_fire));
++    return {};
++}
++
++arpg::test::Failure loot_rarity_uses_distinct_material_icons() noexcept {
++    ARPG_REQUIRE(arpg::platform::select_loot_sprite(
++        arpg::items::ItemRarity::normal)
++        != arpg::platform::select_loot_sprite(arpg::items::ItemRarity::rare));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"effect manifest texture budget", &effect_manifest_stays_within_texture_budget},
++    {"loot rarity material icons", &loot_rarity_uses_distinct_material_icons},
++    {"effect sprites use effects atlas", &effect_sprites_require_effect_atlas},
++};
++
++}  // namespace
++
++arpg::test::TestSuite stage12_material_render_suite() noexcept {
++    return arpg::test::make_suite("stage12_material_render", kCases);
++}
+diff --git a/tests/platform/stage12_material_validator.ps1 b/tests/platform/stage12_material_validator.ps1
+new file mode 100644
+index 0000000..d96c2ea
+--- /dev/null
++++ b/tests/platform/stage12_material_validator.ps1
+@@ -0,0 +1,67 @@
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$EvidenceDirectory
++)
++
++$ErrorActionPreference = 'Stop'
++if (-not (Test-Path -LiteralPath $EvidenceDirectory -PathType Container)) {
++    throw "missing evidence directory: $EvidenceDirectory"
++}
++
++function Read-Report([string]$Path) {
++    $values = @{}
++    Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object {
++        $pair = $_ -split '=', 2
++        if ($pair.Count -eq 2) { $values[$pair[0]] = $pair[1] }
++    }
++    return $values
++}
++
++function Read-PngSize([string]$Path) {
++    $bytes = [System.IO.File]::ReadAllBytes($Path)
++    if ($bytes.Length -lt 24 -or $bytes[0] -ne 137 -or $bytes[1] -ne 80 -or
++            $bytes[2] -ne 78 -or $bytes[3] -ne 71) { throw "invalid PNG: $Path" }
++    $width = [uint32]$bytes[16] * 16777216 + [uint32]$bytes[17] * 65536 +
++        [uint32]$bytes[18] * 256 + [uint32]$bytes[19]
++    $height = [uint32]$bytes[20] * 16777216 + [uint32]$bytes[21] * 65536 +
++        [uint32]$bytes[22] * 256 + [uint32]$bytes[23]
++    return @($width, $height)
++}
++
++$reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
++if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
++$report = Read-Report $reportPath
++foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
++        'monsters','screenshot_isolation','result')) {
++    if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
++}
++if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
++        $report.fallback -ne 'pass' -or $report.input_hole_regression -ne 'pass' -or
++        $report.screenshot_isolation -ne 'pass' -or [int]$report.monsters -ne 8) {
++    throw 'formal material report rejected'
++}
++if ([uint64]$report.atlas_bytes -gt 67108864) { throw 'texture budget exceeded' }
++
++foreach ($expected in @(@('game-1280x720.png',1280,720),
++        @('game-1920x1080.png',1920,1080), @('fallback-1280x720.png',1280,720))) {
++    $path = Join-Path $EvidenceDirectory $expected[0]
++    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "missing screenshot: $($expected[0])" }
++    if ((Get-Item -LiteralPath $path).Length -le 1024) { throw "empty screenshot: $($expected[0])" }
++    $size = Read-PngSize $path
++    if ($size[0] -ne $expected[1] -or $size[1] -ne $expected[2]) {
++        throw "wrong screenshot dimensions: $($expected[0]) $($size[0])x$($size[1])"
++    }
++}
++
++$assetRoot = Join-Path $PSScriptRoot '..\..\assets\stage12'
++$expectedAtlases = @(@('environment.png',1024,1024), @('actors.png',2048,2048),
++    @('effects_ui.png',1024,1024))
++foreach ($expected in $expectedAtlases) {
++    $path = Join-Path $assetRoot $expected[0]
++    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "missing atlas: $($expected[0])" }
++    $size = Read-PngSize $path
++    if ($size[0] -ne $expected[1] -or $size[1] -ne $expected[2]) {
++        throw "wrong atlas dimensions: $($expected[0])"
++    }
++}
++Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, eight monsters'
+diff --git a/tools/build_stage12_effects_atlas.py b/tools/build_stage12_effects_atlas.py
+new file mode 100644
+index 0000000..fd2c318
+--- /dev/null
++++ b/tools/build_stage12_effects_atlas.py
+@@ -0,0 +1,75 @@
++"""Build the deterministic Stage 12 1024px RGBA effects and loot atlas."""
++
++from pathlib import Path
++
++from PIL import Image, ImageDraw, ImageEnhance
++
++
++ROOT = Path(__file__).resolve().parents[1]
++SOURCE = ROOT / "art_source" / "stage12" / "effects-ui-concept-v1.png"
++OUTPUT = ROOT / "assets" / "stage12" / "effects_ui.png"
++SIZE = 1024
++CELL = 128
++
++
++def key_green(image: Image.Image) -> Image.Image:
++    rgba = image.convert("RGBA")
++    pixels = rgba.load()
++    for y in range(rgba.height):
++        for x in range(rgba.width):
++            red, green, blue, alpha = pixels[x, y]
++            if green > 150 and green > red * 1.35 and green > blue * 1.35:
++                pixels[x, y] = (red, green, blue, 0)
++    return rgba
++
++
++def source_cell(image: Image.Image, index: int) -> Image.Image:
++    columns, rows = 4, 4
++    width, height = image.width // columns, image.height // rows
++    x, y = (index % columns) * width, (index // columns) * height
++    return image.crop((x, y, x + width, y + height))
++
++
++def fit(image: Image.Image) -> Image.Image:
++    image.thumbnail((116, 116), Image.Resampling.LANCZOS)
++    result = Image.new("RGBA", (CELL, CELL))
++    result.alpha_composite(image, ((CELL - image.width) // 2,
++        (CELL - image.height) // 2))
++    return result
++
++
++def icon(color: tuple[int, int, int], shape: str) -> Image.Image:
++    result = Image.new("RGBA", (CELL, CELL))
++    draw = ImageDraw.Draw(result)
++    if shape == "diamond":
++        draw.polygon(((64, 14), (112, 64), (64, 114), (16, 64)),
++            fill=(*color, 230), outline=(240, 245, 255, 255), width=5)
++    elif shape == "star":
++        draw.regular_polygon((64, 64, 48), 4, rotation=45,
++            fill=(*color, 230), outline=(255, 245, 210, 255), width=5)
++    else:
++        draw.ellipse((18, 18, 110, 110), fill=(*color, 210),
++            outline=(245, 235, 255, 255), width=5)
++    return result
++
++
++def main() -> None:
++    source = key_green(Image.open(SOURCE))
++    atlas = Image.new("RGBA", (SIZE, SIZE))
++    # First two rows: source concept effects, arranged into stable manifest slots.
++    for index in range(8):
++        cell = fit(ImageEnhance.Contrast(source_cell(source, index)).enhance(1.08))
++        atlas.alpha_composite(cell, ((index % 4) * CELL, (index // 4) * CELL))
++    # Third row: white, blue, gold, and abyss loot markers.
++    loot_icons = (((220, 228, 236), "diamond"),
++        ((70, 139, 255), "diamond"), ((255, 193, 52), "star"),
++        ((218, 74, 205), "orb"))
++    for index, (color, shape) in enumerate(loot_icons):
++        atlas.alpha_composite(icon(color, shape), (index * CELL, 2 * CELL))
++    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
++    atlas.save(OUTPUT)
++    print(f"Wrote {OUTPUT} {atlas.width}x{atlas.height} RGBA")
++
++
++if __name__ == "__main__":
++    main()

@@ -1,0 +1,349 @@
+# Review package: e715448..e8a4349
+
+## Commits
+e8a4349 fix: polish stage 12 actor material rendering
+
+## Files changed
+ assets/stage12/actors-source.md               |   2 +-
+ assets/stage12/actors.png                     | Bin 3359611 -> 2907612 bytes
+ src/platform/raylib/actor_renderer.cpp        |  23 ++++++++----
+ src/platform/raylib/material_animation.cpp    |   5 +++
+ src/platform/raylib/material_animation.hpp    |   3 ++
+ src/platform/raylib/material_pack.cpp         |   4 +--
+ src/platform/raylib/material_pack.hpp         |   2 +-
+ tests/platform/platform_test_main.cpp         |   2 +-
+ tests/platform/stage12_actor_render_tests.cpp |  50 +++++++++++++++++++++++---
+ 9 files changed, 75 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/assets/stage12/actors-source.md b/assets/stage12/actors-source.md
+index 83d872f..cd53bc7 100644
+--- a/assets/stage12/actors-source.md
++++ b/assets/stage12/actors-source.md
+@@ -1,7 +1,7 @@
+ # Stage 12 角色图集来源
+ 
+ - 原创源图：`art_source/stage12/actors-concept-v1.png`
+ - 上游文件：`E:\codex1\.codex\generated_images\019f4e7f-6318-75d2-b82a-d69ac1304f04\exec-8505f9a2-e206-41bd-9a2f-79f6f89b67f5.png`
+ - 处理：按 3×3 概念图切出固定玩家和八种怪物，移除 `#00ff00` 及其抗锯齿绿边，排入 2048×2048、8 列×9 行的透明 PNG 图集。
+ 
+-`actors.png` 的每格为 224×224，脚锚点为 `(112, 224)`，共 9 列×9 行（只使用前 68 格）。前 12 格依次为玩家 idle、move、J1、J2、J3、L 上挑、跳跃上升、跳跃下降、空中 J、落地、受击、死亡；其余每种怪物连续 7 格：idle、move、telegraph、active、recovery、cooldown、defeated。阶段格共享同一固定角色外观，并用位移、提亮、冷却暗化或败北淡出表达阶段，不另造角色。
++`actors.png` 的清单布局为 **9 列×9 行**（并非 8 列）；每格为 224×224，脚锚点为 `(112, 224)`，只使用前 68 格。前 12 格依次为玩家 idle、move、J1、J2、J3、L 上挑、跳跃上升、跳跃下降、空中 J、落地、受击、死亡。玩家帧基于同一原创角色裁切作几何旋转、腾空、落地压缩、受击倾斜、倒地和剑弧合成；L 格含明确朝上的蓝白挥剑弧。其余每种怪物连续 7 格：idle、move、telegraph、active、recovery、cooldown、defeated。怪物阶段格保持同一固定角色外观，以位移、提亮、冷却暗化或败北淡出表达阶段。
+diff --git a/assets/stage12/actors.png b/assets/stage12/actors.png
+index 1c229c4..0791a76 100644
+Binary files a/assets/stage12/actors.png and b/assets/stage12/actors.png differ
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index f4e81c4..90d3544 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -166,24 +166,34 @@ void draw_blink_affix_warning(const MonsterSnapshot& monster, Vec3 position,
+     const Color warning{255, 86, 214, 235};
+     const float actor_radius = blink_affix_warning_actor_radius(monster) * projected.scale;
+     const float ground_radius = blink_affix_warning_ground_radius(monster) * projected.scale;
+     DrawCircleLines(static_cast<int>(projected.x),
+         static_cast<int>(projected.y - 44.0F * projected.scale), actor_radius, warning);
+     DrawEllipseLines(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
+         ground_radius, ground_radius * 0.38F, warning);
+ }
+ 
+ bool draw_material_actor(const MaterialPack& material_pack,
+-    MaterialSpriteId sprite, Facing facing,
+-    const ScreenProjection& projected) noexcept {
+-    return material_pack.draw(sprite, {projected.x, projected.y},
+-        facing == Facing::left, projected.scale);
++    MaterialSpriteId sprite, Facing facing, bool player,
++    const ScreenProjection& projected, float hit_flash_seconds = 0.0F) noexcept {
++    const float scale = material_actor_draw_scale(player, projected.scale);
++    if (!material_pack.draw(sprite, {projected.x, projected.y},
++            facing == Facing::left, scale)) {
++        return false;
++    }
++    if (hit_flash_seconds > 0.0F) {
++        BeginBlendMode(BLEND_ADDITIVE);
++        static_cast<void>(material_pack.draw(sprite, {projected.x, projected.y},
++            facing == Facing::left, scale, Color{255, 249, 220, 185}));
++        EndBlendMode();
++    }
++    return true;
+ }
+ 
+ void draw_player_geometry(const ScreenProjection& projected) noexcept {
+     const float body_width = 42.0F * projected.scale;
+     const float body_height = 82.0F * projected.scale;
+     DrawRectangleRounded({projected.x - body_width * .5F,
+         projected.y - body_height, body_width, body_height}, .20F, 6,
+         Color{65, 202, 223, 255});
+     DrawTriangle({projected.x, projected.y - body_height - 16.0F * projected.scale},
+         {projected.x - 12.0F * projected.scale,
+@@ -333,28 +343,29 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+         const ScreenProjection projected = project_combat_position(item.position, width, height);
+         if (item.player) {
+             MaterialSpriteId sprite = select_player_sprite(
+                 current_combat.player.state, current_combat.player.active_attack);
+             if (current_combat.player.hp <= 0) {
+                 sprite = MaterialSpriteId::player_dead;
+             } else if (current_combat.player.hurt_ticks > 0) {
+                 sprite = MaterialSpriteId::player_hurt;
+             }
+             if (!draw_material_actor(material_pack_, sprite,
+-                    current_combat.player.facing, projected)) {
++                    current_combat.player.facing, true, projected)) {
+                 draw_player_geometry(projected);
+             }
+         } else {
+             const MonsterSnapshot& monster = current_combat.monsters[item.monster_index];
+             const MaterialSpriteId sprite = select_monster_sprite(monster.id,
+                 monster.ai_phase);
+-            if (draw_material_actor(material_pack_, sprite, monster.facing, projected)) {
++            if (draw_material_actor(material_pack_, sprite, monster.facing, false,
++                    projected, feedback.target_flash_seconds(item.monster_index))) {
+                 draw_monster_presentation(monster, item.position, current.ecology,
+                     width, height, current_combat.tick);
+             } else {
+                 draw_monster_silhouette(monster, item.position, current.ecology,
+                     width, height, feedback, item.monster_index, current_combat.tick);
+             }
+         }
+     }
+     draw_effects(feedback, width, height, true);
+     if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
+diff --git a/src/platform/raylib/material_animation.cpp b/src/platform/raylib/material_animation.cpp
+index 44f171b..0ab5ad1 100644
+--- a/src/platform/raylib/material_animation.cpp
++++ b/src/platform/raylib/material_animation.cpp
+@@ -165,11 +165,16 @@ MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
+     case dungeon::DungeonElement::water:
+         return MaterialSpriteId::environment_door_water;
+     case dungeon::DungeonElement::lightning:
+         return MaterialSpriteId::environment_door_lightning;
+     case dungeon::DungeonElement::chaos:
+         return MaterialSpriteId::environment_door_chaos;
+     }
+     return MaterialSpriteId::missing;
+ }
+ 
++float material_actor_draw_scale(bool player, float projection_scale) noexcept {
++    if (projection_scale <= 0.0F) return 0.0F;
++    return projection_scale * (player ? 0.36F : 0.34F);
++}
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_animation.hpp b/src/platform/raylib/material_animation.hpp
+index 82ac380..e64f430 100644
+--- a/src/platform/raylib/material_animation.hpp
++++ b/src/platform/raylib/material_animation.hpp
+@@ -14,11 +14,14 @@ namespace arpg::platform {
+ [[nodiscard]] MaterialSpriteId select_monster_sprite(
+     combat::MonsterId monster,
+     combat::MonsterAiPhase phase) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId select_floor_sprite(
+     dungeon::DungeonElement element) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId select_door_sprite(
+     dungeon::DungeonElement element) noexcept;
+ 
++[[nodiscard]] float material_actor_draw_scale(
++    bool player, float projection_scale) noexcept;
++
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.cpp b/src/platform/raylib/material_pack.cpp
+index 59555f8..4e279c9 100644
+--- a/src/platform/raylib/material_pack.cpp
++++ b/src/platform/raylib/material_pack.cpp
+@@ -149,32 +149,32 @@ bool MaterialPack::can_draw(MaterialSpriteId id) const noexcept {
+     if (!state_.can_draw(id) || !valid_texture_api(texture_api_)) return false;
+ 
+     const MaterialManifestDefinition manifest = default_material_manifest();
+     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+     if (frame == nullptr || !state_.available(frame->atlas)) return false;
+ 
+     return texture_api_.valid(textures_[atlas_index(frame->atlas)]);
+ }
+ 
+ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
+-    bool flip_x, float scale) const noexcept {
++    bool flip_x, float scale, Color tint) const noexcept {
+     if (!can_draw(id) || scale <= 0.0F) return false;
+ 
+     const MaterialManifestDefinition manifest = default_material_manifest();
+     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+     if (frame == nullptr || !state_.available(frame->atlas)) return false;
+ 
+     const Texture2D& texture = textures_[atlas_index(frame->atlas)];
+ 
+     Rectangle source = frame->source;
+     if (flip_x) {
+         source.x += source.width;
+         source.width = -source.width;
+     }
+     const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
+         foot_position.y - frame->foot_anchor.y * scale,
+         frame->source.width * scale, frame->source.height * scale};
+-    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, WHITE);
++    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
+     return true;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/material_pack.hpp b/src/platform/raylib/material_pack.hpp
+index fcd0d31..8481178 100644
+--- a/src/platform/raylib/material_pack.hpp
++++ b/src/platform/raylib/material_pack.hpp
+@@ -29,21 +29,21 @@ private:
+ class MaterialPack final {
+ public:
+     MaterialPack() noexcept;
+     explicit MaterialPack(MaterialTextureApi texture_api) noexcept;
+     [[nodiscard]] bool load() noexcept;
+     void unload() noexcept;
+     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
+     [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
+     [[nodiscard]] bool draw(
+         MaterialSpriteId id, Vector2 foot_position, bool flip_x,
+-        float scale = 1.0F) const noexcept;
++        float scale = 1.0F, Color tint = WHITE) const noexcept;
+ 
+ private:
+     MaterialTextureApi texture_api_{};
+     MaterialPackState state_{};
+     std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
+         textures_{};
+     std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
+         warnings_emitted_{};
+ };
+ 
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index dc0dd35..57cb5b2 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -68,12 +68,12 @@ int main() {
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 295, "stage 12 material manifest runtime");
++    return arpg::test::run_suites(suites, 296, "stage 12 material manifest runtime");
+ }
+diff --git a/tests/platform/stage12_actor_render_tests.cpp b/tests/platform/stage12_actor_render_tests.cpp
+index eb0b26a..a000760 100644
+--- a/tests/platform/stage12_actor_render_tests.cpp
++++ b/tests/platform/stage12_actor_render_tests.cpp
+@@ -1,48 +1,86 @@
+ #include "test_framework.hpp"
+ 
+ #include "material_animation.hpp"
++#include "material_asset_validation.hpp"
++#include "material_manifest.hpp"
+ 
+ #include <array>
+ 
+ namespace {
+ 
+ using arpg::combat::MonsterAiPhase;
+ using arpg::combat::MonsterId;
+ using arpg::platform::MaterialSpriteId;
+ 
++const arpg::platform::MaterialFrameDefinition* find_manifest_frame(
++    MaterialSpriteId id) noexcept {
++    const arpg::platform::MaterialManifestDefinition manifest =
++        arpg::platform::default_material_manifest();
++    for (std::size_t index = 0U; index < manifest.frame_count; ++index) {
++        if (manifest.frames[index].id == id) return &manifest.frames[index];
++    }
++    return nullptr;
++}
++
++const arpg::platform::MaterialAtlasDefinition* find_manifest_atlas(
++    arpg::platform::MaterialAtlasId id) noexcept {
++    const arpg::platform::MaterialManifestDefinition manifest =
++        arpg::platform::default_material_manifest();
++    for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
++        if (manifest.atlases[index].id == id) return &manifest.atlases[index];
++    }
++    return nullptr;
++}
++
+ arpg::test::Failure stage12_monster_phases_use_distinct_material_frames() noexcept {
+     constexpr std::array<MonsterId, 8> kMonsters{{
+         MonsterId::fire_bomber, MonsterId::fire_charger,
+         MonsterId::water_bulwark, MonsterId::water_support,
+         MonsterId::lightning_shooter, MonsterId::lightning_dasher,
+         MonsterId::chaos_chaser, MonsterId::chaos_hazard,
+     }};
+     constexpr std::array<MonsterAiPhase, 7> kPhases{{
+         MonsterAiPhase::idle, MonsterAiPhase::move, MonsterAiPhase::telegraph,
+         MonsterAiPhase::active, MonsterAiPhase::recovery,
+         MonsterAiPhase::cooldown, MonsterAiPhase::defeated,
+     }};
+     for (const MonsterId monster : kMonsters) {
+-        const MaterialSpriteId idle = arpg::platform::select_monster_sprite(
+-            monster, MonsterAiPhase::idle);
+-        ARPG_REQUIRE(idle != MaterialSpriteId::missing);
+-        for (const MonsterAiPhase phase : kPhases) {
++        std::array<MaterialSpriteId, kPhases.size()> frames{};
++        for (std::size_t phase_index = 0U; phase_index < kPhases.size(); ++phase_index) {
++            const MonsterAiPhase phase = kPhases[phase_index];
+             const MaterialSpriteId selected = arpg::platform::select_monster_sprite(
+                 monster, phase);
+             ARPG_REQUIRE(selected != MaterialSpriteId::missing);
+-            if (phase != MonsterAiPhase::idle) ARPG_REQUIRE(selected != idle);
++            const arpg::platform::MaterialFrameDefinition* frame =
++                find_manifest_frame(selected);
++            ARPG_REQUIRE(frame != nullptr);
++            const arpg::platform::MaterialAtlasDefinition* atlas =
++                find_manifest_atlas(frame->atlas);
++            ARPG_REQUIRE(atlas != nullptr);
++            ARPG_REQUIRE(arpg::platform::validate_material_frame(*atlas, *frame).valid);
++            for (std::size_t prior = 0U; prior < phase_index; ++prior) {
++                ARPG_REQUIRE(selected != frames[prior]);
++            }
++            frames[phase_index] = selected;
+         }
+     }
+     return {};
+ }
+ 
++arpg::test::Failure stage12_actor_material_scale_matches_existing_geometry() noexcept {
++    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 1.0F) == 0.36F);
++    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(false, 1.0F) == 0.34F);
++    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 0.5F) == 0.18F);
++    return {};
++}
++
+ arpg::test::Failure stage12_player_attack_actions_have_distinct_material_frames() noexcept {
+     using arpg::combat::AttackId;
+     using arpg::combat::PlayerState;
+     const MaterialSpriteId j1 = arpg::platform::select_player_sprite(
+         PlayerState::attack_active, AttackId::j1);
+     ARPG_REQUIRE(j1 != MaterialSpriteId::missing);
+     ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
+         PlayerState::attack_active, AttackId::j2));
+     ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
+         PlayerState::attack_active, AttackId::j3));
+@@ -51,17 +89,19 @@ arpg::test::Failure stage12_player_attack_actions_have_distinct_material_frames(
+     ARPG_REQUIRE(j1 != arpg::platform::select_player_sprite(
+         PlayerState::attack_active, AttackId::air_j));
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"maps every monster phase to a distinct material frame",
+         &stage12_monster_phases_use_distinct_material_frames},
+     {"maps player attack actions to distinct material frames",
+         &stage12_player_attack_actions_have_distinct_material_frames},
++    {"scales material actors to the existing geometry envelope",
++        &stage12_actor_material_scale_matches_existing_geometry},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite stage12_actor_render_suite() noexcept {
+     return arpg::test::make_suite("stage12_actor_render", kCases);
+ }
