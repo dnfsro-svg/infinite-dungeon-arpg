@@ -1,0 +1,1040 @@
+[
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\core\\CMakeFiles\\arpg_core.dir\\fixed_step.cpp.obj /Fdsrc\\core\\CMakeFiles\\arpg_core.dir\\arpg_core.pdb /FS -c Q:\\src\\core\\fixed_step.cpp",
+  "file": "Q:/src/core/fixed_step.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/core/CMakeFiles/arpg_core.dir/fixed_step.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\core\\CMakeFiles\\arpg_core.dir\\deterministic_rng.cpp.obj /Fdsrc\\core\\CMakeFiles\\arpg_core.dir\\arpg_core.pdb /FS -c Q:\\src\\core\\deterministic_rng.cpp",
+  "file": "Q:/src/core/deterministic_rng.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/core/CMakeFiles/arpg_core.dir/deterministic_rng.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\core\\CMakeFiles\\arpg_core.dir\\crc32.cpp.obj /Fdsrc\\core\\CMakeFiles\\arpg_core.dir\\arpg_core.pdb /FS -c Q:\\src\\core\\crc32.cpp",
+  "file": "Q:/src/core/crc32.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/core/CMakeFiles/arpg_core.dir/crc32.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\abyss\\CMakeFiles\\arpg_abyss.dir\\abyss_rules.cpp.obj /Fdsrc\\abyss\\CMakeFiles\\arpg_abyss.dir\\arpg_abyss.pdb /FS -c Q:\\src\\abyss\\abyss_rules.cpp",
+  "file": "Q:/src/abyss/abyss_rules.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/abyss/CMakeFiles/arpg_abyss.dir/abyss_rules.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\abyss\\CMakeFiles\\arpg_abyss.dir\\abyss_rewards.cpp.obj /Fdsrc\\abyss\\CMakeFiles\\arpg_abyss.dir\\arpg_abyss.pdb /FS -c Q:\\src\\abyss\\abyss_rewards.cpp",
+  "file": "Q:/src/abyss/abyss_rewards.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/abyss/CMakeFiles/arpg_abyss.dir/abyss_rewards.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\skills\\CMakeFiles\\arpg_skills.dir\\active_skill_catalog.cpp.obj /Fdsrc\\skills\\CMakeFiles\\arpg_skills.dir\\arpg_skills.pdb /FS -c Q:\\src\\skills\\active_skill_catalog.cpp",
+  "file": "Q:/src/skills/active_skill_catalog.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/skills/CMakeFiles/arpg_skills.dir/active_skill_catalog.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\skills\\CMakeFiles\\arpg_skills.dir\\skill_loadout.cpp.obj /Fdsrc\\skills\\CMakeFiles\\arpg_skills.dir\\arpg_skills.pdb /FS -c Q:\\src\\skills\\skill_loadout.cpp",
+  "file": "Q:/src/skills/skill_loadout.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/skills/CMakeFiles/arpg_skills.dir/skill_loadout.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\active_skill_runtime.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\active_skill_runtime.cpp",
+  "file": "Q:/src/combat/active_skill_runtime.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/active_skill_runtime.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\active_skill_timeline.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\active_skill_timeline.cpp",
+  "file": "Q:/src/combat/active_skill_timeline.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/active_skill_timeline.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\abyss_environment.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\abyss_environment.cpp",
+  "file": "Q:/src/combat/abyss_environment.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/abyss_environment.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\attack_catalog.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\attack_catalog.cpp",
+  "file": "Q:/src/combat/attack_catalog.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/attack_catalog.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\combat_collision.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\combat_collision.cpp",
+  "file": "Q:/src/combat/combat_collision.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/combat_collision.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\combat_effects.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\combat_effects.cpp",
+  "file": "Q:/src/combat/combat_effects.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/combat_effects.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\combat_snapshot.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\combat_snapshot.cpp",
+  "file": "Q:/src/combat/combat_snapshot.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/combat_snapshot.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\combat_world.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\combat_world.cpp",
+  "file": "Q:/src/combat/combat_world.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/combat_world.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\hit_resolution.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\hit_resolution.cpp",
+  "file": "Q:/src/combat/hit_resolution.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/hit_resolution.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\input_buffer.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\input_buffer.cpp",
+  "file": "Q:/src/combat/input_buffer.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/input_buffer.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_ai.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_ai.cpp",
+  "file": "Q:/src/combat/monster_ai.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_ai.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_ai_melee.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_ai_melee.cpp",
+  "file": "Q:/src/combat/monster_ai_melee.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_ai_melee.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_ai_ranged.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_ai_ranged.cpp",
+  "file": "Q:/src/combat/monster_ai_ranged.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_ai_ranged.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_ai_special.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_ai_special.cpp",
+  "file": "Q:/src/combat/monster_ai_special.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_ai_special.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_affix_catalog.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_affix_catalog.cpp",
+  "file": "Q:/src/combat/monster_affix_catalog.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_affix_catalog.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_affix_generation.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_affix_generation.cpp",
+  "file": "Q:/src/combat/monster_affix_generation.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_affix_generation.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_affix_runtime.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_affix_runtime.cpp",
+  "file": "Q:/src/combat/monster_affix_runtime.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_affix_runtime.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_catalog.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_catalog.cpp",
+  "file": "Q:/src/combat/monster_catalog.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_catalog.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\monster_pool.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\monster_pool.cpp",
+  "file": "Q:/src/combat/monster_pool.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/monster_pool.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\player_damage_history.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\player_damage_history.cpp",
+  "file": "Q:/src/combat/player_damage_history.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/player_damage_history.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\player_simulation.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\player_simulation.cpp",
+  "file": "Q:/src/combat/player_simulation.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/player_simulation.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\combat\\CMakeFiles\\arpg_combat.dir\\target_simulation.cpp.obj /Fdsrc\\combat\\CMakeFiles\\arpg_combat.dir\\arpg_combat.pdb /FS -c Q:\\src\\combat\\target_simulation.cpp",
+  "file": "Q:/src/combat/target_simulation.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/combat/CMakeFiles/arpg_combat.dir/target_simulation.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\progression\\CMakeFiles\\arpg_progression.dir\\progression_rules.cpp.obj /Fdsrc\\progression\\CMakeFiles\\arpg_progression.dir\\arpg_progression.pdb /FS -c Q:\\src\\progression\\progression_rules.cpp",
+  "file": "Q:/src/progression/progression_rules.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/progression/CMakeFiles/arpg_progression.dir/progression_rules.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\modifiers\\CMakeFiles\\arpg_modifiers.dir\\modifier_math.cpp.obj /Fdsrc\\modifiers\\CMakeFiles\\arpg_modifiers.dir\\arpg_modifiers.pdb /FS -c Q:\\src\\modifiers\\modifier_math.cpp",
+  "file": "Q:/src/modifiers/modifier_math.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/modifiers/CMakeFiles/arpg_modifiers.dir/modifier_math.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\modifiers\\CMakeFiles\\arpg_modifiers.dir\\effect_set.cpp.obj /Fdsrc\\modifiers\\CMakeFiles\\arpg_modifiers.dir\\arpg_modifiers.pdb /FS -c Q:\\src\\modifiers\\effect_set.cpp",
+  "file": "Q:/src/modifiers/effect_set.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/modifiers/CMakeFiles/arpg_modifiers.dir/effect_set.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\modifiers\\CMakeFiles\\arpg_modifiers.dir\\player_modifier_values.cpp.obj /Fdsrc\\modifiers\\CMakeFiles\\arpg_modifiers.dir\\arpg_modifiers.pdb /FS -c Q:\\src\\modifiers\\player_modifier_values.cpp",
+  "file": "Q:/src/modifiers/player_modifier_values.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/modifiers/CMakeFiles/arpg_modifiers.dir/player_modifier_values.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\items\\CMakeFiles\\arpg_items.dir\\item_catalog.cpp.obj /Fdsrc\\items\\CMakeFiles\\arpg_items.dir\\arpg_items.pdb /FS -c Q:\\src\\items\\item_catalog.cpp",
+  "file": "Q:/src/items/item_catalog.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/items/CMakeFiles/arpg_items.dir/item_catalog.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\items\\CMakeFiles\\arpg_items.dir\\item_crafting.cpp.obj /Fdsrc\\items\\CMakeFiles\\arpg_items.dir\\arpg_items.pdb /FS -c Q:\\src\\items\\item_crafting.cpp",
+  "file": "Q:/src/items/item_crafting.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/items/CMakeFiles/arpg_items.dir/item_crafting.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\items\\CMakeFiles\\arpg_items.dir\\item_generation.cpp.obj /Fdsrc\\items\\CMakeFiles\\arpg_items.dir\\arpg_items.pdb /FS -c Q:\\src\\items\\item_generation.cpp",
+  "file": "Q:/src/items/item_generation.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/items/CMakeFiles/arpg_items.dir/item_generation.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\items\\CMakeFiles\\arpg_items.dir\\item_modifiers.cpp.obj /Fdsrc\\items\\CMakeFiles\\arpg_items.dir\\arpg_items.pdb /FS -c Q:\\src\\items\\item_modifiers.cpp",
+  "file": "Q:/src/items/item_modifiers.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/items/CMakeFiles/arpg_items.dir/item_modifiers.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\items\\CMakeFiles\\arpg_items.dir\\material_catalog.cpp.obj /Fdsrc\\items\\CMakeFiles\\arpg_items.dir\\arpg_items.pdb /FS -c Q:\\src\\items\\material_catalog.cpp",
+  "file": "Q:/src/items/material_catalog.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/items/CMakeFiles/arpg_items.dir/material_catalog.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\passives\\CMakeFiles\\arpg_passives.dir\\passive_tree_catalog.cpp.obj /Fdsrc\\passives\\CMakeFiles\\arpg_passives.dir\\arpg_passives.pdb /FS -c Q:\\src\\passives\\passive_tree_catalog.cpp",
+  "file": "Q:/src/passives/passive_tree_catalog.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/passives/CMakeFiles/arpg_passives.dir/passive_tree_catalog.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\passives\\CMakeFiles\\arpg_passives.dir\\passive_tree_rules.cpp.obj /Fdsrc\\passives\\CMakeFiles\\arpg_passives.dir\\arpg_passives.pdb /FS -c Q:\\src\\passives\\passive_tree_rules.cpp",
+  "file": "Q:/src/passives/passive_tree_rules.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/passives/CMakeFiles/arpg_passives.dir/passive_tree_rules.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\abyss_reward.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\abyss_reward.cpp",
+  "file": "Q:/src/dungeon/abyss_reward.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/abyss_reward.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\abyss_checkpoint_migration.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\abyss_checkpoint_migration.cpp",
+  "file": "Q:/src/dungeon/abyss_checkpoint_migration.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/abyss_checkpoint_migration.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\dungeon_rules.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\dungeon_rules.cpp",
+  "file": "Q:/src/dungeon/dungeon_rules.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/dungeon_rules.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\encounter_director.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\encounter_director.cpp",
+  "file": "Q:/src/dungeon/encounter_director.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/encounter_director.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\encounter_budget.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\encounter_budget.cpp",
+  "file": "Q:/src/dungeon/encounter_budget.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/encounter_budget.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\encounter_wave_builder.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\encounter_wave_builder.cpp",
+  "file": "Q:/src/dungeon/encounter_wave_builder.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/encounter_wave_builder.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\dungeon_session.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\dungeon_session.cpp",
+  "file": "Q:/src/dungeon/dungeon_session.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/dungeon_session.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\dungeon_transition.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\dungeon_transition.cpp",
+  "file": "Q:/src/dungeon/dungeon_transition.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/dungeon_transition.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\dungeon_snapshot.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\dungeon_snapshot.cpp",
+  "file": "Q:/src/dungeon/dungeon_snapshot.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/dungeon_snapshot.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\death_checkpoint.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\death_checkpoint.cpp",
+  "file": "Q:/src/dungeon/death_checkpoint.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/death_checkpoint.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\dungeon_progression.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\dungeon_progression.cpp",
+  "file": "Q:/src/dungeon/dungeon_progression.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/dungeon_progression.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\material_loot.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\material_loot.cpp",
+  "file": "Q:/src/dungeon/material_loot.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/material_loot.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\room_generation.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\room_generation.cpp",
+  "file": "Q:/src/dungeon/room_generation.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/room_generation.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\room_combat_template.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\room_combat_template.cpp",
+  "file": "Q:/src/dungeon/room_combat_template.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/room_combat_template.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fosrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\room_navigation.cpp.obj /Fdsrc\\dungeon\\CMakeFiles\\arpg_dungeon.dir\\arpg_dungeon.pdb /FS -c Q:\\src\\dungeon\\room_navigation.cpp",
+  "file": "Q:/src/dungeon/room_navigation.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/dungeon/CMakeFiles/arpg_dungeon.dir/room_navigation.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /EHsc /W4 /permissive- /Fosrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\checkpoint_codec.cpp.obj /Fdsrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\arpg_persistence.pdb /FS -c Q:\\src\\persistence\\checkpoint_codec.cpp",
+  "file": "Q:/src/persistence/checkpoint_codec.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/persistence/CMakeFiles/arpg_persistence.dir/checkpoint_codec.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /EHsc /W4 /permissive- /Fosrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\save_paths.cpp.obj /Fdsrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\arpg_persistence.pdb /FS -c Q:\\src\\persistence\\save_paths.cpp",
+  "file": "Q:/src/persistence/save_paths.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/persistence/CMakeFiles/arpg_persistence.dir/save_paths.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /EHsc /W4 /permissive- /Fosrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\save_slot.cpp.obj /Fdsrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\arpg_persistence.pdb /FS -c Q:\\src\\persistence\\save_slot.cpp",
+  "file": "Q:/src/persistence/save_slot.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/persistence/CMakeFiles/arpg_persistence.dir/save_slot.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /EHsc /W4 /permissive- /Fosrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\save_transaction.cpp.obj /Fdsrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\arpg_persistence.pdb /FS -c Q:\\src\\persistence\\save_transaction.cpp",
+  "file": "Q:/src/persistence/save_transaction.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/persistence/CMakeFiles/arpg_persistence.dir/save_transaction.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /EHsc /W4 /permissive- /Fosrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\save_recovery.cpp.obj /Fdsrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\arpg_persistence.pdb /FS -c Q:\\src\\persistence\\save_recovery.cpp",
+  "file": "Q:/src/persistence/save_recovery.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/persistence/CMakeFiles/arpg_persistence.dir/save_recovery.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /EHsc /W4 /permissive- /Fosrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\save_store.cpp.obj /Fdsrc\\persistence\\CMakeFiles\\arpg_persistence.dir\\arpg_persistence.pdb /FS -c Q:\\src\\persistence\\save_store.cpp",
+  "file": "Q:/src/persistence/save_store.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/persistence/CMakeFiles/arpg_persistence.dir/save_store.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\platform\\settings\\CMakeFiles\\arpg_settings.dir\\settings_types.cpp.obj /Fdsrc\\platform\\settings\\CMakeFiles\\arpg_settings.dir\\arpg_settings.pdb /FS -c Q:\\src\\platform\\settings\\settings_types.cpp",
+  "file": "Q:/src/platform/settings/settings_types.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/platform/settings/CMakeFiles/arpg_settings.dir/settings_types.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\platform\\settings\\CMakeFiles\\arpg_settings.dir\\settings_codec.cpp.obj /Fdsrc\\platform\\settings\\CMakeFiles\\arpg_settings.dir\\arpg_settings.pdb /FS -c Q:\\src\\platform\\settings\\settings_codec.cpp",
+  "file": "Q:/src/platform/settings/settings_codec.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/platform/settings/CMakeFiles/arpg_settings.dir/settings_codec.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fosrc\\platform\\settings\\CMakeFiles\\arpg_settings.dir\\settings_store.cpp.obj /Fdsrc\\platform\\settings\\CMakeFiles\\arpg_settings.dir\\arpg_settings.pdb /FS -c Q:\\src\\platform\\settings\\settings_store.cpp",
+  "file": "Q:/src/platform/settings/settings_store.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/platform/settings/CMakeFiles/arpg_settings.dir/settings_store.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src\\launcher /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MTd -Zi /W4 /permissive- /utf-8 /Fosrc\\launcher\\CMakeFiles\\arpg_launcher_core.dir\\launcher_core.cpp.obj /Fdsrc\\launcher\\CMakeFiles\\arpg_launcher_core.dir\\arpg_launcher_core.pdb /FS -c Q:\\src\\launcher\\launcher_core.cpp",
+  "file": "Q:/src/launcher/launcher_core.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/launcher/CMakeFiles/arpg_launcher_core.dir/launcher_core.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src\\launcher /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MTd -Zi /W4 /permissive- /utf-8 /Fosrc\\launcher\\CMakeFiles\\arpg_launcher_core.dir\\launcher_layout.cpp.obj /Fdsrc\\launcher\\CMakeFiles\\arpg_launcher_core.dir\\arpg_launcher_core.pdb /FS -c Q:\\src\\launcher\\launcher_layout.cpp",
+  "file": "Q:/src/launcher/launcher_layout.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/src/launcher/CMakeFiles/arpg_launcher_core.dir/launcher_layout.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\core\\CMakeFiles\\arpg_core_tests.dir\\test_main.cpp.obj /Fdtests\\core\\CMakeFiles\\arpg_core_tests.dir\\ /FS -c Q:\\tests\\core\\test_main.cpp",
+  "file": "Q:/tests/core/test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/core/CMakeFiles/arpg_core_tests.dir/test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\core\\CMakeFiles\\arpg_core_tests.dir\\allocation_probe.cpp.obj /Fdtests\\core\\CMakeFiles\\arpg_core_tests.dir\\ /FS -c Q:\\tests\\core\\allocation_probe.cpp",
+  "file": "Q:/tests/core/allocation_probe.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/core/CMakeFiles/arpg_core_tests.dir/allocation_probe.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\core\\CMakeFiles\\arpg_core_tests.dir\\allocation_probe_tests.cpp.obj /Fdtests\\core\\CMakeFiles\\arpg_core_tests.dir\\ /FS -c Q:\\tests\\core\\allocation_probe_tests.cpp",
+  "file": "Q:/tests/core/allocation_probe_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/core/CMakeFiles/arpg_core_tests.dir/allocation_probe_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\core\\CMakeFiles\\arpg_core_tests.dir\\fixed_step_tests.cpp.obj /Fdtests\\core\\CMakeFiles\\arpg_core_tests.dir\\ /FS -c Q:\\tests\\core\\fixed_step_tests.cpp",
+  "file": "Q:/tests/core/fixed_step_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/core/CMakeFiles/arpg_core_tests.dir/fixed_step_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\core\\CMakeFiles\\arpg_core_tests.dir\\deterministic_rng_tests.cpp.obj /Fdtests\\core\\CMakeFiles\\arpg_core_tests.dir\\ /FS -c Q:\\tests\\core\\deterministic_rng_tests.cpp",
+  "file": "Q:/tests/core/deterministic_rng_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/core/CMakeFiles/arpg_core_tests.dir/deterministic_rng_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\core\\CMakeFiles\\arpg_core_tests.dir\\fixed_pool_tests.cpp.obj /Fdtests\\core\\CMakeFiles\\arpg_core_tests.dir\\ /FS -c Q:\\tests\\core\\fixed_pool_tests.cpp",
+  "file": "Q:/tests/core/fixed_pool_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/core/CMakeFiles/arpg_core_tests.dir/fixed_pool_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\core\\CMakeFiles\\arpg_core_tests.dir\\bounded_queue_tests.cpp.obj /Fdtests\\core\\CMakeFiles\\arpg_core_tests.dir\\ /FS -c Q:\\tests\\core\\bounded_queue_tests.cpp",
+  "file": "Q:/tests/core/bounded_queue_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/core/CMakeFiles/arpg_core_tests.dir/bounded_queue_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\abyss\\CMakeFiles\\arpg_abyss_tests.dir\\abyss_test_main.cpp.obj /Fdtests\\abyss\\CMakeFiles\\arpg_abyss_tests.dir\\ /FS -c Q:\\tests\\abyss\\abyss_test_main.cpp",
+  "file": "Q:/tests/abyss/abyss_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/abyss/CMakeFiles/arpg_abyss_tests.dir/abyss_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\abyss\\CMakeFiles\\arpg_abyss_tests.dir\\abyss_rules_tests.cpp.obj /Fdtests\\abyss\\CMakeFiles\\arpg_abyss_tests.dir\\ /FS -c Q:\\tests\\abyss\\abyss_rules_tests.cpp",
+  "file": "Q:/tests/abyss/abyss_rules_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/abyss/CMakeFiles/arpg_abyss_tests.dir/abyss_rules_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\abyss\\CMakeFiles\\arpg_abyss_tests.dir\\abyss_rewards_tests.cpp.obj /Fdtests\\abyss\\CMakeFiles\\arpg_abyss_tests.dir\\ /FS -c Q:\\tests\\abyss\\abyss_rewards_tests.cpp",
+  "file": "Q:/tests/abyss/abyss_rewards_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/abyss/CMakeFiles/arpg_abyss_tests.dir/abyss_rewards_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\skills\\CMakeFiles\\arpg_skills_tests.dir\\skills_test_main.cpp.obj /Fdtests\\skills\\CMakeFiles\\arpg_skills_tests.dir\\ /FS -c Q:\\tests\\skills\\skills_test_main.cpp",
+  "file": "Q:/tests/skills/skills_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/skills/CMakeFiles/arpg_skills_tests.dir/skills_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\skills\\CMakeFiles\\arpg_skills_tests.dir\\skill_loadout_tests.cpp.obj /Fdtests\\skills\\CMakeFiles\\arpg_skills_tests.dir\\ /FS -c Q:\\tests\\skills\\skill_loadout_tests.cpp",
+  "file": "Q:/tests/skills/skill_loadout_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/skills/CMakeFiles/arpg_skills_tests.dir/skill_loadout_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\__\\core\\allocation_probe.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\core\\allocation_probe.cpp",
+  "file": "Q:/tests/core/allocation_probe.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/__/core/allocation_probe.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\combat_test_main.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\combat_test_main.cpp",
+  "file": "Q:/tests/combat/combat_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/combat_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\active_skill_timeline_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\active_skill_timeline_tests.cpp",
+  "file": "Q:/tests/combat/active_skill_timeline_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/active_skill_timeline_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\abyss_environment_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\abyss_environment_tests.cpp",
+  "file": "Q:/tests/combat/abyss_environment_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/abyss_environment_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\attack_catalog_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\attack_catalog_tests.cpp",
+  "file": "Q:/tests/combat/attack_catalog_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/attack_catalog_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\attack_state_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\attack_state_tests.cpp",
+  "file": "Q:/tests/combat/attack_state_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/attack_state_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\break_stress_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\break_stress_tests.cpp",
+  "file": "Q:/tests/combat/break_stress_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/break_stress_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\combat_config_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\combat_config_tests.cpp",
+  "file": "Q:/tests/combat/combat_config_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/combat_config_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\combat_query_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\combat_query_tests.cpp",
+  "file": "Q:/tests/combat/combat_query_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/combat_query_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\draw_slash_skill_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\draw_slash_skill_tests.cpp",
+  "file": "Q:/tests/combat/draw_slash_skill_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/draw_slash_skill_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\dummy_reaction_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\dummy_reaction_tests.cpp",
+  "file": "Q:/tests/combat/dummy_reaction_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/dummy_reaction_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\hit_resolution_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\hit_resolution_tests.cpp",
+  "file": "Q:/tests/combat/hit_resolution_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/hit_resolution_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\input_buffer_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\input_buffer_tests.cpp",
+  "file": "Q:/tests/combat/input_buffer_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/input_buffer_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_affix_catalog_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_affix_catalog_tests.cpp",
+  "file": "Q:/tests/combat/monster_affix_catalog_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_affix_catalog_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_affix_generation_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_affix_generation_tests.cpp",
+  "file": "Q:/tests/combat/monster_affix_generation_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_affix_generation_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_affix_runtime_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_affix_runtime_tests.cpp",
+  "file": "Q:/tests/combat/monster_affix_runtime_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_affix_runtime_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_affix_trigger_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_affix_trigger_tests.cpp",
+  "file": "Q:/tests/combat/monster_affix_trigger_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_affix_trigger_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_catalog_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_catalog_tests.cpp",
+  "file": "Q:/tests/combat/monster_catalog_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_catalog_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_melee_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_melee_tests.cpp",
+  "file": "Q:/tests/combat/monster_melee_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_melee_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_ranged_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_ranged_tests.cpp",
+  "file": "Q:/tests/combat/monster_ranged_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_ranged_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_special_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_special_tests.cpp",
+  "file": "Q:/tests/combat/monster_special_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_special_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\monster_pool_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\monster_pool_tests.cpp",
+  "file": "Q:/tests/combat/monster_pool_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/monster_pool_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\movement_jump_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\movement_jump_tests.cpp",
+  "file": "Q:/tests/combat/movement_jump_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/movement_jump_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\player_health_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\player_health_tests.cpp",
+  "file": "Q:/tests/combat/player_health_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/player_health_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\player_build_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\player_build_tests.cpp",
+  "file": "Q:/tests/combat/player_build_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/player_build_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\player_damage_history_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\player_damage_history_tests.cpp",
+  "file": "Q:/tests/combat/player_damage_history_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/player_damage_history_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\player_death_snapshot_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\player_death_snapshot_tests.cpp",
+  "file": "Q:/tests/combat/player_death_snapshot_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/player_death_snapshot_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\player_defense_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\player_defense_tests.cpp",
+  "file": "Q:/tests/combat/player_defense_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/player_defense_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\storm_swords_skill_tests.cpp.obj /Fdtests\\combat\\CMakeFiles\\arpg_combat_tests.dir\\ /FS -c Q:\\tests\\combat\\storm_swords_skill_tests.cpp",
+  "file": "Q:/tests/combat/storm_swords_skill_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/combat/CMakeFiles/arpg_combat_tests.dir/storm_swords_skill_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\__\\core\\allocation_probe.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\core\\allocation_probe.cpp",
+  "file": "Q:/tests/core/allocation_probe.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/__/core/allocation_probe.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_test_main.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_test_main.cpp",
+  "file": "Q:/tests/dungeon/dungeon_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\death_checkpoint_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\death_checkpoint_tests.cpp",
+  "file": "Q:/tests/dungeon/death_checkpoint_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/death_checkpoint_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_death_lifecycle_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_death_lifecycle_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_death_lifecycle_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_death_lifecycle_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_death_stress_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_death_stress_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_death_stress_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_death_stress_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_lifecycle_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_lifecycle_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_lifecycle_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_lifecycle_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_navigation_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_navigation_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_navigation_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_navigation_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_stress_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_stress_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_stress_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_stress_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\room_generation_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\room_generation_tests.cpp",
+  "file": "Q:/tests/dungeon/room_generation_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/room_generation_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_rules_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_rules_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_rules_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_rules_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_progression_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_progression_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_progression_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_progression_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_query_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_query_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_query_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_query_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_passive_tree_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_passive_tree_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_passive_tree_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_passive_tree_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_item_transaction_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_item_transaction_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_item_transaction_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_item_transaction_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_crafting_transaction_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_crafting_transaction_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_crafting_transaction_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_crafting_transaction_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_skill_loadout_transaction_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_skill_loadout_transaction_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_skill_loadout_transaction_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_skill_loadout_transaction_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_skill_cast_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_skill_cast_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_skill_cast_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_skill_cast_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_equipment_stress_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_equipment_stress_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_equipment_stress_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_equipment_stress_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_loot_drop_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_loot_drop_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_loot_drop_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_loot_drop_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_material_loot_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_material_loot_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_material_loot_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_material_loot_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_transaction_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_transaction_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_transaction_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_transaction_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_abyss_reward_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_abyss_reward_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_abyss_reward_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_abyss_reward_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_abyss_stress_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_abyss_stress_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_abyss_stress_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_abyss_stress_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\encounter_director_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\encounter_director_tests.cpp",
+  "file": "Q:/tests/dungeon/encounter_director_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/encounter_director_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_wave_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_wave_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_wave_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_wave_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_progression_reward_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_progression_reward_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_progression_reward_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_progression_reward_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_affix_reward_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_affix_reward_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_affix_reward_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_affix_reward_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\combat -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\dungeon_affix_stress_tests.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_dungeon_tests.dir\\ /FS -c Q:\\tests\\dungeon\\dungeon_affix_stress_tests.cpp",
+  "file": "Q:/tests/dungeon/dungeon_affix_stress_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_dungeon_tests.dir/dungeon_affix_stress_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_stage16_loot_reinforcement_simulation.dir\\stage16_loot_reinforcement_simulation.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_stage16_loot_reinforcement_simulation.dir\\ /FS -c Q:\\tests\\dungeon\\stage16_loot_reinforcement_simulation.cpp",
+  "file": "Q:/tests/dungeon/stage16_loot_reinforcement_simulation.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_stage16_loot_reinforcement_simulation.dir/stage16_loot_reinforcement_simulation.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_stage8_validation_fixture.dir\\stage8_validation_fixture.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_stage8_validation_fixture.dir\\ /FS -c Q:\\tests\\dungeon\\stage8_validation_fixture.cpp",
+  "file": "Q:/tests/dungeon/stage8_validation_fixture.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_stage8_validation_fixture.dir/stage8_validation_fixture.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_stage9_validation_fixture.dir\\stage9_validation_fixture.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_stage9_validation_fixture.dir\\ /FS -c Q:\\tests\\dungeon\\stage9_validation_fixture.cpp",
+  "file": "Q:/tests/dungeon/stage9_validation_fixture.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_stage9_validation_fixture.dir/stage9_validation_fixture.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_stage10_validation_fixture.dir\\stage10_validation_fixture.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_stage10_validation_fixture.dir\\ /FS -c Q:\\tests\\dungeon\\stage10_validation_fixture.cpp",
+  "file": "Q:/tests/dungeon/stage10_validation_fixture.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_stage10_validation_fixture.dir/stage10_validation_fixture.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\dungeon\\CMakeFiles\\arpg_stage8_validation_input.dir\\stage8_validation_input.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_stage8_validation_input.dir\\ /FS -c Q:\\tests\\dungeon\\stage8_validation_input.cpp",
+  "file": "Q:/tests/dungeon/stage8_validation_input.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_stage8_validation_input.dir/stage8_validation_input.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\dungeon\\CMakeFiles\\arpg_stage11_death_validation_fixture.dir\\stage11_death_validation_fixture.cpp.obj /Fdtests\\dungeon\\CMakeFiles\\arpg_stage11_death_validation_fixture.dir\\ /FS -c Q:\\tests\\dungeon\\stage11_death_validation_fixture.cpp",
+  "file": "Q:/tests/dungeon/stage11_death_validation_fixture.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/dungeon/CMakeFiles/arpg_stage11_death_validation_fixture.dir/stage11_death_validation_fixture.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\persistence_test_main.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\persistence_test_main.cpp",
+  "file": "Q:/tests/persistence/persistence_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/persistence_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\checkpoint_codec_tests.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\checkpoint_codec_tests.cpp",
+  "file": "Q:/tests/persistence/checkpoint_codec_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/checkpoint_codec_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\checkpoint_v8_skill_loadout_tests.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\checkpoint_v8_skill_loadout_tests.cpp",
+  "file": "Q:/tests/persistence/checkpoint_v8_skill_loadout_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/checkpoint_v8_skill_loadout_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\death_checkpoint_codec_tests.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\death_checkpoint_codec_tests.cpp",
+  "file": "Q:/tests/persistence/death_checkpoint_codec_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/death_checkpoint_codec_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\passive_tree_checkpoint_tests.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\passive_tree_checkpoint_tests.cpp",
+  "file": "Q:/tests/persistence/passive_tree_checkpoint_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/passive_tree_checkpoint_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\save_store_tests.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\save_store_tests.cpp",
+  "file": "Q:/tests/persistence/save_store_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/save_store_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\save_store_fault_tests.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\save_store_fault_tests.cpp",
+  "file": "Q:/tests/persistence/save_store_fault_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/save_store_fault_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\tests\\dungeon -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /EHsc /Fotests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\dungeon_save_integration_tests.cpp.obj /Fdtests\\persistence\\CMakeFiles\\arpg_persistence_tests.dir\\ /FS -c Q:\\tests\\persistence\\dungeon_save_integration_tests.cpp",
+  "file": "Q:/tests/persistence/dungeon_save_integration_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/persistence/CMakeFiles/arpg_persistence_tests.dir/dungeon_save_integration_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\progression\\CMakeFiles\\arpg_progression_tests.dir\\progression_test_main.cpp.obj /Fdtests\\progression\\CMakeFiles\\arpg_progression_tests.dir\\ /FS -c Q:\\tests\\progression\\progression_test_main.cpp",
+  "file": "Q:/tests/progression/progression_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/progression/CMakeFiles/arpg_progression_tests.dir/progression_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\progression\\CMakeFiles\\arpg_progression_tests.dir\\progression_rules_tests.cpp.obj /Fdtests\\progression\\CMakeFiles\\arpg_progression_tests.dir\\ /FS -c Q:\\tests\\progression\\progression_rules_tests.cpp",
+  "file": "Q:/tests/progression/progression_rules_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/progression/CMakeFiles/arpg_progression_tests.dir/progression_rules_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\modifier_test_main.cpp.obj /Fdtests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\ /FS -c Q:\\tests\\modifiers\\modifier_test_main.cpp",
+  "file": "Q:/tests/modifiers/modifier_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/modifiers/CMakeFiles/arpg_modifier_tests.dir/modifier_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\modifier_math_tests.cpp.obj /Fdtests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\ /FS -c Q:\\tests\\modifiers\\modifier_math_tests.cpp",
+  "file": "Q:/tests/modifiers/modifier_math_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/modifiers/CMakeFiles/arpg_modifier_tests.dir/modifier_math_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\effect_set_tests.cpp.obj /Fdtests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\ /FS -c Q:\\tests\\modifiers\\effect_set_tests.cpp",
+  "file": "Q:/tests/modifiers/effect_set_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/modifiers/CMakeFiles/arpg_modifier_tests.dir/effect_set_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\player_modifier_values_tests.cpp.obj /Fdtests\\modifiers\\CMakeFiles\\arpg_modifier_tests.dir\\ /FS -c Q:\\tests\\modifiers\\player_modifier_values_tests.cpp",
+  "file": "Q:/tests/modifiers/player_modifier_values_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/modifiers/CMakeFiles/arpg_modifier_tests.dir/player_modifier_values_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\passives\\CMakeFiles\\arpg_passive_tests.dir\\passive_test_main.cpp.obj /Fdtests\\passives\\CMakeFiles\\arpg_passive_tests.dir\\ /FS -c Q:\\tests\\passives\\passive_test_main.cpp",
+  "file": "Q:/tests/passives/passive_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/passives/CMakeFiles/arpg_passive_tests.dir/passive_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\passives\\CMakeFiles\\arpg_passive_tests.dir\\passive_tree_catalog_tests.cpp.obj /Fdtests\\passives\\CMakeFiles\\arpg_passive_tests.dir\\ /FS -c Q:\\tests\\passives\\passive_tree_catalog_tests.cpp",
+  "file": "Q:/tests/passives/passive_tree_catalog_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/passives/CMakeFiles/arpg_passive_tests.dir/passive_tree_catalog_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\passives\\CMakeFiles\\arpg_passive_tests.dir\\passive_tree_rules_tests.cpp.obj /Fdtests\\passives\\CMakeFiles\\arpg_passive_tests.dir\\ /FS -c Q:\\tests\\passives\\passive_tree_rules_tests.cpp",
+  "file": "Q:/tests/passives/passive_tree_rules_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/passives/CMakeFiles/arpg_passive_tests.dir/passive_tree_rules_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\items\\CMakeFiles\\arpg_item_tests.dir\\item_test_main.cpp.obj /Fdtests\\items\\CMakeFiles\\arpg_item_tests.dir\\ /FS -c Q:\\tests\\items\\item_test_main.cpp",
+  "file": "Q:/tests/items/item_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/items/CMakeFiles/arpg_item_tests.dir/item_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\items\\CMakeFiles\\arpg_item_tests.dir\\item_catalog_tests.cpp.obj /Fdtests\\items\\CMakeFiles\\arpg_item_tests.dir\\ /FS -c Q:\\tests\\items\\item_catalog_tests.cpp",
+  "file": "Q:/tests/items/item_catalog_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/items/CMakeFiles/arpg_item_tests.dir/item_catalog_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\items\\CMakeFiles\\arpg_item_tests.dir\\item_generation_tests.cpp.obj /Fdtests\\items\\CMakeFiles\\arpg_item_tests.dir\\ /FS -c Q:\\tests\\items\\item_generation_tests.cpp",
+  "file": "Q:/tests/items/item_generation_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/items/CMakeFiles/arpg_item_tests.dir/item_generation_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\items\\CMakeFiles\\arpg_item_tests.dir\\item_modifier_tests.cpp.obj /Fdtests\\items\\CMakeFiles\\arpg_item_tests.dir\\ /FS -c Q:\\tests\\items\\item_modifier_tests.cpp",
+  "file": "Q:/tests/items/item_modifier_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/items/CMakeFiles/arpg_item_tests.dir/item_modifier_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\items\\CMakeFiles\\arpg_item_tests.dir\\item_recipe_tests.cpp.obj /Fdtests\\items\\CMakeFiles\\arpg_item_tests.dir\\ /FS -c Q:\\tests\\items\\item_recipe_tests.cpp",
+  "file": "Q:/tests/items/item_recipe_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/items/CMakeFiles/arpg_item_tests.dir/item_recipe_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\items\\CMakeFiles\\arpg_item_tests.dir\\item_crafting_tests.cpp.obj /Fdtests\\items\\CMakeFiles\\arpg_item_tests.dir\\ /FS -c Q:\\tests\\items\\item_crafting_tests.cpp",
+  "file": "Q:/tests/items/item_crafting_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/items/CMakeFiles/arpg_item_tests.dir/item_crafting_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\settings_test_main.cpp.obj /Fdtests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\ /FS -c Q:\\tests\\settings\\settings_test_main.cpp",
+  "file": "Q:/tests/settings/settings_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/settings/CMakeFiles/arpg_settings_tests.dir/settings_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\settings_types_tests.cpp.obj /Fdtests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\ /FS -c Q:\\tests\\settings\\settings_types_tests.cpp",
+  "file": "Q:/tests/settings/settings_types_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/settings/CMakeFiles/arpg_settings_tests.dir/settings_types_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\settings_codec_tests.cpp.obj /Fdtests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\ /FS -c Q:\\tests\\settings\\settings_codec_tests.cpp",
+  "file": "Q:/tests/settings/settings_codec_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/settings/CMakeFiles/arpg_settings_tests.dir/settings_codec_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MDd -Zi /W4 /permissive- /Fotests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\settings_store_tests.cpp.obj /Fdtests\\settings\\CMakeFiles\\arpg_settings_tests.dir\\ /FS -c Q:\\tests\\settings\\settings_store_tests.cpp",
+  "file": "Q:/tests/settings/settings_store_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/settings/CMakeFiles/arpg_settings_tests.dir/settings_store_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src\\launcher /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MTd -Zi /W4 /permissive- /utf-8 /Fotests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\launcher_test_main.cpp.obj /Fdtests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\ /FS -c Q:\\tests\\launcher\\launcher_test_main.cpp",
+  "file": "Q:/tests/launcher/launcher_test_main.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/launcher/CMakeFiles/arpg_launcher_tests.dir/launcher_test_main.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src\\launcher /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MTd -Zi /W4 /permissive- /utf-8 /Fotests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\launcher_core_tests.cpp.obj /Fdtests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\ /FS -c Q:\\tests\\launcher\\launcher_core_tests.cpp",
+  "file": "Q:/tests/launcher/launcher_core_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/launcher/CMakeFiles/arpg_launcher_tests.dir/launcher_core_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src\\launcher /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MTd -Zi /W4 /permissive- /utf-8 /Fotests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\launcher_layout_tests.cpp.obj /Fdtests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\ /FS -c Q:\\tests\\launcher\\launcher_layout_tests.cpp",
+  "file": "Q:/tests/launcher/launcher_layout_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/launcher/CMakeFiles/arpg_launcher_tests.dir/launcher_layout_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src\\launcher /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MTd -Zi /W4 /permissive- /utf-8 /Fotests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\launcher_platform_win32_tests.cpp.obj /Fdtests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\ /FS -c Q:\\tests\\launcher\\launcher_platform_win32_tests.cpp",
+  "file": "Q:/tests/launcher/launcher_platform_win32_tests.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/launcher/CMakeFiles/arpg_launcher_tests.dir/launcher_platform_win32_tests.cpp.obj"
+},
+{
+  "directory": "Q:/out/build/windows-msvc-core-debug",
+  "command": "C:\\PROGRA~2\\MICROS~2\\2022\\BUILDT~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IQ:\\tests\\core -IQ:\\src\\launcher /DWIN32 /D_WINDOWS /EHsc /Ob0 /Od /RTC1 -std:c++17 -MTd -Zi /W4 /permissive- /utf-8 /Fotests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\__\\__\\src\\launcher\\launcher_platform_win32.cpp.obj /Fdtests\\launcher\\CMakeFiles\\arpg_launcher_tests.dir\\ /FS -c Q:\\src\\launcher\\launcher_platform_win32.cpp",
+  "file": "Q:/src/launcher/launcher_platform_win32.cpp",
+  "output": "Q:/out/build/windows-msvc-core-debug/tests/launcher/CMakeFiles/arpg_launcher_tests.dir/__/__/src/launcher/launcher_platform_win32.cpp.obj"
+}
+]

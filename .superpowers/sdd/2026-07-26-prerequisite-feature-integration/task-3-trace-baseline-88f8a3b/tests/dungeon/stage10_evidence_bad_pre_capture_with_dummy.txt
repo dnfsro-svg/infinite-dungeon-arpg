@@ -1,0 +1,9 @@
+void export_screenshot(const char* path) noexcept { ExportImage(LoadImageFromScreen(), path); }
+void capture_after_presented_frame(const char* path) noexcept { export_screenshot(path); }
+capture_after_presented_frame("real-before-present.png");
+EndDrawing();
+++presented_frame_count;
+capture_after_presented_frame("dummy-after-present.png");
+queue_action(Action::light);
+request_descent(true);
+reset_current_room();

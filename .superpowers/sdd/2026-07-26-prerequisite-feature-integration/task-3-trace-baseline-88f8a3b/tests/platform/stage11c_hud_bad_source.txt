@@ -1,0 +1,9 @@
+// Stage 11-C HUD architecture mutation manifest.
+int bad_input() { return GetKeyPressed(); }
+DungeonSession* bad_session = nullptr;
+void bad_tick() { runtime.fixed_tick({}); }
+SettingsStore* bad_store = nullptr;
+std::string bad_string;
+std::vector<int> bad_vector;
+constexpr const char* bad_normal_text = "Budget";
+// FOURTH_STATUS_TAG: append_status_tag(output.player, HudStatusTagKind::slow);

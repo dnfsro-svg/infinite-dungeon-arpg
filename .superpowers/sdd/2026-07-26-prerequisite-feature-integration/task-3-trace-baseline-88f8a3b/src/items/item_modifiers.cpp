@@ -1,0 +1,395 @@
+#include "items/item_modifiers.hpp"
+
+#include "items/item_catalog.hpp"
+#include "items/item_crafting.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+
+namespace arpg::items {
+namespace {
+
+inline constexpr modifiers::ModifierId kEquipmentModifierDomain =
+    0x80000000U;
+inline constexpr std::uint16_t kBaseSourceStart = 1U;
+inline constexpr std::uint16_t kAffixSourceStart = 0x100U;
+inline constexpr std::uint16_t kReinforcementSourceStart = 0x80U;
+inline constexpr std::uint16_t kSourceStride = 4U;
+
+bool checked_add(std::int64_t left,
+    std::int64_t right,
+    std::int64_t& output) noexcept {
+    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
+    if ((right > 0 && left > maximum - right)
+        || (right < 0 && left < minimum - right))
+        return false;
+    output = left + right;
+    return true;
+}
+
+std::int64_t saturating_add(std::int64_t left, std::int64_t right) noexcept {
+    std::int64_t output{};
+    if (checked_add(left, right, output)) return output;
+    return right < 0 ? (std::numeric_limits<std::int64_t>::min)()
+                     : (std::numeric_limits<std::int64_t>::max)();
+}
+
+bool checked_multiply(std::int64_t left,
+    std::int64_t right,
+    std::int64_t& output) noexcept {
+    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
+    if (left == 0 || right == 0) {
+        output = 0;
+        return true;
+    }
+    if ((left == -1 && right == minimum)
+        || (right == -1 && left == minimum))
+        return false;
+    if (left > 0) {
+        if ((right > 0 && left > maximum / right)
+            || (right < 0 && right < minimum / left))
+            return false;
+    } else if ((right > 0 && left < minimum / right)
+        || (right < 0 && left < maximum / right)) {
+        return false;
+    }
+    output = left * right;
+    return true;
+}
+
+bool checked_add_int32(std::int32_t left,
+    std::int32_t right,
+    std::int32_t& output) noexcept {
+    const std::int64_t sum = static_cast<std::int64_t>(left) + right;
+    if (sum < (std::numeric_limits<std::int32_t>::min)()
+        || sum > (std::numeric_limits<std::int32_t>::max)())
+        return false;
+    output = static_cast<std::int32_t>(sum);
+    return true;
+}
+
+std::size_t value_index(std::uint8_t item_level) noexcept {
+    for (std::uint8_t tier = 1U; tier <= 8U; ++tier) {
+        if (item_level >= tier_minimum_level(tier))
+            return static_cast<std::size_t>(8U - tier);
+    }
+    return 0U;
+}
+
+bool uses_fixed_units(modifiers::StatId stat,
+    modifiers::ModifierOperation operation) noexcept {
+    if (operation != modifiers::ModifierOperation::flat) return false;
+    return stat == modifiers::StatId::physical_flat_damage
+        || stat == modifiers::StatId::fire_flat_damage
+        || stat == modifiers::StatId::water_flat_damage
+        || stat == modifiers::StatId::lightning_flat_damage
+        || stat == modifiers::StatId::chaos_flat_damage
+        || stat == modifiers::StatId::max_health
+        || stat == modifiers::StatId::max_barrier;
+}
+
+modifiers::ModifierId modifier_id(ItemSlot slot,
+    std::uint16_t source) noexcept {
+    return kEquipmentModifierDomain
+        | (static_cast<modifiers::ModifierId>(slot) << 16U)
+        | source;
+}
+
+bool append_modifier(EquipmentProjection& projection,
+    ItemSlot slot,
+    std::uint16_t source,
+    modifiers::StatId stat,
+    modifiers::ModifierOperation operation,
+    std::int64_t raw_value,
+    bool allow_reinforcement_saturation_merge) noexcept {
+    if (projection.modifier_count >= projection.modifiers.size()) return false;
+    std::int64_t value = raw_value;
+    if (uses_fixed_units(stat, operation)
+        && !checked_multiply(value, modifiers::kFixedOne, value)) {
+        value = value < 0 ? (std::numeric_limits<std::int64_t>::min)()
+                          : (std::numeric_limits<std::int64_t>::max)();
+    }
+    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
+    for (std::size_t index = 0U; index < projection.modifier_count; ++index) {
+        modifiers::Modifier& existing = projection.modifiers[index];
+        if (existing.stat != stat || existing.operation != operation) {
+            continue;
+        }
+        // A saturated existing value was produced by an earlier reinforced
+        // equipment effect. Preserve that anchor for later slots so the
+        // projection is independent of equipment-slot iteration order.
+        if (existing.value == maximum || existing.value == minimum
+                || (allow_reinforcement_saturation_merge
+                    && (value == maximum || value == minimum))) {
+            existing.value = value == minimum || existing.value == minimum
+                ? minimum : maximum;
+            return true;
+        }
+    }
+    projection.modifiers[projection.modifier_count++] = modifiers::Modifier{
+        modifier_id(slot, source), stat, operation, value};
+    return true;
+}
+
+bool apply_effect(EquipmentProjection& projection,
+    ItemSlot slot,
+    ItemEffectKind effect,
+    modifiers::StatId stat,
+    modifiers::ModifierOperation operation,
+    std::int64_t value,
+    bool allow_reinforcement_saturation_merge,
+    std::uint8_t variant,
+    std::uint16_t source,
+    std::int64_t& local_flat,
+    std::int64_t& local_increased) noexcept {
+    switch (effect) {
+    case ItemEffectKind::global_modifier:
+        return append_modifier(projection, slot, source,
+            stat, operation, value, allow_reinforcement_saturation_merge);
+    case ItemEffectKind::local_weapon_physical_flat:
+        if (slot != ItemSlot::weapon) return false;
+        local_flat = saturating_add(local_flat, value);
+        return true;
+    case ItemEffectKind::local_weapon_physical_increased:
+        if (slot != ItemSlot::weapon) return false;
+        local_increased = saturating_add(local_increased, value);
+        return true;
+    case ItemEffectKind::slot_dependent_attack_speed:
+        if (value < (std::numeric_limits<std::int32_t>::min)()
+                || value > (std::numeric_limits<std::int32_t>::max)()) {
+            return false;
+        }
+        if (slot == ItemSlot::weapon) {
+            return checked_add_int32(projection.local_attack_speed_bp,
+                static_cast<std::int32_t>(value),
+                projection.local_attack_speed_bp);
+        }
+        return append_modifier(projection, slot, source,
+            modifiers::StatId::attack_speed,
+            modifiers::ModifierOperation::increased, value,
+            allow_reinforcement_saturation_merge);
+    case ItemEffectKind::all_element_damage_reduction:
+        for (std::uint16_t element = 0U; element < 4U; ++element) {
+            const auto element_stat = static_cast<modifiers::StatId>(
+                static_cast<std::uint16_t>(
+                    modifiers::StatId::fire_damage_reduction) + element);
+            if (!append_modifier(projection, slot,
+                    static_cast<std::uint16_t>(source + element),
+                    element_stat, modifiers::ModifierOperation::flat, value,
+                    allow_reinforcement_saturation_merge))
+                return false;
+        }
+        return true;
+    case ItemEffectKind::tri_element_damage_reduction:
+        for (std::uint16_t element = 0U; element < 3U; ++element) {
+            const auto element_stat = static_cast<modifiers::StatId>(
+                static_cast<std::uint16_t>(
+                    modifiers::StatId::fire_damage_reduction) + element);
+            if (!append_modifier(projection, slot,
+                    static_cast<std::uint16_t>(source + element),
+                    element_stat, modifiers::ModifierOperation::flat, value,
+                    allow_reinforcement_saturation_merge))
+                return false;
+        }
+        return true;
+    case ItemEffectKind::variant_element_damage_reduction_cap:
+        if (variant >= 4U) return false;
+        return append_modifier(projection, slot, source,
+            static_cast<modifiers::StatId>(static_cast<std::uint16_t>(
+                modifiers::StatId::fire_damage_reduction_cap) + variant),
+            modifiers::ModifierOperation::flat, value,
+            allow_reinforcement_saturation_merge);
+    case ItemEffectKind::count:
+        return false;
+    }
+    return false;
+}
+
+const ItemInstance* equipped_item(const ItemOwnershipState& state,
+    std::uint64_t id) noexcept {
+    for (const ItemInstance& item : state.items)
+        if (item.id == id) return &item;
+    return nullptr;
+}
+
+bool valid_equipment_override(const ItemOwnershipState& state,
+    const EquipmentState& equipment) noexcept {
+    for (std::size_t slot_index = 0U;
+         slot_index < equipment.equipped_ids.size(); ++slot_index) {
+        const std::uint64_t id = equipment.equipped_ids[slot_index];
+        if (id == 0U) continue;
+        for (std::size_t prior = 0U; prior < slot_index; ++prior) {
+            if (equipment.equipped_ids[prior] == id) return false;
+        }
+        const ItemInstance* const item = equipped_item(state, id);
+        const BaseDefinition* const base = item == nullptr
+            ? nullptr : base_definition(item->base_id);
+        if (base == nullptr
+            || base->slot != static_cast<ItemSlot>(slot_index)) return false;
+    }
+    return true;
+}
+
+bool checked_weapon_formula(std::int64_t base_and_flat,
+    std::int64_t local_increased,
+    std::int64_t& output) noexcept {
+    const std::int64_t factor = saturating_add(
+        modifiers::kFixedOne, local_increased);
+    if (factor == modifiers::kFixedOne) {
+        output = base_and_flat;
+        return true;
+    }
+    if (base_and_flat >= 0 && factor >= 0) {
+        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+        const std::int64_t whole_input =
+            base_and_flat / modifiers::kFixedOne;
+        const std::int64_t remainder_input =
+            base_and_flat % modifiers::kFixedOne;
+        if (whole_input > maximum / factor) {
+            output = maximum;
+            return true;
+        }
+        const std::int64_t whole = whole_input * factor;
+        std::int64_t remainder_product{};
+        if (!checked_multiply(remainder_input, factor, remainder_product)) {
+            output = maximum;
+            return true;
+        }
+        const std::int64_t remainder = remainder_product / modifiers::kFixedOne;
+        if (whole > maximum - remainder) {
+            output = maximum;
+            return true;
+        }
+        output = whole + remainder;
+        return true;
+    }
+    std::int64_t whole{};
+    std::int64_t remainder{};
+    if (!checked_multiply(base_and_flat / modifiers::kFixedOne,
+            factor, whole)
+        || !checked_multiply(base_and_flat % modifiers::kFixedOne,
+            factor, remainder))
+        return false;
+    remainder /= modifiers::kFixedOne;
+    output = saturating_add(whole, remainder);
+    return true;
+}
+
+}  // namespace
+
+namespace {
+
+EquipmentProjectionResult project_equipment_with_state(
+    const ItemOwnershipState& state,
+    const EquipmentState& equipment) noexcept {
+    EquipmentProjectionResult result{};
+    const OwnershipValidationResult validation =
+        validate_ownership_detailed(state);
+    if (validation == OwnershipValidationResult::allocation_failure) {
+        result.status = EquipmentProjectionStatus::allocation_failure;
+        return result;
+    }
+    if (validation != OwnershipValidationResult::valid) return result;
+    if (!valid_equipment_override(state, equipment)) return result;
+    EquipmentProjection& projection = result.projection;
+
+    std::int64_t local_flat = 0;
+    std::int64_t local_increased = 0;
+    for (std::size_t slot_index = 0U;
+         slot_index < equipment.equipped_ids.size(); ++slot_index) {
+        const std::uint64_t id = equipment.equipped_ids[slot_index];
+        if (id == 0U) continue;
+        const ItemInstance* item = equipped_item(state, id);
+        if (item == nullptr) return {};
+        const BaseDefinition* base = base_definition(item->base_id);
+        if (base == nullptr) return {};
+        const ItemSlot slot = static_cast<ItemSlot>(slot_index);
+        const std::size_t base_value_index = value_index(item->item_level);
+        for (std::size_t effect_index = 0U;
+             effect_index < base->effect_count; ++effect_index) {
+            const BaseEffect& effect = base->effects[effect_index];
+            std::int64_t value = effect.values[base_value_index];
+            const bool reinforced_base = (slot == ItemSlot::weapon
+                    && effect.effect
+                        == ItemEffectKind::local_weapon_physical_flat)
+                || (slot != ItemSlot::weapon && slot != ItemSlot::accessory
+                    && effect.effect == ItemEffectKind::global_modifier
+                    && effect.stat == modifiers::StatId::armor
+                    && effect.operation == modifiers::ModifierOperation::flat);
+            if (reinforced_base) {
+                value = reinforced_base_value(value, item->reinforcement);
+            }
+            const std::uint16_t source = static_cast<std::uint16_t>(
+                kBaseSourceStart + effect_index * kSourceStride);
+            if (!apply_effect(projection, slot, effect.effect, effect.stat,
+                    effect.operation, value, reinforced_base
+                        && item->reinforcement != 0U, 0xFFU,
+                    source, local_flat, local_increased))
+                return {};
+        }
+
+        if (slot == ItemSlot::accessory && item->reinforcement != 0U) {
+            const std::int32_t bonus = reinforced_accessory_bonus_bp(
+                item->reinforcement);
+            for (std::uint16_t element = 0U; element < 4U; ++element) {
+                const auto stat = static_cast<modifiers::StatId>(
+                    static_cast<std::uint16_t>(
+                        modifiers::StatId::fire_damage_reduction) + element);
+                if (!append_modifier(projection, slot,
+                        static_cast<std::uint16_t>(
+                            kReinforcementSourceStart + element),
+                        stat, modifiers::ModifierOperation::flat, bonus,
+                        true)) {
+                    return {};
+                }
+            }
+        }
+
+        for (std::size_t affix_index = 0U;
+             affix_index < item->affix_count; ++affix_index) {
+            const AffixRoll& roll = item->affixes[affix_index];
+            const AffixDefinition* affix = affix_definition(roll.affix_id);
+            if (affix == nullptr) return {};
+            const auto value = affix_roll_value(roll);
+            if (!value.has_value()) return {};
+            const std::uint16_t source = static_cast<std::uint16_t>(
+                kAffixSourceStart + affix_index * kSourceStride);
+            if (!apply_effect(projection, slot, affix->effect, affix->stat,
+                    affix->operation, *value, item->reinforcement != 0U,
+                    roll.variant,
+                    source, local_flat, local_increased))
+                return {};
+        }
+    }
+
+    if (!checked_weapon_formula(
+            local_flat, local_increased, projection.weapon_physical))
+        return {};
+    projection.valid = true;
+    result.status = EquipmentProjectionStatus::valid;
+    return result;
+}
+
+}  // namespace
+
+EquipmentProjectionResult project_equipment_detailed(
+    const ItemOwnershipState& state) noexcept {
+    return project_equipment_with_state(state, state.equipment);
+}
+
+EquipmentProjectionResult project_equipment_detailed(
+    const ItemOwnershipState& state,
+    const EquipmentState& equipment_override) noexcept {
+    return project_equipment_with_state(state, equipment_override);
+}
+
+EquipmentProjection project_equipment(
+    const ItemOwnershipState& state) noexcept {
+    return project_equipment_detailed(state).projection;
+}
+
+}  // namespace arpg::items

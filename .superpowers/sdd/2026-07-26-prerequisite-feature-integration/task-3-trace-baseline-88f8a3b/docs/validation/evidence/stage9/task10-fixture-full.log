@@ -1,0 +1,12 @@
+plan waves=2 budget=15
+plan wave=0 spawn=0 ordinal=0 monster=6 pos=9.924,1.47086 affixes=BLINK-M3,FRZ-M1,MGT-M2 score=13
+plan wave=0 spawn=1 ordinal=1 monster=1 pos=8.8485,2.73743 affixes=SWF-M2,BLINK-M1,CHAIN-M2 score=13
+plan wave=0 spawn=2 ordinal=2 monster=6 pos=-6.5205,1.45043 affixes=CHAIN-M3,CHILL-M1,SHD-M3 score=17
+plan wave=1 spawn=0 ordinal=96 monster=6 pos=-5.31,-0.553143 affixes=DEATH-M3 score=9
+plan wave=1 spawn=1 ordinal=97 monster=3 pos=-9.123,-1.75371 affixes=SHD-M2 score=4
+plan wave=1 spawn=2 ordinal=98 monster=6 pos=6.084,4.96571 affixes=BLINK-M2,CORR-M2 score=10
+deep40 root=2 room_index=39 room_seed=2972536108632698802 depth=40
+defeat kind=5 tick=2 target=2 monster=6 ordinal=2 score=17 reward_eligible=1
+drop ordinal=2 item_id=12564799626640217584 item_level=46 rarity=0
+claim ordinal=2 claimed_bits=4,0,0 item_count=1
+v4 state_equal=1 plan_and_affixes_equal=1 drop_equal=1 claim_equal=1 consistent=1

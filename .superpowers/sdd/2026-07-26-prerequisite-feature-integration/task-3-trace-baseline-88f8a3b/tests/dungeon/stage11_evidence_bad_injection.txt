@@ -1,0 +1,1 @@
+DungeonSessionTestAccess stable_state_ phase_ = death_checkpoint

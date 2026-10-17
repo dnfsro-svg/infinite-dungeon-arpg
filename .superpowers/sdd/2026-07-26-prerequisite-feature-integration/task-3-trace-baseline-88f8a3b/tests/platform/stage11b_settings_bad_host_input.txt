@@ -1,0 +1,7 @@
+const PhysicalKeySnapshot physical_keys = sample_physical_keys();
+pause_menu.committed = settings::default_settings();
+validation_input_setter(physical_keys);
+session.queue_action(combat::Action::light);
+Image image = LoadImageFromScreen();
+EndDrawing();
+TestAccess state{};

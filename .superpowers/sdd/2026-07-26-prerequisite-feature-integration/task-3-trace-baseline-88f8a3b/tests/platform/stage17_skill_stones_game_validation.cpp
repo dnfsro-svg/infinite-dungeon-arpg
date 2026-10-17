@@ -1,0 +1,367 @@
+#include "persistence/checkpoint_codec.hpp"
+#include "active_skill_renderer.hpp"
+#include "raylib_host.hpp"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <string>
+#include <thread>
+
+namespace {
+
+namespace platform = arpg::platform;
+namespace persistence = arpg::persistence;
+namespace combat = arpg::combat;
+namespace skills = arpg::skills;
+
+std::filesystem::path g_executable{};
+
+[[nodiscard]] bool path_is_within(const std::filesystem::path& child,
+    const std::filesystem::path& parent) noexcept {
+    auto child_part = child.begin();
+    auto parent_part = parent.begin();
+    for (; parent_part != parent.end(); ++parent_part, ++child_part) {
+        if (child_part == child.end() || *child_part != *parent_part) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool prepare_evidence(const std::filesystem::path& argument,
+    std::filesystem::path& run) noexcept {
+    try {
+        std::error_code error{};
+        std::filesystem::create_directories(argument, error);
+        if (error) return false;
+        const std::filesystem::path root =
+            std::filesystem::weakly_canonical(argument, error);
+        if (error || root.empty()) return false;
+        run = (root / "stage17-run").lexically_normal();
+        if (run.filename() != "stage17-run" || run.parent_path() != root
+                || !path_is_within(run, root)) {
+            return false;
+        }
+        if (std::filesystem::exists(run, error)) {
+            const std::filesystem::path existing =
+                std::filesystem::weakly_canonical(run, error);
+            if (error || existing != run || !path_is_within(existing, root)) {
+                return false;
+            }
+            std::filesystem::remove_all(existing, error);
+            if (error) return false;
+        }
+        std::filesystem::create_directories(run, error);
+        return !error;
+    } catch (...) {
+        return false;
+    }
+}
+
+[[nodiscard]] std::string quote(const std::filesystem::path& value) {
+    std::string result{"\""};
+    for (const char character : value.string()) {
+        if (character == '"') result += '\\';
+        result += character;
+    }
+    result += '"';
+    return result;
+}
+
+[[nodiscard]] bool regular_nonempty(
+    const std::filesystem::path& path) noexcept {
+    std::error_code error{};
+    return std::filesystem::is_regular_file(path, error) && !error
+        && std::filesystem::file_size(path, error) > 0U && !error;
+}
+
+[[nodiscard]] std::map<std::string, std::string> read_fields(
+    const std::filesystem::path& path) {
+    std::ifstream stream(path);
+    std::map<std::string, std::string> fields{};
+    std::string line{};
+    while (std::getline(stream, line)) {
+        const std::size_t separator = line.find('=');
+        if (separator != std::string::npos) {
+            fields.emplace(line.substr(0U, separator),
+                line.substr(separator + 1U));
+        }
+    }
+    return fields;
+}
+
+[[nodiscard]] bool field_is(
+    const std::map<std::string, std::string>& fields,
+    const char* key, const char* expected) noexcept {
+    const auto found = fields.find(key);
+    return found != fields.end() && found->second == expected;
+}
+
+[[nodiscard]] bool field_is_positive(
+    const std::map<std::string, std::string>& fields,
+    const char* key) noexcept {
+    const auto found = fields.find(key);
+    if (found == fields.end()) return false;
+    try {
+        return std::stoull(found->second) > 0U;
+    } catch (...) {
+        return false;
+    }
+}
+
+[[nodiscard]] bool run_child(const std::filesystem::path& run,
+    const char* scenario, std::uint64_t seed) {
+    const std::filesystem::path command = run /
+        (std::string{"stage17-"} + scenario + ".cmd");
+    std::ofstream stream(command, std::ios::out | std::ios::trunc);
+    stream << "@echo off\r\n" << quote(g_executable)
+           << " --scenario " << scenario << ' ' << quote(run)
+           << ' ' << seed << "\r\n";
+    if (!stream) return false;
+    stream.close();
+    return std::system(("call " + quote(command)).c_str()) == 0;
+}
+
+[[nodiscard]] bool run_host_child(const std::filesystem::path& run,
+    const std::string& scenario, std::uint64_t seed) noexcept {
+    platform::RaylibHostConfig config{};
+    config.window_width = 1280;
+    config.window_height = 720;
+    config.window_title = "Stage 17 Skill Stones Production Validation";
+    config.save_directory = run / "save";
+    config.settings_directory = run / "settings";
+    config.screenshot_directory = run;
+    config.new_run_seed = seed;
+    config.validation_steps_per_frame = 1U;
+    config.validation_exit_after_presented_frames =
+        scenario == "production" ? 1200U : 300U;
+    if (scenario == "production") {
+        config.stage17_skill_stones_validation =
+            platform::Stage17SkillStonesValidationScenario::production_sequence;
+        config.validation_summary_file = run / "production-summary.txt";
+    } else if (scenario == "restart") {
+        config.stage17_skill_stones_validation =
+            platform::Stage17SkillStonesValidationScenario::restarted_loadout;
+        config.validation_summary_file = run / "restart-summary.txt";
+    } else {
+        return false;
+    }
+    return platform::run_raylib_host(config) == platform::HostExitCode::success
+        && regular_nonempty(*config.validation_summary_file);
+}
+
+[[nodiscard]] bool production_summary_valid(
+    const std::map<std::string, std::string>& fields) noexcept {
+    return field_is(fields, "scenario", "production_sequence")
+        && field_is(fields, "result", "pass")
+        && field_is(fields, "initial_slots",
+            "draw_slash,storm_swords,none,none,none")
+        && field_is(fields, "final_slots",
+            "none,draw_slash,none,none,storm_swords")
+        && field_is(fields, "owned_active_bits", "3")
+        && field_is(fields, "support_none_count", "25")
+        && field_is(fields, "empty_slots_none", "1")
+        && field_is(fields, "draw_accepted", "1")
+        && field_is(fields, "draw_windup_captured", "1")
+        && field_is(fields, "draw_frame_peak", "35")
+        && field_is(fields, "draw_hit_count", "2")
+        && field_is(fields, "storm_accepted", "1")
+        && field_is(fields, "storm_strike_hit_count", "5")
+        && field_is(fields, "storm_finisher_hit_count", "0")
+        && field_is(fields, "storm_strike_count", "12")
+        && field_is(fields, "storm_sword_peak", "24")
+        && field_is(fields, "storm_invulnerable_seen", "1")
+        && field_is(fields, "storm_finisher_phase_seen", "1")
+        && field_is(fields, "storm_aerial_captured", "1")
+        && field_is(fields, "active_skill_atlases_ready", "1")
+        && field_is_positive(fields, "draw_renderer_samples")
+        && field_is(fields, "draw_material_frame_drawn", "1")
+        && field_is(fields, "draw_base_player_drawn", "0")
+        && field_is(fields, "draw_procedural_main_visual_peak", "0")
+        && field_is(fields, "draw_renderer_status_valid", "1")
+        && field_is_positive(fields, "storm_renderer_samples")
+        && field_is(fields, "storm_material_frame_drawn", "1")
+        && field_is(fields, "storm_base_player_drawn", "0")
+        && field_is(fields, "storm_procedural_main_visual_peak", "0")
+        && field_is(fields, "storm_renderer_status_valid", "1")
+        && field_is(fields, "renderer_status_failure_latched", "0")
+        && field_is(fields, "storm_center_locked", "1")
+        && field_is(fields, "storm_player_moved", "1")
+        && field_is(fields, "public_input_path", "1")
+        && field_is(fields, "production_transactions", "1");
+}
+
+[[nodiscard]] bool restart_summary_valid(
+    const std::map<std::string, std::string>& fields) noexcept {
+    return field_is(fields, "scenario", "restarted_loadout")
+        && field_is(fields, "result", "pass")
+        && field_is(fields, "initial_slots",
+            "none,draw_slash,none,none,storm_swords")
+        && field_is(fields, "restart_persisted", "1")
+        && field_is(fields, "restart_cooldowns_zero", "1");
+}
+
+struct PureTimelineEvidence final {
+    std::array<bool, 36> draw_frames{};
+    std::array<bool, 24> storm_frames{};
+
+    [[nodiscard]] bool draw_complete() const noexcept {
+        return std::all_of(draw_frames.begin(), draw_frames.end(),
+            [](bool seen) { return seen; });
+    }
+
+    [[nodiscard]] bool storm_complete() const noexcept {
+        return std::all_of(storm_frames.begin(), storm_frames.end(),
+            [](bool seen) { return seen; });
+    }
+
+    [[nodiscard]] bool valid() const noexcept {
+        return draw_complete() && storm_complete()
+            && draw_frames.front() && draw_frames.back()
+            && storm_frames.front() && storm_frames.back();
+    }
+};
+
+[[nodiscard]] PureTimelineEvidence pure_timeline_evidence() noexcept {
+    PureTimelineEvidence evidence{};
+    for (std::uint16_t tick{}; tick < 90U; ++tick) {
+        const std::size_t frame = platform::active_skill_visual_frame_index(
+            skills::ActiveSkillId::draw_slash, tick);
+        if (frame < evidence.draw_frames.size()) evidence.draw_frames[frame] = true;
+    }
+    for (std::uint16_t tick{}; tick < 360U; ++tick) {
+        const std::size_t frame = platform::active_skill_visual_frame_index(
+            skills::ActiveSkillId::storm_swords, tick);
+        if (frame < evidence.storm_frames.size()) evidence.storm_frames[frame] = true;
+    }
+
+    return evidence;
+}
+
+[[nodiscard]] bool write_final_state(const std::filesystem::path& run,
+    const PureTimelineEvidence& timeline,
+    const std::map<std::string, std::string>& production) {
+    static_assert(persistence::kCheckpointFormatVersion == 8U);
+    if (!timeline.valid()) return false;
+    std::ofstream stream(run / "stage17-skill-stones-state.txt",
+        std::ios::out | std::ios::trunc | std::ios::binary);
+    stream << "schema=stage17-active-skill-rework-evidence-v3\n"
+           << "result=PASS\n"
+           << "renderer=raylib-6.0-opengl\n"
+           << "window=1280x720\n"
+           << "fixture_path=production-raylib-host\n"
+           << "showcase_capture_count=0\n"
+           << "save_version=" << persistence::kCheckpointFormatVersion << "\n"
+           << "initial_slots=draw_slash,storm_swords,none,none,none\n"
+           << "final_slots=none,draw_slash,none,none,storm_swords\n"
+           << "restarted_slots=none,draw_slash,none,none,storm_swords\n"
+           << "owned_active_bits=3\n"
+           << "support_none_count=25\n"
+           << "digit_1_cast=accepted\n"
+           << "digit_2_cast=accepted\n"
+           << "digit_3_5_effect=none\n"
+           << "draw_windup_captured=true\n"
+           << "draw_frame_peak=35\n"
+           << "draw_slash_frame_union="
+           << (timeline.draw_complete() ? "0..35" : "incomplete") << "\n"
+           << "draw_slash_frame_zero="
+           << (timeline.draw_frames.front() ? "true" : "false") << "\n"
+           << "draw_slash_frame_last="
+           << (timeline.draw_frames.back() ? "true" : "false") << "\n"
+           << "draw_slash_hit_count=2\n"
+           << "storm_strike_hit_count=5\n"
+           << "storm_finisher_hit_count=0\n"
+           << "storm_strike_count=12\n"
+           << "storm_sword_peak=24\n"
+           << "storm_swords_frame_union="
+           << (timeline.storm_complete() ? "0..23" : "incomplete") << "\n"
+           << "storm_swords_frame_zero="
+           << (timeline.storm_frames.front() ? "true" : "false") << "\n"
+           << "storm_swords_frame_last="
+           << (timeline.storm_frames.back() ? "true" : "false") << "\n"
+           << "storm_invulnerable_seen=true\n"
+           << "storm_finisher_phase_seen=true\n"
+           << "storm_aerial_captured=true\n"
+           << "active_skill_atlases_ready=true\n"
+           << "renderer_status_source=production-summary.txt\n"
+           << "draw_renderer_samples="
+           << production.at("draw_renderer_samples") << "\n"
+           << "draw_material_frame_drawn="
+           << production.at("draw_material_frame_drawn") << "\n"
+           << "draw_base_player_drawn="
+           << production.at("draw_base_player_drawn") << "\n"
+           << "draw_procedural_main_visual_peak="
+           << production.at("draw_procedural_main_visual_peak") << "\n"
+           << "draw_renderer_status_valid="
+           << production.at("draw_renderer_status_valid") << "\n"
+           << "storm_renderer_samples="
+           << production.at("storm_renderer_samples") << "\n"
+           << "storm_material_frame_drawn="
+           << production.at("storm_material_frame_drawn") << "\n"
+           << "storm_base_player_drawn="
+           << production.at("storm_base_player_drawn") << "\n"
+           << "storm_procedural_main_visual_peak="
+           << production.at("storm_procedural_main_visual_peak") << "\n"
+           << "storm_renderer_status_valid="
+           << production.at("storm_renderer_status_valid") << "\n"
+           << "renderer_status_failure_latched="
+           << production.at("renderer_status_failure_latched") << "\n"
+           << "storm_center_locked=true\n"
+           << "loadout_transactions=remove1,equip5,swap2_5\n"
+           << "restart_persisted=true\n"
+           << "cooldown_persisted=false\n"
+           << "public_input_path=true\n"
+           << "production_transactions=true\n";
+    return static_cast<bool>(stream);
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc == 5 && argv[1] != nullptr
+            && std::string{argv[1]} == "--scenario") {
+        return run_host_child(std::filesystem::absolute(argv[3]), argv[2],
+            std::stoull(argv[4])) ? 0 : 1;
+    }
+    if (argc != 2 || argv[1] == nullptr) {
+        std::cerr << "usage: arpg_stage17_skill_stones_game_validation "
+                     "<evidence-root>\n";
+        return 2;
+    }
+    g_executable = std::filesystem::absolute(argv[0]);
+    std::filesystem::path run{};
+    if (!prepare_evidence(std::filesystem::absolute(argv[1]), run)) return 3;
+    {
+        std::ofstream marker(run / "run.marker",
+            std::ios::out | std::ios::trunc);
+        marker << "stage17-run\n";
+        if (!marker) return 4;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    constexpr std::uint64_t kProductionSeed = 170017U;
+    if (!run_child(run, "production", kProductionSeed)) return 5;
+    const auto production = read_fields(run / "production-summary.txt");
+    if (!production_summary_valid(production)) {
+        std::cerr << "stage17 production summary rejected\n";
+        return 6;
+    }
+    if (!run_child(run, "restart", kProductionSeed)) return 7;
+    const auto restart = read_fields(run / "restart-summary.txt");
+    if (!restart_summary_valid(restart)) {
+        std::cerr << "stage17 restart summary rejected\n";
+        return 8;
+    }
+    const PureTimelineEvidence timeline = pure_timeline_evidence();
+    if (!timeline.valid()) return 9;
+    if (!write_final_state(run, timeline, production)) return 10;
+    std::cout << "stage17 raylib skill stones scenario=PASS\n";
+    return 0;
+}

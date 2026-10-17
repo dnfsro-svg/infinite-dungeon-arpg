@@ -1,0 +1,11 @@
+/.worktrees/
+/out/
+/build/
+/build-*/
+/_deps/
+/.vs/
+/CMakeUserPresets.json
+*.suo
+*.user
+*.VC.db
+*.VC.VC.opendb
