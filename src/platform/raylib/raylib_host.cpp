@@ -1472,6 +1472,18 @@ combat::MovementInput validation_exit_movement(
     return movement;
 }
 
+[[nodiscard]] dungeon::ExitDirection validation_outward_exit_direction(
+    combat::Vec3 player) noexcept {
+    if (std::fabs(player.x) >= std::fabs(player.y)) {
+        return player.x < 0.0F
+            ? dungeon::ExitDirection::left
+            : dungeon::ExitDirection::right;
+    }
+    return player.y < 0.0F
+        ? dungeon::ExitDirection::up
+        : dungeon::ExitDirection::down;
+}
+
 bool validation_attack_lane(
     const combat::CombatSnapshot& state,
     const combat::MonsterSnapshot& target) noexcept;
@@ -1550,8 +1562,12 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
             || current.phase != dungeon::RoomPhase::awaiting_exit) {
         return snapshot;
     }
+    if (current.is_abyss && current.abyss_exit_confirmation_armed) {
+        return snapshot;
+    }
     const dungeon::ExitDirection direction = current.is_abyss
-        ? dungeon::ExitDirection::right : validation_direction(config);
+        ? validation_outward_exit_direction(combat_snapshot.player.position)
+        : validation_direction(config);
     inject_stage11c_movement(snapshot, settings_data,
         validation_exit_movement(combat_snapshot.player.position, direction));
     return snapshot;
@@ -2523,8 +2539,10 @@ bool stage10_transaction_path_only(
         && config.stage11b_validation == Stage11BValidationScenario::none
         && config.stage11c_hud_validation
             == Stage11CHudValidationScenario::none
+// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN transaction_resources
         && config.stage11d_loot_validation
             == Stage11DLootValidationScenario::none
+// STAGE11D_LOOT_VALIDATION_SEAM_END transaction_resources
         && config.stage17_skill_stones_validation
             == Stage17SkillStonesValidationScenario::none
         && !config.stage12_material_showcase
@@ -3531,8 +3549,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 if (!config.stage12_material_background_only
                     && !config.stage12_material_icons_only
                     && pause_menu.screen != PauseScreen::closed) {
-                    pause_menu_renderer.draw(
-                        pause_menu, renderer.material_pack());
+                    pause_menu_renderer.draw(pause_menu, renderer.material_pack());
                     if (config.stage11b_validation
                             == Stage11BValidationScenario::corrupt_defaults
                         && pause_menu.message == kSettingsRecoveredDefaults
@@ -3677,10 +3694,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             } else if (!capture_path.has_value()) {
                 capture_path = validation_capture_path();
             }
-            present_frame_and_maybe_capture(transaction_path_only
-                ? nullptr
-                : (capture_path.has_value()
-                    ? capture_path->c_str() : nullptr));
+            present_frame_and_maybe_capture(capture_path.has_value()
+                    && !transaction_path_only
+                ? capture_path->c_str() : nullptr);
             if (stage17_capture_requested) {
                 mark_stage17_capture_complete(*stage17_validation_state);
             }

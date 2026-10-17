@@ -116,8 +116,8 @@ std::filesystem::path g_executable{};
 
 [[nodiscard]] std::optional<dungeon::checkpoint::DungeonRunState>
 next_normal_state(const dungeon::checkpoint::DungeonRunState& state,
-    const dungeon::DungeonRules& rules) noexcept {
-    if (state.current_room.depth < 1U && state.current_room.has_hole
+    const dungeon::DungeonRules& rules, std::uint8_t target_depth) noexcept {
+    if (state.current_room.depth < target_depth && state.current_room.has_hole
             && !state.current_room.is_abyss) {
         const auto next = dungeon::make_descent_transition(state, rules);
         if (next.fault == dungeon::DungeonFault::none) return next.state;
@@ -152,7 +152,7 @@ struct OrdinaryRoomScore final {
 [[nodiscard]] std::optional<OrdinaryRoomScore> ordinary_room_score(
     const dungeon::checkpoint::DungeonRunState& state,
     const dungeon::DungeonRules& rules) noexcept {
-    if (state.current_room.is_abyss || state.current_room.depth != 1U) {
+    if (state.current_room.is_abyss || state.current_room.depth != 4U) {
         return std::nullopt;
     }
     const auto built = dungeon::build_encounter_plan(state.current_room.seed,
@@ -207,25 +207,25 @@ struct OrdinaryRoomScore final {
 [[nodiscard]] SelectedStates select_states() noexcept {
     const dungeon::DungeonRules rules{};
     SelectedStates selected{};
-    auto ordinary_built = dungeon::make_initial_run_state(62U, rules);
+    const auto ordinary_built = dungeon::make_initial_run_state(62U, rules);
     if (ordinary_built.fault == dungeon::DungeonFault::none) {
         auto state = ordinary_built.state;
-        for (std::size_t step = 0U; step < 1100U; ++step) {
-            if (state.current_room.index == 979U) {
+        for (std::size_t step = 0U; step < 80000U; ++step) {
+            if (state.current_room.index == 78813U) {
                 const auto score = ordinary_room_score(state, rules);
                 if (score.has_value() && score->last_wave == 0U
                         && score->last_required_spawn == 2U
-                        && score->prefix_affix_danger == 4U
-                        && score->total_affix_danger == 4U
+                        && score->prefix_affix_danger == 11U
+                        && score->total_affix_danger == 11U
                         && score->spawn_count == 3U
-                        && score->base_threat == 5320U
+                        && score->base_threat == 1355U
                         && score->total_budget == 8U) {
                     selected.ordinary = state;
                     selected.ordinary_ready = true;
                 }
                 break;
             }
-            const auto next = next_normal_state(state, rules);
+            const auto next = next_normal_state(state, rules, 4U);
             if (!next.has_value()) break;
             state = *next;
         }
@@ -253,7 +253,7 @@ struct OrdinaryRoomScore final {
                 }
             }
             if (selected.abyss_ready) break;
-            const auto next = next_normal_state(state, rules);
+            const auto next = next_normal_state(state, rules, 1U);
             if (!next.has_value()) break;
             state = *next;
         }

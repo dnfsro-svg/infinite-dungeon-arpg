@@ -42,7 +42,7 @@ set(_stage11d_host_seam "")
 set(_host_without_stage11d_seam "${_host_text}")
 set(_stage11d_seam_labels
     state selectors safe_movement physical_driver evidence_semantics
-    foreground runtime_state runtime_input fixed_step abyss_claim
+    transaction_resources foreground runtime_state runtime_input fixed_step abyss_claim
     presented_semantics reached_merge reached visible_capture captured summary)
 foreach(_label IN LISTS _stage11d_seam_labels)
     set(_begin "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN ${_label}")

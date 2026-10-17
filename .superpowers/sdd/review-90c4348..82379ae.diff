@@ -1,0 +1,469 @@
+BASE: 90c4348567a57ce614f5eaa427197cd35e04ee59
+HEAD: 82379ae7ec8ff00e3aaf85c21fc33a1bc439688c
+
+=== LOG ===
+82379ae feat: define deterministic fixed-capacity health potion loot
+
+=== STAT ===
+ src/dungeon/CMakeLists.txt                    |  1 +
+ src/dungeon/dungeon_types.hpp                 | 10 +++++
+ src/dungeon/health_potion_loot.cpp            | 29 ++++++++++++++
+ src/dungeon/health_potion_loot.hpp            | 56 ++++++++++++++++++++++++++
+ tests/dungeon/CMakeLists.txt                  |  1 +
+ tests/dungeon/dungeon_health_potion_tests.cpp | 58 +++++++++++++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp           | 22 +++++++++-
+ 7 files changed, 176 insertions(+), 1 deletion(-)
+
+=== DIFF CHECK ===
+(clean)
+
+=== DIFF -U10 ===
+diff --git a/src/dungeon/CMakeLists.txt b/src/dungeon/CMakeLists.txt
+index 0307a0f..08f5c47 100644
+--- a/src/dungeon/CMakeLists.txt
++++ b/src/dungeon/CMakeLists.txt
+@@ -4,20 +4,21 @@ add_library(arpg_dungeon STATIC
+     dungeon_rules.cpp
+     encounter_director.cpp
+     encounter_budget.cpp
+     encounter_wave_builder.cpp
+     dungeon_session.cpp
+     dungeon_transition.cpp
+     dungeon_snapshot.cpp
+     death_checkpoint.cpp
+     dungeon_progression.cpp
+     material_loot.cpp
++    health_potion_loot.cpp
+     room_generation.cpp
+     room_combat_template.cpp
+     room_navigation.cpp)
+ 
+ target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_dungeon PUBLIC cxx_std_17)
+ target_link_libraries(arpg_dungeon PUBLIC arpg_combat arpg_progression arpg_passives arpg_items arpg_skills PRIVATE arpg_core arpg_abyss)
+ arpg_enable_project_warnings(arpg_dungeon)
+ if(MSVC)
+     target_compile_options(arpg_dungeon PUBLIC /EHsc)
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index a45b505..7f8d45d 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -1,15 +1,16 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
+ #include "dungeon/dungeon_checkpoint.hpp"
+ #include "dungeon/dungeon_rules.hpp"
++#include "dungeon/health_potion_loot.hpp"
+ #include "dungeon/material_loot.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::dungeon {
+ 
+ using ExitDirection = checkpoint::ExitDirection;
+@@ -87,20 +88,21 @@ struct AbyssExitConfirmation final {
+ 
+ struct DungeonDiagnostics final {
+     std::uint32_t event_overflow_count{};
+     std::uint32_t combat_relay_overflow_count{};
+     std::uint32_t rejected_exit_count{};
+     std::uint32_t save_failure_count{};
+     std::uint32_t ground_saturation_count{};
+     std::uint32_t material_ground_saturation_count{};
+     DungeonFault fault{DungeonFault::none};
+     bool room_index_overflow{};
++    std::uint32_t health_potion_ground_saturation_count{};
+ };
+ 
+ struct DungeonEncounterDiagnostics final {
+     std::uint8_t total_budget{};
+     std::uint8_t current_wave_budget{};
+     std::uint8_t current_wave_spawn_count{};
+     bool plan_valid{};
+ };
+ 
+ struct DungeonSessionConfig final {
+@@ -109,20 +111,21 @@ struct DungeonSessionConfig final {
+ };
+ 
+ struct RoomDescriptor final {
+     std::uint64_t index{};
+     std::uint64_t seed{};
+     EntrySide entry{EntrySide::initial};
+     combat::CombatLabConfig combat{};
+ };
+ 
+ inline constexpr std::size_t kGroundDropCapacity = 192U;
++static_assert(kGroundHealthPotionCapacity == kGroundDropCapacity);
+ inline constexpr float kPickupRadius = 1.5F;
+ 
+ enum class GroundItemSource : std::uint8_t {
+     monster_drop,
+     abyss_chest,
+ };
+ 
+ struct GroundItem final {
+     bool active{};
+     std::uint16_t drop_ordinal{};
+@@ -228,20 +231,25 @@ struct DungeonSnapshot final {
+     std::optional<std::uint16_t> pending_pickup_ordinal{};
+     std::optional<std::uint16_t> pending_material_pickup_ordinal{};
+     std::optional<DeathSnapshot> death{};
+     std::optional<combat::CombatSnapshot> combat{};
+     DungeonEncounterDiagnostics encounter{};
+     DungeonDiagnostics diagnostics{};
+     progression::ProgressionState progression{};
+     std::uint64_t pending_room_experience{};
+     std::uint64_t last_room_experience{};
+     std::uint8_t last_levels_gained{};
++    std::uint16_t ground_health_potion_count{};
++    std::array<GroundHealthPotionSnapshot, kGroundHealthPotionCapacity>
++        ground_health_potions{};
++    HealthPotionPickupReceipt health_potion_pickup_receipt{};
++    std::optional<std::uint16_t> pending_health_potion_spawn_ordinal{};
+ };
+ 
+ struct PendingTransition final {
+     TransitionKind kind{TransitionKind::none};
+     ExitDirection direction{ExitDirection::none};
+     std::uint64_t expected_generation{};
+     DungeonRunState next_state{};
+ };
+ 
+ enum class PendingSaveKind : std::uint8_t {
+@@ -256,32 +264,34 @@ enum class PendingSaveKind : std::uint8_t {
+     reinforcement,
+     skill_loadout,
+     abyss_start,
+     abyss_fail,
+     abyss_clear,
+     abyss_reward_materialized,
+     abyss_reward_claim,
+     abyss_abandon,
+     death_retreat,
+     death_continue,
++    health_potion_pickup,
+ };
+ 
+ struct PendingSave final {
+     PendingSaveKind kind{PendingSaveKind::transition};
+     std::uint64_t expected_generation{};
+     DungeonRunState next_state{};
+     TransitionKind transition{TransitionKind::none};
+     ExitDirection direction{ExitDirection::none};
+     RoomPhase resume_phase{RoomPhase::awaiting_exit};
+     std::uint16_t pickup_ordinal{0xFFFFU};
+     std::optional<combat::CombatDeathSnapshot> death_snapshot{};
+     std::optional<ReinforcementReceipt> reinforcement_receipt{};
++    std::optional<PendingHealthPotionClaim> health_potion_claim{};
+ };
+ 
+ struct PendingSaveResult final {
+     SaveDisposition disposition{SaveDisposition::indeterminate};
+     std::uint64_t generation{};
+     DungeonRunState verified_state{};
+     std::optional<PendingSaveKind> kind{};
+ };
+ 
+ using TransitionSaveResult = PendingSaveResult;
+diff --git a/src/dungeon/health_potion_loot.cpp b/src/dungeon/health_potion_loot.cpp
+new file mode 100644
+index 0000000..706189e
+--- /dev/null
++++ b/src/dungeon/health_potion_loot.cpp
+@@ -0,0 +1,29 @@
++#include "dungeon/health_potion_loot.hpp"
++
++#include "core/deterministic_rng.hpp"
++
++namespace arpg::dungeon {
++namespace {
++
++constexpr std::uint64_t kHealthPotionChanceDomain = 0x48505F504F544E31ULL;
++
++}  // namespace
++
++bool roll_health_potion_drop(
++    std::uint64_t room_seed, std::uint16_t spawn_ordinal) noexcept {
++    auto ordinal = core::DeterministicRng::derive_stream(
++        room_seed, static_cast<std::uint64_t>(spawn_ordinal));
++    auto chance = core::DeterministicRng::derive_stream(
++        ordinal.next_u64(), kHealthPotionChanceDomain);
++    return chance.next_bounded(10000U).value_or(9999U)
++        < kHealthPotionDropChanceBp;
++}
++
++bool health_potion_auto_use_eligible(int hp, int max_hp) noexcept {
++    if (hp <= 0 || max_hp <= 0 || hp > max_hp) return false;
++    return static_cast<std::int64_t>(hp) * 10000
++        <= static_cast<std::int64_t>(max_hp)
++            * kHealthPotionAutoUseThresholdBp;
++}
++
++}  // namespace arpg::dungeon
+diff --git a/src/dungeon/health_potion_loot.hpp b/src/dungeon/health_potion_loot.hpp
+new file mode 100644
+index 0000000..c9cde8a
+--- /dev/null
++++ b/src/dungeon/health_potion_loot.hpp
+@@ -0,0 +1,56 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++
++namespace arpg::dungeon {
++
++inline constexpr std::uint16_t kHealthPotionDropChanceBp = 3000U;
++inline constexpr std::uint16_t kHealthPotionRestoreBp = 2500U;
++inline constexpr std::uint16_t kHealthPotionAutoUseThresholdBp = 7500U;
++inline constexpr std::size_t kGroundHealthPotionCapacity = 192U;
++inline constexpr std::size_t kPendingHealthPotionClaimCapacity = 4U;
++
++[[nodiscard]] constexpr std::uint16_t health_potion_claim_ordinal(
++    std::uint16_t spawn_ordinal) noexcept {
++    return static_cast<std::uint16_t>(spawn_ordinal * 2U + 1U);
++}
++
++struct GroundHealthPotion final {
++    bool active{};
++    std::uint16_t spawn_ordinal{};
++    std::uint16_t claim_ordinal{};
++    combat::Vec3 position{};
++};
++
++struct GroundHealthPotionSnapshot final {
++    std::uint16_t spawn_ordinal{};
++    std::uint16_t claim_ordinal{};
++    combat::Vec3 position{};
++};
++
++struct HealthPotionPickupReceipt final {
++    bool valid{};
++    bool room_clear{};
++    std::uint16_t consumed_count{};
++    std::uint64_t commit_generation{};
++    int restored_hp{};
++};
++
++struct PendingHealthPotionClaim final {
++    std::array<std::uint16_t, kPendingHealthPotionClaimCapacity> spawn_ordinals{};
++    std::uint8_t count{};
++    int expected_hp{};
++    int expected_max_hp{};
++};
++
++[[nodiscard]] bool roll_health_potion_drop(
++    std::uint64_t room_seed, std::uint16_t spawn_ordinal) noexcept;
++[[nodiscard]] bool health_potion_auto_use_eligible(
++    int hp, int max_hp) noexcept;
++
++}  // namespace arpg::dungeon
+diff --git a/tests/dungeon/CMakeLists.txt b/tests/dungeon/CMakeLists.txt
+index 29fb77e..186ab87 100644
+--- a/tests/dungeon/CMakeLists.txt
++++ b/tests/dungeon/CMakeLists.txt
+@@ -12,20 +12,21 @@ add_executable(arpg_dungeon_tests
+     dungeon_progression_tests.cpp
+     dungeon_query_tests.cpp
+     dungeon_passive_tree_tests.cpp
+     dungeon_item_transaction_tests.cpp
+     dungeon_crafting_transaction_tests.cpp
+     dungeon_skill_loadout_transaction_tests.cpp
+     dungeon_skill_cast_tests.cpp
+     dungeon_equipment_stress_tests.cpp
+     dungeon_loot_drop_tests.cpp
+     dungeon_material_loot_tests.cpp
++    dungeon_health_potion_tests.cpp
+     dungeon_transaction_tests.cpp
+     dungeon_abyss_reward_tests.cpp
+     dungeon_abyss_stress_tests.cpp
+     encounter_director_tests.cpp
+     dungeon_wave_tests.cpp)
+ target_sources(arpg_dungeon_tests PRIVATE
+     dungeon_progression_reward_tests.cpp
+     dungeon_affix_reward_tests.cpp
+     dungeon_affix_stress_tests.cpp)
+ 
+diff --git a/tests/dungeon/dungeon_health_potion_tests.cpp b/tests/dungeon/dungeon_health_potion_tests.cpp
+new file mode 100644
+index 0000000..35d4e77
+--- /dev/null
++++ b/tests/dungeon/dungeon_health_potion_tests.cpp
+@@ -0,0 +1,58 @@
++#include "test_framework.hpp"
++
++#include "dungeon/health_potion_loot.hpp"
++
++#include <cstdint>
++
++namespace {
++
++arpg::test::Failure health_potion_rules_are_frozen() noexcept {
++    ARPG_REQUIRE(arpg::dungeon::kHealthPotionDropChanceBp == 3000U);
++    ARPG_REQUIRE(arpg::dungeon::kHealthPotionRestoreBp == 2500U);
++    ARPG_REQUIRE(arpg::dungeon::kHealthPotionAutoUseThresholdBp == 7500U);
++    ARPG_REQUIRE(arpg::dungeon::kGroundHealthPotionCapacity == 192U);
++    ARPG_REQUIRE(arpg::dungeon::health_potion_claim_ordinal(0U) == 1U);
++    ARPG_REQUIRE(arpg::dungeon::health_potion_claim_ordinal(191U) == 383U);
++    return {};
++}
++
++arpg::test::Failure health_potion_roll_is_deterministic_and_has_both_outcomes()
++    noexcept {
++    bool found_drop = false;
++    bool found_miss = false;
++    for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
++        const bool first = arpg::dungeon::roll_health_potion_drop(seed, 37U);
++        const bool second = arpg::dungeon::roll_health_potion_drop(seed, 37U);
++        ARPG_REQUIRE(first == second);
++        found_drop = found_drop || first;
++        found_miss = found_miss || !first;
++    }
++    ARPG_REQUIRE(found_drop);
++    ARPG_REQUIRE(found_miss);
++    return {};
++}
++
++arpg::test::Failure health_potion_threshold_is_integer_exact() noexcept {
++    using arpg::dungeon::health_potion_auto_use_eligible;
++    ARPG_REQUIRE(!health_potion_auto_use_eligible(751, 1000));
++    ARPG_REQUIRE(health_potion_auto_use_eligible(750, 1000));
++    ARPG_REQUIRE(health_potion_auto_use_eligible(749, 1000));
++    ARPG_REQUIRE(!health_potion_auto_use_eligible(0, 1000));
++    ARPG_REQUIRE(!health_potion_auto_use_eligible(1, 0));
++    ARPG_REQUIRE(health_potion_auto_use_eligible(3, 4));
++    ARPG_REQUIRE(!health_potion_auto_use_eligible(4, 4));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"health potion rules frozen", &health_potion_rules_are_frozen},
++    {"health potion deterministic roll",
++        &health_potion_roll_is_deterministic_and_has_both_outcomes},
++    {"health potion exact threshold", &health_potion_threshold_is_integer_exact},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dungeon_health_potion_suite() noexcept {
++    return arpg::test::make_suite("dungeon_health_potion", kCases);
++}
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 7f4eeca..8752cac 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -18,20 +18,21 @@ arpg::test::TestSuite dungeon_rules_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_suite() noexcept;
+ arpg::test::TestSuite dungeon_query_suite() noexcept;
+ arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
+ arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_skill_loadout_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_skill_cast_suite() noexcept;
+ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
+ arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
+ arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
++arpg::test::TestSuite dungeon_health_potion_suite() noexcept;
+ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
+ arpg::test::TestSuite encounter_director_suite() noexcept;
+ arpg::test::TestSuite dungeon_wave_suite() noexcept;
+ arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+ arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
+ 
+ namespace {
+@@ -109,20 +110,30 @@ bool stage16_material_loot_only() noexcept {
+ bool stage16_crafting_transaction_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE16_CRAFTING_TRANSACTION_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool health_potion_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_HEALTH_POTION_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ bool stage17_skill_loadout_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_STAGE17_SKILL_LOADOUT_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
+@@ -149,20 +160,21 @@ int main() {
+         dungeon_progression_suite(),
+         dungeon_query_suite(),
+         dungeon_passive_tree_suite(),
+         dungeon_item_transaction_suite(),
+         dungeon_crafting_transaction_suite(),
+         dungeon_skill_loadout_transaction_suite(),
+         dungeon_skill_cast_suite(),
+         dungeon_equipment_stress_suite(),
+         dungeon_loot_drop_suite(),
+         dungeon_material_loot_suite(),
++        dungeon_health_potion_suite(),
+         dungeon_transaction_suite(),
+         dungeon_abyss_reward_suite(),
+         dungeon_abyss_stress_suite(),
+         encounter_director_suite(),
+         dungeon_wave_suite(),
+         dungeon_progression_reward_suite(),
+         dungeon_affix_reward_suite(),
+         dungeon_affix_stress_suite(),
+     };
+ 
+@@ -224,21 +236,29 @@ int main() {
+     }
+ 
+     if (stage16_crafting_transaction_only()) {
+         const arpg::test::TestSuite crafting_only[] = {
+             dungeon_crafting_transaction_suite(),
+         };
+         return arpg::test::run_suites(crafting_only, 6,
+             "stage 16 task 7 crafting and reinforcement transactions");
+     }
+ 
++    if (health_potion_only()) {
++        const arpg::test::TestSuite potion_only[] = {
++            dungeon_health_potion_suite(),
++        };
++        return arpg::test::run_suites(potion_only, 3,
++            "task 4 health potion loot");
++    }
++
+     if (stage17_skill_loadout_only()) {
+         const arpg::test::TestSuite loadout_only[] = {
+             dungeon_skill_loadout_transaction_suite(),
+         };
+         return arpg::test::run_suites(loadout_only, 9,
+             "stage 17 task 3 skill loadout transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 287,
++    return arpg::test::run_suites(suites, 290,
+         "stage 18 dungeon queries");
+ }

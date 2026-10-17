@@ -15,7 +15,7 @@ void add_ground_loot_codepoints(DeathOverlayFontPlan& plan) noexcept {
     constexpr int kCodepoints[] = {
         0x666E, 0x901A, 0x9B54, 0x6CD5, 0x7A00,
         0x6709, 0x5DF2, 0x62FE, 0x53D6, 0x672A,
-        0x77E5, 0x88C5, 0x5907,
+        0x77E5, 0x88C5, 0x5907, 0x836F,
     };
     for (const int codepoint : kCodepoints) {
         add_hud_codepoint(plan, codepoint);
@@ -47,7 +47,7 @@ HudFontPlan hud_font_plan() noexcept {
     add_ground_loot_codepoints(plan.shared);
     add_active_skill_codepoints(plan.shared);
     constexpr const char* kRequiredText[] = {
-        u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
+        u8"生命药", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
         u8"减速", u8"腐蚀", u8"无敌", u8"深度", u8"层房间", u8"生态",
         u8"第", u8"波", u8"下一波即将开始", u8"待领奖励", u8"未领取",

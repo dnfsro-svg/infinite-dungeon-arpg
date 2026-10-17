@@ -118,7 +118,7 @@ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept 
 arpg::test::Failure ground_loot_labels_are_covered_by_the_hud_owned_font() noexcept {
     const platform::HudFontPlan plan = platform::hud_font_plan();
     constexpr const char* kGroundLootText =
-        u8"普通魔法稀有已拾取未知装备";
+        u8"普通魔法稀有已拾取未知装备生命药 +250 HP";
 
     ARPG_REQUIRE(plan.covers_required_text);
     ARPG_REQUIRE(platform::death_overlay_font_covers_text(

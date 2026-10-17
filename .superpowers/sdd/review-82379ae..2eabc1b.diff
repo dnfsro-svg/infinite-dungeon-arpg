@@ -1,0 +1,650 @@
+BASE: 82379ae7ec8ff00e3aaf85c21fc33a1bc439688c
+HEAD: 2eabc1be1a9ff13a242276bd338ba30033a4d6b0
+
+=== LOG ===
+2eabc1b feat: drop and snapshot ground health potions
+
+=== STAT ===
+ src/dungeon/dungeon_session.cpp               |  20 ++
+ src/dungeon/dungeon_session.hpp               |   5 +
+ src/dungeon/dungeon_snapshot.cpp              |  10 +
+ src/dungeon/dungeon_transition.cpp            |   1 +
+ tests/dungeon/dungeon_health_potion_tests.cpp | 276 ++++++++++++++++++++++++++
+ tests/dungeon/dungeon_test_main.cpp           |   6 +-
+ tests/dungeon/dungeon_test_support.hpp        |   9 +
+ 7 files changed, 324 insertions(+), 3 deletions(-)
+
+=== DIFF CHECK ===
+(clean)
+
+=== DIFF -U10 ===
+diff --git a/src/dungeon/dungeon_session.cpp b/src/dungeon/dungeon_session.cpp
+index 0ac75bc..f65e72f 100644
+--- a/src/dungeon/dungeon_session.cpp
++++ b/src/dungeon/dungeon_session.cpp
+@@ -473,20 +473,21 @@ void DungeonSession::construct_current_room() noexcept {
+     if (!checkpoint::valid_death_checkpoint_structural(
+             stable_state_.death)) {
+         clear_transient_room_state();
+         enter_fault(DungeonFault::death_sequence_mismatch);
+         return;
+     }
+     ground_items_ = {};
+     rolled_drop_bits_ = {};
+     ground_materials_ = {};
+     rolled_material_bits_ = {};
++    ground_health_potions_ = {};
+     if (stable_state_.current_room.depth == 0U) {
+         enter_fault(DungeonFault::invalid_item_state);
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+     pending_room_experience_ = 0U;
+     last_room_experience_ = 0U;
+     last_levels_gained_ = 0U;
+     if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::cleared) {
+         construct_cleared_abyss_room();
+@@ -553,20 +554,21 @@ bool DungeonSession::validate_pending_death_state() const noexcept {
+         && state.last_abyss_resolution.claimed == 0U
+         && state.last_abyss_resolution.abandoned == total;
+ }
+ 
+ void DungeonSession::clear_transient_room_state() noexcept {
+     combat_.reset();
+     ground_items_ = {};
+     rolled_drop_bits_ = {};
+     ground_materials_ = {};
+     rolled_material_bits_ = {};
++    ground_health_potions_ = {};
+     encounter_plan_ = {};
+     wave_index_ = 0U;
+     wave_delay_ticks_ = 0U;
+     pending_save_.reset();
+     pending_item_build_.reset();
+     pending_abyss_combat_.reset();
+     pending_abyss_reward_.reset();
+     clear_abyss_exit_confirmation();
+     room_progression_ = stable_state_.progression;
+     pending_room_experience_ = 0U;
+@@ -1452,20 +1454,34 @@ bool DungeonSession::place_ground_material(
+     }
+     if (ground_materials_[ordinal].active) {
+         saturating_increment(diagnostics_.material_ground_saturation_count);
+         return false;
+     }
+     ground_materials_[ordinal] = {
+         true, ordinal, source, position, material};
+     return true;
+ }
+ 
++bool DungeonSession::place_ground_health_potion(
++    std::uint16_t spawn_ordinal, combat::Vec3 position) noexcept {
++    if (spawn_ordinal >= ground_health_potions_.size()) return false;
++    GroundHealthPotion& slot = ground_health_potions_[spawn_ordinal];
++    if (slot.active) {
++        saturating_increment(
++            diagnostics_.health_potion_ground_saturation_count);
++        return false;
++    }
++    slot = {true, spawn_ordinal,
++        health_potion_claim_ordinal(spawn_ordinal), position};
++    return true;
++}
++
+ void DungeonSession::roll_ground_materials(
+     const combat::CombatEvent& event) noexcept {
+     const std::uint16_t spawn_ordinal = event.spawn_ordinal;
+     if (spawn_ordinal >= kGroundDropCapacity) return;
+     const std::uint16_t common_ordinal = static_cast<std::uint16_t>(
+         spawn_ordinal * 2U);
+     const std::uint16_t coupon_ordinal = static_cast<std::uint16_t>(
+         common_ordinal + 1U);
+     const combat::Vec3 position{event.position.x, event.position.y, 0.0F};
+     if (claim_material_roll(common_ordinal)) {
+@@ -1488,20 +1504,24 @@ void DungeonSession::roll_ground_materials(
+         const auto coupon = roll_coupon_drop(
+             stable_state_.current_room.seed,
+             spawn_ordinal,
+             stable_state_.current_room.depth,
+             event.affix_score,
+             abyss_monster);
+         if (coupon.has_value()) {
+             static_cast<void>(place_ground_material(
+                 coupon_ordinal, GroundMaterialSource::monster_coupon,
+                 position, *coupon));
++        } else if (roll_health_potion_drop(
++                stable_state_.current_room.seed, spawn_ordinal)) {
++            static_cast<void>(place_ground_health_potion(
++                spawn_ordinal, position));
+         }
+     }
+ }
+ 
+ bool DungeonSession::materialize_abyss_clear_materials() noexcept {
+     const std::uint8_t count = abyss_material_reward_count(
+         stable_state_.abyss.danger);
+     if (count == 0U || count > 3U) return false;
+     for (std::uint8_t index = 0U; index < count; ++index) {
+         const std::uint16_t ordinal = static_cast<std::uint16_t>(
+diff --git a/src/dungeon/dungeon_session.hpp b/src/dungeon/dungeon_session.hpp
+index 62bb3d2..1a0dff1 100644
+--- a/src/dungeon/dungeon_session.hpp
++++ b/src/dungeon/dungeon_session.hpp
+@@ -195,20 +195,22 @@ private:
+     [[nodiscard]] bool claim_defeat_reward(
+         const combat::CombatEvent& event) noexcept;
+     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
+     void roll_ground_materials(const combat::CombatEvent& event) noexcept;
+     [[nodiscard]] bool claim_material_roll(std::uint16_t ordinal) noexcept;
+     [[nodiscard]] bool place_ground_material(
+         std::uint16_t ordinal,
+         GroundMaterialSource source,
+         combat::Vec3 position,
+         items::MaterialId material) noexcept;
++    [[nodiscard]] bool place_ground_health_potion(
++        std::uint16_t spawn_ordinal, combat::Vec3 position) noexcept;
+     [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
+     void vacuum_room_materials() noexcept;
+     [[nodiscard]] bool has_ground_materials() const noexcept;
+     void prepare_room_clear() noexcept;
+     void publish_room_clear() noexcept;
+     void settle_room_experience() noexcept;
+     [[nodiscard]] bool can_emit(std::size_t count) const noexcept;
+     void attempt_exit(ExitDirection direction) noexcept;
+     [[nodiscard]] bool prepare_transition(
+         TransitionKind kind,
+@@ -266,20 +268,23 @@ private:
+     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
+     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
+     std::optional<PendingAbyssReward> pending_abyss_reward_{};
+     AbyssExitConfirmation abyss_exit_confirmation_{};
+     std::optional<combat::CombatWorld> combat_{};
+     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
+     std::array<std::uint64_t, 3> rolled_drop_bits_{};
+     std::array<GroundMaterial, kGroundMaterialCapacity> ground_materials_{};
+     std::array<std::uint64_t, kMaterialDropBitWordCount>
+         rolled_material_bits_{};
++    std::array<GroundHealthPotion, kGroundHealthPotionCapacity>
++        ground_health_potions_{};
++    HealthPotionPickupReceipt health_potion_pickup_receipt_{};
+     MaterialPickupReceipt material_pickup_receipt_{};
+     ReinforcementReceipt reinforcement_receipt_{};
+     RoomEncounterPlan encounter_plan_{};
+     std::uint8_t wave_index_{};
+     std::uint16_t wave_delay_ticks_{};
+     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
+     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
+         combat_events_{};
+     RoomPhase phase_{RoomPhase::locked};
+     ExitDirection last_exit_{ExitDirection::none};
+diff --git a/src/dungeon/dungeon_snapshot.cpp b/src/dungeon/dungeon_snapshot.cpp
+index d5398ca..95da3b0 100644
+--- a/src/dungeon/dungeon_snapshot.cpp
++++ b/src/dungeon/dungeon_snapshot.cpp
+@@ -137,20 +137,30 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
+     }
+     for (const GroundMaterial& ground : ground_materials_) {
+         if (!ground.active) continue;
+         GroundMaterialSnapshot& packed =
+             result.ground_materials[result.ground_material_count++];
+         packed.ordinal = ground.ordinal;
+         packed.source = ground.source;
+         packed.position = ground.position;
+         packed.material = ground.material;
+     }
++    for (const GroundHealthPotion& ground : ground_health_potions_) {
++        if (!ground.active) continue;
++        GroundHealthPotionSnapshot& packed =
++            result.ground_health_potions[
++                result.ground_health_potion_count++];
++        packed.spawn_ordinal = ground.spawn_ordinal;
++        packed.claim_ordinal = ground.claim_ordinal;
++        packed.position = ground.position;
++    }
++    result.health_potion_pickup_receipt = health_potion_pickup_receipt_;
+     result.material_pickup_receipt = material_pickup_receipt_;
+     result.reinforcement_receipt = reinforcement_receipt_;
+     if (pending_save_.has_value()) {
+         result.pending_save_kind = pending_save_->kind;
+         if (pending_save_->kind == PendingSaveKind::loot_pickup
+                 || pending_save_->kind
+                     == PendingSaveKind::abyss_reward_claim) {
+             result.pending_pickup_ordinal = pending_save_->pickup_ordinal;
+         }
+         if (pending_save_->kind == PendingSaveKind::material_pickup) {
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index 2085f7c..72de99a 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -1649,20 +1649,21 @@ void DungeonSession::commit_pending_save(
+         phase_ = resume_phase;
+         return;
+     }
+     if (kind == PendingSaveKind::transition
+             || kind == PendingSaveKind::abyss_abandon) {
+         clear_abyss_exit_confirmation();
+         ground_items_ = {};
+         rolled_drop_bits_ = {};
+         ground_materials_ = {};
+         rolled_material_bits_ = {};
++        ground_health_potions_ = {};
+         combat_.reset();
+         phase_ = RoomPhase::transitioning;
+         emit_committed(previous_room, stable_state_);
+         return;
+     }
+     if (skill_loadout_commit) {
+         phase_ = resume_phase;
+         return;
+     }
+     room_progression_ = stable_state_.progression;
+diff --git a/tests/dungeon/dungeon_health_potion_tests.cpp b/tests/dungeon/dungeon_health_potion_tests.cpp
+index 35d4e77..074f17a 100644
+--- a/tests/dungeon/dungeon_health_potion_tests.cpp
++++ b/tests/dungeon/dungeon_health_potion_tests.cpp
+@@ -1,18 +1,98 @@
+ #include "test_framework.hpp"
+ 
++#include "allocation_probe.hpp"
++#include "dungeon_test_support.hpp"
++
+ #include "dungeon/health_potion_loot.hpp"
++#include "dungeon/material_loot.hpp"
++#include "dungeon/dungeon_progression.hpp"
+ 
++#include <array>
++#include <cstring>
+ #include <cstdint>
++#include <optional>
+ 
+ namespace {
+ 
++using arpg::dungeon::DungeonRules;
++using arpg::dungeon::DungeonRunState;
++using arpg::dungeon::DungeonSession;
++using arpg::dungeon::GroundMaterialSource;
++
++struct DropSeedRequirements final {
++    bool common{};
++    bool coupon{};
++    bool potion{};
++};
++
++std::uint64_t find_drop_seed(
++    std::uint16_t spawn_ordinal,
++    std::uint64_t depth,
++    std::uint16_t affix_score,
++    DropSeedRequirements required) noexcept {
++    for (std::uint64_t seed = 1U; seed < 1000000U; ++seed) {
++        const bool common = arpg::dungeon::roll_material_drop(
++            seed, spawn_ordinal, depth, affix_score).has_value();
++        const bool coupon = arpg::dungeon::roll_coupon_drop(
++            seed, spawn_ordinal, depth, affix_score, false).has_value();
++        const bool potion = arpg::dungeon::roll_health_potion_drop(
++            seed, spawn_ordinal);
++        if (common == required.common && coupon == required.coupon
++                && potion == required.potion) {
++            return seed;
++        }
++    }
++    return 0U;
++}
++
++DungeonRunState potion_state(
++    std::uint64_t seed, std::uint64_t depth = 90U) noexcept {
++    DungeonRunState state = arpg::dungeon::make_initial_run_state(
++        0x48505F504F54494FULL, DungeonRules{}).state;
++    state.current_room.seed = seed;
++    state.current_room.depth = depth;
++    return state;
++}
++
++bool relay_drop(
++    DungeonSession& session,
++    std::uint64_t seed,
++    std::uint16_t spawn_ordinal,
++    std::uint16_t affix_score,
++    arpg::combat::Vec3 position) noexcept {
++    arpg::test::set_current_room_seed(session, seed);
++    const bool relayed = arpg::test::relay_defeated(
++        session,
++        static_cast<std::uint8_t>(spawn_ordinal / 96U),
++        static_cast<std::uint8_t>(spawn_ordinal % 96U),
++        position,
++        true,
++        arpg::combat::MonsterId::fire_bomber,
++        spawn_ordinal,
++        affix_score);
++    static_cast<void>(session.try_pop_combat_event());
++    return relayed;
++}
++
++const arpg::dungeon::GroundMaterialSnapshot* find_ground_material_snapshot(
++    const arpg::dungeon::DungeonSnapshot& snapshot,
++    std::uint16_t ordinal) noexcept {
++    for (std::uint16_t index = 0U;
++         index < snapshot.ground_material_count; ++index) {
++        if (snapshot.ground_materials[index].ordinal == ordinal) {
++            return &snapshot.ground_materials[index];
++        }
++    }
++    return nullptr;
++}
++
+ arpg::test::Failure health_potion_rules_are_frozen() noexcept {
+     ARPG_REQUIRE(arpg::dungeon::kHealthPotionDropChanceBp == 3000U);
+     ARPG_REQUIRE(arpg::dungeon::kHealthPotionRestoreBp == 2500U);
+     ARPG_REQUIRE(arpg::dungeon::kHealthPotionAutoUseThresholdBp == 7500U);
+     ARPG_REQUIRE(arpg::dungeon::kGroundHealthPotionCapacity == 192U);
+     ARPG_REQUIRE(arpg::dungeon::health_potion_claim_ordinal(0U) == 1U);
+     ARPG_REQUIRE(arpg::dungeon::health_potion_claim_ordinal(191U) == 383U);
+     return {};
+ }
+ 
+@@ -37,22 +117,218 @@ arpg::test::Failure health_potion_threshold_is_integer_exact() noexcept {
+     ARPG_REQUIRE(!health_potion_auto_use_eligible(751, 1000));
+     ARPG_REQUIRE(health_potion_auto_use_eligible(750, 1000));
+     ARPG_REQUIRE(health_potion_auto_use_eligible(749, 1000));
+     ARPG_REQUIRE(!health_potion_auto_use_eligible(0, 1000));
+     ARPG_REQUIRE(!health_potion_auto_use_eligible(1, 0));
+     ARPG_REQUIRE(health_potion_auto_use_eligible(3, 4));
+     ARPG_REQUIRE(!health_potion_auto_use_eligible(4, 4));
+     return {};
+ }
+ 
++arpg::test::Failure
++coupon_has_priority_and_common_material_can_coexist_with_potion() noexcept {
++    constexpr std::uint16_t kSpawn = 23U;
++    constexpr std::uint64_t kDepth = 90U;
++    constexpr std::uint16_t kScore = 18U;
++    const std::uint64_t coupon_seed = find_drop_seed(
++        kSpawn, kDepth, kScore, {false, true, true});
++    const std::uint64_t common_potion_seed = find_drop_seed(
++        kSpawn, kDepth, kScore, {true, false, true});
++    ARPG_REQUIRE(coupon_seed != 0U);
++    ARPG_REQUIRE(common_potion_seed != 0U);
++
++    DungeonSession coupon_session{
++        DungeonRules{}, potion_state(coupon_seed, kDepth)};
++    ARPG_REQUIRE(relay_drop(coupon_session, coupon_seed, kSpawn, kScore,
++        {2.0F, 3.0F, 9.0F}));
++    const auto coupon_snapshot = coupon_session.snapshot();
++    ARPG_REQUIRE(coupon_snapshot.ground_health_potion_count == 0U);
++    const auto* secondary = find_ground_material_snapshot(
++        coupon_snapshot, arpg::dungeon::health_potion_claim_ordinal(kSpawn));
++    ARPG_REQUIRE(secondary != nullptr);
++    ARPG_REQUIRE(secondary->source == GroundMaterialSource::monster_coupon);
++
++    DungeonSession coexist_session{
++        DungeonRules{}, potion_state(common_potion_seed, kDepth)};
++    ARPG_REQUIRE(relay_drop(coexist_session, common_potion_seed, kSpawn,
++        kScore, {-2.0F, 7.0F, 5.0F}));
++    const auto coexist_snapshot = coexist_session.snapshot();
++    ARPG_REQUIRE(coexist_snapshot.ground_health_potion_count == 1U);
++    ARPG_REQUIRE(coexist_snapshot.ground_health_potions[0].claim_ordinal
++        == arpg::dungeon::health_potion_claim_ordinal(kSpawn));
++    const auto* common = find_ground_material_snapshot(
++        coexist_snapshot, static_cast<std::uint16_t>(kSpawn * 2U));
++    ARPG_REQUIRE(common != nullptr);
++    ARPG_REQUIRE(common->source == GroundMaterialSource::monster_common);
++    ARPG_REQUIRE(find_ground_material_snapshot(coexist_snapshot,
++        arpg::dungeon::health_potion_claim_ordinal(kSpawn)) == nullptr);
++    return {};
++}
++
++arpg::test::Failure
++adding_potions_does_not_change_existing_material_or_coupon_rolls() noexcept {
++    constexpr std::size_t kBatch = 48U;
++    constexpr std::uint64_t kDepth = 90U;
++    constexpr std::uint16_t kScore = 18U;
++    const std::uint64_t seed = find_drop_seed(
++        0U, kDepth, kScore, {false, false, true});
++    ARPG_REQUIRE(seed != 0U);
++    std::array<std::optional<arpg::items::MaterialId>, kBatch> common{};
++    std::array<std::optional<arpg::items::MaterialId>, kBatch> coupons{};
++    for (std::uint16_t spawn = 0U; spawn < kBatch; ++spawn) {
++        common[spawn] = arpg::dungeon::roll_material_drop(
++            seed, spawn, kDepth, kScore);
++        coupons[spawn] = arpg::dungeon::roll_coupon_drop(
++            seed, spawn, kDepth, kScore, false);
++    }
++
++    DungeonSession session{DungeonRules{}, potion_state(seed, kDepth)};
++    for (std::uint16_t spawn = 0U; spawn < kBatch; ++spawn) {
++        ARPG_REQUIRE(relay_drop(session, seed, spawn, kScore,
++            {static_cast<float>(spawn), -static_cast<float>(spawn), 8.0F}));
++    }
++    const auto snapshot = session.snapshot();
++    ARPG_REQUIRE(snapshot.ground_health_potion_count != 0U);
++    for (std::uint16_t spawn = 0U; spawn < kBatch; ++spawn) {
++        ARPG_REQUIRE(common[spawn] == arpg::dungeon::roll_material_drop(
++            seed, spawn, kDepth, kScore));
++        ARPG_REQUIRE(coupons[spawn] == arpg::dungeon::roll_coupon_drop(
++            seed, spawn, kDepth, kScore, false));
++        const auto* actual_common = find_ground_material_snapshot(
++            snapshot, static_cast<std::uint16_t>(spawn * 2U));
++        ARPG_REQUIRE((actual_common != nullptr) == common[spawn].has_value());
++        if (actual_common != nullptr) {
++            ARPG_REQUIRE(actual_common->material == *common[spawn]);
++            ARPG_REQUIRE(actual_common->source
++                == GroundMaterialSource::monster_common);
++        }
++        const auto* actual_coupon = find_ground_material_snapshot(
++            snapshot, arpg::dungeon::health_potion_claim_ordinal(spawn));
++        ARPG_REQUIRE((actual_coupon != nullptr)
++            == coupons[spawn].has_value());
++        if (actual_coupon != nullptr) {
++            ARPG_REQUIRE(actual_coupon->material == *coupons[spawn]);
++            ARPG_REQUIRE(actual_coupon->source
++                == GroundMaterialSource::monster_coupon);
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure
++ground_potion_pool_accepts_spawn_zero_and_191_without_overwrite() noexcept {
++    constexpr std::uint64_t kDepth = 90U;
++    constexpr std::uint16_t kScore = 18U;
++    const std::uint64_t initial_seed = find_drop_seed(
++        0U, kDepth, kScore, {false, false, true});
++    ARPG_REQUIRE(initial_seed != 0U);
++    DungeonSession session{
++        DungeonRules{}, potion_state(initial_seed, kDepth)};
++    const std::uint64_t allocations_before = arpg::test::allocation_count();
++    arpg::dungeon::DungeonSnapshot full{};
++    {
++        arpg::test::ScopedAllocationFailure fail{0U};
++        for (std::uint16_t spawn = 0U;
++             spawn < arpg::dungeon::kGroundHealthPotionCapacity; ++spawn) {
++            const std::uint64_t seed = find_drop_seed(
++                spawn, kDepth, kScore, {false, false, true});
++            ARPG_REQUIRE(seed != 0U);
++            ARPG_REQUIRE(relay_drop(session, seed, spawn, kScore,
++                {static_cast<float>(spawn),
++                    static_cast<float>(spawn + 1U), 99.0F}));
++        }
++        full = session.snapshot();
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
++    ARPG_REQUIRE(full.ground_health_potion_count
++        == arpg::dungeon::kGroundHealthPotionCapacity);
++    ARPG_REQUIRE(full.ground_health_potions[0].spawn_ordinal == 0U);
++    ARPG_REQUIRE(full.ground_health_potions[191].spawn_ordinal == 191U);
++    ARPG_REQUIRE(full.ground_health_potions[0].claim_ordinal == 1U);
++    ARPG_REQUIRE(full.ground_health_potions[191].claim_ordinal == 383U);
++    const auto original = full.ground_health_potions[0];
++    const std::uint32_t saturation_before =
++        full.diagnostics.health_potion_ground_saturation_count;
++
++    arpg::test::clear_rolled_material_claims(session);
++    ARPG_REQUIRE(relay_drop(session, initial_seed, 0U, kScore,
++        {-999.0F, -888.0F, 77.0F}));
++    const auto after = session.snapshot();
++    ARPG_REQUIRE(after.ground_health_potion_count
++        == arpg::dungeon::kGroundHealthPotionCapacity);
++    ARPG_REQUIRE(std::memcmp(&original, &after.ground_health_potions[0],
++        sizeof(original)) == 0);
++    ARPG_REQUIRE(after.diagnostics.health_potion_ground_saturation_count
++        == saturation_before + 1U);
++    return {};
++}
++
++arpg::test::Failure
++potion_snapshot_is_sorted_by_spawn_ordinal_and_clears_on_room_exit() noexcept {
++    constexpr std::uint64_t kDepth = 90U;
++    constexpr std::uint16_t kScore = 18U;
++    constexpr std::array<std::uint16_t, 3U> kInstallOrder{{191U, 77U, 0U}};
++    const std::uint64_t initial_seed = find_drop_seed(
++        kInstallOrder[0], kDepth, kScore, {false, false, true});
++    ARPG_REQUIRE(initial_seed != 0U);
++    DungeonSession session{
++        DungeonRules{}, potion_state(initial_seed, kDepth)};
++    for (const std::uint16_t spawn : kInstallOrder) {
++        const std::uint64_t seed = find_drop_seed(
++            spawn, kDepth, kScore, {false, false, true});
++        ARPG_REQUIRE(seed != 0U);
++        ARPG_REQUIRE(relay_drop(session, seed, spawn, kScore,
++            {static_cast<float>(spawn), 4.0F, 17.0F}));
++    }
++    const auto installed = session.snapshot();
++    ARPG_REQUIRE(installed.ground_health_potion_count == 3U);
++    ARPG_REQUIRE(installed.ground_health_potions[0].spawn_ordinal == 0U);
++    ARPG_REQUIRE(installed.ground_health_potions[1].spawn_ordinal == 77U);
++    ARPG_REQUIRE(installed.ground_health_potions[2].spawn_ordinal == 191U);
++    ARPG_REQUIRE(!installed.health_potion_pickup_receipt.valid);
++
++    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
++    arpg::test::prepare_room_clear(session);
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::cleared);
++    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 3U);
++    session.tick({});
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::awaiting_exit);
++    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 3U);
++
++    arpg::test::set_current_room_hole(session, true);
++    ARPG_REQUIRE(session.request_descent(true));
++    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 3U);
++    const auto pending = session.pending_transition();
++    ARPG_REQUIRE(pending.has_value());
++    session.resolve_pending_transition({
++        arpg::dungeon::SaveDisposition::committed,
++        pending->expected_generation,
++        pending->next_state,
++    });
++    ARPG_REQUIRE(session.snapshot().phase
++        == arpg::dungeon::RoomPhase::transitioning);
++    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 0U);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"health potion rules frozen", &health_potion_rules_are_frozen},
+     {"health potion deterministic roll",
+         &health_potion_roll_is_deterministic_and_has_both_outcomes},
+     {"health potion exact threshold", &health_potion_threshold_is_integer_exact},
++    {"coupon priority and common potion coexistence",
++        &coupon_has_priority_and_common_material_can_coexist_with_potion},
++    {"potions preserve material and coupon rolls",
++        &adding_potions_does_not_change_existing_material_or_coupon_rolls},
++    {"fixed potion pool boundaries and no overwrite",
++        &ground_potion_pool_accepts_spawn_zero_and_191_without_overwrite},
++    {"potion snapshot sorted and room exit clears",
++        &potion_snapshot_is_sorted_by_spawn_ordinal_and_clears_on_room_exit},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_health_potion_suite() noexcept {
+     return arpg::test::make_suite("dungeon_health_potion", kCases);
+ }
+diff --git a/tests/dungeon/dungeon_test_main.cpp b/tests/dungeon/dungeon_test_main.cpp
+index 8752cac..b3a9b14 100644
+--- a/tests/dungeon/dungeon_test_main.cpp
++++ b/tests/dungeon/dungeon_test_main.cpp
+@@ -240,25 +240,25 @@ int main() {
+             dungeon_crafting_transaction_suite(),
+         };
+         return arpg::test::run_suites(crafting_only, 6,
+             "stage 16 task 7 crafting and reinforcement transactions");
+     }
+ 
+     if (health_potion_only()) {
+         const arpg::test::TestSuite potion_only[] = {
+             dungeon_health_potion_suite(),
+         };
+-        return arpg::test::run_suites(potion_only, 3,
+-            "task 4 health potion loot");
++        return arpg::test::run_suites(potion_only, 7,
++            "task 5 health potion ground drops");
+     }
+ 
+     if (stage17_skill_loadout_only()) {
+         const arpg::test::TestSuite loadout_only[] = {
+             dungeon_skill_loadout_transaction_suite(),
+         };
+         return arpg::test::run_suites(loadout_only, 9,
+             "stage 17 task 3 skill loadout transactions");
+     }
+ 
+-    return arpg::test::run_suites(suites, 290,
++    return arpg::test::run_suites(suites, 294,
+         "stage 18 dungeon queries");
+ }
+diff --git a/tests/dungeon/dungeon_test_support.hpp b/tests/dungeon/dungeon_test_support.hpp
+index 78f4919..800aeb4 100644
+--- a/tests/dungeon/dungeon_test_support.hpp
++++ b/tests/dungeon/dungeon_test_support.hpp
+@@ -311,20 +311,24 @@ struct DungeonSessionTestAccess final {
+     static const std::array<dungeon::GroundItem,
+         dungeon::kGroundDropCapacity>& ground_items(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.ground_items_;
+     }
+     static const std::array<dungeon::GroundMaterial,
+         dungeon::kGroundMaterialCapacity>& ground_materials(
+         const dungeon::DungeonSession& session) noexcept {
+         return session.ground_materials_;
+     }
++    static void clear_rolled_material_claims(
++        dungeon::DungeonSession& session) noexcept {
++        session.rolled_material_bits_ = {};
++    }
+ };
+ 
+ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
+     DungeonSessionTestAccess::force_defeat_current_wave(session);
+ }
+ 
+ inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::defeat_next_live_monster(session);
+ }
+ 
+@@ -519,20 +523,25 @@ inline void publish_run_state_reusing_items(
+     DungeonSessionTestAccess::publish_run_state_reusing_items(
+         destination, source);
+ }
+ 
+ inline const std::array<dungeon::GroundItem,
+     dungeon::kGroundDropCapacity>& ground_items(
+     const dungeon::DungeonSession& session) noexcept {
+     return DungeonSessionTestAccess::ground_items(session);
+ }
+ 
++inline void clear_rolled_material_claims(
++    dungeon::DungeonSession& session) noexcept {
++    DungeonSessionTestAccess::clear_rolled_material_claims(session);
++}
++
+ inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
+     const dungeon::RoomEncounterPlan& right) noexcept {
+     if (left.wave_count != right.wave_count
+             || left.total_budget != right.total_budget) return false;
+     for (std::size_t wave = 0; wave < left.wave_count; ++wave) {
+         const auto& a = left.waves[wave];
+         const auto& b = right.waves[wave];
+         if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) return false;
+         for (std::size_t spawn = 0; spawn < a.spawn_count; ++spawn) {
+             if (a.spawns[spawn].id != b.spawns[spawn].id

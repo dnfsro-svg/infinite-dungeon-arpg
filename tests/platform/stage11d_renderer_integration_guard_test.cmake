@@ -48,8 +48,79 @@ function(stage11d_reject_consumer_rebuild SOURCE_TEXT CONSUMER_NAME)
     endforeach()
 endfunction()
 
-stage11d_reject_consumer_rebuild("${_room_source}" "room")
+set(_icons_only_marker
+    "GroundLootView CombatRenderer::draw_ground_loot_icons_only(")
+set(_room_consumer_marker "void CombatRenderer::draw_room(")
+string(REGEX MATCHALL
+    "GroundLootView CombatRenderer::draw_ground_loot_icons_only[ \\t\\r\\n]*\\("
+    _icons_only_markers "${_room_source}")
+string(REGEX MATCHALL "void CombatRenderer::draw_room[ \\t\\r\\n]*\\("
+    _room_consumer_markers "${_room_source}")
+list(LENGTH _icons_only_markers _icons_only_marker_count)
+list(LENGTH _room_consumer_markers _room_consumer_marker_count)
+string(FIND "${_room_source}" "${_icons_only_marker}" _icons_only_start)
+string(FIND "${_room_source}" "${_room_consumer_marker}" _room_consumer_start)
+if(NOT _icons_only_marker_count EQUAL 1
+        OR NOT _room_consumer_marker_count EQUAL 1
+        OR _icons_only_start EQUAL -1
+        OR _room_consumer_start EQUAL -1
+        OR NOT _icons_only_start LESS _room_consumer_start)
+    message(FATAL_ERROR
+        "Stage11D renderer integration cannot isolate the Stage12 icons-only exception")
+endif()
+string(SUBSTRING "${_room_source}" 0 ${_icons_only_start} _room_prefix)
+math(EXPR _icons_only_length
+    "${_room_consumer_start} - ${_icons_only_start}")
+string(SUBSTRING "${_room_source}" ${_icons_only_start}
+    ${_icons_only_length} _icons_only_source)
+string(SUBSTRING "${_room_source}" ${_room_consumer_start} -1 _room_tail)
+set(_room_without_icons_only "${_room_prefix}\n${_room_tail}")
+
+stage11d_reject_consumer_rebuild("${_room_without_icons_only}" "room")
 stage11d_reject_consumer_rebuild("${_hud_source}" "HUD")
+
+string(REGEX MATCHALL "build_ground_loot_view[ \\t\\r\\n]*\\("
+    _icons_ground_builders "${_icons_only_source}")
+string(REGEX MATCHALL "build_material_loot_view[ \\t\\r\\n]*\\("
+    _icons_material_builders "${_icons_only_source}")
+string(REGEX MATCHALL "make_combat_render_plan[ \\t\\r\\n]*\\("
+    _icons_render_plans "${_icons_only_source}")
+string(REGEX MATCHALL "ground_loot_visible[ \\t\\r\\n]*\\("
+    _icons_visibility_filters "${_icons_only_source}")
+string(REGEX MATCHALL "LootFilterMode" _icons_filter_types
+    "${_icons_only_source}")
+string(REGEX MATCHALL "loot_filter_mode" _icons_filter_reads
+    "${_icons_only_source}")
+list(LENGTH _icons_ground_builders _icons_ground_builder_count)
+list(LENGTH _icons_material_builders _icons_material_builder_count)
+list(LENGTH _icons_render_plans _icons_render_plan_count)
+list(LENGTH _icons_visibility_filters _icons_visibility_filter_count)
+list(LENGTH _icons_filter_types _icons_filter_type_count)
+list(LENGTH _icons_filter_reads _icons_filter_read_count)
+if(NOT _icons_ground_builder_count EQUAL 1
+        OR NOT _icons_material_builder_count EQUAL 1
+        OR NOT _icons_render_plan_count EQUAL 0
+        OR NOT _icons_visibility_filter_count EQUAL 0
+        OR NOT _icons_filter_type_count EQUAL 0
+        OR NOT _icons_filter_read_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D icons-only exception must build one shared ground/material view without a second render plan")
+endif()
+string(REGEX REPLACE "[ \t\r\n]+" "" _icons_only_normalized
+    "${_icons_only_source}")
+foreach(_required_icons_binding IN ITEMS
+        "constGroundLootViewground_loot=build_ground_loot_view(snapshot,loot_filter_mode_,width,height)"
+        "constMaterialLootViewmaterial_loot=build_material_loot_view(snapshot,width,height)"
+        "draw_ground_materials(snapshot,material_loot,material_pack_,width,height)"
+        "draw_ground_items(snapshot,ground_loot,material_pack_,width,height)"
+        "returnground_loot")
+    string(FIND "${_icons_only_normalized}"
+        "${_required_icons_binding}" _icons_binding_found)
+    if(_icons_binding_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D icons-only exception must preserve the shared view binding: ${_required_icons_binding}")
+    endif()
+endforeach()
 
 string(FIND "${_combat_source}" "GroundLootView CombatRenderer::draw(" _draw_start)
 if(_draw_start EQUAL -1)

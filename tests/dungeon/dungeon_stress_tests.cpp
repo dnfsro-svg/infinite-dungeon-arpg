@@ -226,6 +226,14 @@ bool same_ground_material(
         && lhs.material == rhs.material;
 }
 
+bool same_ground_health_potion(
+    const arpg::dungeon::GroundHealthPotionSnapshot& lhs,
+    const arpg::dungeon::GroundHealthPotionSnapshot& rhs) noexcept {
+    return lhs.spawn_ordinal == rhs.spawn_ordinal
+        && lhs.claim_ordinal == rhs.claim_ordinal
+        && same_vec(lhs.position, rhs.position);
+}
+
 bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
     if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
             || lhs.commit_generation != rhs.commit_generation
@@ -258,6 +266,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.equipped_ids != rhs.equipped_ids
             || lhs.ground_item_count != rhs.ground_item_count
             || lhs.ground_material_count != rhs.ground_material_count
+            || lhs.ground_health_potion_count
+                != rhs.ground_health_potion_count
             || lhs.material_pickup_receipt.valid
                 != rhs.material_pickup_receipt.valid
             || lhs.material_pickup_receipt.room_vacuum
@@ -266,6 +276,12 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.material_pickup_receipt.commit_generation
             || lhs.material_pickup_receipt.counts
                 != rhs.material_pickup_receipt.counts
+            || lhs.health_potion_pickup_receipt.valid
+                != rhs.health_potion_pickup_receipt.valid
+            || lhs.health_potion_pickup_receipt.commit_generation
+                != rhs.health_potion_pickup_receipt.commit_generation
+            || lhs.health_potion_pickup_receipt.restored_hp
+                != rhs.health_potion_pickup_receipt.restored_hp
             || lhs.pending_save_kind != rhs.pending_save_kind
             || lhs.pending_pickup_ordinal != rhs.pending_pickup_ordinal
             || lhs.pending_material_pickup_ordinal
@@ -288,6 +304,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.diagnostics.ground_saturation_count
             || lhs.diagnostics.material_ground_saturation_count
                 != rhs.diagnostics.material_ground_saturation_count
+            || lhs.diagnostics.health_potion_ground_saturation_count
+                != rhs.diagnostics.health_potion_ground_saturation_count
             || lhs.diagnostics.fault != rhs.diagnostics.fault
             || lhs.diagnostics.room_index_overflow
                 != rhs.diagnostics.room_index_overflow
@@ -303,6 +321,14 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             index < lhs.ground_materials.size(); ++index) {
         if (!same_ground_material(
                 lhs.ground_materials[index], rhs.ground_materials[index])) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U;
+            index < lhs.ground_health_potion_count; ++index) {
+        if (!same_ground_health_potion(
+                lhs.ground_health_potions[index],
+                rhs.ground_health_potions[index])) {
             return false;
         }
     }

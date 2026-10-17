@@ -70,6 +70,44 @@ stage11d_replace_required(_room_duplicate "${_room}"
 stage11d_run_guard_case(room_rebuild "${_combat}" "${_room_duplicate}"
     "${_hud}" FALSE "room renderer.*rebuild")
 
+set(_icons_only_marker
+    "GroundLootView CombatRenderer::draw_ground_loot_icons_only(")
+set(_room_prefix_rebuild
+    "void stage11d_room_prefix_rebuild_mutation(const dungeon::DungeonSnapshot& snapshot) {\n    static_cast<void>(build_ground_loot_view(snapshot, settings::LootFilterMode::show_all, 1.0F, 1.0F));\n}\n\n${_icons_only_marker}")
+stage11d_replace_required(_room_prefix_duplicate "${_room}"
+    "${_icons_only_marker}" "${_room_prefix_rebuild}" room_prefix_rebuild)
+stage11d_run_guard_case(room_prefix_rebuild "${_combat}"
+    "${_room_prefix_duplicate}" "${_hud}" FALSE "room renderer.*rebuild")
+
+set(_icons_builder
+    "    const GroundLootView ground_loot = build_ground_loot_view(")
+set(_icons_duplicate_builder
+    "    static_cast<void>(build_ground_loot_view(snapshot, loot_filter_mode_, width, height));\n${_icons_builder}")
+stage11d_replace_required(_room_icons_duplicate "${_room}"
+    "${_icons_builder}" "${_icons_duplicate_builder}" icons_duplicate_builder)
+stage11d_run_guard_case(icons_duplicate_builder "${_combat}"
+    "${_room_icons_duplicate}" "${_hud}" FALSE "icons-only exception.*one shared")
+
+set(_icons_load_line
+    "    static_cast<void>(material_pack_.load(material_ecology(snapshot.ecology)));")
+set(_icons_extra_filter
+    "${_icons_load_line}\n    const settings::LootFilterMode extra_filter = settings::LootFilterMode::show_all;\n    static_cast<void>(extra_filter);")
+stage11d_replace_required(_room_icons_extra_filter "${_room}"
+    "${_icons_load_line}" "${_icons_extra_filter}" icons_extra_filter)
+stage11d_run_guard_case(icons_extra_filter "${_combat}"
+    "${_room_icons_extra_filter}" "${_hud}" FALSE "icons-only exception.*one shared")
+
+set(_icons_material_draw
+    "    draw_ground_materials(snapshot, material_loot, material_pack_, width, height);")
+set(_icons_split_material_draw
+    "    draw_ground_materials(snapshot, MaterialLootView{}, material_pack_, width, height);")
+stage11d_replace_required(_room_icons_split_material "${_room}"
+    "${_icons_material_draw}" "${_icons_split_material_draw}"
+    icons_split_material)
+stage11d_run_guard_case(icons_split_material "${_combat}"
+    "${_room_icons_split_material}" "${_hud}" FALSE
+    "icons-only exception.*shared view binding")
+
 set(_hud_rebuild
     "void stage11d_hud_rebuild_mutation(const dungeon::DungeonSnapshot& snapshot) {\n    static_cast<void>(build_ground_loot_view(snapshot, settings::LootFilterMode::show_all, 1.0F, 1.0F));\n}\n\n${_outer_close}")
 stage11d_replace_required(_hud_duplicate "${_hud}"
@@ -92,9 +130,9 @@ stage11d_replace_required(_combat_renamed_declaration "${_combat}"
 stage11d_replace_required(_combat_renamed "${_combat_renamed_declaration}"
     "render_plan." "frame_plan." local_plan_use_rename)
 set(_renamed_room
-    "            draw_room(current, frame_plan.ground_loot, frame_plan.material_loot);")
+    "            draw_room(current, frame_plan.ground_loot,\n                frame_plan.material_loot, lightning_palette_showcase);")
 set(_formatted_room
-    "            draw_room(\n                current,\n                frame_plan.ground_loot,\n                frame_plan.material_loot); ")
+    "            draw_room(\n                current,\n                frame_plan.ground_loot,\n                frame_plan.material_loot,\n                lightning_palette_showcase); ")
 stage11d_replace_required(_combat_formatted "${_combat_renamed}"
     "${_renamed_room}" "${_formatted_room}" harmless_formatting)
 stage11d_run_guard_case(rename_and_format "${_combat_formatted}" "${_room}"
@@ -107,12 +145,13 @@ set(_alias_declaration
 stage11d_replace_required(_combat_alias "${_combat_renamed}"
     "${_renamed_camera}" "${_alias_declaration}" const_reference_alias)
 stage11d_replace_required(_combat_alias_room "${_combat_alias}"
-    "frame_plan.ground_loot, frame_plan.material_loot);"
-    "shared_ground_loot, frame_plan.material_loot);" alias_room_consumer)
+    "frame_plan.ground_loot,\n                frame_plan.material_loot, lightning_palette_showcase);"
+    "shared_ground_loot,\n                frame_plan.material_loot, lightning_palette_showcase);"
+    alias_room_consumer)
 stage11d_replace_required(_combat_alias_consumers "${_combat_alias_room}"
     "frame_plan.ground_loot);" "shared_ground_loot);" alias_hud_consumer)
 stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_room}"
     "${_hud}" TRUE "")
 
 message(STATUS
-    "[stage11d-renderer-guard-self-test] bad_mutations=4 equivalent_variants=2")
+    "[stage11d-renderer-guard-self-test] bad_mutations=8 equivalent_variants=2")

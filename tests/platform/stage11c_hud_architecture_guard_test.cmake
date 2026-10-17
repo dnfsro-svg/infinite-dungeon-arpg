@@ -92,7 +92,7 @@ arpg_extract_hud_host_seam("${_host_text}"
     "Host HUD recovery observation seam is invalid" _recovery_hud_seam)
 arpg_extract_hud_host_seam("${_host_text}"
     "const HudPresentedFrame hud_presented_frame = current.death.has_value()"
-    "feedback, audio_ready);"
+    "feedback, audio_ready, lightning_palette_showcase);"
     "Host HUD normal observation/presentation seam is invalid" _normal_hud_seam)
 foreach(_required_recovery IN ITEMS
         "HudPresentedFrame::recovery" "renderer.observe_presented_hud_frame")

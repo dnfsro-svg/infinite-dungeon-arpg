@@ -1,0 +1,185 @@
+BASE: c73805398c0fbc75b8ddf9c65ffda7e99660c916
+HEAD: 54a4f9f87233867d62ac7c65fa68585a4be4b995
+
+=== LOG ===
+54a4f9f balance: suppress monster affixes through depth three
+
+=== STAT ===
+ src/combat/monster_affix_generation.cpp         |  3 ++-
+ tests/combat/combat_test_main.cpp               |  2 +-
+ tests/combat/monster_affix_generation_tests.cpp | 33 +++++++++++++++++++++++--
+ 3 files changed, 34 insertions(+), 4 deletions(-)
+
+=== DIFF CHECK ===
+(clean)
+
+=== DIFF -U10 ===
+diff --git a/src/combat/monster_affix_generation.cpp b/src/combat/monster_affix_generation.cpp
+index 34f81cc..041ac42 100644
+--- a/src/combat/monster_affix_generation.cpp
++++ b/src/combat/monster_affix_generation.cpp
+@@ -37,21 +37,21 @@ supplement_abyss_affixes_with_catalog(
+ }  // namespace detail
+ namespace {
+ 
+ struct AffixDepthBand final {
+     std::uint64_t maximum_depth{};
+     std::array<std::uint16_t, 4> count_weights{};
+     std::array<std::uint16_t, 3> tier_weights{};
+ };
+ 
+ constexpr std::array<AffixDepthBand, 5> kAffixDepthBands{{
+-    {3U, {{80U, 20U, 0U, 0U}}, {{100U, 0U, 0U}}},
++    {3U, {{100U, 0U, 0U, 0U}}, {{100U, 0U, 0U}}},
+     {9U, {{55U, 38U, 7U, 0U}}, {{80U, 20U, 0U}}},
+     {19U, {{30U, 45U, 20U, 5U}}, {{50U, 40U, 10U}}},
+     {39U, {{15U, 35U, 35U, 15U}}, {{25U, 50U, 25U}}},
+     {(std::numeric_limits<std::uint64_t>::max)(),
+         {{5U, 20U, 40U, 35U}}, {{10U, 35U, 55U}}},
+ }};
+ 
+ constexpr std::uint64_t kAffixCountDomain = 0x41464658434E5431ULL;
+ constexpr std::uint64_t kAffixSelectionDomain = 0x4146465853454C31ULL;
+ constexpr std::uint64_t kAffixTierDomain = 0x4146465854494552ULL;
+@@ -309,20 +309,21 @@ std::optional<MonsterAffixSet> supplement_abyss_affixes_with_catalog(
+     std::uint8_t spawn_index,
+     const MonsterDefinition& monster,
+     MonsterAffixSet normal,
+     const MonsterAffixCatalog& catalog) noexcept {
+     if (!detail::monster_affix_catalog_valid(catalog)) return std::nullopt;
+     const MonsterDefinition* const canonical = monster_definition(monster.id);
+     if (canonical == nullptr || canonical->tags != monster.tags
+             || !affix_set_valid_for_monster(normal, monster, catalog)) {
+         return std::nullopt;
+     }
++    if (depth <= 3U) return MonsterAffixSet{};
+     const std::uint8_t target_count = abyss::minimum_abyss_affixes(depth);
+     if (normal.count >= target_count) return normal;
+ 
+     const std::uint64_t seed = monster_affix_context_seed(room_seed, depth,
+         wave_index, spawn_index);
+     const auto tier_weights = affix_tier_weights(depth);
+     for (std::size_t output_index = normal.count;
+          output_index < target_count; ++output_index) {
+         std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>
+             candidates{};
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 98909b4..4aad3f8 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -124,12 +124,12 @@ int main() {
+         monster_special_suite(),
+         monster_pool_suite(),
+         player_health_suite(),
+         player_build_suite(),
+         player_damage_history_suite(),
+         player_death_snapshot_suite(),
+         player_defense_suite(),
+         storm_swords_skill_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 242, "stage 18 combat queries");
++    return arpg::test::run_suites(suites, 243, "stage 18 combat queries");
+ }
+diff --git a/tests/combat/monster_affix_generation_tests.cpp b/tests/combat/monster_affix_generation_tests.cpp
+index cfce6c2..dd25ee8 100644
+--- a/tests/combat/monster_affix_generation_tests.cpp
++++ b/tests/combat/monster_affix_generation_tests.cpp
+@@ -202,21 +202,21 @@ bool affixes_are_unique(const MonsterAffixSet& set) noexcept {
+ 
+ arpg::test::Failure abyss_supplement_enforces_depth_minimums_and_preserves_prefix() noexcept {
+     const MonsterDefinition* const monster =
+         monster_definition(MonsterId::lightning_shooter);
+     ARPG_REQUIRE(monster != nullptr);
+     struct Case final {
+         std::uint64_t depth{};
+         std::uint8_t minimum{};
+     };
+     constexpr std::array<Case, 6> kCases{{
+-        {1U, 1U}, {19U, 1U}, {20U, 2U},
++        {4U, 1U}, {19U, 1U}, {20U, 2U},
+         {39U, 2U}, {40U, 3U}, {(std::numeric_limits<std::uint64_t>::max)(), 3U},
+     }};
+ 
+     for (const Case value : kCases) {
+         for (std::uint64_t seed = 0U; seed < 256U; ++seed) {
+             const auto normal = generate_monster_affixes(seed, value.depth,
+                 1U, 7U, *monster);
+             ARPG_REQUIRE(normal.has_value());
+             const auto supplemented = supplement_abyss_affixes(seed,
+                 value.depth, 1U, 7U, *monster, *normal);
+@@ -285,23 +285,50 @@ arpg::test::Failure abyss_supplement_allocates_nothing() noexcept {
+     for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
+         const auto result = supplement_abyss_affixes(seed, 40U, 1U, 7U,
+             *monster, MonsterAffixSet{});
+         ARPG_REQUIRE(result.has_value());
+         ARPG_REQUIRE(result->count == 3U);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
++arpg::test::Failure first_three_depths_are_affix_free_in_normal_and_abyss_rooms() noexcept {
++    MonsterAffixSet nonempty{};
++    nonempty.values[0] = {MonsterAffixId::mighty, MonsterAffixTier::m1};
++    nonempty.count = 1U;
++    for (std::uint64_t depth = 1U; depth <= 3U; ++depth) {
++        for (std::uint8_t raw = 0U;
++             raw < static_cast<std::uint8_t>(MonsterId::count); ++raw) {
++            const MonsterDefinition* monster = monster_definition(static_cast<MonsterId>(raw));
++            ARPG_REQUIRE(monster != nullptr);
++            for (std::uint64_t seed = 0U; seed < 256U; ++seed) {
++                const auto normal = generate_monster_affixes(seed, depth, 1U, raw, *monster);
++                ARPG_REQUIRE(normal.has_value());
++                ARPG_REQUIRE(normal->count == 0U);
++                const auto abyss = supplement_abyss_affixes(seed, depth, 1U, raw,
++                    *monster, *normal);
++                ARPG_REQUIRE(abyss.has_value());
++                ARPG_REQUIRE(abyss->count == 0U);
++            }
++            const auto cleared = supplement_abyss_affixes(7U, depth, 0U, raw,
++                *monster, nonempty);
++            ARPG_REQUIRE(cleared.has_value());
++            ARPG_REQUIRE(cleared->count == 0U);
++        }
++    }
++    return {};
++}
++
+ arpg::test::Failure depth_bands_match_frozen_weights() noexcept {
+     ARPG_REQUIRE((affix_count_weights(3U)
+-        == std::array<std::uint16_t, 4>{{80U, 20U, 0U, 0U}}));
++        == std::array<std::uint16_t, 4>{{100U, 0U, 0U, 0U}}));
+     ARPG_REQUIRE((affix_count_weights(4U)
+         == std::array<std::uint16_t, 4>{{55U, 38U, 7U, 0U}}));
+     ARPG_REQUIRE((affix_count_weights(9U)
+         == std::array<std::uint16_t, 4>{{55U, 38U, 7U, 0U}}));
+     ARPG_REQUIRE((affix_count_weights(10U)
+         == std::array<std::uint16_t, 4>{{30U, 45U, 20U, 5U}}));
+     ARPG_REQUIRE((affix_count_weights(19U)
+         == std::array<std::uint16_t, 4>{{30U, 45U, 20U, 5U}}));
+     ARPG_REQUIRE((affix_count_weights(20U)
+         == std::array<std::uint16_t, 4>{{15U, 35U, 35U, 15U}}));
+@@ -521,20 +548,22 @@ arpg::test::Failure invalid_monster_definition_fails_explicitly() noexcept {
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"abyss supplement depth minimums and prefix",
+         &abyss_supplement_enforces_depth_minimums_and_preserves_prefix},
+     {"abyss supplement stable and satisfied bytes unchanged",
+         &abyss_supplement_is_stable_and_leaves_satisfied_bytes_unchanged},
+     {"abyss supplement insufficient candidates fail",
+         &abyss_supplement_fails_when_compatible_candidates_run_out},
+     {"abyss supplement no allocations", &abyss_supplement_allocates_nothing},
++    {"first three depths are affix free in normal and abyss rooms",
++        &first_three_depths_are_affix_free_in_normal_and_abyss_rooms},
+     {"frozen depth bands", &depth_bands_match_frozen_weights},
+     {"deterministic unique generation and score",
+         &generation_is_deterministic_unique_and_scored},
+     {"applicability and three high risk", &applicability_rules_and_three_high_risk_are_preserved},
+     {"malformed catalogs fail explicitly", &malformed_catalogs_are_rejected_explicitly},
+     {"malformed catalog fails before zero affix sampling",
+         &malformed_catalog_fails_before_zero_affix_sampling},
+     {"insufficient candidates fail explicitly",
+         &insufficient_candidates_fail_explicitly},
+     {"context has no depth wave or spawn alias",
