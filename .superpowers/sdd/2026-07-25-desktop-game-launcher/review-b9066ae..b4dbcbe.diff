@@ -1,0 +1,80 @@
+# Review package: b9066ae5fe16a621b440f6d86c2af6ef86466820..b4dbcbe9553d333a81a28cea04582095c4186139
+
+## Commits
+b4dbcbe fix: reject conflicting release build cache
+
+## Files changed
+ scripts/DeployLauncher.ps1                   |  3 ++-
+ tests/launcher/deploy_launcher_self_test.ps1 | 17 +++++++++++++++++
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/scripts/DeployLauncher.ps1 b/scripts/DeployLauncher.ps1
+index 3f455c8..6689ac4 100644
+--- a/scripts/DeployLauncher.ps1
++++ b/scripts/DeployLauncher.ps1
+@@ -47,21 +47,22 @@ function Assert-ReleaseBuildDirectory([string]$Directory) {
+         throw "GameBuildDirectory must be an explicit Release bin directory: $Directory"
+     }
+ 
+     Assert-ApplicationLayout -Directory $Directory -Description 'GameBuildDirectory'
+ 
+     $cachePath = Join-Path (Split-Path -Path $Directory -Parent) 'CMakeCache.txt'
+     if (-not (Test-Path -LiteralPath $cachePath -PathType Leaf)) {
+         throw "GameBuildDirectory has no sibling CMakeCache.txt: $cachePath"
+     }
+     $cacheContents = Get-Content -LiteralPath $cachePath -Raw
+-    if ($cacheContents -notmatch '(?m)^CMAKE_BUILD_TYPE:STRING=Release\r?$') {
++    $buildTypeAssignments = [regex]::Matches($cacheContents, '(?m)^CMAKE_BUILD_TYPE:STRING=([^\r\n]*)\r?$')
++    if ($buildTypeAssignments.Count -ne 1 -or $buildTypeAssignments[0].Groups[1].Value -cne 'Release') {
+         throw "GameBuildDirectory is not a Release CMake build: $cachePath"
+     }
+ }
+ 
+ function New-SiblingName([string]$BaseName, [string]$Role) {
+     $timestamp = Get-Date -Format 'yyyyMMddHHmmssfff'
+     return "$BaseName.$Role.$timestamp.$PID.$([Guid]::NewGuid().ToString('N'))"
+ }
+ 
+ $resolvedGameBuildDirectory = Resolve-OutputPath -Path $GameBuildDirectory -Name 'GameBuildDirectory'
+diff --git a/tests/launcher/deploy_launcher_self_test.ps1 b/tests/launcher/deploy_launcher_self_test.ps1
+index 2203b1f..4936535 100644
+--- a/tests/launcher/deploy_launcher_self_test.ps1
++++ b/tests/launcher/deploy_launcher_self_test.ps1
+@@ -83,19 +83,36 @@ try {
+     try {
+         & $DeployScript -GameBuildDirectory $incompleteBin -InstallRoot $installRoot -DesktopDirectory $desktopRoot
+     }
+     catch {
+         $invalidDeploymentFailed = $true
+     }
+     Require $invalidDeploymentFailed 'Missing assets/skills input unexpectedly deployed.'
+     Require (Test-Path -LiteralPath $sentinelPath -PathType Leaf) 'Invalid input changed the existing installed app.'
+     Require ((Get-Content -LiteralPath $sentinelPath -Raw) -eq 'preserve-me') 'Invalid input changed the existing installed app sentinel.'
+ 
++    $conflictedRoot = Join-Path $temporaryRoot 'conflicted-cache'
++    $conflictedBin = New-ReleaseFixture -Root $conflictedRoot
++    Set-Content -LiteralPath (Join-Path $conflictedRoot 'CMakeCache.txt') -Value @(
++        'CMAKE_BUILD_TYPE:STRING=Release',
++        'CMAKE_BUILD_TYPE:STRING=Debug'
++    )
++    $conflictedDeploymentFailed = $false
++    try {
++        & $DeployScript -GameBuildDirectory $conflictedBin -InstallRoot $installRoot -DesktopDirectory $desktopRoot
++    }
++    catch {
++        $conflictedDeploymentFailed = $true
++    }
++    Require $conflictedDeploymentFailed 'Conflicting CMAKE_BUILD_TYPE assignments unexpectedly deployed.'
++    Require (Test-Path -LiteralPath $sentinelPath -PathType Leaf) 'Conflicting CMakeCache input changed the existing installed app.'
++    Require ((Get-Content -LiteralPath $sentinelPath -Raw) -eq 'preserve-me') 'Conflicting CMakeCache input changed the existing installed app sentinel.'
++
+     Require (Test-Path -LiteralPath $saveDirectory -PathType Container) 'Deployment removed the existing save directory.'
+     Require (Test-Path -LiteralPath $saveSentinel -PathType Leaf) 'Deployment moved or removed the existing save sentinel.'
+     Require (-not (Test-Path -LiteralPath (Join-Path $installRoot 'save'))) 'Deployment created a save directory in the app layout.'
+ }
+ finally {
+     if (Test-Path -LiteralPath $temporaryRoot) {
+         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
+     }
+ }

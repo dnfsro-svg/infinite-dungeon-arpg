@@ -1,0 +1,186 @@
+# Review package: d3351a5096e5ccf3d845425cabe50a253499cb0f..14a9b7ea85622562bbc9a9acda7d09e6ed81a4ec
+
+## Commits
+14a9b7e fix: include Win32 error codes in launcher status
+
+## Files changed
+ src/launcher/launcher_platform_win32.cpp         |  7 ++-
+ tests/launcher/CMakeLists.txt                    |  6 +-
+ tests/launcher/launcher_platform_win32_tests.cpp | 75 ++++++++++++++++++++++++
+ tests/launcher/launcher_test_main.cpp            |  4 +-
+ 4 files changed, 86 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/src/launcher/launcher_platform_win32.cpp b/src/launcher/launcher_platform_win32.cpp
+index 3941618..ca92da0 100644
+--- a/src/launcher/launcher_platform_win32.cpp
++++ b/src/launcher/launcher_platform_win32.cpp
+@@ -19,34 +19,35 @@ std::wstring format_failure(
+         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+             FORMAT_MESSAGE_IGNORE_INSERTS,
+         nullptr,
+         error_code,
+         0,
+         reinterpret_cast<wchar_t*>(&system_message),
+         0,
+         nullptr);
+ 
+     std::wstring message{operation};
+-    message += L"：";
++    message += L"（错误代码 ";
++    message += std::to_wstring(error_code);
++    message += L"）：";
+     if (length != 0U && system_message != nullptr) {
+         std::wstring detail{system_message, length};
+         LocalFree(system_message);
+         while (!detail.empty() &&
+             (detail.back() == L'\r' || detail.back() == L'\n' ||
+                 detail.back() == L' ')) {
+             detail.pop_back();
+         }
+         message += detail;
+     }
+     else {
+-        message += L"错误代码 ";
+-        message += std::to_wstring(error_code);
++        message += L"无法获取系统错误消息";
+     }
+     return message;
+ }
+ 
+ PlatformResult failure(
+     const std::wstring_view operation,
+     const unsigned long error_code) {
+     return {false, error_code, format_failure(operation, error_code)};
+ }
+ 
+diff --git a/tests/launcher/CMakeLists.txt b/tests/launcher/CMakeLists.txt
+index b59931e..df67046 100644
+--- a/tests/launcher/CMakeLists.txt
++++ b/tests/launcher/CMakeLists.txt
+@@ -1,19 +1,21 @@
+ add_executable(arpg_launcher_tests
+     launcher_test_main.cpp
+     launcher_core_tests.cpp
+-    launcher_layout_tests.cpp)
++    launcher_layout_tests.cpp
++    launcher_platform_win32_tests.cpp
++    "${PROJECT_SOURCE_DIR}/src/launcher/launcher_platform_win32.cpp")
+ 
+ target_compile_features(arpg_launcher_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_launcher_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+-target_link_libraries(arpg_launcher_tests PRIVATE arpg_launcher_core)
++target_link_libraries(arpg_launcher_tests PRIVATE arpg_launcher_core shell32)
+ arpg_enable_project_warnings(arpg_launcher_tests)
+ if(MSVC)
+     target_compile_options(arpg_launcher_tests PRIVATE /utf-8)
+ endif()
+ set_target_properties(arpg_launcher_tests PROPERTIES
+     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+ 
+ add_test(NAME launcher.units COMMAND arpg_launcher_tests)
+ set_tests_properties(launcher.units PROPERTIES LABELS "headless;launcher")
+ 
+diff --git a/tests/launcher/launcher_platform_win32_tests.cpp b/tests/launcher/launcher_platform_win32_tests.cpp
+new file mode 100644
+index 0000000..377e3ae
+--- /dev/null
++++ b/tests/launcher/launcher_platform_win32_tests.cpp
+@@ -0,0 +1,75 @@
++#include "launcher_platform_win32.hpp"
++#include "test_framework.hpp"
++
++#include <Windows.h>
++
++#include <filesystem>
++#include <string>
++#include <system_error>
++
++namespace {
++
++class TemporaryPlatformDirectory final {
++public:
++    TemporaryPlatformDirectory() noexcept {
++        std::error_code error;
++        root_ = std::filesystem::temp_directory_path(error) /
++            L"桌面启动器平台测试" /
++            std::to_wstring(GetCurrentProcessId());
++        if (error) {
++            root_.clear();
++            return;
++        }
++        std::filesystem::remove_all(root_, error);
++        error.clear();
++        std::filesystem::create_directories(root_, error);
++        if (error) {
++            root_.clear();
++        }
++    }
++
++    ~TemporaryPlatformDirectory() {
++        std::error_code error;
++        std::filesystem::remove_all(root_, error);
++    }
++
++    const std::filesystem::path& root() const noexcept {
++        return root_;
++    }
++
++private:
++    std::filesystem::path root_;
++};
++
++arpg::test::Failure failed_game_launch_reports_numeric_error_code() noexcept {
++    TemporaryPlatformDirectory temporary;
++    ARPG_REQUIRE(!temporary.root().empty());
++
++    const std::filesystem::path missing_game =
++        temporary.root() / L"确定不存在的游戏.exe";
++    const arpg::launcher::LaunchRequest request{
++        missing_game,
++        temporary.root(),
++        L"\"" + missing_game.native() + L"\"",
++    };
++
++    const arpg::launcher::PlatformResult result =
++        arpg::launcher::launch_game(request);
++    ARPG_REQUIRE(!result.ok);
++    ARPG_REQUIRE(result.error_code != ERROR_SUCCESS);
++    ARPG_REQUIRE(result.message.find(L"无法启动游戏") != std::wstring::npos);
++    ARPG_REQUIRE(
++        result.message.find(std::to_wstring(result.error_code)) !=
++        std::wstring::npos);
++    return {};
++}
++
++}  // namespace
++
++arpg::test::TestSuite launcher_platform_win32_suite() noexcept {
++    static const arpg::test::TestCase cases[] = {
++        {"failed game launch reports numeric error code",
++            failed_game_launch_reports_numeric_error_code},
++    };
++    return arpg::test::make_suite("launcher_platform_win32", cases);
++}
+diff --git a/tests/launcher/launcher_test_main.cpp b/tests/launcher/launcher_test_main.cpp
+index b2944ee..dd89d10 100644
+--- a/tests/launcher/launcher_test_main.cpp
++++ b/tests/launcher/launcher_test_main.cpp
+@@ -1,13 +1,15 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite launcher_core_suite() noexcept;
+ arpg::test::TestSuite launcher_layout_suite() noexcept;
++arpg::test::TestSuite launcher_platform_win32_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         launcher_core_suite(),
+         launcher_layout_suite(),
++        launcher_platform_win32_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 12, "desktop launcher core");
++    return arpg::test::run_suites(suites, 13, "desktop launcher core");
+ }

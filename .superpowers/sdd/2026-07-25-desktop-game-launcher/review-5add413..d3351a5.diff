@@ -1,0 +1,1442 @@
+# Review package: 5add4132bfe26be0856265845991a62c925527c8..d3351a5096e5ccf3d845425cabe50a253499cb0f
+
+## Commits
+d3351a5 feat: add native desktop launcher
+
+## Files changed
+ src/launcher/CMakeLists.txt                   |  29 ++
+ src/launcher/arpg_launcher.manifest           |  21 +
+ src/launcher/arpg_launcher.rc                 |   3 +
+ src/launcher/launcher_main.cpp                | 543 ++++++++++++++++++++++++++
+ src/launcher/launcher_platform_win32.cpp      | 140 +++++++
+ src/launcher/launcher_platform_win32.hpp      |  22 ++
+ src/launcher/launcher_renderer.cpp            | 379 ++++++++++++++++++
+ src/launcher/launcher_renderer.hpp            |  86 ++++
+ tests/launcher/CMakeLists.txt                 |  10 +
+ tests/launcher/launcher_manifest_test.cmake   |  16 +
+ tests/launcher/launcher_window_smoke_test.ps1 |  89 +++++
+ 11 files changed, 1338 insertions(+)
+
+## Diff
+diff --git a/src/launcher/CMakeLists.txt b/src/launcher/CMakeLists.txt
+index 68cd1da..da09c5f 100644
+--- a/src/launcher/CMakeLists.txt
++++ b/src/launcher/CMakeLists.txt
+@@ -4,10 +4,39 @@ add_library(arpg_launcher_core STATIC
+ 
+ target_include_directories(arpg_launcher_core
+     PUBLIC "${PROJECT_SOURCE_DIR}/src/launcher")
+ target_compile_features(arpg_launcher_core PUBLIC cxx_std_17)
+ arpg_enable_project_warnings(arpg_launcher_core)
+ if(MSVC)
+     target_compile_options(arpg_launcher_core PRIVATE /utf-8)
+ endif()
+ set_target_properties(arpg_launcher_core PROPERTIES
+     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
++
++if(TARGET arpg_game)
++    add_executable(arpg_launcher WIN32
++        launcher_main.cpp
++        launcher_platform_win32.cpp
++        launcher_renderer.cpp
++        arpg_launcher.manifest
++        arpg_launcher.rc)
++    set_target_properties(arpg_launcher PROPERTIES
++        OUTPUT_NAME "无限地下城启动器"
++        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
++    target_compile_features(arpg_launcher PRIVATE cxx_std_17)
++    target_compile_definitions(arpg_launcher PRIVATE
++        UNICODE
++        _UNICODE
++        WIN32_LEAN_AND_MEAN
++        NOMINMAX)
++    target_compile_options(arpg_launcher PRIVATE /utf-8)
++    arpg_enable_project_warnings(arpg_launcher)
++    target_link_libraries(arpg_launcher PRIVATE
++        arpg_launcher_core
++        d2d1
++        dwrite
++        shell32
++        ole32
++        user32
++        gdi32)
++    add_dependencies(arpg_launcher arpg_game)
++endif()
+diff --git a/src/launcher/arpg_launcher.manifest b/src/launcher/arpg_launcher.manifest
+new file mode 100644
+index 0000000..1106f8f
+--- /dev/null
++++ b/src/launcher/arpg_launcher.manifest
+@@ -0,0 +1,21 @@
++<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
++  <assemblyIdentity
++      type="win32"
++      name="InfiniteDungeon.Launcher"
++      version="1.0.0.0"
++      processorArchitecture="amd64" />
++  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
++    <security>
++      <requestedPrivileges>
++        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
++      </requestedPrivileges>
++    </security>
++  </trustInfo>
++  <application xmlns="urn:schemas-microsoft-com:asm.v3">
++    <windowsSettings>
++      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
++      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
++    </windowsSettings>
++  </application>
++</assembly>
+diff --git a/src/launcher/arpg_launcher.rc b/src/launcher/arpg_launcher.rc
+new file mode 100644
+index 0000000..0223793
+--- /dev/null
++++ b/src/launcher/arpg_launcher.rc
+@@ -0,0 +1,3 @@
++#include <windows.h>
++
++101 ICON "../../assets/launcher/infinite_dungeon.ico"
+diff --git a/src/launcher/launcher_main.cpp b/src/launcher/launcher_main.cpp
+new file mode 100644
+index 0000000..276880d
+--- /dev/null
++++ b/src/launcher/launcher_main.cpp
+@@ -0,0 +1,543 @@
++#include "launcher_core.hpp"
++#include "launcher_layout.hpp"
++#include "launcher_platform_win32.hpp"
++#include "launcher_renderer.hpp"
++
++#include <Windows.h>
++#include <windowsx.h>
++
++#include <filesystem>
++#include <optional>
++#include <string>
++#include <vector>
++
++namespace arpg::launcher {
++namespace {
++
++constexpr wchar_t kWindowClassName[] = L"InfiniteDungeonLauncherWindow";
++constexpr wchar_t kWindowTitle[] = L"无限地下城启动器";
++constexpr int kLauncherIconId = 101;
++
++bool contains(const RectF rectangle, const float x, const float y) noexcept {
++    return x >= rectangle.left && x < rectangle.right &&
++        y >= rectangle.top && y < rectangle.bottom;
++}
++
++std::optional<std::wstring> local_app_data_value() noexcept {
++    try {
++        DWORD required = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0U);
++        if (required == 0U) {
++            return std::nullopt;
++        }
++
++        std::vector<wchar_t> buffer(required);
++        for (;;) {
++            const DWORD length = GetEnvironmentVariableW(
++                L"LOCALAPPDATA", buffer.data(), static_cast<DWORD>(buffer.size()));
++            if (length == 0U) {
++                return std::nullopt;
++            }
++            if (length < buffer.size()) {
++                return std::wstring{buffer.data(), length};
++            }
++            buffer.resize(static_cast<std::size_t>(length) + 1U);
++        }
++    }
++    catch (...) {
++        return std::nullopt;
++    }
++}
++
++class WindowController final {
++public:
++    void attach(const HWND window) noexcept {
++        window_ = window;
++        dpi_ = GetDpiForWindow(window_);
++        if (dpi_ == 0U) {
++            dpi_ = 96U;
++        }
++    }
++
++    bool create() {
++        if (!renderer_.initialize(window_)) {
++            return false;
++        }
++        refresh_installation();
++        return true;
++    }
++
++    LRESULT handle_message(
++        const UINT message,
++        const WPARAM w_param,
++        const LPARAM l_param) {
++        switch (message) {
++        case WM_PAINT:
++            paint();
++            return 0;
++        case WM_ERASEBKGND:
++            return 1;
++        case WM_SIZE:
++            if (w_param != SIZE_MINIMIZED) {
++                renderer_.resize(LOWORD(l_param), HIWORD(l_param));
++            }
++            return 0;
++        case WM_DPICHANGED:
++            handle_dpi_changed(w_param, l_param);
++            return 0;
++        case WM_MOUSEMOVE:
++            handle_mouse_move(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param));
++            return 0;
++        case WM_MOUSELEAVE:
++            tracking_mouse_ = false;
++            set_hovered_button(LauncherButton::none);
++            set_show_full_path(false);
++            return 0;
++        case WM_LBUTTONDOWN:
++            handle_left_button_down(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param));
++            return 0;
++        case WM_LBUTTONUP:
++            handle_left_button_up(GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param));
++            return 0;
++        case WM_CAPTURECHANGED:
++            set_pressed_button(LauncherButton::none);
++            return 0;
++        case WM_SETFOCUS:
++            window_focused_ = true;
++            invalidate();
++            return 0;
++        case WM_KILLFOCUS:
++            window_focused_ = false;
++            set_pressed_button(LauncherButton::none);
++            invalidate();
++            return 0;
++        case WM_KEYDOWN:
++            if (w_param == VK_RETURN) {
++                if (status_.ready()) {
++                    start_game();
++                }
++                return 0;
++            }
++            if (w_param == VK_ESCAPE) {
++                DestroyWindow(window_);
++                return 0;
++            }
++            break;
++        case WM_DISPLAYCHANGE:
++            invalidate();
++            return 0;
++        case WM_CLOSE:
++            DestroyWindow(window_);
++            return 0;
++        case WM_DESTROY:
++            renderer_.discard_device_resources();
++            PostQuitMessage(0);
++            return 0;
++        default:
++            break;
++        }
++        return DefWindowProcW(window_, message, w_param, l_param);
++    }
++
++private:
++    LauncherLayout layout() const noexcept {
++        RECT client{};
++        if (GetClientRect(window_, &client) == FALSE || dpi_ == 0U) {
++            return {};
++        }
++        const float scale = static_cast<float>(dpi_) / 96.0F;
++        const float width = static_cast<float>(client.right - client.left) / scale;
++        const float height = static_cast<float>(client.bottom - client.top) / scale;
++        return make_launcher_layout(width, height);
++    }
++
++    void refresh_installation() {
++        launcher_executable_ = current_executable_path();
++        if (!launcher_executable_) {
++            status_ = {
++                InstallationState::invalid_launcher_path,
++                {},
++                {},
++                {},
++            };
++            full_path_.clear();
++            path_text_ = L"安装目录：不可用";
++        }
++        else {
++            status_ = inspect_installation(*launcher_executable_);
++            full_path_ = status_.application_directory.native();
++            path_text_ = L"安装目录：" + full_path_;
++        }
++        status_text_ = installation_message(status_);
++        status_ready_ = status_.ready();
++    }
++
++    void set_error(const std::wstring& message) {
++        status_text_ = message;
++        status_ready_ = false;
++        invalidate();
++    }
++
++    void start_game() {
++        if (!status_.ready()) {
++            return;
++        }
++
++        refresh_installation();
++        invalidate();
++        if (!status_.ready()) {
++            return;
++        }
++
++        const std::optional<LaunchRequest> request = make_launch_request(status_);
++        if (!request) {
++            set_error(L"无法创建游戏启动请求");
++            return;
++        }
++        const PlatformResult result = launch_game(*request);
++        if (!result.ok) {
++            set_error(result.message);
++            return;
++        }
++        PostQuitMessage(0);
++    }
++
++    void verify_installation() {
++        refresh_installation();
++        invalidate();
++    }
++
++    void open_saves() {
++        const std::optional<std::wstring> local_app_data = local_app_data_value();
++        if (!local_app_data) {
++            set_error(L"无法解析 LOCALAPPDATA");
++            return;
++        }
++        const std::optional<std::filesystem::path> save_directory =
++            default_save_directory(*local_app_data);
++        if (!save_directory) {
++            set_error(L"无法解析存档目录");
++            return;
++        }
++        const PlatformResult result = open_save_directory(*save_directory);
++        if (!result.ok) {
++            set_error(result.message);
++        }
++    }
++
++    void invoke(const LauncherButton button) {
++        switch (button) {
++        case LauncherButton::start:
++            start_game();
++            break;
++        case LauncherButton::verify:
++            verify_installation();
++            break;
++        case LauncherButton::save:
++            open_saves();
++            break;
++        case LauncherButton::exit:
++            DestroyWindow(window_);
++            break;
++        case LauncherButton::none:
++            break;
++        }
++    }
++
++    LauncherButton hit_test(const float x, const float y) const noexcept {
++        const LauncherLayout current_layout = layout();
++        if (status_.ready() && contains(current_layout.start, x, y)) {
++            return LauncherButton::start;
++        }
++        if (contains(current_layout.verify, x, y)) {
++            return LauncherButton::verify;
++        }
++        if (contains(current_layout.save, x, y)) {
++            return LauncherButton::save;
++        }
++        if (contains(current_layout.exit, x, y)) {
++            return LauncherButton::exit;
++        }
++        return LauncherButton::none;
++    }
++
++    void logical_pointer(
++        const int pixel_x,
++        const int pixel_y,
++        float& logical_x,
++        float& logical_y) const noexcept {
++        const float scale = static_cast<float>(dpi_) / 96.0F;
++        logical_x = static_cast<float>(pixel_x) / scale;
++        logical_y = static_cast<float>(pixel_y) / scale;
++    }
++
++    void handle_mouse_move(const int pixel_x, const int pixel_y) {
++        if (!tracking_mouse_) {
++            TRACKMOUSEEVENT tracking{
++                sizeof(tracking), TME_LEAVE, window_, HOVER_DEFAULT};
++            if (TrackMouseEvent(&tracking) != FALSE) {
++                tracking_mouse_ = true;
++            }
++        }
++
++        float x = 0.0F;
++        float y = 0.0F;
++        logical_pointer(pixel_x, pixel_y, x, y);
++        set_hovered_button(hit_test(x, y));
++        set_show_full_path(contains(layout().path, x, y));
++    }
++
++    void handle_left_button_down(const int pixel_x, const int pixel_y) {
++        float x = 0.0F;
++        float y = 0.0F;
++        logical_pointer(pixel_x, pixel_y, x, y);
++        const LauncherButton button = hit_test(x, y);
++        if (button != LauncherButton::none) {
++            SetCapture(window_);
++            set_pressed_button(button);
++        }
++    }
++
++    void handle_left_button_up(const int pixel_x, const int pixel_y) {
++        float x = 0.0F;
++        float y = 0.0F;
++        logical_pointer(pixel_x, pixel_y, x, y);
++        const LauncherButton released_over = hit_test(x, y);
++        const LauncherButton pressed = pressed_button_;
++        if (GetCapture() == window_) {
++            ReleaseCapture();
++        }
++        set_pressed_button(LauncherButton::none);
++        set_hovered_button(released_over);
++        if (pressed != LauncherButton::none && pressed == released_over) {
++            invoke(pressed);
++        }
++    }
++
++    void set_hovered_button(const LauncherButton button) noexcept {
++        if (hovered_button_ != button) {
++            hovered_button_ = button;
++            invalidate();
++        }
++    }
++
++    void set_pressed_button(const LauncherButton button) noexcept {
++        if (pressed_button_ != button) {
++            pressed_button_ = button;
++            invalidate();
++        }
++    }
++
++    void set_show_full_path(const bool show) noexcept {
++        if (show_full_path_ != show) {
++            show_full_path_ = show;
++            invalidate();
++        }
++    }
++
++    void handle_dpi_changed(const WPARAM w_param, const LPARAM l_param) noexcept {
++        dpi_ = HIWORD(w_param);
++        if (dpi_ == 0U) {
++            dpi_ = 96U;
++        }
++        renderer_.set_dpi(dpi_);
++        const auto* suggested = reinterpret_cast<const RECT*>(l_param);
++        SetWindowPos(
++            window_,
++            nullptr,
++            suggested->left,
++            suggested->top,
++            suggested->right - suggested->left,
++            suggested->bottom - suggested->top,
++            SWP_NOACTIVATE | SWP_NOZORDER);
++        invalidate();
++    }
++
++    void paint() noexcept {
++        PAINTSTRUCT paint_structure{};
++        BeginPaint(window_, &paint_structure);
++        const LauncherLayout current_layout = layout();
++        const LauncherButton focused_button = window_focused_
++            ? (status_.ready() ? LauncherButton::start : LauncherButton::verify)
++            : LauncherButton::none;
++        const LauncherView view{
++            current_layout,
++            status_text_,
++            path_text_,
++            full_path_,
++            hovered_button_,
++            pressed_button_,
++            focused_button,
++            status_.ready(),
++            status_ready_,
++            show_full_path_,
++        };
++        renderer_.render(view);
++        EndPaint(window_, &paint_structure);
++    }
++
++    void invalidate() noexcept {
++        if (window_ != nullptr) {
++            InvalidateRect(window_, nullptr, FALSE);
++        }
++    }
++
++    HWND window_{};
++    UINT dpi_{96U};
++    LauncherRenderer renderer_;
++    std::optional<std::filesystem::path> launcher_executable_;
++    InstallationStatus status_{
++        InstallationState::invalid_launcher_path, {}, {}, {}};
++    std::wstring status_text_;
++    std::wstring path_text_;
++    std::wstring full_path_;
++    LauncherButton hovered_button_{LauncherButton::none};
++    LauncherButton pressed_button_{LauncherButton::none};
++    bool tracking_mouse_{false};
++    bool window_focused_{false};
++    bool status_ready_{false};
++    bool show_full_path_{false};
++};
++
++LRESULT CALLBACK launcher_window_proc(
++    const HWND window,
++    const UINT message,
++    const WPARAM w_param,
++    const LPARAM l_param) noexcept {
++    try {
++        WindowController* controller = reinterpret_cast<WindowController*>(
++            GetWindowLongPtrW(window, GWLP_USERDATA));
++        if (message == WM_NCCREATE) {
++            const auto* create = reinterpret_cast<const CREATESTRUCTW*>(l_param);
++            controller = static_cast<WindowController*>(create->lpCreateParams);
++            controller->attach(window);
++            SetWindowLongPtrW(
++                window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(controller));
++        }
++        if (controller == nullptr) {
++            return DefWindowProcW(window, message, w_param, l_param);
++        }
++        if (message == WM_CREATE) {
++            return controller->create() ? 0 : -1;
++        }
++        return controller->handle_message(message, w_param, l_param);
++    }
++    catch (...) {
++        PostQuitMessage(1);
++        return 0;
++    }
++}
++
++class ComApartment final {
++public:
++    ComApartment() noexcept : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
++
++    ~ComApartment() {
++        if (SUCCEEDED(result_)) {
++            CoUninitialize();
++        }
++    }
++
++    bool available() const noexcept {
++        return SUCCEEDED(result_) || result_ == RPC_E_CHANGED_MODE;
++    }
++
++private:
++    HRESULT result_;
++};
++
++int run_launcher(const HINSTANCE instance, const int show_command) {
++    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
++
++    ComApartment apartment;
++    if (!apartment.available()) {
++        return 1;
++    }
++
++    const HICON icon = static_cast<HICON>(LoadImageW(
++        instance,
++        MAKEINTRESOURCEW(kLauncherIconId),
++        IMAGE_ICON,
++        0,
++        0,
++        LR_DEFAULTSIZE));
++    WNDCLASSEXW window_class{};
++    window_class.cbSize = sizeof(window_class);
++    window_class.style = CS_HREDRAW | CS_VREDRAW;
++    window_class.lpfnWndProc = launcher_window_proc;
++    window_class.hInstance = instance;
++    window_class.hIcon = icon;
++    window_class.hIconSm = icon;
++    window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
++    window_class.lpszClassName = kWindowClassName;
++    if (RegisterClassExW(&window_class) == 0U) {
++        return 1;
++    }
++
++    const DWORD window_style =
++        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
++    const DWORD extended_style = WS_EX_APPWINDOW;
++    UINT dpi = GetDpiForSystem();
++    if (dpi == 0U) {
++        dpi = 96U;
++    }
++    const PixelSize client_size = launcher_pixel_size(dpi);
++    RECT window_rectangle{0, 0, client_size.width, client_size.height};
++    if (AdjustWindowRectExForDpi(
++            &window_rectangle,
++            window_style,
++            FALSE,
++            extended_style,
++            dpi) == FALSE) {
++        return 1;
++    }
++
++    WindowController controller;
++    const HWND window = CreateWindowExW(
++        extended_style,
++        kWindowClassName,
++        kWindowTitle,
++        window_style,
++        CW_USEDEFAULT,
++        CW_USEDEFAULT,
++        window_rectangle.right - window_rectangle.left,
++        window_rectangle.bottom - window_rectangle.top,
++        nullptr,
++        nullptr,
++        instance,
++        &controller);
++    if (window == nullptr) {
++        return 1;
++    }
++
++    ShowWindow(window, show_command);
++    UpdateWindow(window);
++
++    MSG message{};
++    for (;;) {
++        const BOOL result = GetMessageW(&message, nullptr, 0U, 0U);
++        if (result == 0) {
++            return static_cast<int>(message.wParam);
++        }
++        if (result == -1) {
++            return 1;
++        }
++        TranslateMessage(&message);
++        DispatchMessageW(&message);
++    }
++}
++
++}  // namespace
++}  // namespace arpg::launcher
++
++int WINAPI wWinMain(
++    const HINSTANCE instance,
++    HINSTANCE,
++    PWSTR,
++    const int show_command) {
++    try {
++        return arpg::launcher::run_launcher(instance, show_command);
++    }
++    catch (...) {
++        return 1;
++    }
++}
+diff --git a/src/launcher/launcher_platform_win32.cpp b/src/launcher/launcher_platform_win32.cpp
+new file mode 100644
+index 0000000..3941618
+--- /dev/null
++++ b/src/launcher/launcher_platform_win32.cpp
+@@ -0,0 +1,140 @@
++#include "launcher_platform_win32.hpp"
++
++#include <Windows.h>
++#include <shellapi.h>
++
++#include <limits>
++#include <string_view>
++#include <system_error>
++#include <vector>
++
++namespace arpg::launcher {
++namespace {
++
++std::wstring format_failure(
++    const std::wstring_view operation,
++    const unsigned long error_code) {
++    wchar_t* system_message = nullptr;
++    const DWORD length = FormatMessageW(
++        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
++            FORMAT_MESSAGE_IGNORE_INSERTS,
++        nullptr,
++        error_code,
++        0,
++        reinterpret_cast<wchar_t*>(&system_message),
++        0,
++        nullptr);
++
++    std::wstring message{operation};
++    message += L"：";
++    if (length != 0U && system_message != nullptr) {
++        std::wstring detail{system_message, length};
++        LocalFree(system_message);
++        while (!detail.empty() &&
++            (detail.back() == L'\r' || detail.back() == L'\n' ||
++                detail.back() == L' ')) {
++            detail.pop_back();
++        }
++        message += detail;
++    }
++    else {
++        message += L"错误代码 ";
++        message += std::to_wstring(error_code);
++    }
++    return message;
++}
++
++PlatformResult failure(
++    const std::wstring_view operation,
++    const unsigned long error_code) {
++    return {false, error_code, format_failure(operation, error_code)};
++}
++
++}  // namespace
++
++std::optional<std::filesystem::path> current_executable_path() noexcept {
++    try {
++        std::vector<wchar_t> buffer(MAX_PATH);
++        constexpr std::size_t kMaximumPathCharacters = 32768U;
++
++        while (buffer.size() <= kMaximumPathCharacters) {
++            SetLastError(ERROR_SUCCESS);
++            const DWORD length = GetModuleFileNameW(
++                nullptr,
++                buffer.data(),
++                static_cast<DWORD>(buffer.size()));
++            if (length == 0U) {
++                return std::nullopt;
++            }
++            if (length < buffer.size()) {
++                return std::filesystem::path{
++                    std::wstring{buffer.data(), static_cast<std::size_t>(length)}};
++            }
++
++            if (buffer.size() == kMaximumPathCharacters) {
++                return std::nullopt;
++            }
++            const std::size_t next_size =
++                (buffer.size() > kMaximumPathCharacters / 2U)
++                ? kMaximumPathCharacters
++                : buffer.size() * 2U;
++            buffer.resize(next_size);
++        }
++    }
++    catch (...) {
++    }
++    return std::nullopt;
++}
++
++PlatformResult launch_game(const LaunchRequest& request) noexcept {
++    try {
++        std::vector<wchar_t> command_line(
++            request.command_line.begin(), request.command_line.end());
++        command_line.push_back(L'\0');
++
++        STARTUPINFOW startup{};
++        startup.cb = sizeof(startup);
++        PROCESS_INFORMATION process{};
++        if (CreateProcessW(
++                request.application.c_str(), command_line.data(), nullptr, nullptr,
++                FALSE, 0, nullptr, request.working_directory.c_str(), &startup, &process) ==
++            FALSE) {
++            const DWORD error_code = GetLastError();
++            return failure(L"无法启动游戏", error_code);
++        }
++
++        CloseHandle(process.hThread);
++        CloseHandle(process.hProcess);
++        return {true, ERROR_SUCCESS, {}};
++    }
++    catch (...) {
++        return failure(L"无法启动游戏", ERROR_NOT_ENOUGH_MEMORY);
++    }
++}
++
++PlatformResult open_save_directory(const std::filesystem::path& path) noexcept {
++    try {
++        std::error_code error;
++        std::filesystem::create_directories(path, error);
++        if (error) {
++            return failure(
++                L"无法创建存档目录",
++                static_cast<unsigned long>(error.value()));
++        }
++
++        const HINSTANCE result = ShellExecuteW(
++            nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
++        const INT_PTR result_code = reinterpret_cast<INT_PTR>(result);
++        if (result_code <= 32) {
++            return failure(
++                L"无法打开存档目录",
++                static_cast<unsigned long>(result_code));
++        }
++        return {true, ERROR_SUCCESS, {}};
++    }
++    catch (...) {
++        return failure(L"无法打开存档目录", ERROR_NOT_ENOUGH_MEMORY);
++    }
++}
++
++}  // namespace arpg::launcher
+diff --git a/src/launcher/launcher_platform_win32.hpp b/src/launcher/launcher_platform_win32.hpp
+new file mode 100644
+index 0000000..8b5d9dc
+--- /dev/null
++++ b/src/launcher/launcher_platform_win32.hpp
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include "launcher_core.hpp"
++
++#include <filesystem>
++#include <optional>
++#include <string>
++
++namespace arpg::launcher {
++
++std::optional<std::filesystem::path> current_executable_path() noexcept;
++
++struct PlatformResult {
++    bool ok;
++    unsigned long error_code;
++    std::wstring message;
++};
++
++PlatformResult launch_game(const LaunchRequest&) noexcept;
++PlatformResult open_save_directory(const std::filesystem::path&) noexcept;
++
++}  // namespace arpg::launcher
+diff --git a/src/launcher/launcher_renderer.cpp b/src/launcher/launcher_renderer.cpp
+new file mode 100644
+index 0000000..637024c
+--- /dev/null
++++ b/src/launcher/launcher_renderer.cpp
+@@ -0,0 +1,379 @@
++#include "launcher_renderer.hpp"
++
++#include <d2d1helper.h>
++
++#include <array>
++#include <limits>
++
++namespace arpg::launcher {
++namespace {
++
++constexpr wchar_t kFontFamily[] = L"Microsoft YaHei UI";
++constexpr RectF kTooltipRectangle{58.0F, 430.0F, 862.0F, 522.0F};
++
++D2D1_RECT_F to_d2d_rectangle(const RectF rectangle) noexcept {
++    return D2D1::RectF(
++        rectangle.left, rectangle.top, rectangle.right, rectangle.bottom);
++}
++
++D2D1_ROUNDED_RECT rounded_rectangle(const RectF rectangle) noexcept {
++    return D2D1::RoundedRect(to_d2d_rectangle(rectangle), 6.0F, 6.0F);
++}
++
++}  // namespace
++
++bool LauncherRenderer::initialize(const HWND window) noexcept {
++    window_ = window;
++    dpi_ = GetDpiForWindow(window_);
++    if (dpi_ == 0U) {
++        dpi_ = 96U;
++    }
++
++    HRESULT result = D2D1CreateFactory(
++        D2D1_FACTORY_TYPE_SINGLE_THREADED,
++        d2d_factory_.ReleaseAndGetAddressOf());
++    if (FAILED(result)) {
++        return false;
++    }
++    result = DWriteCreateFactory(
++        DWRITE_FACTORY_TYPE_SHARED,
++        __uuidof(IDWriteFactory),
++        reinterpret_cast<IUnknown**>(dwrite_factory_.ReleaseAndGetAddressOf()));
++    if (FAILED(result)) {
++        return false;
++    }
++    return SUCCEEDED(create_text_formats());
++}
++
++HRESULT LauncherRenderer::create_text_formats() noexcept {
++    const auto create_format = [this](
++                                   const FLOAT size,
++                                   const DWRITE_FONT_WEIGHT weight,
++                                   IDWriteTextFormat** destination) noexcept {
++        return dwrite_factory_->CreateTextFormat(
++            kFontFamily,
++            nullptr,
++            weight,
++            DWRITE_FONT_STYLE_NORMAL,
++            DWRITE_FONT_STRETCH_NORMAL,
++            size,
++            L"zh-CN",
++            destination);
++    };
++
++    HRESULT result = create_format(
++        42.0F, DWRITE_FONT_WEIGHT_BOLD, title_format_.ReleaseAndGetAddressOf());
++    if (SUCCEEDED(result)) {
++        result = create_format(
++            18.0F,
++            DWRITE_FONT_WEIGHT_NORMAL,
++            subtitle_format_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_format(
++            24.0F,
++            DWRITE_FONT_WEIGHT_SEMI_BOLD,
++            status_format_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_format(
++            22.0F,
++            DWRITE_FONT_WEIGHT_SEMI_BOLD,
++            button_format_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_format(
++            15.0F,
++            DWRITE_FONT_WEIGHT_NORMAL,
++            path_format_.ReleaseAndGetAddressOf());
++    }
++    if (FAILED(result)) {
++        return result;
++    }
++
++    title_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
++    title_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
++    subtitle_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
++    subtitle_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
++    status_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
++    status_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
++    button_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
++    button_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
++    path_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
++    path_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
++    return dwrite_factory_->CreateEllipsisTrimmingSign(
++        path_format_.Get(), ellipsis_.ReleaseAndGetAddressOf());
++}
++
++HRESULT LauncherRenderer::ensure_render_target() noexcept {
++    if (render_target_) {
++        return S_OK;
++    }
++
++    RECT client{};
++    if (GetClientRect(window_, &client) == FALSE) {
++        return HRESULT_FROM_WIN32(GetLastError());
++    }
++    const D2D1_SIZE_U pixel_size = D2D1::SizeU(
++        static_cast<UINT>(client.right - client.left),
++        static_cast<UINT>(client.bottom - client.top));
++    HRESULT result = d2d_factory_->CreateHwndRenderTarget(
++        D2D1::RenderTargetProperties(),
++        D2D1::HwndRenderTargetProperties(window_, pixel_size),
++        render_target_.ReleaseAndGetAddressOf());
++    if (FAILED(result)) {
++        return result;
++    }
++    render_target_->SetDpi(static_cast<FLOAT>(dpi_), static_cast<FLOAT>(dpi_));
++
++    const std::array<D2D1_GRADIENT_STOP, 2U> stops{{
++        {0.0F, D2D1::ColorF(0x061724, 1.0F)},
++        {1.0F, D2D1::ColorF(0x36566F, 1.0F)},
++    }};
++    Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stop_collection;
++    result = render_target_->CreateGradientStopCollection(
++        stops.data(),
++        static_cast<UINT32>(stops.size()),
++        stop_collection.GetAddressOf());
++    if (SUCCEEDED(result)) {
++        const D2D1_SIZE_F size = render_target_->GetSize();
++        result = render_target_->CreateLinearGradientBrush(
++            D2D1::LinearGradientBrushProperties(
++                D2D1::Point2F(0.0F, 0.0F), D2D1::Point2F(size.width, size.height)),
++            stop_collection.Get(),
++            background_brush_.ReleaseAndGetAddressOf());
++    }
++
++    const auto create_solid = [this](
++                                  const UINT32 color,
++                                  ID2D1SolidColorBrush** destination) noexcept {
++        return render_target_->CreateSolidColorBrush(
++            D2D1::ColorF(color, 1.0F), destination);
++    };
++    if (SUCCEEDED(result)) {
++        result = create_solid(0xFFFFFF, white_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0x00FF00, green_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0xFF0000, red_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0xC0C7D1, silver_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0x00D9FF, cyan_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0x24455E, button_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0x15364F, pressed_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0x555B63, disabled_brush_.ReleaseAndGetAddressOf());
++    }
++    if (SUCCEEDED(result)) {
++        result = create_solid(0x0A1C2B, card_brush_.ReleaseAndGetAddressOf());
++    }
++    if (FAILED(result)) {
++        discard_device_resources();
++    }
++    return result;
++}
++
++void LauncherRenderer::resize(const UINT width, const UINT height) noexcept {
++    if (render_target_ && width != 0U && height != 0U) {
++        const HRESULT result = render_target_->Resize(D2D1::SizeU(width, height));
++        if (result == D2DERR_RECREATE_TARGET) {
++            discard_device_resources();
++            InvalidateRect(window_, nullptr, FALSE);
++        }
++    }
++}
++
++void LauncherRenderer::set_dpi(const UINT dpi) noexcept {
++    dpi_ = dpi == 0U ? 96U : dpi;
++    if (render_target_) {
++        render_target_->SetDpi(static_cast<FLOAT>(dpi_), static_cast<FLOAT>(dpi_));
++    }
++}
++
++HRESULT LauncherRenderer::draw_text(
++    const std::wstring_view text,
++    IDWriteTextFormat* const format,
++    const RectF rectangle,
++    ID2D1Brush* const brush,
++    const DWRITE_WORD_WRAPPING wrapping,
++    const bool ellipsis) noexcept {
++    if (text.size() > std::numeric_limits<UINT32>::max()) {
++        return E_INVALIDARG;
++    }
++    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
++    const wchar_t* const characters = text.empty() ? L"" : text.data();
++    HRESULT result = dwrite_factory_->CreateTextLayout(
++        characters,
++        static_cast<UINT32>(text.size()),
++        format,
++        rectangle.right - rectangle.left,
++        rectangle.bottom - rectangle.top,
++        layout.GetAddressOf());
++    if (FAILED(result)) {
++        return result;
++    }
++    result = layout->SetWordWrapping(wrapping);
++    if (SUCCEEDED(result) && ellipsis) {
++        const DWRITE_TRIMMING trimming{
++            DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0U, 0U};
++        result = layout->SetTrimming(&trimming, ellipsis_.Get());
++    }
++    if (SUCCEEDED(result)) {
++        render_target_->DrawTextLayout(
++            D2D1::Point2F(rectangle.left, rectangle.top),
++            layout.Get(),
++            brush,
++            D2D1_DRAW_TEXT_OPTIONS_NONE);
++    }
++    return result;
++}
++
++void LauncherRenderer::draw_button(
++    const RectF rectangle,
++    const std::wstring_view label,
++    const LauncherButton button,
++    const LauncherView& view) noexcept {
++    const bool disabled = button == LauncherButton::start && !view.start_enabled;
++    const bool hovered = !disabled && view.hovered_button == button;
++    const bool pressed = !disabled && view.pressed_button == button;
++    const bool focused = !disabled && view.focused_button == button;
++
++    ID2D1Brush* fill = disabled
++        ? static_cast<ID2D1Brush*>(disabled_brush_.Get())
++        : static_cast<ID2D1Brush*>(
++              pressed ? pressed_brush_.Get() : button_brush_.Get());
++    ID2D1Brush* border = hovered || focused
++        ? static_cast<ID2D1Brush*>(cyan_brush_.Get())
++        : static_cast<ID2D1Brush*>(silver_brush_.Get());
++    const D2D1_ROUNDED_RECT shape = rounded_rectangle(rectangle);
++    render_target_->FillRoundedRectangle(shape, fill);
++    render_target_->DrawRoundedRectangle(shape, border, hovered || focused ? 2.5F : 1.5F);
++    draw_text(
++        label,
++        button_format_.Get(),
++        rectangle,
++        white_brush_.Get(),
++        DWRITE_WORD_WRAPPING_NO_WRAP);
++}
++
++HRESULT LauncherRenderer::render(const LauncherView& view) noexcept {
++    HRESULT result = ensure_render_target();
++    if (FAILED(result)) {
++        return result;
++    }
++
++    render_target_->BeginDraw();
++    render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
++    const D2D1_SIZE_F target_size = render_target_->GetSize();
++    background_brush_->SetEndPoint(D2D1::Point2F(target_size.width, target_size.height));
++    render_target_->FillRectangle(
++        D2D1::RectF(0.0F, 0.0F, target_size.width, target_size.height),
++        background_brush_.Get());
++
++    result = draw_text(
++        L"无限地下城",
++        title_format_.Get(),
++        view.layout.title,
++        white_brush_.Get(),
++        DWRITE_WORD_WRAPPING_NO_WRAP);
++    if (SUCCEEDED(result)) {
++        result = draw_text(
++            L"版本 0.1.0 · 单人无限地下城",
++            subtitle_format_.Get(),
++            view.layout.subtitle,
++            white_brush_.Get(),
++            DWRITE_WORD_WRAPPING_NO_WRAP);
++    }
++
++    render_target_->DrawRoundedRectangle(
++        rounded_rectangle(view.layout.status), silver_brush_.Get(), 1.5F);
++    if (SUCCEEDED(result)) {
++        result = draw_text(
++            view.status_text,
++            status_format_.Get(),
++            view.layout.status,
++            view.status_ready ? static_cast<ID2D1Brush*>(green_brush_.Get())
++                              : static_cast<ID2D1Brush*>(red_brush_.Get()),
++            DWRITE_WORD_WRAPPING_NO_WRAP);
++    }
++
++    draw_button(
++        view.layout.start, L"开始游戏", LauncherButton::start, view);
++    draw_button(
++        view.layout.verify, L"检查游戏文件", LauncherButton::verify, view);
++    draw_button(
++        view.layout.save, L"打开存档目录", LauncherButton::save, view);
++    draw_button(view.layout.exit, L"退出", LauncherButton::exit, view);
++
++    render_target_->DrawRoundedRectangle(
++        rounded_rectangle(view.layout.path), silver_brush_.Get(), 1.5F);
++    if (SUCCEEDED(result)) {
++        const RectF path_content{
++            view.layout.path.left + 12.0F,
++            view.layout.path.top,
++            view.layout.path.right - 12.0F,
++            view.layout.path.bottom,
++        };
++        result = draw_text(
++            view.path_text,
++            path_format_.Get(),
++            path_content,
++            white_brush_.Get(),
++            DWRITE_WORD_WRAPPING_NO_WRAP,
++            true);
++    }
++
++    if (view.show_full_path) {
++        const D2D1_ROUNDED_RECT card = rounded_rectangle(kTooltipRectangle);
++        render_target_->FillRoundedRectangle(card, card_brush_.Get());
++        render_target_->DrawRoundedRectangle(card, cyan_brush_.Get(), 2.0F);
++        const RectF tooltip_content{
++            kTooltipRectangle.left + 12.0F,
++            kTooltipRectangle.top + 8.0F,
++            kTooltipRectangle.right - 12.0F,
++            kTooltipRectangle.bottom - 8.0F,
++        };
++        if (SUCCEEDED(result)) {
++            result = draw_text(
++                view.full_path,
++                path_format_.Get(),
++                tooltip_content,
++                white_brush_.Get(),
++                DWRITE_WORD_WRAPPING_WRAP);
++        }
++    }
++
++    const HRESULT end_result = render_target_->EndDraw();
++    if (end_result == D2DERR_RECREATE_TARGET) {
++        discard_device_resources();
++        InvalidateRect(window_, nullptr, FALSE);
++        return S_OK;
++    }
++    return FAILED(result) ? result : end_result;
++}
++
++void LauncherRenderer::discard_device_resources() noexcept {
++    card_brush_.Reset();
++    disabled_brush_.Reset();
++    pressed_brush_.Reset();
++    button_brush_.Reset();
++    cyan_brush_.Reset();
++    silver_brush_.Reset();
++    red_brush_.Reset();
++    green_brush_.Reset();
++    white_brush_.Reset();
++    background_brush_.Reset();
++    render_target_.Reset();
++}
++
++}  // namespace arpg::launcher
+diff --git a/src/launcher/launcher_renderer.hpp b/src/launcher/launcher_renderer.hpp
+new file mode 100644
+index 0000000..ab304ab
+--- /dev/null
++++ b/src/launcher/launcher_renderer.hpp
+@@ -0,0 +1,86 @@
++#pragma once
++
++#include "launcher_layout.hpp"
++
++#include <Windows.h>
++#include <d2d1.h>
++#include <dwrite.h>
++#include <wrl/client.h>
++
++#include <string_view>
++
++namespace arpg::launcher {
++
++enum class LauncherButton {
++    none,
++    start,
++    verify,
++    save,
++    exit,
++};
++
++struct LauncherView {
++    LauncherLayout layout;
++    std::wstring_view status_text;
++    std::wstring_view path_text;
++    std::wstring_view full_path;
++    LauncherButton hovered_button;
++    LauncherButton pressed_button;
++    LauncherButton focused_button;
++    bool start_enabled;
++    bool status_ready;
++    bool show_full_path;
++};
++
++class LauncherRenderer final {
++public:
++    LauncherRenderer() = default;
++    LauncherRenderer(const LauncherRenderer&) = delete;
++    LauncherRenderer& operator=(const LauncherRenderer&) = delete;
++
++    bool initialize(HWND window) noexcept;
++    void resize(UINT width, UINT height) noexcept;
++    void set_dpi(UINT dpi) noexcept;
++    HRESULT render(const LauncherView& view) noexcept;
++    void discard_device_resources() noexcept;
++
++private:
++    HRESULT create_text_formats() noexcept;
++    HRESULT ensure_render_target() noexcept;
++    HRESULT draw_text(
++        std::wstring_view text,
++        IDWriteTextFormat* format,
++        RectF rectangle,
++        ID2D1Brush* brush,
++        DWRITE_WORD_WRAPPING wrapping = DWRITE_WORD_WRAPPING_WRAP,
++        bool ellipsis = false) noexcept;
++    void draw_button(
++        RectF rectangle,
++        std::wstring_view label,
++        LauncherButton button,
++        const LauncherView& view) noexcept;
++
++    HWND window_{};
++    UINT dpi_{96U};
++    Microsoft::WRL::ComPtr<ID2D1Factory> d2d_factory_;
++    Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_factory_;
++    Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> render_target_;
++    Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> background_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> white_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> green_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> red_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> silver_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> cyan_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> button_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> pressed_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> disabled_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> card_brush_;
++    Microsoft::WRL::ComPtr<IDWriteTextFormat> title_format_;
++    Microsoft::WRL::ComPtr<IDWriteTextFormat> subtitle_format_;
++    Microsoft::WRL::ComPtr<IDWriteTextFormat> status_format_;
++    Microsoft::WRL::ComPtr<IDWriteTextFormat> button_format_;
++    Microsoft::WRL::ComPtr<IDWriteTextFormat> path_format_;
++    Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis_;
++};
++
++}  // namespace arpg::launcher
+diff --git a/tests/launcher/CMakeLists.txt b/tests/launcher/CMakeLists.txt
+index ec3bf76..b59931e 100644
+--- a/tests/launcher/CMakeLists.txt
++++ b/tests/launcher/CMakeLists.txt
+@@ -18,10 +18,20 @@ add_test(NAME launcher.units COMMAND arpg_launcher_tests)
+ set_tests_properties(launcher.units PROPERTIES LABELS "headless;launcher")
+ 
+ find_package(Python3 REQUIRED COMPONENTS Interpreter)
+ add_test(
+     NAME launcher.icon_asset
+     COMMAND "${Python3_EXECUTABLE}"
+         "${CMAKE_CURRENT_SOURCE_DIR}/launcher_icon_tests.py")
+ set_tests_properties(launcher.icon_asset PROPERTIES
+     LABELS "headless;launcher;assets"
+     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
++
++add_test(NAME launcher.manifest
++    COMMAND "${CMAKE_COMMAND}" -P
++        "${CMAKE_CURRENT_SOURCE_DIR}/launcher_manifest_test.cmake")
++if(TARGET arpg_launcher)
++    add_test(NAME launcher.window_smoke
++        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
++            "${CMAKE_CURRENT_SOURCE_DIR}/launcher_window_smoke_test.ps1"
++            -Launcher "$<TARGET_FILE:arpg_launcher>")
++endif()
+diff --git a/tests/launcher/launcher_manifest_test.cmake b/tests/launcher/launcher_manifest_test.cmake
+new file mode 100644
+index 0000000..d592207
+--- /dev/null
++++ b/tests/launcher/launcher_manifest_test.cmake
+@@ -0,0 +1,16 @@
++set(manifest_path
++    "${CMAKE_CURRENT_LIST_DIR}/../../src/launcher/arpg_launcher.manifest")
++
++if(NOT EXISTS "${manifest_path}")
++    message(FATAL_ERROR "Launcher manifest is missing: ${manifest_path}")
++endif()
++
++file(READ "${manifest_path}" manifest_contents)
++
++foreach(required_text IN ITEMS "PerMonitorV2" "longPathAware" "true")
++    string(FIND "${manifest_contents}" "${required_text}" match_position)
++    if(match_position EQUAL -1)
++        message(FATAL_ERROR
++            "Launcher manifest is missing required text: ${required_text}")
++    endif()
++endforeach()
+diff --git a/tests/launcher/launcher_window_smoke_test.ps1 b/tests/launcher/launcher_window_smoke_test.ps1
+new file mode 100644
+index 0000000..d5afd98
+--- /dev/null
++++ b/tests/launcher/launcher_window_smoke_test.ps1
+@@ -0,0 +1,89 @@
++param(
++    [Parameter(Mandatory = $true)]
++    [string] $Launcher
++)
++
++$ErrorActionPreference = 'Stop'
++
++function Get-PeSubsystem {
++    param([Parameter(Mandatory = $true)][string] $Path)
++
++    $stream = [System.IO.File]::Open(
++        $Path,
++        [System.IO.FileMode]::Open,
++        [System.IO.FileAccess]::Read,
++        [System.IO.FileShare]::Read)
++    try {
++        $reader = [System.IO.BinaryReader]::new($stream)
++        try {
++            $stream.Position = 0x3c
++            $peOffset = $reader.ReadInt32()
++            $stream.Position = $peOffset
++            if ($reader.ReadUInt32() -ne 0x00004550) {
++                throw "Invalid PE signature: $Path"
++            }
++
++            $stream.Position = $peOffset + 24
++            $magic = $reader.ReadUInt16()
++            if ($magic -ne 0x010b -and $magic -ne 0x020b) {
++                throw "Unsupported PE optional-header magic: $magic"
++            }
++
++            $stream.Position = $peOffset + 24 + 68
++            return $reader.ReadUInt16()
++        }
++        finally {
++            $reader.Dispose()
++        }
++    }
++    finally {
++        $stream.Dispose()
++    }
++}
++
++$source = (Resolve-Path -LiteralPath $Launcher).Path
++$temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) (
++    'arpg-launcher-smoke-' + [guid]::NewGuid().ToString('N'))
++$process = $null
++
++try {
++    [System.IO.Directory]::CreateDirectory($temporaryDirectory) | Out-Null
++    $copiedLauncher = Join-Path $temporaryDirectory ([System.IO.Path]::GetFileName($source))
++    Copy-Item -LiteralPath $source -Destination $copiedLauncher
++
++    $subsystem = Get-PeSubsystem -Path $copiedLauncher
++    if ($subsystem -ne 2) {
++        throw "Expected Windows GUI subsystem 2, found $subsystem"
++    }
++
++    $process = Start-Process -FilePath $copiedLauncher -WorkingDirectory $temporaryDirectory -PassThru
++    $deadline = [DateTime]::UtcNow.AddSeconds(5)
++    do {
++        Start-Sleep -Milliseconds 50
++        $process.Refresh()
++    } while (-not $process.HasExited -and
++        $process.MainWindowHandle -eq [IntPtr]::Zero -and
++        [DateTime]::UtcNow -lt $deadline)
++
++    if ($process.HasExited) {
++        throw "Launcher exited before presenting a main window"
++    }
++    if ($process.MainWindowHandle -eq [IntPtr]::Zero) {
++        throw "Launcher did not present a main window within five seconds"
++    }
++    if ($process.MainWindowTitle -ne '无限地下城启动器') {
++        throw "Unexpected launcher title: '$($process.MainWindowTitle)'"
++    }
++}
++finally {
++    if ($null -ne $process -and -not $process.HasExited) {
++        [void] $process.CloseMainWindow()
++        if (-not $process.WaitForExit(2000)) {
++            Stop-Process -Id $process.Id -Force
++            $process.WaitForExit()
++        }
++    }
++    if (Test-Path -LiteralPath $temporaryDirectory) {
++        Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
++    }
++}

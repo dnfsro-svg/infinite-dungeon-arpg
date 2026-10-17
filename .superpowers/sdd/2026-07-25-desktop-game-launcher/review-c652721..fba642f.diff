@@ -1,0 +1,463 @@
+# Review package: c652721ec9283ae90f7dba272178079fd78229a6..fba642f7ddad4e189fdeff4ff8a29ebe35deb0ba
+
+## Commits
+fba642f feat: add launcher installation core
+
+## Files changed
+ CMakeLists.txt                         |   3 +
+ src/launcher/CMakeLists.txt            |  12 +++
+ src/launcher/launcher_core.cpp         | 135 +++++++++++++++++++++++++++
+ src/launcher/launcher_core.hpp         |  39 ++++++++
+ tests/launcher/CMakeLists.txt          |  17 ++++
+ tests/launcher/launcher_core_tests.cpp | 165 +++++++++++++++++++++++++++++++++
+ tests/launcher/launcher_test_main.cpp  |  11 +++
+ 7 files changed, 382 insertions(+)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a66ae65..b6c728e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -56,24 +56,27 @@ add_subdirectory(src/platform/settings)
+ if(ARPG_BUILD_PERFORMANCE_PROBES)
+     add_subdirectory(tools/performance)
+ endif()
+ 
+ if(ARPG_BUILD_GRAPHICS)
+     include(cmake/Dependencies.cmake)
+     add_subdirectory(src/platform/raylib)
+     add_subdirectory(src/app)
+ endif()
+ 
++add_subdirectory(src/launcher)
++
+ if(BUILD_TESTING)
+     add_subdirectory(tests/core)
+     add_subdirectory(tests/abyss)
+     add_subdirectory(tests/skills)
+     add_subdirectory(tests/combat)
+     add_subdirectory(tests/dungeon)
+     add_subdirectory(tests/persistence)
+     add_subdirectory(tests/platform)
+     add_subdirectory(tests/progression)
+     add_subdirectory(tests/modifiers)
+     add_subdirectory(tests/passives)
+     add_subdirectory(tests/items)
+     add_subdirectory(tests/settings)
++    add_subdirectory(tests/launcher)
+ endif()
+diff --git a/src/launcher/CMakeLists.txt b/src/launcher/CMakeLists.txt
+new file mode 100644
+index 0000000..10c47b4
+--- /dev/null
++++ b/src/launcher/CMakeLists.txt
+@@ -0,0 +1,12 @@
++add_library(arpg_launcher_core STATIC
++    launcher_core.cpp)
++
++target_include_directories(arpg_launcher_core
++    PUBLIC "${PROJECT_SOURCE_DIR}/src/launcher")
++target_compile_features(arpg_launcher_core PUBLIC cxx_std_17)
++arpg_enable_project_warnings(arpg_launcher_core)
++if(MSVC)
++    target_compile_options(arpg_launcher_core PRIVATE /utf-8)
++endif()
++set_target_properties(arpg_launcher_core PROPERTIES
++    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+diff --git a/src/launcher/launcher_core.cpp b/src/launcher/launcher_core.cpp
+new file mode 100644
+index 0000000..7704bcd
+--- /dev/null
++++ b/src/launcher/launcher_core.cpp
+@@ -0,0 +1,135 @@
++#include "launcher_core.hpp"
++
++#include <array>
++#include <system_error>
++
++namespace arpg::launcher {
++
++namespace {
++
++inline constexpr std::array<std::wstring_view, 6U> kRequiredAssetDirectories{{
++    L"assets/fonts",
++    L"assets/player",
++    L"assets/skills",
++    L"assets/stage12",
++    L"assets/stage14/audio",
++    L"assets/stage15/audio",
++}};
++
++InstallationStatus make_status(
++    InstallationState state,
++    const std::filesystem::path& application_directory,
++    const std::filesystem::path& game_executable = {},
++    const std::filesystem::path& missing_path = {}) noexcept {
++    return {state, application_directory, game_executable, missing_path};
++}
++
++}  // namespace
++
++bool InstallationStatus::ready() const noexcept {
++    return state == InstallationState::ready;
++}
++
++InstallationStatus inspect_installation(
++    const std::filesystem::path& launcher_executable) noexcept {
++    try {
++        const std::filesystem::path application_directory =
++            launcher_executable.parent_path();
++        std::error_code error;
++        if (application_directory.empty() ||
++            !std::filesystem::is_directory(application_directory, error)) {
++            return make_status(
++                InstallationState::invalid_launcher_path,
++                application_directory,
++                {},
++                launcher_executable);
++        }
++
++        const std::filesystem::path game_executable =
++            application_directory / L"arpg_game.exe";
++        error.clear();
++        if (!std::filesystem::is_regular_file(game_executable, error)) {
++            return make_status(
++                InstallationState::missing_game_executable,
++                application_directory,
++                game_executable,
++                game_executable);
++        }
++
++        for (const auto directory : kRequiredAssetDirectories) {
++            const std::filesystem::path asset_directory =
++                application_directory / directory;
++            error.clear();
++            if (!std::filesystem::is_directory(asset_directory, error)) {
++                return make_status(
++                    InstallationState::missing_asset_directory,
++                    application_directory,
++                    game_executable,
++                    asset_directory);
++            }
++        }
++
++        return make_status(
++            InstallationState::ready,
++            application_directory,
++            game_executable);
++    }
++    catch (...) {
++        return make_status(
++            InstallationState::invalid_launcher_path,
++            {},
++            {},
++            launcher_executable);
++    }
++}
++
++std::optional<LaunchRequest> make_launch_request(
++    const InstallationStatus& status) noexcept {
++    if (!status.ready()) {
++        return std::nullopt;
++    }
++
++    try {
++        return LaunchRequest{
++            status.game_executable,
++            status.application_directory,
++            L"\"" + status.game_executable.native() + L"\"",
++        };
++    }
++    catch (...) {
++        return std::nullopt;
++    }
++}
++
++std::optional<std::filesystem::path> default_save_directory(
++    const std::wstring_view local_app_data) noexcept {
++    if (local_app_data.empty()) {
++        return std::nullopt;
++    }
++
++    try {
++        return std::filesystem::path{std::wstring{local_app_data}} /
++            L"InfiniteDungeon" / L"save";
++    }
++    catch (...) {
++        return std::nullopt;
++    }
++}
++
++std::wstring installation_message(const InstallationStatus& status) {
++    switch (status.state) {
++    case InstallationState::ready:
++        return L"游戏已就绪";
++    case InstallationState::invalid_launcher_path:
++        return L"启动器路径无效";
++    case InstallationState::missing_game_executable:
++        return L"缺少 arpg_game.exe";
++    case InstallationState::missing_asset_directory:
++        return L"缺少资源：" +
++            status.missing_path.lexically_relative(status.application_directory).generic_wstring();
++    }
++
++    return L"启动器路径无效";
++}
++
++}  // namespace arpg::launcher
+diff --git a/src/launcher/launcher_core.hpp b/src/launcher/launcher_core.hpp
+new file mode 100644
+index 0000000..f5680af
+--- /dev/null
++++ b/src/launcher/launcher_core.hpp
+@@ -0,0 +1,39 @@
++#pragma once
++
++#include <cstdint>
++#include <filesystem>
++#include <optional>
++#include <string>
++#include <string_view>
++
++namespace arpg::launcher {
++
++enum class InstallationState : std::uint8_t {
++    ready,
++    invalid_launcher_path,
++    missing_game_executable,
++    missing_asset_directory,
++};
++
++struct InstallationStatus {
++    InstallationState state;
++    std::filesystem::path application_directory;
++    std::filesystem::path game_executable;
++    std::filesystem::path missing_path;
++
++    bool ready() const noexcept;
++};
++
++InstallationStatus inspect_installation(const std::filesystem::path&) noexcept;
++
++struct LaunchRequest {
++    std::filesystem::path application;
++    std::filesystem::path working_directory;
++    std::wstring command_line;
++};
++
++std::optional<LaunchRequest> make_launch_request(const InstallationStatus&) noexcept;
++std::optional<std::filesystem::path> default_save_directory(std::wstring_view) noexcept;
++std::wstring installation_message(const InstallationStatus&);
++
++}  // namespace arpg::launcher
+diff --git a/tests/launcher/CMakeLists.txt b/tests/launcher/CMakeLists.txt
+new file mode 100644
+index 0000000..f730ee2
+--- /dev/null
++++ b/tests/launcher/CMakeLists.txt
+@@ -0,0 +1,17 @@
++add_executable(arpg_launcher_tests
++    launcher_test_main.cpp
++    launcher_core_tests.cpp)
++
++target_compile_features(arpg_launcher_tests PRIVATE cxx_std_17)
++target_include_directories(arpg_launcher_tests
++    PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
++target_link_libraries(arpg_launcher_tests PRIVATE arpg_launcher_core)
++arpg_enable_project_warnings(arpg_launcher_tests)
++if(MSVC)
++    target_compile_options(arpg_launcher_tests PRIVATE /utf-8)
++endif()
++set_target_properties(arpg_launcher_tests PROPERTIES
++    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
++
++add_test(NAME launcher.units COMMAND arpg_launcher_tests)
++set_tests_properties(launcher.units PROPERTIES LABELS "headless;launcher")
+diff --git a/tests/launcher/launcher_core_tests.cpp b/tests/launcher/launcher_core_tests.cpp
+new file mode 100644
+index 0000000..c8a092f
+--- /dev/null
++++ b/tests/launcher/launcher_core_tests.cpp
+@@ -0,0 +1,165 @@
++#include "launcher_core.hpp"
++#include "test_framework.hpp"
++
++#include <fstream>
++#include <string>
++#include <system_error>
++
++namespace {
++
++using arpg::launcher::InstallationState;
++using arpg::launcher::InstallationStatus;
++
++constexpr std::wstring_view kRequiredAssetDirectories[] = {
++    L"assets/fonts",
++    L"assets/player",
++    L"assets/skills",
++    L"assets/stage12",
++    L"assets/stage14/audio",
++    L"assets/stage15/audio",
++};
++
++class TemporaryInstallation final {
++public:
++    explicit TemporaryInstallation(std::wstring_view name) noexcept {
++        std::error_code error;
++        root_ = std::filesystem::temp_directory_path(error) /
++            L"桌面 启动器 核心测试" / std::wstring{name};
++        if (error) {
++            root_.clear();
++            return;
++        }
++        std::filesystem::remove_all(root_, error);
++        error.clear();
++        std::filesystem::create_directories(root_, error);
++    }
++
++    ~TemporaryInstallation() {
++        std::error_code error;
++        std::filesystem::remove_all(root_, error);
++    }
++
++    const std::filesystem::path& root() const noexcept {
++        return root_;
++    }
++
++    std::filesystem::path launcher_path() const {
++        return root_ / L"desktop_launcher.exe";
++    }
++
++    void create_ready_files() const {
++        std::error_code error;
++        for (const auto directory : kRequiredAssetDirectories) {
++            std::filesystem::create_directories(root_ / directory, error);
++            error.clear();
++        }
++        std::ofstream game{root_ / L"arpg_game.exe", std::ios::binary};
++    }
++
++private:
++    std::filesystem::path root_;
++};
++
++arpg::test::Failure ready_installation_is_accepted() noexcept {
++    TemporaryInstallation installation{L"ready installation"};
++    installation.create_ready_files();
++
++    const auto status = arpg::launcher::inspect_installation(installation.launcher_path());
++    ARPG_REQUIRE(status.state == InstallationState::ready);
++    ARPG_REQUIRE(status.ready());
++    ARPG_REQUIRE(status.application_directory == installation.root());
++    ARPG_REQUIRE(status.game_executable == installation.root() / L"arpg_game.exe");
++    ARPG_REQUIRE(arpg::launcher::installation_message(status) == L"游戏已就绪");
++    return {};
++}
++
++arpg::test::Failure missing_game_is_reported() noexcept {
++    TemporaryInstallation installation{L"missing game"};
++    std::error_code error;
++    for (const auto directory : kRequiredAssetDirectories) {
++        std::filesystem::create_directories(installation.root() / directory, error);
++        ARPG_REQUIRE(!error);
++    }
++
++    const auto status = arpg::launcher::inspect_installation(installation.launcher_path());
++    ARPG_REQUIRE(status.state == InstallationState::missing_game_executable);
++    ARPG_REQUIRE(status.missing_path == installation.root() / L"arpg_game.exe");
++    ARPG_REQUIRE(arpg::launcher::installation_message(status) == L"缺少 arpg_game.exe");
++    return {};
++}
++
++arpg::test::Failure missing_asset_directory_is_reported() noexcept {
++    TemporaryInstallation installation{L"missing asset"};
++    installation.create_ready_files();
++    std::error_code error;
++    std::filesystem::remove_all(installation.root() / L"assets/stage12", error);
++    ARPG_REQUIRE(!error);
++
++    const auto status = arpg::launcher::inspect_installation(installation.launcher_path());
++    ARPG_REQUIRE(status.state == InstallationState::missing_asset_directory);
++    ARPG_REQUIRE(status.missing_path == installation.root() / L"assets/stage12");
++    ARPG_REQUIRE(arpg::launcher::installation_message(status) == L"缺少资源：assets/stage12");
++    return {};
++}
++
++arpg::test::Failure ready_installation_builds_argument_free_request() noexcept {
++    TemporaryInstallation installation{L"launch request"};
++    installation.create_ready_files();
++
++    const auto status = arpg::launcher::inspect_installation(installation.launcher_path());
++    const auto request = arpg::launcher::make_launch_request(status);
++    ARPG_REQUIRE(request.has_value());
++    ARPG_REQUIRE(request->application == status.game_executable);
++    ARPG_REQUIRE(request->working_directory == status.application_directory);
++    ARPG_REQUIRE(request->command_line == L"\"" + status.game_executable.native() + L"\"");
++    ARPG_REQUIRE(request->command_line.find(L"--") == std::wstring::npos);
++    return {};
++}
++
++arpg::test::Failure long_chinese_game_path_is_preserved_verbatim() noexcept {
++    const std::wstring segment(96U, L'路');
++    const std::filesystem::path game_path =
++        std::filesystem::path{L"C:\\长路径 空格"} / segment / segment / segment / L"arpg_game.exe";
++    const InstallationStatus status{
++        InstallationState::ready,
++        game_path.parent_path(),
++        game_path,
++        {},
++    };
++
++    const auto request = arpg::launcher::make_launch_request(status);
++    ARPG_REQUIRE(game_path.native().size() > 260U);
++    ARPG_REQUIRE(request.has_value());
++    ARPG_REQUIRE(request->application.native() == game_path.native());
++    ARPG_REQUIRE(request->command_line == L"\"" + game_path.native() + L"\"");
++    return {};
++}
++
++arpg::test::Failure local_app_data_builds_existing_default_save_path() noexcept {
++    const std::wstring local_app_data = L"C:\\Users\\测试 用户\\AppData\\Local";
++    const auto save_directory = arpg::launcher::default_save_directory(local_app_data);
++    ARPG_REQUIRE(save_directory.has_value());
++    ARPG_REQUIRE(*save_directory ==
++        std::filesystem::path{local_app_data} / L"InfiniteDungeon" / L"save");
++    return {};
++}
++
++arpg::test::Failure empty_local_app_data_is_rejected() noexcept {
++    ARPG_REQUIRE(!arpg::launcher::default_save_directory(L"").has_value());
++    return {};
++}
++
++}  // namespace
++
++arpg::test::TestSuite launcher_core_suite() noexcept {
++    static const arpg::test::TestCase cases[] = {
++        {"ready installation is accepted", ready_installation_is_accepted},
++        {"missing game is reported", missing_game_is_reported},
++        {"missing asset directory is reported", missing_asset_directory_is_reported},
++        {"ready installation builds argument-free request", ready_installation_builds_argument_free_request},
++        {"long Chinese game path is preserved verbatim", long_chinese_game_path_is_preserved_verbatim},
++        {"local app data builds existing default save path", local_app_data_builds_existing_default_save_path},
++        {"empty local app data is rejected", empty_local_app_data_is_rejected},
++    };
++    return arpg::test::make_suite("launcher_core", cases);
++}
+diff --git a/tests/launcher/launcher_test_main.cpp b/tests/launcher/launcher_test_main.cpp
+new file mode 100644
+index 0000000..58641a4
+--- /dev/null
++++ b/tests/launcher/launcher_test_main.cpp
+@@ -0,0 +1,11 @@
++#include "test_framework.hpp"
++
++arpg::test::TestSuite launcher_core_suite() noexcept;
++
++int main() {
++    const arpg::test::TestSuite suites[] = {
++        launcher_core_suite(),
++    };
++
++    return arpg::test::run_suites(suites, 7, "desktop launcher core");
++}

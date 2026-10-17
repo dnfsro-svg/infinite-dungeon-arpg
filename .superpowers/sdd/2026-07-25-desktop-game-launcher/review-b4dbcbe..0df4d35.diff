@@ -1,0 +1,245 @@
+# Review package: b4dbcbe9553d333a81a28cea04582095c4186139..0df4d3567c4dcbd0aa1a16433bb5321e4600ac4c
+
+## Commits
+0df4d35 fix: scope audio process guards for launcher
+
+## Files changed
+ tests/platform/CMakeLists.txt                      |  9 ++++
+ tests/platform/audio_process_guard_common.cmake    | 37 ++++++++++++++
+ .../audio_process_guard_common_self_test.cmake     | 56 ++++++++++++++++++++++
+ .../platform/stage14_audio_integration_guard.cmake | 16 ++-----
+ .../platform/stage15_audio_integration_guard.cmake |  8 ++--
+ 5 files changed, 112 insertions(+), 14 deletions(-)
+
+## Diff
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 949f493..c275bb9 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1700,20 +1700,29 @@ set_tests_properties(
+     PROPERTIES LABELS "headless;platform;stage14")
+ 
+ add_test(
+     NAME stage14.audio_integration_guard
+     COMMAND "${CMAKE_COMMAND}"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage14_audio_integration_guard.cmake")
+ set_tests_properties(
+     stage14.audio_integration_guard
+     PROPERTIES LABELS "headless;platform;architecture;stage14")
+ 
++add_test(
++    NAME audio.process_guard_common_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/audio-process-guard-common"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/audio_process_guard_common_self_test.cmake")
++set_tests_properties(
++    audio.process_guard_common_self_test
++    PROPERTIES LABELS "headless;platform;architecture")
++
+ add_test(
+     NAME stage15.audio_sources
+     COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+         "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator.ps1"
+         -AssetDirectory "${PROJECT_SOURCE_DIR}/assets/stage15/audio")
+ set_tests_properties(
+     stage15.audio_sources
+     PROPERTIES LABELS "headless;platform;stage15")
+ 
+ add_test(
+diff --git a/tests/platform/audio_process_guard_common.cmake b/tests/platform/audio_process_guard_common.cmake
+new file mode 100644
+index 0000000..d8c8c1c
+--- /dev/null
++++ b/tests/platform/audio_process_guard_common.cmake
+@@ -0,0 +1,37 @@
++function(arpg_audio_process_guard_process_call_detected
++        SOURCE_ROOT SOURCE_FILE SOURCE_TEXT OUT_DETECTED)
++    file(REAL_PATH "${SOURCE_ROOT}" _repository_root)
++    file(REAL_PATH "${SOURCE_FILE}" _source_file)
++    file(REAL_PATH
++        "${_repository_root}/src/launcher/launcher_platform_win32.cpp"
++        _launcher_platform_source)
++
++    set(_checked_text "${SOURCE_TEXT}")
++    if(_source_file STREQUAL _launcher_platform_source)
++        string(REGEX REPLACE
++            "(^|[^A-Za-z0-9_:>.])CreateProcessW[(]"
++            "\\1arpg_audio_guard_allowed_createprocessw("
++            _checked_text "${_checked_text}")
++        string(REGEX REPLACE
++            "(^|[^A-Za-z0-9_:>.])ShellExecuteW[(]"
++            "\\1arpg_audio_guard_allowed_shellexecutew("
++            _checked_text "${_checked_text}")
++    endif()
++
++    string(TOLOWER "${_checked_text}" _checked_lower)
++    set(_process_function_family
++        "(system|_wsystem|popen|_popen|_wpopen|createprocess[a-z]*|shellexecute[a-z]*|winexec|posix_spawn[a-z]*|_spawn(l|le|lp|lpe|v|ve|vp|vpe)?|_wspawn(l|le|lp|lpe|v|ve|vp|vpe)?|exec(l|le|lp|lpe|v|ve|vp|vpe)?|_exec(l|le|lp|lpe|v|ve|vp|vpe)?)")
++    set(_bare_process_call_pattern
++        "(^|[^A-Za-z0-9_:>.])${_process_function_family}[ \\t\\r\\n]*\\(")
++    set(_std_process_call_pattern
++        "(^|[^A-Za-z0-9_:>.])std::system[ \\t\\r\\n]*\\(")
++    set(_global_process_call_pattern
++        "(^|[^A-Za-z0-9_:>.])::${_process_function_family}[ \\t\\r\\n]*\\(")
++    if(_checked_lower MATCHES "${_bare_process_call_pattern}"
++            OR _checked_lower MATCHES "${_std_process_call_pattern}"
++            OR _checked_lower MATCHES "${_global_process_call_pattern}")
++        set(${OUT_DETECTED} TRUE PARENT_SCOPE)
++    else()
++        set(${OUT_DETECTED} FALSE PARENT_SCOPE)
++    endif()
++endfunction()
+diff --git a/tests/platform/audio_process_guard_common_self_test.cmake b/tests/platform/audio_process_guard_common_self_test.cmake
+new file mode 100644
+index 0000000..2892375
+--- /dev/null
++++ b/tests/platform/audio_process_guard_common_self_test.cmake
+@@ -0,0 +1,56 @@
++if(NOT DEFINED GUARD_TEST_ROOT)
++    message(FATAL_ERROR "Audio process guard self-test requires GUARD_TEST_ROOT")
++endif()
++
++include("${CMAKE_CURRENT_LIST_DIR}/audio_process_guard_common.cmake")
++
++set(_fixture_root "${GUARD_TEST_ROOT}/src")
++file(REMOVE_RECURSE "${GUARD_TEST_ROOT}")
++file(MAKE_DIRECTORY "${_fixture_root}/launcher")
++
++set(_launcher "${_fixture_root}/launcher/launcher_platform_win32.cpp")
++set(_other_launcher "${_fixture_root}/launcher/other_launcher.cpp")
++
++function(arpg_audio_process_guard_expect LABEL SOURCE CONTENT EXPECTED)
++    file(WRITE "${SOURCE}" "${CONTENT}")
++    arpg_audio_process_guard_process_call_detected(
++        "${GUARD_TEST_ROOT}" "${SOURCE}" "${CONTENT}" _detected)
++    if(NOT _detected STREQUAL EXPECTED)
++        message(FATAL_ERROR
++            "Audio process guard ${LABEL}: expected ${EXPECTED}, got ${_detected}")
++    endif()
++endfunction()
++
++arpg_audio_process_guard_expect(
++    "allows exact launcher CreateProcessW"
++    "${_launcher}"
++    "void launch() { CreateProcessW(); }\n"
++    FALSE)
++arpg_audio_process_guard_expect(
++    "allows exact launcher ShellExecuteW"
++    "${_launcher}"
++    "void open_save() { ShellExecuteW(); }\n"
++    FALSE)
++arpg_audio_process_guard_expect(
++    "retains launcher system detection"
++    "${_launcher}"
++    "void launch() { system(); }\n"
++    TRUE)
++arpg_audio_process_guard_expect(
++    "retains launcher CreateProcessA detection"
++    "${_launcher}"
++    "void launch() { CreateProcessA(); }\n"
++    TRUE)
++arpg_audio_process_guard_expect(
++    "retains CreateProcessW detection in other launcher file"
++    "${_other_launcher}"
++    "void launch() { CreateProcessW(); }\n"
++    TRUE)
++arpg_audio_process_guard_expect(
++    "retains ShellExecuteW detection in other launcher file"
++    "${_other_launcher}"
++    "void open_save() { ShellExecuteW(); }\n"
++    TRUE)
++
++message(STATUS
++    "Audio process guard allows only the two canonical launcher calls")
+diff --git a/tests/platform/stage14_audio_integration_guard.cmake b/tests/platform/stage14_audio_integration_guard.cmake
+index cb25cdb..920b578 100644
+--- a/tests/platform/stage14_audio_integration_guard.cmake
++++ b/tests/platform/stage14_audio_integration_guard.cmake
+@@ -25,43 +25,37 @@ file(GLOB_RECURSE _stage14_production_sources LIST_DIRECTORIES false
+     "${_stage14_repository_root}/src/*.cc"
+     "${_stage14_repository_root}/src/*.cpp"
+     "${_stage14_repository_root}/src/*.cxx"
+     "${_stage14_repository_root}/src/*.h"
+     "${_stage14_repository_root}/src/*.hpp")
+ file(GLOB_RECURSE _stage14_production_cmake LIST_DIRECTORIES false
+     "${_stage14_repository_root}/src/CMakeLists.txt"
+     "${_stage14_repository_root}/src/*/CMakeLists.txt")
+ set(_stage14_production_files
+     ${_stage14_production_sources} ${_stage14_production_cmake})
+-set(_stage14_process_function_family
+-    "(system|_wsystem|popen|_popen|_wpopen|createprocess[a-z]*|shellexecute[a-z]*|winexec|posix_spawn[a-z]*|_spawn(l|le|lp|lpe|v|ve|vp|vpe)?|_wspawn(l|le|lp|lpe|v|ve|vp|vpe)?|exec(l|le|lp|lpe|v|ve|vp|vpe)?|_exec(l|le|lp|lpe|v|ve|vp|vpe)?)")
+-set(_stage14_bare_process_call_pattern
+-    "(^|[^A-Za-z0-9_:>.])${_stage14_process_function_family}[ \\t\\r\\n]*\\(")
+-set(_stage14_std_process_call_pattern
+-    "(^|[^A-Za-z0-9_:>.])std::system[ \\t\\r\\n]*\\(")
+-set(_stage14_global_process_call_pattern
+-    "(^|[^A-Za-z0-9_:>.])::${_stage14_process_function_family}[ \\t\\r\\n]*\\(")
++include("${CMAKE_CURRENT_LIST_DIR}/audio_process_guard_common.cmake")
+ 
+ foreach(_stage14_source IN LISTS _stage14_production_files)
+     file(READ "${_stage14_source}" _stage14_source_text)
+     string(TOLOWER "${_stage14_source_text}" _stage14_source_lower)
+     if(_stage14_source_lower MATCHES "(https?|ftp)://")
+         message(FATAL_ERROR
+             "Stage14 production source must not contain a download URL: ${_stage14_source}")
+     endif()
+     if(_stage14_source_lower MATCHES "ffmpeg")
+         message(FATAL_ERROR
+             "Stage14 production source must not invoke or reference ffmpeg: ${_stage14_source}")
+     endif()
+-    if(_stage14_source_lower MATCHES "${_stage14_bare_process_call_pattern}"
+-            OR _stage14_source_lower MATCHES "${_stage14_std_process_call_pattern}"
+-            OR _stage14_source_lower MATCHES "${_stage14_global_process_call_pattern}")
++    arpg_audio_process_guard_process_call_detected(
++        "${_stage14_repository_root}" "${_stage14_source}"
++        "${_stage14_source_text}" _stage14_process_call_detected)
++    if(_stage14_process_call_detected)
+         message(FATAL_ERROR
+             "Stage14 production source must not launch a process: ${_stage14_source}")
+     endif()
+ endforeach()
+ 
+ file(GLOB_RECURSE _stage14_core_boundary_sources LIST_DIRECTORIES false
+     "${_stage14_repository_root}/src/core/*.c"
+     "${_stage14_repository_root}/src/core/*.cc"
+     "${_stage14_repository_root}/src/core/*.cpp"
+     "${_stage14_repository_root}/src/core/*.cxx"
+diff --git a/tests/platform/stage15_audio_integration_guard.cmake b/tests/platform/stage15_audio_integration_guard.cmake
+index 154b593..975e48a 100644
+--- a/tests/platform/stage15_audio_integration_guard.cmake
++++ b/tests/platform/stage15_audio_integration_guard.cmake
+@@ -14,29 +14,31 @@ foreach(_required IN ITEMS
+         "${_app_cmake}")
+     if(NOT EXISTS "${_required}")
+         message(FATAL_ERROR "Stage15 integration input missing: ${_required}")
+     endif()
+ endforeach()
+ 
+ file(GLOB_RECURSE _production_files LIST_DIRECTORIES false
+     "${_repository_root}/src/*.c" "${_repository_root}/src/*.cc"
+     "${_repository_root}/src/*.cpp" "${_repository_root}/src/*.cxx"
+     "${_repository_root}/src/*.h" "${_repository_root}/src/*.hpp")
+-set(_process_pattern
+-    "(^|[^A-Za-z0-9_:>.])(system|_wsystem|popen|_popen|createprocess[a-z]*|shellexecute[a-z]*|winexec|posix_spawn[a-z]*|_spawn[a-z]*|_wspawn[a-z]*|exec[a-z]*|_exec[a-z]*)[ \\t\\r\\n]*\\(")
++include("${CMAKE_CURRENT_LIST_DIR}/audio_process_guard_common.cmake")
+ foreach(_source IN LISTS _production_files)
+     file(READ "${_source}" _text)
+     string(TOLOWER "${_text}" _lower)
+     if(_lower MATCHES "(https?|ftp)://")
+         message(FATAL_ERROR "Stage15 production source contains a download URL: ${_source}")
+     endif()
+-    if(_lower MATCHES "${_process_pattern}" OR _lower MATCHES "std::system[ \\t\\r\\n]*\\(")
++    arpg_audio_process_guard_process_call_detected(
++        "${_repository_root}" "${_source}" "${_text}"
++        _process_call_detected)
++    if(_process_call_detected)
+         message(FATAL_ERROR "Stage15 production source launches a process: ${_source}")
+     endif()
+ endforeach()
+ 
+ file(GLOB_RECURSE _core_files LIST_DIRECTORIES false
+     "${_repository_root}/src/core/*" "${_repository_root}/src/combat/*"
+     "${_repository_root}/src/dungeon/*")
+ foreach(_source IN LISTS _core_files)
+     if(IS_DIRECTORY "${_source}")
+         continue()

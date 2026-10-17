@@ -1,0 +1,284 @@
+# Review package: 14a9b7ea85622562bbc9a9acda7d09e6ed81a4ec..b9066ae
+
+## Commits
+b9066ae feat: deploy launcher to desktop
+
+## Files changed
+ scripts/DeployLauncher.ps1                   | 137 +++++++++++++++++++++++++++
+ tests/launcher/CMakeLists.txt                |   7 ++
+ tests/launcher/deploy_launcher_self_test.ps1 | 101 ++++++++++++++++++++
+ 3 files changed, 245 insertions(+)
+
+## Diff
+diff --git a/scripts/DeployLauncher.ps1 b/scripts/DeployLauncher.ps1
+new file mode 100644
+index 0000000..3f455c8
+--- /dev/null
++++ b/scripts/DeployLauncher.ps1
+@@ -0,0 +1,137 @@
++[CmdletBinding()]
++param(
++    [Parameter(Mandatory)][string]$GameBuildDirectory,
++    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'InfiniteDungeon\app'),
++    [string]$DesktopDirectory = [Environment]::GetFolderPath('Desktop')
++)
++
++Set-StrictMode -Version Latest
++$ErrorActionPreference = 'Stop'
++
++$requiredAssetDirectories = @(
++    'assets/fonts',
++    'assets/player',
++    'assets/skills',
++    'assets/stage12',
++    'assets/stage14/audio',
++    'assets/stage15/audio'
++)
++
++function Resolve-OutputPath([string]$Path, [string]$Name) {
++    if ([string]::IsNullOrWhiteSpace($Path)) {
++        throw "$Name must not be empty."
++    }
++    return [System.IO.Path]::GetFullPath($Path)
++}
++
++function Assert-ApplicationLayout([string]$Directory, [string]$Description) {
++    foreach ($executable in @('无限地下城启动器.exe', 'arpg_game.exe')) {
++        $path = Join-Path $Directory $executable
++        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
++            throw "$Description is missing required file: $executable"
++        }
++    }
++    foreach ($assetDirectory in $requiredAssetDirectories) {
++        $path = Join-Path $Directory $assetDirectory
++        if (-not (Test-Path -LiteralPath $path -PathType Container)) {
++            throw "$Description is missing required asset directory: $assetDirectory"
++        }
++    }
++}
++
++function Assert-ReleaseBuildDirectory([string]$Directory) {
++    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
++        throw "GameBuildDirectory does not exist or is not a directory: $Directory"
++    }
++    if ((Split-Path -Path $Directory -Leaf) -ine 'bin') {
++        throw "GameBuildDirectory must be an explicit Release bin directory: $Directory"
++    }
++
++    Assert-ApplicationLayout -Directory $Directory -Description 'GameBuildDirectory'
++
++    $cachePath = Join-Path (Split-Path -Path $Directory -Parent) 'CMakeCache.txt'
++    if (-not (Test-Path -LiteralPath $cachePath -PathType Leaf)) {
++        throw "GameBuildDirectory has no sibling CMakeCache.txt: $cachePath"
++    }
++    $cacheContents = Get-Content -LiteralPath $cachePath -Raw
++    if ($cacheContents -notmatch '(?m)^CMAKE_BUILD_TYPE:STRING=Release\r?$') {
++        throw "GameBuildDirectory is not a Release CMake build: $cachePath"
++    }
++}
++
++function New-SiblingName([string]$BaseName, [string]$Role) {
++    $timestamp = Get-Date -Format 'yyyyMMddHHmmssfff'
++    return "$BaseName.$Role.$timestamp.$PID.$([Guid]::NewGuid().ToString('N'))"
++}
++
++$resolvedGameBuildDirectory = Resolve-OutputPath -Path $GameBuildDirectory -Name 'GameBuildDirectory'
++if (-not (Test-Path -LiteralPath $resolvedGameBuildDirectory -PathType Container)) {
++    throw "GameBuildDirectory does not exist or is not a directory: $resolvedGameBuildDirectory"
++}
++$resolvedGameBuildDirectory = (Resolve-Path -LiteralPath $resolvedGameBuildDirectory).ProviderPath
++$resolvedInstallRoot = Resolve-OutputPath -Path $InstallRoot -Name 'InstallRoot'
++$resolvedDesktopDirectory = Resolve-OutputPath -Path $DesktopDirectory -Name 'DesktopDirectory'
++
++Assert-ReleaseBuildDirectory -Directory $resolvedGameBuildDirectory
++
++$installParent = Split-Path -Path $resolvedInstallRoot -Parent
++$installLeaf = Split-Path -Path $resolvedInstallRoot -Leaf
++if ([string]::IsNullOrWhiteSpace($installParent) -or [string]::IsNullOrWhiteSpace($installLeaf)) {
++    throw "InstallRoot must name an application directory: $resolvedInstallRoot"
++}
++
++New-Item -ItemType Directory -Path $installParent -Force | Out-Null
++$stagingPath = Join-Path $installParent (New-SiblingName -BaseName $installLeaf -Role 'staging')
++$backupPath = $null
++$stagePublished = $false
++$previousMoved = $false
++
++try {
++    New-Item -ItemType Directory -Path $stagingPath -ErrorAction Stop | Out-Null
++    foreach ($executable in @('无限地下城启动器.exe', 'arpg_game.exe')) {
++        Copy-Item -LiteralPath (Join-Path $resolvedGameBuildDirectory $executable) -Destination (Join-Path $stagingPath $executable) -ErrorAction Stop
++    }
++    Copy-Item -LiteralPath (Join-Path $resolvedGameBuildDirectory 'assets') -Destination (Join-Path $stagingPath 'assets') -Recurse -ErrorAction Stop
++    Assert-ApplicationLayout -Directory $stagingPath -Description 'Staging deployment'
++
++    if (Test-Path -LiteralPath $resolvedInstallRoot) {
++        if (-not (Test-Path -LiteralPath $resolvedInstallRoot -PathType Container)) {
++            throw "InstallRoot exists but is not a directory: $resolvedInstallRoot"
++        }
++        $backupPath = Join-Path $installParent (New-SiblingName -BaseName $installLeaf -Role 'previous')
++        Rename-Item -LiteralPath $resolvedInstallRoot -NewName (Split-Path -Path $backupPath -Leaf) -ErrorAction Stop
++        $previousMoved = $true
++    }
++
++    Rename-Item -LiteralPath $stagingPath -NewName $installLeaf -ErrorAction Stop
++    $stagePublished = $true
++    Assert-ApplicationLayout -Directory $resolvedInstallRoot -Description 'Published deployment'
++}
++catch {
++    $deploymentError = $_
++    if ($stagePublished -and (Test-Path -LiteralPath $resolvedInstallRoot)) {
++        Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force -ErrorAction SilentlyContinue
++    }
++    if ($previousMoved -and $null -ne $backupPath -and (Test-Path -LiteralPath $backupPath) -and -not (Test-Path -LiteralPath $resolvedInstallRoot)) {
++        Rename-Item -LiteralPath $backupPath -NewName $installLeaf -ErrorAction SilentlyContinue
++    }
++    throw $deploymentError
++}
++finally {
++    if (Test-Path -LiteralPath $stagingPath) {
++        Remove-Item -LiteralPath $stagingPath -Recurse -Force -ErrorAction SilentlyContinue
++    }
++}
++
++if ($previousMoved -and $null -ne $backupPath -and (Test-Path -LiteralPath $backupPath)) {
++    Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop
++}
++
++New-Item -ItemType Directory -Path $resolvedDesktopDirectory -Force | Out-Null
++$shell = New-Object -ComObject WScript.Shell
++$shortcut = $shell.CreateShortcut((Join-Path $resolvedDesktopDirectory '无限地下城.lnk'))
++$shortcut.TargetPath = Join-Path $resolvedInstallRoot '无限地下城启动器.exe'
++$shortcut.WorkingDirectory = $resolvedInstallRoot
++$shortcut.IconLocation = "$($shortcut.TargetPath),0"
++$shortcut.Description = '启动无限地下城'
++$shortcut.Save()
+diff --git a/tests/launcher/CMakeLists.txt b/tests/launcher/CMakeLists.txt
+index df67046..753b1d0 100644
+--- a/tests/launcher/CMakeLists.txt
++++ b/tests/launcher/CMakeLists.txt
+@@ -30,10 +30,17 @@ set_tests_properties(launcher.icon_asset PROPERTIES
+ 
+ add_test(NAME launcher.manifest
+     COMMAND "${CMAKE_COMMAND}" -P
+         "${CMAKE_CURRENT_SOURCE_DIR}/launcher_manifest_test.cmake")
+ if(TARGET arpg_launcher)
+     add_test(NAME launcher.window_smoke
+         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+             "${CMAKE_CURRENT_SOURCE_DIR}/launcher_window_smoke_test.ps1"
+             -Launcher "$<TARGET_FILE:arpg_launcher>")
+ endif()
++
++add_test(NAME launcher.deploy_self_test
++    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
++        "${CMAKE_CURRENT_SOURCE_DIR}/deploy_launcher_self_test.ps1"
++        -DeployScript "${PROJECT_SOURCE_DIR}/scripts/DeployLauncher.ps1")
++set_tests_properties(launcher.deploy_self_test PROPERTIES
++    LABELS "headless;launcher;deployment")
+diff --git a/tests/launcher/deploy_launcher_self_test.ps1 b/tests/launcher/deploy_launcher_self_test.ps1
+new file mode 100644
+index 0000000..2203b1f
+--- /dev/null
++++ b/tests/launcher/deploy_launcher_self_test.ps1
+@@ -0,0 +1,101 @@
++[CmdletBinding()]
++param(
++    [Parameter(Mandatory)][string]$DeployScript
++)
++
++Set-StrictMode -Version Latest
++$ErrorActionPreference = 'Stop'
++
++function Require([bool]$Condition, [string]$Message) {
++    if (-not $Condition) {
++        throw $Message
++    }
++}
++
++function New-ReleaseFixture([string]$Root, [bool]$IncludeSkills = $true) {
++    $binDirectory = Join-Path $Root 'bin'
++    New-Item -ItemType Directory -Path $binDirectory -Force | Out-Null
++    Set-Content -LiteralPath (Join-Path $Root 'CMakeCache.txt') -Value 'CMAKE_BUILD_TYPE:STRING=Release' -NoNewline
++
++    New-Item -ItemType File -Path (Join-Path $binDirectory '无限地下城启动器.exe') -Force | Out-Null
++    New-Item -ItemType File -Path (Join-Path $binDirectory 'arpg_game.exe') -Force | Out-Null
++    $assetDirectories = @(
++        'assets/fonts',
++        'assets/player',
++        'assets/stage12',
++        'assets/stage14/audio',
++        'assets/stage15/audio'
++    )
++    if ($IncludeSkills) {
++        $assetDirectories += 'assets/skills'
++    }
++    foreach ($assetDirectory in $assetDirectories) {
++        New-Item -ItemType Directory -Path (Join-Path $binDirectory $assetDirectory) -Force | Out-Null
++    }
++    return $binDirectory
++}
++
++function Require-InstalledLayout([string]$InstallRoot) {
++    foreach ($relativePath in @(
++        '无限地下城启动器.exe',
++        'arpg_game.exe',
++        'assets/fonts',
++        'assets/player',
++        'assets/skills',
++        'assets/stage12',
++        'assets/stage14/audio',
++        'assets/stage15/audio'
++    )) {
++        Require (Test-Path -LiteralPath (Join-Path $InstallRoot $relativePath)) "Missing installed item: $relativePath"
++    }
++}
++
++$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("InfiniteDungeon-DeploySelfTest-" + [Guid]::NewGuid().ToString('N'))
++try {
++    New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
++    $completeBin = New-ReleaseFixture -Root (Join-Path $temporaryRoot 'complete')
++    $installParent = Join-Path $temporaryRoot 'InfiniteDungeon'
++    $installRoot = Join-Path $installParent 'app'
++    $desktopRoot = Join-Path $temporaryRoot 'Desktop'
++    New-Item -ItemType Directory -Path $desktopRoot -Force | Out-Null
++
++    $saveDirectory = Join-Path $installParent 'save'
++    New-Item -ItemType Directory -Path $saveDirectory -Force | Out-Null
++    $saveSentinel = Join-Path $saveDirectory 'keep.txt'
++    Set-Content -LiteralPath $saveSentinel -Value 'keep' -NoNewline
++
++    & $DeployScript -GameBuildDirectory $completeBin -InstallRoot $installRoot -DesktopDirectory $desktopRoot
++    Require-InstalledLayout -InstallRoot $installRoot
++
++    $shortcutPath = Join-Path $desktopRoot '无限地下城.lnk'
++    Require (Test-Path -LiteralPath $shortcutPath -PathType Leaf) 'Desktop shortcut was not created.'
++    $shell = New-Object -ComObject WScript.Shell
++    $shortcut = $shell.CreateShortcut($shortcutPath)
++    $expectedLauncher = Join-Path $installRoot '无限地下城启动器.exe'
++    Require ($shortcut.TargetPath -eq $expectedLauncher) "Shortcut target differs: $($shortcut.TargetPath)"
++    Require ($shortcut.WorkingDirectory -eq $installRoot) "Shortcut working directory differs: $($shortcut.WorkingDirectory)"
++    Require ($shortcut.IconLocation -eq "$expectedLauncher,0") "Shortcut icon differs: $($shortcut.IconLocation)"
++
++    $sentinelPath = Join-Path $installRoot 'sentinel.txt'
++    Set-Content -LiteralPath $sentinelPath -Value 'preserve-me' -NoNewline
++    $incompleteBin = New-ReleaseFixture -Root (Join-Path $temporaryRoot 'incomplete') -IncludeSkills:$false
++    $invalidDeploymentFailed = $false
++    try {
++        & $DeployScript -GameBuildDirectory $incompleteBin -InstallRoot $installRoot -DesktopDirectory $desktopRoot
++    }
++    catch {
++        $invalidDeploymentFailed = $true
++    }
++    Require $invalidDeploymentFailed 'Missing assets/skills input unexpectedly deployed.'
++    Require (Test-Path -LiteralPath $sentinelPath -PathType Leaf) 'Invalid input changed the existing installed app.'
++    Require ((Get-Content -LiteralPath $sentinelPath -Raw) -eq 'preserve-me') 'Invalid input changed the existing installed app sentinel.'
++
++    Require (Test-Path -LiteralPath $saveDirectory -PathType Container) 'Deployment removed the existing save directory.'
++    Require (Test-Path -LiteralPath $saveSentinel -PathType Leaf) 'Deployment moved or removed the existing save sentinel.'
++    Require (-not (Test-Path -LiteralPath (Join-Path $installRoot 'save'))) 'Deployment created a save directory in the app layout.'
++}
++finally {
++    if (Test-Path -LiteralPath $temporaryRoot) {
++        Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
++    }
++}

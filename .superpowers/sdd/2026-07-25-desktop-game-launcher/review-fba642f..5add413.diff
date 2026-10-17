@@ -1,0 +1,408 @@
+# Review package: fba642f7ddad4e189fdeff4ff8a29ebe35deb0ba..5add4132bfe26be0856265845991a62c925527c8
+
+## Commits
+5add413 feat: add launcher layout and icon
+
+## Files changed
+ assets/launcher/infinite_dungeon.ico     | Bin 0 -> 46332 bytes
+ src/launcher/CMakeLists.txt              |   3 +-
+ src/launcher/launcher_layout.cpp         |  66 ++++++++++++++++++
+ src/launcher/launcher_layout.hpp         |  33 +++++++++
+ tests/launcher/CMakeLists.txt            |  12 +++-
+ tests/launcher/launcher_icon_tests.py    |  33 +++++++++
+ tests/launcher/launcher_layout_tests.cpp | 113 +++++++++++++++++++++++++++++++
+ tests/launcher/launcher_test_main.cpp    |   4 +-
+ tools/build_launcher_icon.py             |  40 +++++++++++
+ 9 files changed, 301 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/assets/launcher/infinite_dungeon.ico b/assets/launcher/infinite_dungeon.ico
+new file mode 100644
+index 0000000..fec8776
+Binary files /dev/null and b/assets/launcher/infinite_dungeon.ico differ
+diff --git a/src/launcher/CMakeLists.txt b/src/launcher/CMakeLists.txt
+index 10c47b4..68cd1da 100644
+--- a/src/launcher/CMakeLists.txt
++++ b/src/launcher/CMakeLists.txt
+@@ -1,12 +1,13 @@
+ add_library(arpg_launcher_core STATIC
+-    launcher_core.cpp)
++    launcher_core.cpp
++    launcher_layout.cpp)
+ 
+ target_include_directories(arpg_launcher_core
+     PUBLIC "${PROJECT_SOURCE_DIR}/src/launcher")
+ target_compile_features(arpg_launcher_core PUBLIC cxx_std_17)
+ arpg_enable_project_warnings(arpg_launcher_core)
+ if(MSVC)
+     target_compile_options(arpg_launcher_core PRIVATE /utf-8)
+ endif()
+ set_target_properties(arpg_launcher_core PROPERTIES
+     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+diff --git a/src/launcher/launcher_layout.cpp b/src/launcher/launcher_layout.cpp
+new file mode 100644
+index 0000000..6a7009f
+--- /dev/null
++++ b/src/launcher/launcher_layout.cpp
+@@ -0,0 +1,66 @@
++#include "launcher_layout.hpp"
++
++namespace arpg::launcher {
++namespace {
++
++constexpr float kLogicalWidth = 920.0F;
++constexpr float kLogicalHeight = 560.0F;
++
++constexpr LauncherLayout kDesignLayout{
++    {56.0F, 42.0F, 864.0F, 98.0F},
++    {58.0F, 102.0F, 862.0F, 132.0F},
++    {58.0F, 174.0F, 862.0F, 226.0F},
++    {58.0F, 260.0F, 862.0F, 342.0F},
++    {58.0F, 370.0F, 308.0F, 426.0F},
++    {335.0F, 370.0F, 585.0F, 426.0F},
++    {612.0F, 370.0F, 862.0F, 426.0F},
++    {58.0F, 474.0F, 862.0F, 522.0F},
++};
++
++RectF offset(RectF rectangle, float horizontal, float vertical) noexcept {
++    return {
++        rectangle.left + horizontal,
++        rectangle.top + vertical,
++        rectangle.right + horizontal,
++        rectangle.bottom + vertical,
++    };
++}
++
++}  // namespace
++
++LauncherLayout make_launcher_layout(float width, float height) noexcept {
++    if (width < 800.0F || height < 450.0F) {
++        return {};
++    }
++
++    const float horizontal = (width - kLogicalWidth) / 2.0F;
++    const float vertical = (height - kLogicalHeight) / 2.0F;
++    return {
++        offset(kDesignLayout.title, horizontal, vertical),
++        offset(kDesignLayout.subtitle, horizontal, vertical),
++        offset(kDesignLayout.status, horizontal, vertical),
++        offset(kDesignLayout.start, horizontal, vertical),
++        offset(kDesignLayout.verify, horizontal, vertical),
++        offset(kDesignLayout.save, horizontal, vertical),
++        offset(kDesignLayout.exit, horizontal, vertical),
++        offset(kDesignLayout.path, horizontal, vertical),
++    };
++}
++
++bool overlaps(RectF first, RectF second) noexcept {
++    return first.left < second.right && first.right > second.left &&
++        first.top < second.bottom && first.bottom > second.top;
++}
++
++PixelSize launcher_pixel_size(unsigned int dpi) noexcept {
++    if (dpi == 0U) {
++        return {};
++    }
++
++    return {
++        static_cast<int>((920U * dpi + 95U) / 96U),
++        static_cast<int>((560U * dpi + 95U) / 96U),
++    };
++}
++
++}  // namespace arpg::launcher
+diff --git a/src/launcher/launcher_layout.hpp b/src/launcher/launcher_layout.hpp
+new file mode 100644
+index 0000000..a083f64
+--- /dev/null
++++ b/src/launcher/launcher_layout.hpp
+@@ -0,0 +1,33 @@
++#pragma once
++
++namespace arpg::launcher {
++
++struct RectF {
++    float left;
++    float top;
++    float right;
++    float bottom;
++};
++
++struct LauncherLayout {
++    RectF title;
++    RectF subtitle;
++    RectF status;
++    RectF start;
++    RectF verify;
++    RectF save;
++    RectF exit;
++    RectF path;
++};
++
++[[nodiscard]] LauncherLayout make_launcher_layout(float width, float height) noexcept;
++[[nodiscard]] bool overlaps(RectF first, RectF second) noexcept;
++
++struct PixelSize {
++    int width;
++    int height;
++};
++
++[[nodiscard]] PixelSize launcher_pixel_size(unsigned int dpi) noexcept;
++
++}  // namespace arpg::launcher
+diff --git a/tests/launcher/CMakeLists.txt b/tests/launcher/CMakeLists.txt
+index f730ee2..ec3bf76 100644
+--- a/tests/launcher/CMakeLists.txt
++++ b/tests/launcher/CMakeLists.txt
+@@ -1,17 +1,27 @@
+ add_executable(arpg_launcher_tests
+     launcher_test_main.cpp
+-    launcher_core_tests.cpp)
++    launcher_core_tests.cpp
++    launcher_layout_tests.cpp)
+ 
+ target_compile_features(arpg_launcher_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_launcher_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_launcher_tests PRIVATE arpg_launcher_core)
+ arpg_enable_project_warnings(arpg_launcher_tests)
+ if(MSVC)
+     target_compile_options(arpg_launcher_tests PRIVATE /utf-8)
+ endif()
+ set_target_properties(arpg_launcher_tests PROPERTIES
+     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+ 
+ add_test(NAME launcher.units COMMAND arpg_launcher_tests)
+ set_tests_properties(launcher.units PROPERTIES LABELS "headless;launcher")
++
++find_package(Python3 REQUIRED COMPONENTS Interpreter)
++add_test(
++    NAME launcher.icon_asset
++    COMMAND "${Python3_EXECUTABLE}"
++        "${CMAKE_CURRENT_SOURCE_DIR}/launcher_icon_tests.py")
++set_tests_properties(launcher.icon_asset PROPERTIES
++    LABELS "headless;launcher;assets"
++    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+diff --git a/tests/launcher/launcher_icon_tests.py b/tests/launcher/launcher_icon_tests.py
+new file mode 100644
+index 0000000..634a0e0
+--- /dev/null
++++ b/tests/launcher/launcher_icon_tests.py
+@@ -0,0 +1,33 @@
++from __future__ import annotations
++
++from pathlib import Path
++import unittest
++
++from PIL import Image
++
++
++ROOT = Path(__file__).resolve().parents[2]
++ICON_PATH = ROOT / "assets" / "launcher" / "infinite_dungeon.ico"
++EXPECTED_SIZES = {(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)}
++
++
++class LauncherIconTests(unittest.TestCase):
++    def test_icon_contains_the_required_rgba_frames(self) -> None:
++        with Image.open(ICON_PATH) as icon:
++            self.assertEqual(set(icon.ico.sizes()), EXPECTED_SIZES)
++
++            frames = {}
++            for size in EXPECTED_SIZES:
++                icon.size = size
++                frames[size] = icon.convert("RGBA").copy()
++
++        alpha_extrema = frames[(256, 256)].getchannel("A").getextrema()
++        self.assertEqual(alpha_extrema, (0, 255))
++
++        pixels = list(frames[(256, 256)].getdata())
++        self.assertTrue(any(alpha > 0 for _, _, _, alpha in pixels))
++        self.assertTrue(any(red or green or blue for red, green, blue, alpha in pixels if alpha > 0))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/launcher/launcher_layout_tests.cpp b/tests/launcher/launcher_layout_tests.cpp
+new file mode 100644
+index 0000000..5e1b545
+--- /dev/null
++++ b/tests/launcher/launcher_layout_tests.cpp
+@@ -0,0 +1,113 @@
++#include "launcher_layout.hpp"
++#include "test_framework.hpp"
++
++namespace {
++
++using arpg::launcher::LauncherLayout;
++using arpg::launcher::PixelSize;
++using arpg::launcher::RectF;
++
++constexpr RectF kEmptyRect{};
++
++bool inside(RectF rectangle, float width, float height) noexcept {
++    return rectangle.left >= 0.0F && rectangle.top >= 0.0F &&
++        rectangle.right <= width && rectangle.bottom <= height &&
++        rectangle.left <= rectangle.right && rectangle.top <= rectangle.bottom;
++}
++
++bool empty(RectF rectangle) noexcept {
++    return rectangle.left == kEmptyRect.left && rectangle.top == kEmptyRect.top &&
++        rectangle.right == kEmptyRect.right && rectangle.bottom == kEmptyRect.bottom;
++}
++
++bool same(RectF first, RectF second) noexcept {
++    return first.left == second.left && first.top == second.top &&
++        first.right == second.right && first.bottom == second.bottom;
++}
++
++bool same(PixelSize first, PixelSize second) noexcept {
++    return first.width == second.width && first.height == second.height;
++}
++
++arpg::test::Failure design_size_keeps_every_rect_inside_client_area() noexcept {
++    constexpr float width = 920.0F;
++    constexpr float height = 560.0F;
++    const LauncherLayout layout = arpg::launcher::make_launcher_layout(width, height);
++
++    ARPG_REQUIRE(same(layout.title, RectF{56.0F, 42.0F, 864.0F, 98.0F}));
++    ARPG_REQUIRE(same(layout.subtitle, RectF{58.0F, 102.0F, 862.0F, 132.0F}));
++    ARPG_REQUIRE(same(layout.status, RectF{58.0F, 174.0F, 862.0F, 226.0F}));
++    ARPG_REQUIRE(same(layout.start, RectF{58.0F, 260.0F, 862.0F, 342.0F}));
++    ARPG_REQUIRE(same(layout.verify, RectF{58.0F, 370.0F, 308.0F, 426.0F}));
++    ARPG_REQUIRE(same(layout.save, RectF{335.0F, 370.0F, 585.0F, 426.0F}));
++    ARPG_REQUIRE(same(layout.exit, RectF{612.0F, 370.0F, 862.0F, 426.0F}));
++    ARPG_REQUIRE(same(layout.path, RectF{58.0F, 474.0F, 862.0F, 522.0F}));
++    ARPG_REQUIRE(inside(layout.title, width, height));
++    ARPG_REQUIRE(inside(layout.subtitle, width, height));
++    ARPG_REQUIRE(inside(layout.status, width, height));
++    ARPG_REQUIRE(inside(layout.start, width, height));
++    ARPG_REQUIRE(inside(layout.verify, width, height));
++    ARPG_REQUIRE(inside(layout.save, width, height));
++    ARPG_REQUIRE(inside(layout.exit, width, height));
++    ARPG_REQUIRE(inside(layout.path, width, height));
++    return {};
++}
++
++arpg::test::Failure buttons_never_overlap_each_other() noexcept {
++    const LauncherLayout layout = arpg::launcher::make_launcher_layout(920.0F, 560.0F);
++
++    ARPG_REQUIRE(!arpg::launcher::overlaps(layout.start, layout.verify));
++    ARPG_REQUIRE(!arpg::launcher::overlaps(layout.start, layout.save));
++    ARPG_REQUIRE(!arpg::launcher::overlaps(layout.start, layout.exit));
++    ARPG_REQUIRE(!arpg::launcher::overlaps(layout.verify, layout.save));
++    ARPG_REQUIRE(!arpg::launcher::overlaps(layout.verify, layout.exit));
++    ARPG_REQUIRE(!arpg::launcher::overlaps(layout.save, layout.exit));
++    return {};
++}
++
++arpg::test::Failure status_and_path_do_not_overlap_actions() noexcept {
++    const LauncherLayout layout = arpg::launcher::make_launcher_layout(920.0F, 560.0F);
++    const RectF actions[] = {layout.start, layout.verify, layout.save, layout.exit};
++
++    for (const RectF action : actions) {
++        ARPG_REQUIRE(!arpg::launcher::overlaps(layout.status, action));
++        ARPG_REQUIRE(!arpg::launcher::overlaps(layout.path, action));
++    }
++    return {};
++}
++
++arpg::test::Failure undersized_client_area_returns_empty_layout() noexcept {
++    const LauncherLayout layout = arpg::launcher::make_launcher_layout(799.0F, 449.0F);
++
++    ARPG_REQUIRE(empty(layout.title));
++    ARPG_REQUIRE(empty(layout.subtitle));
++    ARPG_REQUIRE(empty(layout.status));
++    ARPG_REQUIRE(empty(layout.start));
++    ARPG_REQUIRE(empty(layout.verify));
++    ARPG_REQUIRE(empty(layout.save));
++    ARPG_REQUIRE(empty(layout.exit));
++    ARPG_REQUIRE(empty(layout.path));
++    return {};
++}
++
++arpg::test::Failure dpi_scaling_preserves_the_fixed_logical_size() noexcept {
++    ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(96U), PixelSize{920, 560}));
++    ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(120U), PixelSize{1150, 700}));
++    ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(144U), PixelSize{1380, 840}));
++    ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(192U), PixelSize{1840, 1120}));
++    ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(0U), PixelSize{0, 0}));
++    return {};
++}
++
++}  // namespace
++
++arpg::test::TestSuite launcher_layout_suite() noexcept {
++    static const arpg::test::TestCase cases[] = {
++        {"design size keeps every rect inside client area", design_size_keeps_every_rect_inside_client_area},
++        {"buttons never overlap each other", buttons_never_overlap_each_other},
++        {"status and path do not overlap actions", status_and_path_do_not_overlap_actions},
++        {"undersized client area returns empty layout", undersized_client_area_returns_empty_layout},
++        {"dpi scaling preserves the fixed logical size", dpi_scaling_preserves_the_fixed_logical_size},
++    };
++    return arpg::test::make_suite("launcher_layout", cases);
++}
+diff --git a/tests/launcher/launcher_test_main.cpp b/tests/launcher/launcher_test_main.cpp
+index 58641a4..b2944ee 100644
+--- a/tests/launcher/launcher_test_main.cpp
++++ b/tests/launcher/launcher_test_main.cpp
+@@ -1,11 +1,13 @@
+ #include "test_framework.hpp"
+ 
+ arpg::test::TestSuite launcher_core_suite() noexcept;
++arpg::test::TestSuite launcher_layout_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         launcher_core_suite(),
++        launcher_layout_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 7, "desktop launcher core");
++    return arpg::test::run_suites(suites, 12, "desktop launcher core");
+ }
+diff --git a/tools/build_launcher_icon.py b/tools/build_launcher_icon.py
+new file mode 100644
+index 0000000..2f6fd5b
+--- /dev/null
++++ b/tools/build_launcher_icon.py
+@@ -0,0 +1,40 @@
++from __future__ import annotations
++
++from pathlib import Path
++
++from PIL import Image
++
++
++ROOT = Path(__file__).resolve().parents[1]
++SOURCE_PATH = ROOT / "assets" / "stage12" / "ui_material.png"
++OUTPUT_PATH = ROOT / "assets" / "launcher" / "infinite_dungeon.ico"
++CELL_BOX = (128, 128, 256, 256)
++ICON_SIZES = ((16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256))
++
++
++def build_icon() -> None:
++    with Image.open(SOURCE_PATH) as source:
++        cell = source.convert("RGBA").crop(CELL_BOX)
++
++    canvas = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
++    canvas.alpha_composite(
++        cell,
++        ((canvas.width - cell.width) // 2, (canvas.height - cell.height) // 2),
++    )
++    frames = [
++        canvas.resize(size, Image.Resampling.LANCZOS)
++        for size in ICON_SIZES
++    ]
++
++    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
++    frames[-1].save(
++        OUTPUT_PATH,
++        format="ICO",
++        sizes=ICON_SIZES,
++        append_images=frames[:-1],
++        bitmap_format="png",
++    )
++
++
++if __name__ == "__main__":
++    build_icon()
