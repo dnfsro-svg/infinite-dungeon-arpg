@@ -1,0 +1,393 @@
+# Review package: 110a284..59661f2
+
+## Commits
+59661f2 fix: preserve dungeon prompt layout contracts
+
+## Files changed
+ src/platform/raylib/dungeon_view_math.cpp          | 33 +++++++++++++++-------
+ src/platform/raylib/dungeon_view_math.hpp          |  1 +
+ src/platform/raylib/room_renderer.cpp              |  3 +-
+ .../hole_prompt_binding_source_self_test.cmake     | 15 +++++++---
+ .../platform/hole_prompt_binding_source_test.cmake | 29 ++++++++++++++++++-
+ tests/platform/hud_layout_tests.cpp                | 24 ++++++++++++++++
+ tests/platform/hud_render_plan_tests.cpp           | 33 +++++++++++++++++++++-
+ 7 files changed, 121 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/dungeon_view_math.cpp b/src/platform/raylib/dungeon_view_math.cpp
+index 3a1a3b8..bfc8701 100644
+--- a/src/platform/raylib/dungeon_view_math.cpp
++++ b/src/platform/raylib/dungeon_view_math.cpp
+@@ -309,40 +309,53 @@ Rgba8 world_prompt_text_color(Rgba8 requested) noexcept {
+ }
+ 
+ WorldPromptLayout world_prompt_layout(
+     Vector2 anchor, Vector2 measured,
+     float screen_width, float screen_height) noexcept {
+     WorldPromptLayout layout{};
+     if (!(screen_width > 0.0F) || !(screen_height > 0.0F)
+             || !(measured.x > 0.0F) || !(measured.y > 0.0F)) {
+         return layout;
+     }
+-    const float scale = std::clamp((std::min)(
++    const float viewport_scale = std::clamp((std::min)(
+         screen_width / 1280.0F, screen_height / 720.0F), 0.625F, 1.5F);
+-    const float padding_x = 8.0F * scale;
+-    const float padding_y = 5.0F * scale;
+-    const float backing_width = (std::min)(
+-        screen_width, measured.x + padding_x * 2.0F);
+-    const float backing_height = (std::min)(
+-        screen_height, measured.y + padding_y * 2.0F);
++    const float padding_x = 8.0F * viewport_scale;
++    const float padding_y = 5.0F * viewport_scale;
++    const float available_width = screen_width - padding_x * 2.0F;
++    const float available_height = screen_height - padding_y * 2.0F;
++    if (!(available_width > 0.0F) || !(available_height > 0.0F)) {
++        return layout;
++    }
++    const float text_scale = (std::min)({
++        1.0F, available_width / measured.x, available_height / measured.y});
++    constexpr float kMinimumReadableTextHeight = 8.0F;
++    if (!(text_scale > 0.0F)
++            || measured.y * text_scale < kMinimumReadableTextHeight) {
++        return layout;
++    }
++    const Vector2 scaled_measured{
++        measured.x * text_scale, measured.y * text_scale};
++    const float backing_width = scaled_measured.x + padding_x * 2.0F;
++    const float backing_height = scaled_measured.y + padding_y * 2.0F;
+     const float backing_x = std::clamp(
+         anchor.x - backing_width * 0.5F,
+         0.0F, screen_width - backing_width);
+     const float backing_y = std::clamp(anchor.y,
+         0.0F, screen_height - backing_height);
+     layout.visible = true;
++    layout.text_scale = text_scale;
+     layout.backing = {
+         backing_x, backing_y, backing_width, backing_height};
+-    layout.measured = measured;
++    layout.measured = scaled_measured;
+     layout.text_position = {
+-        backing_x + (backing_width - measured.x) * 0.5F,
+-        backing_y + (backing_height - measured.y) * 0.5F,
++        backing_x + (backing_width - scaled_measured.x) * 0.5F,
++        backing_y + (backing_height - scaled_measured.y) * 0.5F,
+     };
+     return layout;
+ }
+ 
+ Rgba8 ecosystem_tint(dungeon::DungeonElement element) noexcept {
+     switch (element) {
+     case dungeon::DungeonElement::fire:
+         return {88U, 43U, 34U, 255U};
+     case dungeon::DungeonElement::water:
+         return {35U, 70U, 104U, 255U};
+diff --git a/src/platform/raylib/dungeon_view_math.hpp b/src/platform/raylib/dungeon_view_math.hpp
+index 06b6696..7f680e9 100644
+--- a/src/platform/raylib/dungeon_view_math.hpp
++++ b/src/platform/raylib/dungeon_view_math.hpp
+@@ -56,20 +56,21 @@ enum class HoleInteractionAction : std::uint8_t {
+ struct WorldPromptStyle final {
+     Rgba8 backing{};
+     Rgba8 primary{};
+     Rgba8 secondary{};
+     Rgba8 warning{};
+     Rgba8 danger{};
+ };
+ 
+ struct WorldPromptLayout final {
+     bool visible{};
++    float text_scale{};
+     Rectangle backing{};
+     Vector2 text_position{};
+     Vector2 measured{};
+ };
+ 
+ enum class DoorVisualMode : std::uint8_t {
+     closed,
+     open,
+     hidden,
+ };
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index 3121a18..d884323 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -37,21 +37,22 @@ void draw_world_prompt(const char* text, Vector2 anchor,
+             || text[0] == '\0' || !(font_size > 0.0F)) return;
+     const WorldPromptStyle style = world_prompt_style();
+     const Vector2 measured = MeasureTextEx(font, text, font_size, 1.0F);
+     const WorldPromptLayout layout = world_prompt_layout(
+         anchor, measured, screen_width, screen_height);
+     if (!layout.visible) return;
+     color = raylib_color(world_prompt_text_color(
+         {color.r, color.g, color.b, color.a}));
+     DrawRectangleRec(layout.backing, raylib_color(style.backing));
+     draw_crisp_ui_text(font, text, layout.text_position,
+-        font_size, 1.0F, color);
++        font_size * layout.text_scale,
++        1.0F * layout.text_scale, color);
+ }
+ 
+ Vector2 lerp(Vector2 from, Vector2 to, float amount) noexcept {
+     return {
+         from.x + (to.x - from.x) * amount,
+         from.y + (to.y - from.y) * amount,
+     };
+ }
+ 
+ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
+diff --git a/tests/platform/hole_prompt_binding_source_self_test.cmake b/tests/platform/hole_prompt_binding_source_self_test.cmake
+index f0a3069..e58683b 100644
+--- a/tests/platform/hole_prompt_binding_source_self_test.cmake
++++ b/tests/platform/hole_prompt_binding_source_self_test.cmake
+@@ -47,31 +47,38 @@ endmacro()
+ run_room_mutant(hardcoded_interact_key
+     "interact_binding_label, HoleInteractionAction::descend"
+     "\"E\", HoleInteractionAction::descend")
+ run_room_mutant(missing_backing
+     "DrawRectangleRec(layout.backing, raylib_color(style.backing));"
+     "static_cast<void>(layout.backing);")
+ run_room_mutant(missing_contrast_correction
+     "color = raylib_color(world_prompt_text_color(\n        {color.r, color.g, color.b, color.a}));"
+     "color.a = 255U;")
+ run_room_mutant(default_text_draw
+-    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size, 1.0F, color);"
+-    "DrawTextEx(font, text, layout.text_position, font_size, 1.0F, color);")
++    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size * layout.text_scale,\n        1.0F * layout.text_scale, color);"
++    "DrawTextEx(font, text, layout.text_position, font_size * layout.text_scale, 1.0F * layout.text_scale, color);")
+ run_room_mutant(legacy_text_measure
+     "MeasureTextEx(font, text, font_size, 1.0F)"
+     "Vector2{static_cast<float>(MeasureText(text, static_cast<int>(font_size))), font_size}")
+ 
+ string(REPLACE "world_ui_font_ = shared_ui_font.font();"
+     "world_ui_font_ = GetFontDefault();" COMBAT_MUTATED "${COMBAT_ORIGINAL}")
+ if(COMBAT_MUTATED STREQUAL COMBAT_ORIGINAL)
+     message(FATAL_ERROR "shared font mutation anchor is missing")
+ endif()
+ run_guard(default_font_owner "${ROOM_ORIGINAL}" "${COMBAT_MUTATED}" FALSE)
+ 
+ run_room_mutant(dead_cjk_decoy
+-    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size, 1.0F, color);"
+-    "if (false) { draw_crisp_ui_text(font, text, layout.text_position, font_size, 1.0F, color); }")
++    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size * layout.text_scale,\n        1.0F * layout.text_scale, color);"
++    "if (false) { draw_crisp_ui_text(font, text, layout.text_position, font_size * layout.text_scale, 1.0F * layout.text_scale, color); }")
++
++run_room_mutant(abyss_overlay_default_font
++    "draw_abyss(current, static_cast<float>(GetTime()),\n        world_ui_font_, world_ui_font_ready_);"
++    "draw_abyss(current, static_cast<float>(GetTime()),\n        GetFontDefault(), true);")
++run_room_mutant(abyss_overlay_dead_shared_font_decoy
++    "draw_abyss(current, static_cast<float>(GetTime()),\n        world_ui_font_, world_ui_font_ready_);"
++    "if (false) { draw_abyss(current, static_cast<float>(GetTime()), world_ui_font_, world_ui_font_ready_); }\n    draw_abyss(current, static_cast<float>(GetTime()), GetFontDefault(), true);")
+ 
+ if(MISSED_MUTATIONS)
+     list(JOIN MISSED_MUTATIONS ", " MISSED_LABELS)
+     message(FATAL_ERROR "hole prompt guard missed mutations: ${MISSED_LABELS}")
+ endif()
+diff --git a/tests/platform/hole_prompt_binding_source_test.cmake b/tests/platform/hole_prompt_binding_source_test.cmake
+index 27c358b..f881bda 100644
+--- a/tests/platform/hole_prompt_binding_source_test.cmake
++++ b/tests/platform/hole_prompt_binding_source_test.cmake
+@@ -35,21 +35,21 @@ foreach(LEGACY_TEXT IN ITEMS
+     endif()
+ endforeach()
+ 
+ extract_cpp_function_body("${ROOM_TEXT}" "void draw_world_prompt("
+     WORLD_PROMPT_BODY WORLD_PROMPT_CODE)
+ foreach(REQUIRED_TOKEN IN ITEMS
+         "MeasureTextEx(font, text, font_size, 1.0F)"
+         "world_prompt_layout( anchor, measured, screen_width, screen_height)"
+         "color = raylib_color(world_prompt_text_color( {color.r, color.g, color.b, color.a}))"
+         "DrawRectangleRec(layout.backing, raylib_color(style.backing))"
+-        "draw_crisp_ui_text(font, text, layout.text_position, font_size, 1.0F, color)")
++        "draw_crisp_ui_text(font, text, layout.text_position, font_size * layout.text_scale, 1.0F * layout.text_scale, color)")
+     string(FIND "${WORLD_PROMPT_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
+     if(TOKEN_INDEX EQUAL -1)
+         message(FATAL_ERROR
+             "world prompt must measure, back, and draw shared CJK text: ${REQUIRED_TOKEN}")
+     endif()
+ endforeach()
+ string(FIND "${WORLD_PROMPT_BODY}"
+     "DrawRectangleRec(layout.backing" BACKING_INDEX)
+ string(FIND "${WORLD_PROMPT_BODY}"
+     "draw_crisp_ui_text(font, text" CJK_DRAW_INDEX)
+@@ -103,20 +103,47 @@ foreach(REQUIRED_TOKEN IN ITEMS "draw_world_prompt(visual.label")
+         message(FATAL_ERROR "door renderer must use the shared world prompt path")
+     endif()
+ endforeach()
+ foreach(REQUIRED_TOKEN IN ITEMS "draw_world_prompt(label")
+     string(FIND "${ABYSS_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
+     if(TOKEN_INDEX EQUAL -1)
+         message(FATAL_ERROR "abyss renderer must use the shared world prompt path")
+     endif()
+ endforeach()
+ 
++extract_cpp_function_body("${ROOM_TEXT}"
++    "void CombatRenderer::draw_abyss_overlay(" ABYSS_OVERLAY_BODY ABYSS_OVERLAY_CODE)
++set(ABYSS_SHARED_FONT_CALL
++    "draw_abyss(current, static_cast<float>(GetTime()), world_ui_font_, world_ui_font_ready_)")
++string(FIND "${ABYSS_OVERLAY_BODY}" "${ABYSS_SHARED_FONT_CALL}"
++    ABYSS_SHARED_FONT_INDEX)
++if(ABYSS_SHARED_FONT_INDEX EQUAL -1)
++    message(FATAL_ERROR
++        "CombatRenderer abyss overlay must pass its shared CJK font")
++endif()
++string(REGEX MATCHALL "draw_abyss\\(" ABYSS_DRAW_CALLS
++    "${ABYSS_OVERLAY_CODE}")
++list(LENGTH ABYSS_DRAW_CALLS ABYSS_DRAW_CALL_COUNT)
++if(NOT ABYSS_DRAW_CALL_COUNT EQUAL 1)
++    message(FATAL_ERROR
++        "CombatRenderer abyss overlay must contain exactly one live draw call")
++endif()
++foreach(FORBIDDEN_TOKEN IN ITEMS "GetFontDefault(" "if(false)" "if (false)"
++        "if(0)" "if (0)")
++    string(FIND "${ABYSS_OVERLAY_CODE}" "${FORBIDDEN_TOKEN}"
++        FORBIDDEN_INDEX)
++    if(NOT FORBIDDEN_INDEX EQUAL -1)
++        message(FATAL_ERROR
++            "CombatRenderer abyss overlay contains a default-font or dead decoy path")
++    endif()
++endforeach()
++
+ extract_cpp_function_body("${ROOM_TEXT}" "void CombatRenderer::draw_room("
+     DRAW_ROOM_BODY DRAW_ROOM_CODE)
+ foreach(REQUIRED_TOKEN IN ITEMS
+         "draw_doors(current, camera, width, height, material_pack_, world_ui_font_, world_ui_font_ready_)"
+         "draw_hole(current, material_pack_, camera, interact_binding_label, world_ui_font_, world_ui_font_ready_)")
+     string(FIND "${DRAW_ROOM_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
+     if(TOKEN_INDEX EQUAL -1)
+         message(FATAL_ERROR "CombatRenderer room path must pass its shared CJK font")
+     endif()
+ endforeach()
+diff --git a/tests/platform/hud_layout_tests.cpp b/tests/platform/hud_layout_tests.cpp
+index e5c2a18..219da7f 100644
+--- a/tests/platform/hud_layout_tests.cpp
++++ b/tests/platform/hud_layout_tests.cpp
+@@ -253,33 +253,57 @@ arpg::test::Failure world_prompt_backings_fit_supported_viewports() noexcept {
+     }};
+     for (const auto viewport : kViewports) {
+         const float width = static_cast<float>(viewport[0]);
+         const float height = static_cast<float>(viewport[1]);
+         const platform::WorldPromptLayout layout =
+             platform::world_prompt_layout(
+                 {width * 0.5F, height - 2.0F},
+                 {width * 0.36F, 30.0F}, width, height);
+         const Rectangle screen{0.0F, 0.0F, width, height};
+         ARPG_REQUIRE(layout.visible);
++        ARPG_REQUIRE(layout.text_scale == 1.0F);
+         ARPG_REQUIRE(layout.backing.x >= screen.x);
+         ARPG_REQUIRE(layout.backing.y >= screen.y);
+         ARPG_REQUIRE(layout.backing.x + layout.backing.width
+             <= screen.x + screen.width);
+         ARPG_REQUIRE(layout.backing.y + layout.backing.height
+             <= screen.y + screen.height);
+         ARPG_REQUIRE(layout.text_position.x >= layout.backing.x);
+         ARPG_REQUIRE(layout.text_position.y >= layout.backing.y);
+         ARPG_REQUIRE(layout.text_position.x + layout.measured.x
+             <= layout.backing.x + layout.backing.width);
+         ARPG_REQUIRE(layout.text_position.y + layout.measured.y
+             <= layout.backing.y + layout.backing.height);
+     }
++
++    constexpr std::array<Vector2, 2U> kOversizedMeasured{{
++        {1600.0F, 30.0F},
++        {120.0F, 900.0F},
++    }};
++    for (const Vector2 measured : kOversizedMeasured) {
++        const platform::WorldPromptLayout layout =
++            platform::world_prompt_layout(
++                {400.0F, 448.0F}, measured, 800.0F, 450.0F);
++        ARPG_REQUIRE(layout.visible);
++        ARPG_REQUIRE(layout.text_scale > 0.0F);
++        ARPG_REQUIRE(layout.text_scale < 1.0F);
++        ARPG_REQUIRE(layout.measured.x <= layout.backing.width);
++        ARPG_REQUIRE(layout.measured.y <= layout.backing.height);
++        ARPG_REQUIRE(layout.text_position.x >= 0.0F);
++        ARPG_REQUIRE(layout.text_position.y >= 0.0F);
++        ARPG_REQUIRE(layout.text_position.x + layout.measured.x <= 800.0F);
++        ARPG_REQUIRE(layout.text_position.y + layout.measured.y <= 450.0F);
++        ARPG_REQUIRE(layout.backing.x >= 0.0F);
++        ARPG_REQUIRE(layout.backing.y >= 0.0F);
++        ARPG_REQUIRE(layout.backing.x + layout.backing.width <= 800.0F);
++        ARPG_REQUIRE(layout.backing.y + layout.backing.height <= 450.0F);
++    }
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"resolution safe layout matrices", &resolution_matrices_are_safe_and_do_not_cover_combat},
+     {"notices above abyss confirmation", &notices_remain_above_the_bottom_abyss_confirmation_area},
+     {"debug layout opt in", &debug_panel_is_opt_in_and_keeps_the_combat_exclusion_clear},
+     {"invalid viewport layout", &invalid_viewports_return_an_empty_layout},
+     {"HUD rectangle helpers", &hud_rect_helpers_distinguish_touching_from_overlapping},
+     {"HUD text safe boxes",
+diff --git a/tests/platform/hud_render_plan_tests.cpp b/tests/platform/hud_render_plan_tests.cpp
+index 5d972e1..7151cfa 100644
+--- a/tests/platform/hud_render_plan_tests.cpp
++++ b/tests/platform/hud_render_plan_tests.cpp
+@@ -466,34 +466,65 @@ arpg::test::Failure world_prompt_style_uses_opaque_high_contrast_inner_backing()
+     ARPG_REQUIRE(platform::ui_luma_contrast_ratio(primary, backing) >= 4.5F);
+     ARPG_REQUIRE(platform::ui_luma_contrast_ratio(secondary, backing) >= 4.5F);
+     ARPG_REQUIRE(platform::ui_luma_contrast_ratio(warning, backing) >= 4.5F);
+     ARPG_REQUIRE(platform::ui_luma_contrast_ratio(danger, backing) >= 4.5F);
+     constexpr std::array<platform::Rgba8, 4U> kDoorColors{{
+         {236U, 92U, 54U, 255U},
+         {64U, 156U, 236U, 255U},
+         {236U, 218U, 72U, 255U},
+         {154U, 76U, 210U, 255U},
+     }};
+-    for (const platform::Rgba8 requested : kDoorColors) {
++    for (std::size_t index = 0U; index < kDoorColors.size(); ++index) {
++        const platform::Rgba8 requested = kDoorColors[index];
+         const platform::Rgba8 corrected =
+             platform::world_prompt_text_color(requested);
+         const Color actual{corrected.r, corrected.g,
+             corrected.b, corrected.a};
+         ARPG_REQUIRE(corrected.a == 255U);
+         ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+             actual, backing) >= 4.5F);
++        if (index < 3U) {
++            ARPG_REQUIRE(corrected.r == requested.r);
++            ARPG_REQUIRE(corrected.g == requested.g);
++            ARPG_REQUIRE(corrected.b == requested.b);
++            ARPG_REQUIRE(corrected.a == requested.a);
++        }
+     }
+     const platform::Rgba8 corrected_chaos =
+         platform::world_prompt_text_color(kDoorColors[3]);
+     ARPG_REQUIRE(corrected_chaos.r == style.primary.r);
+     ARPG_REQUIRE(corrected_chaos.g == style.primary.g);
+     ARPG_REQUIRE(corrected_chaos.b == style.primary.b);
++    ARPG_REQUIRE(corrected_chaos.a == style.primary.a);
++
++    constexpr std::array<platform::Rgba8, 4U> kSemanticColors{{
++        {248U, 246U, 238U, 255U},
++        {194U, 229U, 255U, 255U},
++        {255U, 210U, 118U, 255U},
++        {255U, 152U, 152U, 255U},
++    }};
++    for (const platform::Rgba8 expected : kSemanticColors) {
++        const platform::Rgba8 actual =
++            platform::world_prompt_text_color(expected);
++        ARPG_REQUIRE(actual.r == expected.r);
++        ARPG_REQUIRE(actual.g == expected.g);
++        ARPG_REQUIRE(actual.b == expected.b);
++        ARPG_REQUIRE(actual.a == expected.a);
++    }
++    const platform::Rgba8 low_contrast{
++        style.backing.r, style.backing.g, style.backing.b, 31U};
++    const platform::Rgba8 corrected_low =
++        platform::world_prompt_text_color(low_contrast);
++    ARPG_REQUIRE(corrected_low.r == style.primary.r);
++    ARPG_REQUIRE(corrected_low.g == style.primary.g);
++    ARPG_REQUIRE(corrected_low.b == style.primary.b);
++    ARPG_REQUIRE(corrected_low.a == style.primary.a);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"health first", &health_is_always_the_first_visible_player_bar},
+     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
+     {"XP max", &max_level_experience_uses_the_max_presentation},
+     {"level and passive points text", &player_plan_exposes_level_and_unspent_points_text},
+     {"low health presentation frequency", &low_health_emphasis_is_presentation_time_bounded_to_two_hz},
+     {"three status tags", &player_plan_preserves_at_most_three_snapshot_status_tags},

@@ -1,0 +1,2048 @@
+# Review package: 0ce9c29..a12f569
+
+## Commits
+a12f569 feat: localize responsive debug overlay
+
+## Files changed
+ src/platform/raylib/actor_renderer.cpp             |  28 +-
+ src/platform/raylib/combat_renderer.cpp            |   4 +-
+ src/platform/raylib/combat_view_math.cpp           |  51 +++-
+ src/platform/raylib/combat_view_math.hpp           |  14 +-
+ src/platform/raylib/debug_overlay_renderer.cpp     | 323 ++++++++++++++-------
+ src/platform/raylib/debug_overlay_renderer.hpp     |  32 +-
+ src/platform/raylib/debug_renderer.cpp             |  20 +-
+ src/platform/raylib/ui_text_catalog.cpp            |   5 +-
+ tests/platform/CMakeLists.txt                      |  20 ++
+ tests/platform/debug_overlay_renderer_tests.cpp    | 318 ++++++++++++++++++++
+ tests/platform/monster_view_tests.cpp              |  14 +-
+ tests/platform/platform_test_main.cpp              |   7 +-
+ .../stage11c_hud_formal_game_validation.cpp        |  38 +++
+ tests/platform/stage12_actor_render_tests.cpp      |  16 +-
+ .../task7_debug_overlay_source_self_test.cmake     | 114 ++++++++
+ .../platform/task7_debug_overlay_source_test.cmake | 195 +++++++++++++
+ 16 files changed, 1029 insertions(+), 170 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index 7c5e6c5..aa1f4e5 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -17,33 +17,20 @@
+ #include <cstdint>
+ #include <cmath>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ using namespace combat;
+ 
+ Color to_color(Rgba8 color) noexcept { return {color.r, color.g, color.b, color.a}; }
+ 
+-const char* monster_phase_name(MonsterAiPhase phase) noexcept {
+-    switch (phase) {
+-    case MonsterAiPhase::idle: return "Idle";
+-    case MonsterAiPhase::move: return "Move";
+-    case MonsterAiPhase::telegraph: return "Telegraph";
+-    case MonsterAiPhase::active: return "Active";
+-    case MonsterAiPhase::recovery: return "Recovery";
+-    case MonsterAiPhase::cooldown: return "Cooldown";
+-    case MonsterAiPhase::defeated: return "Defeated";
+-    }
+-    return "?";
+-}
+-
+ struct RenderActor final {
+     Vec3 position{};
+     std::uint8_t monster_index{};
+     bool player{};
+     MonsterMaterialDrawPlan material_plan{};
+ };
+ 
+ bool render_actor_precedes(const RenderActor& lhs, const RenderActor& rhs) noexcept {
+     if (lhs.position.y != rhs.position.y) return lhs.position.y < rhs.position.y;
+     if (lhs.position.z != rhs.position.z) return lhs.position.z < rhs.position.z;
+@@ -97,43 +84,38 @@ void draw_outlined_text(const char* text, int x, int y, int font_size,
+         }
+     }
+     DrawText(text, x, y, font_size, color);
+ }
+ 
+ void draw_scene_label(Font font, bool font_ready, const char* text,
+     float x, float y, int font_size, Color color) noexcept {
+     if (font_ready && IsFontValid(font)) {
+         draw_crisp_ui_text(font, text, {x, y},
+             static_cast<float>(font_size), 1.0F, color);
+-        return;
+     }
+-    DrawText(text, static_cast<int>(std::round(x)),
+-        static_cast<int>(std::round(y)), font_size, color);
+ }
+ 
+ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
+     const CombatCameraView& camera,
+     float width, float height, bool foreground,
+     Font hud_font, bool hud_font_ready) noexcept {
+     constexpr int kCombatTextShadowPixels = 1;
+-    static_cast<void>(hud_font_ready);
+     const CombatTextStyle text_style = combat_text_style(
+         static_cast<int>(width), static_cast<int>(height));
+-    const Font draw_font = IsFontValid(hud_font)
+-        ? hud_font : GetFontDefault();
+     const auto draw_combat_text = [&](const char* text, float center_x,
+                                       float y, float font_size,
+                                       Color color) noexcept {
++        if (!hud_font_ready || !IsFontValid(hud_font)) return;
+         const Vector2 measured = MeasureTextEx(
+-            draw_font, text, font_size, text_style.spacing);
++            hud_font, text, font_size, text_style.spacing);
+         color.a = 255U;
+-        draw_crisp_ui_text(draw_font, text,
++        draw_crisp_ui_text(hud_font, text,
+             {center_x - measured.x * 0.5F, y}, font_size,
+             text_style.spacing, color, kCombatTextShadowPixels);
+     };
+     for (const VisualEffect& effect : feedback.effects()) {
+         if (!effect.active) continue;
+         const bool is_foreground = effect.kind == VisualEffectKind::spark
+             || effect.kind == VisualEffectKind::damage_number
+             || effect.kind == VisualEffectKind::defeat_marker;
+         if (is_foreground != foreground) continue;
+         const float progress = effect.lifetime_seconds <= 0.0F ? 1.0F
+@@ -163,21 +145,21 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
+             DrawLineEx({projected.x - 22.0F, projected.y - 54.0F},
+                 {projected.x + 25.0F, projected.y - 30.0F}, 3.0F,
+                 Fade(Color{255, 248, 210, 255}, opacity)); break;
+         case VisualEffectKind::damage_number:
+             draw_combat_text(TextFormat("%d", effect.value),
+                 projected.x + 8.0F,
+                 projected.y - 90.0F - progress * 32.0F,
+                 text_style.damage_font_size, Color{255, 238, 156, 255});
+             break;
+         case VisualEffectKind::defeat_marker: {
+-            constexpr const char* kLabel = "DEFEATED";
++            constexpr const char* kLabel = u8"已击败";
+             draw_combat_text(kLabel, projected.x,
+                 projected.y - 112.0F - progress * 24.0F,
+                 text_style.defeated_font_size, Color{255, 196, 92, 255});
+             DrawCircleLines(static_cast<int>(projected.x),
+                 static_cast<int>(projected.y - 46.0F * projected.scale),
+                 (30.0F + progress * 18.0F) * projected.scale,
+                 Fade(Color{255, 196, 92, 255}, opacity));
+             break;
+         }
+         }
+@@ -458,21 +440,21 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
+                     * static_cast<float>(text_style.affix_font_size + 2),
+             text_style.affix_font_size, to_color(badge.color));
+     }
+     if (presentation.role_label_visible) {
+         draw_scene_label(hud_font, hud_font_ready, visual.role_label,
+             x - bar_width * .5F, role_y, text_style.role_font_size,
+             Color{248, 246, 238, 255});
+     }
+     if (presentation.phase_label_visible) {
+         draw_scene_label(hud_font, hud_font_ready,
+-            monster_phase_name(monster.ai_phase), x - bar_width * .5F,
++            monster_phase_label(monster.ai_phase), x - bar_width * .5F,
+             phase_y, text_style.phase_font_size, Color{205, 218, 237, 255});
+     }
+ }
+ 
+ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
+     dungeon::DungeonElement ecology, const CombatCameraView& camera,
+     float width, float height,
+     const CombatFeedback& feedback, std::uint64_t tick, std::size_t label_lane,
+     Font hud_font, bool hud_font_ready, bool draw_debug) noexcept {
+     const ScreenProjection projected = project_combat_position(
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 7f82967..d170537 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -637,22 +637,22 @@ GroundLootView CombatRenderer::draw(
+         }
+     }
+     if (world_mode) EndMode2D();
+ 
+     if (draw_debug) {
+         const DebugOverlayDiagnosticsPlan diagnostics =
+             make_debug_overlay_diagnostics_plan(current_hud,
+                 hud_model_.diagnostics,
+                 hud_notices_.dropped_count(), hud_binding_revision_, last_event_,
+                 has_last_event_, hud_renderer_.font_ready());
+-        debug_overlay_.draw(current_hud, runtime_status, feedback,
+-            audio_ready, diagnostics);
++        debug_overlay_.draw(world_ui_font_, world_ui_font_ready_,
++            current_hud, runtime_status, feedback, audio_ready, diagnostics);
+     }
+ 
+     const float overlay_alpha = transition_overlay_alpha(transition_.seconds_left);
+     if (overlay_alpha > 0.0F) {
+         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+             Fade(BLACK, overlay_alpha));
+     }
+     death_overlay_.draw(current_hud, material_pack_);
+     return render_plan.ground_loot;
+ }
+diff --git a/src/platform/raylib/combat_view_math.cpp b/src/platform/raylib/combat_view_math.cpp
+index 8a40867..7c80a84 100644
+--- a/src/platform/raylib/combat_view_math.cpp
++++ b/src/platform/raylib/combat_view_math.cpp
+@@ -1,13 +1,14 @@
+ #include "combat_view_math.hpp"
+ 
+ #include "combat/room_bounds.hpp"
++#include "ui_text_catalog.hpp"
+ 
+ #include <algorithm>
+ #include <cmath>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ bool actor_precedes(
+     const ActorDrawItem& lhs,
+@@ -44,26 +45,26 @@ Rgba8 affix_category_color(combat::MonsterAffixId id) noexcept {
+     case combat::MonsterAffixId::blink_assault:
+     case combat::MonsterAffixId::death_blast:
+     case combat::MonsterAffixId::count:
+         return {224U, 231U, 241U, 255U};
+     }
+     return {224U, 231U, 241U, 255U};
+ }
+ 
+ const char* affix_tier_text(combat::MonsterAffixTier tier) noexcept {
+     switch (tier) {
+-    case combat::MonsterAffixTier::m1: return "M1";
+-    case combat::MonsterAffixTier::m2: return "M2";
+-    case combat::MonsterAffixTier::m3: return "M3";
+-    case combat::MonsterAffixTier::count: return "M1";
++    case combat::MonsterAffixTier::m1: return u8"词缀Ⅰ";
++    case combat::MonsterAffixTier::m2: return u8"词缀Ⅱ";
++    case combat::MonsterAffixTier::m3: return u8"词缀Ⅲ";
++    case combat::MonsterAffixTier::count: return u8"词缀Ⅰ";
+     }
+-    return "M1";
++    return u8"词缀Ⅰ";
+ }
+ 
+ }  // namespace
+ 
+ CombatCameraView make_combat_camera_view(
+     combat::Vec3 interpolated_player,
+     float width,
+     float height) noexcept {
+     constexpr float kBaselineAspect = 16.0F / 9.0F;
+     constexpr float kBaselineVisibleWidth = 24.0F;
+@@ -217,88 +218,110 @@ Rgba8 monster_ecology_color(dungeon::DungeonElement ecology) noexcept {
+ MonsterVisual monster_visual(
+     combat::MonsterId id,
+     combat::MonsterAiPhase phase,
+     dungeon::DungeonElement ecology) noexcept {
+     MonsterVisual visual{};
+     visual.accent = monster_ecology_color(ecology);
+     visual.warning = {255U, 106U, 92U, 255U};
+     switch (id) {
+     case combat::MonsterId::fire_bomber:
+         visual = {{195U, 65U, 54U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::bomber, "BOMBER", MonsterWarningMode::none};
++            MonsterShapeId::bomber, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::fire_charger:
+         visual = {{173U, 79U, 49U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::charger, "CHARGER", MonsterWarningMode::none};
++            MonsterShapeId::charger, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::water_bulwark:
+         visual = {{54U, 117U, 173U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::bulwark, "BULWARK", MonsterWarningMode::none};
++            MonsterShapeId::bulwark, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::water_support:
+         visual = {{72U, 142U, 190U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::support, "SUPPORT", MonsterWarningMode::none};
++            MonsterShapeId::support, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::lightning_shooter:
+         visual = {{191U, 171U, 58U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::shooter, "SHOOTER", MonsterWarningMode::none};
++            MonsterShapeId::shooter, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::lightning_dasher:
+         visual = {{209U, 188U, 65U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::dasher, "DASHER", MonsterWarningMode::none};
++            MonsterShapeId::dasher, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::chaos_chaser:
+         visual = {{121U, 67U, 173U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::chaser, "CHASER", MonsterWarningMode::none};
++            MonsterShapeId::chaser, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::chaos_hazard:
+         visual = {{145U, 70U, 183U, 255U}, visual.accent, visual.warning,
+-            MonsterShapeId::hazard_caster, "HAZARD", MonsterWarningMode::none};
++            MonsterShapeId::hazard_caster, ui_monster_name(id), MonsterWarningMode::none};
+         break;
+     case combat::MonsterId::count:
+         break;
+     }
+ 
+     const bool priority = id == combat::MonsterId::fire_bomber
+         || id == combat::MonsterId::fire_charger
+         || id == combat::MonsterId::lightning_dasher
+         || id == combat::MonsterId::chaos_hazard;
+     const bool direct_attacker = id != combat::MonsterId::water_support
+         && id != combat::MonsterId::count;
+     visual.priority_warning = priority;
+     if (direct_attacker && phase == combat::MonsterAiPhase::telegraph) {
+         visual.warning_mode = MonsterWarningMode::telegraph;
+     } else if (direct_attacker && phase == combat::MonsterAiPhase::active) {
+         visual.warning_mode = MonsterWarningMode::active;
+     }
+     return visual;
+ }
+ 
++const char* monster_phase_label(combat::MonsterAiPhase phase) noexcept {
++    switch (phase) {
++    case combat::MonsterAiPhase::idle: return u8"待机";
++    case combat::MonsterAiPhase::move: return u8"移动";
++    case combat::MonsterAiPhase::telegraph: return u8"预警";
++    case combat::MonsterAiPhase::active: return u8"生效";
++    case combat::MonsterAiPhase::recovery: return u8"恢复";
++    case combat::MonsterAiPhase::cooldown: return u8"冷却";
++    case combat::MonsterAiPhase::defeated: return u8"已击败";
++    }
++    return u8"未知";
++}
++
++const char* debug_world_volume_label(DebugWorldVolumeKind kind) noexcept {
++    switch (kind) {
++    case DebugWorldVolumeKind::assist: return u8"辅助判定";
++    case DebugWorldVolumeKind::attack: return u8"攻击判定";
++    case DebugWorldVolumeKind::hurt: return u8"受击判定";
++    }
++    return u8"未知判定";
++}
++
+ MonsterLabelTextStyle monster_label_text_style(float viewport_scale) noexcept {
+     const float scale = std::clamp(viewport_scale, 1.0F, 1.5F);
+     const int font_size = static_cast<int>(std::ceil(16.0F * scale));
+     return {font_size, font_size, font_size, 0};
+ }
+ 
+ MonsterPresentationPlan monster_presentation_plan(
+     std::size_t label_lane, bool draw_debug) noexcept {
+     return {-128.0F, label_lane % 4U, true, draw_debug, draw_debug};
+ }
+ 
+ AffixBadge monster_affix_badge(combat::MonsterAffixInstance affix) noexcept {
+     const combat::MonsterAffixDefinition* const definition =
+         combat::monster_affix_definition(affix.id);
+     if (definition == nullptr) {
+         return {"?", affix_tier_text(affix.tier),
+             combat::MonsterAffixDanger::low, {224U, 231U, 241U, 255U}};
+     }
+-    return {definition->short_name.data(), affix_tier_text(affix.tier),
++    return {ui_monster_affix_short_name(affix.id), affix_tier_text(affix.tier),
+         definition->danger, affix_category_color(affix.id)};
+ }
+ 
+ AffixOutline monster_affix_outline(
+     combat::MonsterAffixInstance affix,
+     std::uint64_t tick) noexcept {
+     const AffixBadge badge = monster_affix_badge(affix);
+     if (badge.danger != combat::MonsterAffixDanger::high) {
+         return {badge.color, 255U};
+     }
+diff --git a/src/platform/raylib/combat_view_math.hpp b/src/platform/raylib/combat_view_math.hpp
+index 73471eb..c63b79d 100644
+--- a/src/platform/raylib/combat_view_math.hpp
++++ b/src/platform/raylib/combat_view_math.hpp
+@@ -50,21 +50,21 @@ enum class HazardVisualMode : std::uint8_t {
+     hidden,
+     telegraph,
+     active,
+ };
+ 
+ struct MonsterVisual final {
+     Rgba8 body{};
+     Rgba8 accent{};
+     Rgba8 warning{};
+     MonsterShapeId shape{MonsterShapeId::chaser};
+-    const char* role_label{"CHASER"};
++    const char* role_label{u8"未知"};
+     MonsterWarningMode warning_mode{MonsterWarningMode::none};
+     bool priority_warning{};
+ };
+ 
+ struct MonsterLabelTextStyle final {
+     int affix_font_size{11};
+     int role_font_size{14};
+     int phase_font_size{12};
+     int outline_pixels{2};
+ };
+@@ -72,25 +72,31 @@ struct MonsterLabelTextStyle final {
+ struct MonsterPresentationPlan final {
+     float resource_bar_offset_y{};
+     std::size_t debug_label_lane{};
+     bool resource_bars_visible{};
+     bool role_label_visible{};
+     bool phase_label_visible{};
+ };
+ 
+ struct AffixBadge final {
+     const char* short_name{"?"};
+-    const char* tier_text{"M1"};
++    const char* tier_text{u8"词缀Ⅰ"};
+     combat::MonsterAffixDanger danger{combat::MonsterAffixDanger::low};
+     Rgba8 color{};
+ };
+ 
++enum class DebugWorldVolumeKind : std::uint8_t {
++    assist,
++    attack,
++    hurt,
++};
++
+ struct AffixOutline final {
+     Rgba8 color{};
+     std::uint8_t alpha{255U};
+ };
+ 
+ [[nodiscard]] CombatCameraView make_combat_camera_view(
+     combat::Vec3 interpolated_player,
+     float width,
+     float height) noexcept;
+ 
+@@ -118,20 +124,24 @@ struct AffixOutline final {
+ 
+ void sort_actor_draw_items(
+     std::array<ActorDrawItem, 4>& items) noexcept;
+ 
+ [[nodiscard]] Rgba8 monster_ecology_color(
+     dungeon::DungeonElement ecology) noexcept;
+ [[nodiscard]] MonsterVisual monster_visual(
+     combat::MonsterId id,
+     combat::MonsterAiPhase phase,
+     dungeon::DungeonElement ecology) noexcept;
++[[nodiscard]] const char* monster_phase_label(
++    combat::MonsterAiPhase phase) noexcept;
++[[nodiscard]] const char* debug_world_volume_label(
++    DebugWorldVolumeKind kind) noexcept;
+ [[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
+     float viewport_scale) noexcept;
+ [[nodiscard]] MonsterPresentationPlan monster_presentation_plan(
+     std::size_t label_lane, bool draw_debug) noexcept;
+ [[nodiscard]] AffixBadge monster_affix_badge(
+     combat::MonsterAffixInstance affix) noexcept;
+ [[nodiscard]] AffixOutline monster_affix_outline(
+     combat::MonsterAffixInstance affix,
+     std::uint64_t tick) noexcept;
+ [[nodiscard]] bool blink_affix_warning_visible(
+diff --git a/src/platform/raylib/debug_overlay_renderer.cpp b/src/platform/raylib/debug_overlay_renderer.cpp
+index 4c5037a..159663d 100644
+--- a/src/platform/raylib/debug_overlay_renderer.cpp
++++ b/src/platform/raylib/debug_overlay_renderer.cpp
+@@ -1,82 +1,101 @@
+ #include "debug_overlay_renderer.hpp"
+ 
+-#include "combat/attack_catalog.hpp"
+-#include "combat_view_math.hpp"
+-#include "render_layout.hpp"
++#include "ui_text_renderer.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <raylib.h>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ const char* attack_name(combat::AttackId id) noexcept {
+     switch (id) {
+     case combat::AttackId::j1: return "J1";
+     case combat::AttackId::j2: return "J2";
+     case combat::AttackId::j3: return "J3";
+-    case combat::AttackId::launcher: return "L";
+-    case combat::AttackId::air_j: return "Air J";
+-    case combat::AttackId::none: return "None";
++    case combat::AttackId::launcher: return u8"挑飞";
++    case combat::AttackId::air_j: return u8"空中J";
++    case combat::AttackId::none: return u8"无";
+     }
+-    return "?";
++    return u8"未知";
+ }
+ 
+ const char* phase_name(combat::AttackPhase phase) noexcept {
+     switch (phase) {
+-    case combat::AttackPhase::startup: return "Startup";
+-    case combat::AttackPhase::active: return "Active";
+-    case combat::AttackPhase::recovery: return "Recovery";
+-    case combat::AttackPhase::finished: return "Finished";
++    case combat::AttackPhase::startup: return u8"起手";
++    case combat::AttackPhase::active: return u8"生效";
++    case combat::AttackPhase::recovery: return u8"后摇";
++    case combat::AttackPhase::finished: return u8"结束";
+     }
+-    return "?";
++    return u8"未知";
+ }
+ 
+ const char* player_state_name(combat::PlayerState state) noexcept {
+     switch (state) {
+-    case combat::PlayerState::idle: return "Idle";
+-    case combat::PlayerState::move: return "Move";
+-    case combat::PlayerState::attack_startup: return "Attack startup";
+-    case combat::PlayerState::attack_active: return "Attack active";
+-    case combat::PlayerState::attack_recovery: return "Attack recovery";
+-    case combat::PlayerState::jump_rise: return "Jump rise";
+-    case combat::PlayerState::jump_fall: return "Jump fall";
+-    case combat::PlayerState::landing: return "Landing";
++    case combat::PlayerState::idle: return u8"待机";
++    case combat::PlayerState::move: return u8"移动";
++    case combat::PlayerState::attack_startup: return u8"攻击起手";
++    case combat::PlayerState::attack_active: return u8"攻击生效";
++    case combat::PlayerState::attack_recovery: return u8"攻击后摇";
++    case combat::PlayerState::jump_rise: return u8"上升";
++    case combat::PlayerState::jump_fall: return u8"下落";
++    case combat::PlayerState::landing: return u8"落地";
+     }
+-    return "?";
++    return u8"未知";
+ }
+ 
+ const char* event_name(combat::CombatEventKind kind) noexcept {
+     switch (kind) {
+-    case combat::CombatEventKind::swing: return "Swing";
+-    case combat::CombatEventKind::hit: return "Hit";
+-    case combat::CombatEventKind::impact_summary: return "Impact";
+-    case combat::CombatEventKind::landing: return "Landing";
+-    case combat::CombatEventKind::break_started: return "Break";
+-    case combat::CombatEventKind::defeated: return "Defeated";
+-    case combat::CombatEventKind::respawned: return "Respawned";
+-    case combat::CombatEventKind::reset: return "Reset";
+-    case combat::CombatEventKind::player_hit: return "Player hit";
+-    case combat::CombatEventKind::player_hurt_started: return "Player hurt";
+-    case combat::CombatEventKind::player_health_reset: return "Player heal";
++    case combat::CombatEventKind::swing: return u8"挥击";
++    case combat::CombatEventKind::hit: return u8"命中";
++    case combat::CombatEventKind::impact_summary: return u8"冲击汇总";
++    case combat::CombatEventKind::landing: return u8"落地";
++    case combat::CombatEventKind::break_started: return u8"破防开始";
++    case combat::CombatEventKind::defeated: return u8"已击败";
++    case combat::CombatEventKind::respawned: return u8"已重生";
++    case combat::CombatEventKind::reset: return u8"已重置";
++    case combat::CombatEventKind::player_hit: return u8"玩家命中";
++    case combat::CombatEventKind::player_hurt_started: return u8"玩家受击";
++    case combat::CombatEventKind::player_health_reset: return u8"玩家生命重置";
+     }
+-    return "?";
++    return u8"未知";
+ }
+ 
+ const char* ecology_name(dungeon::DungeonElement element) noexcept {
+     switch (element) {
+-    case dungeon::DungeonElement::fire: return "FIRE";
+-    case dungeon::DungeonElement::water: return "WATER";
+-    case dungeon::DungeonElement::lightning: return "LIGHTNING";
+-    case dungeon::DungeonElement::chaos: return "CHAOS";
++    case dungeon::DungeonElement::fire: return u8"火焰";
++    case dungeon::DungeonElement::water: return u8"水流";
++    case dungeon::DungeonElement::lightning: return u8"闪电";
++    case dungeon::DungeonElement::chaos: return u8"混沌";
+     }
+-    return "UNKNOWN";
++    return u8"未知";
++}
++
++const char* save_indicator_name(SaveIndicator indicator) noexcept {
++    switch (indicator) {
++    case SaveIndicator::none: return u8"空闲";
++    case SaveIndicator::saving: return u8"保存中";
++    case SaveIndicator::saved: return u8"已保存";
++    case SaveIndicator::recovered: return u8"已恢复";
++    case SaveIndicator::error: return u8"错误";
++    }
++    return u8"未知";
++}
++
++const char* save_slot_name(persistence::SaveSlot slot) noexcept {
++    switch (slot) {
++    case persistence::SaveSlot::none: return u8"无";
++    case persistence::SaveSlot::a: return "A";
++    case persistence::SaveSlot::b: return "B";
++    }
++    return u8"未知";
+ }
+ 
+ }  // namespace
+ 
+ DebugOverlayDiagnosticsPlan make_debug_overlay_diagnostics_plan(
+     const dungeon::DungeonSnapshot& current,
+     const HudBuildDiagnostics& hud_diagnostics,
+     std::uint32_t notice_drops,
+     std::uint64_t binding_revision,
+     const combat::CombatEvent& last_event,
+@@ -99,98 +118,202 @@ DebugOverlayDiagnosticsPlan make_debug_overlay_diagnostics_plan(
+     }
+     plan.hud = hud_diagnostics;
+     plan.notice_drops = notice_drops;
+     plan.binding_revision = binding_revision;
+     plan.last_event = last_event;
+     plan.has_last_event = has_last_event;
+     plan.cjk_font_ready = cjk_font_ready;
+     return plan;
+ }
+ 
+-void DebugOverlayRenderer::draw(const dungeon::DungeonSnapshot& current,
+-    const DungeonRenderStatus& runtime_status, const CombatFeedback& feedback,
+-    bool audio_ready, const DebugOverlayDiagnosticsPlan& diagnostics) const noexcept {
+-    const Color text{218, 226, 239, 255};
+-    const RenderLayout layout = render_layout(true);
+-    int y = debug_overlay_start_y(current.combat.has_value() ? 265 : 150);
+-    DrawText(TextFormat("Root %016llX Room %016llX Generation %llu",
++DebugOverlayView make_debug_overlay_view(
++    const dungeon::DungeonSnapshot& current,
++    const DungeonRenderStatus& runtime_status,
++    const CombatFeedback& feedback,
++    bool audio_ready,
++    const DebugOverlayDiagnosticsPlan& diagnostics) noexcept {
++    constexpr Color kText{218, 226, 239, 255};
++    constexpr Color kWarning{255, 210, 118, 255};
++    constexpr Color kError{255, 151, 117, 255};
++    DebugOverlayView view{};
++    view.line_count = view.lines.size();
++
++    static_cast<void>(ui_utf8_format(view.lines[0].text.data(),
++        view.lines[0].text.size(),
++        u8"根种子 %016llX 房间种子 %016llX 提交代次 %llu",
+         static_cast<unsigned long long>(current.root_seed),
+         static_cast<unsigned long long>(current.room_seed),
+-        static_cast<unsigned long long>(current.commit_generation)),
+-        static_cast<int>(layout.hud_x), y, 16, text);
+-    y += layout.hud_line_step;
+-    DrawText(TextFormat("Saved ecology %s hole %s abyss %s slot %u error %u fault %u",
+-        ecology_name(current.ecology), current.has_hole ? "YES" : "NO",
+-        current.is_abyss ? "YES" : "NO", static_cast<unsigned>(runtime_status.active_slot),
+-        static_cast<unsigned>(runtime_status.error), static_cast<unsigned>(current.diagnostics.fault)),
+-        static_cast<int>(layout.hud_x), y, 16, text);
+-    y += layout.hud_line_step;
+-    DrawText(TextFormat("Budget total/current %u/%u  M/P/H %llu/%llu/%llu",
++        static_cast<unsigned long long>(current.commit_generation)));
++    view.lines[0].color = kText;
++
++    static_cast<void>(ui_utf8_format(view.lines[1].text.data(),
++        view.lines[1].text.size(),
++        u8"存档 %s 生态 %s 洞口 %s 深渊 %s 槽 %s 错误 %u 故障 %u",
++        save_indicator_name(runtime_status.indicator), ecology_name(current.ecology),
++        current.has_hole ? u8"是" : u8"否",
++        current.is_abyss ? u8"是" : u8"否",
++        save_slot_name(runtime_status.active_slot),
++        static_cast<unsigned>(runtime_status.error),
++        static_cast<unsigned>(current.diagnostics.fault)));
++    view.lines[1].color = runtime_status.indicator == SaveIndicator::error
++            || runtime_status.faulted || runtime_status.recovery_required
++        ? kError
++        : runtime_status.indicator == SaveIndicator::saving
++            ? kWarning : kText;
++
++    static_cast<void>(ui_utf8_format(view.lines[2].text.data(),
++        view.lines[2].text.size(),
++        u8"预算 总计/当前 %u/%u 实体 怪物/投射物/危险 %llu/%llu/%llu",
+         static_cast<unsigned>(diagnostics.total_budget),
+         static_cast<unsigned>(diagnostics.current_wave_budget),
+         static_cast<unsigned long long>(diagnostics.active_monsters),
+         static_cast<unsigned long long>(diagnostics.active_projectiles),
+-        static_cast<unsigned long long>(diagnostics.active_hazards)),
+-        static_cast<int>(layout.hud_x), y, 16, text);
+-    y += layout.hud_line_step;
+-    DrawText(TextFormat("Dungeon event %u relay %u rejected %u ground saturation %u index overflow %s",
++        static_cast<unsigned long long>(diagnostics.active_hazards)));
++    view.lines[2].color = kText;
++
++    static_cast<void>(ui_utf8_format(view.lines[3].text.data(),
++        view.lines[3].text.size(),
++        u8"地下城 事件溢出 %u 转发溢出 %u 拒绝出口 %u 地面饱和 %u 房间索引溢出 %s",
+         current.diagnostics.event_overflow_count,
+         current.diagnostics.combat_relay_overflow_count,
+         current.diagnostics.rejected_exit_count,
+         diagnostics.ground_saturation,
+-        diagnostics.room_index_overflow ? "YES" : "NO"),
+-        static_cast<int>(layout.hud_x), y, 16, text);
++        diagnostics.room_index_overflow ? u8"是" : u8"否"));
++    view.lines[3].color = diagnostics.room_index_overflow
++        ? kWarning : kText;
++
+     if (current.combat.has_value()) {
+         const combat::CombatSnapshot& state = *current.combat;
+-        y += layout.hud_line_step;
+-        DrawText(TextFormat("Tick %llu State %s Z %.2f Hit stop %u",
++        static_cast<void>(ui_utf8_format(view.lines[4].text.data(),
++            view.lines[4].text.size(),
++            u8"战斗 帧 %llu 玩家状态 %s 高度 %.2f 命中停顿 %u",
+             static_cast<unsigned long long>(state.tick), player_state_name(state.player.state),
+-            state.player.position.z, state.player.hit_stop_ticks),
+-            static_cast<int>(layout.hud_x), y, 16, text);
+-        y += layout.hud_line_step;
+-        DrawText(TextFormat("Effects owners/active %llu/%llu overflow %u commands %u",
++            state.player.position.z, state.player.hit_stop_ticks));
++        static_cast<void>(ui_utf8_format(view.lines[5].text.data(),
++            view.lines[5].text.size(),
++            u8"效果 所有者/活跃 %llu/%llu 溢出 %u 指令溢出 %u",
+             static_cast<unsigned long long>(state.diagnostics.effect_owner_count),
+             static_cast<unsigned long long>(state.diagnostics.active_effect_count),
+-            state.diagnostics.effect_overflow_count, state.diagnostics.effect_command_overflow_count),
+-            static_cast<int>(layout.hud_x), y, 16, text);
+-        y += layout.hud_line_step;
+-        DrawText(TextFormat("Action %s %s Combo %u", attack_name(state.player.active_attack),
+-            phase_name(state.player.attack_phase), state.player.combo_stage),
+-            static_cast<int>(layout.hud_x), y, 16, text);
+-        y += layout.hud_line_step;
+-        DrawText(TextFormat("Input %llu expired %u overflow %u event overflow %u",
++            state.diagnostics.effect_overflow_count,
++            state.diagnostics.effect_command_overflow_count));
++        static_cast<void>(ui_utf8_format(view.lines[6].text.data(),
++            view.lines[6].text.size(), u8"动作 %s %s 连段 %u",
++            attack_name(state.player.active_attack),
++            phase_name(state.player.attack_phase), state.player.combo_stage));
++        static_cast<void>(ui_utf8_format(view.lines[7].text.data(),
++            view.lines[7].text.size(),
++            u8"输入 队列 %llu 过期 %u 溢出 %u 事件溢出 %u",
+             static_cast<unsigned long long>(state.diagnostics.input_size),
+             state.diagnostics.input_expired_count, state.diagnostics.input_overflow_count,
+-            state.diagnostics.event_overflow_count), static_cast<int>(layout.hud_x), y, 16, text);
++            state.diagnostics.event_overflow_count));
+     } else {
+-        y += layout.hud_line_step;
+-        DrawText("Combat diagnostics unavailable during transition",
+-            static_cast<int>(layout.hud_x), y, 16, text);
++        static_cast<void>(ui_utf8_format(view.lines[4].text.data(),
++            view.lines[4].text.size(), u8"战斗 转场期间无战斗快照"));
++        static_cast<void>(ui_utf8_format(view.lines[5].text.data(),
++            view.lines[5].text.size(), u8"效果 转场期间无战斗快照"));
++        static_cast<void>(ui_utf8_format(view.lines[6].text.data(),
++            view.lines[6].text.size(), u8"动作 转场期间无战斗快照"));
++        static_cast<void>(ui_utf8_format(view.lines[7].text.data(),
++            view.lines[7].text.size(), u8"输入 转场期间无战斗快照"));
++    }
++    for (std::size_t index = 4U; index < 8U; ++index) {
++        view.lines[index].color = current.combat.has_value() ? kText : kWarning;
+     }
+-    y += layout.hud_line_step;
+-    DrawText(diagnostics.has_last_event
+-            ? TextFormat("Last event %s target %u",
+-                event_name(diagnostics.last_event.kind),
+-                static_cast<unsigned>(diagnostics.last_event.target_ordinal))
+-            : "Last event None",
+-        static_cast<int>(layout.hud_x), y, 16, text);
+-    y += layout.hud_line_step;
+-    DrawText(TextFormat("FX %u Dropped %u Shake %.1f Audio %s",
++
++    if (diagnostics.has_last_event) {
++        static_cast<void>(ui_utf8_format(view.lines[8].text.data(),
++            view.lines[8].text.size(), u8"最近事件 %s 目标 %u",
++            event_name(diagnostics.last_event.kind),
++            static_cast<unsigned>(diagnostics.last_event.target_ordinal)));
++    } else {
++        static_cast<void>(ui_utf8_format(view.lines[8].text.data(),
++            view.lines[8].text.size(), u8"最近事件 无"));
++    }
++    view.lines[8].color = kText;
++
++    static_cast<void>(ui_utf8_format(view.lines[9].text.data(),
++        view.lines[9].text.size(),
++        u8"反馈 效果 %u 丢弃 %u 震屏 %.1f 音频%s",
+         static_cast<unsigned>(feedback.active_count()), feedback.dropped_count(),
+-        feedback.shake_amplitude(), audio_ready ? "Ready" : "Unavailable"),
+-        static_cast<int>(layout.hud_x), y, 16,
+-        audio_ready ? text : Color{255, 151, 117, 255});
+-    y += layout.hud_line_step;
+-    DrawText(TextFormat("Projectile saturation/invalid %u/%u Hazard saturation/invalid %u/%u",
++        feedback.shake_amplitude(), audio_ready ? u8"已就绪" : u8"不可用"));
++    view.lines[9].color = audio_ready ? kText : kError;
++
++    static_cast<void>(ui_utf8_format(view.lines[10].text.data(),
++        view.lines[10].text.size(),
++        u8"资源 投射物饱和/无效 %u/%u 危险饱和/无效 %u/%u",
+         diagnostics.projectile_saturation, diagnostics.projectile_invalid_owner,
+-        diagnostics.hazard_saturation, diagnostics.hazard_invalid_owner),
+-        static_cast<int>(layout.hud_x), y, 16, text);
+-    y += layout.hud_line_step;
+-    DrawText(TextFormat("HUD clamp %u trunc %u missing %s notices dropped %u bindings %llu CJK %s",
++        diagnostics.hazard_saturation, diagnostics.hazard_invalid_owner));
++    view.lines[10].color = kText;
++
++    static_cast<void>(ui_utf8_format(view.lines[11].text.data(),
++        view.lines[11].text.size(),
++        u8"界面 钳制 %u 截断 %u 战斗缺失 %s 通知丢弃 %u 绑定版本 %llu 中文字体 %s",
+         diagnostics.hud.clamped_values, diagnostics.hud.truncated_texts,
+-        diagnostics.hud.combat_snapshot_missing ? "YES" : "NO", diagnostics.notice_drops,
++        diagnostics.hud.combat_snapshot_missing ? u8"是" : u8"否",
++        diagnostics.notice_drops,
+         static_cast<unsigned long long>(diagnostics.binding_revision),
+-        diagnostics.cjk_font_ready ? "READY" : "FALLBACK"),
+-        static_cast<int>(layout.hud_x), y, 16, text);
++        diagnostics.cjk_font_ready ? u8"已就绪" : u8"不可用"));
++    view.lines[11].color = diagnostics.cjk_font_ready ? kText : kError;
++    return view;
++}
++
++DebugOverlayLayout debug_overlay_layout(
++    int screen_width, int screen_height) noexcept {
++    DebugOverlayLayout layout{};
++    if (screen_width <= 0 || screen_height <= 0) return layout;
++    constexpr float kMargin = 8.0F;
++    constexpr float kGap = 8.0F;
++    constexpr float kPadding = 8.0F;
++    constexpr float kLineStep = 24.0F;
++    constexpr float kLineHeight = 20.0F;
++    layout.column_count = screen_width < 1280 ? 1U : 2U;
++    layout.font_size = 13.0F;
++    layout.spacing = 0.5F;
++    layout.backing_color = {0x0B, 0x10, 0x19, 255};
++    const std::size_t rows = layout.column_count == 1U ? 12U : 6U;
++    const float total_width = static_cast<float>(screen_width) - 2.0F * kMargin;
++    const float column_width = layout.column_count == 1U
++        ? total_width : (total_width - kGap) * 0.5F;
++    const float backing_height = 2.0F * kPadding
++        + static_cast<float>(rows) * kLineStep;
++    for (std::size_t column = 0U; column < layout.column_count; ++column) {
++        const float x = kMargin
++            + static_cast<float>(column) * (column_width + kGap);
++        layout.column_backings[column] = {
++            x, kMargin, column_width, backing_height};
++        for (std::size_t row = 0U; row < rows; ++row) {
++            const std::size_t index = column * rows + row;
++            layout.line_bounds[index] = {
++                x + kPadding,
++                kMargin + kPadding + static_cast<float>(row) * kLineStep,
++                column_width - 2.0F * kPadding,
++                kLineHeight,
++            };
++        }
++    }
++    return layout;
++}
++
++void DebugOverlayRenderer::draw(Font shared_ui_font,
++    bool shared_ui_font_ready,
++    const dungeon::DungeonSnapshot& current,
++    const DungeonRenderStatus& runtime_status,
++    const CombatFeedback& feedback,
++    bool audio_ready,
++    const DebugOverlayDiagnosticsPlan& diagnostics) const noexcept {
++    const DebugOverlayView view = make_debug_overlay_view(
++        current, runtime_status, feedback, audio_ready, diagnostics);
++    const DebugOverlayLayout layout = debug_overlay_layout(
++        GetScreenWidth(), GetScreenHeight());
++    for (std::size_t column = 0U; column < layout.column_count; ++column) {
++        DrawRectangleRec(layout.column_backings[column], layout.backing_color);
++    }
++    if (!shared_ui_font_ready || !IsFontValid(shared_ui_font)) return;
++    for (std::size_t index = 0U; index < view.line_count; ++index) {
++        const Rectangle bounds = layout.line_bounds[index];
++        draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
++            {bounds.x, bounds.y + 2.0F}, layout.font_size,
++            layout.spacing, view.lines[index].color, 1);
++    }
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/debug_overlay_renderer.hpp b/src/platform/raylib/debug_overlay_renderer.hpp
+index 60be057..89c2266 100644
+--- a/src/platform/raylib/debug_overlay_renderer.hpp
++++ b/src/platform/raylib/debug_overlay_renderer.hpp
+@@ -1,16 +1,19 @@
+ #pragma once
+ 
+ #include "combat_feedback.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "hud_view_model.hpp"
+ 
++#include <raylib.h>
++
++#include <array>
+ #include <cstdint>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ struct DebugOverlayDiagnosticsPlan final {
+     std::uint8_t total_budget{};
+     std::uint8_t current_wave_budget{};
+     std::size_t active_monsters{};
+     std::size_t active_projectiles{};
+@@ -22,24 +25,51 @@ struct DebugOverlayDiagnosticsPlan final {
+     std::uint32_t ground_saturation{};
+     bool room_index_overflow{};
+     HudBuildDiagnostics hud{};
+     std::uint32_t notice_drops{};
+     std::uint64_t binding_revision{};
+     combat::CombatEvent last_event{};
+     bool has_last_event{};
+     bool cjk_font_ready{};
+ };
+ 
++struct DebugOverlayLine final {
++    std::array<char, 192U> text{};
++    Color color{};
++};
++
++struct DebugOverlayView final {
++    std::array<DebugOverlayLine, 12U> lines{};
++    std::size_t line_count{};
++};
++
++struct DebugOverlayLayout final {
++    std::array<Rectangle, 2U> column_backings{};
++    std::array<Rectangle, 12U> line_bounds{};
++    std::size_t column_count{};
++    float font_size{};
++    float spacing{};
++    Color backing_color{};
++};
++
+ [[nodiscard]] DebugOverlayDiagnosticsPlan make_debug_overlay_diagnostics_plan(
+     const dungeon::DungeonSnapshot&, const HudBuildDiagnostics&,
+     std::uint32_t notice_drops, std::uint64_t binding_revision,
+     const combat::CombatEvent&, bool has_last_event,
+     bool cjk_font_ready) noexcept;
+ 
++[[nodiscard]] DebugOverlayView make_debug_overlay_view(
++    const dungeon::DungeonSnapshot&, const DungeonRenderStatus&,
++    const CombatFeedback&, bool audio_ready,
++    const DebugOverlayDiagnosticsPlan&) noexcept;
++[[nodiscard]] DebugOverlayLayout debug_overlay_layout(
++    int screen_width, int screen_height) noexcept;
++
+ class DebugOverlayRenderer final {
+ public:
+-    void draw(const dungeon::DungeonSnapshot&, const DungeonRenderStatus&,
++    void draw(Font shared_ui_font, bool shared_ui_font_ready,
++        const dungeon::DungeonSnapshot&, const DungeonRenderStatus&,
+         const CombatFeedback&, bool audio_ready,
+         const DebugOverlayDiagnosticsPlan&) const noexcept;
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/debug_renderer.cpp b/src/platform/raylib/debug_renderer.cpp
+index 896e344..ec23eb1 100644
+--- a/src/platform/raylib/debug_renderer.cpp
++++ b/src/platform/raylib/debug_renderer.cpp
+@@ -1,66 +1,74 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
+ #include "combat/combat_collision.hpp"
+ #include "combat_view_math.hpp"
++#include "ui_text_renderer.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ void draw_projected_aabb(const combat::Aabb& box,
+     const CombatCameraView& camera, float width, float height,
+-    Color color, const char* label) noexcept {
++    Color color, Font shared_ui_font, bool shared_ui_font_ready,
++    const char* label) noexcept {
+     std::array<ScreenProjection, 8> corners{};
+     for (std::size_t index = 0; index < corners.size(); ++index) {
+         const combat::Vec3 corner{(index & 1U) != 0 ? box.maximum.x : box.minimum.x,
+             (index & 2U) != 0 ? box.maximum.y : box.minimum.y,
+             (index & 4U) != 0 ? box.maximum.z : box.minimum.z};
+         corners[index] = project_combat_position(
+             corner, camera, width, height);
+     }
+     for (std::size_t index = 0; index < corners.size(); ++index) {
+         for (std::size_t axis = 0; axis < 3; ++axis) {
+             const std::size_t bit = std::size_t{1} << axis;
+             if ((index & bit) == 0) {
+                 const ScreenProjection& from = corners[index];
+                 const ScreenProjection& to = corners[index | bit];
+                 DrawLineEx({from.x, from.y}, {to.x, to.y}, 1.5F, color);
+             }
+         }
+     }
+-    DrawText(label, static_cast<int>(corners[4].x + 4.0F),
+-        static_cast<int>(corners[4].y - 14.0F), 12, color);
++    if (shared_ui_font_ready && IsFontValid(shared_ui_font)) {
++        draw_crisp_ui_text(shared_ui_font, label,
++            {corners[4].x + 4.0F, corners[4].y - 14.0F},
++            12.0F, 0.5F, color, 1);
++    }
+ }
+ 
+ }  // namespace
+ 
+ void CombatRenderer::draw_debug_world_volumes(
+     const combat::CombatSnapshot& snapshot,
+     const CombatCameraView& camera,
+     float width, float height) const noexcept {
+     if (const combat::AttackDefinition* definition =
+             combat::find_attack_definition(snapshot.player.active_attack)) {
+         const combat::Aabb attack_box = combat::make_world_aabb(
+             definition->local_hitbox, snapshot.player.position, snapshot.player.facing);
+         const combat::Aabb assist_box = combat::make_attack_assist_volume(
+             *definition, snapshot.player.position, snapshot.player.facing);
+         draw_projected_aabb(assist_box, camera, width, height,
+-            Color{90, 190, 255, 190}, "Assist");
++            Color{90, 190, 255, 190}, world_ui_font_, world_ui_font_ready_,
++            debug_world_volume_label(DebugWorldVolumeKind::assist));
+         draw_projected_aabb(attack_box, camera, width, height,
+-            Color{255, 88, 184, 230}, "Attack");
++            Color{255, 88, 184, 230}, world_ui_font_, world_ui_font_ready_,
++            debug_world_volume_label(DebugWorldVolumeKind::attack));
+     }
+     for (const combat::MonsterSnapshot& monster : snapshot.monsters) {
+         if (monster_visible(monster)) {
+             draw_projected_aabb(combat::make_dummy_hurtbox(monster.kind, monster.position),
+                 camera, width, height,
+-                Color{94, 255, 173, 210}, "Hurt");
++                Color{94, 255, 173, 210}, world_ui_font_, world_ui_font_ready_,
++                debug_world_volume_label(DebugWorldVolumeKind::hurt));
+         }
+     }
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index a5dda9c..e48031b 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -131,21 +131,24 @@ constexpr std::array<const char*, 67U> kUiDynamicGlyphCoverage{{
+     u8"设置界面…",
+     u8"已拾取：强化石 x1、混沌石 x1",
+     u8"蜕变石",
+     u8"火焰水流闪电混沌未知低危中危高危雷暴猎杀之焰混沌扩张迅捷追猎深渊壁垒深渊狂怒沉重脚步疲惫恢复生命献祭无规则"
+     "每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害"
+     "每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害"
+     "每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害"
+     "怪物：移动速度+15%，冷却时间×85%护甲×130%，护盾+30%伤害与攻击速度×145%"
+     "玩家：地面移动速度×85%入场资源及后续恢复×70%最大生命×55%"
+     "封闭可进入保存中异常已保存已恢复存档错误锁定战斗中等待下一波已清理等待离开切换房间处理撤退中"
+-    "上方下方左方右方无方向Q：下潜进入下一层离开后再次触碰同一出口以放弃全部剩余奖励再次交互，放弃剩余奖励并下潜",
++    "上方下方左方右方无方向Q：下潜进入下一层离开后再次触碰同一出口以放弃全部剩余奖励再次交互，放弃剩余奖励并下潜"
++    u8"辅助判定攻击受击待机移动预警生效恢复冷却已击败词缀ⅠⅡⅢ起手后摇结束空中无未知"
++    "根种子房间种子提交代次存档空闲洞口槽错误故障预算总计当前实体怪物投射物危险地下城事件溢出转发拒绝出口地面饱和房间索引"
++    "战斗帧玩家状态高度命中停顿效果所有者活跃指令动作连段输入队列过期最近事件目标反馈丢弃震屏音频就绪不可用资源无效界面钳制截断战斗缺失通知绑定版本中文字体转场期间无战斗快照",
+ }};
+ 
+ template <typename Id, std::size_t Count>
+ const char* value_or_unknown(const std::array<const char*, Count>& values,
+     Id id) noexcept {
+     const std::size_t index = static_cast<std::size_t>(id);
+     return index < values.size() ? values[index] : kUnknown;
+ }
+ 
+ template <std::size_t Count>
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 5984c63..acdffb3 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -38,20 +38,21 @@ if(TARGET arpg_raylib)
+         host_window_lifetime_tests.cpp
+         pause_menu_state_tests.cpp
+         pause_menu_view_tests.cpp
+         window_settings_tests.cpp
+         control_hints_tests.cpp
+         hud_view_model_tests.cpp
+         hud_notice_state_tests.cpp
+         loot_pickup_feedback_tests.cpp
+         loot_suction_animation_tests.cpp
+         hud_layout_tests.cpp
++        debug_overlay_renderer_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+         hud_host_integration_tests.cpp
+         death_input_gate_tests.cpp
+         death_overlay_view_tests.cpp
+         ground_loot_view_tests.cpp
+         material_loot_view_tests.cpp
+         material_bag_renderer_tests.cpp
+         ui_material_slice_tests.cpp
+         audio_asset_validation_tests.cpp
+@@ -1905,20 +1906,39 @@ set_tests_properties(
+ add_test(
+     NAME platform.task6_recovery_screen_source_guard_self_test
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+         "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/task6-recovery-screen-guard-mutations"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/task6_recovery_screen_source_self_test.cmake")
+ set_tests_properties(
+     platform.task6_recovery_screen_source_guard_self_test
+     PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+ 
++add_test(
++    NAME platform.task7_debug_overlay_source_guard
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/task7_debug_overlay_source_test.cmake")
++set_tests_properties(
++    platform.task7_debug_overlay_source_guard
++    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
++
++add_test(
++    NAME platform.task7_debug_overlay_source_guard_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/task7-debug-overlay-guard-mutations"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/task7_debug_overlay_source_self_test.cmake")
++set_tests_properties(
++    platform.task7_debug_overlay_source_guard_self_test
++    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
++
+ add_test(
+     NAME platform.hole_prompt_binding_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_test.cmake")
+ set_tests_properties(
+     platform.hole_prompt_binding_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
+ add_test(
+diff --git a/tests/platform/debug_overlay_renderer_tests.cpp b/tests/platform/debug_overlay_renderer_tests.cpp
+new file mode 100644
+index 0000000..84b8741
+--- /dev/null
++++ b/tests/platform/debug_overlay_renderer_tests.cpp
+@@ -0,0 +1,318 @@
++#include "test_framework.hpp"
++#include "allocation_probe.hpp"
++
++#include "combat_view_math.hpp"
++#include "debug_overlay_renderer.hpp"
++#include "ui_text_catalog.hpp"
++#include "ui_text_contrast.hpp"
++#include "ui_utf8.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstring>
++
++namespace {
++
++namespace combat = arpg::combat;
++namespace dungeon = arpg::dungeon;
++namespace platform = arpg::platform;
++
++[[nodiscard]] platform::DebugOverlayDiagnosticsPlan diagnostics_for(
++    const dungeon::DungeonSnapshot& snapshot) noexcept {
++    platform::HudBuildDiagnostics hud{};
++    hud.clamped_values = 2U;
++    hud.truncated_texts = 3U;
++    combat::CombatEvent event{};
++    event.kind = combat::CombatEventKind::hit;
++    event.target_ordinal = 7U;
++    return platform::make_debug_overlay_diagnostics_plan(
++        snapshot, hud, 4U, 5U, event, true, true);
++}
++
++[[nodiscard]] bool contains(const char* text, const char* needle) noexcept {
++    return text != nullptr && needle != nullptr
++        && std::strstr(text, needle) != nullptr;
++}
++
++[[nodiscard]] bool view_contains(
++    const platform::DebugOverlayView& view, const char* needle) noexcept {
++    for (std::size_t index = 0U; index < view.line_count; ++index) {
++        if (contains(view.lines[index].text.data(), needle)) return true;
++    }
++    return false;
++}
++
++[[nodiscard]] bool rectangle_inside(
++    Rectangle inner, int width, int height) noexcept {
++    return inner.x >= 0.0F && inner.y >= 0.0F
++        && inner.width > 0.0F && inner.height > 0.0F
++        && inner.x + inner.width <= static_cast<float>(width)
++        && inner.y + inner.height <= static_cast<float>(height);
++}
++
++arpg::test::Failure combat_and_transition_views_keep_twelve_localized_utf8_lines()
++    noexcept {
++    dungeon::DungeonSnapshot snapshot{};
++    snapshot.root_seed = 0x1234U;
++    snapshot.room_seed = 0x5678U;
++    snapshot.commit_generation = 9U;
++    snapshot.has_hole = true;
++    snapshot.combat.emplace();
++    snapshot.combat->player.state = combat::PlayerState::attack_active;
++    snapshot.combat->player.active_attack = combat::AttackId::j2;
++    snapshot.combat->player.attack_phase = combat::AttackPhase::active;
++    const platform::DungeonRenderStatus status{};
++    const platform::CombatFeedback feedback{};
++
++    const platform::DebugOverlayView combat_view =
++        platform::make_debug_overlay_view(snapshot, status, feedback, true,
++            diagnostics_for(snapshot));
++    ARPG_REQUIRE(combat_view.line_count == 12U);
++    for (std::size_t index = 0U; index < combat_view.line_count; ++index) {
++        ARPG_REQUIRE(combat_view.lines[index].text[0] != '\0');
++        ARPG_REQUIRE(platform::ui_utf8_is_valid(
++            combat_view.lines[index].text.data()));
++    }
++    ARPG_REQUIRE(view_contains(combat_view, u8"根种子"));
++    ARPG_REQUIRE(view_contains(combat_view, u8"玩家状态 攻击生效"));
++    ARPG_REQUIRE(view_contains(combat_view, u8"动作 J2 生效"));
++
++    constexpr std::array<const char*, 22U> kOldPlayerLabels{{
++        "Root", "Room", "Generation", "Saved", "Budget", "Dungeon",
++        "Tick", "State", "Hit stop", "Effects", "Action", "Combo",
++        "Input", "Last event", "None", "FX", "Dropped", "Shake",
++        "Audio", "Projectile", "Hazard", "HUD",
++    }};
++    for (const char* label : kOldPlayerLabels) {
++        ARPG_REQUIRE(!view_contains(combat_view, label));
++    }
++
++    snapshot.combat.reset();
++    const platform::DebugOverlayView transition_view =
++        platform::make_debug_overlay_view(snapshot, status, feedback, false,
++            diagnostics_for(snapshot));
++    ARPG_REQUIRE(transition_view.line_count == 12U);
++    ARPG_REQUIRE(view_contains(transition_view, u8"转场期间无战斗快照"));
++    ARPG_REQUIRE(view_contains(transition_view, u8"音频不可用"));
++    for (std::size_t index = 0U; index < transition_view.line_count; ++index) {
++        ARPG_REQUIRE(transition_view.lines[index].text[0] != '\0');
++        ARPG_REQUIRE(platform::ui_utf8_is_valid(
++            transition_view.lines[index].text.data()));
++    }
++    return {};
++}
++
++arpg::test::Failure responsive_layout_switches_at_1280_with_six_lines_per_column()
++    noexcept {
++    const platform::DebugOverlayLayout narrow =
++        platform::debug_overlay_layout(800, 450);
++    ARPG_REQUIRE(narrow.column_count == 1U);
++    for (std::size_t index = 1U; index < narrow.line_bounds.size(); ++index) {
++        ARPG_REQUIRE(narrow.line_bounds[index].x
++            == narrow.line_bounds[0].x);
++        ARPG_REQUIRE(narrow.line_bounds[index].y
++            > narrow.line_bounds[index - 1U].y);
++    }
++
++    for (const auto viewport : std::array<std::array<int, 2>, 2U>{{
++            {{1280, 720}}, {{1920, 1080}},
++        }}) {
++        const platform::DebugOverlayLayout wide =
++            platform::debug_overlay_layout(viewport[0], viewport[1]);
++        ARPG_REQUIRE(wide.column_count == 2U);
++        for (std::size_t index = 1U; index < 6U; ++index) {
++            ARPG_REQUIRE(wide.line_bounds[index].x
++                == wide.line_bounds[0].x);
++            ARPG_REQUIRE(wide.line_bounds[index].y
++                > wide.line_bounds[index - 1U].y);
++            ARPG_REQUIRE(wide.line_bounds[index + 6U].x
++                == wide.line_bounds[6U].x);
++            ARPG_REQUIRE(wide.line_bounds[index + 6U].y
++                > wide.line_bounds[index + 5U].y);
++        }
++        ARPG_REQUIRE(wide.line_bounds[6U].x
++            > wide.line_bounds[0].x);
++        ARPG_REQUIRE(wide.line_bounds[6U].y
++            == wide.line_bounds[0].y);
++    }
++    return {};
++}
++
++arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewports()
++    noexcept {
++    constexpr std::array<std::array<int, 2>, 3U> kViewports{{
++        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
++    }};
++    for (const auto viewport : kViewports) {
++        const platform::DebugOverlayLayout layout =
++            platform::debug_overlay_layout(viewport[0], viewport[1]);
++        ARPG_REQUIRE(layout.backing_color.r == 0x0BU);
++        ARPG_REQUIRE(layout.backing_color.g == 0x10U);
++        ARPG_REQUIRE(layout.backing_color.b == 0x19U);
++        ARPG_REQUIRE(layout.backing_color.a == 255U);
++        for (std::size_t column = 0U; column < layout.column_count; ++column) {
++            ARPG_REQUIRE(rectangle_inside(layout.column_backings[column],
++                viewport[0], viewport[1]));
++        }
++        for (const Rectangle line : layout.line_bounds) {
++            ARPG_REQUIRE(rectangle_inside(line, viewport[0], viewport[1]));
++        }
++    }
++
++    dungeon::DungeonSnapshot snapshot{};
++    platform::DungeonRenderStatus status{};
++    platform::CombatFeedback feedback{};
++    status.indicator = platform::SaveIndicator::error;
++    const platform::DebugOverlayView view =
++        platform::make_debug_overlay_view(snapshot, status, feedback, false,
++            diagnostics_for(snapshot));
++    const Color backing{0x0B, 0x10, 0x19, 255};
++    bool saw_text{};
++    bool saw_warning{};
++    bool saw_error{};
++    for (const platform::DebugOverlayLine& line : view.lines) {
++        ARPG_REQUIRE(line.color.a == 255U);
++        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
++            line.color, backing) >= 4.5F);
++        saw_text = saw_text || (line.color.r == 218U
++            && line.color.g == 226U && line.color.b == 239U);
++        saw_warning = saw_warning || (line.color.r == 255U
++            && line.color.g == 210U && line.color.b == 118U);
++        saw_error = saw_error || (line.color.r == 255U
++            && line.color.g == 151U && line.color.b == 117U);
++    }
++    ARPG_REQUIRE(saw_text);
++    ARPG_REQUIRE(saw_warning);
++    ARPG_REQUIRE(saw_error);
++    ARPG_REQUIRE(view_contains(view, u8"错误"));
++    ARPG_REQUIRE(view_contains(view, u8"不可用"));
++    return {};
++}
++
++arpg::test::Failure ten_thousand_view_builds_allocate_nothing() noexcept {
++    dungeon::DungeonSnapshot snapshot{};
++    snapshot.combat.emplace();
++    snapshot.combat->tick = 44U;
++    const platform::DungeonRenderStatus status{};
++    const platform::CombatFeedback feedback{};
++    const platform::DebugOverlayDiagnosticsPlan diagnostics =
++        diagnostics_for(snapshot);
++    std::uint64_t checksum{};
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (std::size_t index = 0U; index < 10000U; ++index) {
++        const platform::DebugOverlayView view =
++            platform::make_debug_overlay_view(snapshot, status, feedback,
++                true, diagnostics);
++        checksum += view.line_count
++            + static_cast<unsigned char>(view.lines[0].text[0]);
++    }
++    const std::uint64_t after = arpg::test::allocation_count();
++    ARPG_REQUIRE(checksum != 0U);
++    ARPG_REQUIRE(after == before);
++    return {};
++}
++
++arpg::test::Failure status_and_world_debug_labels_are_exhaustively_chinese()
++    noexcept {
++    dungeon::DungeonSnapshot snapshot{};
++    snapshot.combat.emplace();
++    const platform::DungeonRenderStatus status{};
++    const platform::CombatFeedback feedback{};
++
++    constexpr std::array<combat::AttackPhase, 4U> kAttackPhases{{
++        combat::AttackPhase::startup, combat::AttackPhase::active,
++        combat::AttackPhase::recovery, combat::AttackPhase::finished,
++    }};
++    constexpr std::array<const char*, 4U> kAttackLabels{{
++        u8"起手", u8"生效", u8"后摇", u8"结束",
++    }};
++    snapshot.combat->player.active_attack = combat::AttackId::j1;
++    for (std::size_t index = 0U; index < kAttackPhases.size(); ++index) {
++        snapshot.combat->player.attack_phase = kAttackPhases[index];
++        const platform::DebugOverlayView view =
++            platform::make_debug_overlay_view(snapshot, status, feedback,
++                true, diagnostics_for(snapshot));
++        ARPG_REQUIRE(view_contains(view, kAttackLabels[index]));
++    }
++
++    constexpr std::array<combat::PlayerState, 8U> kPlayerStates{{
++        combat::PlayerState::idle, combat::PlayerState::move,
++        combat::PlayerState::attack_startup,
++        combat::PlayerState::attack_active,
++        combat::PlayerState::attack_recovery,
++        combat::PlayerState::jump_rise, combat::PlayerState::jump_fall,
++        combat::PlayerState::landing,
++    }};
++    constexpr std::array<const char*, 8U> kPlayerLabels{{
++        u8"待机", u8"移动", u8"攻击起手", u8"攻击生效",
++        u8"攻击后摇", u8"上升", u8"下落", u8"落地",
++    }};
++    for (std::size_t index = 0U; index < kPlayerStates.size(); ++index) {
++        snapshot.combat->player.state = kPlayerStates[index];
++        const platform::DebugOverlayView view =
++            platform::make_debug_overlay_view(snapshot, status, feedback,
++                true, diagnostics_for(snapshot));
++        ARPG_REQUIRE(view_contains(view, kPlayerLabels[index]));
++    }
++
++    ARPG_REQUIRE(std::strcmp(platform::debug_world_volume_label(
++        platform::DebugWorldVolumeKind::assist), u8"辅助判定") == 0);
++    ARPG_REQUIRE(std::strcmp(platform::debug_world_volume_label(
++        platform::DebugWorldVolumeKind::attack), u8"攻击判定") == 0);
++    ARPG_REQUIRE(std::strcmp(platform::debug_world_volume_label(
++        platform::DebugWorldVolumeKind::hurt), u8"受击判定") == 0);
++    for (std::size_t index = 0U;
++            index < static_cast<std::size_t>(combat::MonsterId::count);
++            ++index) {
++        const combat::MonsterId id = static_cast<combat::MonsterId>(index);
++        const platform::MonsterVisual visual = platform::monster_visual(
++            id, combat::MonsterAiPhase::idle,
++            dungeon::DungeonElement::fire);
++        ARPG_REQUIRE(std::strcmp(
++            visual.role_label, platform::ui_monster_name(id)) == 0);
++    }
++    constexpr std::array<combat::MonsterAiPhase, 7U> kMonsterPhases{{
++        combat::MonsterAiPhase::idle, combat::MonsterAiPhase::move,
++        combat::MonsterAiPhase::telegraph, combat::MonsterAiPhase::active,
++        combat::MonsterAiPhase::recovery, combat::MonsterAiPhase::cooldown,
++        combat::MonsterAiPhase::defeated,
++    }};
++    constexpr std::array<const char*, 7U> kMonsterPhaseLabels{{
++        u8"待机", u8"移动", u8"预警", u8"生效", u8"恢复",
++        u8"冷却", u8"已击败",
++    }};
++    for (std::size_t index = 0U; index < kMonsterPhases.size(); ++index) {
++        ARPG_REQUIRE(std::strcmp(platform::monster_phase_label(
++            kMonsterPhases[index]), kMonsterPhaseLabels[index]) == 0);
++    }
++    constexpr std::array<const char*, 3U> kTierLabels{{
++        u8"词缀Ⅰ", u8"词缀Ⅱ", u8"词缀Ⅲ",
++    }};
++    for (std::size_t index = 0U; index < kTierLabels.size(); ++index) {
++        combat::MonsterAffixInstance affix{};
++        affix.tier = static_cast<combat::MonsterAffixTier>(index);
++        ARPG_REQUIRE(std::strcmp(
++            platform::monster_affix_badge(affix).tier_text,
++            kTierLabels[index]) == 0);
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"combat and transition fixed localized lines",
++        &combat_and_transition_views_keep_twelve_localized_utf8_lines},
++    {"responsive one and two column layout",
++        &responsive_layout_switches_at_1280_with_six_lines_per_column},
++    {"supported viewport bounds and contrast",
++        &layout_rectangles_and_contrast_are_safe_on_supported_viewports},
++    {"fixed-buffer view allocation pressure",
++        &ten_thousand_view_builds_allocate_nothing},
++    {"Chinese status and world debug labels",
++        &status_and_world_debug_labels_are_exhaustively_chinese},
++};
++
++}  // namespace
++
++arpg::test::TestSuite debug_overlay_renderer_suite() noexcept {
++    return arpg::test::make_suite("debug_overlay_renderer", kCases);
++}
+diff --git a/tests/platform/monster_view_tests.cpp b/tests/platform/monster_view_tests.cpp
+index 8c6b4f7..61402e5 100644
+--- a/tests/platform/monster_view_tests.cpp
++++ b/tests/platform/monster_view_tests.cpp
+@@ -1,16 +1,17 @@
+ #include "test_framework.hpp"
+ 
+ #include "audio_routing.hpp"
+ #include "combat_view_math.hpp"
+ #include "combat/monster_affix_catalog.hpp"
+ #include "dungeon_view_math.hpp"
++#include "ui_text_catalog.hpp"
+ 
+ #include <array>
+ #include <cstring>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ using arpg::combat::HazardSnapshot;
+ using arpg::combat::MonsterAiPhase;
+ using arpg::combat::MonsterAffixDanger;
+@@ -188,38 +189,35 @@ arpg::test::Failure monster_attack_audio_emits_one_low_layer() noexcept {
+ 
+ arpg::test::Failure affix_badges_consume_catalog_names_tiers_and_danger() noexcept {
+     constexpr std::array<MonsterAffixId, 12> kAffixes{{
+         MonsterAffixId::mighty, MonsterAffixId::frenzy,
+         MonsterAffixId::swift, MonsterAffixId::armored,
+         MonsterAffixId::shielding, MonsterAffixId::multishot,
+         MonsterAffixId::burning_ground, MonsterAffixId::chilling,
+         MonsterAffixId::chain_lightning, MonsterAffixId::chaos_corrosion,
+         MonsterAffixId::blink_assault, MonsterAffixId::death_blast,
+     }};
+-    constexpr std::array<const char*, 12> kNames{{
+-        "MGT", "FRZ", "SWF", "ARM", "SHD", "MULTI", "BURN", "CHILL",
+-        "CHAIN", "CORR", "BLINK", "DEATH",
+-    }};
+     for (std::size_t index = 0U; index < kAffixes.size(); ++index) {
+         const auto badge = arpg::platform::monster_affix_badge(
+             {kAffixes[index], MonsterAffixTier::m1});
+-        ARPG_REQUIRE(std::strcmp(badge.short_name, kNames[index]) == 0);
+-        ARPG_REQUIRE(std::strcmp(badge.tier_text, "M1") == 0);
++        ARPG_REQUIRE(std::strcmp(badge.short_name,
++            arpg::platform::ui_monster_affix_short_name(kAffixes[index])) == 0);
++        ARPG_REQUIRE(std::strcmp(badge.tier_text, u8"词缀Ⅰ") == 0);
+         ARPG_REQUIRE(badge.danger
+             == arpg::combat::monster_affix_definition(kAffixes[index])->danger);
+     }
+     const auto tier_two = arpg::platform::monster_affix_badge(
+         {MonsterAffixId::mighty, MonsterAffixTier::m2});
+     const auto tier_three = arpg::platform::monster_affix_badge(
+         {MonsterAffixId::death_blast, MonsterAffixTier::m3});
+-    ARPG_REQUIRE(std::strcmp(tier_two.tier_text, "M2") == 0);
+-    ARPG_REQUIRE(std::strcmp(tier_three.tier_text, "M3") == 0);
++    ARPG_REQUIRE(std::strcmp(tier_two.tier_text, u8"词缀Ⅱ") == 0);
++    ARPG_REQUIRE(std::strcmp(tier_three.tier_text, u8"词缀Ⅲ") == 0);
+     ARPG_REQUIRE(tier_three.danger == MonsterAffixDanger::high);
+     return {};
+ }
+ 
+ arpg::test::Failure affix_presentation_has_category_colors_and_high_danger_pulse() noexcept {
+     const auto base = arpg::platform::monster_affix_badge(
+         {MonsterAffixId::mighty, MonsterAffixTier::m1});
+     const auto defense = arpg::platform::monster_affix_badge(
+         {MonsterAffixId::armored, MonsterAffixTier::m1});
+     const auto fire = arpg::platform::monster_affix_badge(
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index dc0f715..102077a 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -37,20 +37,21 @@ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+ arpg::test::TestSuite window_settings_suite() noexcept;
+ arpg::test::TestSuite pause_host_gate_suite() noexcept;
+ arpg::test::TestSuite host_settings_runtime_suite() noexcept;
+ arpg::test::TestSuite host_window_lifetime_suite() noexcept;
+ arpg::test::TestSuite control_hints_suite() noexcept;
+ arpg::test::TestSuite hud_view_model_suite() noexcept;
+ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
+ arpg::test::TestSuite loot_suction_animation_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
++arpg::test::TestSuite debug_overlay_renderer_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
+ arpg::test::TestSuite ground_loot_view_suite() noexcept;
+ arpg::test::TestSuite material_loot_view_suite() noexcept;
+ arpg::test::TestSuite material_bag_renderer_suite() noexcept;
+ arpg::test::TestSuite ui_material_slice_suite() noexcept;
+ arpg::test::TestSuite audio_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_animation_suite() noexcept;
+@@ -301,25 +302,26 @@ int main() {
+     if (full_chinese_ui_menu_hud_only()) {
+         const arpg::test::TestSuite full_chinese_ui_menu_hud[] = {
+             pause_menu_state_suite(),
+             pause_menu_view_suite(),
+             control_hints_suite(),
+             hud_view_model_suite(),
+             hud_notice_state_suite(),
+             active_skill_view_suite(),
+             dungeon_view_math_suite(),
+             hud_layout_suite(),
++            debug_overlay_renderer_suite(),
+             hud_font_suite(),
+             hud_render_plan_suite(),
+             hud_host_integration_suite(),
+         };
+-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 178,
++        return arpg::test::run_suites(full_chinese_ui_menu_hud, 183,
+             "full Chinese UI menus and HUD");
+     }
+     if (cplay038_save_directory_only()) {
+         const arpg::test::TestSuite cplay038_only[] = {
+             dungeon_runtime_save_directory_lease_suite(),
+         };
+         return arpg::test::run_suites(cplay038_only, 8,
+             "CPLAY-038 runtime save directory lease");
+     }
+     if (cplay035_settings_conflict_only()) {
+@@ -489,32 +491,33 @@ int main() {
+         death_input_gate_suite(),
+         death_overlay_view_suite(),
+         pause_menu_state_suite(),
+         pause_menu_view_suite(),
+         window_settings_suite(),
+         control_hints_suite(),
+         hud_view_model_suite(),
+         hud_notice_state_suite(),
+         loot_pickup_feedback_suite(),
+         hud_layout_suite(),
++        debug_overlay_renderer_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         material_loot_view_suite(),
+         material_bag_renderer_suite(),
+         ui_material_slice_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+         large_room_render_plan_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 665,
++    return arpg::test::run_suites(suites, 670,
+         "host settings runtime contract");
+ }
+diff --git a/tests/platform/stage11c_hud_formal_game_validation.cpp b/tests/platform/stage11c_hud_formal_game_validation.cpp
+index b53ec87..750603f 100644
+--- a/tests/platform/stage11c_hud_formal_game_validation.cpp
++++ b/tests/platform/stage11c_hud_formal_game_validation.cpp
+@@ -1,13 +1,15 @@
+ #include "dungeon/dungeon_progression.hpp"
+ #include "dungeon/room_generation.hpp"
++#include "debug_overlay_renderer.hpp"
+ #include "raylib_host.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <array>
+ #include <chrono>
+ #include <cstdint>
+ #include <cstdlib>
+ #include <filesystem>
+ #include <fstream>
+ #include <iostream>
+ #include <map>
+ #include <optional>
+@@ -148,20 +150,55 @@ static_assert(hash_bytes(kFnvFixture.data(), kFnvFixture.size())
+     return found != values.end() && found->second == expected;
+ }
+ 
+ [[nodiscard]] bool field_nonzero(
+     const std::map<std::string, std::string>& values, const char* key) {
+     const auto found = values.find(key);
+     return found != values.end() && !found->second.empty()
+         && found->second != "0";
+ }
+ 
++[[nodiscard]] bool debug_overlay_contract_ready() noexcept {
++    dungeon::DungeonSnapshot snapshot{};
++    snapshot.combat.emplace();
++    platform::DebugOverlayDiagnosticsPlan diagnostics{};
++    diagnostics.cjk_font_ready = true;
++    const platform::DebugOverlayView view =
++        platform::make_debug_overlay_view(snapshot,
++            platform::DungeonRenderStatus{}, platform::CombatFeedback{},
++            true, diagnostics);
++    if (view.line_count != 12U) return false;
++    for (const platform::DebugOverlayLine& line : view.lines) {
++        if (line.text[0] == '\0'
++                || !platform::ui_utf8_is_valid(line.text.data())) return false;
++    }
++    constexpr std::array<std::array<int, 2>, 3U> kViewports{{
++        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
++    }};
++    for (const auto viewport : kViewports) {
++        const platform::DebugOverlayLayout layout =
++            platform::debug_overlay_layout(viewport[0], viewport[1]);
++        const std::size_t expected_columns = viewport[0] < 1280 ? 1U : 2U;
++        if (layout.column_count != expected_columns
++                || layout.backing_color.r != 0x0BU
++                || layout.backing_color.g != 0x10U
++                || layout.backing_color.b != 0x19U
++                || layout.backing_color.a != 255U) return false;
++        for (const Rectangle line : layout.line_bounds) {
++            if (line.x < 0.0F || line.y < 0.0F
++                    || line.x + line.width > viewport[0]
++                    || line.y + line.height > viewport[1]) return false;
++        }
++    }
++    return true;
++}
++
+ [[nodiscard]] const std::string& field_or_empty(
+     const std::map<std::string, std::string>& values, const char* key) {
+     static const std::string empty{};
+     const auto found = values.find(key);
+     return found == values.end() ? empty : found->second;
+ }
+ 
+ [[nodiscard]] bool fresh_nonempty_file(const std::filesystem::path& path,
+     std::filesystem::file_time_type earliest, std::uintmax_t minimum_size) {
+     std::error_code error{};
+@@ -225,20 +262,21 @@ static_assert(hash_bytes(kFnvFixture.data(), kFnvFixture.size())
+         "production_snapshot_hash", "result",
+     }};
+     for (const char* key : required) {
+         if (values.find(key) == values.end()) return false;
+     }
+     const bool expect_debug = spec.scenario
+         == platform::Stage11CHudValidationScenario::debug_overlay;
+     return field_equals(values, "result", "pass")
+         && field_equals(values, "font_ready", "1")
+         && field_equals(values, "f1", expect_debug ? "1" : "0")
++        && (!expect_debug || debug_overlay_contract_ready())
+         && field_nonzero(values, "production_snapshot_hash")
+         && !field_or_empty(values, "objective").empty();
+ }
+ 
+ }  // namespace
+ 
+ int main(int argc, char** argv) {
+     if (argc == 6 && argv[1] != nullptr
+             && std::string{argv[1]} == "--scenario") {
+         const ScenarioSpec* const spec = scenario_from_argument(argv[2]);
+diff --git a/tests/platform/stage12_actor_render_tests.cpp b/tests/platform/stage12_actor_render_tests.cpp
+index 5f982c8..154a8cd 100644
+--- a/tests/platform/stage12_actor_render_tests.cpp
++++ b/tests/platform/stage12_actor_render_tests.cpp
+@@ -265,32 +265,26 @@ arpg::test::Failure combat_text_uses_crisp_shared_font_path() noexcept {
+     ARPG_REQUIRE(actor_input.good() || actor_input.eof());
+     const std::size_t begin = actor.find("void draw_effects(");
+     const std::size_t end = actor.find("void draw_hazards(", begin);
+     ARPG_REQUIRE(begin != std::string::npos);
+     ARPG_REQUIRE(end != std::string::npos);
+     const std::string effects = actor.substr(begin, end - begin);
+     ARPG_REQUIRE(effects.find("Font hud_font") != std::string::npos);
+     ARPG_REQUIRE(effects.find("bool hud_font_ready") != std::string::npos);
+     ARPG_REQUIRE(effects.find("MeasureTextEx(") != std::string::npos);
+     ARPG_REQUIRE(effects.find("draw_crisp_ui_text(") != std::string::npos);
+-    ARPG_REQUIRE(effects.find("GetFontDefault()") != std::string::npos);
+-    const std::size_t font_choice_begin =
+-        effects.find("const Font draw_font =");
+-    const std::size_t font_choice_end =
+-        effects.find(';', font_choice_begin);
+-    ARPG_REQUIRE(font_choice_begin != std::string::npos);
+-    ARPG_REQUIRE(font_choice_end != std::string::npos);
+-    const std::string font_choice = effects.substr(
+-        font_choice_begin, font_choice_end - font_choice_begin);
+-    ARPG_REQUIRE(font_choice.find("IsFontValid(hud_font)")
++    ARPG_REQUIRE(effects.find("GetFontDefault()") == std::string::npos);
++    ARPG_REQUIRE(effects.find(
++        "if (!hud_font_ready || !IsFontValid(hud_font)) return;")
+         != std::string::npos);
+-    ARPG_REQUIRE(font_choice.find("hud_font_ready") == std::string::npos);
++    ARPG_REQUIRE(effects.find(
++        "MeasureTextEx(\n            hud_font, text") != std::string::npos);
+     ARPG_REQUIRE(effects.find("kCombatTextShadowPixels = 1")
+         != std::string::npos);
+     ARPG_REQUIRE(effects.find("DrawText(") == std::string::npos);
+     ARPG_REQUIRE(effects.find("MeasureText(") == std::string::npos);
+     ARPG_REQUIRE(effects.find("DrawTextGradient") == std::string::npos);
+ 
+     const std::filesystem::path crisp_header = std::filesystem::path{
+         ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/ui_text_renderer.hpp";
+     std::ifstream crisp_input(crisp_header);
+     const std::string crisp((std::istreambuf_iterator<char>(crisp_input)), {});
+diff --git a/tests/platform/task7_debug_overlay_source_self_test.cmake b/tests/platform/task7_debug_overlay_source_self_test.cmake
+new file mode 100644
+index 0000000..97c5c95
+--- /dev/null
++++ b/tests/platform/task7_debug_overlay_source_self_test.cmake
+@@ -0,0 +1,114 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED MUTATION_ROOT)
++    message(FATAL_ERROR "SOURCE_ROOT and MUTATION_ROOT are required")
++endif()
++
++set(_guard "${SOURCE_ROOT}/tests/platform/task7_debug_overlay_source_test.cmake")
++set(_source_dir "${SOURCE_ROOT}/src/platform/raylib")
++set(_names OVERLAY_HEADER OVERLAY_SOURCE DEBUG_SOURCE ACTOR_SOURCE
++    COMBAT_SOURCE VIEW_MATH_SOURCE)
++set(_files debug_overlay_renderer.hpp debug_overlay_renderer.cpp
++    debug_renderer.cpp actor_renderer.cpp combat_renderer.cpp
++    combat_view_math.cpp)
++file(REMOVE_RECURSE "${MUTATION_ROOT}")
++file(MAKE_DIRECTORY "${MUTATION_ROOT}")
++
++set(_index 0)
++foreach(_name IN LISTS _names)
++    list(GET _files ${_index} _file)
++    file(READ "${_source_dir}/${_file}" _text)
++    set(_original_${_name} "${_text}")
++    math(EXPR _index "${_index} + 1")
++endforeach()
++
++function(run_guard LABEL EXPECT_SUCCESS)
++    set(_root "${MUTATION_ROOT}/${LABEL}")
++    file(MAKE_DIRECTORY "${_root}")
++    set(_args "-DSOURCE_ROOT=${SOURCE_ROOT}")
++    set(_index 0)
++    foreach(_name IN LISTS _names)
++        list(GET _files ${_index} _file)
++        if(DEFINED _mutated_${_name})
++            set(_text "${_mutated_${_name}}")
++        else()
++            set(_text "${_original_${_name}}")
++        endif()
++        set(_path "${_root}/${_file}")
++        file(WRITE "${_path}" "${_text}")
++        list(APPEND _args "-D${_name}=${_path}")
++        math(EXPR _index "${_index} + 1")
++    endforeach()
++    execute_process(COMMAND "${CMAKE_COMMAND}" ${_args} -P "${_guard}"
++        RESULT_VARIABLE _result OUTPUT_QUIET ERROR_QUIET)
++    if(EXPECT_SUCCESS AND NOT _result EQUAL 0)
++        message(FATAL_ERROR "Task 7 guard rejected pristine source")
++    endif()
++    if(NOT EXPECT_SUCCESS AND _result EQUAL 0)
++        message(FATAL_ERROR "Task 7 guard accepted mutation: ${LABEL}")
++    endif()
++endfunction()
++
++run_guard(pristine TRUE)
++
++function(expect_mutation_rejected LABEL SOURCE_NAME NEEDLE REPLACEMENT)
++    set(_source "${_original_${SOURCE_NAME}}")
++    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_source}")
++    if(_mutated STREQUAL _source)
++        message(FATAL_ERROR "Task 7 mutation anchor is missing: ${LABEL}")
++    endif()
++    set(_mutated_${SOURCE_NAME} "${_mutated}")
++    run_guard("${LABEL}" FALSE)
++endfunction()
++
++expect_mutation_rejected(line_capacity OVERLAY_HEADER
++    "std::array<DebugOverlayLine, 12U> lines{};"
++    "std::array<DebugOverlayLine, 11U> lines{};")
++expect_mutation_rejected(dynamic_format OVERLAY_SOURCE
++    "ui_utf8_format(view.lines[0].text.data(),"
++    "std::snprintf(view.lines[0].text.data(),")
++expect_mutation_rejected(wrong_breakpoint OVERLAY_SOURCE
++    "screen_width < 1280 ? 1U : 2U"
++    "screen_width < 1279 ? 1U : 2U")
++expect_mutation_rejected(translucent_backing OVERLAY_SOURCE
++    "layout.backing_color = {0x0B, 0x10, 0x19, 255};"
++    "layout.backing_color = {0x0B, 0x10, 0x19, 200};")
++expect_mutation_rejected(missing_column_backing OVERLAY_SOURCE
++    "DrawRectangleRec(layout.column_backings[column], layout.backing_color);"
++    "static_cast<void>(layout.column_backings[column]);")
++expect_mutation_rejected(default_overlay_text OVERLAY_SOURCE
++    "draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
++            {bounds.x, bounds.y + 2.0F}, layout.font_size,
++            layout.spacing, view.lines[index].color, 1);"
++    "DrawTextEx(shared_ui_font, view.lines[index].text.data(),
++            {bounds.x, bounds.y + 2.0F}, layout.font_size,
++            layout.spacing, view.lines[index].color);")
++expect_mutation_rejected(dead_shared_font_decoy OVERLAY_SOURCE
++    "draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
++            {bounds.x, bounds.y + 2.0F}, layout.font_size,
++            layout.spacing, view.lines[index].color, 1);"
++    "if (false) {
++            draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
++                {bounds.x, bounds.y + 2.0F}, layout.font_size,
++                layout.spacing, view.lines[index].color, 1);
++        }")
++expect_mutation_rejected(unshared_overlay_call COMBAT_SOURCE
++    "debug_overlay_.draw(world_ui_font_, world_ui_font_ready_,"
++    "debug_overlay_.draw(Font{}, true,")
++expect_mutation_rejected(hardcoded_world_label DEBUG_SOURCE
++    "debug_world_volume_label(DebugWorldVolumeKind::assist)"
++    "\"Assist\"")
++expect_mutation_rejected(hardcoded_monster_role VIEW_MATH_SOURCE
++    "MonsterShapeId::bomber, ui_monster_name(id), MonsterWarningMode::none"
++    "MonsterShapeId::bomber, \"BOMBER\", MonsterWarningMode::none")
++expect_mutation_rejected(english_monster_phase VIEW_MATH_SOURCE
++    "case combat::MonsterAiPhase::idle: return u8\"待机\";"
++    "case combat::MonsterAiPhase::idle: return \"Idle\";")
++expect_mutation_rejected(english_affix_tier VIEW_MATH_SOURCE
++    "case combat::MonsterAffixTier::m1: return u8\"词缀Ⅰ\";"
++    "case combat::MonsterAffixTier::m1: return \"M1\";")
++expect_mutation_rejected(english_defeat_marker ACTOR_SOURCE
++    "constexpr const char* kLabel = u8\"已击败\";"
++    "constexpr const char* kLabel = \"DEFEATED\";")
++
++message(STATUS "Task 7 debug overlay source guard self-test rejected all mutations")
+diff --git a/tests/platform/task7_debug_overlay_source_test.cmake b/tests/platform/task7_debug_overlay_source_test.cmake
+new file mode 100644
+index 0000000..9cc99e9
+--- /dev/null
++++ b/tests/platform/task7_debug_overlay_source_test.cmake
+@@ -0,0 +1,195 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED SOURCE_ROOT)
++    message(FATAL_ERROR "SOURCE_ROOT is required")
++endif()
++
++set(_raylib_root "${SOURCE_ROOT}/src/platform/raylib")
++foreach(_name IN ITEMS OVERLAY_HEADER OVERLAY_SOURCE DEBUG_SOURCE ACTOR_SOURCE
++        COMBAT_SOURCE VIEW_MATH_SOURCE)
++    if(NOT DEFINED ${_name})
++        if(_name STREQUAL "OVERLAY_HEADER")
++            set(${_name} "${_raylib_root}/debug_overlay_renderer.hpp")
++        elseif(_name STREQUAL "OVERLAY_SOURCE")
++            set(${_name} "${_raylib_root}/debug_overlay_renderer.cpp")
++        elseif(_name STREQUAL "DEBUG_SOURCE")
++            set(${_name} "${_raylib_root}/debug_renderer.cpp")
++        elseif(_name STREQUAL "ACTOR_SOURCE")
++            set(${_name} "${_raylib_root}/actor_renderer.cpp")
++        elseif(_name STREQUAL "COMBAT_SOURCE")
++            set(${_name} "${_raylib_root}/combat_renderer.cpp")
++        else()
++            set(${_name} "${_raylib_root}/combat_view_math.cpp")
++        endif()
++    endif()
++    if(NOT EXISTS "${${_name}}")
++        message(FATAL_ERROR "Task 7 source is missing: ${_name}=${${_name}}")
++    endif()
++endforeach()
++
++include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
++file(READ "${OVERLAY_HEADER}" _overlay_header)
++file(READ "${OVERLAY_SOURCE}" _overlay_source)
++file(READ "${DEBUG_SOURCE}" _debug_source)
++file(READ "${ACTOR_SOURCE}" _actor_source)
++file(READ "${COMBAT_SOURCE}" _combat_source)
++file(READ "${VIEW_MATH_SOURCE}" _view_math_source)
++
++function(require_token TEXT TOKEN MESSAGE_TEXT)
++    string(FIND "${TEXT}" "${TOKEN}" _found)
++    if(_found EQUAL -1)
++        message(FATAL_ERROR "${MESSAGE_TEXT}: ${TOKEN}")
++    endif()
++endfunction()
++
++function(reject_dead_branch CODE MESSAGE_TEXT)
++    if("${CODE}" MATCHES "if[ ]*\\([ ]*(false|0)[ ]*\\)")
++        message(FATAL_ERROR "${MESSAGE_TEXT} cannot live in a dead branch")
++    endif()
++endfunction()
++
++normalize_cpp_source("${_overlay_header}" _overlay_header_normalized)
++string(REGEX REPLACE "[ \t\r\n]+" "" _overlay_header_compact
++    "${_overlay_header_normalized}")
++require_token("${_overlay_header_compact}"
++    "std::array<char,192U>text{};"
++    "Task 7 overlay line must own a fixed UTF-8 buffer")
++require_token("${_overlay_header_compact}"
++    "std::array<DebugOverlayLine,12U>lines{};"
++    "Task 7 overlay view must own exactly twelve lines")
++
++extract_cpp_function_body("${_overlay_source}"
++    "DebugOverlayView make_debug_overlay_view(" _view_body _view_code)
++foreach(_token IN ITEMS
++        "view.line_count = view.lines.size()"
++        "ui_utf8_format(view.lines[0].text.data()"
++        "ui_utf8_format(view.lines[11].text.data()")
++    require_token("${_view_body}" "${_token}"
++        "Task 7 overlay view must use the fixed-buffer UTF-8 model")
++endforeach()
++foreach(_forbidden IN ITEMS "TextFormat(" "DrawText(" "DrawTextEx("
++        "GetFontDefault(" "LoadFont")
++    string(FIND "${_view_code}" "${_forbidden}" _found)
++    if(NOT _found EQUAL -1)
++        message(FATAL_ERROR
++            "Task 7 overlay view uses a forbidden dynamic/default path: ${_forbidden}")
++    endif()
++endforeach()
++reject_dead_branch("${_view_code}" "Task 7 overlay view")
++
++extract_cpp_function_body("${_overlay_source}"
++    "DebugOverlayLayout debug_overlay_layout(" _layout_body _layout_code)
++foreach(_token IN ITEMS
++        "screen_width < 1280 ? 1U : 2U"
++        "layout.column_count == 1U ? 12U : 6U"
++        "layout.backing_color = {0x0B, 0x10, 0x19, 255}"
++        "layout.column_backings[column] ="
++        "layout.line_bounds[index] =")
++    require_token("${_layout_body}" "${_token}"
++        "Task 7 responsive overlay layout contract is missing")
++endforeach()
++reject_dead_branch("${_layout_code}" "Task 7 overlay layout")
++
++extract_cpp_function_body("${_overlay_source}"
++    "void DebugOverlayRenderer::draw(" _draw_body _draw_code)
++foreach(_token IN ITEMS
++        "DrawRectangleRec(layout.column_backings[column], layout.backing_color)"
++        "if (!shared_ui_font_ready || !IsFontValid(shared_ui_font)) return"
++        "draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data()")
++    require_token("${_draw_body}" "${_token}"
++        "Task 7 renderer must draw opaque columns then shared-font text")
++endforeach()
++string(FIND "${_draw_body}" "DrawRectangleRec(" _backing_index)
++string(FIND "${_draw_body}" "draw_crisp_ui_text(" _text_index)
++if(_backing_index GREATER _text_index)
++    message(FATAL_ERROR "Task 7 column backing must be drawn before text")
++endif()
++foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "TextFormat("
++        "GetFontDefault(" "LoadFont")
++    string(FIND "${_draw_code}" "${_forbidden}" _found)
++    if(NOT _found EQUAL -1)
++        message(FATAL_ERROR
++            "Task 7 renderer uses a forbidden text/font path: ${_forbidden}")
++    endif()
++endforeach()
++reject_dead_branch("${_draw_code}" "Task 7 renderer")
++
++extract_cpp_function_body("${_combat_source}"
++    "GroundLootView CombatRenderer::draw(" _combat_draw_body _combat_draw_code)
++require_token("${_combat_draw_body}"
++    "debug_overlay_.draw(world_ui_font_, world_ui_font_ready_,"
++    "Task 7 CombatRenderer must pass its borrowed SharedUiFont")
++reject_dead_branch("${_combat_draw_code}" "Task 7 CombatRenderer overlay path")
++
++extract_cpp_function_body("${_debug_source}"
++    "void draw_projected_aabb(" _aabb_body _aabb_code)
++foreach(_token IN ITEMS
++        "shared_ui_font_ready && IsFontValid(shared_ui_font)"
++        "draw_crisp_ui_text(shared_ui_font, label")
++    require_token("${_aabb_body}" "${_token}"
++        "Task 7 world volume labels must use the borrowed SharedUiFont")
++endforeach()
++foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "GetFontDefault(")
++    string(FIND "${_aabb_code}" "${_forbidden}" _found)
++    if(NOT _found EQUAL -1)
++        message(FATAL_ERROR
++            "Task 7 world volume label uses a default text path: ${_forbidden}")
++    endif()
++endforeach()
++reject_dead_branch("${_aabb_code}" "Task 7 world volume label draw")
++
++extract_cpp_function_body("${_debug_source}"
++    "void CombatRenderer::draw_debug_world_volumes(" _world_body _world_code)
++foreach(_token IN ITEMS
++        "debug_world_volume_label(DebugWorldVolumeKind::assist)"
++        "debug_world_volume_label(DebugWorldVolumeKind::attack)"
++        "debug_world_volume_label(DebugWorldVolumeKind::hurt)"
++        "world_ui_font_, world_ui_font_ready_")
++    require_token("${_world_body}" "${_token}"
++        "Task 7 world debug label mapping is missing")
++endforeach()
++reject_dead_branch("${_world_code}" "Task 7 world debug labels")
++
++extract_cpp_function_body("${_view_math_source}"
++    "MonsterVisual monster_visual(" _monster_body _monster_code)
++require_token("${_monster_body}" "ui_monster_name(id)"
++    "Task 7 monster role labels must use ui_monster_name")
++string(REGEX MATCHALL "ui_monster_name\\(id\\)" _monster_name_calls
++    "${_monster_code}")
++list(LENGTH _monster_name_calls _monster_name_call_count)
++if(NOT _monster_name_call_count EQUAL 8)
++    message(FATAL_ERROR
++        "Task 7 must localize every concrete monster role label")
++endif()
++
++extract_cpp_function_body("${_view_math_source}"
++    "const char* monster_phase_label(" _phase_body _phase_code)
++foreach(_token IN ITEMS "待机" "移动" "预警" "生效" "恢复" "冷却" "已击败")
++    require_token("${_phase_body}" "${_token}"
++        "Task 7 monster phase mapping is incomplete")
++endforeach()
++reject_dead_branch("${_phase_code}" "Task 7 monster phase mapping")
++
++extract_cpp_function_body("${_view_math_source}"
++    "const char* affix_tier_text(" _tier_body _tier_code)
++foreach(_token IN ITEMS
++        "case combat::MonsterAffixTier::m1: return u8\"词缀Ⅰ\""
++        "case combat::MonsterAffixTier::m2: return u8\"词缀Ⅱ\""
++        "case combat::MonsterAffixTier::m3: return u8\"词缀Ⅲ\"")
++    require_token("${_tier_body}" "${_token}"
++        "Task 7 affix tier mapping is incomplete")
++endforeach()
++reject_dead_branch("${_tier_code}" "Task 7 affix tier mapping")
++
++extract_cpp_function_body("${_actor_source}"
++    "void draw_effects(" _effects_body _effects_code)
++require_token("${_effects_body}" "u8\"已击败\""
++    "Task 7 defeat marker must be Chinese")
++extract_cpp_function_body("${_actor_source}"
++    "void draw_monster_presentation(" _presentation_body _presentation_code)
++require_token("${_presentation_body}" "monster_phase_label(monster.ai_phase)"
++    "Task 7 monster presentation must consume the Chinese phase mapping")
++reject_dead_branch("${_effects_code}" "Task 7 defeat marker")
++reject_dead_branch("${_presentation_code}" "Task 7 monster presentation")
++
++message(STATUS "Task 7 debug overlay source guard accepted")

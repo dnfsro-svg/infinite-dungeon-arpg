@@ -1,0 +1,497 @@
+# Review package: 0179b69d324c93542b1a7d4b3f8ddd8035205a62..9e4215b2c50ff2ce6238ba0c38756c03f4bcce82
+
+## Commits
+9e4215b feat: localize game and launcher titles
+
+## Files changed
+ src/launcher/launcher_main.cpp                |   4 +-
+ src/platform/raylib/raylib_host.hpp           |   2 +-
+ tests/launcher/launcher_core_tests.cpp        |  14 +-
+ tests/launcher/launcher_window_smoke_test.ps1 | 232 +++++++++++++++++++++++++-
+ tests/platform/host_window_lifetime_tests.cpp |   7 +-
+ 5 files changed, 251 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/src/launcher/launcher_main.cpp b/src/launcher/launcher_main.cpp
+index 4b1b611..ec7dea5 100644
+--- a/src/launcher/launcher_main.cpp
++++ b/src/launcher/launcher_main.cpp
+@@ -51,21 +51,21 @@ std::optional<std::wstring> local_app_data_value() noexcept {
+ }
+ 
+ std::wstring render_failure_message(const RendererResult& result) {
+     const std::wstring_view stage = renderer_stage_name(result.stage);
+     wchar_t hresult[11]{};
+     std::swprintf(
+         hresult,
+         std::size(hresult),
+         L"%08X",
+         static_cast<unsigned int>(result.hresult));
+-    return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";
++    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";
+ }
+ 
+ RECT fallback_rectangle(const RectF rectangle, const float scale) noexcept {
+     return {
+         static_cast<LONG>(std::lround(rectangle.left * scale)),
+         static_cast<LONG>(std::lround(rectangle.top * scale)),
+         static_cast<LONG>(std::lround(rectangle.right * scale)),
+         static_cast<LONG>(std::lround(rectangle.bottom * scale)),
+     };
+ }
+@@ -405,21 +405,21 @@ private:
+     }
+ 
+     void verify_installation() {
+         refresh_installation();
+         invalidate();
+     }
+ 
+     void open_saves() {
+         const std::optional<std::wstring> local_app_data = local_app_data_value();
+         if (!local_app_data) {
+-            set_error(L"无法解析 LOCALAPPDATA");
++            set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");
+             return;
+         }
+         const std::optional<std::filesystem::path> save_directory =
+             default_save_directory(*local_app_data);
+         if (!save_directory) {
+             set_error(L"无法解析存档目录");
+             return;
+         }
+         const PlatformResult result = open_save_directory(*save_directory);
+         if (!result.ok) {
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index f5cd06a..de08baf 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -197,21 +197,21 @@ struct Stage12MaterialRuntimeStatus final {
+     bool room_background_resident{};
+     bool room_background_drawn{};
+     std::uint16_t room_background_source_width{};
+     std::uint16_t room_background_source_height{};
+     float room_background_scale{};
+ };
+ 
+ struct RaylibHostConfig final {
+     int window_width{1280};
+     int window_height{720};
+-    const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
++    const char* window_title{u8"无限地城"};
+     std::optional<std::filesystem::path> save_directory{};
+     std::optional<std::filesystem::path> settings_directory{};
+     // F12 writes into this caller-owned directory when provided, isolating
+     // concurrent formal runs from the legacy executable-directory capture.
+     std::optional<std::filesystem::path> screenshot_directory{};
+     std::optional<std::uint64_t> new_run_seed{};
+     bool continue_pending_death_on_launch{};
+     bool validation_capture{};
+     std::uint32_t validation_exit_after_presented_frames{};
+     Stage10ValidationScenario stage10_validation{
+diff --git a/tests/launcher/launcher_core_tests.cpp b/tests/launcher/launcher_core_tests.cpp
+index c8a092f..d8d2117 100644
+--- a/tests/launcher/launcher_core_tests.cpp
++++ b/tests/launcher/launcher_core_tests.cpp
+@@ -66,32 +66,41 @@ arpg::test::Failure ready_installation_is_accepted() noexcept {
+ 
+     const auto status = arpg::launcher::inspect_installation(installation.launcher_path());
+     ARPG_REQUIRE(status.state == InstallationState::ready);
+     ARPG_REQUIRE(status.ready());
+     ARPG_REQUIRE(status.application_directory == installation.root());
+     ARPG_REQUIRE(status.game_executable == installation.root() / L"arpg_game.exe");
+     ARPG_REQUIRE(arpg::launcher::installation_message(status) == L"游戏已就绪");
+     return {};
+ }
+ 
+-arpg::test::Failure missing_game_is_reported() noexcept {
++arpg::test::Failure invalid_launcher_and_missing_game_are_reported() noexcept {
+     TemporaryInstallation installation{L"missing game"};
+     std::error_code error;
+     for (const auto directory : kRequiredAssetDirectories) {
+         std::filesystem::create_directories(installation.root() / directory, error);
+         ARPG_REQUIRE(!error);
+     }
+ 
+     const auto status = arpg::launcher::inspect_installation(installation.launcher_path());
+     ARPG_REQUIRE(status.state == InstallationState::missing_game_executable);
+     ARPG_REQUIRE(status.missing_path == installation.root() / L"arpg_game.exe");
+     ARPG_REQUIRE(arpg::launcher::installation_message(status) == L"缺少 arpg_game.exe");
++
++    const InstallationStatus invalid_status{
++        InstallationState::invalid_launcher_path,
++        {},
++        {},
++        installation.launcher_path(),
++    };
++    ARPG_REQUIRE(
++        arpg::launcher::installation_message(invalid_status) == L"启动器路径无效");
+     return {};
+ }
+ 
+ arpg::test::Failure missing_asset_directory_is_reported() noexcept {
+     TemporaryInstallation installation{L"missing asset"};
+     installation.create_ready_files();
+     std::error_code error;
+     std::filesystem::remove_all(installation.root() / L"assets/stage12", error);
+     ARPG_REQUIRE(!error);
+ 
+@@ -147,19 +156,20 @@ arpg::test::Failure local_app_data_builds_existing_default_save_path() noexcept
+ arpg::test::Failure empty_local_app_data_is_rejected() noexcept {
+     ARPG_REQUIRE(!arpg::launcher::default_save_directory(L"").has_value());
+     return {};
+ }
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite launcher_core_suite() noexcept {
+     static const arpg::test::TestCase cases[] = {
+         {"ready installation is accepted", ready_installation_is_accepted},
+-        {"missing game is reported", missing_game_is_reported},
++        {"invalid launcher and missing game are reported",
++            invalid_launcher_and_missing_game_are_reported},
+         {"missing asset directory is reported", missing_asset_directory_is_reported},
+         {"ready installation builds argument-free request", ready_installation_builds_argument_free_request},
+         {"long Chinese game path is preserved verbatim", long_chinese_game_path_is_preserved_verbatim},
+         {"local app data builds existing default save path", local_app_data_builds_existing_default_save_path},
+         {"empty local app data is rejected", empty_local_app_data_is_rejected},
+     };
+     return arpg::test::make_suite("launcher_core", cases);
+ }
+diff --git a/tests/launcher/launcher_window_smoke_test.ps1 b/tests/launcher/launcher_window_smoke_test.ps1
+index 8064f87..17e6e0f 100644
+--- a/tests/launcher/launcher_window_smoke_test.ps1
++++ b/tests/launcher/launcher_window_smoke_test.ps1
+@@ -1,18 +1,236 @@
+ param(
+-    [Parameter(Mandatory = $true)]
+     [string] $Launcher,
+-    [switch] $SelfTestStaleCleanup
++    [switch] $SelfTestStaleCleanup,
++    [switch] $SelfTestChineseCopyGuard
+ )
+ 
+ $ErrorActionPreference = 'Stop'
+ 
++function Assert-Task8SourcePattern {
++    param(
++        [Parameter(Mandatory = $true)][string] $Source,
++        [Parameter(Mandatory = $true)][string] $Pattern,
++        [Parameter(Mandatory = $true)][string] $Contract
++    )
++
++    if (-not [regex]::IsMatch(
++            $Source,
++            $Pattern,
++            [Text.RegularExpressions.RegexOptions]::Singleline -bor
++                [Text.RegularExpressions.RegexOptions]::CultureInvariant)) {
++        throw "Task 8 Chinese-copy guard failed: $Contract"
++    }
++}
++
++function Get-Task8ChineseCopySources {
++    $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
++    return [ordered]@{
++        Host = [System.IO.File]::ReadAllText(
++            (Join-Path $sourceRoot 'src\platform\raylib\raylib_host.hpp'),
++            [System.Text.Encoding]::UTF8)
++        Main = [System.IO.File]::ReadAllText(
++            (Join-Path $sourceRoot 'src\launcher\launcher_main.cpp'),
++            [System.Text.Encoding]::UTF8)
++        Renderer = [System.IO.File]::ReadAllText(
++            (Join-Path $sourceRoot 'src\launcher\launcher_renderer.cpp'),
++            [System.Text.Encoding]::UTF8)
++        Core = [System.IO.File]::ReadAllText(
++            (Join-Path $sourceRoot 'src\launcher\launcher_core.cpp'),
++            [System.Text.Encoding]::UTF8)
++        Platform = [System.IO.File]::ReadAllText(
++            (Join-Path $sourceRoot 'src\launcher\launcher_platform_win32.cpp'),
++            [System.Text.Encoding]::UTF8)
++    }
++}
++
++function Assert-Task8ChineseCopyGuard {
++    param(
++        [Parameter(Mandatory = $true)] $Sources,
++        [string[]] $WholeFileAllowlist = @()
++    )
++
++    if ($WholeFileAllowlist.Count -ne 0) {
++        throw 'Task 8 forbids whole-file English allowlists'
++    }
++
++    Assert-Task8SourcePattern $Sources.Host 'const\s+char\*\s+window_title\{u8"无限地城"\};' 'untouched RaylibHostConfig must default to exact UTF-8 无限地城'
++    Assert-Task8SourcePattern $Sources.Main 'constexpr\s+wchar_t\s+kWindowTitle\[\]\s*=\s*L"无限地下城启动器";' 'launcher window title must remain exact 无限地下城启动器'
++    Assert-Task8SourcePattern $Sources.Main 'constexpr\s+wchar_t\s+kWindowClassName\[\]\s*=\s*L"InfiniteDungeonLauncherWindow";' 'internal Win32 class identity is the only allowed launcher class token'
++    Assert-Task8SourcePattern $Sources.Main 'GetEnvironmentVariableW\(\s*L"LOCALAPPDATA"' 'LOCALAPPDATA is allowed only as the exact environment-variable lookup token'
++    Assert-Task8SourcePattern $Sources.Main 'CreateFontW\([^;]+L"Microsoft YaHei UI"\s*\)' 'native fallback font-family token must stay in the font API call'
++    Assert-Task8SourcePattern $Sources.Renderer 'constexpr\s+wchar_t\s+kFontFamily\[\]\s*=\s*L"Microsoft YaHei UI";' 'DirectWrite font-family token must stay an internal identifier'
++    Assert-Task8SourcePattern $Sources.Renderer 'CreateTextFormat\([^;]+L"zh-CN"' 'zh-CN is allowed only as the DirectWrite locale identifier'
++
++    $buttons = @(
++        @{ Layout = 'start'; Label = '开始游戏'; Button = 'start' },
++        @{ Layout = 'verify'; Label = '检查游戏文件'; Button = 'verify' },
++        @{ Layout = 'save'; Label = '打开存档目录'; Button = 'save' },
++        @{ Layout = 'exit'; Label = '退出'; Button = 'exit' }
++    )
++    foreach ($button in $buttons) {
++        $fallbackPattern = 'draw_fallback_button\(\s*device_context,\s*view\.layout\.' +
++            $button.Layout + ',\s*L"' + [regex]::Escape($button.Label) +
++            '",\s*LauncherButton::' + $button.Button + ',\s*view,\s*scale\);'
++        Assert-Task8SourcePattern $Sources.Main $fallbackPattern "native fallback button must be exact Chinese: $($button.Label)"
++
++        $directWritePattern = 'draw_button\(\s*view\.layout\.' + $button.Layout +
++            ',\s*L"' + [regex]::Escape($button.Label) +
++            '",\s*LauncherButton::' + $button.Button + ',\s*view\);'
++        Assert-Task8SourcePattern $Sources.Renderer $directWritePattern "DirectWrite button must be exact Chinese: $($button.Label)"
++    }
++
++    foreach ($source in @($Sources.Main, $Sources.Renderer)) {
++        Assert-Task8SourcePattern $source 'L"无限地下城"' 'launcher product title must be Chinese in both rendering paths'
++        Assert-Task8SourcePattern $source 'L"版本 0\.1\.0 · 单人无限地下城"' 'launcher subtitle must be Chinese in both rendering paths'
++    }
++
++    foreach ($contract in @(
++        @{ Pattern = 'case\s+InstallationState::ready:\s*return\s+L"游戏已就绪";'; Name = 'ready status' },
++        @{ Pattern = 'case\s+InstallationState::invalid_launcher_path:\s*return\s+L"启动器路径无效";'; Name = 'invalid path status' },
++        @{ Pattern = 'case\s+InstallationState::missing_game_executable:\s*return\s+L"缺少 arpg_game\.exe";'; Name = 'missing executable status' },
++        @{ Pattern = 'case\s+InstallationState::missing_asset_directory:\s*return\s+L"缺少资源："\s*\+'; Name = 'missing asset prefix' }
++    )) {
++        Assert-Task8SourcePattern $Sources.Core $contract.Pattern "installation copy must be exact Chinese: $($contract.Name)"
++    }
++    foreach ($pathToken in @(
++        'arpg_game.exe',
++        'assets/fonts',
++        'assets/player',
++        'assets/skills',
++        'assets/stage12',
++        'assets/stage14/audio',
++        'assets/stage15/audio')) {
++        Assert-Task8SourcePattern $Sources.Core ('L"' + [regex]::Escape($pathToken) + '"') "immutable package token must remain exact: $pathToken"
++    }
++    Assert-Task8SourcePattern $Sources.Core 'L"InfiniteDungeon"\s*/\s*L"save"' 'default save path must remain InfiniteDungeon/save'
++
++    foreach ($contract in @(
++        @{ Pattern = 'path_text_\s*=\s*L"安装目录：不可用";'; Name = 'unavailable install path' },
++        @{ Pattern = 'path_text_\s*=\s*L"安装目录："\s*\+\s*full_path_;'; Name = 'dynamic install path prefix' },
++        @{ Pattern = 'set_error\(L"无法创建游戏启动请求"\);'; Name = 'launch request failure' },
++        @{ Pattern = 'set_error\(L"无法解析本地应用数据目录（LOCALAPPDATA）"\);'; Name = 'LOCALAPPDATA failure with technical suffix' },
++        @{ Pattern = 'set_error\(L"无法解析存档目录"\);'; Name = 'save path failure' }
++    )) {
++        Assert-Task8SourcePattern $Sources.Main $contract.Pattern "launcher error/status copy must be exact Chinese: $($contract.Name)"
++    }
++
++    Assert-Task8SourcePattern $Sources.Main 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";' 'renderer API stage and HRESULT must both stay inside Chinese parentheses'
++    if ([regex]::IsMatch($Sources.Main, '渲染失败：[^\r\n]*HRESULT')) {
++        throw 'Task 8 Chinese-copy guard rejected an unparenthesized renderer API stage'
++    }
++    if ([regex]::Matches($Sources.Main, 'renderer_stage_name\s*\(').Count -ne 1) {
++        throw 'Task 8 renderer stage names must flow only through render_failure_message'
++    }
++
++    $stageBody = [regex]::Match(
++        $Sources.Renderer,
++        'std::wstring_view\s+renderer_stage_name\([^\{]+\{(?<Body>.*?)\n\}\s*\n\s*bool\s+LauncherRenderer::initialize',
++        [Text.RegularExpressions.RegexOptions]::Singleline).Groups['Body'].Value
++    if ([string]::IsNullOrEmpty($stageBody)) {
++        throw 'Task 8 could not isolate renderer_stage_name for contextual audit'
++    }
++    $actualStages = @([regex]::Matches($stageBody, 'return\s+L"([^"]+)";') |
++        ForEach-Object { $_.Groups[1].Value } | Sort-Object)
++    $allowedStages = @(
++        'CreateGradientStopCollection',
++        'CreateHwndRenderTarget',
++        'CreateLinearGradientBrush',
++        'CreateSolidColorBrush',
++        'CreateTextLayout',
++        'ID2D1HwndRenderTarget::Resize',
++        'ID2D1RenderTarget::EndDraw',
++        'IDWriteTextLayout::SetTrimming',
++        'IDWriteTextLayout::SetWordWrapping',
++        'none',
++        'unknown'
++    ) | Sort-Object
++    if (($actualStages -join "`n") -cne ($allowedStages -join "`n")) {
++        throw 'Task 8 renderer-stage technical allowlist changed'
++    }
++
++    foreach ($contract in @(
++        @{ Pattern = 'message\s*\+=\s*L"（错误代码 ";'; Name = 'numeric error prefix' },
++        @{ Pattern = 'message\s*\+=\s*L"）：";'; Name = 'numeric error suffix' },
++        @{ Pattern = 'failure\(L"无法启动游戏",\s*error_code\)'; Name = 'game launch failure' },
++        @{ Pattern = 'failure\(\s*L"无法创建存档目录",'; Name = 'save create failure' },
++        @{ Pattern = 'failure\(\s*L"无法打开存档目录",'; Name = 'save open failure' },
++        @{ Pattern = 'message\s*\+=\s*L"无法获取系统错误消息";'; Name = 'system message fallback' }
++    )) {
++        Assert-Task8SourcePattern $Sources.Platform $contract.Pattern "Win32 error path must keep a Chinese main message: $($contract.Name)"
++    }
++    Assert-Task8SourcePattern $Sources.Platform 'ShellExecuteW\(\s*nullptr,\s*L"open"' 'open is allowed only as the ShellExecuteW verb'
++
++    $technicalAllowlist = @(
++        @{ File = 'launcher_main.cpp'; Token = 'InfiniteDungeonLauncherWindow'; Reason = 'internal Win32 class identity, never display copy' },
++        @{ File = 'launcher_main.cpp'; Token = 'LOCALAPPDATA'; Reason = 'exact environment variable, shown only after a Chinese explanation' },
++        @{ File = 'launcher_main.cpp/launcher_renderer.cpp'; Token = 'Microsoft YaHei UI'; Reason = 'installed font-family identifier' },
++        @{ File = 'launcher_renderer.cpp'; Token = 'zh-CN'; Reason = 'DirectWrite locale identifier' },
++        @{ File = 'launcher_renderer.cpp'; Token = ($allowedStages -join ','); Reason = 'renderer diagnostic stages, consumed only by the parenthesized formatter' },
++        @{ File = 'launcher_main.cpp'; Token = 'HRESULT 0x'; Reason = 'numeric renderer detail inside Chinese parentheses' },
++        @{ File = 'launcher_core.cpp'; Token = 'arpg_game.exe'; Reason = 'immutable executable name after Chinese copy' },
++        @{ File = 'launcher_core.cpp'; Token = 'assets/fonts,assets/player,assets/skills,assets/stage12,assets/stage14/audio,assets/stage15/audio'; Reason = 'exact immutable package paths after 缺少资源：' },
++        @{ File = 'launcher_core.cpp'; Token = 'InfiniteDungeon/save'; Reason = 'immutable default save-path components, not authored display copy' },
++        @{ File = 'launcher_platform_win32.cpp'; Token = 'open'; Reason = 'ShellExecuteW verb, never display copy' }
++    )
++    foreach ($entry in $technicalAllowlist) {
++        if ([string]::IsNullOrWhiteSpace($entry.File) -or
++            [string]::IsNullOrWhiteSpace($entry.Token) -or
++            [string]::IsNullOrWhiteSpace($entry.Reason)) {
++            throw 'Task 8 technical allowlist entries require file, exact token/category, and reason'
++        }
++    }
++}
++
++function Copy-Task8ChineseCopySources {
++    param([Parameter(Mandatory = $true)] $Sources)
++    $copy = [ordered]@{}
++    foreach ($key in $Sources.Keys) { $copy[$key] = $Sources[$key] }
++    return $copy
++}
++
++function Invoke-Task8ChineseCopyGuardSelfTest {
++    param([Parameter(Mandatory = $true)] $Sources)
++
++    Assert-Task8ChineseCopyGuard $Sources
++    $mutations = @(
++        @{ Name = 'English game title'; File = 'Host'; Needle = 'u8"无限地城"'; Replacement = '"Infinite Dungeon"' },
++        @{ Name = 'English launcher title'; File = 'Main'; Needle = 'L"无限地下城启动器"'; Replacement = 'L"Infinite Dungeon Launcher"' },
++        @{ Name = 'English fallback button'; File = 'Main'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
++        @{ Name = 'English DirectWrite button'; File = 'Renderer'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
++        @{ Name = 'English status prefix'; File = 'Core'; Needle = 'L"游戏已就绪"'; Replacement = 'L"Ready"' },
++        @{ Name = 'unparenthesized renderer stage'; File = 'Main'; Needle = 'return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'; Replacement = 'return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";' }
++    )
++    foreach ($mutation in $mutations) {
++        $mutated = Copy-Task8ChineseCopySources $Sources
++        if (-not $mutated[$mutation.File].Contains($mutation.Needle)) {
++            throw "Task 8 mutation anchor is missing: $($mutation.Name)"
++        }
++        $mutated[$mutation.File] = $mutated[$mutation.File].Replace(
++            $mutation.Needle, $mutation.Replacement)
++        $accepted = $true
++        try { Assert-Task8ChineseCopyGuard $mutated }
++        catch { $accepted = $false }
++        if ($accepted) {
++            throw "Task 8 Chinese-copy guard accepted mutation: $($mutation.Name)"
++        }
++    }
++
++    $acceptedBroadAllowlist = $true
++    try { Assert-Task8ChineseCopyGuard $Sources -WholeFileAllowlist @('launcher_main.cpp') }
++    catch { $acceptedBroadAllowlist = $false }
++    if ($acceptedBroadAllowlist) {
++        throw 'Task 8 Chinese-copy guard accepted a broad-file allowlist attempt'
++    }
++    return $mutations.Count + 1
++}
++
+ $LauncherSmokeDirectoryPrefix = 'arpg-launcher-window-smoke-'
+ $LauncherSmokeDirectoryPattern = '^arpg-launcher-window-smoke-[0-9a-f]{32}$'
+ $LauncherSmokeMarkerName = '.launcher-window-smoke-owner.marker'
+ $LauncherSmokeMarkerMagic = 'ARPG_LAUNCHER_WINDOW_SMOKE_OWNER_V1'
+ $LauncherSmokeStaleAgeSeconds = 15
+ 
+ Add-Type -AssemblyName System.Drawing
+ 
+ Add-Type -TypeDefinition @'
+ using System;
+@@ -550,25 +768,35 @@ function Assert-RenderedClientPixels {
+     Send-LauncherMouse $Process $origin 0x0202 0 ($verifyX + [int](125 * $scale)) ($verifyY + [int](28 * $scale))
+ 
+     $pathX = Convert-DipToPixels 58 $dpi
+     $pathY = Convert-DipToPixels 474 $dpi
+     Send-LauncherMouse $Process $origin 0x0200 0 ($pathX + [int](30 * $scale)) ($pathY + [int](20 * $scale))
+     $tooltip = Get-VerifiedClientBitmap $Process $origin $width $height
+     try { Assert-ColorNear ($tooltip.GetPixel((Convert-DipToPixels 800 $dpi), (Convert-DipToPixels 445 $dpi))) 10 28 43 'Full-path tooltip card' }
+     finally { $tooltip.Dispose() }
+ }
+ 
++$task8Sources = Get-Task8ChineseCopySources
++$task8MutationCount = Invoke-Task8ChineseCopyGuardSelfTest $task8Sources
++if ($SelfTestChineseCopyGuard) {
++    Write-Host "Task 8 Chinese-copy guard accepted pristine sources and rejected $task8MutationCount mutations"
++    exit 0
++}
++
+ $temporaryRoot = [System.IO.Path]::GetTempPath()
+ if ($SelfTestStaleCleanup) {
+     Invoke-LauncherSmokeStaleCleanupSelfTest $temporaryRoot
+     exit 0
+ }
++if ([string]::IsNullOrWhiteSpace($Launcher)) {
++    throw 'Launcher is required unless only a self-test is requested'
++}
+ Remove-StaleLauncherSmokeDirectories $temporaryRoot ([DateTime]::UtcNow)
+ $source = (Resolve-Path -LiteralPath $Launcher).Path
+ $temporaryDirectory = Join-Path $temporaryRoot (
+     $LauncherSmokeDirectoryPrefix + [guid]::NewGuid().ToString('N'))
+ $process = $null
+ $jobHandle = [IntPtr]::Zero
+ $originalCursor = [LauncherPixelSmokeNative+POINT]::new()
+ [void][LauncherPixelSmokeNative]::GetCursorPos([ref] $originalCursor)
+ 
+ try {
+diff --git a/tests/platform/host_window_lifetime_tests.cpp b/tests/platform/host_window_lifetime_tests.cpp
+index c456a7b..bb32882 100644
+--- a/tests/platform/host_window_lifetime_tests.cpp
++++ b/tests/platform/host_window_lifetime_tests.cpp
+@@ -1,19 +1,20 @@
+ #include "test_framework.hpp"
+ 
+ #include "host_window_lifetime.hpp"
+ #include "raylib_host.hpp"
+ 
+ #include "platform/settings/settings_types.hpp"
+ 
+ #include <array>
+ #include <cstddef>
++#include <cstring>
+ #include <type_traits>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ namespace settings = arpg::settings;
+ 
+ static_assert(std::is_same_v<
+     decltype(platform::HostWindowBackend::set_config_flags),
+     void (*)(unsigned int) noexcept>);
+@@ -84,27 +85,31 @@ void close_window() noexcept {
+     config.window_width = 960;
+     config.window_height = 540;
+     config.window_title = "lifetime test";
+     return config;
+ }
+ 
+ arpg::test::Failure failed_initialization_leaves_window_unowned() noexcept {
+     CountingBackend backend{};
+     const settings::SettingsData settings = settings::default_settings();
+     platform::HostWindowLifetime lifetime{backend_for(backend)};
++    const platform::RaylibHostConfig config{};
+ 
+-    ARPG_REQUIRE(!lifetime.initialize(configured_host(), settings));
++    ARPG_REQUIRE(std::strcmp(config.window_title, u8"无限地城") == 0);
++    ARPG_REQUIRE(!lifetime.initialize(config, settings));
+     ARPG_REQUIRE(!lifetime.ready());
+     ARPG_REQUIRE(backend.event_count == 3U);
+     ARPG_REQUIRE(backend.events[0] == BackendEvent::set_flags);
+     ARPG_REQUIRE(backend.events[1] == BackendEvent::init_window);
+     ARPG_REQUIRE(backend.events[2] == BackendEvent::query_ready);
++    ARPG_REQUIRE(backend.title == config.window_title);
++    ARPG_REQUIRE(std::strcmp(backend.title, u8"无限地城") == 0);
+     ARPG_REQUIRE(backend.close_count == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure incomplete_backend_is_rejected_before_any_callback()
+     noexcept {
+     const settings::SettingsData settings = settings::default_settings();
+     for (std::size_t missing = 0U; missing < 4U; ++missing) {
+         CountingBackend backend{true};
+         platform::HostWindowBackend callbacks = backend_for(backend);

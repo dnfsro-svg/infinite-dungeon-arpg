@@ -1,0 +1,121 @@
+# Review package: 5abefcbe15fa7651fad5ea2829e4f85c87556fba..92f36ec8a6d2b6ae7dc5b1858a744c819e2cd126
+
+## Commits
+92f36ec test(ui): lock material recipe input exclusion
+
+## Files changed
+ src/platform/raylib/inventory_renderer.cpp   | 1 +
+ src/platform/raylib/inventory_view_math.cpp  | 3 ++-
+ src/platform/raylib/inventory_view_math.hpp  | 1 +
+ tests/platform/inventory_view_math_tests.cpp | 3 +++
+ 4 files changed, 7 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/platform/raylib/inventory_renderer.cpp b/src/platform/raylib/inventory_renderer.cpp
+index c3c080d..e57fa9b 100644
+--- a/src/platform/raylib/inventory_renderer.cpp
++++ b/src/platform/raylib/inventory_renderer.cpp
+@@ -946,20 +946,21 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
+     priority.tooltip = retained_backing_blocks;
+     priority.directed_material = directed_material;
+     priority.material_cancel_requested = right_pressed
+         && selected_material.has_value() && !directed_material;
+     priority.material_select = left_pressed
+         && page_ == InventoryPage::materials
+         && material_card_contains(frame_layout_.materials, mouse);
+     priority.material_target = left_pressed
+         && page_ == InventoryPage::equipment
+         && selected_material.has_value() && direct_hit.grid_item;
++    priority.material_selected = selected_material.has_value();
+     priority.page_action = left_pressed
+         && inventory_page_action_contains(frame_layout_.shell, page_, mouse);
+     priority.filter = left_pressed && page_ == InventoryPage::equipment
+         && (contains(frame_layout_.shell.slot_filter_bounds, mouse)
+             || contains(frame_layout_.shell.rarity_filter_bounds, mouse));
+     priority.skill_content = left_pressed
+         && page_ == InventoryPage::skill_stones
+         && active_skill_content_contains(frame_layout_.skills, mouse);
+     priority.recipe = page_ == InventoryPage::equipment
+         && direct_hit.grid_item && !selected_material.has_value()
+diff --git a/src/platform/raylib/inventory_view_math.cpp b/src/platform/raylib/inventory_view_math.cpp
+index 5a6efc6..af9fe8d 100644
+--- a/src/platform/raylib/inventory_view_math.cpp
++++ b/src/platform/raylib/inventory_view_math.cpp
+@@ -1568,21 +1568,22 @@ float inventory_grid_scroll_after_wheel(InventoryPage page,
+ InventoryPointerLayer inventory_pointer_layer(
+     const InventoryPointerPriorityInput& input) noexcept {
+     if (input.confirmation) return InventoryPointerLayer::confirmation;
+     if (input.tab) return InventoryPointerLayer::tab;
+     if (input.tooltip) return InventoryPointerLayer::tooltip;
+     if (input.directed_material) return InventoryPointerLayer::directed_material;
+     if (input.material_cancel_requested)
+         return InventoryPointerLayer::material_cancel;
+     if (input.material_select) return InventoryPointerLayer::material_select;
+     if (input.material_target) return InventoryPointerLayer::material_target;
+-    if (input.page_action) return InventoryPointerLayer::page_action;
++    if (input.page_action && !input.material_selected)
++        return InventoryPointerLayer::page_action;
+     if (input.filter) return InventoryPointerLayer::filter;
+     if (input.skill_content) return InventoryPointerLayer::skill_content;
+     if (input.recipe) return InventoryPointerLayer::recipe;
+     if (input.equipment) return InventoryPointerLayer::equipment;
+     return input.background_clear ? InventoryPointerLayer::background_clear
+                                   : InventoryPointerLayer::none;
+ }
+ 
+ ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
+     modifiers::StatId stat, modifiers::ModifierOperation operation,
+diff --git a/src/platform/raylib/inventory_view_math.hpp b/src/platform/raylib/inventory_view_math.hpp
+index 10daece..42d6767 100644
+--- a/src/platform/raylib/inventory_view_math.hpp
++++ b/src/platform/raylib/inventory_view_math.hpp
+@@ -420,20 +420,21 @@ struct InventoryTooltipInteractionResult final {
+ };
+ 
+ struct InventoryPointerPriorityInput final {
+     bool confirmation{};
+     bool tab{};
+     bool tooltip{};
+     bool directed_material{};
+     bool material_cancel_requested{};
+     bool material_select{};
+     bool material_target{};
++    bool material_selected{};
+     bool page_action{};
+     bool filter{};
+     bool skill_content{};
+     bool recipe{};
+     bool equipment{};
+     bool background_clear{};
+ };
+ 
+ struct ItemAttributeLabel final {
+     const char* name{};
+diff --git a/tests/platform/inventory_view_math_tests.cpp b/tests/platform/inventory_view_math_tests.cpp
+index 8ab169a..d1a175d 100644
+--- a/tests/platform/inventory_view_math_tests.cpp
++++ b/tests/platform/inventory_view_math_tests.cpp
+@@ -146,20 +146,23 @@ test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
+             platform::InventoryPage::skill_stones, action_center));
+         ARPG_REQUIRE(!platform::inventory_page_action_contains(shell,
+             platform::InventoryPage::materials, action_center));
+         platform::InventoryPointerPriorityInput disabled_action_click{};
+         disabled_action_click.page_action =
+             platform::inventory_page_action_contains(shell,
+                 platform::InventoryPage::equipment, action_center);
+         disabled_action_click.background_clear = true;
+         ARPG_REQUIRE(platform::inventory_pointer_layer(disabled_action_click)
+             == platform::InventoryPointerLayer::page_action);
++        disabled_action_click.material_selected = true;
++        ARPG_REQUIRE(platform::inventory_pointer_layer(disabled_action_click)
++            == platform::InventoryPointerLayer::background_clear);
+         if (shell.hint_visible) {
+             ARPG_REQUIRE(inside(shell.hint_bounds, shell.status_bar));
+             ARPG_REQUIRE(separated(shell.action_bounds, shell.hint_bounds));
+         } else {
+             ARPG_REQUIRE(size[0] == 800 && size[1] == 450);
+         }
+         for (const Rectangle tab : shell.tabs) {
+             ARPG_REQUIRE(tab.width >= 40.0F);
+             ARPG_REQUIRE(tab.height >= 32.0F);
+             ARPG_REQUIRE(test::near(tab.height, expected_header_height));

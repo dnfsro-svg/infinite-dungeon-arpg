@@ -1,0 +1,164 @@
+# Review package: 08d1e9106826a3f917c9cf737d16f1dea289ecbb..d14f61bce6bd2bfbd1b464fdf31c07f9a779fd9e
+
+## Commits
+d14f61b test: bind launcher formatter return path
+
+## Files changed
+ tests/launcher/launcher_window_smoke_test.ps1 | 63 +++++++++++++++++++--------
+ 1 file changed, 46 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/tests/launcher/launcher_window_smoke_test.ps1 b/tests/launcher/launcher_window_smoke_test.ps1
+index c960719..54f025b 100644
+--- a/tests/launcher/launcher_window_smoke_test.ps1
++++ b/tests/launcher/launcher_window_smoke_test.ps1
+@@ -22,39 +22,37 @@ function Assert-Task8SourcePattern {
+     }
+ }
+ 
+ function Test-Task8CppCharacterLiteralStart {
+     param(
+         [Parameter(Mandatory = $true)][string] $Source,
+         [Parameter(Mandatory = $true)][int] $Index
+     )
+ 
+     if ($Source[$Index] -ne "'") { return $false }
+-    if ($Index -eq 0) { return $true }
+-
+-    $previous = $Source[$Index - 1]
+-    if (-not [char]::IsLetterOrDigit($previous) -and $previous -ne '_') {
+-        return $true
+-    }
+-    if ($previous -in @('L', 'u', 'U') -and
+-        ($Index -eq 1 -or
+-            (-not [char]::IsLetterOrDigit($Source[$Index - 2]) -and
+-                $Source[$Index - 2] -ne '_'))) {
++    if ($Index -eq 0 -or $Index + 1 -ge $Source.Length -or
++        -not [char]::IsLetterOrDigit($Source[$Index - 1]) -or
++        -not [char]::IsLetterOrDigit($Source[$Index + 1])) {
+         return $true
+     }
+-    if ($Index -ge 2 -and $Source.Substring($Index - 2, 2) -ceq 'u8' -and
+-        ($Index -eq 2 -or
+-            (-not [char]::IsLetterOrDigit($Source[$Index - 3]) -and
+-                $Source[$Index - 3] -ne '_'))) {
+-        return $true
++
++    $tokenStart = $Index - 1
++    while ($tokenStart -gt 0 -and
++        ([char]::IsLetterOrDigit($Source[$tokenStart - 1]) -or
++            $Source[$tokenStart - 1] -in @('_', '.'))) {
++        --$tokenStart
+     }
+-    return $false
++    $numericToken = [char]::IsDigit($Source[$tokenStart]) -or
++        ($Source[$tokenStart] -eq '.' -and
++            $tokenStart + 1 -lt $Source.Length -and
++            [char]::IsDigit($Source[$tokenStart + 1]))
++    return -not $numericToken
+ }
+ 
+ function Remove-Task8CppComments {
+     param([Parameter(Mandatory = $true)][string] $Source)
+ 
+     $result = [System.Text.StringBuilder]::new($Source.Length)
+     $state = 'code'
+     $index = 0
+     while ($index -lt $Source.Length) {
+         $character = $Source[$index]
+@@ -321,21 +319,36 @@ function Assert-Task8ChineseCopyGuard {
+     foreach ($contract in @(
+         @{ Pattern = 'path_text_\s*=\s*L"安装目录：不可用";'; Name = 'unavailable install path' },
+         @{ Pattern = 'path_text_\s*=\s*L"安装目录："\s*\+\s*full_path_;'; Name = 'dynamic install path prefix' },
+         @{ Pattern = 'set_error\(L"无法创建游戏启动请求"\);'; Name = 'launch request failure' },
+         @{ Pattern = 'set_error\(L"无法解析本地应用数据目录（LOCALAPPDATA）"\);'; Name = 'LOCALAPPDATA failure with technical suffix' },
+         @{ Pattern = 'set_error\(L"无法解析存档目录"\);'; Name = 'save path failure' }
+     )) {
+         Assert-Task8SourcePattern $Sources.Main $contract.Pattern "launcher error/status copy must be exact Chinese: $($contract.Name)"
+     }
+ 
+-    Assert-Task8SourcePattern $Sources.Main 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";' 'renderer API stage and HRESULT must both stay inside Chinese parentheses'
++    $renderFailureMatches = [regex]::Matches(
++        $Sources.Main,
++        'std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)\s*\{(?<Body>.*?)\r?\n\}\s*\r?\n\s*RECT\s+fallback_rectangle',
++        [Text.RegularExpressions.RegexOptions]::Singleline -bor
++            [Text.RegularExpressions.RegexOptions]::CultureInvariant)
++    if ($renderFailureMatches.Count -ne 1) {
++        throw 'Task 8 must isolate exactly one render_failure_message function body'
++    }
++    $renderFailureBody = $renderFailureMatches[0].Groups['Body'].Value
++    if ([regex]::Matches($renderFailureBody, '\breturn\b').Count -ne 1) {
++        throw 'Task 8 render_failure_message must contain exactly one return statement'
++    }
++    if ([regex]::IsMatch($renderFailureBody, '\[[^\]\r\n]*\]\s*\(')) {
++        throw 'Task 8 render_failure_message cannot hide its formatter in a lambda'
++    }
++    Assert-Task8SourcePattern $renderFailureBody 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";\s*$' 'render_failure_message actual return must keep API stage and HRESULT inside Chinese parentheses'
+     if ([regex]::IsMatch($Sources.Main, '渲染失败：[^\r\n]*HRESULT')) {
+         throw 'Task 8 Chinese-copy guard rejected an unparenthesized renderer API stage'
+     }
+     if ([regex]::Matches($Sources.Main, 'renderer_stage_name\s*\(').Count -ne 1) {
+         throw 'Task 8 renderer stage names must flow only through render_failure_message'
+     }
+ 
+     $stageBody = [regex]::Match(
+         $Sources.Renderer,
+         'std::wstring_view\s+renderer_stage_name\([^\{]+\{(?<Body>.*?)\n\}\s*\n\s*bool\s+LauncherRenderer::initialize',
+@@ -566,20 +579,29 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
+                 '        device_context, view.layout.start, TASK8_WIDEN("Start Game"), LauncherButton::start, view, scale);' + $newline +
+                 '#undef TASK8_WIDEN' + $newline +
+                 '#undef TASK8_WIDEN_IMPL'
+         },
+         @{
+             Name = 'ordinary English runtime error while preserving Chinese error'
+             File = 'Main'
+             Needle = 'set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");'
+             Replacement = 'set_error(L"无法解析本地应用数据目录（LOCALAPPDATA）");' + $newline +
+                 '            set_error(std::filesystem::path{"Launch failed"}.wstring());'
++        },
++        @{
++            Name = 'uninvoked lambda decoys renderer failure return'
++            File = 'Main'
++            Needle = '    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'
++            Replacement = '    [[maybe_unused]] const auto task8_decoy = [&]() -> std::wstring {' + $newline +
++                '        return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";' + $newline +
++                '    };' + $newline +
++                '    return std::wstring{stage};'
+         }
+     )
+     $acceptedMutations = @()
+     foreach ($mutation in $mutations) {
+         $mutated = Copy-Task8ChineseCopySources $Sources
+         if (-not $mutated[$mutation.File].Contains($mutation.Needle)) {
+             throw "Task 8 mutation anchor is missing: $($mutation.Name)"
+         }
+         $mutated[$mutation.File] = $mutated[$mutation.File].Replace(
+             $mutation.Needle, $mutation.Replacement)
+@@ -606,20 +628,27 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
+             Replacement = 'constexpr int kLauncherIconId = 101;' + $newline +
+                 "constexpr unsigned int kTask8DigitSeparatorProbe = 1'000U;"
+         },
+         @{
+             Name = 'continued line comment'
+             File = 'Main'
+             Needle = 'constexpr int kLauncherIconId = 101;'
+             Replacement = 'constexpr int kLauncherIconId = 101;' + $newline +
+                 '// Task 8 lexical probe continues \' + $newline +
+                 'L"Comment-only English"'
++        },
++        @{
++            Name = 'character literal after return without whitespace'
++            File = 'Main'
++            Needle = 'constexpr int kLauncherIconId = 101;'
++            Replacement = 'constexpr int kLauncherIconId = 101;' + $newline +
++                'constexpr char task8_quote_probe() { return''"''; }'
+         }
+     )
+     $rejectedValidVariants = @()
+     foreach ($variant in $validVariants) {
+         $mutated = Copy-Task8ChineseCopySources $Sources
+         if (-not $mutated[$variant.File].Contains($variant.Needle)) {
+             throw "Task 8 valid-variant anchor is missing: $($variant.Name)"
+         }
+         $mutated[$variant.File] = $mutated[$variant.File].Replace(
+             $variant.Needle, $variant.Replacement)

@@ -1,0 +1,290 @@
+# Review package: 8ec999b..7288ec2
+
+## Commits
+7288ec2 test: complete Chinese menus HUD gate
+
+## Files changed
+ .../plans/2026-08-09-full-chinese-ui-menus-hud.md  |   9 +-
+ .../full_chinese_menu_hud_completion_gate.ps1      | 128 +++++++++++++++++++++
+ .../platform/pause_menu_state_boundary_test.cmake  |   5 +-
+ tests/platform/platform_test_main.cpp              |  20 ++++
+ 4 files changed, 155 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/docs/superpowers/plans/2026-08-09-full-chinese-ui-menus-hud.md b/docs/superpowers/plans/2026-08-09-full-chinese-ui-menus-hud.md
+index e98b343..dc655cd 100644
+--- a/docs/superpowers/plans/2026-08-09-full-chinese-ui-menus-hud.md
++++ b/docs/superpowers/plans/2026-08-09-full-chinese-ui-menus-hud.md
+@@ -463,18 +463,15 @@ git diff --cached --check
+ git commit -m "feat: localize game and launcher titles"
+ ```
+ 
+ ---
+ 
+ ## Plan Completion Gate
+ 
+ Run:
+ 
+ ```powershell
+-cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2
+-$env:ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY='1'
+-try { & '.\out\build\windows-msvc-debug\bin\arpg_platform_tests.exe'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } finally { Remove-Item Env:ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY -ErrorAction SilentlyContinue }
+-ctest --preset windows-msvc-debug --output-on-failure -R 'platform.pause_menu_state_boundary|platform.pause_menu_host_layout_source|platform.hole_prompt_binding_source'
+-git diff --check
++powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
++    .\tests\platform\full_chinese_menu_hud_completion_gate.ps1
+ ```
+ 
+-Expected: 菜单/HUD 定向 suite 和三个 source guard 全部通过；玩家路径不再包含本计划覆盖的英文文案。随后进入 `2026-08-09-full-chinese-ui-inventory-progression.md`。
++Expected: 菜单/HUD 183 例、完成补充 86 例、Task 1/2/4/5/6/7 source guards/self-tests/parser、launcher units/中文文案守卫/window smoke 全部通过；`arpg_stage11c_hud_formal` 只完成编译链接，不在本门禁中启动正式验证窗口。玩家路径不再包含本计划覆盖的英文文案。随后进入 `2026-08-09-full-chinese-ui-inventory-progression.md`。
+diff --git a/tests/platform/full_chinese_menu_hud_completion_gate.ps1 b/tests/platform/full_chinese_menu_hud_completion_gate.ps1
+new file mode 100644
+index 0000000..e29f686
+--- /dev/null
++++ b/tests/platform/full_chinese_menu_hud_completion_gate.ps1
+@@ -0,0 +1,128 @@
++[CmdletBinding()]
++param(
++    [ValidateSet('windows-msvc-debug')]
++    [string] $Preset = 'windows-msvc-debug'
++)
++
++$ErrorActionPreference = 'Stop'
++
++function Invoke-ArpgNative {
++    param(
++        [Parameter(Mandatory)]
++        [string] $FilePath,
++        [string[]] $ArgumentList = @()
++    )
++
++    & $FilePath @ArgumentList
++    if ($LASTEXITCODE -ne 0) {
++        throw "$FilePath failed with exit code $LASTEXITCODE"
++    }
++}
++
++function Invoke-PlatformSelector {
++    param(
++        [Parameter(Mandatory)]
++        [string] $Executable,
++        [Parameter(Mandatory)]
++        [string] $Selector
++    )
++
++    $selectors = @(
++        'ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY',
++        'ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY'
++    )
++    $saved = @{}
++    foreach ($name in $selectors) {
++        $item = Get-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
++        if ($null -ne $item) {
++            $saved[$name] = $item.Value
++        }
++        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
++    }
++
++    try {
++        Set-Item -LiteralPath "Env:$Selector" -Value '1'
++        Invoke-ArpgNative -FilePath $Executable
++    }
++    finally {
++        foreach ($name in $selectors) {
++            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
++            if ($saved.ContainsKey($name)) {
++                Set-Item -LiteralPath "Env:$name" -Value $saved[$name]
++            }
++        }
++    }
++}
++
++$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
++$launcherGuard = Join-Path $root 'tests\launcher\launcher_window_smoke_test.ps1'
++$platformTests = Join-Path $root "out\build\$Preset\bin\arpg_platform_tests.exe"
++
++Push-Location $root
++try {
++    . (Join-Path $root 'scripts\Configure.ps1') -Preset $Preset
++
++    Invoke-ArpgNative -FilePath 'cmake.exe' -ArgumentList @(
++        '--build', '--preset', $Preset,
++        '--target',
++        'arpg_platform_tests',
++        'arpg_launcher_tests',
++        'arpg_launcher',
++        'arpg_stage11c_hud_formal',
++        '--parallel', '2'
++    )
++
++    Invoke-PlatformSelector -Executable $platformTests `
++        -Selector 'ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY'
++    Invoke-PlatformSelector -Executable $platformTests `
++        -Selector 'ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY'
++
++    $guardTests = @(
++        'platform.pause_menu_state_boundary',
++        'platform.pause_menu_host_layout_source',
++        'platform.hud_notice_structured_binding_source',
++        'platform.cpp_source_function_body_self_test',
++        'platform.hud_notice_structured_binding_source_self_test',
++        'platform.hud_renderer_structured_model_source',
++        'platform.hud_renderer_structured_model_source_self_test',
++        'platform.hole_prompt_binding_source',
++        'platform.hole_prompt_binding_source_self_test',
++        'platform.task6_recovery_screen_source_guard',
++        'platform.task6_recovery_screen_source_guard_self_test',
++        'platform.task7_debug_overlay_source_guard',
++        'platform.task7_debug_overlay_source_guard_self_test'
++    )
++    $guardRegex = '^(' + (($guardTests | ForEach-Object {
++        [regex]::Escape($_)
++    }) -join '|') + ')$'
++    Invoke-ArpgNative -FilePath 'ctest.exe' -ArgumentList @(
++        '--preset', $Preset,
++        '--output-on-failure',
++        '-R', $guardRegex,
++        '--parallel', '1'
++    )
++
++    Invoke-ArpgNative -FilePath 'ctest.exe' -ArgumentList @(
++        '--preset', $Preset,
++        '--output-on-failure',
++        '-R', '^launcher\.units$',
++        '--parallel', '1'
++    )
++    Invoke-ArpgNative -FilePath 'powershell.exe' -ArgumentList @(
++        '-NoProfile',
++        '-ExecutionPolicy', 'Bypass',
++        '-File', $launcherGuard,
++        '-SelfTestChineseCopyGuard'
++    )
++    Invoke-ArpgNative -FilePath 'ctest.exe' -ArgumentList @(
++        '--preset', $Preset,
++        '--output-on-failure',
++        '-R', '^launcher\.window_smoke$',
++        '--parallel', '1'
++    )
++
++    Invoke-ArpgNative -FilePath 'git.exe' -ArgumentList @('diff', '--check')
++}
++finally {
++    Pop-Location
++}
+diff --git a/tests/platform/pause_menu_state_boundary_test.cmake b/tests/platform/pause_menu_state_boundary_test.cmake
+index fd63bd3..ed85a1f 100644
+--- a/tests/platform/pause_menu_state_boundary_test.cmake
++++ b/tests/platform/pause_menu_state_boundary_test.cmake
+@@ -7,21 +7,21 @@ endif()
+ include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+ 
+ function(arpg_pause_preprocessor_is_allowed SANITIZED_SOURCE OUT_ALLOWED OUT_BAD_LINE)
+     string(REPLACE "\n" ";" _arpg_lines "${SANITIZED_SOURCE}")
+     foreach(_arpg_line IN LISTS _arpg_lines)
+         if(_arpg_line MATCHES "^[ \t]*#")
+             if(_arpg_line MATCHES "^[ \t]*#[ \t]*pragma[ \t]+once[ \t]*$")
+                 continue()
+             endif()
+             if(_arpg_line MATCHES
+-                    "^[ \t]*#[ \t]*include[ \t]*(\"pause_menu_state\\.hpp\"|\"platform/settings/settings_types\\.hpp\"|<cstddef>|<cstdint>|<optional>|<limits>)[ \t]*$")
++                    "^[ \t]*#[ \t]*include[ \t]*(\"pause_menu_state\\.hpp\"|\"platform/settings/settings_types\\.hpp\"|\"ui_text_catalog\\.hpp\"|<cstddef>|<cstdint>|<optional>|<limits>)[ \t]*$")
+                 continue()
+             endif()
+             set("${OUT_ALLOWED}" FALSE PARENT_SCOPE)
+             set("${OUT_BAD_LINE}" "${_arpg_line}" PARENT_SCOPE)
+             return()
+         endif()
+     endforeach()
+     set("${OUT_ALLOWED}" TRUE PARENT_SCOPE)
+     set("${OUT_BAD_LINE}" "" PARENT_SCOPE)
+ endfunction()
+@@ -92,20 +92,23 @@ endfunction()
+ 
+ set_property(GLOBAL PROPERTY ARPG_PAUSE_BOUNDARY_SELF_TEST_FAILURES "")
+ 
+ arpg_expect_pause_boundary(
+     "pragma once" FALSE [=[#pragma once]=])
+ arpg_expect_pause_boundary(
+     "own include" FALSE [=[#include "pause_menu_state.hpp"]=])
+ arpg_expect_pause_boundary(
+     "settings include" FALSE
+     [=[ # include "platform/settings/settings_types.hpp"]=])
++arpg_expect_pause_boundary(
++    "UI text catalog include" FALSE
++    [=[#include "ui_text_catalog.hpp"]=])
+ arpg_expect_pause_boundary(
+     "standard include" FALSE [=[#include <cstddef>]=])
+ arpg_expect_pause_boundary(
+     "comment-separated allowed include" FALSE
+     [=[#/**/include/**/<cstdint>]=])
+ 
+ arpg_expect_pause_boundary(
+     "raylib include" TRUE [=[#include <raylib.h>]=])
+ arpg_expect_pause_boundary(
+     "combat include" TRUE [=[#include "combat/combat.hpp"]=])
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 102077a..61d85f2 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -151,20 +151,30 @@ bool full_chinese_ui_foundation_only() noexcept {
+ bool full_chinese_ui_menu_hud_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_FULL_CHINESE_UI_MENU_HUD_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool full_chinese_ui_menu_hud_completion_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_FULL_CHINESE_UI_MENU_HUD_COMPLETION_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ bool cplay021_loot_suction_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_CPLAY021_LOOT_SUCTION_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
+@@ -310,20 +320,30 @@ int main() {
+             dungeon_view_math_suite(),
+             hud_layout_suite(),
+             debug_overlay_renderer_suite(),
+             hud_font_suite(),
+             hud_render_plan_suite(),
+             hud_host_integration_suite(),
+         };
+         return arpg::test::run_suites(full_chinese_ui_menu_hud, 183,
+             "full Chinese UI menus and HUD");
+     }
++    if (full_chinese_ui_menu_hud_completion_only()) {
++        const arpg::test::TestSuite completion_supplement[] = {
++            host_input_suite(),
++            host_settings_runtime_suite(),
++            dungeon_runtime_suite(),
++            host_window_lifetime_suite(),
++        };
++        return arpg::test::run_suites(completion_supplement, 86,
++            "full Chinese UI menus and HUD completion supplement");
++    }
+     if (cplay038_save_directory_only()) {
+         const arpg::test::TestSuite cplay038_only[] = {
+             dungeon_runtime_save_directory_lease_suite(),
+         };
+         return arpg::test::run_suites(cplay038_only, 8,
+             "CPLAY-038 runtime save directory lease");
+     }
+     if (cplay035_settings_conflict_only()) {
+         const arpg::test::TestSuite cplay035_only[] = {
+             host_settings_runtime_suite(),

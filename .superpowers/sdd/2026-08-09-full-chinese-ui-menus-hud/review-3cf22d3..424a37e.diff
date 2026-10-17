@@ -1,0 +1,215 @@
+# Review package: 3cf22d3..HEAD
+
+## Commits
+424a37e fix: preserve Chinese UI text identifiers
+
+## Files changed
+ src/platform/raylib/ui_text_catalog.cpp        |  9 ++---
+ src/platform/raylib/ui_text_catalog.hpp        |  8 ++---
+ tests/platform/host_settings_runtime_tests.cpp |  2 +-
+ tests/platform/ui_text_catalog_tests.cpp       | 49 +++++++++++++++++++++++++-
+ 4 files changed, 58 insertions(+), 10 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index 881bec1..e1e000a 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -5,30 +5,31 @@
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr const char* kUnknown = u8"未知";
+ 
+ constexpr std::array<const char*, 43U> kUiTexts{{
+     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
+     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
+     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
+-    u8"该按键不可绑定", u8"设置无效", u8"版本号已达上限",
+-    u8"实时预览失败", u8"设置保存失败，请重试", u8"另一实例保存繁忙",
+-    u8"设置回滚失败", u8"设置已保存", u8"另一实例修改已重载",
+-    u8"设置存储冲突，需重启", u8"设置已恢复默认值",
+     u8"生命", u8"护盾", u8"经验", u8"等级",
+     u8"正在保存", u8"保存完成", u8"已恢复存档", u8"存档错误",
+     u8"需要恢复存档", u8"无效存档槽",
+     u8"背包", u8"装备", u8"物品详情",
+     u8"被动星图", u8"未分配点", u8"关闭",
+     u8"调试就绪", u8"调试不可用", kUnknown,
++    u8"该按键不可绑定", u8"设置无效", u8"版本号已达上限",
++    u8"实时预览失败", u8"设置保存失败，请重试",
++    u8"另一游戏实例正在保存，请稍后重试",
++    u8"设置回滚失败", u8"设置已保存", u8"另一实例修改已重载",
++    u8"设置存储冲突，需重启", u8"设置已恢复默认值",
+ }};
+ 
+ constexpr std::array<const char*, 18U> kItemBaseNames{{
+     u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套", u8"行者战靴", u8"元素护符",
+     u8"迅捷匕首", u8"攻城巨刃", u8"暗影兜帽", u8"堡垒头盔", u8"夜行者外衣", u8"城塞胸甲",
+     u8"猎手护腕", u8"碎骨护手", u8"轻捷战靴", u8"铁护胫", u8"三元吊坠", u8"混沌之眼",
+ }};
+ 
+ constexpr std::array<const char*, 14U> kMaterialNames{{
+     u8"嬗变石", u8"增幅石", u8"富豪石", u8"混沌石", u8"崇高石", u8"剥离石", u8"神圣石",
+diff --git a/src/platform/raylib/ui_text_catalog.hpp b/src/platform/raylib/ui_text_catalog.hpp
+index 6eb7293..6835b85 100644
+--- a/src/platform/raylib/ui_text_catalog.hpp
++++ b/src/platform/raylib/ui_text_catalog.hpp
+@@ -9,31 +9,31 @@
+ 
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ enum class UiTextId : std::uint16_t {
+     pause_title, pause_continue, pause_settings, pause_quit,
+     settings_title, settings_audio, settings_display, settings_bindings,
+     settings_restore_defaults, settings_apply, settings_cancel,
+     settings_saved_prefix, settings_unknown,
+-    settings_invalid_binding, settings_invalid, settings_revision_limit,
+-    settings_preview_failed, settings_save_failed_retry, settings_save_busy,
+-    settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
+-    settings_storage_conflict, settings_recovered_defaults,
+     hud_health, hud_barrier, hud_experience, hud_level,
+     save_saving, save_saved, save_recovered, save_error,
+     recovery_title, recovery_invalid_slots,
+     inventory_title, equipment_title, item_detail_title,
+     passive_title, passive_points, passive_close,
+     debug_ready, debug_unavailable,
+     unknown,
++    settings_invalid_binding, settings_invalid, settings_revision_limit,
++    settings_preview_failed, settings_save_failed_retry, settings_save_busy,
++    settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
++    settings_storage_conflict, settings_recovered_defaults,
+     count,
+ };
+ 
+ [[nodiscard]] const char* ui_text(UiTextId id) noexcept;
+ [[nodiscard]] const char* ui_item_base_name(std::uint8_t base_id) noexcept;
+ [[nodiscard]] const char* ui_material_name(items::MaterialId id) noexcept;
+ [[nodiscard]] const char* ui_item_slot_name(items::ItemSlot id) noexcept;
+ [[nodiscard]] const char* ui_item_rarity_name(items::ItemRarity id) noexcept;
+ [[nodiscard]] const char* ui_item_affix_name(std::uint16_t affix_id) noexcept;
+ [[nodiscard]] const char* ui_passive_node_name(
+diff --git a/tests/platform/host_settings_runtime_tests.cpp b/tests/platform/host_settings_runtime_tests.cpp
+index a019c39..84ad30a 100644
+--- a/tests/platform/host_settings_runtime_tests.cpp
++++ b/tests/platform/host_settings_runtime_tests.cpp
+@@ -394,21 +394,21 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
+         ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+         ARPG_REQUIRE(same_settings(menu.committed,
+             settings::default_settings()));
+         ARPG_REQUIRE(same_settings(live, menu.committed));
+         ARPG_REQUIRE(same_settings(input, menu.committed));
+         settings::SettingsData expected_draft = edited;
+         expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
+         ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+         ARPG_REQUIRE(menu.message != nullptr);
+         ARPG_REQUIRE(std::strcmp(menu.message,
+-            u8"另一实例保存繁忙") == 0);
++            u8"另一游戏实例正在保存，请稍后重试") == 0);
+     }
+     {
+         MemorySettingsFiles files{};
+         files.path = "memory-settings/settings-a.bin";
+         files.bytes = {0x01U};
+         const settings::SettingsStore store = memory_store(files);
+         FakeBackend backend{};
+         platform::PauseMenuState menu{};
+         menu.committed = settings::default_settings();
+         menu.draft = changed_settings(menu.committed);
+diff --git a/tests/platform/ui_text_catalog_tests.cpp b/tests/platform/ui_text_catalog_tests.cpp
+index 47f4c6d..04f174a 100644
+--- a/tests/platform/ui_text_catalog_tests.cpp
++++ b/tests/platform/ui_text_catalog_tests.cpp
+@@ -6,20 +6,66 @@
+ 
+ #include <array>
+ #include <cstdint>
+ #include <cstring>
+ #include <utility>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ 
++constexpr std::array<platform::UiTextId, 32U> kBaseUiTextIds{{
++    platform::UiTextId::pause_title,
++    platform::UiTextId::pause_continue,
++    platform::UiTextId::pause_settings,
++    platform::UiTextId::pause_quit,
++    platform::UiTextId::settings_title,
++    platform::UiTextId::settings_audio,
++    platform::UiTextId::settings_display,
++    platform::UiTextId::settings_bindings,
++    platform::UiTextId::settings_restore_defaults,
++    platform::UiTextId::settings_apply,
++    platform::UiTextId::settings_cancel,
++    platform::UiTextId::settings_saved_prefix,
++    platform::UiTextId::settings_unknown,
++    platform::UiTextId::hud_health,
++    platform::UiTextId::hud_barrier,
++    platform::UiTextId::hud_experience,
++    platform::UiTextId::hud_level,
++    platform::UiTextId::save_saving,
++    platform::UiTextId::save_saved,
++    platform::UiTextId::save_recovered,
++    platform::UiTextId::save_error,
++    platform::UiTextId::recovery_title,
++    platform::UiTextId::recovery_invalid_slots,
++    platform::UiTextId::inventory_title,
++    platform::UiTextId::equipment_title,
++    platform::UiTextId::item_detail_title,
++    platform::UiTextId::passive_title,
++    platform::UiTextId::passive_points,
++    platform::UiTextId::passive_close,
++    platform::UiTextId::debug_ready,
++    platform::UiTextId::debug_unavailable,
++    platform::UiTextId::unknown,
++}};
++
++constexpr bool base_ui_text_ordinals_are_stable() noexcept {
++    for (std::size_t index = 0U; index < kBaseUiTextIds.size(); ++index) {
++        if (static_cast<std::size_t>(kBaseUiTextIds[index]) != index)
++            return false;
++    }
++    return true;
++}
++
++static_assert(base_ui_text_ordinals_are_stable(),
++    "Base UiTextId ordinals 0-31 are a stable compatibility contract");
++
+ void count_text(const char* text, void* context) noexcept {
+     auto* const count = static_cast<std::size_t*>(context);
+     if (text != nullptr && text[0] != '\0') ++(*count);
+ }
+ 
+ std::size_t utf8_codepoint_count(const char* text) noexcept {
+     std::size_t count{};
+     for (const auto* byte = reinterpret_cast<const unsigned char*>(text);
+          *byte != 0U; ++byte) {
+         if ((*byte & 0xC0U) != 0x80U) ++count;
+@@ -41,21 +87,22 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+             {platform::UiTextId::settings_restore_defaults, u8"恢复默认设置"},
+             {platform::UiTextId::settings_apply, u8"应用"},
+             {platform::UiTextId::settings_cancel, u8"取消"},
+             {platform::UiTextId::settings_saved_prefix, u8"已保存："},
+             {platform::UiTextId::settings_unknown, u8"未知"},
+             {platform::UiTextId::settings_invalid_binding, u8"该按键不可绑定"},
+             {platform::UiTextId::settings_invalid, u8"设置无效"},
+             {platform::UiTextId::settings_revision_limit, u8"版本号已达上限"},
+             {platform::UiTextId::settings_preview_failed, u8"实时预览失败"},
+             {platform::UiTextId::settings_save_failed_retry, u8"设置保存失败，请重试"},
+-            {platform::UiTextId::settings_save_busy, u8"另一实例保存繁忙"},
++            {platform::UiTextId::settings_save_busy,
++                u8"另一游戏实例正在保存，请稍后重试"},
+             {platform::UiTextId::settings_rollback_failed, u8"设置回滚失败"},
+             {platform::UiTextId::settings_saved, u8"设置已保存"},
+             {platform::UiTextId::settings_reloaded_elsewhere, u8"另一实例修改已重载"},
+             {platform::UiTextId::settings_storage_conflict, u8"设置存储冲突，需重启"},
+             {platform::UiTextId::settings_recovered_defaults, u8"设置已恢复默认值"},
+             {platform::UiTextId::hud_health, u8"生命"},
+             {platform::UiTextId::hud_barrier, u8"护盾"},
+             {platform::UiTextId::hud_experience, u8"经验"},
+             {platform::UiTextId::hud_level, u8"等级"},
+             {platform::UiTextId::save_saving, u8"正在保存"},

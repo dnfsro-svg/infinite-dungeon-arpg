@@ -1,0 +1,2122 @@
+# Review package: 9f3370c..HEAD
+
+## Commits
+110a284 feat: localize dungeon interaction views
+
+## Files changed
+ src/platform/raylib/combat_renderer.cpp            |   6 +-
+ src/platform/raylib/combat_renderer.hpp            |   2 +
+ src/platform/raylib/dungeon_view_math.cpp          | 193 ++++++++++++++-------
+ src/platform/raylib/dungeon_view_math.hpp          |  31 +++-
+ src/platform/raylib/room_renderer.cpp              | 103 +++++++----
+ src/platform/raylib/ui_text_catalog.cpp            |  10 +-
+ tests/platform/CMakeLists.txt                      |  11 ++
+ tests/platform/dungeon_view_math_tests.cpp         | 177 +++++++++++++++----
+ .../hole_prompt_binding_source_self_test.cmake     |  77 ++++++++
+ .../platform/hole_prompt_binding_source_test.cmake | 175 +++++++++++++++----
+ tests/platform/hud_font_tests.cpp                  |  33 ++++
+ tests/platform/hud_layout_tests.cpp                |  32 ++++
+ tests/platform/hud_render_plan_tests.cpp           |  46 +++++
+ tests/platform/hud_view_model_tests.cpp            |  11 +-
+ tests/platform/platform_test_main.cpp              |  11 +-
+ .../platform/stage12_environment_render_tests.cpp  |   3 +-
+ tests/platform/ui_text_catalog_tests.cpp           |   4 +-
+ 17 files changed, 752 insertions(+), 173 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 08070fc..7f82967 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -278,33 +278,37 @@ CombatRenderPlan make_combat_render_plan(
+ 
+ std::optional<std::size_t> hud_presented_frame_index(
+     HudPresentedFrame frame) noexcept {
+     const std::size_t index = static_cast<std::size_t>(frame);
+     return index < static_cast<std::size_t>(HudPresentedFrame::count)
+         ? std::optional<std::size_t>{index} : std::nullopt;
+ }
+ 
+ bool CombatRenderer::initialize_resources(
+     const SharedUiFont& shared_ui_font) noexcept {
++    world_ui_font_ = shared_ui_font.font();
++    world_ui_font_ready_ = shared_ui_font.ready();
+     const bool death_font_ready = death_overlay_.initialize(shared_ui_font);
+     const bool hud_font_ready = hud_renderer_.initialize(shared_ui_font);
+     static_cast<void>(material_pack_.synchronize_residency(
+         base_material_residency_request()));
+     if (!death_font_ready || !hud_font_ready) {
+         TraceLog(LOG_WARNING,
+             "HUD overlays are using a fallback font; formal CJK validation will fail");
+     }
+-    return death_font_ready && hud_font_ready;
++    return death_font_ready && hud_font_ready && world_ui_font_ready_;
+ }
+ 
+ void CombatRenderer::shutdown_resources() noexcept {
+     material_pack_.unload();
++    world_ui_font_ = {};
++    world_ui_font_ready_ = false;
+     hud_renderer_.shutdown();
+     death_overlay_.shutdown();
+ }
+ 
+ bool CombatRenderer::active_skill_assets_ready() const noexcept {
+     return active_skill_renderer_.assets_ready();
+ }
+ 
+ bool CombatRenderer::material_pipeline_ready() const noexcept {
+     return material_pack_.material_pipeline_ready();
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 96b95b3..3e35801 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -236,15 +236,17 @@ private:
+     RoomBackgroundDrawRuntimeStatus room_background_draw_status_{};
+     ActiveSkillDrawRuntimeStatus active_skill_draw_status_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
+     ActiveSkillHudModel active_skill_hud_model_{};
+     HudLayout hud_layout_{};
+     std::uint64_t hud_binding_revision_{};
+     std::uint64_t hud_observation_count_{};
+     std::array<std::uint64_t,
+         static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
++    Font world_ui_font_{};
++    bool world_ui_font_ready_{};
+     settings::LootFilterMode loot_filter_mode_{
+         settings::LootFilterMode::show_all};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/dungeon_view_math.cpp b/src/platform/raylib/dungeon_view_math.cpp
+index acee228..3a1a3b8 100644
+--- a/src/platform/raylib/dungeon_view_math.cpp
++++ b/src/platform/raylib/dungeon_view_math.cpp
+@@ -1,15 +1,16 @@
+ #include "dungeon_view_math.hpp"
+ 
++#include "ui_utf8.hpp"
++
+ #include <algorithm>
+ #include <cmath>
+-#include <cstdio>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kTransitionSeconds = 0.12F;
+ constexpr float kTwoPi = 6.28318530717958647692F;
+ 
+ constexpr Rgba8 kFireFrame{236U, 92U, 54U, 255U};
+ constexpr Rgba8 kWaterFrame{64U, 156U, 236U, 255U};
+ constexpr Rgba8 kLightningFrame{236U, 218U, 72U, 255U};
+@@ -26,31 +27,31 @@ DoorVisualMode door_visual_mode(
+     }
+     if (exits_open) {
+         return DoorVisualMode::open;
+     }
+     return DoorVisualMode::closed;
+ }
+ 
+ DoorTheme door_theme(dungeon::ExitDirection direction) noexcept {
+     switch (direction) {
+     case dungeon::ExitDirection::up:
+-        return {dungeon::DungeonElement::fire, "FIRE", "\xE2\x86\x91", kFireFrame};
++        return {dungeon::DungeonElement::fire, u8"火焰", "\xE2\x86\x91", kFireFrame};
+     case dungeon::ExitDirection::down:
+-        return {dungeon::DungeonElement::water, "WATER", "\xE2\x86\x93", kWaterFrame};
++        return {dungeon::DungeonElement::water, u8"水流", "\xE2\x86\x93", kWaterFrame};
+     case dungeon::ExitDirection::left:
+-        return {dungeon::DungeonElement::lightning, "LIGHTNING", "\xE2\x86\x90", kLightningFrame};
++        return {dungeon::DungeonElement::lightning, u8"闪电", "\xE2\x86\x90", kLightningFrame};
+     case dungeon::ExitDirection::right:
+-        return {dungeon::DungeonElement::chaos, "CHAOS", "\xE2\x86\x92", kChaosFrame};
++        return {dungeon::DungeonElement::chaos, u8"混沌", "\xE2\x86\x92", kChaosFrame};
+     case dungeon::ExitDirection::none:
+-        return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
++        return {dungeon::DungeonElement::chaos, u8"未知", "?", kChaosFrame};
+     }
+-    return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
++    return {dungeon::DungeonElement::chaos, u8"未知", "?", kChaosFrame};
+ }
+ 
+ DoorArrowGeometry door_arrow_geometry(dungeon::ExitDirection direction,
+     float center_x, float center_y, float scale) noexcept {
+     const float safe_scale = std::max(0.0F, scale);
+     Vector2 outward{};
+     switch (direction) {
+     case dungeon::ExitDirection::up:
+         outward = {0.0F, -1.0F};
+         break;
+@@ -129,64 +130,63 @@ EnvironmentHazardVisual environment_hazard_visual(
+         hazard.radius,
+         warning ? Rgba8{255U, 203U, 91U, 48U} : active_fill,
+         warning ? Rgba8{255U, 203U, 91U, 235U} : active_outline,
+     };
+ }
+ 
+ namespace {
+ 
+ const char* abyss_danger_label(abyss::AbyssDanger danger) noexcept {
+     switch (danger) {
+-    case abyss::AbyssDanger::low: return "ABYSS LOW";
+-    case abyss::AbyssDanger::medium: return "ABYSS MED";
+-    case abyss::AbyssDanger::high: return "ABYSS HIGH";
++    case abyss::AbyssDanger::low: return u8"低危";
++    case abyss::AbyssDanger::medium: return u8"中危";
++    case abyss::AbyssDanger::high: return u8"高危";
+     }
+-    return "ABYSS";
++    return u8"未知";
+ }
+ 
+ const char* abyss_rule_label(abyss::AbyssRuleId rule) noexcept {
+     switch (rule) {
+-    case abyss::AbyssRuleId::thunderstorm: return "THUNDERSTORM";
+-    case abyss::AbyssRuleId::hunting_flames: return "HUNTING FLAMES";
+-    case abyss::AbyssRuleId::chaos_expansion: return "CHAOS EXPANSION";
+-    case abyss::AbyssRuleId::swift_pursuit: return "SWIFT PURSUIT";
+-    case abyss::AbyssRuleId::abyss_bulwark: return "ABYSS BULWARK";
+-    case abyss::AbyssRuleId::abyss_fury: return "ABYSS FURY";
+-    case abyss::AbyssRuleId::heavy_steps: return "HEAVY STEPS";
+-    case abyss::AbyssRuleId::exhausted_recovery:
+-        return "EXHAUSTED RECOVERY";
+-    case abyss::AbyssRuleId::life_sacrifice: return "LIFE SACRIFICE";
+-    case abyss::AbyssRuleId::none: return "NO RULE";
++    case abyss::AbyssRuleId::thunderstorm: return u8"雷暴";
++    case abyss::AbyssRuleId::hunting_flames: return u8"猎杀之焰";
++    case abyss::AbyssRuleId::chaos_expansion: return u8"混沌扩张";
++    case abyss::AbyssRuleId::swift_pursuit: return u8"迅捷追猎";
++    case abyss::AbyssRuleId::abyss_bulwark: return u8"深渊壁垒";
++    case abyss::AbyssRuleId::abyss_fury: return u8"深渊狂怒";
++    case abyss::AbyssRuleId::heavy_steps: return u8"沉重脚步";
++    case abyss::AbyssRuleId::exhausted_recovery: return u8"疲惫恢复";
++    case abyss::AbyssRuleId::life_sacrifice: return u8"生命献祭";
++    case abyss::AbyssRuleId::none: return u8"无规则";
+     }
+-    return "NO RULE";
++    return u8"无规则";
+ }
+ 
+ const char* abyss_effect_label(abyss::AbyssRuleId rule) noexcept {
+     switch (rule) {
+     case abyss::AbyssRuleId::thunderstorm:
+-        return "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning";
++        return u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害";
+     case abyss::AbyssRuleId::hunting_flames:
+-        return "Every 240t: warn 45t/radius 1.0, burn 10% max HP/60t for 180t";
++        return u8"每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害";
+     case abyss::AbyssRuleId::chaos_expansion:
+-        return "Radius 1.0/2.3/3.6/4.9/6.2 per 180t, 8% max HP chaos/60t";
++        return u8"每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害";
+     case abyss::AbyssRuleId::swift_pursuit:
+-        return "Monsters: move +15%, cooldown x85%";
++        return u8"怪物：移动速度+15%，冷却时间×85%";
+     case abyss::AbyssRuleId::abyss_bulwark:
+-        return "Monsters: armor x130%, shield +30% max HP";
++        return u8"怪物：护甲×130%，护盾+30%最大生命";
+     case abyss::AbyssRuleId::abyss_fury:
+-        return "Monsters: damage and attack speed x145%";
++        return u8"怪物：伤害与攻击速度×145%";
+     case abyss::AbyssRuleId::heavy_steps:
+-        return "Player: ground move x85%";
++        return u8"玩家：地面移动速度×85%";
+     case abyss::AbyssRuleId::exhausted_recovery:
+-        return "Player: entry resources and future recovery x70%";
++        return u8"玩家：入场资源及后续恢复×70%";
+     case abyss::AbyssRuleId::life_sacrifice:
+-        return "Player: max HP x55%";
++        return u8"玩家：最大生命×55%";
+     case abyss::AbyssRuleId::none:
+         return "";
+     }
+     return "";
+ }
+ 
+ }  // namespace
+ 
+ AbyssHudValues abyss_hud_values(
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+@@ -198,25 +198,24 @@ AbyssHudValues abyss_hud_values(
+     values.effect_label = abyss_effect_label(snapshot.abyss_rule);
+     values.pending_rewards = snapshot.abyss_pending_rewards;
+     values.unpicked_rewards = snapshot.abyss_unpicked_rewards;
+     values.confirmation_visible = values.visible
+         && snapshot.abyss_exit_confirmation_armed;
+     values.confirmation_transition =
+         snapshot.abyss_exit_confirmation_transition;
+     values.confirmation_direction =
+         snapshot.abyss_exit_confirmation_direction;
+     if (values.confirmation_transition == dungeon::TransitionKind::descent) {
+-        values.confirmation_label =
+-            "Press E again to abandon remaining rewards and descend";
++        values.confirmation_label = u8"再次交互，放弃剩余奖励并下潜";
+     } else {
+         values.confirmation_label =
+-            "Touch the SAME door again to abandon ALL remaining rewards";
++            u8"离开后再次触碰同一出口以放弃全部剩余奖励";
+     }
+     return values;
+ }
+ 
+ HoleVisualMode hole_visual_mode(
+     const dungeon::DungeonSnapshot& snapshot) noexcept {
+     if (!snapshot.has_active_room || !snapshot.has_hole) {
+         return HoleVisualMode::hidden;
+     }
+     switch (snapshot.phase) {
+@@ -232,20 +231,31 @@ HoleVisualMode hole_visual_mode(
+     case dungeon::RoomPhase::committing:
+         return HoleVisualMode::busy;
+     case dungeon::RoomPhase::faulted:
+         return HoleVisualMode::faulted;
+     case dungeon::RoomPhase::transitioning:
+         return HoleVisualMode::hidden;
+     }
+     return HoleVisualMode::hidden;
+ }
+ 
++const char* hole_visual_label(HoleVisualMode mode) noexcept {
++    switch (mode) {
++    case HoleVisualMode::hidden: return "";
++    case HoleVisualMode::sealed: return u8"封闭";
++    case HoleVisualMode::ready: return u8"可进入";
++    case HoleVisualMode::busy: return u8"保存中";
++    case HoleVisualMode::faulted: return u8"异常";
++    }
++    return u8"异常";
++}
++
+ bool player_in_hole_range(
+     combat::Vec3 position,
+     combat::Vec3 center,
+     float radius) noexcept {
+     if (radius < 0.0F) {
+         return false;
+     }
+     const float x = position.x - center.x;
+     const float y = position.y - center.y;
+     return x * x + y * y <= radius * radius;
+@@ -253,31 +263,90 @@ bool player_in_hole_range(
+ 
+ bool can_prompt_descent(
+     const dungeon::DungeonSnapshot& snapshot,
+     combat::Vec3 player_position) noexcept {
+     return hole_visual_mode(snapshot) == HoleVisualMode::ready
+         && player_in_hole_range(
+             player_position, kHoleCenter, kHoleInteractionRadius);
+ }
+ 
+ HoleInteractionPrompt hole_interaction_prompt(
+-    const char* interact_binding_label) noexcept {
++    const char* interact_binding_label,
++    HoleInteractionAction action) noexcept {
+     HoleInteractionPrompt prompt{};
+-    const char* const label = interact_binding_label != nullptr
+-            && interact_binding_label[0] != '\0'
+-        ? interact_binding_label : "E";
+-    static_cast<void>(std::snprintf(
+-        prompt.data(), prompt.size(), "%s: DESCEND", label));
+-    prompt.back() = '\0';
++    if (interact_binding_label == nullptr
++            || interact_binding_label[0] == '\0') return prompt;
++    static_cast<void>(ui_utf8_format(prompt.data(), prompt.size(),
++        action == HoleInteractionAction::descend
++            ? u8"%s：下潜" : u8"%s：进入下一层",
++        interact_binding_label));
+     return prompt;
+ }
+ 
++WorldPromptStyle world_prompt_style() noexcept {
++    return {
++        {0x0BU, 0x10U, 0x19U, 255U},
++        {248U, 246U, 238U, 255U},
++        {194U, 229U, 255U, 255U},
++        {255U, 210U, 118U, 255U},
++        {255U, 152U, 152U, 255U},
++    };
++}
++
++Rgba8 world_prompt_text_color(Rgba8 requested) noexcept {
++    requested.a = 255U;
++    const WorldPromptStyle style = world_prompt_style();
++    const auto luma = [](Rgba8 color) noexcept {
++        return 0.2126F * static_cast<float>(color.r)
++            + 0.7152F * static_cast<float>(color.g)
++            + 0.0722F * static_cast<float>(color.b);
++    };
++    const float requested_luma = luma(requested);
++    const float backing_luma = luma(style.backing);
++    const float lighter = (std::max)(requested_luma, backing_luma);
++    const float darker = (std::min)(requested_luma, backing_luma);
++    return (lighter + 12.75F) / (darker + 12.75F) >= 4.5F
++        ? requested : style.primary;
++}
++
++WorldPromptLayout world_prompt_layout(
++    Vector2 anchor, Vector2 measured,
++    float screen_width, float screen_height) noexcept {
++    WorldPromptLayout layout{};
++    if (!(screen_width > 0.0F) || !(screen_height > 0.0F)
++            || !(measured.x > 0.0F) || !(measured.y > 0.0F)) {
++        return layout;
++    }
++    const float scale = std::clamp((std::min)(
++        screen_width / 1280.0F, screen_height / 720.0F), 0.625F, 1.5F);
++    const float padding_x = 8.0F * scale;
++    const float padding_y = 5.0F * scale;
++    const float backing_width = (std::min)(
++        screen_width, measured.x + padding_x * 2.0F);
++    const float backing_height = (std::min)(
++        screen_height, measured.y + padding_y * 2.0F);
++    const float backing_x = std::clamp(
++        anchor.x - backing_width * 0.5F,
++        0.0F, screen_width - backing_width);
++    const float backing_y = std::clamp(anchor.y,
++        0.0F, screen_height - backing_height);
++    layout.visible = true;
++    layout.backing = {
++        backing_x, backing_y, backing_width, backing_height};
++    layout.measured = measured;
++    layout.text_position = {
++        backing_x + (backing_width - measured.x) * 0.5F,
++        backing_y + (backing_height - measured.y) * 0.5F,
++    };
++    return layout;
++}
++
+ Rgba8 ecosystem_tint(dungeon::DungeonElement element) noexcept {
+     switch (element) {
+     case dungeon::DungeonElement::fire:
+         return {88U, 43U, 34U, 255U};
+     case dungeon::DungeonElement::water:
+         return {35U, 70U, 104U, 255U};
+     case dungeon::DungeonElement::lightning:
+         return {96U, 90U, 34U, 255U};
+     case dungeon::DungeonElement::chaos:
+         return {73U, 43U, 99U, 255U};
+@@ -292,27 +361,27 @@ float abyss_pulse_alpha(float elapsed_seconds) noexcept {
+     const float phase = std::fmod(elapsed_seconds, 1.0F);
+     const float alpha = 0.5F + 0.5F * std::sin(kTwoPi * phase);
+     return std::clamp(alpha, 0.0F, 1.0F);
+ }
+ 
+ const char* save_indicator_label(SaveIndicator indicator) noexcept {
+     switch (indicator) {
+     case SaveIndicator::none:
+         return "";
+     case SaveIndicator::saving:
+-        return "SAVING";
++        return u8"保存中";
+     case SaveIndicator::saved:
+-        return "SAVED";
++        return u8"已保存";
+     case SaveIndicator::recovered:
+-        return "RECOVERED";
++        return u8"已恢复";
+     case SaveIndicator::error:
+-        return "SAVE ERROR";
++        return u8"存档错误";
+     }
+     return "";
+ }
+ 
+ bool recovery_requested(
+     bool runtime_recovery_required,
+     bool n_pressed) noexcept {
+     return runtime_recovery_required && n_pressed;
+ }
+ 
+@@ -332,53 +401,55 @@ bool can_interpolate_room(
+ 
+ bool dungeon_event_clears_transients(
+     dungeon::DungeonEventKind kind) noexcept {
+     return kind == dungeon::DungeonEventKind::room_destroyed
+         || kind == dungeon::DungeonEventKind::room_reset;
+ }
+ 
+ const char* room_phase_label(dungeon::RoomPhase phase) noexcept {
+     switch (phase) {
+     case dungeon::RoomPhase::locked:
+-        return "LOCKED";
++        return u8"锁定";
+     case dungeon::RoomPhase::combat:
+-        return "COMBAT";
++        return u8"战斗中";
+     case dungeon::RoomPhase::wave_delay:
+-        return "WAVE DELAY";
++        return u8"等待下一波";
+     case dungeon::RoomPhase::cleared:
+-        return "CLEARED";
++        return u8"已清理";
+     case dungeon::RoomPhase::awaiting_exit:
+-        return "AWAITING EXIT";
++        return u8"等待离开";
+     case dungeon::RoomPhase::committing:
+-        return "COMMITTING";
++        return u8"保存中";
+     case dungeon::RoomPhase::transitioning:
+-        return "TRANSITIONING";
++        return u8"切换房间";
++    case dungeon::RoomPhase::death_pending:
++        return u8"处理撤退中";
+     case dungeon::RoomPhase::faulted:
+-        return "FAULTED";
++        return u8"异常";
+     }
+-    return "UNKNOWN";
++    return u8"未知";
+ }
+ 
+ const char* exit_direction_label(dungeon::ExitDirection direction) noexcept {
+     switch (direction) {
+     case dungeon::ExitDirection::up:
+-        return "UP";
++        return u8"上方";
+     case dungeon::ExitDirection::down:
+-        return "DOWN";
++        return u8"下方";
+     case dungeon::ExitDirection::left:
+-        return "LEFT";
++        return u8"左方";
+     case dungeon::ExitDirection::right:
+-        return "RIGHT";
++        return u8"右方";
+     case dungeon::ExitDirection::none:
+-        return "NONE";
++        return u8"无方向";
+     }
+-    return "UNKNOWN";
++    return u8"未知";
+ }
+ 
+ TransitionVisualState transition_after_dungeon_event(
+     TransitionVisualState state,
+     dungeon::DungeonEventKind kind) noexcept {
+     if (kind == dungeon::DungeonEventKind::room_destroyed) {
+         state.seconds_left = kTransitionSeconds;
+     } else if (kind == dungeon::DungeonEventKind::room_reset) {
+         state = {};
+     }
+diff --git a/src/platform/raylib/dungeon_view_math.hpp b/src/platform/raylib/dungeon_view_math.hpp
+index 9368b5f..06b6696 100644
+--- a/src/platform/raylib/dungeon_view_math.hpp
++++ b/src/platform/raylib/dungeon_view_math.hpp
+@@ -41,20 +41,40 @@ enum class HoleVisualMode : std::uint8_t {
+ };
+ 
+ enum class SaveIndicator : std::uint8_t {
+     none,
+     saving,
+     saved,
+     recovered,
+     error,
+ };
+ 
++enum class HoleInteractionAction : std::uint8_t {
++    descend,
++    next_floor,
++};
++
++struct WorldPromptStyle final {
++    Rgba8 backing{};
++    Rgba8 primary{};
++    Rgba8 secondary{};
++    Rgba8 warning{};
++    Rgba8 danger{};
++};
++
++struct WorldPromptLayout final {
++    bool visible{};
++    Rectangle backing{};
++    Vector2 text_position{};
++    Vector2 measured{};
++};
++
+ enum class DoorVisualMode : std::uint8_t {
+     closed,
+     open,
+     hidden,
+ };
+ 
+ struct TransitionVisualState final {
+     float seconds_left{};
+     bool transition_phase_seen{};
+ };
+@@ -92,49 +112,56 @@ struct AbyssHudValues final {
+     bool confirmation_visible{};
+     dungeon::TransitionKind confirmation_transition{
+         dungeon::TransitionKind::none};
+     dungeon::ExitDirection confirmation_direction{
+         dungeon::ExitDirection::none};
+     const char* confirmation_label{};
+ };
+ 
+ inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
+ inline constexpr float kHoleInteractionRadius = 3.25F;
+-using HoleInteractionPrompt = std::array<char, 32>;
++using HoleInteractionPrompt = std::array<char, 48>;
+ 
+ [[nodiscard]] DoorVisualMode door_visual_mode(
+     dungeon::RoomPhase phase,
+     bool has_active_room,
+     bool exits_open) noexcept;
+ [[nodiscard]] DoorTheme door_theme(
+     dungeon::ExitDirection direction) noexcept;
+ [[nodiscard]] DoorArrowGeometry door_arrow_geometry(
+     dungeon::ExitDirection direction, float center_x, float center_y,
+     float scale) noexcept;
+ [[nodiscard]] bool abyss_door_marker(
+     const dungeon::DungeonSnapshot& snapshot,
+     dungeon::ExitDirection direction) noexcept;
+ [[nodiscard]] EnvironmentHazardVisual environment_hazard_visual(
+     const combat::HazardSnapshot& hazard) noexcept;
+ [[nodiscard]] AbyssHudValues abyss_hud_values(
+     const dungeon::DungeonSnapshot& snapshot) noexcept;
+ [[nodiscard]] HoleVisualMode hole_visual_mode(
+     const dungeon::DungeonSnapshot& snapshot) noexcept;
++[[nodiscard]] const char* hole_visual_label(HoleVisualMode mode) noexcept;
+ [[nodiscard]] bool player_in_hole_range(
+     combat::Vec3 position,
+     combat::Vec3 center,
+     float radius) noexcept;
+ [[nodiscard]] bool can_prompt_descent(
+     const dungeon::DungeonSnapshot& snapshot,
+     combat::Vec3 player_position) noexcept;
+ [[nodiscard]] HoleInteractionPrompt hole_interaction_prompt(
+-    const char* interact_binding_label) noexcept;
++    const char* interact_binding_label,
++    HoleInteractionAction action = HoleInteractionAction::descend) noexcept;
++[[nodiscard]] WorldPromptStyle world_prompt_style() noexcept;
++[[nodiscard]] Rgba8 world_prompt_text_color(Rgba8 requested) noexcept;
++[[nodiscard]] WorldPromptLayout world_prompt_layout(
++    Vector2 anchor, Vector2 measured,
++    float screen_width, float screen_height) noexcept;
+ [[nodiscard]] Rgba8 ecosystem_tint(
+     dungeon::DungeonElement element) noexcept;
+ [[nodiscard]] float abyss_pulse_alpha(float elapsed_seconds) noexcept;
+ [[nodiscard]] const char* save_indicator_label(
+     SaveIndicator indicator) noexcept;
+ [[nodiscard]] bool recovery_requested(
+     bool runtime_recovery_required,
+     bool n_pressed) noexcept;
+ [[nodiscard]] bool can_interpolate_room(
+     const dungeon::DungeonSnapshot& previous,
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index d8664d9..3121a18 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -6,32 +6,54 @@
+ #include "environment_prop_layout.hpp"
+ #include "environment_render_plan.hpp"
+ #include "fire_room_material_slice.hpp"
+ #include "material_animation.hpp"
+ #include "material_loot_view.hpp"
+ #include "lightning_room_material_slice.hpp"
+ #include "render_layout.hpp"
+ #include "room_background_render_plan.hpp"
+ #include "ui_text_renderer.hpp"
+ #include "ui_typography.hpp"
++#include "ui_utf8.hpp"
+ #include "water_room_material_slice.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
++Color raylib_color(Rgba8 color) noexcept {
++    return {color.r, color.g, color.b, color.a};
++}
++
++void draw_world_prompt(const char* text, Vector2 anchor,
++    float font_size, Color color, Font font, bool font_ready,
++    float screen_width, float screen_height) noexcept {
++    if (!font_ready || !IsFontValid(font) || text == nullptr
++            || text[0] == '\0' || !(font_size > 0.0F)) return;
++    const WorldPromptStyle style = world_prompt_style();
++    const Vector2 measured = MeasureTextEx(font, text, font_size, 1.0F);
++    const WorldPromptLayout layout = world_prompt_layout(
++        anchor, measured, screen_width, screen_height);
++    if (!layout.visible) return;
++    color = raylib_color(world_prompt_text_color(
++        {color.r, color.g, color.b, color.a}));
++    DrawRectangleRec(layout.backing, raylib_color(style.backing));
++    draw_crisp_ui_text(font, text, layout.text_position,
++        font_size, 1.0F, color);
++}
++
+ Vector2 lerp(Vector2 from, Vector2 to, float amount) noexcept {
+     return {
+         from.x + (to.x - from.x) * amount,
+         from.y + (to.y - from.y) * amount,
+     };
+ }
+ 
+ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+@@ -142,22 +164,22 @@ MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
+         return MaterialSpriteId::lightning_hole;
+     }
+     if (ecology == dungeon::DungeonElement::chaos) {
+         return MaterialSpriteId::chaos_hole;
+     }
+     return MaterialSpriteId::environment_hole;
+ }
+ 
+ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
+     const CombatCameraView& camera,
+-    float width, float height, const MaterialPack& material_pack, Font hud_font,
+-    bool hud_font_ready) noexcept {
++    float width, float height, const MaterialPack& material_pack, Font font,
++    bool font_ready) noexcept {
+     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
+         snapshot.has_active_room, snapshot.exits_unlocked);
+     if (mode == DoorVisualMode::hidden) {
+         return;
+     }
+     for (std::size_t index = 0; index < snapshot.doors.size(); ++index) {
+         const dungeon::DoorRenderSnapshot& door = snapshot.doors[index];
+         const RenderProjection projected = project_render_world(
+             door.position.x, door.position.y, door.position.z,
+             camera, width, height);
+@@ -217,35 +239,24 @@ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
+                 frame.y + 13.0F * projected.scale,
+             };
+             DrawPoly(marker, 4, 9.0F * projected.scale, 45.0F,
+                 Color{231, 46, 157, 245});
+             DrawPolyLinesEx(marker, 4, 9.0F * projected.scale, 45.0F,
+                 2.0F * projected.scale, Color{255, 155, 221, 255});
+         }
+         const MonsterLabelTextStyle scene_text = monster_label_text_style(
+             ui_viewport_scale(static_cast<int>(width),
+                 static_cast<int>(height)));
+-        const int label_size = scene_text.role_font_size;
+-        const Font label_font = hud_font_ready ? hud_font : GetFontDefault();
+-        const Vector2 measured = MeasureTextEx(label_font, visual.label,
+-            static_cast<float>(label_size), 1.0F);
+-        const Vector2 label_position{
+-            projected.x - measured.x * 0.5F,
+-            frame.y - static_cast<float>(label_size) - 4.0F};
+-        if (hud_font_ready && IsFontValid(label_font)) {
+-            draw_crisp_ui_text(label_font, visual.label, label_position,
+-                static_cast<float>(label_size), 1.0F, text_color);
+-        } else {
+-            DrawText(visual.label, static_cast<int>(std::round(label_position.x)),
+-                static_cast<int>(std::round(label_position.y)),
+-                label_size, text_color);
+-        }
++        const float label_size = static_cast<float>(scene_text.role_font_size);
++        draw_world_prompt(visual.label,
++            {projected.x, frame.y - label_size - 14.0F},
++            label_size, text_color, font, font_ready, width, height);
+     }
+ }
+ 
+ void draw_environment_hazards(
+     const dungeon::DungeonRenderSnapshot& snapshot,
+     const CombatCameraView& camera, float width, float height) noexcept {
+     if (!snapshot.has_combat) return;
+     for (const combat::HazardSnapshot& hazard : snapshot.combat.hazards) {
+         const EnvironmentHazardVisual visual =
+             environment_hazard_visual(hazard);
+@@ -459,37 +470,41 @@ void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
+     const std::size_t potion_count = (std::min)(
+         static_cast<std::size_t>(snapshot.ground_health_potion_count),
+         snapshot.ground_health_potions.size());
+     for (std::size_t index = 0U; index < potion_count; ++index) {
+         draw_secondary_loot_icon(snapshot.ground_health_potions[index].position,
+             {255U, 48U, 48U, 255U}, MaterialSpriteId::health_potion, true,
+             material_pack, camera, width, height);
+     }
+ }
+ 
+-void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
++void draw_abyss(const dungeon::DungeonSnapshot& snapshot,
++    float elapsed_seconds, Font font, bool font_ready) noexcept {
+     if (!snapshot.is_abyss) {
+         return;
+     }
+     const float pulse = abyss_pulse_alpha(elapsed_seconds);
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));
+     DrawRectangleLinesEx({8.0F, 8.0F, static_cast<float>(GetScreenWidth() - 16),
+         static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
+         Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
+     const AbyssHudValues values = abyss_hud_values(snapshot);
+     if (values.visible) {
+-        const char* label = TextFormat("%s  |  %s",
+-            values.danger_label, values.rule_label);
+-        const int font_size = 20;
+-        DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
+-            18, font_size, Color{255, 164, 221, 255});
++        std::array<char, 96U> label{};
++        static_cast<void>(ui_utf8_format(label.data(), label.size(),
++            u8"%s｜%s", values.danger_label, values.rule_label));
++        const float screen_width = static_cast<float>(GetScreenWidth());
++        const float screen_height = static_cast<float>(GetScreenHeight());
++        draw_world_prompt(label.data(), {screen_width * 0.5F, 18.0F},
++            20.0F, raylib_color(world_prompt_style().primary),
++            font, font_ready, screen_width, screen_height);
+     }
+ }
+ 
+ HoleVisualMode render_hole_visual_mode(
+     const dungeon::DungeonRenderSnapshot& snapshot) noexcept {
+     if (!snapshot.has_active_room || !snapshot.hole.present) {
+         return HoleVisualMode::hidden;
+     }
+     switch (snapshot.phase) {
+     case dungeon::RoomPhase::locked:
+@@ -505,55 +520,67 @@ HoleVisualMode render_hole_visual_mode(
+         return HoleVisualMode::faulted;
+     case dungeon::RoomPhase::transitioning:
+         return HoleVisualMode::hidden;
+     }
+     return HoleVisualMode::hidden;
+ }
+ 
+ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
+     const MaterialPack& material_pack,
+     const CombatCameraView& camera,
+-    const char* interact_binding_label) noexcept {
++    const char* interact_binding_label,
++    Font font, bool font_ready) noexcept {
+     const HoleVisualMode hole = render_hole_visual_mode(snapshot);
+     if (hole == HoleVisualMode::hidden) {
+         return;
+     }
+     const HoleProjectedGeometry geometry = project_hole_geometry(
+         snapshot.hole.position, camera,
+         static_cast<float>(GetScreenWidth()),
+         static_cast<float>(GetScreenHeight()));
+-    const int x = static_cast<int>(geometry.center.x);
+-    const int y = static_cast<int>(geometry.center.y);
++    const float screen_width = static_cast<float>(GetScreenWidth());
++    const float screen_height = static_cast<float>(GetScreenHeight());
+     Color color{43, 25, 55, 255};
+     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
+     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
+     if (!material_pack.draw(hole_sprite(snapshot.ecology),
+             geometry.center, false,
+             kEnvironmentGameplayHoleScale
+                 * geometry.radius_x / 74.0F)) {
+         DrawEllipse(static_cast<int>(geometry.center.x),
+             static_cast<int>(geometry.center.y),
+             geometry.radius_x, geometry.radius_y, Color{5, 2, 9, 235});
+     }
+     DrawEllipseLinesV(geometry.center,
+         geometry.radius_x, geometry.radius_y, color);
+-    const char* label = hole == HoleVisualMode::sealed ? "SEALED"
+-        : hole == HoleVisualMode::ready ? "READY"
+-        : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
+-    DrawText(label, x - MeasureText(label, 20) / 2, y - 12, 20, color);
++    const char* const label = hole_visual_label(hole);
++    const WorldPromptStyle prompt_style = world_prompt_style();
++    const Color label_color = hole == HoleVisualMode::busy
++        ? raylib_color(prompt_style.warning)
++        : hole == HoleVisualMode::faulted
++            ? raylib_color(prompt_style.danger)
++            : hole == HoleVisualMode::ready
++                ? raylib_color(prompt_style.primary)
++                : raylib_color(prompt_style.secondary);
++    draw_world_prompt(label,
++        {geometry.center.x, geometry.center.y - 12.0F},
++        20.0F, label_color, font, font_ready,
++        screen_width, screen_height);
+     if (snapshot.has_combat && hole == HoleVisualMode::ready
+         && player_in_hole_range(snapshot.combat.player.position,
+             snapshot.hole.position, kHoleInteractionRadius)) {
+         const auto prompt = hole_interaction_prompt(
+-            interact_binding_label);
+-        DrawText(prompt.data(), x - MeasureText(prompt.data(), 26) / 2,
+-            y + 36, 26, RAYWHITE);
++            interact_binding_label, HoleInteractionAction::descend);
++        draw_world_prompt(prompt.data(),
++            {geometry.center.x, geometry.center.y + 36.0F},
++            26.0F, raylib_color(world_prompt_style().primary),
++            font, font_ready, screen_width, screen_height);
+     }
+ }
+ 
+ RoomBackgroundDrawRuntimeStatus room_background_status(
+     const MaterialPack& material_pack,
+     dungeon::DungeonElement ecology) noexcept {
+     const RoomBackgroundRenderPlan plan = room_background_render_plan(ecology);
+     return {
+         ecology,
+         plan.atlas,
+@@ -587,21 +614,22 @@ MaterialResidencyRequest room_background_residency_request(
+         request.require(MaterialAtlasId::chaos_room_background);
+         break;
+     }
+     return request;
+ }
+ 
+ }  // namespace
+ 
+ void CombatRenderer::draw_abyss_overlay(
+     const dungeon::DungeonSnapshot& current) const noexcept {
+-    draw_abyss(current, static_cast<float>(GetTime()));
++    draw_abyss(current, static_cast<float>(GetTime()),
++        world_ui_font_, world_ui_font_ready_);
+ }
+ 
+ RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
+     dungeon::DungeonElement ecology) noexcept {
+     static_cast<void>(material_pack_.synchronize_residency(
+         room_background_residency_request(ecology)));
+     room_background_draw_status_ = room_background_status(material_pack_, ecology);
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     const CombatCameraView camera = make_combat_camera_view(
+@@ -650,20 +678,21 @@ void CombatRenderer::draw_room(
+         material_pack_, current.ecology);
+     const bool draw_material_background = room_background_draw_status_.resident
+         && draw_environment_room(material_pack_, current.ecology, camera);
+     room_background_draw_status_.drawn = draw_material_background;
+     if (!draw_material_background) {
+         draw_graybox_room(current.ecology);
+     }
+     draw_environment_hazards(current, camera, width, height);
+     draw_environment_room_props(
+         material_pack_, current, camera, width, height);
+-    draw_doors(current, camera, width, height, material_pack_, hud_renderer_.hud_font(),
+-        hud_renderer_.font_ready());
+-    draw_hole(current, material_pack_, camera, interact_binding_label);
++    draw_doors(current, camera, width, height, material_pack_,
++        world_ui_font_, world_ui_font_ready_);
++    draw_hole(current, material_pack_, camera, interact_binding_label,
++        world_ui_font_, world_ui_font_ready_);
+     draw_ground_materials(
+         current, material_pack_, camera, width, height);
+     draw_ground_items(ground_item_range(current), loot_filter_mode_, material_pack_,
+         camera, width, height);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index 74939d6..91e9ebd 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -82,21 +82,21 @@ constexpr std::array<const char*, 10U> kSettingActionNames{{
+     u8"上移", u8"下移", u8"左移", u8"右移", u8"轻攻击", u8"跳跃", u8"挑飞", u8"交互", u8"背包", u8"被动树",
+ }};
+ 
+ constexpr std::array<const char*, 2U> kSkillNames{{
+     u8"拔刀斩", u8"风暴剑阵",
+ }};
+ 
+ // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
+ // its existing death-overlay/HUD corpus in the single catalog visitor so the
+ // shared glyph plan covers it without a second hand-maintained font list.
+-constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
++constexpr std::array<const char*, 67U> kUiDynamicGlyphCoverage{{
+     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
+     "上移下移左移右移轻攻击跳跃挑飞交互背包被动树调试截图暂停小键盘秒经验已满"
+     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
+     "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
+     "方向键导航选择返回重置房间上下左右调整请按下可绑定用于的当前空格"
+     "窗口模式全屏窗口化垂直同步开关拾取过滤显示全部魔法及以上仅稀有"
+     "确认退出绑定按键总音量音效音乐环境音界面音｜（）？"
+     "剩余出口已开放未分配点减速无敌目标个敌人待结算经验深度 · 层房间生态第波下一波即将开始待领奖励未领取"
+     "正在保存房间正在处理撤退房间状态异常"
+     "需要恢复存档再次交互，以放弃奖励离开后触碰同一出口全部剩余并下降进入下一层进入出口已清理升级至级有被动点打开背包树"
+@@ -123,20 +123,28 @@ constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
+     u8"拔刀斩", u8"极·鬼剑术（暴风式）",
+     u8"怪群规模：拥挤密集兽潮",
+     u8"消灭（总计）剩余",
+     u8"出口尚未开放，战斗仍可继续",
+     u8"离开将放弃剩余奖励",
+     u8"可见：怪 105/105 环境 73/105 掉落 53/331",
+     u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
+     u8"设置界面…",
+     u8"已拾取：强化石 x1、混沌石 x1",
+     u8"蜕变石",
++    u8"火焰水流闪电混沌未知低危中危高危雷暴猎杀之焰混沌扩张迅捷追猎深渊壁垒深渊狂怒沉重脚步疲惫恢复生命献祭无规则"
++    "每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害"
++    "每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害"
++    "每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害"
++    "怪物：移动速度+15%，冷却时间×85%护甲×130%，护盾+30%伤害与攻击速度×145%"
++    "玩家：地面移动速度×85%入场资源及后续恢复×70%最大生命×55%"
++    "封闭可进入保存中异常已保存已恢复存档错误锁定战斗中等待下一波已清理等待离开切换房间处理撤退中"
++    "上方下方左方右方无方向Q：下潜进入下一层离开后再次触碰同一出口以放弃全部剩余奖励再次交互，放弃剩余奖励并下潜",
+ }};
+ 
+ template <typename Id, std::size_t Count>
+ const char* value_or_unknown(const std::array<const char*, Count>& values,
+     Id id) noexcept {
+     const std::size_t index = static_cast<std::size_t>(id);
+     return index < values.size() ? values[index] : kUnknown;
+ }
+ 
+ template <std::size_t Count>
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 975a6ba..a6e6371 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1895,20 +1895,31 @@ set_tests_properties(
+ 
+ add_test(
+     NAME platform.hole_prompt_binding_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_test.cmake")
+ set_tests_properties(
+     platform.hole_prompt_binding_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
++add_test(
++    NAME platform.hole_prompt_binding_source_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
++        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_test.cmake"
++        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hole_prompt_binding_mutants"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_self_test.cmake")
++set_tests_properties(
++    platform.hole_prompt_binding_source_self_test
++    PROPERTIES LABELS "headless;platform;architecture;self_test")
++
+ add_test(
+     NAME platform.hud_notice_structured_binding_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake")
+ set_tests_properties(
+     platform.hud_notice_structured_binding_source
+     PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+ 
+ add_test(
+diff --git a/tests/platform/dungeon_view_math_tests.cpp b/tests/platform/dungeon_view_math_tests.cpp
+index 36e8690..08326f9 100644
+--- a/tests/platform/dungeon_view_math_tests.cpp
++++ b/tests/platform/dungeon_view_math_tests.cpp
+@@ -1,15 +1,17 @@
+ #include "test_framework.hpp"
+ 
++#include "allocation_probe.hpp"
+ #include "combat_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "progression/progression_rules.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <array>
+ #include <cstring>
+ 
+ namespace {
+ 
+ using arpg::dungeon::DungeonEventKind;
+ using arpg::dungeon::DungeonSnapshot;
+ using arpg::dungeon::ExitDirection;
+ using arpg::dungeon::RoomPhase;
+@@ -58,24 +60,30 @@ arpg::test::Failure door_modes_follow_room_lifecycle() noexcept {
+ bool rgba_equals(Rgba8 lhs, Rgba8 rhs) noexcept {
+     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
+         && lhs.a == rhs.a;
+ }
+ 
+ arpg::test::Failure door_themes_match_directional_elements() noexcept {
+     const DoorTheme up = arpg::platform::door_theme(ExitDirection::up);
+     const DoorTheme down = arpg::platform::door_theme(ExitDirection::down);
+     const DoorTheme left = arpg::platform::door_theme(ExitDirection::left);
+     const DoorTheme right = arpg::platform::door_theme(ExitDirection::right);
++    const DoorTheme unknown = arpg::platform::door_theme(ExitDirection::none);
+     ARPG_REQUIRE(up.element == arpg::dungeon::DungeonElement::fire);
+     ARPG_REQUIRE(down.element == arpg::dungeon::DungeonElement::water);
+     ARPG_REQUIRE(left.element == arpg::dungeon::DungeonElement::lightning);
+     ARPG_REQUIRE(right.element == arpg::dungeon::DungeonElement::chaos);
++    ARPG_REQUIRE(std::strcmp(up.label, u8"火焰") == 0);
++    ARPG_REQUIRE(std::strcmp(down.label, u8"水流") == 0);
++    ARPG_REQUIRE(std::strcmp(left.label, u8"闪电") == 0);
++    ARPG_REQUIRE(std::strcmp(right.label, u8"混沌") == 0);
++    ARPG_REQUIRE(std::strcmp(unknown.label, u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(up.arrow, "\xE2\x86\x91") == 0);
+     ARPG_REQUIRE(std::strcmp(down.arrow, "\xE2\x86\x93") == 0);
+     ARPG_REQUIRE(std::strcmp(left.arrow, "\xE2\x86\x90") == 0);
+     ARPG_REQUIRE(std::strcmp(right.arrow, "\xE2\x86\x92") == 0);
+     ARPG_REQUIRE(rgba_equals(up.frame, {236U, 92U, 54U, 255U}));
+     ARPG_REQUIRE(rgba_equals(down.frame, {64U, 156U, 236U, 255U}));
+     ARPG_REQUIRE(rgba_equals(left.frame, {236U, 218U, 72U, 255U}));
+     ARPG_REQUIRE(rgba_equals(right.frame, {154U, 76U, 210U, 255U}));
+ 
+     return {};
+@@ -239,67 +247,111 @@ arpg::test::Failure abyss_hud_uses_committed_snapshot_labels_and_counts() noexce
+     auto hidden = arpg::platform::abyss_hud_values(snapshot);
+     ARPG_REQUIRE(!hidden.visible);
+ 
+     snapshot.is_abyss = true;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+     snapshot.abyss_pending_rewards = 2U;
+     snapshot.abyss_unpicked_rewards = 1U;
+     const auto values = arpg::platform::abyss_hud_values(snapshot);
+     ARPG_REQUIRE(values.visible);
+-    ARPG_REQUIRE(std::strcmp(values.danger_label, "ABYSS HIGH") == 0);
+-    ARPG_REQUIRE(std::strcmp(values.rule_label, "ABYSS FURY") == 0);
++    ARPG_REQUIRE(std::strcmp(values.danger_label, u8"高危") == 0);
++    ARPG_REQUIRE(std::strcmp(values.rule_label, u8"深渊狂怒") == 0);
+     ARPG_REQUIRE(std::strcmp(values.effect_label,
+-        "Monsters: damage and attack speed x145%") == 0);
++        u8"怪物：伤害与攻击速度×145%") == 0);
+     ARPG_REQUIRE(values.pending_rewards == 2U);
+     ARPG_REQUIRE(values.unpicked_rewards == 1U);
+     ARPG_REQUIRE(!values.confirmation_visible);
+ 
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::low;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::thunderstorm;
+     const auto low = arpg::platform::abyss_hud_values(snapshot);
+-    ARPG_REQUIRE(std::strcmp(low.danger_label, "ABYSS LOW") == 0);
+-    ARPG_REQUIRE(std::strcmp(low.rule_label, "THUNDERSTORM") == 0);
++    ARPG_REQUIRE(std::strcmp(low.danger_label, u8"低危") == 0);
++    ARPG_REQUIRE(std::strcmp(low.rule_label, u8"雷暴") == 0);
+     ARPG_REQUIRE(std::strcmp(low.effect_label,
+-        "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning") == 0);
++        u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害") == 0);
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::medium;
+     ARPG_REQUIRE(std::strcmp(
+         arpg::platform::abyss_hud_values(snapshot).danger_label,
+-        "ABYSS MED") == 0);
++        u8"中危") == 0);
++    return {};
++}
++
++arpg::test::Failure every_abyss_rule_has_a_chinese_name_and_effect() noexcept {
++    struct Expected final {
++        arpg::abyss::AbyssRuleId rule;
++        const char* name;
++        const char* effect;
++    };
++    constexpr Expected kExpected[] = {
++        {arpg::abyss::AbyssRuleId::thunderstorm, u8"雷暴",
++            u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害"},
++        {arpg::abyss::AbyssRuleId::hunting_flames, u8"猎杀之焰",
++            u8"每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害"},
++        {arpg::abyss::AbyssRuleId::chaos_expansion, u8"混沌扩张",
++            u8"每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害"},
++        {arpg::abyss::AbyssRuleId::swift_pursuit, u8"迅捷追猎",
++            u8"怪物：移动速度+15%，冷却时间×85%"},
++        {arpg::abyss::AbyssRuleId::abyss_bulwark, u8"深渊壁垒",
++            u8"怪物：护甲×130%，护盾+30%最大生命"},
++        {arpg::abyss::AbyssRuleId::abyss_fury, u8"深渊狂怒",
++            u8"怪物：伤害与攻击速度×145%"},
++        {arpg::abyss::AbyssRuleId::heavy_steps, u8"沉重脚步",
++            u8"玩家：地面移动速度×85%"},
++        {arpg::abyss::AbyssRuleId::exhausted_recovery, u8"疲惫恢复",
++            u8"玩家：入场资源及后续恢复×70%"},
++        {arpg::abyss::AbyssRuleId::life_sacrifice, u8"生命献祭",
++            u8"玩家：最大生命×55%"},
++    };
++    DungeonSnapshot snapshot = active_snapshot(1U, 2U);
++    snapshot.is_abyss = true;
++    snapshot.abyss_danger = arpg::abyss::AbyssDanger::low;
++    for (const Expected& expected : kExpected) {
++        snapshot.abyss_rule = expected.rule;
++        const auto values = arpg::platform::abyss_hud_values(snapshot);
++        ARPG_REQUIRE(values.visible);
++        ARPG_REQUIRE(std::strcmp(values.rule_label, expected.name) == 0);
++        ARPG_REQUIRE(std::strcmp(values.effect_label, expected.effect) == 0);
++    }
++    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::none;
++    const auto none = arpg::platform::abyss_hud_values(snapshot);
++    ARPG_REQUIRE(!none.visible);
++    ARPG_REQUIRE(std::strcmp(none.rule_label, u8"无规则") == 0);
++    ARPG_REQUIRE(std::strcmp(none.effect_label, "") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_confirmation_prompt_preserves_transition_and_direction() noexcept {
+     DungeonSnapshot snapshot = active_snapshot(7U, 8U);
+     snapshot.is_abyss = true;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::hunting_flames;
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::medium;
+     snapshot.abyss_pending_rewards = 1U;
+     snapshot.abyss_unpicked_rewards = 2U;
+     snapshot.abyss_exit_confirmation_armed = true;
+     snapshot.abyss_exit_confirmation_transition =
+         arpg::dungeon::TransitionKind::door;
+     snapshot.abyss_exit_confirmation_direction = ExitDirection::left;
+     auto values = arpg::platform::abyss_hud_values(snapshot);
+     ARPG_REQUIRE(values.confirmation_visible);
+     ARPG_REQUIRE(values.confirmation_transition
+         == arpg::dungeon::TransitionKind::door);
+     ARPG_REQUIRE(values.confirmation_direction == ExitDirection::left);
+     ARPG_REQUIRE(std::strcmp(values.confirmation_label,
+-        "Touch the SAME door again to abandon ALL remaining rewards") == 0);
++        u8"离开后再次触碰同一出口以放弃全部剩余奖励") == 0);
+ 
+     snapshot.abyss_exit_confirmation_transition =
+         arpg::dungeon::TransitionKind::descent;
+     snapshot.abyss_exit_confirmation_direction = ExitDirection::none;
+     values = arpg::platform::abyss_hud_values(snapshot);
+     ARPG_REQUIRE(std::strcmp(values.confirmation_label,
+-        "Press E again to abandon remaining rewards and descend") == 0);
++        u8"再次交互，放弃剩余奖励并下潜") == 0);
+ 
+     snapshot.abyss_exit_confirmation_armed = false;
+     ARPG_REQUIRE(!arpg::platform::abyss_hud_values(snapshot)
+         .confirmation_visible);
+     return {};
+ }
+ 
+ arpg::test::Failure ecosystem_tints_are_stable() noexcept {
+     const Rgba8 fire = arpg::platform::ecosystem_tint(
+         arpg::dungeon::DungeonElement::fire);
+@@ -366,31 +418,80 @@ arpg::test::Failure player_hole_range_uses_xy_radius() noexcept {
+         Vec3{6.01F, -2.0F, 0.0F}, center, 2.0F));
+     ARPG_REQUIRE(!arpg::platform::player_in_hole_range(
+         center, center, -1.0F));
+     return {};
+ }
+ 
+ arpg::test::Failure indicators_and_phase_labels_are_stable() noexcept {
+     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+         SaveIndicator::none), "") == 0);
+     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+-        SaveIndicator::saving), "SAVING") == 0);
++        SaveIndicator::saving), u8"保存中") == 0);
+     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+-        SaveIndicator::saved), "SAVED") == 0);
++        SaveIndicator::saved), u8"已保存") == 0);
+     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+-        SaveIndicator::recovered), "RECOVERED") == 0);
++        SaveIndicator::recovered), u8"已恢复") == 0);
+     ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+-        SaveIndicator::error), "SAVE ERROR") == 0);
+-    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
+-        RoomPhase::committing), "COMMITTING") == 0);
+-    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
+-        RoomPhase::faulted), "FAULTED") == 0);
++        SaveIndicator::error), u8"存档错误") == 0);
++
++    struct PhaseExpected final { RoomPhase phase; const char* label; };
++    constexpr PhaseExpected kPhases[] = {
++        {RoomPhase::locked, u8"锁定"},
++        {RoomPhase::combat, u8"战斗中"},
++        {RoomPhase::wave_delay, u8"等待下一波"},
++        {RoomPhase::cleared, u8"已清理"},
++        {RoomPhase::awaiting_exit, u8"等待离开"},
++        {RoomPhase::committing, u8"保存中"},
++        {RoomPhase::transitioning, u8"切换房间"},
++        {RoomPhase::death_pending, u8"处理撤退中"},
++        {RoomPhase::faulted, u8"异常"},
++    };
++    for (const PhaseExpected& expected : kPhases) {
++        ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
++            expected.phase), expected.label) == 0);
++    }
++
++    struct DirectionExpected final {
++        ExitDirection direction;
++        const char* label;
++    };
++    constexpr DirectionExpected kDirections[] = {
++        {ExitDirection::up, u8"上方"},
++        {ExitDirection::down, u8"下方"},
++        {ExitDirection::left, u8"左方"},
++        {ExitDirection::right, u8"右方"},
++        {ExitDirection::none, u8"无方向"},
++    };
++    for (const DirectionExpected& expected : kDirections) {
++        ARPG_REQUIRE(std::strcmp(arpg::platform::exit_direction_label(
++            expected.direction), expected.label) == 0);
++    }
++    return {};
++}
++
++arpg::test::Failure visible_hole_modes_have_explicit_chinese_labels() noexcept {
++    struct Expected final {
++        HoleVisualMode mode;
++        const char* label;
++    };
++    constexpr Expected kExpected[] = {
++        {HoleVisualMode::sealed, u8"封闭"},
++        {HoleVisualMode::ready, u8"可进入"},
++        {HoleVisualMode::busy, u8"保存中"},
++        {HoleVisualMode::faulted, u8"异常"},
++    };
++    ARPG_REQUIRE(std::strcmp(arpg::platform::hole_visual_label(
++        HoleVisualMode::hidden), "") == 0);
++    for (const Expected& expected : kExpected) {
++        ARPG_REQUIRE(std::strcmp(arpg::platform::hole_visual_label(
++            expected.mode), expected.label) == 0);
++    }
+     return {};
+ }
+ 
+ arpg::test::Failure recovery_requires_fault_and_n_press() noexcept {
+     ARPG_REQUIRE(!arpg::platform::recovery_requested(false, false));
+     ARPG_REQUIRE(!arpg::platform::recovery_requested(false, true));
+     ARPG_REQUIRE(!arpg::platform::recovery_requested(true, false));
+     ARPG_REQUIRE(arpg::platform::recovery_requested(true, true));
+     return {};
+ }
+@@ -436,27 +537,27 @@ arpg::test::Failure cross_room_and_missing_room_reject_interpolation() noexcept
+ 
+ arpg::test::Failure cleanup_routing_and_labels_are_stable() noexcept {
+     ARPG_REQUIRE(arpg::platform::dungeon_event_clears_transients(
+         DungeonEventKind::room_destroyed));
+     ARPG_REQUIRE(arpg::platform::dungeon_event_clears_transients(
+         DungeonEventKind::room_reset));
+     ARPG_REQUIRE(!arpg::platform::dungeon_event_clears_transients(
+         DungeonEventKind::room_entered));
+     ARPG_REQUIRE(std::strcmp(
+         arpg::platform::room_phase_label(RoomPhase::awaiting_exit),
+-        "AWAITING EXIT") == 0);
++        u8"等待离开") == 0);
+     ARPG_REQUIRE(std::strcmp(
+         arpg::platform::exit_direction_label(ExitDirection::left),
+-        "LEFT") == 0);
++        u8"左方") == 0);
+     ARPG_REQUIRE(std::strcmp(
+         arpg::platform::exit_direction_label(ExitDirection::none),
+-        "NONE") == 0);
++        u8"无方向") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure fade_alpha_clamps_to_transition_window() noexcept {
+     using arpg::platform::TransitionVisualState;
+ 
+     ARPG_REQUIRE(arpg::test::near(
+         arpg::platform::transition_overlay_alpha(-1.0F), 0.0, 1.0e-6));
+     ARPG_REQUIRE(arpg::test::near(
+         arpg::platform::transition_overlay_alpha(0.0F), 0.0, 1.0e-6));
+@@ -524,54 +625,68 @@ arpg::test::Failure progression_hud_values_follow_snapshot() noexcept {
+     ARPG_REQUIRE(!values.maximum_level);
+ 
+     snapshot.progression = {100U, 0U, 99U, 99U};
+     const auto maximum = arpg::platform::progression_hud_values(snapshot, rules);
+     ARPG_REQUIRE(maximum.maximum_level);
+     ARPG_REQUIRE(maximum.required_experience == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure hole_prompt_follows_current_interact_binding() noexcept {
+-    const auto default_prompt = arpg::platform::hole_interaction_prompt("E");
+-    const auto rebound_prompt = arpg::platform::hole_interaction_prompt("Right");
++    using arpg::platform::HoleInteractionAction;
++    const auto descend = arpg::platform::hole_interaction_prompt(
++        "Q", HoleInteractionAction::descend);
++    const auto next_floor = arpg::platform::hole_interaction_prompt(
++        "Q", HoleInteractionAction::next_floor);
+     const auto longest_prompt =
+-        arpg::platform::hole_interaction_prompt("Right Shift");
+-    const auto fallback_prompt = arpg::platform::hole_interaction_prompt(nullptr);
+-    const auto empty_fallback_prompt =
+-        arpg::platform::hole_interaction_prompt("");
+-    ARPG_REQUIRE(std::strcmp(default_prompt.data(), "E: DESCEND") == 0);
+-    ARPG_REQUIRE(std::strcmp(rebound_prompt.data(), "Right: DESCEND") == 0);
++        arpg::platform::hole_interaction_prompt(
++            u8"右 Shift", HoleInteractionAction::next_floor);
++    ARPG_REQUIRE(std::strcmp(descend.data(), u8"Q：下潜") == 0);
++    ARPG_REQUIRE(std::strcmp(next_floor.data(), u8"Q：进入下一层") == 0);
+     ARPG_REQUIRE(std::strcmp(longest_prompt.data(),
+-        "Right Shift: DESCEND") == 0);
+-    ARPG_REQUIRE(std::strcmp(fallback_prompt.data(), "E: DESCEND") == 0);
+-    ARPG_REQUIRE(std::strcmp(empty_fallback_prompt.data(), "E: DESCEND") == 0);
++        u8"右 Shift：进入下一层") == 0);
++    ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(descend.data()));
++    ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(next_floor.data()));
++    ARPG_REQUIRE(arpg::platform::ui_utf8_is_valid(longest_prompt.data()));
++    const std::uint64_t allocations_before = arpg::test::allocation_count();
++    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
++        const auto prompt = arpg::platform::hole_interaction_prompt(
++            "Q", iteration % 2U == 0U ? HoleInteractionAction::descend
++                                       : HoleInteractionAction::next_floor);
++        ARPG_REQUIRE(prompt.back() == '\0');
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"door lifecycle modes", &door_modes_follow_room_lifecycle},
+     {"same room interpolation", &same_room_snapshots_can_interpolate},
+     {"cross and missing room rejection", &cross_room_and_missing_room_reject_interpolation},
+     {"cleanup routing and labels", &cleanup_routing_and_labels_are_stable},
+     {"transition fade alpha", &fade_alpha_clamps_to_transition_window},
+     {"directional door themes", &door_themes_match_directional_elements},
+     {"directional door sprites and modes",
+         &directional_door_decisions_use_element_sprites_and_modes},
+     {"directional door arrow geometry",
+         &door_arrow_geometry_points_outward_inside_scaled_box},
+     {"abyss door marker preview", &abyss_door_markers_follow_only_directional_preview},
+     {"environment hazard snapshot visuals", &environment_hazards_use_snapshot_geometry_and_phase},
+     {"abyss HUD snapshot values", &abyss_hud_uses_committed_snapshot_labels_and_counts},
++    {"all abyss rule names and effects",
++        &every_abyss_rule_has_a_chinese_name_and_effect},
+     {"abyss confirmation prompt values", &abyss_confirmation_prompt_preserves_transition_and_direction},
+     {"ecosystem tints", &ecosystem_tints_are_stable},
+     {"abyss pulse bounds", &abyss_pulse_is_bounded_and_periodic},
+     {"hole visual modes", &hole_modes_follow_room_phase},
++    {"hole visual Chinese labels",
++        &visible_hole_modes_have_explicit_chinese_labels},
+     {"XY hole range", &player_hole_range_uses_xy_radius},
+     {"save indicators and labels", &indicators_and_phase_labels_are_stable},
+     {"recovery request gate", &recovery_requires_fault_and_n_press},
+     {"progression HUD values", &progression_hud_values_follow_snapshot},
+     {"hole prompt follows interact binding",
+         &hole_prompt_follows_current_interact_binding},
+ };
+ 
+ }  // namespace
+ 
+diff --git a/tests/platform/hole_prompt_binding_source_self_test.cmake b/tests/platform/hole_prompt_binding_source_self_test.cmake
+new file mode 100644
+index 0000000..f0a3069
+--- /dev/null
++++ b/tests/platform/hole_prompt_binding_source_self_test.cmake
+@@ -0,0 +1,77 @@
++cmake_minimum_required(VERSION 3.25)
++
++foreach(REQUIRED_INPUT IN ITEMS RAYLIB_SOURCE_DIR GUARD_SCRIPT MUTATION_ROOT)
++    if(NOT DEFINED ${REQUIRED_INPUT} OR "${${REQUIRED_INPUT}}" STREQUAL "")
++        message(FATAL_ERROR "hole prompt guard self-test input missing: ${REQUIRED_INPUT}")
++    endif()
++endforeach()
++
++file(REMOVE_RECURSE "${MUTATION_ROOT}")
++file(MAKE_DIRECTORY "${MUTATION_ROOT}")
++file(READ "${RAYLIB_SOURCE_DIR}/room_renderer.cpp" ROOM_ORIGINAL)
++file(READ "${RAYLIB_SOURCE_DIR}/combat_renderer.cpp" COMBAT_ORIGINAL)
++set(MISSED_MUTATIONS)
++
++function(run_guard LABEL ROOM_TEXT COMBAT_TEXT EXPECT_SUCCESS)
++    set(ROOT "${MUTATION_ROOT}/${LABEL}")
++    file(MAKE_DIRECTORY "${ROOT}")
++    set(ROOM_MUTANT "${ROOT}/room_renderer.cpp")
++    set(COMBAT_MUTANT "${ROOT}/combat_renderer.cpp")
++    file(WRITE "${ROOM_MUTANT}" "${ROOM_TEXT}")
++    file(WRITE "${COMBAT_MUTANT}" "${COMBAT_TEXT}")
++    execute_process(COMMAND "${CMAKE_COMMAND}"
++        "-DRAYLIB_SOURCE_DIR=${RAYLIB_SOURCE_DIR}"
++        "-DROOM_RENDERER_SOURCE=${ROOM_MUTANT}"
++        "-DCOMBAT_RENDERER_SOURCE=${COMBAT_MUTANT}"
++        -P "${GUARD_SCRIPT}"
++        RESULT_VARIABLE RESULT OUTPUT_QUIET ERROR_QUIET)
++    if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
++        message(FATAL_ERROR "hole prompt guard rejected clean source: ${LABEL}")
++    endif()
++    if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
++        list(APPEND MISSED_MUTATIONS "${LABEL}")
++        set(MISSED_MUTATIONS "${MISSED_MUTATIONS}" PARENT_SCOPE)
++    endif()
++endfunction()
++
++run_guard(clean "${ROOM_ORIGINAL}" "${COMBAT_ORIGINAL}" TRUE)
++
++macro(run_room_mutant LABEL NEEDLE REPLACEMENT)
++    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" ROOM_MUTATED "${ROOM_ORIGINAL}")
++    if(ROOM_MUTATED STREQUAL ROOM_ORIGINAL)
++        message(FATAL_ERROR "${LABEL}: mutation anchor is missing")
++    endif()
++    run_guard("${LABEL}" "${ROOM_MUTATED}" "${COMBAT_ORIGINAL}" FALSE)
++endmacro()
++
++run_room_mutant(hardcoded_interact_key
++    "interact_binding_label, HoleInteractionAction::descend"
++    "\"E\", HoleInteractionAction::descend")
++run_room_mutant(missing_backing
++    "DrawRectangleRec(layout.backing, raylib_color(style.backing));"
++    "static_cast<void>(layout.backing);")
++run_room_mutant(missing_contrast_correction
++    "color = raylib_color(world_prompt_text_color(\n        {color.r, color.g, color.b, color.a}));"
++    "color.a = 255U;")
++run_room_mutant(default_text_draw
++    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size, 1.0F, color);"
++    "DrawTextEx(font, text, layout.text_position, font_size, 1.0F, color);")
++run_room_mutant(legacy_text_measure
++    "MeasureTextEx(font, text, font_size, 1.0F)"
++    "Vector2{static_cast<float>(MeasureText(text, static_cast<int>(font_size))), font_size}")
++
++string(REPLACE "world_ui_font_ = shared_ui_font.font();"
++    "world_ui_font_ = GetFontDefault();" COMBAT_MUTATED "${COMBAT_ORIGINAL}")
++if(COMBAT_MUTATED STREQUAL COMBAT_ORIGINAL)
++    message(FATAL_ERROR "shared font mutation anchor is missing")
++endif()
++run_guard(default_font_owner "${ROOM_ORIGINAL}" "${COMBAT_MUTATED}" FALSE)
++
++run_room_mutant(dead_cjk_decoy
++    "draw_crisp_ui_text(font, text, layout.text_position,\n        font_size, 1.0F, color);"
++    "if (false) { draw_crisp_ui_text(font, text, layout.text_position, font_size, 1.0F, color); }")
++
++if(MISSED_MUTATIONS)
++    list(JOIN MISSED_MUTATIONS ", " MISSED_LABELS)
++    message(FATAL_ERROR "hole prompt guard missed mutations: ${MISSED_LABELS}")
++endif()
+diff --git a/tests/platform/hole_prompt_binding_source_test.cmake b/tests/platform/hole_prompt_binding_source_test.cmake
+index cabb3f5..27c358b 100644
+--- a/tests/platform/hole_prompt_binding_source_test.cmake
++++ b/tests/platform/hole_prompt_binding_source_test.cmake
+@@ -1,45 +1,162 @@
++cmake_minimum_required(VERSION 3.25)
++
+ if(NOT DEFINED RAYLIB_SOURCE_DIR)
+     message(FATAL_ERROR "RAYLIB_SOURCE_DIR is required")
+ endif()
+ 
+-file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+-file(READ "${RAYLIB_SOURCE_DIR}/combat_renderer.cpp" COMBAT_RENDERER_SOURCE)
+-file(READ "${RAYLIB_SOURCE_DIR}/room_renderer.cpp" ROOM_RENDERER_SOURCE)
++foreach(SOURCE_NAME IN ITEMS HOST_SOURCE COMBAT_RENDERER_SOURCE ROOM_RENDERER_SOURCE)
++    if(NOT DEFINED ${SOURCE_NAME})
++        if(SOURCE_NAME STREQUAL "HOST_SOURCE")
++            set(${SOURCE_NAME} "${RAYLIB_SOURCE_DIR}/raylib_host.cpp")
++        elseif(SOURCE_NAME STREQUAL "COMBAT_RENDERER_SOURCE")
++            set(${SOURCE_NAME} "${RAYLIB_SOURCE_DIR}/combat_renderer.cpp")
++        else()
++            set(${SOURCE_NAME} "${RAYLIB_SOURCE_DIR}/room_renderer.cpp")
++        endif()
++    endif()
++    if(NOT EXISTS "${${SOURCE_NAME}}")
++        message(FATAL_ERROR "${SOURCE_NAME} is required")
++    endif()
++endforeach()
+ 
+-string(FIND "${ROOM_RENDERER_SOURCE}" "\"E: DESCEND\""
+-    LEGACY_HOLE_INTERACTION_PROMPT)
+-if(NOT LEGACY_HOLE_INTERACTION_PROMPT EQUAL -1)
+-    message(FATAL_ERROR
+-        "hole interaction prompt must not hard-code the default E binding")
+-endif()
++include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
++file(READ "${HOST_SOURCE}" HOST_TEXT)
++file(READ "${COMBAT_RENDERER_SOURCE}" COMBAT_TEXT)
++file(READ "${ROOM_RENDERER_SOURCE}" ROOM_TEXT)
++normalize_cpp_source("${ROOM_TEXT}" ROOM_NORMALIZED ROOM_CODE)
+ 
+-set(DYNAMIC_HOLE_PROMPT [=[const auto prompt = hole_interaction_prompt(
+-            interact_binding_label);]=])
+-string(FIND "${ROOM_RENDERER_SOURCE}" "${DYNAMIC_HOLE_PROMPT}"
+-    DYNAMIC_HOLE_PROMPT_INDEX)
+-if(DYNAMIC_HOLE_PROMPT_INDEX EQUAL -1)
+-    message(FATAL_ERROR
+-        "hole renderer must format the current interact binding")
++foreach(LEGACY_TEXT IN ITEMS
++        "E: DESCEND" "SEALED" "READY" "SAVING" "FAULTED"
++        "ABYSS HIGH" "ABYSS FURY")
++    string(FIND "${ROOM_NORMALIZED}" "\"${LEGACY_TEXT}\"" LEGACY_INDEX)
++    if(NOT LEGACY_INDEX EQUAL -1)
++        message(FATAL_ERROR
++            "room renderer contains legacy player text: ${LEGACY_TEXT}")
++    endif()
++endforeach()
++
++extract_cpp_function_body("${ROOM_TEXT}" "void draw_world_prompt("
++    WORLD_PROMPT_BODY WORLD_PROMPT_CODE)
++foreach(REQUIRED_TOKEN IN ITEMS
++        "MeasureTextEx(font, text, font_size, 1.0F)"
++        "world_prompt_layout( anchor, measured, screen_width, screen_height)"
++        "color = raylib_color(world_prompt_text_color( {color.r, color.g, color.b, color.a}))"
++        "DrawRectangleRec(layout.backing, raylib_color(style.backing))"
++        "draw_crisp_ui_text(font, text, layout.text_position, font_size, 1.0F, color)")
++    string(FIND "${WORLD_PROMPT_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
++    if(TOKEN_INDEX EQUAL -1)
++        message(FATAL_ERROR
++            "world prompt must measure, back, and draw shared CJK text: ${REQUIRED_TOKEN}")
++    endif()
++endforeach()
++string(FIND "${WORLD_PROMPT_BODY}"
++    "DrawRectangleRec(layout.backing" BACKING_INDEX)
++string(FIND "${WORLD_PROMPT_BODY}"
++    "draw_crisp_ui_text(font, text" CJK_DRAW_INDEX)
++if(BACKING_INDEX GREATER CJK_DRAW_INDEX)
++    message(FATAL_ERROR "world prompt backing must be drawn before text")
++endif()
++if(NOT WORLD_PROMPT_CODE MATCHES "if[ ]*\\([ ]*!font_ready")
++    message(FATAL_ERROR "world prompt must reject an unavailable shared font")
+ endif()
++if(WORLD_PROMPT_CODE MATCHES "if[ ]*\\([ ]*(false|0)[ ]*\\)")
++    message(FATAL_ERROR "world prompt requirements cannot live in a dead branch")
++endif()
++foreach(FORBIDDEN_DRAW IN ITEMS "DrawText(" "DrawTextEx(" "MeasureText(")
++    string(FIND "${WORLD_PROMPT_CODE}" "${FORBIDDEN_DRAW}" FORBIDDEN_INDEX)
++    if(NOT FORBIDDEN_INDEX EQUAL -1)
++        message(FATAL_ERROR
++            "world prompt must not use the default/legacy text path: ${FORBIDDEN_DRAW}")
++    endif()
++endforeach()
+ 
+-set(DYNAMIC_HOLE_DRAW [=[draw_room(world, render_plan.ground_loot,
+-                render_plan.material_loot, camera, interact_binding_label);]=])
+-string(FIND "${COMBAT_RENDERER_SOURCE}" "${DYNAMIC_HOLE_DRAW}"
+-    DYNAMIC_HOLE_DRAW_INDEX)
+-if(DYNAMIC_HOLE_DRAW_INDEX EQUAL -1)
+-    message(FATAL_ERROR
+-        "combat renderer must pass the current interact binding to the room")
++extract_cpp_function_body("${ROOM_TEXT}" "void draw_hole("
++    HOLE_BODY HOLE_CODE)
++foreach(REQUIRED_TOKEN IN ITEMS
++        "hole_visual_label(hole)"
++        "hole_interaction_prompt( interact_binding_label, HoleInteractionAction::descend)"
++        "draw_world_prompt(label, {geometry.center.x, geometry.center.y - 12.0F}, 20.0F, label_color, font, font_ready, screen_width, screen_height)"
++        "draw_world_prompt(prompt.data(), {geometry.center.x, geometry.center.y + 36.0F}, 26.0F, raylib_color(world_prompt_style().primary), font, font_ready, screen_width, screen_height)")
++    string(FIND "${HOLE_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
++    if(TOKEN_INDEX EQUAL -1)
++        message(FATAL_ERROR
++            "hole renderer must consume labels, dynamic key, and shared font: ${REQUIRED_TOKEN}")
++    endif()
++endforeach()
++
++extract_cpp_function_body("${ROOM_TEXT}" "void draw_doors("
++    DOOR_BODY DOOR_CODE)
++extract_cpp_function_body("${ROOM_TEXT}" "void draw_abyss("
++    ABYSS_BODY ABYSS_CODE)
++foreach(BODY_NAME IN ITEMS HOLE_CODE DOOR_CODE ABYSS_CODE)
++    foreach(FORBIDDEN_DRAW IN ITEMS "DrawText(" "DrawTextEx(" "MeasureText(")
++        string(FIND "${${BODY_NAME}}" "${FORBIDDEN_DRAW}" FORBIDDEN_INDEX)
++        if(NOT FORBIDDEN_INDEX EQUAL -1)
++            message(FATAL_ERROR
++                "room text function must use only the shared CJK path: ${FORBIDDEN_DRAW}")
++        endif()
++    endforeach()
++endforeach()
++foreach(REQUIRED_TOKEN IN ITEMS "draw_world_prompt(visual.label")
++    string(FIND "${DOOR_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
++    if(TOKEN_INDEX EQUAL -1)
++        message(FATAL_ERROR "door renderer must use the shared world prompt path")
++    endif()
++endforeach()
++foreach(REQUIRED_TOKEN IN ITEMS "draw_world_prompt(label")
++    string(FIND "${ABYSS_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
++    if(TOKEN_INDEX EQUAL -1)
++        message(FATAL_ERROR "abyss renderer must use the shared world prompt path")
++    endif()
++endforeach()
++
++extract_cpp_function_body("${ROOM_TEXT}" "void CombatRenderer::draw_room("
++    DRAW_ROOM_BODY DRAW_ROOM_CODE)
++foreach(REQUIRED_TOKEN IN ITEMS
++        "draw_doors(current, camera, width, height, material_pack_, world_ui_font_, world_ui_font_ready_)"
++        "draw_hole(current, material_pack_, camera, interact_binding_label, world_ui_font_, world_ui_font_ready_)")
++    string(FIND "${DRAW_ROOM_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
++    if(TOKEN_INDEX EQUAL -1)
++        message(FATAL_ERROR "CombatRenderer room path must pass its shared CJK font")
++    endif()
++endforeach()
++
++extract_cpp_function_body("${COMBAT_TEXT}"
++    "bool CombatRenderer::initialize_resources(" INITIALIZE_BODY)
++extract_cpp_function_body("${COMBAT_TEXT}"
++    "void CombatRenderer::shutdown_resources(" SHUTDOWN_BODY)
++extract_cpp_function_body("${COMBAT_TEXT}"
++    "GroundLootView CombatRenderer::draw(" COMBAT_DRAW_BODY)
++foreach(REQUIRED_TOKEN IN ITEMS
++        "world_ui_font_ = shared_ui_font.font()"
++        "world_ui_font_ready_ = shared_ui_font.ready()")
++    string(FIND "${INITIALIZE_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
++    if(TOKEN_INDEX EQUAL -1)
++        message(FATAL_ERROR "CombatRenderer must borrow the shared UI font")
++    endif()
++endforeach()
++foreach(REQUIRED_TOKEN IN ITEMS "world_ui_font_ = {}"
++        "world_ui_font_ready_ = false")
++    string(FIND "${SHUTDOWN_BODY}" "${REQUIRED_TOKEN}" TOKEN_INDEX)
++    if(TOKEN_INDEX EQUAL -1)
++        message(FATAL_ERROR "CombatRenderer must clear its borrowed UI font")
++    endif()
++endforeach()
++string(FIND "${COMBAT_DRAW_BODY}"
++    "draw_room(world, render_plan.ground_loot, render_plan.material_loot, camera, interact_binding_label)"
++    COMBAT_DYNAMIC_KEY_INDEX)
++if(COMBAT_DYNAMIC_KEY_INDEX EQUAL -1)
++    message(FATAL_ERROR "CombatRenderer must forward the same interact key variable")
+ endif()
+ 
+-set(DYNAMIC_HOLE_HOST [=[feedback, audio_ready, stable_key_label(
++set(HOST_DYNAMIC_KEY [=[feedback, audio_ready, stable_key_label(
+                         settings::binding_for(input_settings,
+                             settings::SettingAction::interact)))]=])
+-string(FIND "${HOST_SOURCE}" "${DYNAMIC_HOLE_HOST}"
+-    DYNAMIC_HOLE_HOST_INDEX)
+-if(DYNAMIC_HOLE_HOST_INDEX EQUAL -1)
++string(FIND "${HOST_TEXT}" "${HOST_DYNAMIC_KEY}" HOST_DYNAMIC_KEY_INDEX)
++if(HOST_DYNAMIC_KEY_INDEX EQUAL -1)
+     message(FATAL_ERROR
+-        "host must pass the applied interact binding to world rendering")
++        "host must pass the applied structured interact binding to world rendering")
+ endif()
+ 
+ message(STATUS
+-    "[CPLAY-030] hole prompt follows the applied interact binding")
++    "[CPLAY-030] hole prompt and room text use the applied binding and shared CJK font")
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index ca10240..e75c461 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -313,20 +313,51 @@ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
+     ARPG_REQUIRE(!death.initialize(shared));
+     ARPG_REQUIRE(!pause.initialize(shared));
+     death.shutdown();
+     pause.shutdown();
+     ARPG_REQUIRE(!shared.ready());
+     shared.shutdown();
+     shared.shutdown();
+     return {};
+ }
+ 
++arpg::test::Failure dungeon_interaction_chinese_text_is_covered_by_shared_font_plan() noexcept {
++    const platform::HudFontPlan plan = platform::hud_font_plan();
++    constexpr const char* kTask5Text[] = {
++        u8"火焰水流闪电混沌未知",
++        u8"低危中危高危",
++        u8"雷暴猎杀之焰混沌扩张迅捷追猎深渊壁垒深渊狂怒沉重脚步疲惫恢复生命献祭无规则",
++        u8"每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害",
++        u8"每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害",
++        u8"每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害",
++        u8"怪物：移动速度+15%，冷却时间×85%",
++        u8"怪物：护甲×130%，护盾+30%最大生命",
++        u8"怪物：伤害与攻击速度×145%",
++        u8"玩家：地面移动速度×85%",
++        u8"玩家：入场资源及后续恢复×70%",
++        u8"玩家：最大生命×55%",
++        u8"封闭可进入保存中异常",
++        u8"已保存已恢复存档错误",
++        u8"锁定战斗中等待下一波已清理等待离开保存中切换房间处理撤退中异常",
++        u8"上方下方左方右方无方向",
++        u8"Q：下潜",
++        u8"Q：进入下一层",
++        u8"离开后再次触碰同一出口以放弃全部剩余奖励",
++        u8"再次交互，放弃剩余奖励并下潜",
++    };
++    ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
++    for (const char* text : kTask5Text) {
++        ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
++    }
++    return {};
++}
++
+ arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noexcept {
+     const platform::HudFontPlan font = platform::hud_font_plan();
+     constexpr const char* kCombatText = "0123456789-+%DEFEATED";
+     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+         font.shared, kCombatText));
+ 
+     const platform::CombatTextStyle compact =
+         platform::combat_text_style(800, 450);
+     const platform::CombatTextStyle full_hd =
+         platform::combat_text_style(1920, 1080);
+@@ -341,20 +372,22 @@ arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noex
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
+     {"passive tree Chinese coverage",
+         &passive_tree_chinese_text_is_covered_by_shared_font_plan},
+     {"passive tree shared font selection",
+         &passive_tree_text_selects_shared_font_when_ready},
+     {"ground loot Chinese coverage",
+         &ground_loot_labels_are_covered_by_the_hud_owned_font},
+     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
++    {"dungeon interaction Chinese coverage",
++        &dungeon_interaction_chinese_text_is_covered_by_shared_font_plan},
+     {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
+     {"visible-set ViewModel shared font coverage",
+         &visible_set_model_text_is_covered_by_shared_font_plan},
+     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},
+     {"bundled Noto Sans SC runtime font",
+         &bundled_noto_sans_sc_is_the_required_runtime_font},
+     {"bounded high-resolution glyph atlas",
+         &bundled_font_uses_bounded_high_resolution_glyph_atlas},
+     {"single solid text foreground",
+         &ui_text_uses_one_solid_foreground_without_fake_bold},
+diff --git a/tests/platform/hud_layout_tests.cpp b/tests/platform/hud_layout_tests.cpp
+index d936e9c..e5c2a18 100644
+--- a/tests/platform/hud_layout_tests.cpp
++++ b/tests/platform/hud_layout_tests.cpp
+@@ -1,12 +1,13 @@
+ #include "test_framework.hpp"
+ 
++#include "dungeon_view_math.hpp"
+ #include "hud_layout.hpp"
+ #include "hud_renderer.hpp"
+ #include "ui_text_contrast.hpp"
+ 
+ #include <array>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ 
+@@ -239,27 +240,58 @@ arpg::test::Failure hud_typography_has_readable_minimums_and_contrast() noexcept
+     ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+         contrast.secondary, contrast.backing) >= 6.0F);
+     ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+         contrast.muted, contrast.backing) >= 4.5F);
+     ARPG_REQUIRE(contrast.outline_pixels == 0);
+     ARPG_REQUIRE(contrast.shadow_pixels >= 2);
+     ARPG_REQUIRE(contrast.backing.a >= 220U);
+     return {};
+ }
+ 
++arpg::test::Failure world_prompt_backings_fit_supported_viewports() noexcept {
++    constexpr std::array<std::array<int, 2>, 3U> kViewports{{
++        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
++    }};
++    for (const auto viewport : kViewports) {
++        const float width = static_cast<float>(viewport[0]);
++        const float height = static_cast<float>(viewport[1]);
++        const platform::WorldPromptLayout layout =
++            platform::world_prompt_layout(
++                {width * 0.5F, height - 2.0F},
++                {width * 0.36F, 30.0F}, width, height);
++        const Rectangle screen{0.0F, 0.0F, width, height};
++        ARPG_REQUIRE(layout.visible);
++        ARPG_REQUIRE(layout.backing.x >= screen.x);
++        ARPG_REQUIRE(layout.backing.y >= screen.y);
++        ARPG_REQUIRE(layout.backing.x + layout.backing.width
++            <= screen.x + screen.width);
++        ARPG_REQUIRE(layout.backing.y + layout.backing.height
++            <= screen.y + screen.height);
++        ARPG_REQUIRE(layout.text_position.x >= layout.backing.x);
++        ARPG_REQUIRE(layout.text_position.y >= layout.backing.y);
++        ARPG_REQUIRE(layout.text_position.x + layout.measured.x
++            <= layout.backing.x + layout.backing.width);
++        ARPG_REQUIRE(layout.text_position.y + layout.measured.y
++            <= layout.backing.y + layout.backing.height);
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"resolution safe layout matrices", &resolution_matrices_are_safe_and_do_not_cover_combat},
+     {"notices above abyss confirmation", &notices_remain_above_the_bottom_abyss_confirmation_area},
+     {"debug layout opt in", &debug_panel_is_opt_in_and_keeps_the_combat_exclusion_clear},
+     {"invalid viewport layout", &invalid_viewports_return_an_empty_layout},
+     {"HUD rectangle helpers", &hud_rect_helpers_distinguish_touching_from_overlapping},
+     {"HUD text safe boxes",
+         &hud_text_safe_boxes_do_not_intersect_or_cross_panels},
+     {"HUD typography readability",
+         &hud_typography_has_readable_minimums_and_contrast},
++    {"world prompt supported viewport bounds",
++        &world_prompt_backings_fit_supported_viewports},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_layout_suite() noexcept {
+     return arpg::test::make_suite("hud_layout", kCases);
+ }
+diff --git a/tests/platform/hud_render_plan_tests.cpp b/tests/platform/hud_render_plan_tests.cpp
+index 7690e84..5d972e1 100644
+--- a/tests/platform/hud_render_plan_tests.cpp
++++ b/tests/platform/hud_render_plan_tests.cpp
+@@ -1,14 +1,15 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "combat/combat_types.hpp"
++#include "dungeon_view_math.hpp"
+ #include "hud_palette.hpp"
+ #include "hud_renderer.hpp"
+ #include "ui_text_contrast.hpp"
+ 
+ #include <array>
+ #include <cstring>
+ #include <limits>
+ 
+ namespace {
+ 
+@@ -439,33 +440,78 @@ arpg::test::Failure large_room_hud_rows_are_opaque_and_non_overlapping_at_suppor
+             ARPG_REQUIRE(rect_inside(rows[first], layout.objective_panel));
+             for (std::size_t second = first + 1U; second < rows.size(); ++second) {
+                 ARPG_REQUIRE(!platform::hud_rects_overlap(
+                     rows[first], rows[second]));
+             }
+         }
+     }
+     return {};
+ }
+ 
++arpg::test::Failure world_prompt_style_uses_opaque_high_contrast_inner_backing() noexcept {
++    const platform::WorldPromptStyle style = platform::world_prompt_style();
++    ARPG_REQUIRE(style.backing.r == 0x0BU);
++    ARPG_REQUIRE(style.backing.g == 0x10U);
++    ARPG_REQUIRE(style.backing.b == 0x19U);
++    ARPG_REQUIRE(style.backing.a == 255U);
++    const Color backing{style.backing.r, style.backing.g,
++        style.backing.b, style.backing.a};
++    const Color primary{style.primary.r, style.primary.g,
++        style.primary.b, style.primary.a};
++    const Color secondary{style.secondary.r, style.secondary.g,
++        style.secondary.b, style.secondary.a};
++    const Color warning{style.warning.r, style.warning.g,
++        style.warning.b, style.warning.a};
++    const Color danger{style.danger.r, style.danger.g,
++        style.danger.b, style.danger.a};
++    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(primary, backing) >= 4.5F);
++    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(secondary, backing) >= 4.5F);
++    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(warning, backing) >= 4.5F);
++    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(danger, backing) >= 4.5F);
++    constexpr std::array<platform::Rgba8, 4U> kDoorColors{{
++        {236U, 92U, 54U, 255U},
++        {64U, 156U, 236U, 255U},
++        {236U, 218U, 72U, 255U},
++        {154U, 76U, 210U, 255U},
++    }};
++    for (const platform::Rgba8 requested : kDoorColors) {
++        const platform::Rgba8 corrected =
++            platform::world_prompt_text_color(requested);
++        const Color actual{corrected.r, corrected.g,
++            corrected.b, corrected.a};
++        ARPG_REQUIRE(corrected.a == 255U);
++        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
++            actual, backing) >= 4.5F);
++    }
++    const platform::Rgba8 corrected_chaos =
++        platform::world_prompt_text_color(kDoorColors[3]);
++    ARPG_REQUIRE(corrected_chaos.r == style.primary.r);
++    ARPG_REQUIRE(corrected_chaos.g == style.primary.g);
++    ARPG_REQUIRE(corrected_chaos.b == style.primary.b);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"health first", &health_is_always_the_first_visible_player_bar},
+     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
+     {"XP max", &max_level_experience_uses_the_max_presentation},
+     {"level and passive points text", &player_plan_exposes_level_and_unspent_points_text},
+     {"low health presentation frequency", &low_health_emphasis_is_presentation_time_bounded_to_two_hz},
+     {"three status tags", &player_plan_preserves_at_most_three_snapshot_status_tags},
+     {"clamped stable bar bounds", &plan_clamps_ratios_and_keeps_stable_bounds},
+     {"nonfinite ratios", &nonfinite_player_ratios_fall_back_to_zero_without_low_health_pulse},
+     {"monster snapshot palette world space", &monster_resource_plan_consumes_snapshot_values_and_palette_ids},
+     {"objective navigation context plans", &objective_navigation_and_context_plans_stay_in_their_layout_panels},
+     {"navigation colors use shared palette", &navigation_element_colors_use_the_authoritative_hud_palette},
+     {"navigation maximum text fit", &maximum_navigation_text_has_a_measured_bounded_draw_plan},
+     {"HUD key labels remain readable at 720p", &hud_text_style_keeps_key_labels_readable_at_720p},
+     {"large room HUD resolution matrix",
+         &large_room_hud_rows_are_opaque_and_non_overlapping_at_supported_resolutions},
++    {"world prompt opaque high contrast backing",
++        &world_prompt_style_uses_opaque_high_contrast_inner_backing},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_render_plan_suite() noexcept {
+     return arpg::test::make_suite("hud_render_plan", kCases);
+ }
+diff --git a/tests/platform/hud_view_model_tests.cpp b/tests/platform/hud_view_model_tests.cpp
+index 6e0247f..fa1f8fd 100644
+--- a/tests/platform/hud_view_model_tests.cpp
++++ b/tests/platform/hud_view_model_tests.cpp
+@@ -391,21 +391,23 @@ arpg::test::Failure objective_describes_every_player_visible_room_state() noexce
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"正在保存") != nullptr);
+ 
+     snapshot.is_abyss = true;
+     snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+     snapshot.abyss_pending_rewards = 3U;
+     snapshot.abyss_unpicked_rewards = 2U;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊") != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS HIGH") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"高危") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊狂怒") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS") == nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+         u8"待领奖励 3") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+         u8"未领取 2") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(), u8"W 上移")
+         != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(), "Move Up")
+         == nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(),
+         u8"J 轻攻击")
+@@ -446,31 +448,32 @@ arpg::test::Failure navigation_formats_extremes_and_four_shared_element_visuals(
+ arpg::test::Failure context_attaches_notice_priority_without_changing_abyss_values() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.is_abyss = true;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+     snapshot.abyss_exit_confirmation_armed = true;
+     snapshot.abyss_exit_confirmation_transition = dungeon::TransitionKind::descent;
+     const auto before = arpg::platform::abyss_hud_values(snapshot);
+     platform::HudNoticeView notice{};
+     notice.primary.kind = platform::HudNoticeKind::abyss_abandon;
+     static_cast<void>(std::snprintf(notice.primary.text.bytes.data(),
+-        notice.primary.text.bytes.size(), "E %s", before.confirmation_label));
++        notice.primary.text.bytes.size(), u8"Q：%s", before.confirmation_label));
+     notice.secondary.kind = platform::HudNoticeKind::hole_interact;
+     static_cast<void>(std::snprintf(notice.secondary.text.bytes.data(),
+-        notice.secondary.text.bytes.size(), "E to descend"));
++        notice.secondary.text.bytes.size(), u8"Q：进入下一层"));
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     platform::attach_notice_view(output, notice);
+ 
+     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
+     ARPG_REQUIRE(output.context.secondary_kind == platform::HudNoticeKind::hole_interact);
+-    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "Press E again") != nullptr);
++    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(),
++        u8"再次交互，放弃剩余奖励并下潜") != nullptr);
+     const auto after = arpg::platform::abyss_hud_values(snapshot);
+     ARPG_REQUIRE(after.confirmation_visible == before.confirmation_visible);
+     ARPG_REQUIRE(after.confirmation_label == before.confirmation_label);
+     return {};
+ }
+ 
+ arpg::test::Failure rebound_context_hints_use_committed_e_i_and_p_labels() noexcept {
+     dungeon::DungeonSnapshot previous{};
+     dungeon::DungeonSnapshot current = normal_snapshot();
+     current.has_active_room = true;
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index e61d967..4331071 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -299,24 +299,27 @@ int main() {
+             "full Chinese UI foundation");
+     }
+     if (full_chinese_ui_menu_hud_only()) {
+         const arpg::test::TestSuite full_chinese_ui_menu_hud[] = {
+             pause_menu_state_suite(),
+             pause_menu_view_suite(),
+             control_hints_suite(),
+             hud_view_model_suite(),
+             hud_notice_state_suite(),
+             active_skill_view_suite(),
++            dungeon_view_math_suite(),
++            hud_layout_suite(),
++            hud_font_suite(),
+             hud_render_plan_suite(),
+             hud_host_integration_suite(),
+         };
+-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 130,
++        return arpg::test::run_suites(full_chinese_ui_menu_hud, 177,
+             "full Chinese UI menus and HUD");
+     }
+     if (cplay038_save_directory_only()) {
+         const arpg::test::TestSuite cplay038_only[] = {
+             dungeon_runtime_save_directory_lease_suite(),
+         };
+         return arpg::test::run_suites(cplay038_only, 8,
+             "CPLAY-038 runtime save directory lease");
+     }
+     if (cplay035_settings_conflict_only()) {
+@@ -330,35 +333,35 @@ int main() {
+         const arpg::test::TestSuite cplay034_only[] = {
+             passive_tree_view_suite(),
+         };
+         return arpg::test::run_suites(cplay034_only, 8,
+             "CPLAY-034 passive tree node feedback");
+     }
+     if (cplay033_passive_cjk_only()) {
+         const arpg::test::TestSuite cplay033_only[] = {
+             hud_font_suite(),
+         };
+-        return arpg::test::run_suites(cplay033_only, 15,
++        return arpg::test::run_suites(cplay033_only, 16,
+             "CPLAY-033 passive tree CJK font");
+     }
+     if (cplay032_death_retry_hint_only()) {
+         const arpg::test::TestSuite cplay032_only[] = {
+             death_overlay_view_suite(),
+         };
+         return arpg::test::run_suites(cplay032_only, 12,
+             "CPLAY-032 death retry key hint");
+     }
+     if (cplay030_hole_prompt_only()) {
+         const arpg::test::TestSuite cplay030_only[] = {
+             dungeon_view_math_suite(),
+         };
+-        return arpg::test::run_suites(cplay030_only, 20,
++        return arpg::test::run_suites(cplay030_only, 22,
+             "CPLAY-030 dynamic hole interaction prompt");
+     }
+     if (cplay028_pause_focus_only()) {
+         const arpg::test::TestSuite cplay028_only[] = {
+             pause_menu_state_suite(),
+         };
+         return arpg::test::run_suites(cplay028_only, 32,
+             "CPLAY-028 unfocused pause input");
+     }
+     if (cplay027_inventory_binding_label_only()) {
+@@ -505,13 +508,13 @@ int main() {
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+         large_room_render_plan_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 659,
++    return arpg::test::run_suites(suites, 664,
+         "host settings runtime contract");
+ }
+diff --git a/tests/platform/stage12_environment_render_tests.cpp b/tests/platform/stage12_environment_render_tests.cpp
+index 2098076..69a13ea 100644
+--- a/tests/platform/stage12_environment_render_tests.cpp
++++ b/tests/platform/stage12_environment_render_tests.cpp
+@@ -441,21 +441,22 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
+         "draw_graybox_room") != std::string::npos);
+     const std::size_t doors = draw_room_block.find("draw_doors(");
+     ARPG_REQUIRE(doors != std::string::npos);
+     const std::size_t door_call_end = draw_room_block.find(");", doors);
+     ARPG_REQUIRE(door_call_end != std::string::npos);
+     const std::string door_call = draw_room_block.substr(doors,
+         door_call_end - doors + 2U);
+     ARPG_REQUIRE(door_call.find(
+         "draw_material_background") == std::string::npos);
+     ARPG_REQUIRE(draw_room_block.find(
+-        "draw_hole(current, material_pack_, camera, interact_binding_label)")
++        "draw_hole(current, material_pack_, camera, interact_binding_label,\n"
++        "        world_ui_font_, world_ui_font_ready_)")
+         != std::string::npos);
+     ARPG_REQUIRE(occurrence_count(draw_room_block,
+         "draw_fire_room_props(") == 0U);
+     ARPG_REQUIRE(occurrence_count(draw_room_block,
+         "draw_environment_room_props(") == 1U);
+     ARPG_REQUIRE(draw_room_block.find("material_pack_, current, camera")
+         != std::string::npos);
+     for (const char* old_loop : {"draw_water_room_props(",
+              "draw_lightning_room_props(", "draw_chaos_room_props("}) {
+         ARPG_REQUIRE(renderer.find(old_loop) == std::string::npos);
+diff --git a/tests/platform/ui_text_catalog_tests.cpp b/tests/platform/ui_text_catalog_tests.cpp
+index de4406a..772c9f3 100644
+--- a/tests/platform/ui_text_catalog_tests.cpp
++++ b/tests/platform/ui_text_catalog_tests.cpp
+@@ -287,32 +287,32 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
+     ARPG_REQUIRE(std::strcmp(platform::ui_setting_action_name(
+         static_cast<arpg::settings::SettingAction>(255U)), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_skill_name(
+         static_cast<arpg::skills::ActiveSkillId>(255U)), u8"未知") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
+     std::size_t count{};
+     platform::visit_ui_text_catalog(&count_text, &count);
+-    ARPG_REQUIRE(count == 283U);
++    ARPG_REQUIRE(count == 284U);
+     return {};
+ }
+ 
+ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
+     std::size_t warmup_count{};
+     platform::visit_ui_text_catalog(&count_text, &warmup_count);
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
+         std::size_t count{};
+         platform::visit_ui_text_catalog(&count_text, &count);
+-        ARPG_REQUIRE(count == 283U);
++        ARPG_REQUIRE(count == 284U);
+         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+             arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {

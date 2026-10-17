@@ -1,0 +1,647 @@
+# Review package: 94c27d6..2e686c0
+
+## Commits
+2e686c0 fix: back Chinese scene labels with contrast
+
+## Files changed
+ src/platform/raylib/actor_renderer.cpp             |  20 ++--
+ src/platform/raylib/combat_view_math.cpp           |  42 ++++++++
+ src/platform/raylib/combat_view_math.hpp           |  18 ++++
+ src/platform/raylib/debug_renderer.cpp             |  10 +-
+ tests/platform/debug_overlay_renderer_tests.cpp    | 107 +++++++++++++++++++++
+ .../task7_debug_overlay_source_self_test.cmake     |  46 ++++++++-
+ .../platform/task7_debug_overlay_source_test.cmake |  58 ++++++++++-
+ 7 files changed, 289 insertions(+), 12 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index 0b00443..39e0dc0 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -81,24 +81,31 @@ void draw_outlined_text(const char* text, int x, int y, int font_size,
+     for (int offset_y = -outline_pixels; offset_y <= outline_pixels; ++offset_y) {
+         for (int offset_x = -outline_pixels; offset_x <= outline_pixels; ++offset_x) {
+             if (offset_x == 0 && offset_y == 0) continue;
+             DrawText(text, x + offset_x, y + offset_y, font_size, outline);
+         }
+     }
+     DrawText(text, x, y, font_size, color);
+ }
+ 
+ void draw_scene_label(Font font, bool font_ready, const char* text,
+-    float x, float y, int font_size, Color color) noexcept {
++    float x, float y, int font_size, Color color,
++    float viewport_width, float viewport_height) noexcept {
+     if (font_ready && IsFontValid(font)) {
+-        draw_crisp_ui_text(font, text, {x, y},
+-            static_cast<float>(font_size), 1.0F, color);
++        const SceneLabelStyle style = scene_label_style(color);
++        const Vector2 measured = MeasureTextEx(
++            font, text, static_cast<float>(font_size), 1.0F);
++        const SceneLabelLayout layout = scene_label_layout(
++            {x, y}, measured, viewport_width, viewport_height, style);
++        DrawRectangleRec(layout.backing, style.backing_color);
++        draw_crisp_ui_text(font, text, layout.text_position,
++            static_cast<float>(font_size), 1.0F, style.text_color);
+     }
+ }
+ 
+ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
+     const CombatCameraView& camera,
+     float width, float height, bool foreground,
+     Font hud_font, bool hud_font_ready) noexcept {
+     constexpr int kCombatTextShadowPixels = 1;
+     const CombatTextStyle text_style = combat_text_style(
+         static_cast<int>(width), static_cast<int>(height));
+@@ -434,31 +441,32 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
+     for (std::size_t index = 0U; index < affix_count; ++index) {
+         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
+         std::array<char, 64U> affix_text{};
+         static_cast<void>(ui_utf8_format(affix_text.data(), affix_text.size(),
+             u8"%s %s", badge.short_name, badge.tier_text));
+         draw_scene_label(hud_font, hud_font_ready, affix_text.data(),
+             x - bar_width * .5F,
+             phase_y + static_cast<float>(text_style.phase_font_size + 2)
+                 + static_cast<float>(index)
+                     * static_cast<float>(text_style.affix_font_size + 2),
+-            text_style.affix_font_size, to_color(badge.color));
++            text_style.affix_font_size, to_color(badge.color), width, height);
+     }
+     if (presentation.role_label_visible) {
+         draw_scene_label(hud_font, hud_font_ready, visual.role_label,
+             x - bar_width * .5F, role_y, text_style.role_font_size,
+-            Color{248, 246, 238, 255});
++            Color{248, 246, 238, 255}, width, height);
+     }
+     if (presentation.phase_label_visible) {
+         draw_scene_label(hud_font, hud_font_ready,
+             monster_phase_label(monster.ai_phase), x - bar_width * .5F,
+-            phase_y, text_style.phase_font_size, Color{205, 218, 237, 255});
++            phase_y, text_style.phase_font_size,
++            Color{205, 218, 237, 255}, width, height);
+     }
+ }
+ 
+ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
+     dungeon::DungeonElement ecology, const CombatCameraView& camera,
+     float width, float height,
+     const CombatFeedback& feedback, std::uint64_t tick, std::size_t label_lane,
+     Font hud_font, bool hud_font_ready, bool draw_debug) noexcept {
+     const ScreenProjection projected = project_combat_position(
+         position, camera, width, height);
+diff --git a/src/platform/raylib/combat_view_math.cpp b/src/platform/raylib/combat_view_math.cpp
+index 7c80a84..78ba122 100644
+--- a/src/platform/raylib/combat_view_math.cpp
++++ b/src/platform/raylib/combat_view_math.cpp
+@@ -1,14 +1,15 @@
+ #include "combat_view_math.hpp"
+ 
+ #include "combat/room_bounds.hpp"
+ #include "ui_text_catalog.hpp"
++#include "ui_text_contrast.hpp"
+ 
+ #include <algorithm>
+ #include <cmath>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ bool actor_precedes(
+     const ActorDrawItem& lhs,
+@@ -295,20 +296,61 @@ const char* debug_world_volume_label(DebugWorldVolumeKind kind) noexcept {
+     }
+     return u8"未知判定";
+ }
+ 
+ MonsterLabelTextStyle monster_label_text_style(float viewport_scale) noexcept {
+     const float scale = std::clamp(viewport_scale, 1.0F, 1.5F);
+     const int font_size = static_cast<int>(std::ceil(16.0F * scale));
+     return {font_size, font_size, font_size, 0};
+ }
+ 
++SceneLabelStyle scene_label_style(Color requested_text_color) noexcept {
++    SceneLabelStyle style{};
++    style.backing_color = {0x0B, 0x10, 0x19, 255};
++    style.horizontal_padding = 6.0F;
++    style.vertical_padding = 3.0F;
++    requested_text_color.a = 255U;
++    if (ui_luma_contrast_ratio(
++            requested_text_color, style.backing_color) < 4.5F) {
++        requested_text_color = {218U, 226U, 239U, 255U};
++    }
++    style.text_color = requested_text_color;
++    return style;
++}
++
++SceneLabelLayout scene_label_layout(Vector2 anchor, Vector2 text_size,
++    float viewport_width, float viewport_height,
++    SceneLabelStyle style) noexcept {
++    const float safe_width = std::max(0.0F, viewport_width);
++    const float safe_height = std::max(0.0F, viewport_height);
++    const float text_width = std::max(0.0F, text_size.x);
++    const float text_height = std::max(0.0F, text_size.y);
++    const float backing_width = std::min(safe_width,
++        text_width + std::max(0.0F, style.horizontal_padding) * 2.0F);
++    const float backing_height = std::min(safe_height,
++        text_height + std::max(0.0F, style.vertical_padding) * 2.0F);
++    SceneLabelLayout layout{};
++    layout.backing = {
++        std::clamp(anchor.x - backing_width * 0.5F,
++            0.0F, std::max(0.0F, safe_width - backing_width)),
++        std::clamp(anchor.y - backing_height * 0.5F,
++            0.0F, std::max(0.0F, safe_height - backing_height)),
++        backing_width,
++        backing_height,
++    };
++    layout.text_position = {
++        layout.backing.x + (layout.backing.width - text_width) * 0.5F,
++        layout.backing.y + (layout.backing.height - text_height) * 0.5F,
++    };
++    return layout;
++}
++
+ MonsterPresentationPlan monster_presentation_plan(
+     std::size_t label_lane, bool draw_debug) noexcept {
+     return {-128.0F, label_lane % 4U, true, draw_debug, draw_debug};
+ }
+ 
+ AffixBadge monster_affix_badge(combat::MonsterAffixInstance affix) noexcept {
+     const combat::MonsterAffixDefinition* const definition =
+         combat::monster_affix_definition(affix.id);
+     if (definition == nullptr) {
+         return {"?", affix_tier_text(affix.tier),
+diff --git a/src/platform/raylib/combat_view_math.hpp b/src/platform/raylib/combat_view_math.hpp
+index c63b79d..b880eea 100644
+--- a/src/platform/raylib/combat_view_math.hpp
++++ b/src/platform/raylib/combat_view_math.hpp
+@@ -62,20 +62,32 @@ struct MonsterVisual final {
+     bool priority_warning{};
+ };
+ 
+ struct MonsterLabelTextStyle final {
+     int affix_font_size{11};
+     int role_font_size{14};
+     int phase_font_size{12};
+     int outline_pixels{2};
+ };
+ 
++struct SceneLabelStyle final {
++    Color text_color{};
++    Color backing_color{};
++    float horizontal_padding{};
++    float vertical_padding{};
++};
++
++struct SceneLabelLayout final {
++    Rectangle backing{};
++    Vector2 text_position{};
++};
++
+ struct MonsterPresentationPlan final {
+     float resource_bar_offset_y{};
+     std::size_t debug_label_lane{};
+     bool resource_bars_visible{};
+     bool role_label_visible{};
+     bool phase_label_visible{};
+ };
+ 
+ struct AffixBadge final {
+     const char* short_name{"?"};
+@@ -130,20 +142,26 @@ void sort_actor_draw_items(
+ [[nodiscard]] MonsterVisual monster_visual(
+     combat::MonsterId id,
+     combat::MonsterAiPhase phase,
+     dungeon::DungeonElement ecology) noexcept;
+ [[nodiscard]] const char* monster_phase_label(
+     combat::MonsterAiPhase phase) noexcept;
+ [[nodiscard]] const char* debug_world_volume_label(
+     DebugWorldVolumeKind kind) noexcept;
+ [[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
+     float viewport_scale) noexcept;
++[[nodiscard]] SceneLabelStyle scene_label_style(
++    Color requested_text_color) noexcept;
++[[nodiscard]] SceneLabelLayout scene_label_layout(
++    Vector2 anchor, Vector2 text_size,
++    float viewport_width, float viewport_height,
++    SceneLabelStyle style) noexcept;
+ [[nodiscard]] MonsterPresentationPlan monster_presentation_plan(
+     std::size_t label_lane, bool draw_debug) noexcept;
+ [[nodiscard]] AffixBadge monster_affix_badge(
+     combat::MonsterAffixInstance affix) noexcept;
+ [[nodiscard]] AffixOutline monster_affix_outline(
+     combat::MonsterAffixInstance affix,
+     std::uint64_t tick) noexcept;
+ [[nodiscard]] bool blink_affix_warning_visible(
+     const combat::MonsterSnapshot& monster) noexcept;
+ [[nodiscard]] float blink_affix_warning_actor_radius(
+diff --git a/src/platform/raylib/debug_renderer.cpp b/src/platform/raylib/debug_renderer.cpp
+index ec23eb1..5331372 100644
+--- a/src/platform/raylib/debug_renderer.cpp
++++ b/src/platform/raylib/debug_renderer.cpp
+@@ -29,23 +29,29 @@ void draw_projected_aabb(const combat::Aabb& box,
+         for (std::size_t axis = 0; axis < 3; ++axis) {
+             const std::size_t bit = std::size_t{1} << axis;
+             if ((index & bit) == 0) {
+                 const ScreenProjection& from = corners[index];
+                 const ScreenProjection& to = corners[index | bit];
+                 DrawLineEx({from.x, from.y}, {to.x, to.y}, 1.5F, color);
+             }
+         }
+     }
+     if (shared_ui_font_ready && IsFontValid(shared_ui_font)) {
+-        draw_crisp_ui_text(shared_ui_font, label,
++        const SceneLabelStyle style = scene_label_style(color);
++        const Vector2 measured = MeasureTextEx(
++            shared_ui_font, label, 12.0F, 0.5F);
++        const SceneLabelLayout layout = scene_label_layout(
+             {corners[4].x + 4.0F, corners[4].y - 14.0F},
+-            12.0F, 0.5F, color, 1);
++            measured, width, height, style);
++        DrawRectangleRec(layout.backing, style.backing_color);
++        draw_crisp_ui_text(shared_ui_font, label, layout.text_position,
++            12.0F, 0.5F, style.text_color, 1);
+     }
+ }
+ 
+ }  // namespace
+ 
+ void CombatRenderer::draw_debug_world_volumes(
+     const combat::CombatSnapshot& snapshot,
+     const CombatCameraView& camera,
+     float width, float height) const noexcept {
+     if (const combat::AttackDefinition* definition =
+diff --git a/tests/platform/debug_overlay_renderer_tests.cpp b/tests/platform/debug_overlay_renderer_tests.cpp
+index 84b8741..b4c2fae 100644
+--- a/tests/platform/debug_overlay_renderer_tests.cpp
++++ b/tests/platform/debug_overlay_renderer_tests.cpp
+@@ -43,20 +43,24 @@ namespace platform = arpg::platform;
+ }
+ 
+ [[nodiscard]] bool rectangle_inside(
+     Rectangle inner, int width, int height) noexcept {
+     return inner.x >= 0.0F && inner.y >= 0.0F
+         && inner.width > 0.0F && inner.height > 0.0F
+         && inner.x + inner.width <= static_cast<float>(width)
+         && inner.y + inner.height <= static_cast<float>(height);
+ }
+ 
++[[nodiscard]] Color to_color(platform::Rgba8 color) noexcept {
++    return {color.r, color.g, color.b, color.a};
++}
++
+ arpg::test::Failure combat_and_transition_views_keep_twelve_localized_utf8_lines()
+     noexcept {
+     dungeon::DungeonSnapshot snapshot{};
+     snapshot.root_seed = 0x1234U;
+     snapshot.room_seed = 0x5678U;
+     snapshot.commit_generation = 9U;
+     snapshot.has_hole = true;
+     snapshot.combat.emplace();
+     snapshot.combat->player.state = combat::PlayerState::attack_active;
+     snapshot.combat->player.active_attack = combat::AttackId::j2;
+@@ -150,20 +154,109 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
+         ARPG_REQUIRE(layout.backing_color.g == 0x10U);
+         ARPG_REQUIRE(layout.backing_color.b == 0x19U);
+         ARPG_REQUIRE(layout.backing_color.a == 255U);
+         for (std::size_t column = 0U; column < layout.column_count; ++column) {
+             ARPG_REQUIRE(rectangle_inside(layout.column_backings[column],
+                 viewport[0], viewport[1]));
+         }
+         for (const Rectangle line : layout.line_bounds) {
+             ARPG_REQUIRE(rectangle_inside(line, viewport[0], viewport[1]));
+         }
++
++        const platform::SceneLabelStyle scene_style =
++            platform::scene_label_style(Color{205U, 218U, 237U, 255U});
++        ARPG_REQUIRE(scene_style.backing_color.r == 0x0BU);
++        ARPG_REQUIRE(scene_style.backing_color.g == 0x10U);
++        ARPG_REQUIRE(scene_style.backing_color.b == 0x19U);
++        ARPG_REQUIRE(scene_style.backing_color.a == 255U);
++        const Vector2 text_size{132.0F, 18.0F};
++        const float width = static_cast<float>(viewport[0]);
++        const float height = static_cast<float>(viewport[1]);
++        const std::array<Vector2, 5U> anchors{{
++            {0.0F, 0.0F}, {width, 0.0F}, {0.0F, height},
++            {width, height}, {width * 0.5F, height * 0.5F},
++        }};
++        std::array<platform::SceneLabelLayout, 5U> labels{};
++        for (std::size_t index = 0U; index < anchors.size(); ++index) {
++            labels[index] = platform::scene_label_layout(
++                anchors[index], text_size, width, height, scene_style);
++            ARPG_REQUIRE(rectangle_inside(
++                labels[index].backing, viewport[0], viewport[1]));
++            ARPG_REQUIRE(arpg::test::near(
++                labels[index].text_position.x + text_size.x * 0.5F,
++                labels[index].backing.x + labels[index].backing.width * 0.5F));
++            ARPG_REQUIRE(arpg::test::near(
++                labels[index].text_position.y + text_size.y * 0.5F,
++                labels[index].backing.y + labels[index].backing.height * 0.5F));
++            ARPG_REQUIRE(labels[index].backing.width > text_size.x);
++            ARPG_REQUIRE(labels[index].backing.height > text_size.y);
++        }
++        ARPG_REQUIRE(labels[0U].backing.x == 0.0F);
++        ARPG_REQUIRE(labels[0U].backing.y == 0.0F);
++        ARPG_REQUIRE(arpg::test::near(
++            labels[1U].backing.x + labels[1U].backing.width, width));
++        ARPG_REQUIRE(labels[1U].backing.y == 0.0F);
++        ARPG_REQUIRE(labels[2U].backing.x == 0.0F);
++        ARPG_REQUIRE(arpg::test::near(
++            labels[2U].backing.y + labels[2U].backing.height, height));
++        ARPG_REQUIRE(arpg::test::near(
++            labels[3U].backing.x + labels[3U].backing.width, width));
++        ARPG_REQUIRE(arpg::test::near(
++            labels[3U].backing.y + labels[3U].backing.height, height));
++        ARPG_REQUIRE(arpg::test::near(
++            labels[4U].backing.x + labels[4U].backing.width * 0.5F,
++            width * 0.5F));
++        ARPG_REQUIRE(arpg::test::near(
++            labels[4U].backing.y + labels[4U].backing.height * 0.5F,
++            height * 0.5F));
++    }
++
++    constexpr std::array<Color, 5U> kActualFixedSceneLabelColors{{
++        {90U, 190U, 255U, 190U},
++        {255U, 88U, 184U, 230U},
++        {94U, 255U, 173U, 210U},
++        {248U, 246U, 238U, 255U},
++        {205U, 218U, 237U, 255U},
++    }};
++    for (const Color requested : kActualFixedSceneLabelColors) {
++        const platform::SceneLabelStyle style =
++            platform::scene_label_style(requested);
++        ARPG_REQUIRE(style.text_color.a == 255U);
++        ARPG_REQUIRE(style.backing_color.r == 0x0BU);
++        ARPG_REQUIRE(style.backing_color.g == 0x10U);
++        ARPG_REQUIRE(style.backing_color.b == 0x19U);
++        ARPG_REQUIRE(style.backing_color.a == 255U);
++        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
++            style.text_color, style.backing_color) >= 4.5F);
++    }
++    constexpr std::array<combat::MonsterAffixId, 12U> kAffixes{{
++        combat::MonsterAffixId::mighty,
++        combat::MonsterAffixId::frenzy,
++        combat::MonsterAffixId::swift,
++        combat::MonsterAffixId::armored,
++        combat::MonsterAffixId::shielding,
++        combat::MonsterAffixId::multishot,
++        combat::MonsterAffixId::burning_ground,
++        combat::MonsterAffixId::chilling,
++        combat::MonsterAffixId::chain_lightning,
++        combat::MonsterAffixId::chaos_corrosion,
++        combat::MonsterAffixId::blink_assault,
++        combat::MonsterAffixId::death_blast,
++    }};
++    for (const combat::MonsterAffixId id : kAffixes) {
++        const platform::AffixBadge badge = platform::monster_affix_badge(
++            {id, combat::MonsterAffixTier::m1});
++        const platform::SceneLabelStyle style =
++            platform::scene_label_style(to_color(badge.color));
++        ARPG_REQUIRE(style.text_color.a == 255U);
++        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
++            style.text_color, style.backing_color) >= 4.5F);
+     }
+ 
+     dungeon::DungeonSnapshot snapshot{};
+     platform::DungeonRenderStatus status{};
+     platform::CombatFeedback feedback{};
+     status.indicator = platform::SaveIndicator::error;
+     const platform::DebugOverlayView view =
+         platform::make_debug_overlay_view(snapshot, status, feedback, false,
+             diagnostics_for(snapshot));
+     const Color backing{0x0B, 0x10, 0x19, 255};
+@@ -190,28 +283,42 @@ arpg::test::Failure layout_rectangles_and_contrast_are_safe_on_supported_viewpor
+ }
+ 
+ arpg::test::Failure ten_thousand_view_builds_allocate_nothing() noexcept {
+     dungeon::DungeonSnapshot snapshot{};
+     snapshot.combat.emplace();
+     snapshot.combat->tick = 44U;
+     const platform::DungeonRenderStatus status{};
+     const platform::CombatFeedback feedback{};
+     const platform::DebugOverlayDiagnosticsPlan diagnostics =
+         diagnostics_for(snapshot);
++    constexpr std::array<Color, 3U> kSceneColors{{
++        {90U, 190U, 255U, 190U},
++        {255U, 88U, 184U, 230U},
++        {205U, 218U, 237U, 255U},
++    }};
+     std::uint64_t checksum{};
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t index = 0U; index < 10000U; ++index) {
+         const platform::DebugOverlayView view =
+             platform::make_debug_overlay_view(snapshot, status, feedback,
+                 true, diagnostics);
+         checksum += view.line_count
+             + static_cast<unsigned char>(view.lines[0].text[0]);
++        const platform::SceneLabelStyle style =
++            platform::scene_label_style(kSceneColors[index % kSceneColors.size()]);
++        const platform::SceneLabelLayout label = platform::scene_label_layout(
++            {static_cast<float>(index % 800U),
++                static_cast<float>(index % 450U)},
++            {132.0F, 18.0F}, 800.0F, 450.0F, style);
++        checksum += static_cast<std::uint64_t>(
++            label.backing.width + label.backing.height
++            + label.text_position.x + label.text_position.y);
+     }
+     const std::uint64_t after = arpg::test::allocation_count();
+     ARPG_REQUIRE(checksum != 0U);
+     ARPG_REQUIRE(after == before);
+     return {};
+ }
+ 
+ arpg::test::Failure status_and_world_debug_labels_are_exhaustively_chinese()
+     noexcept {
+     dungeon::DungeonSnapshot snapshot{};
+diff --git a/tests/platform/task7_debug_overlay_source_self_test.cmake b/tests/platform/task7_debug_overlay_source_self_test.cmake
+index 399f38d..94e1b33 100644
+--- a/tests/platform/task7_debug_overlay_source_self_test.cmake
++++ b/tests/platform/task7_debug_overlay_source_self_test.cmake
+@@ -54,26 +54,70 @@ run_guard(pristine TRUE)
+ function(expect_mutation_rejected LABEL SOURCE_NAME NEEDLE REPLACEMENT)
+     set(_source "${_original_${SOURCE_NAME}}")
+     string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_source}")
+     if(_mutated STREQUAL _source)
+         message(FATAL_ERROR "Task 7 mutation anchor is missing: ${LABEL}")
+     endif()
+     set(_mutated_${SOURCE_NAME} "${_mutated}")
+     run_guard("${LABEL}" FALSE)
+ endfunction()
+ 
++expect_mutation_rejected(missing_world_label_backing DEBUG_SOURCE
++    "DrawRectangleRec(layout.backing, style.backing_color);"
++    "static_cast<void>(layout.backing);")
++expect_mutation_rejected(default_world_label_font DEBUG_SOURCE
++    "draw_crisp_ui_text(shared_ui_font, label, layout.text_position,
++            12.0F, 0.5F, style.text_color, 1);"
++    "DrawTextEx(GetFontDefault(), label, layout.text_position,
++            12.0F, 0.5F, style.text_color);")
++expect_mutation_rejected(dead_world_label_backing DEBUG_SOURCE
++    "DrawRectangleRec(layout.backing, style.backing_color);"
++    "if (shared_ui_font_ready && false) {
++            DrawRectangleRec(layout.backing, style.backing_color);
++        }")
++expect_mutation_rejected(unclamped_world_label_layout DEBUG_SOURCE
++    "const SceneLabelLayout layout = scene_label_layout(
++            {corners[4].x + 4.0F, corners[4].y - 14.0F},
++            measured, width, height, style);"
++    "const SceneLabelLayout layout{
++            {corners[4].x + 4.0F, corners[4].y - 14.0F,
++                measured.x, measured.y},
++            {corners[4].x + 4.0F, corners[4].y - 14.0F}};")
++expect_mutation_rejected(monster_label_text_before_backing ACTOR_SOURCE
++    "DrawRectangleRec(layout.backing, style.backing_color);
++        draw_crisp_ui_text(font, text, layout.text_position,
++            static_cast<float>(font_size), 1.0F, style.text_color);"
++    "draw_crisp_ui_text(font, text, layout.text_position,
++            static_cast<float>(font_size), 1.0F, style.text_color);
++        DrawRectangleRec(layout.backing, style.backing_color);")
++expect_mutation_rejected(default_monster_label_font ACTOR_SOURCE
++    "draw_crisp_ui_text(font, text, layout.text_position,
++            static_cast<float>(font_size), 1.0F, style.text_color);"
++    "DrawTextEx(GetFontDefault(), text, layout.text_position,
++            static_cast<float>(font_size), 1.0F, style.text_color);")
++expect_mutation_rejected(dead_monster_label_backing ACTOR_SOURCE
++    "DrawRectangleRec(layout.backing, style.backing_color);"
++    "if (font_ready && false) {
++            DrawRectangleRec(layout.backing, style.backing_color);
++        }")
++expect_mutation_rejected(missing_monster_label_viewport ACTOR_SOURCE
++    "text_style.role_font_size,
++            Color{248, 246, 238, 255}, width, height);"
++    "text_style.role_font_size,
++            Color{248, 246, 238, 255}, 0.0F, 0.0F);")
++
+ expect_mutation_rejected(unsafe_affix_textformat ACTOR_SOURCE
+     "    for (std::size_t index = 0U; index < affix_count; ++index) {"
+     "    draw_scene_label(hud_font, hud_font_ready,
+         TextFormat(\"%s %s\", u8\"词缀\", u8\"Ⅰ\"),
+         x - bar_width * .5F, phase_y, text_style.affix_font_size,
+-        Color{205, 218, 237, 255});
++        Color{205, 218, 237, 255}, width, height);
+     for (std::size_t index = 0U; index < affix_count; ++index) {")
+ 
+ expect_mutation_rejected(line_capacity OVERLAY_HEADER
+     "std::array<DebugOverlayLine, 12U> lines{};"
+     "std::array<DebugOverlayLine, 11U> lines{};")
+ expect_mutation_rejected(dynamic_format OVERLAY_SOURCE
+     "ui_utf8_format(view.lines[0].text.data(),"
+     "std::snprintf(view.lines[0].text.data(),")
+ expect_mutation_rejected(wrong_breakpoint OVERLAY_SOURCE
+     "screen_width < 1280 ? 1U : 2U"
+diff --git a/tests/platform/task7_debug_overlay_source_test.cmake b/tests/platform/task7_debug_overlay_source_test.cmake
+index 73201d2..cef763b 100644
+--- a/tests/platform/task7_debug_overlay_source_test.cmake
++++ b/tests/platform/task7_debug_overlay_source_test.cmake
+@@ -120,25 +120,38 @@ extract_cpp_function_body("${_combat_source}"
+     "GroundLootView CombatRenderer::draw(" _combat_draw_body _combat_draw_code)
+ require_token("${_combat_draw_body}"
+     "debug_overlay_.draw(world_ui_font_, world_ui_font_ready_,"
+     "Task 7 CombatRenderer must pass its borrowed SharedUiFont")
+ reject_dead_branch("${_combat_draw_code}" "Task 7 CombatRenderer overlay path")
+ 
+ extract_cpp_function_body("${_debug_source}"
+     "void draw_projected_aabb(" _aabb_body _aabb_code)
+ foreach(_token IN ITEMS
+         "shared_ui_font_ready && IsFontValid(shared_ui_font)"
+-        "draw_crisp_ui_text(shared_ui_font, label")
++        "scene_label_style(color)"
++        "shared_ui_font, label, 12.0F, 0.5F"
++        "scene_label_layout("
++        "width, height, style"
++        "DrawRectangleRec(layout.backing, style.backing_color)"
++        "draw_crisp_ui_text(shared_ui_font, label, layout.text_position"
++        "style.text_color")
+     require_token("${_aabb_body}" "${_token}"
+-        "Task 7 world volume labels must use the borrowed SharedUiFont")
++        "Task 7 world volume labels must use clamped backed SharedUiFont text")
+ endforeach()
+-foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "GetFontDefault(")
++string(FIND "${_aabb_body}" "DrawRectangleRec(" _aabb_backing_index)
++string(FIND "${_aabb_body}" "draw_crisp_ui_text(" _aabb_text_index)
++if(_aabb_backing_index GREATER _aabb_text_index)
++    message(FATAL_ERROR
++        "Task 7 world volume label backing must be drawn before text")
++endif()
++foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "TextFormat("
++        "GetFontDefault(" "LoadFont")
+     string(FIND "${_aabb_code}" "${_forbidden}" _found)
+     if(NOT _found EQUAL -1)
+         message(FATAL_ERROR
+             "Task 7 world volume label uses a default text path: ${_forbidden}")
+     endif()
+ endforeach()
+ reject_dead_branch("${_aabb_code}" "Task 7 world volume label draw")
+ 
+ extract_cpp_function_body("${_debug_source}"
+     "void CombatRenderer::draw_debug_world_volumes(" _world_body _world_code)
+@@ -180,30 +193,69 @@ foreach(_token IN ITEMS
+         "case combat::MonsterAffixTier::m3: return u8\"词缀Ⅲ\"")
+     require_token("${_tier_body}" "${_token}"
+         "Task 7 affix tier mapping is incomplete")
+ endforeach()
+ reject_dead_branch("${_tier_code}" "Task 7 affix tier mapping")
+ 
+ extract_cpp_function_body("${_actor_source}"
+     "void draw_effects(" _effects_body _effects_code)
+ require_token("${_effects_body}" "u8\"已击败\""
+     "Task 7 defeat marker must be Chinese")
++extract_cpp_function_body("${_actor_source}"
++    "void draw_scene_label(" _scene_label_body _scene_label_code)
++foreach(_token IN ITEMS
++        "font_ready && IsFontValid(font)"
++        "scene_label_style(color)"
++        "font, text, static_cast<float>(font_size), 1.0F"
++        "scene_label_layout("
++        "viewport_width, viewport_height, style"
++        "DrawRectangleRec(layout.backing, style.backing_color)"
++        "draw_crisp_ui_text(font, text, layout.text_position"
++        "style.text_color")
++    require_token("${_scene_label_body}" "${_token}"
++        "Task 7 monster scene labels must use clamped backed SharedUiFont text")
++endforeach()
++string(FIND "${_scene_label_body}" "DrawRectangleRec(" _scene_backing_index)
++string(FIND "${_scene_label_body}" "draw_crisp_ui_text(" _scene_text_index)
++if(_scene_backing_index GREATER _scene_text_index)
++    message(FATAL_ERROR
++        "Task 7 monster scene label backing must be drawn before text")
++endif()
++foreach(_forbidden IN ITEMS "DrawText(" "DrawTextEx(" "TextFormat("
++        "GetFontDefault(" "LoadFont")
++    string(FIND "${_scene_label_code}" "${_forbidden}" _found)
++    if(NOT _found EQUAL -1)
++        message(FATAL_ERROR
++            "Task 7 monster scene label uses a forbidden text/font path: ${_forbidden}")
++    endif()
++endforeach()
++reject_dead_branch("${_scene_label_code}" "Task 7 monster scene label draw")
+ extract_cpp_function_body("${_actor_source}"
+     "void draw_monster_presentation(" _presentation_body _presentation_code)
+ require_token("${_presentation_body}" "monster_phase_label(monster.ai_phase)"
+     "Task 7 monster presentation must consume the Chinese phase mapping")
+ foreach(_token IN ITEMS
+         "std::array<char, 64U> affix_text{}"
+         "ui_utf8_format(affix_text.data(), affix_text.size(), u8\"%s %s\""
+         "draw_scene_label(hud_font, hud_font_ready, affix_text.data()")
+     require_token("${_presentation_body}" "${_token}"
+         "Task 7 affix labels must use a fixed UTF-8 stack buffer")
+ endforeach()
++normalize_cpp_source("${_presentation_body}" _presentation_normalized)
++string(REGEX REPLACE "[ \t\r\n]+" "" _presentation_compact
++    "${_presentation_normalized}")
++foreach(_token IN ITEMS
++        "text_style.affix_font_size,to_color(badge.color),width,height)"
++        "text_style.role_font_size,Color{248,246,238,255},width,height)"
++        "text_style.phase_font_size,Color{205,218,237,255},width,height)")
++    require_token("${_presentation_compact}" "${_token}"
++        "Task 7 monster scene labels must receive the real viewport")
++endforeach()
+ string(FIND "${_presentation_code}" "TextFormat(" _affix_textformat)
+ if(NOT _affix_textformat EQUAL -1)
+     message(FATAL_ERROR
+         "Task 7 monster presentation must not use TextFormat")
+ endif()
+ reject_dead_branch("${_effects_code}" "Task 7 defeat marker")
+ reject_dead_branch("${_presentation_code}" "Task 7 monster presentation")
+ 
+ message(STATUS "Task 7 debug overlay source guard accepted")

@@ -1,0 +1,111 @@
+# Review package: 8605e8f35719800bd94721d4f154ab48dd9302f2..841b5e40ddb6eee88e9939a53f6fdea1a66f9de2
+
+## Commits
+841b5e4 fix(ui): reset invalid receipt session baselines
+
+## Files changed
+ src/platform/raylib/inventory_view_math.cpp  |  5 +++-
+ tests/platform/inventory_view_math_tests.cpp | 34 ++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/platform/raylib/inventory_view_math.cpp b/src/platform/raylib/inventory_view_math.cpp
+index e347618..3940b40 100644
+--- a/src/platform/raylib/inventory_view_math.cpp
++++ b/src/platform/raylib/inventory_view_math.cpp
+@@ -979,32 +979,35 @@ InventoryStatusPresentation inventory_status_presentation(
+     return output;
+ }
+ 
+ InventoryTransientStatusFrameResult inventory_transient_status_for_frame(
+     InventoryTransientStatusState state,
+     const InventoryTransientStatusInput& input) noexcept {
+     InventoryTransientStatusFrameResult result{};
+     if (!state.initialized) {
+         state.initialized = true;
+         state.last_commit_generation = input.commit_generation;
+-        state.last_receipt_generation = input.receipt_commit_generation;
++        state.last_receipt_generation = input.receipt_valid
++            ? input.receipt_commit_generation : 0U;
+         result.next = state;
+         return result;
+     }
+     if (input.commit_generation < state.last_commit_generation
+         || (input.receipt_valid && input.receipt_commit_generation
+             < state.last_receipt_generation)) {
+         state.kind = InventoryTransientStatusKind::none;
+         state.remaining_frames = 0U;
+         state.last_commit_generation = input.commit_generation;
+         if (input.receipt_valid)
+             state.last_receipt_generation = input.receipt_commit_generation;
++        else
++            state.last_receipt_generation = 0U;
+         result.next = state;
+         return result;
+     }
+     const bool new_commit = input.commit_generation > state.last_commit_generation;
+     const bool new_receipt = input.receipt_valid
+         && input.receipt_commit_generation > state.last_receipt_generation;
+     state.last_commit_generation = std::max(state.last_commit_generation,
+         input.commit_generation);
+     if (input.receipt_valid) state.last_receipt_generation = std::max(
+         state.last_receipt_generation, input.receipt_commit_generation);
+diff --git a/tests/platform/inventory_view_math_tests.cpp b/tests/platform/inventory_view_math_tests.cpp
+index 09d66b7..49c6d30 100644
+--- a/tests/platform/inventory_view_math_tests.cpp
++++ b/tests/platform/inventory_view_math_tests.cpp
+@@ -690,20 +690,54 @@ test::Failure comparison_uses_full_build_fields() noexcept {
+     receipt_then_save = platform::inventory_transient_status_for_frame(
+         receipt_then_save, old_receipt).next;
+     platform::InventoryTransientStatusInput fresh_save{};
+     fresh_save.commit_generation = 12U;
+     fresh_save.save_state = platform::InventorySavePresentationState::saved;
+     const auto saved_after_old_receipt = platform::inventory_transient_status_for_frame(
+         receipt_then_save, fresh_save);
+     ARPG_REQUIRE(saved_after_old_receipt.presentation.kind
+         == platform::InventoryTransientStatusKind::saved);
+ 
++    platform::InventoryTransientStatusState old_session{};
++    old_session.initialized = true;
++    old_session.last_commit_generation = 50U;
++    old_session.last_receipt_generation = 50U;
++    old_session.kind = platform::InventoryTransientStatusKind::saved;
++    old_session.remaining_frames = 3U;
++    platform::InventoryTransientStatusInput new_session{};
++    new_session.commit_generation = 1U;
++    const auto new_session_baseline = platform::inventory_transient_status_for_frame(
++        old_session, new_session);
++    ARPG_REQUIRE(new_session_baseline.presentation.kind
++        == platform::InventoryTransientStatusKind::none);
++    ARPG_REQUIRE(new_session_baseline.next.last_receipt_generation == 0U);
++    new_session.commit_generation = 2U;
++    new_session.receipt_valid = true;
++    new_session.receipt_commit_generation = 2U;
++    const auto new_session_receipt = platform::inventory_transient_status_for_frame(
++        new_session_baseline.next, new_session);
++    ARPG_REQUIRE(new_session_receipt.presentation.kind
++        == platform::InventoryTransientStatusKind::reinforcement_receipt);
++
++    platform::InventoryTransientStatusState initial_invalid{};
++    platform::InventoryTransientStatusInput invalid_first{};
++    invalid_first.commit_generation = 1U;
++    invalid_first.receipt_commit_generation = 20U;
++    initial_invalid = platform::inventory_transient_status_for_frame(
++        initial_invalid, invalid_first).next;
++    ARPG_REQUIRE(initial_invalid.last_receipt_generation == 0U);
++    invalid_first.receipt_valid = true;
++    const auto valid_after_invalid = platform::inventory_transient_status_for_frame(
++        initial_invalid, invalid_first);
++    ARPG_REQUIRE(valid_after_invalid.presentation.kind
++        == platform::InventoryTransientStatusKind::reinforcement_receipt);
++
+     const platform::InventoryTransientStatusPresentation receipts[] = {
+         {platform::InventoryTransientStatusKind::reinforcement_receipt,
+             true, false, false, 7U, 8U},
+         {platform::InventoryTransientStatusKind::reinforcement_receipt,
+             false, false, false, 7U, 8U},
+         {platform::InventoryTransientStatusKind::reinforcement_receipt,
+             false, true, false, 7U, 8U},
+         {platform::InventoryTransientStatusKind::reinforcement_receipt,
+             true, false, true, 7U, 8U},
+     };

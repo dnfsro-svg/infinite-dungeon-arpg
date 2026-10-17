@@ -1,0 +1,259 @@
+# Review package: e568b44..HEAD
+
+## Commits
+567fe77 fix: preserve Chinese UI compatibility
+
+## Files changed
+ .../final-fix-report.md                            | 22 +++++++++++++++++++-
+ src/platform/raylib/ui_text_catalog.cpp            |  7 ++++---
+ tests/platform/shared_ui_font_tests.cpp            |  1 +
+ tests/platform/ui_text_catalog_tests.cpp           | 24 +++++++++++++++++-----
+ 4 files changed, 45 insertions(+), 9 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/final-fix-report.md b/.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/final-fix-report.md
+index fbbcabd..0a5784a 100644
+--- a/.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/final-fix-report.md
++++ b/.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/final-fix-report.md
+@@ -67,12 +67,32 @@ git diff --check
+ - `src/platform/raylib/ui_utf8.cpp`
+ - `tests/platform/shared_ui_font_tests.cpp`
+ - `tests/platform/ui_text_catalog_tests.cpp`
+ - `tests/platform/ui_utf8_tests.cpp`
+ - `.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/task-4-report.md`
+ - `.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/final-fix-report.md`
+ 
+ ## 疑虑与边界
+ 
+ - 无一一映射冲突或阻断项。
+-- 怪物短标在 Design 中只有“一至两个汉字”的约束，没有逐项批准字面量；本轮让短标沿用批准完整术语的核心字（如 `强力`、`狂热`、`多投`、`死爆`），没有改 stable ID。
++- 在 `e568b44` 时点，怪物短标按 Design 的“一至两个汉字”约束沿用完整术语核心字；下方用户授权兼容修复已用后续正式计划的精确短标表取代该历史状态，全程没有改 stable ID。
+ - Task 4 报告只补记 Stage12 既有 `input_hole_regression=fail`，没有改生产验证逻辑。
++
++## User-authorized compatibility fix
++
++用户在 `e568b44` 后明确授权一次额外窄兼容修复，只处理 scoped re-review 的两个 Important：
++
++1. 真实旧消费者 `material_loot_view` 仍输出“蜕变石”，而正式 catalog 名保持“嬗变石”。先在现有 shared glyph case 增加“蜕变石”覆盖断言，foundation 得到 15 cases / 1 failure，失败精确位于该断言；随后只把真实旧文案 `蜕变石` 加入唯一 `kUiDynamicGlyphCoverage`，没有迁移消费者，也没有在 `shared_ui_font` 增加手工语料。visitor 条目数由 270 增为 271，GREEN 为 15/15。
++2. 先把现有手工短标表改为正式顺序 `强、狂、迅、甲、盾、多射、灼地、寒、连雷、蚀、闪袭、死爆`，并逐项断言合法 UTF-8 及 1–2 个码点；旧 catalog 得到 15 cases / 1 failure，失败精确位于 short-label 字面量比较。随后只替换 `kMonsterAffixShortNames`，GREEN 为 15/15。
++
++实际去重字形数通过临时诊断读取后移除诊断并重新构建：517 -> 517，容量仍为 517 / 640。新增“蜕”同时正式短标移除了旧短标独占码点，因此净变化为 0。
++
++最终新鲜验证：
++
++- `cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2`：通过；
++- foundation：15 cases / 0 failures；
++- CPLAY033：15 cases / 0 failures；
++- lifecycle guard、其 self-test、bundled validator self-test：3/3 passed；
++- `git diff --check`：exit 0；
++- 可用物理内存：6298.4 MiB -> 6281.8 MiB，下降 16.6 MiB，无 OOM 或内存压力。
++
++该兼容修复没有触碰 `material_loot_view`、其他生产文件、菜单或 HUD，也没有修改 stable ID、枚举、玩法、存档或字体所有权。
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index 84679d9..f8f06d0 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -61,36 +61,36 @@ constexpr std::array<const char*, 8U> kMonsterNames{{
+     u8"烈焰爆破者", u8"烈焰冲锋者", u8"水流壁垒", u8"水流援护者",
+     u8"雷电射手", u8"雷电突进者", u8"混沌追猎者", u8"混沌危机体",
+ }};
+ 
+ constexpr std::array<const char*, 12U> kMonsterAffixNames{{
+     u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多重投射",
+     u8"灼烧地面", u8"冰寒", u8"连锁闪电", u8"混沌腐蚀", u8"闪烁突袭", u8"死亡爆破",
+ }};
+ 
+ constexpr std::array<const char*, 12U> kMonsterAffixShortNames{{
+-    u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多投",
+-    u8"灼地", u8"冰寒", u8"链电", u8"腐蚀", u8"闪袭", u8"死爆",
++    u8"强", u8"狂", u8"迅", u8"甲", u8"盾", u8"多射",
++    u8"灼地", u8"寒", u8"连雷", u8"蚀", u8"闪袭", u8"死爆",
+ }};
+ 
+ constexpr std::array<const char*, 10U> kSettingActionNames{{
+     u8"上移", u8"下移", u8"左移", u8"右移", u8"轻攻击", u8"跳跃", u8"挑飞", u8"交互", u8"背包", u8"被动树",
+ }};
+ 
+ constexpr std::array<const char*, 2U> kSkillNames{{
+     u8"拔刀斩", u8"风暴剑阵",
+ }};
+ 
+ // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
+ // its existing death-overlay/HUD corpus in the single catalog visitor so the
+ // shared glyph plan covers it without a second hand-maintained font list.
+-constexpr std::array<const char*, 65U> kUiDynamicGlyphCoverage{{
++constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
+     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
+     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
+     "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
+     "剩余出口已开放未分配点减速无敌目标个敌人待结算经验深度 · 层房间生态第波下一波即将开始待领奖励未领取"
+     "正在保存房间正在处理撤退房间状态异常"
+     "需要恢复存档再次交互，以放弃奖励离开后触碰同一出口全部剩余并下降进入下一层进入出口已清理升级至级有被动点打开背包树"
+     "投弹者冲锋之壁垒支援射手突袭追猎灾术师原生燃烧连锁爆破雷暴"
+     "猎杀之焰扩张强力狂热迅捷装甲多重寒冷腐蚀闪现无规则追猎狂怒"
+     "沉重脚步疲惫恢复献祭"
+     "装备背包技能石暂停继续设置退出游戏关闭选择操作提示材料条目",
+@@ -112,20 +112,21 @@ constexpr std::array<const char*, 65U> kUiDynamicGlyphCoverage{{
+     u8"技能石背包关闭",
+     u8"拔刀斩", u8"极·鬼剑术（暴风式）",
+     u8"怪群规模：拥挤密集兽潮",
+     u8"消灭（总计）剩余",
+     u8"出口尚未开放，战斗仍可继续",
+     u8"离开将放弃剩余奖励",
+     u8"可见：怪 105/105 环境 73/105 掉落 53/331",
+     u8"收益: 起始节点", u8"收益: 路线连接", u8"代价: 无",
+     u8"设置界面…",
+     u8"已拾取：强化石 x1、混沌石 x1",
++    u8"蜕变石",
+ }};
+ 
+ template <typename Id, std::size_t Count>
+ const char* value_or_unknown(const std::array<const char*, Count>& values,
+     Id id) noexcept {
+     const std::size_t index = static_cast<std::size_t>(id);
+     return index < values.size() ? values[index] : kUnknown;
+ }
+ 
+ template <std::size_t Count>
+diff --git a/tests/platform/shared_ui_font_tests.cpp b/tests/platform/shared_ui_font_tests.cpp
+index e4d31d0..45705af 100644
+--- a/tests/platform/shared_ui_font_tests.cpp
++++ b/tests/platform/shared_ui_font_tests.cpp
+@@ -49,20 +49,21 @@ void visit_one_codepoint_over_capacity(platform::UiTextVisitor visitor,
+ 
+ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     CatalogCoverage coverage{&plan};
+     platform::visit_ui_text_catalog(&record_catalog_coverage, &coverage);
+ 
+     ARPG_REQUIRE(coverage.covered);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"最后一击"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"主动技能石槽"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"…、"));
++    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"蜕变石"));
+     ARPG_REQUIRE(plan.codepoint_count > 384U);
+     ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
+     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+         platform::death_overlay_font_plan(), u8"混沌之眼"));
+     ARPG_REQUIRE(platform::hud_font_plan().covers_required_text);
+     return {};
+ }
+ 
+ arpg::test::Failure plan_codepoints_are_unique() noexcept {
+diff --git a/tests/platform/ui_text_catalog_tests.cpp b/tests/platform/ui_text_catalog_tests.cpp
+index 91e679f..88116d3 100644
+--- a/tests/platform/ui_text_catalog_tests.cpp
++++ b/tests/platform/ui_text_catalog_tests.cpp
+@@ -1,29 +1,39 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "ui_text_catalog.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ #include <cstring>
+ #include <utility>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ 
+ void count_text(const char* text, void* context) noexcept {
+     auto* const count = static_cast<std::size_t*>(context);
+     if (text != nullptr && text[0] != '\0') ++(*count);
+ }
+ 
++std::size_t utf8_codepoint_count(const char* text) noexcept {
++    std::size_t count{};
++    for (const auto* byte = reinterpret_cast<const unsigned char*>(text);
++         *byte != 0U; ++byte) {
++        if ((*byte & 0xC0U) != 0x80U) ++count;
++    }
++    return count;
++}
++
+ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+     constexpr std::array<std::pair<platform::UiTextId, const char*>, 32U>
+         kExpectedTexts{{
+             {platform::UiTextId::pause_title, u8"暂停"},
+             {platform::UiTextId::pause_continue, u8"继续游戏"},
+             {platform::UiTextId::pause_settings, u8"设置"},
+             {platform::UiTextId::pause_quit, u8"退出游戏"},
+             {platform::UiTextId::settings_title, u8"设置"},
+             {platform::UiTextId::settings_audio, u8"音频设置"},
+             {platform::UiTextId::settings_display, u8"显示设置"},
+@@ -150,29 +160,33 @@ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
+             static_cast<arpg::combat::MonsterId>(index)),
+             kExpectedMonsterNames[index]) == 0);
+     }
+ 
+     constexpr std::array<const char*, 12U> kExpectedMonsterAffixNames{{
+         u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多重投射",
+         u8"灼烧地面", u8"冰寒", u8"连锁闪电", u8"混沌腐蚀", u8"闪烁突袭",
+         u8"死亡爆破",
+     }};
+     constexpr std::array<const char*, 12U> kExpectedMonsterAffixShortNames{{
+-        u8"强力", u8"狂热", u8"迅捷", u8"装甲", u8"护盾", u8"多投",
+-        u8"灼地", u8"冰寒", u8"链电", u8"腐蚀", u8"闪袭", u8"死爆",
++        u8"强", u8"狂", u8"迅", u8"甲", u8"盾", u8"多射",
++        u8"灼地", u8"寒", u8"连雷", u8"蚀", u8"闪袭", u8"死爆",
+     }};
+     for (std::size_t index{}; index < kExpectedMonsterAffixNames.size(); ++index) {
+         const auto id = static_cast<arpg::combat::MonsterAffixId>(index);
+         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_name(id),
+             kExpectedMonsterAffixNames[index]) == 0);
+-        ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(id),
++        const char* const short_name = platform::ui_monster_affix_short_name(id);
++        ARPG_REQUIRE(std::strcmp(short_name,
+             kExpectedMonsterAffixShortNames[index]) == 0);
++        ARPG_REQUIRE(platform::ui_utf8_is_valid(short_name));
++        const std::size_t codepoint_count = utf8_codepoint_count(short_name);
++        ARPG_REQUIRE(codepoint_count >= 1U && codepoint_count <= 2U);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
+     ARPG_REQUIRE(std::strcmp(platform::ui_text(platform::UiTextId::count), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(255U), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_material_name(
+         static_cast<arpg::items::MaterialId>(255U)), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_item_slot_name(
+@@ -190,32 +204,32 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
+     ARPG_REQUIRE(std::strcmp(platform::ui_setting_action_name(
+         static_cast<arpg::settings::SettingAction>(255U)), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_skill_name(
+         static_cast<arpg::skills::ActiveSkillId>(255U)), u8"未知") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
+     std::size_t count{};
+     platform::visit_ui_text_catalog(&count_text, &count);
+-    ARPG_REQUIRE(count == 270U);
++    ARPG_REQUIRE(count == 271U);
+     return {};
+ }
+ 
+ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
+     std::size_t warmup_count{};
+     platform::visit_ui_text_catalog(&count_text, &warmup_count);
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
+         std::size_t count{};
+         platform::visit_ui_text_catalog(&count_text, &count);
+-        ARPG_REQUIRE(count == 270U);
++        ARPG_REQUIRE(count == 271U);
+         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+             arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {

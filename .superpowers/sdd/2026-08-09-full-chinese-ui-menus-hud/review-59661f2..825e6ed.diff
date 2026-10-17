@@ -1,0 +1,898 @@
+# Review package: 59661f2..825e6ed
+
+## Commits
+825e6ed feat: localize save recovery screen
+
+## Files changed
+ src/platform/raylib/raylib_host.cpp                | 80 +++++++++++++++++++---
+ src/platform/raylib/raylib_host.hpp                | 25 +++++++
+ src/platform/raylib/ui_text_catalog.cpp            |  3 +-
+ src/platform/raylib/ui_text_catalog.hpp            |  1 +
+ tests/platform/CMakeLists.txt                      | 19 +++++
+ tests/platform/host_input_source_test.cmake        | 19 ++++-
+ tests/platform/hud_host_integration_tests.cpp      | 57 +++++++++++++++
+ tests/platform/platform_test_main.cpp              |  4 +-
+ .../task6_recovery_screen_source_self_test.cmake   | 55 +++++++++++++++
+ .../task6_recovery_screen_source_test.cmake        | 61 +++++++++++++++++
+ tests/platform/ui_text_catalog_tests.cpp           | 17 +++--
+ 11 files changed, 323 insertions(+), 18 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 25ae026..1408e02 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -17,22 +17,27 @@
+ #include "host_settings_runtime.hpp"
+ #include "host_validation.hpp"
+ #include "host_window_lifetime.hpp"
+ #include "inventory_renderer.hpp"
+ #include "passive_tree_renderer.hpp"
+ #include "passive_tree_view_math.hpp"
+ #include "pause_menu_renderer.hpp"
+ #include "pause_menu_state.hpp"
+ #include "pause_menu_view.hpp"
+ #include "stable_key_raylib.hpp"
++#include "shared_ui_font.hpp"
+ #include "ui_material.hpp"
++#include "ui_text_catalog.hpp"
+ #include "ui_text_bounds_audit.hpp"
++#include "ui_text_contrast.hpp"
++#include "ui_text_renderer.hpp"
++#include "ui_utf8.hpp"
+ #include "persistence/save_paths.hpp"
+ #include "platform/settings/settings_store.hpp"
+ #include "platform/settings/settings_types.hpp"
+ #include "window_settings.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <cstdint>
+ #include <cmath>
+@@ -152,28 +157,82 @@ void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
+         cues = static_cast<UiAudioCueMask>(
+             cues | ui_audio_cue_mask(UiAudioCue::cancel));
+         break;
+     case PauseCommand::none:
+     case PauseCommand::resume:
+         break;
+     }
+     return cues;
+ }
+ 
+-void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
++RecoveryScreenView make_recovery_screen_view_impl(const DungeonRenderStatus& status,
++    int width, int height) noexcept {
++    constexpr float kBasePanelWidth = 640.0F;
++    constexpr float kBasePanelHeight = 260.0F;
++    constexpr float kMargin = 32.0F;
++    const float screen_width = static_cast<float>((std::max)(width, 0));
++    const float screen_height = static_cast<float>((std::max)(height, 0));
++    const float scale = (std::min)({1.0F,
++        (std::max)(0.0F, screen_width - kMargin * 2.0F) / kBasePanelWidth,
++        (std::max)(0.0F, screen_height - kMargin * 2.0F) / kBasePanelHeight});
++    const UiTextContrastStyle style = ui_text_contrast_style();
++    RecoveryScreenView view{};
++    view.panel = {(screen_width - kBasePanelWidth * scale) * 0.5F,
++        (screen_height - kBasePanelHeight * scale) * 0.5F,
++        kBasePanelWidth * scale, kBasePanelHeight * scale};
++    view.title_bounds = {view.panel.x + 40.0F * scale,
++        view.panel.y + 38.0F * scale, view.panel.width - 80.0F * scale,
++        52.0F * scale};
++    view.message_bounds = {view.panel.x + 40.0F * scale,
++        view.panel.y + 112.0F * scale, view.panel.width - 80.0F * scale,
++        48.0F * scale};
++    view.error_bounds = {view.panel.x + 40.0F * scale,
++        view.panel.y + 186.0F * scale, view.panel.width - 80.0F * scale,
++        34.0F * scale};
++    view.title = ui_text(UiTextId::recovery_title);
++    view.message = ui_text(UiTextId::recovery_dual_slot_instruction);
++    static_cast<void>(ui_utf8_format(view.error_text.data(),
++        view.error_text.size(), "%s %u", ui_text(UiTextId::save_error),
++        static_cast<unsigned>(status.error)));
++    view.panel_color = style.backing;
++    view.title_color = style.danger;
++    view.message_color = style.primary;
++    view.error_color = style.warning;
++    view.title_font_size = 34.0F * scale;
++    view.message_font_size = 20.0F * scale;
++    view.error_font_size = 18.0F * scale;
++    return view;
++}
++
++void draw_recovery_screen(Font font, const DungeonRenderStatus& status) noexcept {
+     BeginDrawing();
+-    ClearBackground(Color{21, 11, 27, 255});
+-    DrawText("SAVE RECOVERY REQUIRED", 48, 70, 32, Color{255, 169, 194, 255});
+-    DrawText("Both save slots are invalid. Press N to archive them and create a new run.",
+-        48, 122, 18, RAYWHITE);
+-    DrawText(TextFormat("Save error %u", static_cast<unsigned>(status.error)),
+-        48, 156, 16, Color{255, 202, 126, 255});
++    ClearBackground(Color{12, 8, 18, 255});
++    if (!IsFontValid(font)) return;
++    const RecoveryScreenView view = ::arpg::platform::make_recovery_screen_view(status,
++        GetScreenWidth(), GetScreenHeight());
++    DrawRectangleRounded(view.panel, 0.04F, 8, view.panel_color);
++    DrawRectangleRoundedLinesEx(view.panel, 0.04F, 8, 2.0F,
++        Color{129, 75, 94, 255});
++    const auto draw_centered = [font](const char* text, Rectangle bounds,
++        float font_size, Color color) noexcept {
++        const Vector2 measured = MeasureTextEx(font, text, font_size, 1.0F);
++        draw_crisp_ui_text(font, text, {bounds.x
++                + (bounds.width - measured.x) * 0.5F,
++                bounds.y + (bounds.height - measured.y) * 0.5F},
++            font_size, 1.0F, color);
++    };
++    draw_centered(view.title, view.title_bounds, view.title_font_size,
++        view.title_color);
++    draw_centered(view.message, view.message_bounds, view.message_font_size,
++        view.message_color);
++    draw_centered(view.error_text.data(), view.error_bounds,
++        view.error_font_size, view.error_color);
+ }
+ 
+ // Production screenshots intentionally read after EndDrawing presents the frame.
+ // With raylib 6 on Windows, reading the default framebuffer before that point
+ // produced black 1920x1080 captures despite correct render/framebuffer dimensions.
+ [[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
+     EndDrawing();
+     if (path == nullptr) return true;
+     Image image = LoadImageFromScreen();
+     if (image.data == nullptr) return false;
+@@ -343,20 +402,25 @@ void apply_stage12_material_showcase_world(
+         world.materials.begin());
+     world.health_potion_count = static_cast<std::uint16_t>((std::min)(
+         static_cast<std::size_t>(showcase.ground_health_potion_count),
+         world.health_potions.size()));
+     std::copy_n(showcase.ground_health_potions.begin(),
+         world.health_potion_count, world.health_potions.begin());
+ }
+ 
+ }  // namespace
+ 
++RecoveryScreenView make_recovery_screen_view(const DungeonRenderStatus& status,
++    int width, int height) noexcept {
++    return make_recovery_screen_view_impl(status, width, height);
++}
++
+ dungeon::AutoPickupPolicy loot_pickup_policy(
+     settings::LootFilterMode mode) noexcept {
+     switch (mode) {
+     case settings::LootFilterMode::show_all:
+         return {items::ItemRarity::normal};
+     case settings::LootFilterMode::magic_or_better:
+         return {items::ItemRarity::magic};
+     case settings::LootFilterMode::rare_only:
+         return {items::ItemRarity::rare};
+     }
+@@ -644,21 +708,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 const float recovery_frame_seconds = GetFrameTime();
+                 audio.update({false, current.is_abyss, true,
+                         current.death.has_value()},
+                     audio_bus_levels(live_settings), 0U,
+                     recovery_frame_seconds);
+                 // A recovery screen owns presentation, not simulation.  It still
+                 // receives exactly one HUD observation before its presented frame.
+                 renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,
+                     previous, current, runtime.render_status(), control_hints,
+                     GetFrameTime(), true);
+-                draw_recovery_screen(runtime.render_status());
++                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());
+                 std::optional<std::string> capture_path =
+                     validation_capture_path();
+                 if (frame_input.keys.f12 || frame_input.keys.v) {
+                     capture_path = host_screenshot_path(config);
+                 }
+                 static_cast<void>(present_frame_and_maybe_capture(
+                     capture_path.has_value() ? capture_path->c_str() : nullptr));
+                 ++presented_frame_count;
+                 continue;
+             }
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index 7aa9886..f5cd06a 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -1,35 +1,60 @@
+ #pragma once
+ 
+ #include "combat/room_bounds.hpp"
+ #include "core/fixed_step.hpp"
++#include "dungeon_runtime.hpp"
+ #include "dungeon/dungeon_types.hpp"
+ #include "material_asset_types.hpp"
+ 
++#include <raylib.h>
++
+ #include <cstdint>
+ #include <array>
+ #include <filesystem>
+ #include <optional>
+ 
+ namespace arpg::dungeon {
+ struct AutoPickupPolicy;
+ }
+ 
+ namespace arpg::settings {
+ enum class LootFilterMode : std::uint8_t;
+ enum class SettingsLoadStatus : std::uint8_t;
+ struct SettingsData;
+ class SettingsStore;
+ }
+ 
+ namespace arpg::platform {
+ 
++inline constexpr std::size_t kRecoveryScreenErrorTextCapacity = 48U;
++
++struct RecoveryScreenView final {
++    Rectangle panel{};
++    Rectangle title_bounds{};
++    Rectangle message_bounds{};
++    Rectangle error_bounds{};
++    const char* title{};
++    const char* message{};
++    std::array<char, kRecoveryScreenErrorTextCapacity> error_text{};
++    Color panel_color{};
++    Color title_color{};
++    Color message_color{};
++    Color error_color{};
++    float title_font_size{};
++    float message_font_size{};
++    float error_font_size{};
++};
++
++[[nodiscard]] RecoveryScreenView make_recovery_screen_view(
++    const DungeonRenderStatus& status, int width, int height) noexcept;
++
+ inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumns{{
+     -4.0F, -1.3F, 1.3F, 4.0F,
+ }};
+ 
+ [[nodiscard]] constexpr combat::Vec3 stage12_material_showcase_position(
+     float legacy_x, float legacy_y) noexcept {
+     return {legacy_x, legacy_y, 0.0F};
+ }
+ 
+ [[nodiscard]] constexpr combat::Vec3 stage12_material_showcase_column_position(
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index 91e9ebd..a5dda9c 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -1,36 +1,37 @@
+ #include "ui_text_catalog.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr const char* kUnknown = u8"未知";
+ 
+-constexpr std::array<const char*, 44U> kUiTexts{{
++constexpr std::array<const char*, 45U> kUiTexts{{
+     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
+     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
+     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
+     u8"生命", u8"护盾", u8"经验", u8"等级",
+     u8"正在保存", u8"保存完成", u8"已恢复存档", u8"存档错误",
+     u8"需要恢复存档", u8"无效存档槽",
+     u8"背包", u8"装备", u8"物品详情",
+     u8"被动星图", u8"未分配点", u8"关闭",
+     u8"调试就绪", u8"调试不可用", kUnknown,
+     u8"该按键不可绑定", u8"设置无效", u8"版本号已达上限",
+     u8"实时预览失败", u8"设置保存失败，请重试",
+     u8"另一游戏实例正在保存，请稍后重试",
+     u8"设置回滚失败", u8"设置已保存", u8"另一实例修改已重载",
+     u8"设置存储冲突，需重启", u8"设置已恢复默认值",
+     u8"经验已满",
++    u8"两个存档槽均无效。按 N 将其归档并创建新游戏。",
+ }};
+ 
+ constexpr std::array<const char*, 18U> kItemBaseNames{{
+     u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套", u8"行者战靴", u8"元素护符",
+     u8"迅捷匕首", u8"攻城巨刃", u8"暗影兜帽", u8"堡垒头盔", u8"夜行者外衣", u8"城塞胸甲",
+     u8"猎手护腕", u8"碎骨护手", u8"轻捷战靴", u8"铁护胫", u8"三元吊坠", u8"混沌之眼",
+ }};
+ 
+ constexpr std::array<const char*, 14U> kMaterialNames{{
+     u8"嬗变石", u8"增幅石", u8"富豪石", u8"混沌石", u8"崇高石", u8"剥离石", u8"神圣石",
+diff --git a/src/platform/raylib/ui_text_catalog.hpp b/src/platform/raylib/ui_text_catalog.hpp
+index 9d818fd..a134a2d 100644
+--- a/src/platform/raylib/ui_text_catalog.hpp
++++ b/src/platform/raylib/ui_text_catalog.hpp
+@@ -21,20 +21,21 @@ enum class UiTextId : std::uint16_t {
+     recovery_title, recovery_invalid_slots,
+     inventory_title, equipment_title, item_detail_title,
+     passive_title, passive_points, passive_close,
+     debug_ready, debug_unavailable,
+     unknown,
+     settings_invalid_binding, settings_invalid, settings_revision_limit,
+     settings_preview_failed, settings_save_failed_retry, settings_save_busy,
+     settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
+     settings_storage_conflict, settings_recovered_defaults,
+     hud_experience_maxed,
++    recovery_dual_slot_instruction,
+     count,
+ };
+ 
+ [[nodiscard]] const char* ui_text(UiTextId id) noexcept;
+ [[nodiscard]] const char* ui_item_base_name(std::uint8_t base_id) noexcept;
+ [[nodiscard]] const char* ui_material_name(items::MaterialId id) noexcept;
+ [[nodiscard]] const char* ui_item_slot_name(items::ItemSlot id) noexcept;
+ [[nodiscard]] const char* ui_item_rarity_name(items::ItemRarity id) noexcept;
+ [[nodiscard]] const char* ui_item_affix_name(std::uint16_t affix_id) noexcept;
+ [[nodiscard]] const char* ui_passive_node_name(
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index a6e6371..5984c63 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1886,20 +1886,39 @@ arpg_verify_lifecycle_poison()
+ 
+ add_test(
+     NAME platform.host_input_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/host_input_source_test.cmake")
+ set_tests_properties(
+     platform.host_input_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
++add_test(
++    NAME platform.task6_recovery_screen_source_guard
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/task6_recovery_screen_source_test.cmake")
++set_tests_properties(
++    platform.task6_recovery_screen_source_guard
++    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
++
++add_test(
++    NAME platform.task6_recovery_screen_source_guard_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/task6-recovery-screen-guard-mutations"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/task6_recovery_screen_source_self_test.cmake")
++set_tests_properties(
++    platform.task6_recovery_screen_source_guard_self_test
++    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
++
+ add_test(
+     NAME platform.hole_prompt_binding_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_test.cmake")
+ set_tests_properties(
+     platform.hole_prompt_binding_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
+ add_test(
+diff --git a/tests/platform/host_input_source_test.cmake b/tests/platform/host_input_source_test.cmake
+index af6d4d9..939dbcd 100644
+--- a/tests/platform/host_input_source_test.cmake
++++ b/tests/platform/host_input_source_test.cmake
+@@ -1948,21 +1948,23 @@ function(hud_present_structure_valid SOURCE OUT_VARIABLE)
+     if(NOT OBSERVE_COUNT EQUAL 2 OR NOT PRESENT_COUNT EQUAL 3)
+         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+         return()
+     endif()
+ 
+     set(CAPTURE_PATH_ARGUMENT_PATTERN
+         "capture_path[.]has_value\\([ \t\r\n]*\\)[ \t\r\n]*\\?[ \t\r\n]*capture_path->c_str\\([ \t\r\n]*\\)[ \t\r\n]*:[ \t\r\n]*nullptr")
+     set(RECOVERY_PRESENT_PATTERN
+         "static_cast[ \t\r\n]*<[ \t\r\n]*void[ \t\r\n]*>[ \t\r\n]*\\([ \t\r\n]*present_frame_and_maybe_capture[ \t\r\n]*\\([ \t\r\n]*${CAPTURE_PATH_ARGUMENT_PATTERN}[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*;")
+     string(FIND "${CODE}" "if (runtime.state() == DungeonRuntimeState::recovery_required)" RECOVERY_START)
+-    string(FIND "${CODE}" "draw_recovery_screen(runtime.render_status());" RECOVERY_DRAW)
++    set(RECOVERY_SHARED_FONT_DRAW
++        "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
++    string(FIND "${CODE}" "${RECOVERY_SHARED_FONT_DRAW}" RECOVERY_DRAW)
+     string(REGEX MATCH "${RECOVERY_PRESENT_PATTERN}"
+         RECOVERY_PRESENT_CALL_MATCH "${CODE}")
+     set(RECOVERY_PRESENT -1)
+     if(NOT RECOVERY_PRESENT_CALL_MATCH STREQUAL "")
+         string(FIND "${CODE}" "${RECOVERY_PRESENT_CALL_MATCH}"
+             RECOVERY_PRESENT)
+     endif()
+     string(FIND "${CODE}" "renderer.observe_presented_hud_frame(" FIRST_OBSERVE)
+     if(RECOVERY_START LESS 0 OR RECOVERY_DRAW LESS 0 OR RECOVERY_PRESENT LESS 0
+             OR FIRST_OBSERVE LESS RECOVERY_START OR FIRST_OBSERVE GREATER RECOVERY_DRAW
+@@ -2066,36 +2068,47 @@ string(REPLACE "${NORMAL_PRESENT_MULTILINE}"
+     "${NORMAL_NULL_ARGUMENT_PRESENT}"
+     NORMAL_NULL_ARGUMENT_SOURCE "${HOST_SOURCE}")
+ if(NORMAL_NULL_ARGUMENT_SOURCE STREQUAL HOST_SOURCE)
+     message(FATAL_ERROR "normal null-argument fixture did not mutate")
+ endif()
+ hud_present_structure_valid("${NORMAL_NULL_ARGUMENT_SOURCE}"
+     NORMAL_NULL_ARGUMENT_VALID)
+ if(NORMAL_NULL_ARGUMENT_VALID)
+     message(FATAL_ERROR "normal present must retain the capture-path argument")
+ endif()
+-string(REPLACE "draw_recovery_screen(runtime.render_status());" ""
++string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());" ""
+     RECOVERY_PRESENT_BEFORE_DRAW_SOURCE "${HOST_SOURCE}")
+ set(RECOVERY_PRESENT_WITH_LATE_DRAW
+-    "${RECOVERY_PRESENT_MULTILINE}\n                draw_recovery_screen(runtime.render_status());")
++    "${RECOVERY_PRESENT_MULTILINE}\n                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
+ string(REPLACE "${RECOVERY_PRESENT_MULTILINE}"
+     "${RECOVERY_PRESENT_WITH_LATE_DRAW}"
+     RECOVERY_PRESENT_BEFORE_DRAW_SOURCE
+     "${RECOVERY_PRESENT_BEFORE_DRAW_SOURCE}")
+ if(RECOVERY_PRESENT_BEFORE_DRAW_SOURCE STREQUAL HOST_SOURCE)
+     message(FATAL_ERROR "recovery present-before-draw fixture did not mutate")
+ endif()
+ hud_present_structure_valid("${RECOVERY_PRESENT_BEFORE_DRAW_SOURCE}"
+     RECOVERY_PRESENT_BEFORE_DRAW_VALID)
+ if(RECOVERY_PRESENT_BEFORE_DRAW_VALID)
+     message(FATAL_ERROR "recovery present before draw must not validate")
+ endif()
++string(REPLACE "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
++    "draw_recovery_screen(Font{}, runtime.render_status());"
++    RECOVERY_UNSHARED_FONT_SOURCE "${HOST_SOURCE}")
++if(RECOVERY_UNSHARED_FONT_SOURCE STREQUAL HOST_SOURCE)
++    message(FATAL_ERROR "recovery shared-font fixture did not mutate")
++endif()
++hud_present_structure_valid("${RECOVERY_UNSHARED_FONT_SOURCE}"
++    RECOVERY_UNSHARED_FONT_VALID)
++if(RECOVERY_UNSHARED_FONT_VALID)
++    message(FATAL_ERROR "recovery draw must borrow the host SharedUiFont")
++endif()
+ set(COMMENT_ONLY_HUD_PRESENT [=[
+ // renderer.observe_presented_hud_frame(HudPresentedFrame::recovery);
+ // present_frame_and_maybe_capture(capture_path.has_value() ? path : nullptr);
+ ]=])
+ hud_present_structure_valid("${COMMENT_ONLY_HUD_PRESENT}" COMMENT_ONLY_HUD_PRESENT_VALID)
+ if(COMMENT_ONLY_HUD_PRESENT_VALID)
+     message(FATAL_ERROR "comment-only HUD presentation tokens must not validate")
+ endif()
+ set(THIRD_PRESENT_HUD_SOURCE "${HOST_SOURCE}\npresent_frame_and_maybe_capture(nullptr);")
+ hud_present_structure_valid("${THIRD_PRESENT_HUD_SOURCE}" THIRD_PRESENT_HUD_VALID)
+diff --git a/tests/platform/hud_host_integration_tests.cpp b/tests/platform/hud_host_integration_tests.cpp
+index 7dd4f61..a77f146 100644
+--- a/tests/platform/hud_host_integration_tests.cpp
++++ b/tests/platform/hud_host_integration_tests.cpp
+@@ -1,24 +1,26 @@
+ #include "test_framework.hpp"
+ 
++#include "allocation_probe.hpp"
+ #include "combat_renderer.hpp"
+ #include "combat_view_math.hpp"
+ #include "control_hints.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "ground_loot_view.hpp"
+ #include "hud_font.hpp"
+ #include "pause_menu_state.hpp"
+ #include "platform/settings/settings_types.hpp"
+ #include "raylib_host.hpp"
+ #include "skills/active_skill_catalog.hpp"
+ #include "skills/skill_loadout.hpp"
++#include "ui_text_contrast.hpp"
+ 
+ #include <array>
+ #include <cstring>
+ 
+ namespace {
+ 
+ namespace dungeon = arpg::dungeon;
+ namespace items = arpg::items;
+ namespace platform = arpg::platform;
+ namespace settings = arpg::settings;
+@@ -265,20 +267,74 @@ arpg::test::Failure committed_settings_hints_and_revision_are_used_after_apply()
+         ARPG_REQUIRE(std::strcmp(
+             active.slots[index].key_label.data(), kExpectedKeycaps[index]) == 0);
+     }
+     ARPG_REQUIRE(std::strcmp(
+         active.slots[0].cooldown_label.data(), u8"2秒") == 0);
+     ARPG_REQUIRE(std::strcmp(
+         active.slots[1].cooldown_label.data(), u8"30秒") == 0);
+     return {};
+ }
+ 
++arpg::test::Failure recovery_screen_view_centers_the_catalogued_cjk_message() noexcept {
++    platform::DungeonRenderStatus status = recovery_status();
++    status.error = static_cast<arpg::persistence::SaveError>(7U);
++    constexpr std::array<Vector2, 3U> kScreens{{
++        {800.0F, 450.0F}, {1280.0F, 720.0F}, {1920.0F, 1080.0F},
++    }};
++    for (const Vector2 screen : kScreens) {
++        const platform::RecoveryScreenView view =
++            platform::make_recovery_screen_view(status,
++                static_cast<int>(screen.x), static_cast<int>(screen.y));
++        ARPG_REQUIRE(view.panel.x >= 0.0F);
++        ARPG_REQUIRE(view.panel.y >= 0.0F);
++        ARPG_REQUIRE(view.panel.x + view.panel.width <= screen.x);
++        ARPG_REQUIRE(view.panel.y + view.panel.height <= screen.y);
++        ARPG_REQUIRE(view.panel.x + view.panel.width * 0.5F
++            == screen.x * 0.5F);
++        ARPG_REQUIRE(view.panel.y + view.panel.height * 0.5F
++            == screen.y * 0.5F);
++        ARPG_REQUIRE(view.title_bounds.x >= view.panel.x);
++        ARPG_REQUIRE(view.message_bounds.x >= view.panel.x);
++        ARPG_REQUIRE(view.error_bounds.x >= view.panel.x);
++        ARPG_REQUIRE(view.title_bounds.x + view.title_bounds.width
++            <= view.panel.x + view.panel.width);
++        ARPG_REQUIRE(view.message_bounds.x + view.message_bounds.width
++            <= view.panel.x + view.panel.width);
++        ARPG_REQUIRE(view.error_bounds.x + view.error_bounds.width
++            <= view.panel.x + view.panel.width);
++        ARPG_REQUIRE(view.title_bounds.y >= view.panel.y);
++        ARPG_REQUIRE(view.message_bounds.y >= view.panel.y);
++        ARPG_REQUIRE(view.error_bounds.y >= view.panel.y);
++        ARPG_REQUIRE(view.error_bounds.y + view.error_bounds.height
++            <= view.panel.y + view.panel.height);
++        ARPG_REQUIRE(std::strcmp(view.title, u8"需要恢复存档") == 0);
++        ARPG_REQUIRE(std::strcmp(view.message,
++            u8"两个存档槽均无效。按 N 将其归档并创建新游戏。") == 0);
++        ARPG_REQUIRE(std::strcmp(view.error_text.data(), u8"存档错误 7") == 0);
++        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(view.title_color,
++            view.panel_color) >= 4.5F);
++        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(view.message_color,
++            view.panel_color) >= 4.5F);
++        ARPG_REQUIRE(platform::ui_luma_contrast_ratio(view.error_color,
++            view.panel_color) >= 4.5F);
++    }
++    const std::uint64_t allocation_count_before =
++        arpg::test::allocation_count();
++    for (std::size_t iteration{}; iteration < 10000U; ++iteration) {
++        static_cast<void>(platform::make_recovery_screen_view(status,
++            static_cast<int>(kScreens[iteration % kScreens.size()].x),
++            static_cast<int>(kScreens[iteration % kScreens.size()].y)));
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == allocation_count_before);
++    return {};
++}
++
+ arpg::test::Failure observation_publishes_the_prebuilt_hud_model() noexcept {
+     const dungeon::DungeonSnapshot value = snapshot();
+     platform::CombatRenderer renderer{};
+     renderer.observe_hud(value, value, saved_status(), committed_hints(8U),
+         0.0F, false);
+     const platform::HudViewModel before = renderer.hud_model();
+ 
+     // Drawing is raylib-owned; this headless contract verifies the draw input
+     // is fully prepared before the render phase and is not rebuilt from later hints.
+     ARPG_REQUIRE(renderer.hud_observation_count() == 1U);
+@@ -576,20 +632,21 @@ arpg::test::Failure abyss_pickup_cross_room_keeps_purple_context_end_to_end()
+     const platform::ContextPanelPlan plan =
+         platform::make_context_panel_plan(renderer.hud_model().context, layout);
+     ARPG_REQUIRE(plan.primary_visible);
+     ARPG_REQUIRE(plan.primary_abyss);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
+     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
++    {"recovery screen centers catalogued CJK message", &recovery_screen_view_centers_the_catalogued_cjk_message},
+     {"presentation frame sentinel is safe", &presentation_frame_sentinel_rejects_invalid_enum_values},
+     {"debug diagnostics plan covers F1 counters", &debug_diagnostics_plan_carries_all_f1_only_counters},
+     {"fallback font selection owns no default font", &fallback_font_selection_matches_actual_draw_and_shutdown_ownership},
+     {"paused hud notices freeze", &paused_frames_freeze_hud_notice_time},
+     {"settings apply uses committed hints", &committed_settings_hints_and_revision_are_used_after_apply},
+     {"observation publishes prebuilt hud model", &observation_publishes_the_prebuilt_hud_model},
+     {"static HUD text cache invalidates by fragment", &static_text_cache_rebuilds_only_changed_fragments},
+     {"ground loot render plan reuses view and orders stages",
+         &ground_loot_render_plan_reuses_one_view_and_orders_stages},
+     {"ground loot avoids highest monster resource bar",
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 4331071..d6723f1 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -305,21 +305,21 @@ int main() {
+             control_hints_suite(),
+             hud_view_model_suite(),
+             hud_notice_state_suite(),
+             active_skill_view_suite(),
+             dungeon_view_math_suite(),
+             hud_layout_suite(),
+             hud_font_suite(),
+             hud_render_plan_suite(),
+             hud_host_integration_suite(),
+         };
+-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 177,
++        return arpg::test::run_suites(full_chinese_ui_menu_hud, 178,
+             "full Chinese UI menus and HUD");
+     }
+     if (cplay038_save_directory_only()) {
+         const arpg::test::TestSuite cplay038_only[] = {
+             dungeon_runtime_save_directory_lease_suite(),
+         };
+         return arpg::test::run_suites(cplay038_only, 8,
+             "CPLAY-038 runtime save directory lease");
+     }
+     if (cplay035_settings_conflict_only()) {
+@@ -508,13 +508,13 @@ int main() {
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+         large_room_render_plan_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 664,
++    return arpg::test::run_suites(suites, 666,
+         "host settings runtime contract");
+ }
+diff --git a/tests/platform/task6_recovery_screen_source_self_test.cmake b/tests/platform/task6_recovery_screen_source_self_test.cmake
+new file mode 100644
+index 0000000..ec356fd
+--- /dev/null
++++ b/tests/platform/task6_recovery_screen_source_self_test.cmake
+@@ -0,0 +1,55 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED MUTATION_ROOT)
++    message(FATAL_ERROR "SOURCE_ROOT and MUTATION_ROOT are required")
++endif()
++
++set(guard "${SOURCE_ROOT}/tests/platform/task6_recovery_screen_source_test.cmake")
++set(host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
++file(REMOVE_RECURSE "${MUTATION_ROOT}")
++file(MAKE_DIRECTORY "${MUTATION_ROOT}")
++
++execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++    -P "${guard}" RESULT_VARIABLE pristine_result)
++if(NOT pristine_result EQUAL 0)
++    message(FATAL_ERROR "Task 6 recovery source guard rejected pristine source")
++endif()
++
++file(READ "${host}" source)
++function(expect_rejected label mutated)
++    set(path "${MUTATION_ROOT}/${label}.cpp")
++    file(WRITE "${path}" "${mutated}")
++    execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
++        "-DHOST_SOURCE_OVERRIDE=${path}" -P "${guard}"
++        RESULT_VARIABLE result)
++    if(result EQUAL 0)
++        message(FATAL_ERROR "Task 6 recovery source guard accepted mutation: ${label}")
++    endif()
++endfunction()
++
++string(REPLACE
++    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
++    "draw_recovery_screen(Font{}, runtime.render_status());"
++    unshared_font "${source}")
++if(unshared_font STREQUAL source)
++    message(FATAL_ERROR "Task 6 shared-font mutation anchor is missing")
++endif()
++expect_rejected("unshared-font" "${unshared_font}")
++
++string(REPLACE
++    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
++    "static_cast<void>(present_frame_and_maybe_capture(nullptr));\n                draw_recovery_screen(shared_ui_font.font(), runtime.render_status());"
++    present_before_draw "${source}")
++if(present_before_draw STREQUAL source)
++    message(FATAL_ERROR "Task 6 present-order mutation anchor is missing")
++endif()
++expect_rejected("present-before-draw" "${present_before_draw}")
++
++string(REPLACE "draw_crisp_ui_text(font, text"
++    "DrawTextEx(font, text" default_text "${source}")
++if(default_text STREQUAL source)
++    message(FATAL_ERROR "Task 6 CJK draw mutation anchor is missing")
++endif()
++expect_rejected("default-text" "${default_text}")
++
++message(STATUS "Task 6 recovery source guard self-test rejected all mutations")
+diff --git a/tests/platform/task6_recovery_screen_source_test.cmake b/tests/platform/task6_recovery_screen_source_test.cmake
+new file mode 100644
+index 0000000..edf7924
+--- /dev/null
++++ b/tests/platform/task6_recovery_screen_source_test.cmake
+@@ -0,0 +1,61 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED SOURCE_ROOT)
++    message(FATAL_ERROR "SOURCE_ROOT is required")
++endif()
++
++set(host_source "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
++if(DEFINED HOST_SOURCE_OVERRIDE)
++    set(host_source "${HOST_SOURCE_OVERRIDE}")
++endif()
++if(NOT EXISTS "${host_source}")
++    message(FATAL_ERROR "recovery screen host source is missing: ${host_source}")
++endif()
++
++include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
++file(READ "${host_source}" host_text)
++extract_cpp_function_body("${host_text}" "void draw_recovery_screen("
++    recovery_draw_body recovery_draw_code)
++
++foreach(required IN ITEMS
++        "const RecoveryScreenView view = ::arpg::platform::make_recovery_screen_view(status,"
++        "DrawRectangleRounded(view.panel"
++        "draw_crisp_ui_text(font, text")
++    string(FIND "${recovery_draw_body}" "${required}" found)
++    if(found EQUAL -1)
++        message(FATAL_ERROR "Task 6 recovery draw seam is missing: ${required}")
++    endif()
++endforeach()
++foreach(forbidden IN ITEMS "DrawText" "TextFormat" "GetFontDefault" "LoadFont")
++    string(FIND "${recovery_draw_code}" "${forbidden}" found)
++    if(NOT found EQUAL -1)
++        message(FATAL_ERROR "Task 6 recovery draw has a forbidden text/font path: ${forbidden}")
++    endif()
++endforeach()
++
++set(recovery_branch_marker
++    "if (runtime.state() == DungeonRuntimeState::recovery_required)")
++set(recovery_observe_marker
++    "renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,")
++set(recovery_draw_marker
++    "draw_recovery_screen(shared_ui_font.font(), runtime.render_status());")
++set(recovery_present_marker
++    "static_cast<void>(present_frame_and_maybe_capture(")
++string(FIND "${host_text}" "${recovery_branch_marker}" recovery_branch_start)
++if(recovery_branch_start EQUAL -1)
++    message(FATAL_ERROR "Task 6 recovery branch is missing")
++endif()
++string(SUBSTRING "${host_text}" ${recovery_branch_start} -1 recovery_branch)
++foreach(marker_name IN ITEMS recovery_observe_marker recovery_draw_marker recovery_present_marker)
++    string(FIND "${recovery_branch}" "${${marker_name}}" ${marker_name}_index)
++    if(${marker_name}_index EQUAL -1)
++        message(FATAL_ERROR "Task 6 recovery branch is missing: ${${marker_name}}")
++    endif()
++endforeach()
++if(NOT recovery_observe_marker_index LESS recovery_draw_marker_index
++        OR NOT recovery_draw_marker_index LESS recovery_present_marker_index)
++    message(FATAL_ERROR
++        "Task 6 recovery presentation must observe, draw with SharedUiFont, then present/capture")
++endif()
++
++message(STATUS "Task 6 recovery source guard accepted")
+diff --git a/tests/platform/ui_text_catalog_tests.cpp b/tests/platform/ui_text_catalog_tests.cpp
+index 772c9f3..a8a63b9 100644
+--- a/tests/platform/ui_text_catalog_tests.cpp
++++ b/tests/platform/ui_text_catalog_tests.cpp
+@@ -62,37 +62,43 @@ constexpr std::array<platform::UiTextId, 43U> kPreTask4UiTextIds{{
+ constexpr bool pre_task4_ui_text_ordinals_are_stable() noexcept {
+     for (std::size_t index = 0U; index < kPreTask4UiTextIds.size(); ++index) {
+         if (static_cast<std::size_t>(kPreTask4UiTextIds[index]) != index)
+             return false;
+     }
+     return true;
+ }
+ 
+ static_assert(pre_task4_ui_text_ordinals_are_stable(),
+     "Pre-Task4 UiTextId ordinals 0-42 are a stable compatibility contract");
++static_assert(static_cast<std::size_t>(platform::UiTextId::hud_experience_maxed)
++        == 43U,
++    "UiTextId ordinals 0-43 are a stable compatibility contract");
++static_assert(static_cast<std::size_t>(
++        platform::UiTextId::recovery_dual_slot_instruction) == 44U,
++    "Recovery instruction must append after the stable UiTextId range");
+ 
+ void count_text(const char* text, void* context) noexcept {
+     auto* const count = static_cast<std::size_t*>(context);
+     if (text != nullptr && text[0] != '\0') ++(*count);
+ }
+ 
+ std::size_t utf8_codepoint_count(const char* text) noexcept {
+     std::size_t count{};
+     for (const auto* byte = reinterpret_cast<const unsigned char*>(text);
+          *byte != 0U; ++byte) {
+         if ((*byte & 0xC0U) != 0x80U) ++count;
+     }
+     return count;
+ }
+ 
+ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 44U>
++    constexpr std::array<std::pair<platform::UiTextId, const char*>, 45U>
+         kExpectedTexts{{
+             {platform::UiTextId::pause_title, u8"暂停"},
+             {platform::UiTextId::pause_continue, u8"继续游戏"},
+             {platform::UiTextId::pause_settings, u8"设置"},
+             {platform::UiTextId::pause_quit, u8"退出游戏"},
+             {platform::UiTextId::settings_title, u8"设置"},
+             {platform::UiTextId::settings_audio, u8"音频设置"},
+             {platform::UiTextId::settings_display, u8"显示设置"},
+             {platform::UiTextId::settings_bindings, u8"按键设置"},
+             {platform::UiTextId::settings_restore_defaults, u8"恢复默认设置"},
+@@ -125,20 +131,22 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+             {platform::UiTextId::inventory_title, u8"背包"},
+             {platform::UiTextId::equipment_title, u8"装备"},
+             {platform::UiTextId::item_detail_title, u8"物品详情"},
+             {platform::UiTextId::passive_title, u8"被动星图"},
+             {platform::UiTextId::passive_points, u8"未分配点"},
+             {platform::UiTextId::passive_close, u8"关闭"},
+             {platform::UiTextId::debug_ready, u8"调试就绪"},
+             {platform::UiTextId::debug_unavailable, u8"调试不可用"},
+             {platform::UiTextId::unknown, u8"未知"},
+             {platform::UiTextId::hud_experience_maxed, u8"经验已满"},
++            {platform::UiTextId::recovery_dual_slot_instruction,
++                u8"两个存档槽均无效。按 N 将其归档并创建新游戏。"},
+         }};
+     for (const auto& expected : kExpectedTexts) {
+         ARPG_REQUIRE(std::strcmp(
+             platform::ui_text(expected.first), expected.second) == 0);
+     }
+ 
+     constexpr std::array<const char*, 18U> kExpectedItemBaseNames{{
+         u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套",
+         u8"行者战靴", u8"元素护符", u8"迅捷匕首", u8"攻城巨刃",
+         u8"暗影兜帽", u8"堡垒头盔", u8"夜行者外衣", u8"城塞胸甲",
+@@ -161,21 +169,21 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+             static_cast<arpg::items::MaterialId>(index)),
+             kExpectedMaterialNames[index]) == 0);
+     }
+ 
+     ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+         arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
+-    constexpr std::array<platform::UiTextId, 44U> texts{{
++    constexpr std::array<platform::UiTextId, 45U> texts{{
+         platform::UiTextId::pause_title, platform::UiTextId::pause_continue,
+         platform::UiTextId::pause_settings, platform::UiTextId::pause_quit,
+         platform::UiTextId::settings_title, platform::UiTextId::settings_audio,
+         platform::UiTextId::settings_display, platform::UiTextId::settings_bindings,
+         platform::UiTextId::settings_restore_defaults, platform::UiTextId::settings_apply,
+         platform::UiTextId::settings_cancel, platform::UiTextId::settings_saved_prefix,
+         platform::UiTextId::settings_unknown,
+         platform::UiTextId::settings_invalid_binding,
+         platform::UiTextId::settings_invalid,
+         platform::UiTextId::settings_revision_limit,
+@@ -191,20 +199,21 @@ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
+         platform::UiTextId::hud_barrier, platform::UiTextId::hud_experience,
+         platform::UiTextId::hud_level, platform::UiTextId::save_saving,
+         platform::UiTextId::save_saved, platform::UiTextId::save_recovered,
+         platform::UiTextId::save_error, platform::UiTextId::recovery_title,
+         platform::UiTextId::recovery_invalid_slots, platform::UiTextId::inventory_title,
+         platform::UiTextId::equipment_title, platform::UiTextId::item_detail_title,
+         platform::UiTextId::passive_title, platform::UiTextId::passive_points,
+         platform::UiTextId::passive_close, platform::UiTextId::debug_ready,
+         platform::UiTextId::debug_unavailable, platform::UiTextId::unknown,
+         platform::UiTextId::hud_experience_maxed,
++        platform::UiTextId::recovery_dual_slot_instruction,
+     }};
+     for (const platform::UiTextId id : texts)
+         ARPG_REQUIRE(platform::ui_text(id)[0] != '\0');
+ 
+     for (std::uint8_t id = 1U; id <= 18U; ++id)
+         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(id), u8"未知") != 0);
+     for (std::uint8_t raw = 0U; raw < 14U; ++raw)
+         ARPG_REQUIRE(std::strcmp(platform::ui_material_name(
+             static_cast<arpg::items::MaterialId>(raw)), u8"未知") != 0);
+     for (std::uint8_t raw = 0U; raw < 6U; ++raw)
+@@ -287,32 +296,32 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
+     ARPG_REQUIRE(std::strcmp(platform::ui_setting_action_name(
+         static_cast<arpg::settings::SettingAction>(255U)), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_skill_name(
+         static_cast<arpg::skills::ActiveSkillId>(255U)), u8"未知") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
+     std::size_t count{};
+     platform::visit_ui_text_catalog(&count_text, &count);
+-    ARPG_REQUIRE(count == 284U);
++    ARPG_REQUIRE(count == 285U);
+     return {};
+ }
+ 
+ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
+     std::size_t warmup_count{};
+     platform::visit_ui_text_catalog(&count_text, &warmup_count);
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
+         std::size_t count{};
+         platform::visit_ui_text_catalog(&count_text, &count);
+-        ARPG_REQUIRE(count == 284U);
++        ARPG_REQUIRE(count == 285U);
+         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+             arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {

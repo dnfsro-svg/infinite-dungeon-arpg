@@ -1,0 +1,290 @@
+# Review package: 7ae6db5..1e15738
+
+## Commits
+1e15738 fix: bound Chinese UI glyph planning
+
+## Files changed
+ .../plans/2026-08-09-full-chinese-ui-foundation.md | 12 ++++--
+ src/platform/raylib/shared_ui_font.cpp             |  9 ++++-
+ src/platform/raylib/shared_ui_font.hpp             |  9 ++++-
+ tests/platform/shared_ui_font_tests.cpp            | 44 ++++++++++++++++++++--
+ 4 files changed, 64 insertions(+), 10 deletions(-)
+
+## Diff
+diff --git a/docs/superpowers/plans/2026-08-09-full-chinese-ui-foundation.md b/docs/superpowers/plans/2026-08-09-full-chinese-ui-foundation.md
+index d045826..53f9803 100644
+--- a/docs/superpowers/plans/2026-08-09-full-chinese-ui-foundation.md
++++ b/docs/superpowers/plans/2026-08-09-full-chinese-ui-foundation.md
+@@ -244,53 +244,55 @@ git commit -m "feat: add bounded UTF-8 UI formatting"
+ 
+ - [ ] **Step 1: 写 4 个字形计划失败测试**
+ 
+ 断言全目录覆盖、码点唯一、容量/预算、候选字体：
+ 
+ ```cpp
+ const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+ ARPG_REQUIRE(plan.codepoint_count > 384U);
+ ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
+ ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
+-ARPG_REQUIRE(platform::kUiFontAtlasInstanceCount == 1U);
++ARPG_REQUIRE(platform::kUiFontAtlasInstanceCount == 3U);
+ ARPG_REQUIRE(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
+ ```
+ 
+ 遍历所有码点并断言不存在重复；候选路径必须包含 `assets/fonts/NotoSansCJKsc-Medium.otf`。
+ 
+ - [ ] **Step 2: 运行并确认 RED**
+ 
+ Run: `cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2`
+ 
+ Expected: 编译失败于 `UiGlyphPlan` 缺失。
+ 
+ - [ ] **Step 3: 实现固定字形计划和兼容壳**
+ 
+ 在 `shared_ui_font.hpp` 定义：
+ 
+ ```cpp
+ inline constexpr std::size_t kUiGlyphCapacity = 640U;
+-inline constexpr std::size_t kUiFontAtlasInstanceCount = 1U;
++// Task 3 only unifies the glyph plan. The three existing renderer-owned
++// atlases remain real until Task 4 atomically transfers ownership.
++inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
+ inline constexpr std::size_t kUiFontAtlasByteBudget =
+     32U * 1024U * 1024U;
+ inline constexpr int kUiFontSourceBaseSize = 96;
+ 
+ struct UiGlyphPlan final {
+     std::array<const char*, 1U> candidate_paths{};
+     std::size_t candidate_count{};
+     std::array<int, kUiGlyphCapacity> codepoints{};
+     std::size_t codepoint_count{};
+     bool capacity_exceeded{};
+ };
+ ```
+ 
+-先加入 ASCII 32–126，再访问完整中文目录并去重。超过容量设置 `capacity_exceeded=true`，覆盖检查返回 false。`death_overlay_font_plan()` 和 `hud_font_plan()` 转发同一个字形结果，不得继续手写补字。
++先加入 ASCII 32–126，再访问完整中文目录并去重。超过容量设置 `capacity_exceeded=true`，覆盖检查返回 false。Task 3 的实例常量必须如实记录当前三个 renderer 各自拥有的图集；`death_overlay_font_plan()` 和 `hud_font_plan()` 转发同一个字形结果，不得继续手写补字。
+ 
+ - [ ] **Step 4: 运行 15 个 foundation case 并确认 GREEN**
+ 
+ Run: 使用 Task 1 的定向命令。
+ 
+ Expected: 目录 5 + UTF-8 6 + 字形 4，共 15 case、0 failure。
+ 
+ - [ ] **Step 5: 提交字形计划**
+ 
+ ```powershell
+@@ -316,20 +318,24 @@ git commit -m "feat: unify Chinese UI glyph planning"
+ - Modify: `tests/platform/stage12_material_validator.ps1`
+ - Modify: `tests/platform/stage12_material_validator_self_test.ps1`
+ - Modify: `tests/platform/stage11d_renderer_integration_guard_test.cmake`
+ 
+ **Interfaces:**
+ - Consumes: `UiGlyphPlan`。
+ - Produces: 一个宿主持有的 `SharedUiFont`；renderer 的 `initialize(const SharedUiFont&)` 仅建立借用。
+ 
+ - [ ] **Step 1: 把现有字体测试改成单实例契约并观察 RED**
+ 
++Task 4 在实现宿主唯一所有权的同一变更中，把 Task 3 的阶段性
++`kUiFontAtlasInstanceCount == 3U` 原子切换为最终 `== 1U`；不得在 Task 3
++提前低报仍由三个 renderer 独立加载的资源。
++
+ 新增/更新断言：
+ 
+ ```cpp
+ ARPG_REQUIRE(platform::kUiFontAtlasInstanceCount == 1U);
+ ARPG_REQUIRE(runtime.bundled_font_instance_count == 1U);
+ ARPG_REQUIRE(runtime.bundled_font_total_atlas_bytes
+     == runtime.bundled_font_atlas_bytes);
+ ```
+ 
+ 源守卫还必须拒绝 `HudRenderer`、`DeathOverlayRenderer`、`PauseMenuRenderer` 中出现 `LoadFontEx` 或 `UnloadFont`。
+diff --git a/src/platform/raylib/shared_ui_font.cpp b/src/platform/raylib/shared_ui_font.cpp
+index 79f49a2..a1d4f0b 100644
+--- a/src/platform/raylib/shared_ui_font.cpp
++++ b/src/platform/raylib/shared_ui_font.cpp
+@@ -83,31 +83,36 @@ void add_catalog_text(const char* text, void* context) noexcept {
+         if (!decode_codepoint(cursor, codepoint)) {
+             plan.capacity_exceeded = true;
+             return;
+         }
+         add_codepoint(plan, codepoint);
+     }
+ }
+ 
+ }  // namespace
+ 
+-UiGlyphPlan ui_glyph_plan() noexcept {
++UiGlyphPlan build_ui_glyph_plan(
++    UiGlyphPlanCatalogVisitor visit_catalog) noexcept {
+     UiGlyphPlan plan{};
+     plan.candidate_paths = {{"assets/fonts/NotoSansCJKsc-Medium.otf"}};
+     plan.candidate_count = 1U;
+     for (int codepoint = 32; codepoint <= 126; ++codepoint) {
+         add_codepoint(plan, codepoint);
+     }
+-    visit_ui_text_catalog(&add_catalog_text, &plan);
++    if (visit_catalog != nullptr) visit_catalog(&add_catalog_text, &plan);
+     return plan;
+ }
+ 
++UiGlyphPlan ui_glyph_plan() noexcept {
++    return build_ui_glyph_plan(&visit_ui_text_catalog);
++}
++
+ bool ui_glyph_plan_has_codepoint(const UiGlyphPlan& plan,
+     int codepoint) noexcept {
+     for (std::size_t index = 0U; index < plan.codepoint_count; ++index) {
+         if (plan.codepoints[index] == codepoint) return true;
+     }
+     return false;
+ }
+ 
+ bool ui_glyph_plan_covers_text(const UiGlyphPlan& plan,
+     const char* utf8_text) noexcept {
+diff --git a/src/platform/raylib/shared_ui_font.hpp b/src/platform/raylib/shared_ui_font.hpp
+index 1986d8d..d775671 100644
+--- a/src/platform/raylib/shared_ui_font.hpp
++++ b/src/platform/raylib/shared_ui_font.hpp
+@@ -1,19 +1,21 @@
+ #pragma once
+ 
++#include "ui_text_catalog.hpp"
++
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ inline constexpr std::size_t kUiGlyphCapacity = 640U;
+-inline constexpr std::size_t kUiFontAtlasInstanceCount = 1U;
++inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
+ inline constexpr std::size_t kUiFontAtlasByteBudget =
+     32U * 1024U * 1024U;
+ inline constexpr int kUiFontSourceBaseSize = 96;
+ inline constexpr int kUiFontMaximumDisplaySize = 39;
+ inline constexpr std::size_t kUiFontAtlasBytesPerPixel = 2U;
+ 
+ [[nodiscard]] constexpr std::size_t ui_font_atlas_bytes(
+     int width, int height) noexcept {
+     return width > 0 && height > 0
+         ? static_cast<std::size_t>(width)
+@@ -29,17 +31,22 @@ struct UiGlyphPlan final {
+     std::size_t codepoint_count{};
+     bool capacity_exceeded{};
+ };
+ 
+ // Task 3 defines only the fixed source plan. Loading and ownership are wired
+ // by the renderer/host lifecycle task.
+ struct SharedUiFont final {
+     UiGlyphPlan glyph_plan{};
+ };
+ 
++using UiGlyphPlanCatalogVisitor = void (*)(UiTextVisitor visitor,
++    void* context) noexcept;
++
++[[nodiscard]] UiGlyphPlan build_ui_glyph_plan(
++    UiGlyphPlanCatalogVisitor visit_catalog) noexcept;
+ [[nodiscard]] UiGlyphPlan ui_glyph_plan() noexcept;
+ [[nodiscard]] bool ui_glyph_plan_has_codepoint(
+     const UiGlyphPlan& plan, int codepoint) noexcept;
+ [[nodiscard]] bool ui_glyph_plan_covers_text(
+     const UiGlyphPlan& plan, const char* utf8_text) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/shared_ui_font_tests.cpp b/tests/platform/shared_ui_font_tests.cpp
+index d00f6ca..e24fff4 100644
+--- a/tests/platform/shared_ui_font_tests.cpp
++++ b/tests/platform/shared_ui_font_tests.cpp
+@@ -15,20 +15,44 @@ struct CatalogCoverage final {
+     const platform::UiGlyphPlan* plan{};
+     bool covered{true};
+ };
+ 
+ void record_catalog_coverage(const char* text, void* context) noexcept {
+     auto& coverage = *static_cast<CatalogCoverage*>(context);
+     coverage.covered = coverage.covered
+         && platform::ui_glyph_plan_covers_text(*coverage.plan, text);
+ }
+ 
++void visit_synthetic_cjk_codepoints(platform::UiTextVisitor visitor,
++    void* context, int count) noexcept {
++    for (int offset = 0; offset < count; ++offset) {
++        const int codepoint = 0x4E00 + offset;
++        char text[4]{
++            static_cast<char>(0xE0U | ((codepoint >> 12U) & 0x0FU)),
++            static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3FU)),
++            static_cast<char>(0x80U | (codepoint & 0x3FU)),
++            '\0',
++        };
++        visitor(text, context);
++    }
++}
++
++void visit_exact_glyph_capacity(platform::UiTextVisitor visitor,
++    void* context) noexcept {
++    visit_synthetic_cjk_codepoints(visitor, context, 545);
++}
++
++void visit_one_codepoint_over_capacity(platform::UiTextVisitor visitor,
++    void* context) noexcept {
++    visit_synthetic_cjk_codepoints(visitor, context, 546);
++}
++
+ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     CatalogCoverage coverage{&plan};
+     platform::visit_ui_text_catalog(&record_catalog_coverage, &coverage);
+ 
+     ARPG_REQUIRE(coverage.covered);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"最后一击"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"主动技能石槽"));
+     ARPG_REQUIRE(plan.codepoint_count > 384U);
+     ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
+@@ -43,30 +67,42 @@ arpg::test::Failure plan_codepoints_are_unique() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     for (std::size_t lhs = 0U; lhs < plan.codepoint_count; ++lhs) {
+         for (std::size_t rhs = lhs + 1U; rhs < plan.codepoint_count; ++rhs) {
+             ARPG_REQUIRE(plan.codepoints[lhs] != plan.codepoints[rhs]);
+         }
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept {
+-    static_assert(platform::kUiFontAtlasInstanceCount == 1U);
++    static_assert(platform::kUiFontAtlasInstanceCount == 3U);
+     static_assert(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
+     static_assert(platform::ui_font_atlas_bytes(4096, 4096)
+         == 32U * 1024U * 1024U);
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     ARPG_REQUIRE(!plan.capacity_exceeded);
++    for (std::size_t index = 0U; index < 95U; ++index) {
++        ARPG_REQUIRE(plan.codepoints[index] == static_cast<int>(32U + index));
++    }
++
++    const platform::UiGlyphPlan exact_capacity =
++        platform::build_ui_glyph_plan(&visit_exact_glyph_capacity);
++    ARPG_REQUIRE(exact_capacity.codepoint_count == platform::kUiGlyphCapacity);
++    ARPG_REQUIRE(!exact_capacity.capacity_exceeded);
++    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(exact_capacity, u8"一"));
++
++    const platform::UiGlyphPlan over_capacity =
++        platform::build_ui_glyph_plan(&visit_one_codepoint_over_capacity);
++    ARPG_REQUIRE(over_capacity.codepoint_count == platform::kUiGlyphCapacity);
++    ARPG_REQUIRE(over_capacity.capacity_exceeded);
++    ARPG_REQUIRE(!platform::ui_glyph_plan_covers_text(over_capacity, u8"一"));
+ 
+-    platform::UiGlyphPlan overflow = plan;
+-    overflow.capacity_exceeded = true;
+-    ARPG_REQUIRE(!platform::ui_glyph_plan_covers_text(overflow, u8"混沌之眼"));
+     return {};
+ }
+ 
+ arpg::test::Failure bundled_noto_font_is_the_only_candidate() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     ARPG_REQUIRE(plan.candidate_count == 1U);
+     ARPG_REQUIRE(plan.candidate_paths[0] != nullptr);
+     ARPG_REQUIRE(std::strcmp(plan.candidate_paths[0],
+         "assets/fonts/NotoSansCJKsc-Medium.otf") == 0);
+     return {};

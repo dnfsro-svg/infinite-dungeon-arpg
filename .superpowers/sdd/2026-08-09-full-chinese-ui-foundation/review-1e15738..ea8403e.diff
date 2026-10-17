@@ -1,0 +1,1957 @@
+# Review package: 1e15738..ea8403e
+
+## Commits
+ea8403e refactor: share one Chinese UI font atlas
+
+## Files changed
+ .../task-4-report.md                               | 89 ++++++++++++++++++++++
+ src/platform/raylib/CMakeLists.txt                 |  1 +
+ src/platform/raylib/combat_renderer.cpp            |  7 +-
+ src/platform/raylib/combat_renderer.hpp            |  2 +-
+ src/platform/raylib/death_overlay_renderer.cpp     | 38 ++-------
+ src/platform/raylib/death_overlay_renderer.hpp     |  5 +-
+ src/platform/raylib/hud_font.cpp                   |  3 +-
+ src/platform/raylib/hud_renderer.cpp               | 57 +-------------
+ src/platform/raylib/hud_renderer.hpp               |  3 +-
+ src/platform/raylib/pause_menu_renderer.cpp        | 27 ++-----
+ src/platform/raylib/pause_menu_renderer.hpp        |  7 +-
+ src/platform/raylib/raylib_host.cpp                | 51 ++++++++-----
+ src/platform/raylib/raylib_host.hpp                |  1 +
+ src/platform/raylib/shared_ui_font.cpp             | 84 ++++++++++++++++++++
+ src/platform/raylib/shared_ui_font.hpp             | 22 ++++--
+ .../host_validation_sequence_guard_self_test.cmake | 21 +++--
+ tests/platform/host_validation_source_test.cmake   | 13 +++-
+ .../host_validation_success_tail_guard.cmake       |  2 +-
+ tests/platform/hud_font_tests.cpp                  | 19 +++++
+ tests/platform/hud_host_integration_tests.cpp      |  2 +-
+ tests/platform/shared_ui_font_tests.cpp            |  2 +-
+ .../stage11c_hud_evidence_guard_self_test.cmake    |  9 ++-
+ .../stage11d_loot_evidence_guard_test.cmake        |  2 +-
+ .../stage11d_renderer_integration_guard_test.cmake | 59 ++++++++++++++
+ .../stage12_material_formal_game_validation.cpp    | 13 +++-
+ tests/platform/stage12_material_validator.ps1      |  6 +-
+ .../stage12_material_validator_self_test.ps1       | 20 +++++
+ tests/platform/ui_material_asset_pipeline_tests.py | 11 ++-
+ 28 files changed, 415 insertions(+), 161 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/task-4-report.md b/.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/task-4-report.md
+new file mode 100644
+index 0000000..97f4ba3
+--- /dev/null
++++ b/.superpowers/sdd/2026-08-09-full-chinese-ui-foundation/task-4-report.md
+@@ -0,0 +1,89 @@
++# Task 4 Report: 单实例共享字体生命周期
++
++## 结果
++
++- `SharedUiFont` 是唯一 raylib 字体资源所有者；全平台源码仅该文件出现 `LoadFontEx`/`UnloadFont`。
++- `HudRenderer`、`DeathOverlayRenderer`、`PauseMenuRenderer` 只借用 `Font` 值与 ready 状态；其 `shutdown()` 只清空借用。
++- `CombatRenderer::initialize_resources(const SharedUiFont&)` 统一分发共享字体。
++- Host 在窗口与工作目录建立后初始化共享字体；成功关闭顺序为 pause -> combat -> shared -> window。render-snapshot 早退和两个异常处理路径也先清空借用再释放 shared，窗口最后关闭。
++- `kUiFontAtlasInstanceCount` 从 Task 3 阶段值 3 原子切换到 1。
++- Stage12 真实运行证据：517 glyph，2048x2048 GRAY_ALPHA，`atlas_bytes=8388608`，`instance_count=1`，`total_atlas_bytes=8388608`，单图集预算 33554432。
++
++## TDD RED
++
++1. 测试先改为 `kUiFontAtlasInstanceCount == 1U`，并新增 renderer 禁止字体所有权调用、Host 生命周期顺序与 Stage12 单实例统计约束。
++2. 首次直接构建被当前 PowerShell 缺失 MSVC `INCLUDE` 截断：`cmath: No such file or directory`，不是有效 RED。
++3. 加载 VS Build Tools 环境后重跑：
++
++```powershell
++cmd /d /s /c '"...\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul && cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2'
++```
++
++结果：`shared_ui_font_tests.cpp:77` 与 `hud_font_tests.cpp:261` 均为静态断言失败，准确证明当前实例数仍为 3。
++
++4. 单跑源守卫：
++
++```powershell
++ctest --preset windows-msvc-debug --output-on-failure -R '^stage11d\.renderer_integration_guard$'
++```
++
++结果：准确 RED：`Shared UI font guard: renderer borrower contains LoadFontEx(`。
++
++## GREEN 与验证
++
++### 构建与窄测试
++
++- `cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2`：exit 0。
++- `cmake --build --preset windows-msvc-debug --target arpg_stage12_material_formal --parallel 2`：exit 0。
++- foundation：`ARPG_FULL_CHINESE_UI_FOUNDATION_ONLY=1`，最终 15 cases / 0 failures。
++- `python tests/platform/ui_material_asset_pipeline_tests.py`：11 tests / OK。
++- validator 与 self-test PowerShell 解析：pass。
++- `git diff --check`：pass；仅 Git 行尾转换提示，无空白错误。
++
++### Windows 清洁构建内存
++
++命令等价于：
++
++```powershell
++cmake --build --preset windows-msvc-debug --target arpg_platform_tests --parallel 2 --clean-first
++```
++
++100ms 采样 `cmake,ninja,cl,link`：
++
++- 257 build steps，exit 0。
++- 聚合工作集峰值：2,567,028,736 bytes（约 2.39 GiB）。
++- 单进程工作集峰值：1,978,056,704 bytes（约 1.84 GiB）。
++- 未出现 OOM。
++
++### Stage12 真实运行
++
++```powershell
++ctest --preset windows-msvc-debug --output-on-failure -R '^stage12\.material_formal$'
++```
++
++- 运行 474.70s；raylib 日志只有一次 `Shared UI font loaded`。
++- 字体字段全部通过：`bundled_font_runtime=pass`、instance 1、glyph 517、atlas/total 均 8388608、capacity 640。
++- 整体测试仍 fail，原因不是字体生命周期：`hud_viewport_safe=fail`、HUD bounds/runtime draw fail，以及 Intel UHD 上 stress average 28.405 FPS、1% low 26.505 FPS，低于 60/45 门槛。
++- 因正式证据不是 pristine pass，`stage12_material_validator_self_test.ps1` 在 pristine gate 以 exit 1 停止，无法进入负向 mutation；两个脚本均已通过 PowerShell 语法解析。
++
++### 全平台与既有守卫
++
++- `platform.units` / 直接运行全平台：655 cases / 2 failures：
++  - ecology `alpha_bounds.x` 与记录不一致；
++  - case count actual 655 / expected 654。
++  两项与 brief 中 Task2 已知观察一致，Task4 前后未掩盖或改 expected。
++- Task4 字体/Host 源守卫已通过新增检查，随后仍在既有 `monster_affix_danger` 守卫断言失败。
++- 其他既有 host/loot 守卫分别在 Task8A host-frame-gate、renderer draw、live-settings rollback 的旧基线断言失败；未改写这些 expected。
++
++## 文件与边界
++
++生产修改只涉及 raylib 字体所有权、renderer 注入、Host 生命周期、Stage12 状态字段与 raylib 生命周期 allowlist；测试修改同步单实例、validator 和既有关闭顺序守卫。未修改玩法、存档、设置编码、stable IDs、枚举或版本；未引入 JSON、外部语言包、运行时映射容器或逐帧分配。
++
++brief 外追加维护的测试/构建文件：`src/platform/raylib/CMakeLists.txt`（允许 owner 查询窗口状态）、`tests/platform/ui_material_asset_pipeline_tests.py` 与既有 Host/Stage11C 顺序守卫 self-test（旧三实例/旧关闭顺序断言必须同步，未削弱约束）。
++
++## 自审与疑虑
++
++- 初始化失败时，所有有效但不合约的候选字体立即 `UnloadFont`；owner 保持 not-ready。
++- 所有 renderer 析构/重复 shutdown 均不卸载 shared。
++- Host 成功、render snapshot 早退、标准异常、未知异常均遵循借用先断开、owner 后卸载、窗口最后关闭。
++- 当前没有为 `LoadFontEx` 注入失败 fake；失败清理由源审查和实现分支覆盖，真实成功生命周期由 Stage12 OpenGL 运行验证。完整 Stage12 总门仍被上述既有视觉/性能条件阻塞。
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 7268f79..ea49d04 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -95,20 +95,21 @@ else()
+ endif()
+ 
+ set_source_files_properties(host_window_lifetime.cpp PROPERTIES
+     COMPILE_DEFINITIONS
+         "ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS;ARPG_ALLOW_RAYLIB_INIT_WINDOW;ARPG_ALLOW_RAYLIB_IS_WINDOW_READY;ARPG_ALLOW_RAYLIB_CLOSE_WINDOW")
+ set_source_files_properties(
+     combat_renderer.cpp
+     death_overlay_renderer.cpp
+     hud_renderer.cpp
+     pause_menu_renderer.cpp
++    shared_ui_font.cpp
+     window_settings.cpp
+     PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
+ set_source_files_properties(raylib_host.cpp PROPERTIES
+     COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE)
+ 
+ if(WIN32)
+     target_link_libraries(arpg_raylib PRIVATE user32)
+ endif()
+ 
+ arpg_enable_project_warnings(arpg_raylib)
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index f483b54..08070fc 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -276,23 +276,24 @@ CombatRenderPlan make_combat_render_plan(
+     return plan;
+ }
+ 
+ std::optional<std::size_t> hud_presented_frame_index(
+     HudPresentedFrame frame) noexcept {
+     const std::size_t index = static_cast<std::size_t>(frame);
+     return index < static_cast<std::size_t>(HudPresentedFrame::count)
+         ? std::optional<std::size_t>{index} : std::nullopt;
+ }
+ 
+-bool CombatRenderer::initialize_resources() noexcept {
+-    const bool death_font_ready = death_overlay_.initialize();
+-    const bool hud_font_ready = hud_renderer_.initialize();
++bool CombatRenderer::initialize_resources(
++    const SharedUiFont& shared_ui_font) noexcept {
++    const bool death_font_ready = death_overlay_.initialize(shared_ui_font);
++    const bool hud_font_ready = hud_renderer_.initialize(shared_ui_font);
+     static_cast<void>(material_pack_.synchronize_residency(
+         base_material_residency_request()));
+     if (!death_font_ready || !hud_font_ready) {
+         TraceLog(LOG_WARNING,
+             "HUD overlays are using a fallback font; formal CJK validation will fail");
+     }
+     return death_font_ready && hud_font_ready;
+ }
+ 
+ void CombatRenderer::shutdown_resources() noexcept {
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 9eb39fc..96b95b3 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -105,21 +105,21 @@ struct HoleProjectedGeometry final {
+ };
+ 
+ [[nodiscard]] HoleProjectedGeometry project_hole_geometry(
+     combat::Vec3 world_position,
+     const CombatCameraView& camera,
+     float width,
+     float height) noexcept;
+ 
+ class CombatRenderer final {
+ public:
+-    [[nodiscard]] bool initialize_resources() noexcept;
++    [[nodiscard]] bool initialize_resources(const SharedUiFont&) noexcept;
+     void shutdown_resources() noexcept;
+     [[nodiscard]] bool active_skill_assets_ready() const noexcept;
+     [[nodiscard]] bool material_pipeline_ready() const noexcept;
+     [[nodiscard]] bool material_ecology_ready(
+         MaterialEcology ecology) const noexcept;
+     [[nodiscard]] bool material_atlas_available(
+         MaterialAtlasId atlas) const noexcept;
+     [[nodiscard]] const MaterialPack& material_pack() const noexcept;
+     [[nodiscard]] std::uint64_t material_sprite_draw_count(
+         MaterialSpriteId sprite) const noexcept;
+diff --git a/src/platform/raylib/death_overlay_renderer.cpp b/src/platform/raylib/death_overlay_renderer.cpp
+index 68f8b25..1a1a78b 100644
+--- a/src/platform/raylib/death_overlay_renderer.cpp
++++ b/src/platform/raylib/death_overlay_renderer.cpp
+@@ -47,61 +47,39 @@ void draw_panel_fallback(const DeathOverlayLayout& layout) noexcept {
+ 
+ void draw_title_plate_fallback(const DeathOverlayLayout& layout) noexcept {
+     DrawRectangleRounded(rectangle(layout.title), 0.12F, 6,
+         Color{22, 19, 25, 255});
+     DrawRectangleRoundedLines(rectangle(layout.title), 0.12F, 6,
+         Color{132, 101, 68, 255});
+ }
+ 
+ }  // namespace
+ 
+-DeathOverlayRenderer::~DeathOverlayRenderer() noexcept {
+-    if (owns_font_ && IsWindowReady()) UnloadFont(font_);
+-}
++DeathOverlayRenderer::~DeathOverlayRenderer() noexcept { shutdown(); }
+ 
+-bool DeathOverlayRenderer::initialize() noexcept {
++bool DeathOverlayRenderer::initialize(
++    const SharedUiFont& shared_ui_font) noexcept {
+     shutdown();
+-    const DeathOverlayFontPlan plan = death_overlay_font_plan();
+-    for (std::size_t index = 0U; index < plan.candidate_count; ++index) {
+-        const char* path = plan.candidate_paths[index];
+-        if (path == nullptr || !FileExists(path)) continue;
+-        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
+-            plan.codepoints.data(),
+-            static_cast<int>(plan.codepoint_count));
+-        if (IsFontValid(candidate)
+-                && candidate.glyphCount
+-                    == static_cast<int>(plan.codepoint_count)) {
+-            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
+-            font_ = candidate;
+-            owns_font_ = true;
+-            TraceLog(LOG_INFO, "DEATH OVERLAY: Loaded font %s (%i glyphs)",
+-                path, candidate.glyphCount);
+-            return true;
+-        }
+-        if (IsFontValid(candidate)) UnloadFont(candidate);
+-    }
+-    font_ = GetFontDefault();
+-    TraceLog(LOG_WARNING,
+-        "DEATH OVERLAY: No complete CJK font found; using readable ASCII fallback");
+-    return false;
++    font_ = shared_ui_font.font();
++    font_ready_ = shared_ui_font.ready();
++    return font_ready_;
+ }
+ 
+ void DeathOverlayRenderer::shutdown() noexcept {
+-    if (owns_font_ && IsWindowReady()) UnloadFont(font_);
+     font_ = {};
+-    owns_font_ = false;
++    font_ready_ = false;
+ }
+ 
+ void DeathOverlayRenderer::draw(
+     const dungeon::DungeonSnapshot& snapshot,
+     const MaterialPack& material_pack) const noexcept {
+-    const DeathOverlayView view = owns_font_
++    const DeathOverlayView view = font_ready_
+         ? build_death_overlay_view(snapshot)
+         : build_death_overlay_ascii_view(snapshot);
+     const DeathOverlayMaterialPlan plan =
+         death_overlay_material_plan(view.visible);
+     if (!plan.visible) return;
+     const DeathOverlayLayout layout = death_overlay_layout(
+         view, GetScreenWidth(), GetScreenHeight());
+     draw_screen_dimmer(plan.dimmer_alpha);
+     if (!material_pack.draw_nine_slice(
+             plan.panel, rectangle(layout.panel), plan.panel_border_pixels)) {
+diff --git a/src/platform/raylib/death_overlay_renderer.hpp b/src/platform/raylib/death_overlay_renderer.hpp
+index 401a1e4..8dcfcab 100644
+--- a/src/platform/raylib/death_overlay_renderer.hpp
++++ b/src/platform/raylib/death_overlay_renderer.hpp
+@@ -1,28 +1,29 @@
+ #pragma once
+ 
+ #include "dungeon/dungeon_types.hpp"
++#include "shared_ui_font.hpp"
+ 
+ #include <raylib.h>
+ 
+ namespace arpg::platform {
+ 
+ class MaterialPack;
+ 
+ class DeathOverlayRenderer final {
+ public:
+     DeathOverlayRenderer() noexcept = default;
+     ~DeathOverlayRenderer() noexcept;
+     DeathOverlayRenderer(const DeathOverlayRenderer&) = delete;
+     DeathOverlayRenderer& operator=(const DeathOverlayRenderer&) = delete;
+ 
+-    [[nodiscard]] bool initialize() noexcept;
++    [[nodiscard]] bool initialize(const SharedUiFont&) noexcept;
+     void shutdown() noexcept;
+     void draw(const dungeon::DungeonSnapshot& snapshot,
+         const MaterialPack& material_pack) const noexcept;
+ 
+ private:
+     Font font_{};
+-    bool owns_font_{};
++    bool font_ready_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_font.cpp b/src/platform/raylib/hud_font.cpp
+index 3f3ec41..304a27b 100644
+--- a/src/platform/raylib/hud_font.cpp
++++ b/src/platform/raylib/hud_font.cpp
+@@ -10,21 +10,20 @@ HudFontPlan hud_font_plan() noexcept {
+     return plan;
+ }
+ 
+ HudFontDrawMode hud_font_draw_mode(bool cjk_font_ready) noexcept {
+     return cjk_font_ready ? HudFontDrawMode::cjk_ready
+                           : HudFontDrawMode::fallback;
+ }
+ 
+ HudFontSelectionPlan make_hud_font_selection_plan(bool cjk_font_ready) noexcept {
+     const HudFontDrawMode mode = hud_font_draw_mode(cjk_font_ready);
+-    return {mode, mode == HudFontDrawMode::fallback,
+-        mode == HudFontDrawMode::cjk_ready};
++    return {mode, mode == HudFontDrawMode::fallback, false};
+ }
+ 
+ CombatTextStyle combat_text_style(
+     int screen_width, int screen_height) noexcept {
+     const float scale = ui_viewport_scale(screen_width, screen_height);
+     return {20.0F * scale, 24.0F * scale, 1.0F};
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index caf1746..844e3bb 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -35,41 +35,20 @@ const char* ecology_name(dungeon::DungeonElement element) noexcept {
+     return "UNKNOWN";
+ }
+ 
+ void draw_bar(float x, float y, float width, float ratio, Color color) noexcept {
+     if (ratio < 0.0F) ratio = 0.0F;
+     else if (ratio > 1.0F) ratio = 1.0F;
+     DrawRectangleRec({x, y, width, 5.0F}, Color{20, 23, 31, 230});
+     DrawRectangleRec({x + 1.0F, y + 1.0F, (width - 2.0F) * ratio, 3.0F}, color);
+ }
+ 
+-bool has_requested_glyphs(Font font,
+-    const DeathOverlayFontPlan& plan) noexcept {
+-    if (!IsFontValid(font)
+-            || font.glyphCount < static_cast<int>(plan.codepoint_count)
+-            || font.glyphs == nullptr) {
+-        return false;
+-    }
+-    for (std::size_t requested = 0U; requested < plan.codepoint_count;
+-         ++requested) {
+-        bool found = false;
+-        for (int glyph = 0; glyph < font.glyphCount; ++glyph) {
+-            if (font.glyphs[glyph].value == plan.codepoints[requested]) {
+-                found = true;
+-                break;
+-            }
+-        }
+-        if (!found) return false;
+-    }
+-    return true;
+-}
+-
+ [[nodiscard]] float clamped_ratio(float ratio) noexcept {
+     if (!std::isfinite(ratio)) return 0.0F;
+     return std::clamp(ratio, 0.0F, 1.0F);
+ }
+ 
+ [[nodiscard]] HudRect player_bar_bounds(const HudLayout& layout,
+     float logical_y) noexcept {
+     const float scale = layout.scale;
+     return {
+         layout.player_panel.x + (188.0F * scale),
+@@ -395,56 +374,28 @@ void draw_context_notice(Font font, const HudRect& bounds,
+     draw_panel_text(font, bounds, text, 17.0F * scale, color,
+         UiTextAuditRole::hud_objective, scale);
+ }
+ 
+ }  // namespace
+ 
+ HudRenderer::~HudRenderer() noexcept {
+     shutdown();
+ }
+ 
+-bool HudRenderer::initialize() noexcept {
++bool HudRenderer::initialize(const SharedUiFont& shared_ui_font) noexcept {
+     shutdown();
+-    const HudFontPlan plan = hud_font_plan();
+-    if (!plan.covers_required_text) {
+-        TraceLog(LOG_WARNING, "HUD: Shared font plan misses required Chinese text");
+-        font_ = GetFontDefault();
+-        return false;
+-    }
+-
+-    for (std::size_t index = 0U; index < plan.shared.candidate_count; ++index) {
+-        const char* path = plan.shared.candidate_paths[index];
+-        if (path == nullptr || !FileExists(path)) continue;
+-        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
+-            plan.shared.codepoints.data(),
+-            static_cast<int>(plan.shared.codepoint_count));
+-        if (has_requested_glyphs(candidate, plan.shared)) {
+-            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
+-            font_ = candidate;
+-            font_ready_ = true;
+-            TraceLog(LOG_INFO, "HUD: Loaded Chinese font %s (%i glyphs)",
+-                path, candidate.glyphCount);
+-            return true;
+-        }
+-        if (IsFontValid(candidate)) UnloadFont(candidate);
+-    }
+-
+-    font_ = GetFontDefault();
+-    TraceLog(LOG_WARNING,
+-        "HUD: No complete Chinese font found; using default font fallback");
+-    return false;
++    font_ = shared_ui_font.font();
++    font_ready_ = shared_ui_font.ready();
++    return font_ready_;
+ }
+ 
+ void HudRenderer::shutdown() noexcept {
+-    const HudFontSelectionPlan selection =
+-        make_hud_font_selection_plan(font_ready_);
+-    if (selection.owns_loaded_font && IsWindowReady()) UnloadFont(font_);
+     font_ = {};
+     font_ready_ = false;
+ }
+ 
+ bool HudRenderer::font_ready() const noexcept {
+     return font_ready_;
+ }
+ 
+ Font HudRenderer::hud_font() const noexcept {
+     return font_;
+diff --git a/src/platform/raylib/hud_renderer.hpp b/src/platform/raylib/hud_renderer.hpp
+index 0c7e565..e972575 100644
+--- a/src/platform/raylib/hud_renderer.hpp
++++ b/src/platform/raylib/hud_renderer.hpp
+@@ -1,18 +1,19 @@
+ #pragma once
+ 
+ #include "hud_layout.hpp"
+ #include "hud_palette.hpp"
+ #include "hud_view_model.hpp"
+ #include "ground_loot_view.hpp"
+ #include "material_loot_view.hpp"
+ #include "material_pack.hpp"
++#include "shared_ui_font.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstdint>
+ 
+ namespace arpg::combat {
+ struct MonsterSnapshot;
+ }
+ 
+@@ -119,21 +120,21 @@ struct HudReadabilityStyle final {
+     HudTextMeasureFn, void*) noexcept;
+ [[nodiscard]] HudReadabilityStyle hud_readability_style() noexcept;
+ 
+ class HudRenderer final {
+ public:
+     HudRenderer() noexcept = default;
+     ~HudRenderer() noexcept;
+     HudRenderer(const HudRenderer&) = delete;
+     HudRenderer& operator=(const HudRenderer&) = delete;
+ 
+-    [[nodiscard]] bool initialize() noexcept;
++    [[nodiscard]] bool initialize(const SharedUiFont&) noexcept;
+     void shutdown() noexcept;
+     [[nodiscard]] bool font_ready() const noexcept;
+     [[nodiscard]] Font hud_font() const noexcept;
+     void draw_ground_loot(const GroundLootView&) const noexcept;
+     void draw_material_loot(const MaterialLootView&) const noexcept;
+     void draw(const HudViewModel&, const HudLayout&) const noexcept;
+     void draw(const HudViewModel&, const HudLayout&,
+         const MaterialPack&) const noexcept;
+ 
+ private:
+diff --git a/src/platform/raylib/pause_menu_renderer.cpp b/src/platform/raylib/pause_menu_renderer.cpp
+index 140340c..cb59906 100644
+--- a/src/platform/raylib/pause_menu_renderer.cpp
++++ b/src/platform/raylib/pause_menu_renderer.cpp
+@@ -197,46 +197,31 @@ void draw_pause_menu_with_font(
+                 }
+                 break;
+         }
+     }
+ }
+ 
+ PauseMenuRenderer::~PauseMenuRenderer() noexcept {
+     shutdown();
+ }
+ 
+-bool PauseMenuRenderer::initialize() noexcept {
++bool PauseMenuRenderer::initialize(
++    const SharedUiFont& shared_ui_font) noexcept {
+     shutdown();
+-    const DeathOverlayFontPlan plan = death_overlay_font_plan();
+-    for (std::size_t index = 0U; index < plan.candidate_count; ++index) {
+-        const char* path = plan.candidate_paths[index];
+-        if (path == nullptr || !FileExists(path)) continue;
+-        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
+-            plan.codepoints.data(),
+-            static_cast<int>(plan.codepoint_count));
+-        if (IsFontValid(candidate)
+-                && candidate.glyphCount == static_cast<int>(plan.codepoint_count)) {
+-            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
+-            font_ = candidate;
+-            owns_font_ = true;
+-            return true;
+-        }
+-        if (IsFontValid(candidate)) UnloadFont(candidate);
+-    }
+-    font_ = GetFontDefault();
+-    return false;
++    font_ = shared_ui_font.font();
++    font_ready_ = shared_ui_font.ready();
++    return font_ready_;
+ }
+ 
+ void PauseMenuRenderer::shutdown() noexcept {
+-    if (owns_font_ && IsWindowReady()) UnloadFont(font_);
+     font_ = {};
+-    owns_font_ = false;
++    font_ready_ = false;
+ }
+ 
+ void PauseMenuRenderer::draw(const PauseMenuState& state,
+     const MaterialPack& material_pack) const noexcept {
+     draw_pause_menu_with_font(state,
+         IsFontValid(font_) ? font_ : GetFontDefault(), &material_pack);
+ }
+ 
+ void draw_pause_menu(const PauseMenuState& state) noexcept {
+     draw_pause_menu_with_font(state, GetFontDefault(), nullptr);
+diff --git a/src/platform/raylib/pause_menu_renderer.hpp b/src/platform/raylib/pause_menu_renderer.hpp
+index 503a610..7e4d458 100644
+--- a/src/platform/raylib/pause_menu_renderer.hpp
++++ b/src/platform/raylib/pause_menu_renderer.hpp
+@@ -1,14 +1,15 @@
+ #pragma once
+ 
+ #include "pause_menu_view.hpp"
+ #include "material_pack.hpp"
++#include "shared_ui_font.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ inline constexpr std::size_t kPauseMenuRenderOpCapacity = 26U;
+@@ -37,24 +38,24 @@ struct PauseMenuRenderPlan final {
+ [[nodiscard]] PauseMenuRenderPlan make_pause_menu_render_plan(
+     const PauseMenuView& view) noexcept;
+ 
+ class PauseMenuRenderer final {
+ public:
+     PauseMenuRenderer() noexcept = default;
+     ~PauseMenuRenderer() noexcept;
+     PauseMenuRenderer(const PauseMenuRenderer&) = delete;
+     PauseMenuRenderer& operator=(const PauseMenuRenderer&) = delete;
+ 
+-    [[nodiscard]] bool initialize() noexcept;
++    [[nodiscard]] bool initialize(const SharedUiFont&) noexcept;
+     void shutdown() noexcept;
+-    [[nodiscard]] bool has_cjk_font() const noexcept { return owns_font_; }
++    [[nodiscard]] bool has_cjk_font() const noexcept { return font_ready_; }
+     void draw(const PauseMenuState& state,
+         const MaterialPack& material_pack) const noexcept;
+ 
+ private:
+     Font font_{};
+-    bool owns_font_{};
++    bool font_ready_{};
+ };
+ 
+ void draw_pause_menu(const PauseMenuState& state) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index dbbdd3d..669095e 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -378,21 +378,23 @@ RaylibHostConfig make_production_host_config(HostLaunchOptions options) {
+     config.save_directory = std::move(options.save_directory);
+     config.settings_directory = std::move(options.settings_directory);
+     config.screenshot_directory = std::move(options.screenshot_directory);
+     config.new_run_seed = options.new_run_seed;
+     config.continue_pending_death_on_launch = true;
+     return config;
+ }
+ 
+ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+     HostWindowLifetime window{raylib_host_window_backend()};
++    SharedUiFont shared_ui_font{};
+     std::unique_ptr<CombatRenderer> renderer_storage;
++    std::unique_ptr<PauseMenuRenderer> pause_menu_renderer_storage;
+     try {
+         const auto save_directory = config.save_directory.has_value()
+             ? config.save_directory : persistence::default_save_directory();
+         if (!save_directory.has_value()) {
+             return HostExitCode::save_initialization_failed;
+         }
+         const auto settings_directory = config.settings_directory.has_value()
+             ? config.settings_directory : save_directory;
+         if (!settings_directory.has_value()) {
+             return HostExitCode::save_initialization_failed;
+@@ -444,46 +446,51 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+         if (!window.initialize(config, committed_settings)) {
+             TraceLog(LOG_ERROR, "raylib window initialization failed");
+             return HostExitCode::window_initialization_failed;
+         }
+         const bool directory_changed = config.validation_capture
+             ? ChangeDirectory(save_directory->string().c_str())
+             : ChangeDirectory(GetApplicationDirectory());
+         if (!directory_changed) {
+             TraceLog(LOG_WARNING, "failed to use screenshot working directory");
+         }
++        if (!shared_ui_font.initialize()) {
++            TraceLog(LOG_ERROR,
++                "Bundled Chinese UI font initialization failed");
++            return HostExitCode::window_initialization_failed;
++        }
+         SetWindowMinSize(800, 450);
+         SetExitKey(KEY_NULL);
+ #ifdef _WIN32
+         if (config.stage11b_validation != Stage11BValidationScenario::none
+                 || config.stage11c_hud_validation
+                     != Stage11CHudValidationScenario::none
+ // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN foreground
+                 || config.stage11d_loot_validation
+                     != Stage11DLootValidationScenario::none
+ // STAGE11D_LOOT_VALIDATION_SEAM_END foreground
+                 || config.stage17_skill_stones_validation
+                     != Stage17SkillStonesValidationScenario::none
+                 ) {
+             static_cast<void>(SetForegroundWindow(GetWindowHandle()));
+         }
+ #endif
+         core::FixedStepRunner fixed_step;
+         renderer_storage = std::make_unique<CombatRenderer>();
+         CombatRenderer& renderer = *renderer_storage;
+-        const bool hud_resources_ready = renderer.initialize_resources();
++        const bool hud_resources_ready =
++            renderer.initialize_resources(shared_ui_font);
+         validation_runtime->set_render_readiness(
+             hud_resources_ready, renderer.active_skill_assets_ready());
+-        const auto pause_menu_renderer_storage =
+-            std::make_unique<PauseMenuRenderer>();
++        pause_menu_renderer_storage = std::make_unique<PauseMenuRenderer>();
+         PauseMenuRenderer& pause_menu_renderer = *pause_menu_renderer_storage;
+-        static_cast<void>(pause_menu_renderer.initialize());
++        static_cast<void>(pause_menu_renderer.initialize(shared_ui_font));
+         CombatFeedback feedback;
+         const auto audio_storage = std::make_unique<GameAudio>();
+         GameAudio& audio = *audio_storage;
+         const auto inventory_storage = std::make_unique<InventoryRenderer>();
+         InventoryRenderer& inventory = *inventory_storage;
+         const bool audio_ready = audio.initialize();
+         if (audio_ready) {
+             SetMasterVolume(1.0F);
+         }
+         const WindowSettingsBackend settings_backend =
+@@ -1028,22 +1035,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             const CombatCameraView frame_camera = make_combat_camera_view(
+                 interpolated_player, screen_width, screen_height);
+             camera_version = camera_version
+                     == (std::numeric_limits<std::uint64_t>::max)()
+                 ? 1U : camera_version + 1U;
+             const dungeon::WorldViewQuery world_query = make_world_view_query(
+                 frame_camera, screen_width, screen_height, camera_version);
+             if (!session->write_render_snapshot(world_query, *render_world)) {
+                 TraceLog(LOG_ERROR, "failed to publish bounded render snapshot");
+                 audio.shutdown();
+-                renderer.shutdown_resources();
+                 pause_menu_renderer.shutdown();
++                renderer.shutdown_resources();
++                shared_ui_font.shutdown();
+                 return HostExitCode::save_initialization_failed;
+             }
+             if (config.stage12_material_showcase) {
+                 apply_stage12_material_showcase_world(
+                     presented_snapshot, *render_world);
+             }
+             // The presented HUD consumes this exact bounded world snapshot;
+             // publish it after all fixed-step and showcase transformations,
+             // and before the frame is drawn.
+             const HudPresentedFrame hud_presented_frame = current.death.has_value()
+@@ -1173,41 +1181,41 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 for (std::size_t index{}; index < kUiMaterialSprites.size();
+                      ++index) {
+                     material_status.ui_material_draws[index] =
+                         renderer.material_sprite_draw_count(
+                             kUiMaterialSprites[index]);
+                     material_status.ui_direct_stretch_draws[index] =
+                         renderer.material_direct_stretch_draw_count(
+                             kUiMaterialSprites[index]);
+                 }
+                 material_status.bundled_font_ready =
+-                    renderer.hud_font_ready()
++                    shared_ui_font.ready() && renderer.hud_font_ready()
+                     && pause_menu_renderer.has_cjk_font();
++                material_status.bundled_font_instance_count =
++                    shared_ui_font.ready()
++                    ? static_cast<std::uint8_t>(kUiFontAtlasInstanceCount)
++                    : 0U;
+                 material_status.bundled_font_glyph_count =
+-                    renderer.hud_font_ready()
++                    shared_ui_font.ready()
+                     ? static_cast<std::uint16_t>((std::min)(
+-                        renderer.hud_font().glyphCount, 65535))
++                        shared_ui_font.font().glyphCount, 65535))
+                     : 0U;
+-                const Font runtime_font = renderer.hud_font();
++                const Font runtime_font = shared_ui_font.font();
+                 material_status.bundled_font_source_base_size =
+-                    renderer.hud_font_ready()
++                    shared_ui_font.ready()
+                     ? static_cast<std::uint16_t>((std::max)(
+                         runtime_font.baseSize, 0))
+                     : 0U;
+                 material_status.bundled_font_atlas_bytes =
+-                    renderer.hud_font_ready()
+-                    ? ui_font_atlas_bytes(runtime_font.texture.width,
+-                        runtime_font.texture.height)
+-                    : 0U;
++                    shared_ui_font.atlas_bytes();
+                 material_status.bundled_font_total_atlas_bytes =
+-                    material_status.bundled_font_atlas_bytes
+-                        * kUiFontAtlasInstanceCount;
++                    material_status.bundled_font_atlas_bytes;
+                 material_status.bundled_font_total_atlas_byte_budget =
+                     kUiFontTotalAtlasByteBudget;
+             }
+             validation_runtime->observe_ground_loot(
+                 current, pause_menu, runtime.render_status(),
+                 presented_loot_filter, ground_loot_view,
+                 renderer.hud_notice_view(), runtime.item_state(),
+                 GetScreenWidth(), GetScreenHeight());
+             if (!config.stage12_material_background_only
+                 && !config.stage12_material_icons_only
+@@ -1327,30 +1335,39 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+             }
+             if (decision.validation_complete
+                     && (!config.validation_capture_file.has_value()
+                         || effective_generic_complete)) {
+                 begin_clean_exit();
+             }
+         }
+         validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         audio.shutdown();
+-        renderer.shutdown_resources();
+         pause_menu_renderer.shutdown();
++        renderer.shutdown_resources();
++        shared_ui_font.shutdown();
+         window.close();
+         return HostExitCode::success;
+     } catch (const std::exception& exception) {
+         TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
++        if (pause_menu_renderer_storage != nullptr) {
++            pause_menu_renderer_storage->shutdown();
++        }
+         if (renderer_storage != nullptr) {
+             renderer_storage->shutdown_resources();
+         }
++        shared_ui_font.shutdown();
+         return HostExitCode::save_initialization_failed;
+     } catch (...) {
+         TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
++        if (pause_menu_renderer_storage != nullptr) {
++            pause_menu_renderer_storage->shutdown();
++        }
+         if (renderer_storage != nullptr) {
+             renderer_storage->shutdown_resources();
+         }
++        shared_ui_font.shutdown();
+         return HostExitCode::save_initialization_failed;
+     }
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index a300f0f..7aa9886 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -145,20 +145,21 @@ struct Stage12MaterialRuntimeStatus final {
+     Stage12MonsterMaterialDrawStatus chaos_chaser_draw{};
+     Stage12MonsterMaterialDrawStatus chaos_hazard_draw{};
+     bool items_ui_resident{};
+     std::array<std::uint64_t, 6U> equipment_slot_draws{};
+     std::array<std::uint64_t, 4U> rarity_draws{};
+     std::array<std::uint64_t, items::kMaterialCount> material_draws{};
+     bool ui_material_resident{};
+     std::array<std::uint64_t, 40U> ui_material_draws{};
+     std::array<std::uint64_t, 40U> ui_direct_stretch_draws{};
+     bool bundled_font_ready{};
++    std::uint8_t bundled_font_instance_count{};
+     std::uint16_t bundled_font_glyph_count{};
+     std::uint16_t bundled_font_source_base_size{};
+     std::uint64_t bundled_font_atlas_bytes{};
+     std::uint64_t bundled_font_total_atlas_bytes{};
+     std::uint64_t bundled_font_total_atlas_byte_budget{};
+     std::array<bool, 4U> ui_text_bounds_safe{};
+     std::array<bool, 4U> ui_text_sizes_readable{};
+     std::array<std::uint64_t, 4U> ui_text_observed_roles{};
+     std::array<std::uint64_t, 4U> ui_text_failed_bounds_roles{};
+     std::array<std::uint64_t, 4U> ui_text_failed_size_roles{};
+diff --git a/src/platform/raylib/shared_ui_font.cpp b/src/platform/raylib/shared_ui_font.cpp
+index a1d4f0b..7b60811 100644
+--- a/src/platform/raylib/shared_ui_font.cpp
++++ b/src/platform/raylib/shared_ui_font.cpp
+@@ -1,18 +1,39 @@
+ #include "shared_ui_font.hpp"
+ 
+ #include "ui_text_catalog.hpp"
+ #include "ui_utf8.hpp"
+ 
+ namespace arpg::platform {
+ namespace {
+ 
++[[nodiscard]] bool has_requested_glyphs(Font font,
++    const UiGlyphPlan& plan) noexcept {
++    if (!IsFontValid(font)
++            || font.glyphCount != static_cast<int>(plan.codepoint_count)
++            || font.glyphs == nullptr) {
++        return false;
++    }
++    for (std::size_t requested = 0U; requested < plan.codepoint_count;
++         ++requested) {
++        bool found = false;
++        for (int glyph = 0; glyph < font.glyphCount; ++glyph) {
++            if (font.glyphs[glyph].value == plan.codepoints[requested]) {
++                found = true;
++                break;
++            }
++        }
++        if (!found) return false;
++    }
++    return true;
++}
++
+ [[nodiscard]] bool is_continuation(unsigned char byte) noexcept {
+     return byte >= 0x80U && byte <= 0xBFU;
+ }
+ 
+ [[nodiscard]] bool decode_codepoint(const char*& cursor,
+     int& codepoint) noexcept {
+     const auto* const bytes = reinterpret_cast<const unsigned char*>(cursor);
+     const unsigned char first = bytes[0];
+     if (first <= 0x7FU) {
+         codepoint = static_cast<int>(first);
+@@ -83,20 +104,83 @@ void add_catalog_text(const char* text, void* context) noexcept {
+         if (!decode_codepoint(cursor, codepoint)) {
+             plan.capacity_exceeded = true;
+             return;
+         }
+         add_codepoint(plan, codepoint);
+     }
+ }
+ 
+ }  // namespace
+ 
++SharedUiFont::~SharedUiFont() noexcept {
++    shutdown();
++}
++
++bool SharedUiFont::initialize() noexcept {
++    shutdown();
++    plan_ = ui_glyph_plan();
++    if (plan_.capacity_exceeded || plan_.codepoint_count == 0U
++            || plan_.codepoint_count > plan_.codepoints.size()) {
++        TraceLog(LOG_ERROR, "Shared UI font glyph plan is invalid");
++        return false;
++    }
++
++    for (std::size_t index = 0U; index < plan_.candidate_count; ++index) {
++        const char* const path = plan_.candidate_paths[index];
++        if (path == nullptr || !FileExists(path)) continue;
++        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
++            plan_.codepoints.data(), static_cast<int>(plan_.codepoint_count));
++        const std::size_t candidate_atlas_bytes = ui_font_atlas_bytes(
++            candidate.texture.width, candidate.texture.height);
++        if (has_requested_glyphs(candidate, plan_)
++                && candidate_atlas_bytes > 0U
++                && candidate_atlas_bytes <= kUiFontAtlasByteBudget) {
++            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
++            font_ = candidate;
++            ready_ = true;
++            TraceLog(LOG_INFO,
++                "Shared UI font loaded %s (%i glyphs, %llu atlas bytes)",
++                path, candidate.glyphCount,
++                static_cast<unsigned long long>(candidate_atlas_bytes));
++            return true;
++        }
++        if (IsFontValid(candidate)) UnloadFont(candidate);
++    }
++
++    font_ = {};
++    TraceLog(LOG_ERROR, "Shared UI font has no valid bundled candidate");
++    return false;
++}
++
++void SharedUiFont::shutdown() noexcept {
++    if (ready_ && IsWindowReady() && IsFontValid(font_)) UnloadFont(font_);
++    font_ = {};
++    ready_ = false;
++}
++
++bool SharedUiFont::ready() const noexcept {
++    return ready_;
++}
++
++Font SharedUiFont::font() const noexcept {
++    return font_;
++}
++
++std::size_t SharedUiFont::atlas_bytes() const noexcept {
++    return ready_ ? ui_font_atlas_bytes(
++        font_.texture.width, font_.texture.height) : 0U;
++}
++
++const UiGlyphPlan& SharedUiFont::plan() const noexcept {
++    return plan_;
++}
++
+ UiGlyphPlan build_ui_glyph_plan(
+     UiGlyphPlanCatalogVisitor visit_catalog) noexcept {
+     UiGlyphPlan plan{};
+     plan.candidate_paths = {{"assets/fonts/NotoSansCJKsc-Medium.otf"}};
+     plan.candidate_count = 1U;
+     for (int codepoint = 32; codepoint <= 126; ++codepoint) {
+         add_codepoint(plan, codepoint);
+     }
+     if (visit_catalog != nullptr) visit_catalog(&add_catalog_text, &plan);
+     return plan;
+diff --git a/src/platform/raylib/shared_ui_font.hpp b/src/platform/raylib/shared_ui_font.hpp
+index d775671..912b2b3 100644
+--- a/src/platform/raylib/shared_ui_font.hpp
++++ b/src/platform/raylib/shared_ui_font.hpp
+@@ -1,21 +1,23 @@
+ #pragma once
+ 
+ #include "ui_text_catalog.hpp"
+ 
++#include <raylib.h>
++
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ inline constexpr std::size_t kUiGlyphCapacity = 640U;
+-inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
++inline constexpr std::size_t kUiFontAtlasInstanceCount = 1U;
+ inline constexpr std::size_t kUiFontAtlasByteBudget =
+     32U * 1024U * 1024U;
+ inline constexpr int kUiFontSourceBaseSize = 96;
+ inline constexpr int kUiFontMaximumDisplaySize = 39;
+ inline constexpr std::size_t kUiFontAtlasBytesPerPixel = 2U;
+ 
+ [[nodiscard]] constexpr std::size_t ui_font_atlas_bytes(
+     int width, int height) noexcept {
+     return width > 0 && height > 0
+         ? static_cast<std::size_t>(width)
+@@ -25,24 +27,34 @@ inline constexpr std::size_t kUiFontAtlasBytesPerPixel = 2U;
+ }
+ 
+ struct UiGlyphPlan final {
+     std::array<const char*, 1U> candidate_paths{};
+     std::size_t candidate_count{};
+     std::array<int, kUiGlyphCapacity> codepoints{};
+     std::size_t codepoint_count{};
+     bool capacity_exceeded{};
+ };
+ 
+-// Task 3 defines only the fixed source plan. Loading and ownership are wired
+-// by the renderer/host lifecycle task.
+-struct SharedUiFont final {
+-    UiGlyphPlan glyph_plan{};
++class SharedUiFont final {
++public:
++    ~SharedUiFont() noexcept;
++    [[nodiscard]] bool initialize() noexcept;
++    void shutdown() noexcept;
++    [[nodiscard]] bool ready() const noexcept;
++    [[nodiscard]] Font font() const noexcept;
++    [[nodiscard]] std::size_t atlas_bytes() const noexcept;
++    [[nodiscard]] const UiGlyphPlan& plan() const noexcept;
++
++private:
++    Font font_{};
++    UiGlyphPlan plan_{};
++    bool ready_{};
+ };
+ 
+ using UiGlyphPlanCatalogVisitor = void (*)(UiTextVisitor visitor,
+     void* context) noexcept;
+ 
+ [[nodiscard]] UiGlyphPlan build_ui_glyph_plan(
+     UiGlyphPlanCatalogVisitor visit_catalog) noexcept;
+ [[nodiscard]] UiGlyphPlan ui_glyph_plan() noexcept;
+ [[nodiscard]] bool ui_glyph_plan_has_codepoint(
+     const UiGlyphPlan& plan, int codepoint) noexcept;
+diff --git a/tests/platform/host_validation_sequence_guard_self_test.cmake b/tests/platform/host_validation_sequence_guard_self_test.cmake
+index 89d7216..ec54a99 100644
+--- a/tests/platform/host_validation_sequence_guard_self_test.cmake
++++ b/tests/platform/host_validation_sequence_guard_self_test.cmake
+@@ -10,37 +10,40 @@ file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
+ 
+ if(DEFINED TASK7C_REVIEW_MUTATION
+         AND (TASK7C_REVIEW_MUTATION STREQUAL dead_shutdown_decoy
+             OR TASK7C_REVIEW_MUTATION STREQUAL conditional_shutdown_decoy))
+     file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+         _task7c_review_host)
+     set(_task7c_review_original "${_task7c_review_host}")
+     set(_task7c_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         audio.shutdown();
+-        renderer.shutdown_resources();
+         pause_menu_renderer.shutdown();
++        renderer.shutdown_resources();
++        shared_ui_font.shutdown();
+         window.close();]=])
+     set(_task7c_dead_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         if (false) {
+             audio.shutdown();
+-            renderer.shutdown_resources();
+             pause_menu_renderer.shutdown();
++            renderer.shutdown_resources();
++            shared_ui_font.shutdown();
+             window.close();
+         }]=])
+     set(_task7c_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         if (config.fullscreen) {
+             audio.shutdown();
+-            renderer.shutdown_resources();
+             pause_menu_renderer.shutdown();
++            renderer.shutdown_resources();
++            shared_ui_font.shutdown();
+             window.close();
+         }]=])
+     if(TASK7C_REVIEW_MUTATION STREQUAL dead_shutdown_decoy)
+         set(_task7c_review_replacement "${_task7c_dead_shutdown_chain}")
+         set(_task7c_review_label "dead shutdown decoy")
+     else()
+         set(_task7c_review_replacement
+             "${_task7c_conditional_shutdown_chain}")
+         set(_task7c_review_label "conditional shutdown decoy")
+     endif()
+@@ -686,46 +689,50 @@ function(arpg_expect_task7c_sequence_rejection
+         string(REPLACE "validation_runtime->write_summaries("
+             "validation_runtime->write_summaries_removed("
+             _mutated "${_mutated}")
+         string(REPLACE "        audio.shutdown();"
+             "        audio.shutdown();\n        validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"
+             _mutated "${_mutated}")
+     elseif(MUTATION STREQUAL "m25_dead_shutdown_decoy")
+         set(_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         audio.shutdown();
+-        renderer.shutdown_resources();
+         pause_menu_renderer.shutdown();
++        renderer.shutdown_resources();
++        shared_ui_font.shutdown();
+         window.close();]=])
+         set(_dead_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         if (false) {
+             audio.shutdown();
+-            renderer.shutdown_resources();
+             pause_menu_renderer.shutdown();
++            renderer.shutdown_resources();
++            shared_ui_font.shutdown();
+             window.close();
+         }]=])
+         string(REPLACE "${_shutdown_chain}" "${_dead_shutdown_chain}"
+             _mutated "${_mutated}")
+     elseif(MUTATION STREQUAL "m25_conditional_shutdown_decoy")
+         set(_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         audio.shutdown();
+-        renderer.shutdown_resources();
+         pause_menu_renderer.shutdown();
++        renderer.shutdown_resources();
++        shared_ui_font.shutdown();
+         window.close();]=])
+         set(_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         if (config.fullscreen) {
+             audio.shutdown();
+-            renderer.shutdown_resources();
+             pause_menu_renderer.shutdown();
++            renderer.shutdown_resources();
++            shared_ui_font.shutdown();
+             window.close();
+         }]=])
+         string(REPLACE "${_shutdown_chain}" "${_conditional_shutdown_chain}"
+             _mutated "${_mutated}")
+     else()
+         message(FATAL_ERROR "Unknown Task 7C sequence mutation: ${MUTATION}")
+     endif()
+ 
+     if(_mutated STREQUAL _original)
+         message(FATAL_ERROR
+diff --git a/tests/platform/host_validation_source_test.cmake b/tests/platform/host_validation_source_test.cmake
+index 3ecd0e3..5b8b65d 100644
+--- a/tests/platform/host_validation_source_test.cmake
++++ b/tests/platform/host_validation_source_test.cmake
+@@ -715,20 +715,21 @@ host_validation_require_canonical_count(
+ 
+ set(_task9_lifecycle_allowlist_contract [=[
+ set_source_files_properties(host_window_lifetime.cpp PROPERTIES
+     COMPILE_DEFINITIONS
+         "ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS;ARPG_ALLOW_RAYLIB_INIT_WINDOW;ARPG_ALLOW_RAYLIB_IS_WINDOW_READY;ARPG_ALLOW_RAYLIB_CLOSE_WINDOW")
+ set_source_files_properties(
+     combat_renderer.cpp
+     death_overlay_renderer.cpp
+     hud_renderer.cpp
+     pause_menu_renderer.cpp
++    shared_ui_font.cpp
+     window_settings.cpp
+     PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
+ set_source_files_properties(raylib_host.cpp PROPERTIES
+     COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE)
+ ]=])
+ host_validation_require_canonical_count(
+     "Task 9 lifecycle exact source allowlist"
+     "${_raylib_cmake_text}"
+     "${_task9_lifecycle_allowlist_contract}" 1)
+ function(host_validation_lifecycle_allowlist_is_valid SOURCE OUT_VALID)
+@@ -2868,25 +2869,27 @@ host_validation_require_canonical_count("Task 8C Host explicit close"
+     "${_run_host_direct}" "window.close();" 1)
+ foreach(_task8c_removed_host_call IN ITEMS
+         "SetConfigFlags(" "InitWindow(" "IsWindowReady(" "CloseWindow(")
+     host_validation_require_count("Task 8C removed direct Host lifecycle"
+         "${_run_host_direct}" "${_task8c_removed_host_call}" 0)
+ endforeach()
+ host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
+     "${_run_host_direct}"
+     "window.initialize(config, committed_settings)"
+     "ChangeDirectory("
++    "shared_ui_font.initialize()"
+     "SetWindowMinSize(800, 450);"
+     "SetExitKey(KEY_NULL);"
+     "audio.shutdown();"
+-    "renderer.shutdown_resources();"
+     "pause_menu_renderer.shutdown();"
++    "renderer.shutdown_resources();"
++    "shared_ui_font.shutdown();"
+     "window.close();")
+ host_validation_require_canonical_count("Task 9 renderer outer owner"
+     "${_run_host_direct}"
+     "std::unique_ptr<CombatRenderer> renderer_storage;" 1)
+ host_validation_require_canonical_count("Task 9 renderer allocation"
+     "${_run_host_direct}"
+     "renderer_storage = std::make_unique<CombatRenderer>();" 1)
+ host_validation_require_canonical_count("Task 9 renderer allocation anchor"
+     "${_run_host_direct}"
+     "core::FixedStepRunner fixed_step;
+@@ -2921,33 +2924,38 @@ if(_task9_renderer_bypass_valid)
+         "Task 9 Host source guard accepted early reset with a dead exact anchor")
+ endif()
+ host_validation_require_canonical_count("Task 9 catch renderer cleanup"
+     "${_run_host_direct}"
+     "if (renderer_storage != nullptr) {
+         renderer_storage->shutdown_resources();
+     }" 2)
+ host_validation_require_canonical_order("Task 9 renderer exception lifetime"
+     "${_run_host_direct}"
+     "HostWindowLifetime window{raylib_host_window_backend()};"
++    "SharedUiFont shared_ui_font{};"
+     "std::unique_ptr<CombatRenderer> renderer_storage;"
++    "std::unique_ptr<PauseMenuRenderer> pause_menu_renderer_storage;"
+     "try {"
+     "window.initialize(config, committed_settings)"
++    "shared_ui_font.initialize()"
+     "renderer_storage = std::make_unique<CombatRenderer>();"
+     "catch (const std::exception& exception) {"
+     "if (renderer_storage != nullptr) {
+         renderer_storage->shutdown_resources();
+     }"
++    "shared_ui_font.shutdown();"
+     "return HostExitCode::save_initialization_failed;"
+     "catch (...) {"
+     "if (renderer_storage != nullptr) {
+         renderer_storage->shutdown_resources();
+     }"
++    "shared_ui_font.shutdown();"
+     "return HostExitCode::save_initialization_failed;")
+ set(_task9_lifecycle_scan_root "${SOURCE_ROOT}")
+ if(DEFINED TASK9_LIFECYCLE_SCAN_ROOT)
+     set(_task9_lifecycle_scan_root "${TASK9_LIFECYCLE_SCAN_ROOT}")
+ endif()
+ evidence_collect_project_production_code_like_files(
+     "${_task9_lifecycle_scan_root}" _task9_project_production_sources)
+ file(TO_CMAKE_PATH
+     "${_task9_lifecycle_scan_root}/src/platform/raylib/"
+     _task9_raylib_code_root)
+@@ -3271,21 +3279,22 @@ host_validation_require_canonical_order("Task 7C Host lifecycle"
+     "validation_runtime->observe_capture_result("
+     "const bool effective_generic_complete ="
+     "validation_runtime->write_summaries("
+     "audio.shutdown();")
+ 
+ host_validation_require_order("Host initialization" "${_run_host}"
+     "HostValidationRuntime::create(config, loaded.status)"
+     "if (validation_runtime == nullptr)"
+     "return HostExitCode::save_initialization_failed;"
+     "window.initialize(config, committed_settings)"
+-    "renderer.initialize_resources()"
++    "shared_ui_font.initialize()"
++    "renderer.initialize_resources(shared_ui_font)"
+     "validation_runtime->set_render_readiness("
+     "hud_resources_ready, renderer.active_skill_assets_ready()")
+ host_validation_require_count("Host runtime creation" "${_run_host}"
+     "HostValidationRuntime::create(" 1)
+ host_validation_require_count("Host render readiness" "${_run_host}"
+     "validation_runtime->set_render_readiness(" 1)
+ 
+ host_validation_require_order("Host physical input split" "${_run_host}"
+     "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+     "const bool gameplay_rearm_was_required ="
+diff --git a/tests/platform/host_validation_success_tail_guard.cmake b/tests/platform/host_validation_success_tail_guard.cmake
+index 9ca1cc8..acad404 100644
+--- a/tests/platform/host_validation_success_tail_guard.cmake
++++ b/tests/platform/host_validation_success_tail_guard.cmake
+@@ -54,21 +54,21 @@ function(evidence_host_success_tail_is_canonical
+     string(FIND "${_post_loop}" "} catch (" _catch_begin)
+     if(_catch_begin EQUAL -1)
+         set(${OUT_VALID} FALSE PARENT_SCOPE)
+         set(${OUT_REASON} "host catch boundary is missing" PARENT_SCOPE)
+         return()
+     endif()
+     string(SUBSTRING "${_post_loop}" 0 ${_catch_begin} _success_tail)
+     string(REGEX REPLACE "[ \t\r\n]+" "" _success_tail_compact
+         "${_success_tail}")
+     set(_canonical_tail
+-        "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();window.close();returnHostExitCode::success;")
++        "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();pause_menu_renderer.shutdown();renderer.shutdown_resources();shared_ui_font.shutdown();window.close();returnHostExitCode::success;")
+     if(NOT _success_tail_compact STREQUAL _canonical_tail)
+         set(${OUT_VALID} FALSE PARENT_SCOPE)
+         set(${OUT_REASON} "post-loop success tail is not canonical" PARENT_SCOPE)
+         return()
+     endif()
+ 
+     string(REGEX REPLACE "[ \t\r\n]+" "" _host_compact
+         "${HOST_FUNCTION}")
+     string(REGEX MATCHALL "returnHostExitCode::success"
+         _success_returns "${_host_compact}")
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index ece2136..4d22ae9 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -1,19 +1,22 @@
+ #include "test_framework.hpp"
+ 
+ #include "death_overlay_font.hpp"
++#include "death_overlay_renderer.hpp"
+ #include "dungeon/dungeon_render_snapshot.hpp"
+ #include "hud_font.hpp"
+ #include "hud_palette.hpp"
+ #include "hud_renderer.hpp"
+ #include "hud_view_model.hpp"
+ #include "passive_tree_renderer.hpp"
++#include "pause_menu_renderer.hpp"
++#include "shared_ui_font.hpp"
+ #include "ui_text_contrast.hpp"
+ #include "ui_typography.hpp"
+ 
+ #include <cstddef>
+ #include <cstring>
+ #include <cstdio>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+@@ -251,20 +254,21 @@ arpg::test::Failure ui_typography_scales_to_physical_full_hd_pixels() noexcept {
+     ARPG_REQUIRE(arpg::test::near(platform::scaled_ui_font_size(
+         platform::ui_typography().kInventoryBodyFontSize, 1920, 1080),
+         24.0F));
+     ARPG_REQUIRE(arpg::test::near(platform::scaled_ui_font_size(
+         platform::ui_typography().kPauseRowFontSize, 1920, 1080),
+         27.0F));
+     return {};
+ }
+ 
+ arpg::test::Failure bundled_font_uses_bounded_high_resolution_glyph_atlas() noexcept {
++    static_assert(platform::kUiFontAtlasInstanceCount == 1U);
+     static_assert(platform::kUiFontSourceBaseSize >= 96);
+     static_assert(platform::kUiFontMaximumDisplaySize >= 39);
+     static_assert(platform::kUiFontSourceBaseSize
+         >= platform::kUiFontMaximumDisplaySize * 2);
+     static_assert(platform::kUiFontAtlasByteBudget > 0U);
+     static_assert(platform::kUiFontAtlasByteBudget <= 32U * 1024U * 1024U);
+     static_assert(platform::kDeathOverlayCodepointCapacity
+         == platform::kUiGlyphCapacity);
+     const platform::DeathOverlayFontPlan plan =
+         platform::death_overlay_font_plan();
+@@ -284,26 +288,41 @@ arpg::test::Failure hud_palette_key_colors_are_opaque_and_distinct() noexcept {
+     for (std::size_t lhs = 0U; lhs < kColorCount; ++lhs) {
+         ARPG_REQUIRE(colors[lhs].a == 255U);
+         for (std::size_t rhs = lhs + 1U; rhs < kColorCount; ++rhs) {
+             ARPG_REQUIRE(!same_color(colors[lhs], colors[rhs]));
+         }
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
++    platform::SharedUiFont shared{};
+     platform::HudRenderer renderer{};
+     ARPG_REQUIRE(!renderer.font_ready());
++    ARPG_REQUIRE(!shared.ready());
++    ARPG_REQUIRE(shared.atlas_bytes() == 0U);
++    ARPG_REQUIRE(!renderer.initialize(shared));
+     renderer.shutdown();
+     renderer.shutdown();
+     ARPG_REQUIRE(!renderer.font_ready());
++    ARPG_REQUIRE(!shared.ready());
+     renderer.draw({}, {});
++
++    platform::DeathOverlayRenderer death{};
++    platform::PauseMenuRenderer pause{};
++    ARPG_REQUIRE(!death.initialize(shared));
++    ARPG_REQUIRE(!pause.initialize(shared));
++    death.shutdown();
++    pause.shutdown();
++    ARPG_REQUIRE(!shared.ready());
++    shared.shutdown();
++    shared.shutdown();
+     return {};
+ }
+ 
+ arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noexcept {
+     const platform::HudFontPlan font = platform::hud_font_plan();
+     constexpr const char* kCombatText = "0123456789-+%DEFEATED";
+     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+         font.shared, kCombatText));
+ 
+     const platform::CombatTextStyle compact =
+diff --git a/tests/platform/hud_host_integration_tests.cpp b/tests/platform/hud_host_integration_tests.cpp
+index a50db1a..b0c08af 100644
+--- a/tests/platform/hud_host_integration_tests.cpp
++++ b/tests/platform/hud_host_integration_tests.cpp
+@@ -193,21 +193,21 @@ arpg::test::Failure fallback_font_selection_matches_actual_draw_and_shutdown_own
+     const platform::HudFontSelectionPlan fallback =
+         platform::make_hud_font_selection_plan(false);
+     ARPG_REQUIRE(fallback.draw_mode == platform::HudFontDrawMode::fallback);
+     ARPG_REQUIRE(fallback.use_default_font);
+     ARPG_REQUIRE(!fallback.owns_loaded_font);
+ 
+     const platform::HudFontSelectionPlan cjk =
+         platform::make_hud_font_selection_plan(true);
+     ARPG_REQUIRE(cjk.draw_mode == platform::HudFontDrawMode::cjk_ready);
+     ARPG_REQUIRE(!cjk.use_default_font);
+-    ARPG_REQUIRE(cjk.owns_loaded_font);
++    ARPG_REQUIRE(!cjk.owns_loaded_font);
+     return {};
+ }
+ 
+ arpg::test::Failure paused_frames_freeze_hud_notice_time() noexcept {
+     const dungeon::DungeonSnapshot previous = snapshot();
+     dungeon::DungeonSnapshot current = previous;
+     current.last_room_experience = 25U;
+     platform::CombatRenderer renderer{};
+ 
+     renderer.observe_hud(previous, current, saved_status(), committed_hints(4U),
+diff --git a/tests/platform/shared_ui_font_tests.cpp b/tests/platform/shared_ui_font_tests.cpp
+index e24fff4..d276827 100644
+--- a/tests/platform/shared_ui_font_tests.cpp
++++ b/tests/platform/shared_ui_font_tests.cpp
+@@ -67,21 +67,21 @@ arpg::test::Failure plan_codepoints_are_unique() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     for (std::size_t lhs = 0U; lhs < plan.codepoint_count; ++lhs) {
+         for (std::size_t rhs = lhs + 1U; rhs < plan.codepoint_count; ++rhs) {
+             ARPG_REQUIRE(plan.codepoints[lhs] != plan.codepoints[rhs]);
+         }
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure capacity_and_atlas_budget_are_explicitly_bounded() noexcept {
+-    static_assert(platform::kUiFontAtlasInstanceCount == 3U);
++    static_assert(platform::kUiFontAtlasInstanceCount == 1U);
+     static_assert(platform::kUiFontAtlasByteBudget == 32U * 1024U * 1024U);
+     static_assert(platform::ui_font_atlas_bytes(4096, 4096)
+         == 32U * 1024U * 1024U);
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     ARPG_REQUIRE(!plan.capacity_exceeded);
+     for (std::size_t index = 0U; index < 95U; ++index) {
+         ARPG_REQUIRE(plan.codepoints[index] == static_cast<int>(32U + index));
+     }
+ 
+     const platform::UiGlyphPlan exact_capacity =
+diff --git a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+index 273c6c1..4f43301 100644
+--- a/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
++++ b/tests/platform/stage11c_hud_evidence_guard_self_test.cmake
+@@ -73,43 +73,46 @@ stage11c_expect_task7c_host_rejection(task7c_m10_model_dead_decoy_get_call
+ 
+ string(REPLACE "${_task7c_mask_hud_observer}"
+     "            validation_runtime.get()->observe_hud(\n                current, renderer.hud_model(), HudNoticeView{},\n                draw_debug, GetScreenWidth(), GetScreenHeight());\n            const auto task7c_hud_observer_decoy = [&] {\n${_task7c_mask_hud_observer}\n            };"
+     _task7c_m10_notices_mask_host "${_host_source}")
+ stage11c_expect_task7c_host_rejection(task7c_m10_notices_lambda_decoy_get_call
+     "${_task7c_m10_notices_mask_host}" "T7C-M10")
+ 
+ set(_task7c_m25_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         audio.shutdown();
+-        renderer.shutdown_resources();
+         pause_menu_renderer.shutdown();
++        renderer.shutdown_resources();
++        shared_ui_font.shutdown();
+         window.close();]=])
+ set(_task7c_m25_dead_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         if (false) {
+             audio.shutdown();
+-            renderer.shutdown_resources();
+             pause_menu_renderer.shutdown();
++            renderer.shutdown_resources();
++            shared_ui_font.shutdown();
+             window.close();
+         }]=])
+ string(REPLACE "${_task7c_m25_shutdown_chain}"
+     "${_task7c_m25_dead_shutdown_chain}"
+     _task7c_m25_dead_shutdown_host "${_host_source}")
+ stage11c_expect_task7c_host_rejection(task7c_m25_dead_shutdown_decoy
+     "${_task7c_m25_dead_shutdown_host}" "facade summary binding/order")
+ 
+ set(_task7c_m25_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
+             runtime.clean_shutdown_state(), pause_menu);
+         if (config.fullscreen) {
+             audio.shutdown();
+-            renderer.shutdown_resources();
+             pause_menu_renderer.shutdown();
++            renderer.shutdown_resources();
++            shared_ui_font.shutdown();
+             window.close();
+         }]=])
+ string(REPLACE "${_task7c_m25_shutdown_chain}"
+     "${_task7c_m25_conditional_shutdown_chain}"
+     _task7c_m25_conditional_shutdown_host "${_host_source}")
+ stage11c_expect_task7c_host_rejection(task7c_m25_conditional_shutdown_decoy
+     "${_task7c_m25_conditional_shutdown_host}"
+     "facade summary binding/order")
+ 
+ if(DEFINED STAGE11C_TASK7C_HOST_MASK_ONLY)
+diff --git a/tests/platform/stage11d_loot_evidence_guard_test.cmake b/tests/platform/stage11d_loot_evidence_guard_test.cmake
+index ec3354e..8ac43a0 100644
+--- a/tests/platform/stage11d_loot_evidence_guard_test.cmake
++++ b/tests/platform/stage11d_loot_evidence_guard_test.cmake
+@@ -1630,21 +1630,21 @@ if(NOT _task7c_main_loop_count EQUAL 1
+         "T7C-M25: Stage11D loot evidence guard cannot bind the Host main loop")
+ endif()
+ stage11d_matching_brace_position("${_stage11d_host_direct}"
+     ${_task7c_main_loop_open} _task7c_main_loop_close)
+ math(EXPR _task7c_post_loop_begin "${_task7c_main_loop_close} + 1")
+ string(SUBSTRING "${_stage11d_host_direct}" ${_task7c_post_loop_begin}
+     -1 _task7c_post_loop_surface)
+ string(REGEX REPLACE "[ \t\r\n]+" "" _task7c_post_loop_normalized
+     "${_task7c_post_loop_surface}")
+ set(_task7c_unconditional_summary_tail
+-    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();window.close();returnHostExitCode::success;")
++    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();pause_menu_renderer.shutdown();renderer.shutdown_resources();shared_ui_font.shutdown();window.close();returnHostExitCode::success;")
+ string(FIND "${_task7c_post_loop_normalized}"
+     "${_task7c_unconditional_summary_tail}" _task7c_summary_tail_position)
+ if(NOT _task7c_summary_tail_position EQUAL 0)
+     message(FATAL_ERROR
+         "T7C-M25: Stage11D loot evidence guard rejected the unconditional Host summary tail")
+ endif()
+ 
+ set(_task7c_decision_begin "const PresentationDecision decision =")
+ set(_task7c_summary_begin "validation_runtime->write_summaries(")
+ foreach(_task7c_boundary IN ITEMS
+diff --git a/tests/platform/stage11d_renderer_integration_guard_test.cmake b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+index 864c461..4c239c4 100644
+--- a/tests/platform/stage11d_renderer_integration_guard_test.cmake
++++ b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+@@ -2,20 +2,26 @@ if(NOT DEFINED SOURCE_ROOT)
+     message(FATAL_ERROR "SOURCE_ROOT is required")
+ endif()
+ 
+ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+ include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+ 
+ set(_combat_header_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.hpp")
+ set(_combat_source_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
+ set(_room_source_path "${SOURCE_ROOT}/src/platform/raylib/room_renderer.cpp")
+ set(_hud_source_path "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp")
++set(_death_overlay_source_path
++    "${SOURCE_ROOT}/src/platform/raylib/death_overlay_renderer.cpp")
++set(_pause_menu_source_path
++    "${SOURCE_ROOT}/src/platform/raylib/pause_menu_renderer.cpp")
++set(_shared_ui_font_source_path
++    "${SOURCE_ROOT}/src/platform/raylib/shared_ui_font.cpp")
+ set(_host_source_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+ set(_runtime_source_path
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+ set(_report_source_path
+     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
+ if(DEFINED COMBAT_HEADER_OVERRIDE)
+     set(_combat_header_path "${COMBAT_HEADER_OVERRIDE}")
+ endif()
+ if(DEFINED COMBAT_SOURCE_OVERRIDE)
+     set(_combat_source_path "${COMBAT_SOURCE_OVERRIDE}")
+@@ -34,46 +40,99 @@ if(DEFINED HOST_VALIDATION_RUNTIME_OVERRIDE)
+ endif()
+ if(DEFINED REPORT_OVERRIDE)
+     set(_report_source_path "${REPORT_OVERRIDE}")
+ endif()
+ 
+ foreach(_required_path IN ITEMS
+         "${_combat_header_path}"
+         "${_combat_source_path}"
+         "${_room_source_path}"
+         "${_hud_source_path}"
++        "${_death_overlay_source_path}"
++        "${_pause_menu_source_path}"
++        "${_shared_ui_font_source_path}"
+         "${_host_source_path}"
+         "${_runtime_source_path}"
+         "${_report_source_path}")
+     if(NOT EXISTS "${_required_path}")
+         message(FATAL_ERROR "Stage11D renderer integration guard input missing: ${_required_path}")
+     endif()
+ endforeach()
+ 
+ file(READ "${_combat_header_path}" _combat_header)
+ file(READ "${_combat_source_path}" _combat_source)
+ file(READ "${_room_source_path}" _room_source)
+ file(READ "${_hud_source_path}" _hud_source)
++file(READ "${_death_overlay_source_path}" _death_overlay_source)
++file(READ "${_pause_menu_source_path}" _pause_menu_source)
++file(READ "${_shared_ui_font_source_path}" _shared_ui_font_source)
+ file(READ "${_host_source_path}" _host_source)
+ file(READ "${_runtime_source_path}" _runtime_source)
+ file(READ "${_report_source_path}" _report_source)
+ 
+ function(stage11d_count_token SOURCE TOKEN OUT_COUNT)
+     string(LENGTH "${SOURCE}" _source_length)
+     string(LENGTH "${TOKEN}" _token_length)
+     string(REPLACE "${TOKEN}" "" _without "${SOURCE}")
+     string(LENGTH "${_without}" _without_length)
+     math(EXPR _removed "${_source_length} - ${_without_length}")
+     math(EXPR _count "${_removed} / ${_token_length}")
+     set(${OUT_COUNT} ${_count} PARENT_SCOPE)
+ endfunction()
+ 
++foreach(_borrower_source IN ITEMS
++        "${_hud_source}"
++        "${_death_overlay_source}"
++        "${_pause_menu_source}")
++    foreach(_owned_font_call IN ITEMS "LoadFontEx(" "UnloadFont(")
++        string(FIND "${_borrower_source}" "${_owned_font_call}"
++            _owned_font_call_position)
++        if(NOT _owned_font_call_position EQUAL -1)
++            message(FATAL_ERROR
++                "Shared UI font guard: renderer borrower contains ${_owned_font_call}")
++        endif()
++    endforeach()
++endforeach()
++foreach(_owned_font_call IN ITEMS "LoadFontEx(" "UnloadFont(")
++    string(FIND "${_shared_ui_font_source}" "${_owned_font_call}"
++        _owned_font_call_position)
++    if(_owned_font_call_position EQUAL -1)
++        message(FATAL_ERROR
++            "Shared UI font guard: SharedUiFont owner is missing ${_owned_font_call}")
++    endif()
++endforeach()
++
++arpg_sanitize_cpp_source("${_host_source}" _shared_font_host_surface)
++string(REGEX REPLACE "[ \t\r\n]+" "" _shared_font_host_normalized
++    "${_shared_font_host_surface}")
++set(_shared_font_host_lifecycle
++    "SharedUiFontshared_ui_font{}"
++    "ChangeDirectory("
++    "shared_ui_font.initialize()"
++    "renderer.initialize_resources(shared_ui_font)"
++    "pause_menu_renderer.initialize(shared_ui_font)"
++    "pause_menu_renderer.shutdown()"
++    "renderer.shutdown_resources()"
++    "shared_ui_font.shutdown()"
++    "window.close()")
++set(_shared_font_previous_position -1)
++foreach(_shared_font_token IN LISTS _shared_font_host_lifecycle)
++    string(FIND "${_shared_font_host_normalized}" "${_shared_font_token}"
++        _shared_font_position)
++    if(_shared_font_position EQUAL -1
++            OR NOT _shared_font_previous_position LESS _shared_font_position)
++        message(FATAL_ERROR
++            "Shared UI font guard: Host lifecycle is missing or out of order at ${_shared_font_token}")
++    endif()
++    set(_shared_font_previous_position ${_shared_font_position})
++endforeach()
++
+ function(stage11d_renderer_unconditional_cpp_surface SOURCE OUT_SURFACE)
+     arpg_sanitize_cpp_source("${SOURCE}" _logical_source)
+     string(LENGTH "${_logical_source}" _source_length)
+     set(_cursor 0)
+     set(_conditional_depth 0)
+     set(_surface "")
+     while(_cursor LESS _source_length)
+         string(SUBSTRING "${_logical_source}" ${_cursor} -1 _tail)
+         string(FIND "${_tail}" "\n" _newline)
+         if(_newline EQUAL -1)
+diff --git a/tests/platform/stage12_material_formal_game_validation.cpp b/tests/platform/stage12_material_formal_game_validation.cpp
+index 939ac78..d53ebbe 100644
+--- a/tests/platform/stage12_material_formal_game_validation.cpp
++++ b/tests/platform/stage12_material_formal_game_validation.cpp
+@@ -1312,22 +1312,24 @@ bool write_integration_render_snapshot(
+     std::error_code working_directory_error{};
+     const std::filesystem::path previous_working_directory =
+         std::filesystem::current_path(working_directory_error);
+     if (!working_directory_error) {
+         std::filesystem::current_path(
+             std::filesystem::path{GetApplicationDirectory()},
+             working_directory_error);
+     }
+     result.working_directory_ready = !working_directory_error;
+ 
++    platform::SharedUiFont shared_ui_font{};
+     platform::CombatRenderer renderer{};
+-    result.overlay_resources_initialized = renderer.initialize_resources();
++    result.overlay_resources_initialized = shared_ui_font.initialize()
++        && renderer.initialize_resources(shared_ui_font);
+     const platform::MaterialResidencyRequest base_request =
+         platform::base_material_residency_request();
+     result.renderer_initialized = renderer.material_pipeline_ready()
+         && renderer.material_pack().residency_satisfied(base_request)
+         && renderer.material_pack().texture_load_call_count() != 0U;
+     std::uint64_t sequence{};
+ 
+     for (const IntegrationResolution& resolution : kIntegrationResolutions) {
+         const bool hud_safe = formal_hud_viewport_safe(
+             resolution.width, resolution.height);
+@@ -1734,21 +1736,22 @@ bool write_integration_render_snapshot(
+         renderer.material_pack().texture_unload_call_count();
+ 
+     const std::filesystem::path missing_map =
+         std::filesystem::path{GetApplicationDirectory()}
+         / "assets/skills/draw_slash_atlas_material.png";
+     const std::filesystem::path held_map = missing_map.string() + ".missing-map";
+     std::error_code file_error{};
+     std::filesystem::rename(missing_map, held_map, file_error);
+     if (!file_error) {
+         platform::CombatRenderer fallback_renderer{};
+-        static_cast<void>(fallback_renderer.initialize_resources());
++        static_cast<void>(
++            fallback_renderer.initialize_resources(shared_ui_font));
+         const bool fallback_core_ready = fallback_renderer.material_pipeline_ready()
+             && fallback_renderer.material_pack().residency_satisfied(
+                 platform::base_material_residency_request())
+             && fallback_renderer.material_pack().texture_load_call_count() != 0U;
+         for (const IntegrationResolution& resolution : kIntegrationResolutions) {
+             dungeon::DungeonSnapshot fallback = integration_snapshot(
+                 dungeon::DungeonElement::fire);
+             equip_skill(fallback, skills::ActiveSkillId::draw_slash, 45U);
+             const std::filesystem::path fallback_screenshot = root /
+                 (std::string{"integration-draw-slash-missing-map-"}
+@@ -1783,20 +1786,21 @@ bool write_integration_render_snapshot(
+             fallback_renderer.material_pack().texture_load_call_count();
+         result.fallback_unload_calls =
+             fallback_renderer.material_pack().texture_unload_call_count();
+         fallback_renderer.shutdown_resources();
+         file_error.clear();
+         std::filesystem::rename(held_map, missing_map, file_error);
+         result.skill_fallback_ok = result.skill_fallback_ok && !file_error;
+     } else {
+         result.skill_fallback_ok = false;
+     }
++    shared_ui_font.shutdown();
+     CloseWindow();
+     working_directory_error.clear();
+     if (result.working_directory_ready) {
+         std::filesystem::current_path(
+             previous_working_directory, working_directory_error);
+     }
+     result.working_directory_restored = !working_directory_error;
+ 
+     std::array<std::size_t, 4> door_sprite_ids{};
+     for (std::size_t index{}; index < kIntegrationDoorDirections.size(); ++index) {
+@@ -2205,28 +2209,31 @@ int main(int argc, char** argv) {
+     const bool hud_non_stretch_1920_ok = no_direct_stretch(
+         hud_ui_1920_runtime, kHudNonStretchResources);
+     const bool inventory_non_stretch_1920_ok = no_direct_stretch(
+         inventory_ui_1920_runtime, kInventoryNonStretchResources);
+     const bool skill_non_stretch_1920_ok = no_direct_stretch(
+         skill_ui_1920_runtime, kSkillNonStretchResources);
+     const bool pause_non_stretch_1920_ok = no_direct_stretch(
+         pause_ui_1920_runtime, kPauseNonStretchResources);
+     const auto font_runtime_valid = [](const auto& status) noexcept {
+         return status.bundled_font_ready
++            && status.bundled_font_instance_count == 1U
+             && status.bundled_font_glyph_count > 0U
+             && status.bundled_font_glyph_count
+                 <= platform::kDeathOverlayCodepointCapacity
+             && status.bundled_font_source_base_size
+                 >= platform::kUiFontMaximumDisplaySize * 2
+             && status.bundled_font_atlas_bytes > 0U
+             && status.bundled_font_atlas_bytes
+                 <= platform::kUiFontAtlasByteBudget
++            && status.bundled_font_total_atlas_bytes
++                == status.bundled_font_atlas_bytes
+             && status.bundled_font_total_atlas_bytes
+                 <= status.bundled_font_total_atlas_byte_budget;
+     };
+     const bool bundled_font_runtime_ok =
+         font_runtime_valid(hud_ui_runtime)
+         && font_runtime_valid(inventory_ui_runtime)
+         && font_runtime_valid(skill_ui_runtime)
+         && font_runtime_valid(pause_ui_runtime)
+         && font_runtime_valid(hud_ui_1920_runtime)
+         && font_runtime_valid(inventory_ui_1920_runtime)
+@@ -2600,20 +2607,22 @@ int main(int argc, char** argv) {
+            << "pause_ui_draw_mask=" << ui_draw_mask(pause_ui_runtime) << '\n'
+            << "hud_ui_runtime_draws_1920=" << (hud_ui_1920_runtime_ok ? "pass" : "fail") << '\n'
+            << "hud_ui_draw_mask_1920=" << ui_draw_mask(hud_ui_1920_runtime) << '\n'
+            << "inventory_ui_runtime_draws_1920=" << (inventory_ui_1920_runtime_ok ? "pass" : "fail") << '\n'
+            << "inventory_ui_draw_mask_1920=" << ui_draw_mask(inventory_ui_1920_runtime) << '\n'
+            << "skill_ui_runtime_draws_1920=" << (skill_ui_1920_runtime_ok ? "pass" : "fail") << '\n'
+            << "skill_ui_draw_mask_1920=" << ui_draw_mask(skill_ui_1920_runtime) << '\n'
+            << "pause_ui_runtime_draws_1920=" << (pause_ui_1920_runtime_ok ? "pass" : "fail") << '\n'
+            << "pause_ui_draw_mask_1920=" << ui_draw_mask(pause_ui_1920_runtime) << '\n'
+            << "bundled_font_runtime=" << (bundled_font_runtime_ok ? "pass" : "fail") << '\n'
++           << "bundled_font_instance_count=" << static_cast<unsigned>(
++                hud_ui_runtime.bundled_font_instance_count) << '\n'
+            << "bundled_font_glyph_count=" << hud_ui_runtime.bundled_font_glyph_count << '\n'
+            << "bundled_font_subset_capacity=" << platform::kDeathOverlayCodepointCapacity << '\n'
+            << "bundled_font_source_base_size=" << hud_ui_runtime.bundled_font_source_base_size << '\n'
+            << "bundled_font_max_display_size=" << platform::kUiFontMaximumDisplaySize << '\n'
+            << "bundled_font_atlas_bytes=" << hud_ui_runtime.bundled_font_atlas_bytes << '\n'
+            << "bundled_font_atlas_byte_budget=" << platform::kUiFontAtlasByteBudget << '\n'
+            << "bundled_font_total_atlas_bytes=" << hud_ui_runtime.bundled_font_total_atlas_bytes << '\n'
+            << "bundled_font_total_atlas_byte_budget=" << hud_ui_runtime.bundled_font_total_atlas_byte_budget << '\n'
+            << "ui_text_contrast=" << (text_contrast_ok ? "pass" : "fail") << '\n'
+            << "ui_text_solid_fill=" << (solid_text_fill_ok ? "pass" : "fail") << '\n'
+diff --git a/tests/platform/stage12_material_validator.ps1 b/tests/platform/stage12_material_validator.ps1
+index 6e591e8..9c4ecf8 100644
+--- a/tests/platform/stage12_material_validator.ps1
++++ b/tests/platform/stage12_material_validator.ps1
+@@ -1602,20 +1602,21 @@ foreach ($key in @('manifest','atlas_bytes','full_pack_bytes',
+         'item_runtime_draws','ui_material_pair','ui_runtime_draws',
+         'hud_ui_runtime_draws','inventory_ui_runtime_draws',
+         'skill_ui_runtime_draws','pause_ui_runtime_draws',
+         'hud_ui_draw_mask','inventory_ui_draw_mask',
+         'skill_ui_draw_mask','pause_ui_draw_mask',
+         'hud_ui_runtime_draws_1920','inventory_ui_runtime_draws_1920',
+         'skill_ui_runtime_draws_1920','pause_ui_runtime_draws_1920',
+         'hud_ui_draw_mask_1920','inventory_ui_draw_mask_1920',
+         'skill_ui_draw_mask_1920','pause_ui_draw_mask_1920',
+         'bundled_font_runtime','bundled_font_glyph_count',
++        'bundled_font_instance_count',
+         'bundled_font_subset_capacity',
+         'bundled_font_source_base_size','bundled_font_max_display_size',
+         'bundled_font_atlas_bytes','bundled_font_atlas_byte_budget',
+         'bundled_font_total_atlas_bytes',
+         'bundled_font_total_atlas_byte_budget',
+         'ui_text_contrast','ui_text_solid_fill','ui_text_primary_contrast',
+         'ui_text_secondary_contrast','ui_text_muted_contrast',
+         'ui_text_outline_pixels','ui_text_shadow_pixels',
+         'ui_text_backing_alpha','ui_text_physical_scale',
+         'inventory_min_font_1280','inventory_min_font_1920',
+@@ -1691,32 +1692,35 @@ $secondaryContrast = [double]$report.ui_text_secondary_contrast
+ $mutedContrast = [double]$report.ui_text_muted_contrast
+ if ($primaryContrast -lt 7.0 -or $secondaryContrast -lt 6.0 -or
+         $mutedContrast -lt 4.5 -or
+         [int]$report.ui_text_outline_pixels -ne 0 -or
+         [int]$report.ui_text_shadow_pixels -lt 2 -or
+         [int]$report.ui_text_backing_alpha -lt 220) {
+     throw 'UI text contrast metrics failed'
+ }
+ $fontGlyphCount = [uint64]$report.bundled_font_glyph_count
+ $fontSubsetCapacity = [uint64]$report.bundled_font_subset_capacity
+-if ($fontGlyphCount -eq 0 -or $fontSubsetCapacity -ne 384 -or
++$fontInstanceCount = [uint64]$report.bundled_font_instance_count
++if ($fontInstanceCount -ne 1 -or $fontGlyphCount -eq 0 -or
++        $fontSubsetCapacity -ne 640 -or
+         $fontGlyphCount -gt $fontSubsetCapacity) {
+     throw 'bundled font glyph subset contract failed'
+ }
+ $fontSourceBase = [uint64]$report.bundled_font_source_base_size
+ $fontMaxDisplay = [uint64]$report.bundled_font_max_display_size
+ $fontAtlasBytes = [uint64]$report.bundled_font_atlas_bytes
+ $fontAtlasBudget = [uint64]$report.bundled_font_atlas_byte_budget
+ $fontTotalAtlasBytes = [uint64]$report.bundled_font_total_atlas_bytes
+ $fontTotalAtlasBudget = [uint64]$report.bundled_font_total_atlas_byte_budget
+ if ($fontSourceBase -lt ($fontMaxDisplay * 2) -or
+         $fontAtlasBytes -eq 0 -or $fontAtlasBytes -gt $fontAtlasBudget -or
++        $fontTotalAtlasBytes -ne $fontAtlasBytes -or
+         $fontTotalAtlasBytes -gt $fontTotalAtlasBudget) {
+     throw 'bundled high-resolution font atlas budget failed'
+ }
+ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
+         $report.fallback -ne 'pass' -or $report.input_hole_regression -ne 'pass' -or
+         $report.items_ui_pair -ne 'resident' -or
+         $report.item_runtime_draws -ne 'pass' -or
+         $report.ui_material_pair -ne 'resident' -or
+         $report.ui_runtime_draws -ne 'pass' -or
+         $report.hud_ui_runtime_draws -ne 'pass' -or
+diff --git a/tests/platform/stage12_material_validator_self_test.ps1 b/tests/platform/stage12_material_validator_self_test.ps1
+index 74cb294..561ac32 100644
+--- a/tests/platform/stage12_material_validator_self_test.ps1
++++ b/tests/platform/stage12_material_validator_self_test.ps1
+@@ -279,20 +279,28 @@ foreach ($page in @('hud','inventory','skill','pause')) {
+         Name="missing-$page-ui-runtime-draw-1920"; Path=$missingPageRuntime }
+ }
+ 
+ $missingBundledFont = New-Mutation 'missing-bundled-font-runtime'
+ $reportPath = Join-Path $missingBundledFont 'stage12-material-evidence.txt'
+ (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+     'bundled_font_runtime=pass', 'bundled_font_runtime=fail') |
+     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+ $mutations += @{ Name='missing-bundled-font-runtime'; Path=$missingBundledFont }
+ 
++$multipleBundledFonts = New-Mutation 'multiple-bundled-font-instances'
++$reportPath = Join-Path $multipleBundledFonts 'stage12-material-evidence.txt'
++(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
++    'bundled_font_instance_count=\d+', 'bundled_font_instance_count=3' |
++    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
++$mutations += @{
++    Name='multiple-bundled-font-instances'; Path=$multipleBundledFonts }
++
+ $emptyFontSubset = New-Mutation 'empty-bundled-font-subset'
+ $reportPath = Join-Path $emptyFontSubset 'stage12-material-evidence.txt'
+ (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+     'bundled_font_glyph_count=\d+', 'bundled_font_glyph_count=0' |
+     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+ $mutations += @{ Name='empty-bundled-font-subset'; Path=$emptyFontSubset }
+ 
+ $lowResolutionFont = New-Mutation 'low-resolution-bundled-font'
+ $reportPath = Join-Path $lowResolutionFont 'stage12-material-evidence.txt'
+ (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+@@ -300,20 +308,32 @@ $reportPath = Join-Path $lowResolutionFont 'stage12-material-evidence.txt'
+     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+ $mutations += @{ Name='low-resolution-bundled-font'; Path=$lowResolutionFont }
+ 
+ $oversizeFontAtlas = New-Mutation 'oversize-bundled-font-atlas'
+ $reportPath = Join-Path $oversizeFontAtlas 'stage12-material-evidence.txt'
+ (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+     'bundled_font_atlas_bytes=\d+', 'bundled_font_atlas_bytes=999999999' |
+     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+ $mutations += @{ Name='oversize-bundled-font-atlas'; Path=$oversizeFontAtlas }
+ 
++$duplicatedFontAtlas = New-Mutation 'duplicated-bundled-font-atlas-total'
++$reportPath = Join-Path $duplicatedFontAtlas 'stage12-material-evidence.txt'
++$atlasReport = Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8
++$singleAtlasBytes = [regex]::Match(
++    $atlasReport, '(?m)^bundled_font_atlas_bytes=(\d+)\r?$').Groups[1].Value
++$atlasReport = $atlasReport -replace
++    '(?m)^bundled_font_total_atlas_bytes=\d+\r?$',
++    "bundled_font_total_atlas_bytes=$([uint64]$singleAtlasBytes * 2)"
++$atlasReport | Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
++$mutations += @{
++    Name='duplicated-bundled-font-atlas-total'; Path=$duplicatedFontAtlas }
++
+ $missingResidentPeak = New-Mutation 'missing-resident-peak-bytes'
+ $reportPath = Join-Path $missingResidentPeak 'stage12-material-evidence.txt'
+ (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+     '(?m)^resident_peak_bytes=\d+\r?\n?', '' |
+     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+ $mutations += @{ Name='missing-resident-peak-bytes'; Path=$missingResidentPeak }
+ 
+ $oversizeResidentPeak = New-Mutation 'oversize-resident-peak-bytes'
+ $reportPath = Join-Path $oversizeResidentPeak 'stage12-material-evidence.txt'
+ (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+diff --git a/tests/platform/ui_material_asset_pipeline_tests.py b/tests/platform/ui_material_asset_pipeline_tests.py
+index 248a63e..b66b2ca 100644
+--- a/tests/platform/ui_material_asset_pipeline_tests.py
++++ b/tests/platform/ui_material_asset_pipeline_tests.py
+@@ -71,42 +71,45 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
+             self.assertIn("record_ui_text_bounds", source, filename)
+ 
+     def test_bundled_cjk_font_and_runtime_archive_are_required(self) -> None:
+         font = ROOT / "assets/fonts/NotoSansCJKsc-Medium.otf"
+         license_file = ROOT / "assets/fonts/OFL.txt"
+         self.assertTrue(font.is_file())
+         self.assertGreater(font.stat().st_size, 10_000_000)
+         self.assertIn("SIL OPEN FONT LICENSE Version 1.1",
+                       license_file.read_text(encoding="utf-8"))
+ 
+-        font_source = (ROOT / "src/platform/raylib/death_overlay_font.cpp").read_text(
++        font_source = (ROOT / "src/platform/raylib/shared_ui_font.cpp").read_text(
+             encoding="utf-8")
+         app_cmake = (ROOT / "src/app/CMakeLists.txt").read_text(encoding="utf-8")
+         formal_cmake = (ROOT / "tests/platform/CMakeLists.txt").read_text(
+             encoding="utf-8")
+         self.assertIn('assets/fonts/NotoSansCJKsc-Medium.otf', font_source)
+         self.assertNotIn('NotoSansSC[wght].ttf', font_source)
+         self.assertIn('${PROJECT_SOURCE_DIR}/assets', app_cmake)
+         self.assertRegex(app_cmake, r"DIRECTORIES[\s\S]*\bfonts\b")
+         self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', formal_cmake)
+ 
+-        contract = (ROOT / "src/platform/raylib/death_overlay_font.hpp").read_text(
++        contract = (ROOT / "src/platform/raylib/shared_ui_font.hpp").read_text(
+             encoding="utf-8")
+         self.assertIn("kUiFontSourceBaseSize = 96", contract)
+         self.assertIn("kUiFontMaximumDisplaySize = 39", contract)
+         self.assertIn("kUiFontAtlasByteBudget", contract)
++        self.assertIn("kUiFontAtlasInstanceCount = 1U", contract)
++        self.assertIn("LoadFontEx(path, kUiFontSourceBaseSize", font_source)
++        self.assertIn("TEXTURE_FILTER_BILINEAR", font_source)
+         for filename in ("hud_renderer.cpp", "pause_menu_renderer.cpp",
+                          "death_overlay_renderer.cpp"):
+             renderer = (ROOT / "src/platform/raylib" / filename).read_text(
+                 encoding="utf-8")
+-            self.assertIn("LoadFontEx(path, kUiFontSourceBaseSize", renderer)
+-            self.assertIn("TEXTURE_FILTER_BILINEAR", renderer)
++            self.assertNotIn("LoadFontEx(", renderer)
++            self.assertNotIn("UnloadFont(", renderer)
+ 
+     def test_decorated_ui_controls_use_non_stretching_draw_paths(self) -> None:
+         hud = (ROOT / "src/platform/raylib/hud_renderer.cpp").read_text(
+             encoding="utf-8")
+         inventory = (ROOT / "src/platform/raylib/inventory_renderer.cpp").read_text(
+             encoding="utf-8")
+         pause = (ROOT / "src/platform/raylib/pause_menu_renderer.cpp").read_text(
+             encoding="utf-8")
+         for element in ("hud_panel", "hud_objective_panel",
+                         "hud_navigation_panel"):

@@ -1,0 +1,796 @@
+# Review package: 461192e..HEAD
+
+## Commits
+91c641a fix: initialize structured HUD consumers
+
+## Files changed
+ src/platform/raylib/hud_view_model.cpp             |  2 +
+ src/platform/raylib/hud_view_model.hpp             |  1 +
+ tests/platform/CMakeLists.txt                      | 26 ++++++
+ tests/platform/control_hints_tests.cpp             |  4 +-
+ tests/platform/dungeon_runtime_tests.cpp           |  2 +
+ tests/platform/hud_host_integration_tests.cpp      | 72 +++++++++++++++--
+ ...otice_structured_binding_source_self_test.cmake | 27 +++++++
+ ...hud_notice_structured_binding_source_test.cmake | 43 ++++++----
+ ...enderer_structured_model_source_self_test.cmake | 90 +++++++++++++++++++++
+ ...hud_renderer_structured_model_source_test.cmake | 93 ++++++++++++++++++++++
+ tests/platform/loot_suction_animation_tests.cpp    |  3 +-
+ .../stage12_material_formal_game_validation.cpp    |  4 +-
+ .../stage16_loot_reinforcement_game_validation.cpp |  8 +-
+ 13 files changed, 348 insertions(+), 27 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/hud_view_model.cpp b/src/platform/raylib/hud_view_model.cpp
+index 683ac1e..26ff876 100644
+--- a/src/platform/raylib/hud_view_model.cpp
++++ b/src/platform/raylib/hud_view_model.cpp
+@@ -292,27 +292,29 @@ void HudViewModelProjector::build(HudViewModel& output,
+         objective_key_ = objective_key;
+         objective_ready_ = true;
+         increment_saturating(
+             static_formatting_diagnostics_.objective_rebuilds);
+     }
+     output.room = cached_objective_;
+     output.room.abyss = snapshot.is_abyss;
+     output.diagnostics.truncated_texts += cached_objective_truncations_;
+ 
+     if (!control_hints_ready_
++        || control_hints_initialized_ != hints.initialized
+         || control_hints_revision_ != hints.revision) {
+         cached_movement_hint_ = {};
+         cached_control_hint_lines_ = {};
+         HudBuildDiagnostics diagnostics{};
+         build_control_hints(cached_movement_hint_, cached_control_hint_lines_,
+             diagnostics, hints);
+         cached_control_hint_truncations_ = diagnostics.truncated_texts;
++        control_hints_initialized_ = hints.initialized;
+         control_hints_revision_ = hints.revision;
+         control_hints_ready_ = true;
+         increment_saturating(
+             static_formatting_diagnostics_.control_hint_rebuilds);
+     }
+     output.diagnostics.truncated_texts += cached_control_hint_truncations_;
+     output.room.movement = cached_movement_hint_;
+     output.room.controls = cached_control_hint_lines_;
+     if (presented_world != nullptr) {
+         output.room.visible_set.available = true;
+diff --git a/src/platform/raylib/hud_view_model.hpp b/src/platform/raylib/hud_view_model.hpp
+index d5a8d5b..f6108d6 100644
+--- a/src/platform/raylib/hud_view_model.hpp
++++ b/src/platform/raylib/hud_view_model.hpp
+@@ -165,20 +165,21 @@ private:
+     struct NavigationKey final {
+         std::uint64_t depth{};
+         std::uint64_t floor_room{};
+         dungeon::DungeonElement ecology{dungeon::DungeonElement::fire};
+         std::array<std::uint32_t, 4> biases{};
+     };
+ 
+     bool objective_ready_{};
+     bool navigation_ready_{};
+     bool control_hints_ready_{};
++    bool control_hints_initialized_{};
+     ObjectiveKey objective_key_{};
+     NavigationKey navigation_key_{};
+     std::uint64_t control_hints_revision_{};
+     RoomHudModel cached_objective_{};
+     NavigationHudModel cached_navigation_{};
+     HudText96 cached_movement_hint_{};
+     std::array<HudText96, 3U> cached_control_hint_lines_{};
+     std::uint32_t cached_objective_truncations_{};
+     std::uint32_t cached_navigation_truncations_{};
+     std::uint32_t cached_control_hint_truncations_{};
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 6cf9acf..6026440 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1915,20 +1915,46 @@ add_test(
+     NAME platform.hud_notice_structured_binding_source_self_test
+     COMMAND "${CMAKE_COMMAND}"
+         "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
+         "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake"
+         "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hud-notice-structured-binding-mutations"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_self_test.cmake")
+ set_tests_properties(
+     platform.hud_notice_structured_binding_source_self_test
+     PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
+ 
++add_test(
++    NAME platform.hud_renderer_structured_model_source
++    COMMAND "${CMAKE_COMMAND}"
++        "-DHUD_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_renderer.cpp"
++        "-DACTIVE_SKILL_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/active_skill_renderer.cpp"
++        "-DDUNGEON_RUNTIME_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/dungeon_runtime_tests.cpp"
++        "-DLOOT_SUCTION_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/loot_suction_animation_tests.cpp"
++        "-DSTAGE12_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/stage12_material_formal_game_validation.cpp"
++        "-DSTAGE16_SOURCE=${PROJECT_SOURCE_DIR}/tests/platform/stage16_loot_reinforcement_game_validation.cpp"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_test.cmake")
++set_tests_properties(
++    platform.hud_renderer_structured_model_source
++    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
++
++add_test(
++    NAME platform.hud_renderer_structured_model_source_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DHUD_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_renderer.cpp"
++        "-DACTIVE_SKILL_RENDERER_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/active_skill_renderer.cpp"
++        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_test.cmake"
++        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hud-renderer-structured-model-mutations"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_renderer_structured_model_source_self_test.cmake")
++set_tests_properties(
++    platform.hud_renderer_structured_model_source_self_test
++    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
++
+ add_test(
+     NAME platform.passive_tree_binding_label_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/passive_tree_binding_label_source_test.cmake")
+ set_tests_properties(
+     platform.passive_tree_binding_label_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
+ add_test(
+diff --git a/tests/platform/control_hints_tests.cpp b/tests/platform/control_hints_tests.cpp
+index cbb94fa..70c19e7 100644
+--- a/tests/platform/control_hints_tests.cpp
++++ b/tests/platform/control_hints_tests.cpp
+@@ -62,21 +62,23 @@ arpg::test::Failure same_revision_preserves_the_complete_cache() noexcept {
+     settings::SettingsData values = settings::default_settings();
+     values.revision = 3U;
+     platform::ControlHints hints{};
+     platform::refresh_control_hints(hints, values);
+     const platform::ControlHints original = hints;
+ 
+     ARPG_REQUIRE(settings::assign_or_swap(values,
+         settings::SettingAction::jump, settings::StableKey::q));
+     platform::refresh_control_hints(hints, values);
+ 
+-    ARPG_REQUIRE(std::memcmp(&hints, &original, sizeof(hints)) == 0);
++    ARPG_REQUIRE(hints.bindings == original.bindings);
++    ARPG_REQUIRE(hints.revision == original.revision);
++    ARPG_REQUIRE(hints.initialized == original.initialized);
+     return {};
+ }
+ 
+ arpg::test::Failure new_revision_replaces_the_complete_cache() noexcept {
+     settings::SettingsData values = settings::default_settings();
+     values.revision = 3U;
+     platform::ControlHints hints{};
+     platform::refresh_control_hints(hints, values);
+     const auto old_jump = platform::control_hint_binding(
+         hints, settings::SettingAction::jump);
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+index 3a0dc07..884328a 100644
+--- a/tests/platform/dungeon_runtime_tests.cpp
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -1417,20 +1417,22 @@ arpg::test::Failure failed_pickup_retry_publishes_one_presented_hud_notice()
+     noexcept {
+     TempDirectory directory;
+     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+     auto config = config_for(directory, 0xFEED771U);
+     config.save.fault_hook = &fail_when_enabled;
+     config.save.fault_context = &fault;
+     platform::DungeonRuntime runtime(config);
+     ARPG_REQUIRE(runtime.initialize());
+     platform::CombatRenderer renderer{};
+     platform::ControlHints hints{};
++    platform::refresh_control_hints(
++        hints, arpg::settings::default_settings());
+     auto previous = runtime.session()->snapshot();
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         previous, previous, runtime.render_status(), hints, 0.0F, false);
+     ARPG_REQUIRE(previous.combat.has_value());
+     const InstalledPickupGround ground =
+         install_pickup_ground_at_active_spawn(
+             runtime, previous, normal_item(0xFEED77101U));
+     ARPG_REQUIRE(ground.valid);
+ 
+     fault.enabled = true;
+diff --git a/tests/platform/hud_host_integration_tests.cpp b/tests/platform/hud_host_integration_tests.cpp
+index 3ee7c3e..7dd4f61 100644
+--- a/tests/platform/hud_host_integration_tests.cpp
++++ b/tests/platform/hud_host_integration_tests.cpp
+@@ -3,21 +3,24 @@
+ #include "combat_renderer.hpp"
+ #include "combat_view_math.hpp"
+ #include "control_hints.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "ground_loot_view.hpp"
+ #include "hud_font.hpp"
+ #include "pause_menu_state.hpp"
+ #include "platform/settings/settings_types.hpp"
+ #include "raylib_host.hpp"
++#include "skills/active_skill_catalog.hpp"
++#include "skills/skill_loadout.hpp"
+ 
++#include <array>
+ #include <cstring>
+ 
+ namespace {
+ 
+ namespace dungeon = arpg::dungeon;
+ namespace items = arpg::items;
+ namespace platform = arpg::platform;
+ namespace settings = arpg::settings;
+ 
+ dungeon::GroundItemSnapshot ground_item(
+@@ -213,27 +216,66 @@ arpg::test::Failure paused_frames_freeze_hud_notice_time() noexcept {
+         3.0F, true);
+     const float paused_seconds = renderer.hud_notice_view().primary.seconds_left;
+     renderer.observe_hud(previous, current, saved_status(), committed_hints(4U),
+         1.25F, true);
+     ARPG_REQUIRE(arpg::test::near(
+         renderer.hud_notice_view().primary.seconds_left, paused_seconds));
+     return {};
+ }
+ 
+ arpg::test::Failure committed_settings_hints_and_revision_are_used_after_apply() noexcept {
+-    const dungeon::DungeonSnapshot value = snapshot();
++    settings::SettingsData values = settings::default_settings();
++    ARPG_REQUIRE(settings::assign_or_swap(values,
++        settings::SettingAction::interact, settings::StableKey::q));
++    ARPG_REQUIRE(settings::assign_or_swap(values,
++        settings::SettingAction::inventory, settings::StableKey::o));
++    ARPG_REQUIRE(settings::assign_or_swap(values,
++        settings::SettingAction::passive_tree, settings::StableKey::t));
++    values.revision = 42U;
++    platform::ControlHints hints{};
++    platform::refresh_control_hints(hints, values);
++    dungeon::DungeonSnapshot value = snapshot();
++    value.phase = dungeon::RoomPhase::awaiting_exit;
++    value.exits_unlocked = true;
++    value.has_hole = true;
++    value.skill_loadout = arpg::skills::default_skill_loadout();
++    value.combat.emplace();
++    value.combat->skill_cooldowns[static_cast<std::size_t>(
++        arpg::skills::ActiveSkillId::draw_slash)] =
++        arpg::skills::kDrawSlashCooldownTicks / 2U;
++    value.combat->skill_cooldowns[static_cast<std::size_t>(
++        arpg::skills::ActiveSkillId::storm_swords)] =
++        arpg::skills::kStormSwordsCooldownTicks;
+     platform::CombatRenderer renderer{};
+ 
+-    renderer.observe_hud(value, value, saved_status(), committed_hints(42U),
++    renderer.observe_hud(value, value, saved_status(), hints,
+         0.0F, false);
+     ARPG_REQUIRE(renderer.hud_binding_revision() == 42U);
+-    ARPG_REQUIRE(renderer.hud_model().diagnostics.combat_snapshot_missing);
++    ARPG_REQUIRE(std::strcmp(
++        renderer.hud_model().room.controls[1].bytes.data(),
++        u8"Q 交互  O 背包  T 被动树") == 0);
++    ARPG_REQUIRE(std::strcmp(
++        renderer.hud_notice_view().primary.text.bytes.data(),
++        u8"Q 交互：进入下一层") == 0);
++    constexpr std::array<const char*, arpg::skills::kActiveSkillSlotCount>
++        kExpectedKeycaps{{u8"小键盘1", u8"小键盘2", u8"小键盘3",
++            u8"小键盘4", u8"小键盘5"}};
++    const platform::ActiveSkillHudModel& active =
++        renderer.active_skill_hud_model();
++    for (std::size_t index{}; index < active.slots.size(); ++index) {
++        ARPG_REQUIRE(std::strcmp(
++            active.slots[index].key_label.data(), kExpectedKeycaps[index]) == 0);
++    }
++    ARPG_REQUIRE(std::strcmp(
++        active.slots[0].cooldown_label.data(), u8"2秒") == 0);
++    ARPG_REQUIRE(std::strcmp(
++        active.slots[1].cooldown_label.data(), u8"30秒") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure observation_publishes_the_prebuilt_hud_model() noexcept {
+     const dungeon::DungeonSnapshot value = snapshot();
+     platform::CombatRenderer renderer{};
+     renderer.observe_hud(value, value, saved_status(), committed_hints(8U),
+         0.0F, false);
+     const platform::HudViewModel before = renderer.hud_model();
+ 
+@@ -245,53 +287,69 @@ arpg::test::Failure observation_publishes_the_prebuilt_hud_model() noexcept {
+     return {};
+ }
+ 
+ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept {
+     dungeon::DungeonSnapshot previous = snapshot();
+     previous.combat.emplace();
+     previous.combat->player.hp = 90;
+     previous.combat->player.max_hp = 100;
+     dungeon::DungeonSnapshot current = previous;
+     platform::CombatRenderer renderer{};
+-    const platform::ControlHints hints = committed_hints(21U);
++    platform::ControlHints hints{};
+ 
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         previous, current, saved_status(), hints, 0.1F, false);
+     const platform::HudStaticFormattingDiagnostics initial =
+         renderer.hud_static_formatting_diagnostics();
+     ARPG_REQUIRE(initial.objective_rebuilds == 1U);
+     ARPG_REQUIRE(initial.navigation_rebuilds == 1U);
+     ARPG_REQUIRE(initial.control_hint_rebuilds == 1U);
++    ARPG_REQUIRE(std::strstr(
++        renderer.hud_model().room.controls[0].bytes.data(), u8"未知") != nullptr);
++
++    settings::SettingsData default_values = settings::default_settings();
++    ARPG_REQUIRE(default_values.revision == 0U);
++    platform::refresh_control_hints(hints, default_values);
++    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
++        current, current, saved_status(), hints, 0.1F, false);
++    platform::HudStaticFormattingDiagnostics expected = initial;
++    ++expected.control_hint_rebuilds;
++    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
++    ARPG_REQUIRE(std::strcmp(renderer.hud_model().room.movement.bytes.data(),
++        u8"W 上移  S 下移  A 左移  D 右移") == 0);
++    ARPG_REQUIRE(std::strstr(
++        renderer.hud_model().room.controls[0].bytes.data(), u8"未知") == nullptr);
++    ARPG_REQUIRE(std::strstr(
++        renderer.hud_model().room.controls[0].bytes.data(), u8"轻攻击") != nullptr);
+ 
+     // The three valid frame owners share one production projection cache.
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::recovery,
+         current, current, recovery_status(), hints, 0.1F, true);
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::death_overlay,
+         current, current, saved_status(), hints, 0.1F, false);
+     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics()
+-        == initial);
++        == expected);
+ 
+     // Dynamic player values still refresh without rebuilding static fragments.
+     dungeon::DungeonSnapshot dynamic = current;
+     dynamic.combat->player.hp = 31;
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         current, dynamic, saved_status(), hints, 0.1F, false);
+     ARPG_REQUIRE(renderer.hud_model().player.hp == 31);
+     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics()
+-        == initial);
++        == expected);
+ 
+     // Objective, navigation and committed bindings invalidate independently.
+     dungeon::DungeonSnapshot changed_objective = dynamic;
+     changed_objective.remaining_targets = 1U;
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         dynamic, changed_objective, saved_status(), hints, 0.1F, false);
+-    platform::HudStaticFormattingDiagnostics expected = initial;
+     ++expected.objective_rebuilds;
+     ARPG_REQUIRE(renderer.hud_model().room.remaining_targets == 1U);
+     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+ 
+     dungeon::DungeonSnapshot changed_navigation = changed_objective;
+     changed_navigation.depth = 22U;
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         changed_objective, changed_navigation, saved_status(), hints, 0.1F, false);
+     ++expected.navigation_rebuilds;
+     ARPG_REQUIRE(renderer.hud_model().navigation.depth == 22U);
+diff --git a/tests/platform/hud_notice_structured_binding_source_self_test.cmake b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+index bf18264..d5d5b0e 100644
+--- a/tests/platform/hud_notice_structured_binding_source_self_test.cmake
++++ b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+@@ -25,30 +25,57 @@ function(run_guard LABEL SOURCE_TEXT EXPECT_SUCCESS)
+     if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
+         message(FATAL_ERROR "HUD notice guard rejected clean source: ${LABEL}")
+     endif()
+     if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
+         message(FATAL_ERROR "HUD notice guard missed mutation: ${LABEL}")
+     endif()
+ endfunction()
+ 
+ run_guard(clean "${ORIGINAL}" TRUE)
+ 
++set(COMMENTED_FORBIDDEN "${ORIGINAL}\n// memcmp(hints.primary, hints.secondary)\n/* std::strstr std::strchr std::string_view::find */\n")
++run_guard(forbidden_tokens_in_comments_are_ignored "${COMMENTED_FORBIDDEN}" TRUE)
++
+ string(REPLACE "control_hint_key_label(hints, action)"
+     "legacy_action_key(hints, action)" MUTATED "${ORIGINAL}")
+ run_guard(missing_structured_query "${MUTATED}" FALSE)
+ 
++string(REPLACE "control_hint_key_label(hints, action)"
++    "legacy_action_key(hints, action)"
++    MUTATED "${ORIGINAL}")
++set(MUTATED "${MUTATED}\n// control_hint_key_label(hints, action)\n")
++run_guard(required_query_only_in_comment "${MUTATED}" FALSE)
++
++string(REPLACE "control_hint_key_label(hints, action)"
++    "legacy_action_key(hints, action)"
++    MUTATED "${ORIGINAL}")
++string(REPLACE "HudNotice notice{};"
++    "if (false) { static_cast<void>(control_hint_key_label(hints, action)); }\n    HudNotice notice{};"
++    MUTATED "${MUTATED}")
++run_guard(required_query_only_in_dead_code "${MUTATED}" FALSE)
++
+ string(REPLACE "settings::SettingAction::interact" "\"Interact\""
+     MUTATED "${ORIGINAL}")
+ run_guard(english_interact_literal "${MUTATED}" FALSE)
+ 
+ string(REPLACE "settings::SettingAction::inventory" "\"Inventory\""
+     MUTATED "${ORIGINAL}")
+ run_guard(english_inventory_literal "${MUTATED}" FALSE)
+ 
+ string(REPLACE "settings::SettingAction::passive_tree" "\"Passive Tree\""
+     MUTATED "${ORIGINAL}")
+ run_guard(english_passive_literal "${MUTATED}" FALSE)
+ 
+ string(REPLACE "format_notice(notice, \"%s %s\","
+     "std::memcmp(hints.secondary.data(), action, 1);\n    format_notice(notice, \"%s %s\","
+     MUTATED "${ORIGINAL}")
+ run_guard(display_text_memcmp "${MUTATED}" FALSE)
++
++string(REPLACE "format_notice(notice, \"%s %s\","
++    "const char* parsed_action = std::strstr(suffix, u8\"交互\");\n    static_cast<void>(parsed_action);\n    format_notice(notice, \"%s %s\","
++    MUTATED "${ORIGINAL}")
++run_guard(display_text_strstr_with_required_tokens "${MUTATED}" FALSE)
++
++string(REPLACE "format_notice(notice, \"%s %s\","
++    "const auto parsed_action = std::string_view{suffix}.find(u8\"打开\");\n    static_cast<void>(parsed_action);\n    format_notice(notice, \"%s %s\","
++    MUTATED "${ORIGINAL}")
++run_guard(display_text_string_view_find_with_required_tokens "${MUTATED}" FALSE)
+diff --git a/tests/platform/hud_notice_structured_binding_source_test.cmake b/tests/platform/hud_notice_structured_binding_source_test.cmake
+index 70b50b8..3982546 100644
+--- a/tests/platform/hud_notice_structured_binding_source_test.cmake
++++ b/tests/platform/hud_notice_structured_binding_source_test.cmake
+@@ -1,33 +1,46 @@
+ cmake_minimum_required(VERSION 3.25)
+ 
+ if(NOT DEFINED HUD_NOTICE_SOURCE OR NOT EXISTS "${HUD_NOTICE_SOURCE}")
+     message(FATAL_ERROR "HUD notice source is required")
+ endif()
+ 
+ file(READ "${HUD_NOTICE_SOURCE}" SOURCE)
+ 
+-foreach(FORBIDDEN IN ITEMS
+-        "hints.secondary"
+-        "std::memcmp"
+-        "memcmp("
++string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" CODE "${SOURCE}")
++string(REGEX REPLACE "//[^\r\n]*" "" CODE "${CODE}")
++string(REGEX REPLACE "[ \t\r\n]+" " " NORMALIZED_CODE "${CODE}")
++
++foreach(FORBIDDEN_REGEX IN ITEMS
++        "hints[ \t\r\n]*\\.[ \t\r\n]*(primary|secondary)"
++        "(std::)?strstr[ \t\r\n]*\\("
++        "(std::)?strchr[ \t\r\n]*\\("
++        "(std::)?memcmp[ \t\r\n]*\\("
++        "(std::)?string_view"
++        "\\.[ \t\r\n]*find[ \t\r\n]*\\("
+         "\"Interact\""
+         "\"Inventory\""
+         "\"Passive Tree\"")
+-    string(FIND "${SOURCE}" "${FORBIDDEN}" FOUND)
+-    if(NOT FOUND EQUAL -1)
++    string(REGEX MATCH "${FORBIDDEN_REGEX}" FOUND "${CODE}")
++    if(FOUND)
+         message(FATAL_ERROR
+-            "HUD notice display-text parsing is forbidden: ${FORBIDDEN}")
++            "HUD notice display-text parsing is forbidden: ${FORBIDDEN_REGEX}")
+     endif()
+ endforeach()
+ 
+-foreach(REQUIRED IN ITEMS
+-        "control_hint_key_label(hints, action)"
+-        "settings::SettingAction::interact"
+-        "settings::SettingAction::inventory"
+-        "settings::SettingAction::passive_tree")
+-    string(FIND "${SOURCE}" "${REQUIRED}" FOUND)
+-    if(FOUND EQUAL -1)
++set(REQUIRED_FORMAT_CALL
++    "format_notice(notice, \"%s %s\", control_hint_key_label(hints, action), suffix);")
++string(FIND "${NORMALIZED_CODE}" "${REQUIRED_FORMAT_CALL}" FOUND)
++if(FOUND EQUAL -1)
++    message(FATAL_ERROR
++        "HUD notice action formatter must consume control_hint_key_label")
++endif()
++
++foreach(REQUIRED_ACTION IN ITEMS interact inventory passive_tree)
++    set(REQUIRED_CALL_REGEX
++        "add_action_notice\\([^;]*hints,[ \t\r\n]*settings::SettingAction::${REQUIRED_ACTION},")
++    string(REGEX MATCH "${REQUIRED_CALL_REGEX}" FOUND "${CODE}")
++    if(NOT FOUND)
+         message(FATAL_ERROR
+-            "HUD notice structured binding token missing: ${REQUIRED}")
++            "HUD notice structured action call missing: ${REQUIRED_ACTION}")
+     endif()
+ endforeach()
+diff --git a/tests/platform/hud_renderer_structured_model_source_self_test.cmake b/tests/platform/hud_renderer_structured_model_source_self_test.cmake
+new file mode 100644
+index 0000000..eb7cc56
+--- /dev/null
++++ b/tests/platform/hud_renderer_structured_model_source_self_test.cmake
+@@ -0,0 +1,90 @@
++cmake_minimum_required(VERSION 3.25)
++
++foreach(REQUIRED_INPUT IN ITEMS HUD_RENDERER_SOURCE ACTIVE_SKILL_RENDERER_SOURCE
++        GUARD_SCRIPT MUTATION_ROOT)
++    if(NOT DEFINED ${REQUIRED_INPUT}
++            OR ("${${REQUIRED_INPUT}}" STREQUAL "")
++            OR (NOT REQUIRED_INPUT STREQUAL "MUTATION_ROOT"
++                AND NOT EXISTS "${${REQUIRED_INPUT}}"))
++        message(FATAL_ERROR "HUD renderer guard self-test input missing: ${REQUIRED_INPUT}")
++    endif()
++endforeach()
++
++file(REMOVE_RECURSE "${MUTATION_ROOT}")
++file(MAKE_DIRECTORY "${MUTATION_ROOT}")
++file(READ "${HUD_RENDERER_SOURCE}" HUD_ORIGINAL)
++file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_ORIGINAL)
++
++set(FIXTURE_TEXT
++    "void fixture(){ arpg::platform::ControlHints hints{}; arpg::platform::refresh_control_hints(hints, arpg::settings::default_settings()); }\n")
++set(STAGE16_FIXTURE_TEXT "${FIXTURE_TEXT}${FIXTURE_TEXT}")
++
++function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
++    set(ROOT "${MUTATION_ROOT}/${LABEL}")
++    file(MAKE_DIRECTORY "${ROOT}")
++    set(HUD_MUTANT "${ROOT}/hud_renderer.cpp")
++    set(ACTIVE_MUTANT "${ROOT}/active_skill_renderer.cpp")
++    set(DUNGEON_FIXTURE "${ROOT}/dungeon.cpp")
++    set(LOOT_FIXTURE "${ROOT}/loot.cpp")
++    set(STAGE12_FIXTURE "${ROOT}/stage12.cpp")
++    set(STAGE16_FIXTURE "${ROOT}/stage16.cpp")
++    file(WRITE "${HUD_MUTANT}" "${HUD_TEXT}")
++    file(WRITE "${ACTIVE_MUTANT}" "${ACTIVE_TEXT}")
++    file(WRITE "${DUNGEON_FIXTURE}" "${FIXTURE_TEXT}")
++    file(WRITE "${LOOT_FIXTURE}" "${FIXTURE_TEXT}")
++    file(WRITE "${STAGE12_FIXTURE}" "${FIXTURE_TEXT}")
++    file(WRITE "${STAGE16_FIXTURE}" "${STAGE16_FIXTURE_TEXT}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}"
++            "-DHUD_RENDERER_SOURCE=${HUD_MUTANT}"
++            "-DACTIVE_SKILL_RENDERER_SOURCE=${ACTIVE_MUTANT}"
++            "-DDUNGEON_RUNTIME_SOURCE=${DUNGEON_FIXTURE}"
++            "-DLOOT_SUCTION_SOURCE=${LOOT_FIXTURE}"
++            "-DSTAGE12_SOURCE=${STAGE12_FIXTURE}"
++            "-DSTAGE16_SOURCE=${STAGE16_FIXTURE}"
++            -P "${GUARD_SCRIPT}"
++        RESULT_VARIABLE RESULT
++        OUTPUT_QUIET ERROR_QUIET)
++    if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
++        message(FATAL_ERROR "HUD renderer guard rejected clean sources: ${LABEL}")
++    endif()
++    if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
++        message(FATAL_ERROR "HUD renderer guard missed mutation: ${LABEL}")
++    endif()
++endfunction()
++
++run_guard(clean "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" TRUE)
++
++string(REPLACE "bar.label.bytes.data()" "u8\"生命\""
++    HUD_MUTATED "${HUD_ORIGINAL}")
++set(HUD_MUTATED
++    "${HUD_MUTATED}\nvoid decoy_bar_label_use(){ bar.label.bytes.data(); }\n")
++run_guard(hud_ignores_bar_label "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
++
++string(REPLACE "slot.key_label.data()" "\"Num1\""
++    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
++set(ACTIVE_MUTATED
++    "${ACTIVE_MUTATED}\nvoid decoy_key_label_use(){ slot.key_label.data(); }\n")
++run_guard(active_hardcodes_num_keycap
++    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
++
++string(REPLACE "slot.key_label.data()" "legacy_key_label(slot)"
++    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
++set(ACTIVE_MUTATED
++    "${ACTIVE_MUTATED}\nvoid decoy_key_label_use(){ slot.key_label.data(); }\n")
++run_guard(active_ignores_key_label
++    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
++
++string(REPLACE "slot.cooldown_label.data()" "\"2 seconds\""
++    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
++set(ACTIVE_MUTATED
++    "${ACTIVE_MUTATED}\nvoid decoy_cooldown_use(){ slot.cooldown_label.data(); }\n")
++run_guard(active_hardcodes_seconds
++    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
++
++string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
++    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
++set(ACTIVE_MUTATED
++    "${ACTIVE_MUTATED}\nvoid decoy_cooldown_use(){ slot.cooldown_label.data(); }\n")
++run_guard(active_ignores_cooldown_label
++    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+diff --git a/tests/platform/hud_renderer_structured_model_source_test.cmake b/tests/platform/hud_renderer_structured_model_source_test.cmake
+new file mode 100644
+index 0000000..49694b2
+--- /dev/null
++++ b/tests/platform/hud_renderer_structured_model_source_test.cmake
+@@ -0,0 +1,93 @@
++cmake_minimum_required(VERSION 3.25)
++
++foreach(REQUIRED_INPUT IN ITEMS HUD_RENDERER_SOURCE ACTIVE_SKILL_RENDERER_SOURCE
++        DUNGEON_RUNTIME_SOURCE LOOT_SUCTION_SOURCE STAGE12_SOURCE STAGE16_SOURCE)
++    if(NOT DEFINED ${REQUIRED_INPUT} OR NOT EXISTS "${${REQUIRED_INPUT}}")
++        message(FATAL_ERROR "HUD renderer structured-model source input missing: ${REQUIRED_INPUT}")
++    endif()
++endforeach()
++
++function(read_normalized_source PATH OUTPUT)
++    file(READ "${PATH}" VALUE)
++    string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" VALUE "${VALUE}")
++    string(REGEX REPLACE "//[^\r\n]*" "" VALUE "${VALUE}")
++    string(REGEX REPLACE "[ \t\r\n]+" " " VALUE "${VALUE}")
++    set(${OUTPUT} "${VALUE}" PARENT_SCOPE)
++endfunction()
++
++function(extract_between SOURCE_VARIABLE START_MARKER END_MARKER OUTPUT)
++    set(SOURCE_TEXT "${${SOURCE_VARIABLE}}")
++    string(FIND "${SOURCE_TEXT}" "${START_MARKER}" START)
++    if(START EQUAL -1)
++        message(FATAL_ERROR "Unable to isolate renderer function body")
++    endif()
++    string(SUBSTRING "${SOURCE_TEXT}" ${START} -1 SOURCE_TAIL)
++    string(FIND "${SOURCE_TAIL}" "${END_MARKER}" LENGTH)
++    if(LENGTH EQUAL -1)
++        message(FATAL_ERROR "Unable to isolate renderer function body")
++    endif()
++    string(SUBSTRING "${SOURCE_TEXT}" ${START} ${LENGTH} BODY)
++    set(${OUTPUT} "${BODY}" PARENT_SCOPE)
++endfunction()
++
++read_normalized_source("${HUD_RENDERER_SOURCE}" HUD_SOURCE)
++extract_between(HUD_SOURCE
++    "void HudRenderer::draw(const HudViewModel& view, const HudLayout& layout, const MaterialPack& assets) const noexcept {"
++    "void CombatRenderer::draw_abyss_hud" HUD_DRAW_BODY)
++string(REGEX MATCHALL "bar\\.label\\.bytes\\.data\\(\\)" BAR_LABEL_USES
++    "${HUD_DRAW_BODY}")
++list(LENGTH BAR_LABEL_USES BAR_LABEL_USE_COUNT)
++if(BAR_LABEL_USE_COUNT LESS 2)
++    message(FATAL_ERROR
++        "HudRenderer::draw must consume each HudBarPlan label for audit and draw")
++endif()
++
++read_normalized_source("${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_SOURCE)
++extract_between(ACTIVE_SOURCE
++    "void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,"
++    "} }" ACTIVE_DRAW_BODY)
++foreach(REQUIRED_USE IN ITEMS
++        "draw_skill_text(hud_font, slot.key_label.data()"
++        "draw_skill_text(hud_font, slot.cooldown_label.data()")
++    string(FIND "${ACTIVE_DRAW_BODY}" "${REQUIRED_USE}" FOUND)
++    if(FOUND EQUAL -1)
++        message(FATAL_ERROR
++            "ActiveSkillRenderer::draw_hud must consume model text: ${REQUIRED_USE}")
++    endif()
++endforeach()
++foreach(FORBIDDEN IN ITEMS "\"Num" "\"seconds" "\"second" "%.0fs")
++    string(FIND "${ACTIVE_DRAW_BODY}" "${FORBIDDEN}" FOUND)
++    if(NOT FOUND EQUAL -1)
++        message(FATAL_ERROR
++            "ActiveSkillRenderer::draw_hud hard-coded fallback text is forbidden: ${FORBIDDEN}")
++    endif()
++endforeach()
++
++read_normalized_source("${DUNGEON_RUNTIME_SOURCE}" DUNGEON_FIXTURE)
++read_normalized_source("${LOOT_SUCTION_SOURCE}" LOOT_FIXTURE)
++read_normalized_source("${STAGE12_SOURCE}" STAGE12_FIXTURE)
++read_normalized_source("${STAGE16_SOURCE}" STAGE16_FIXTURE)
++
++foreach(FIXTURE IN ITEMS DUNGEON_FIXTURE LOOT_FIXTURE STAGE12_FIXTURE)
++    string(REGEX MATCHALL
++        "refresh_control_hints\\([^;]*arpg::settings::default_settings\\(\\)\\);"
++        INITIALIZERS "${${FIXTURE}}")
++    list(LENGTH INITIALIZERS INITIALIZER_COUNT)
++    if(INITIALIZER_COUNT LESS 1)
++        message(FATAL_ERROR
++            "Renderer fixture must initialize ControlHints from SettingsData: ${FIXTURE}")
++    endif()
++endforeach()
++string(REGEX MATCHALL
++    "refresh_control_hints\\([^;]*arpg::settings::default_settings\\(\\)\\);"
++    STAGE16_INITIALIZERS "${STAGE16_FIXTURE}")
++list(LENGTH STAGE16_INITIALIZERS STAGE16_INITIALIZER_COUNT)
++if(STAGE16_INITIALIZER_COUNT LESS 2)
++    message(FATAL_ERROR
++        "Both Stage 16 renderer fixtures must initialize ControlHints from SettingsData")
++endif()
++string(FIND "${LOOT_FIXTURE}" "hints.revision =" LEGACY_REVISION_WRITE)
++if(NOT LEGACY_REVISION_WRITE EQUAL -1)
++    message(FATAL_ERROR
++        "Loot suction fixture must not fake ControlHints initialization by revision")
++endif()
+diff --git a/tests/platform/loot_suction_animation_tests.cpp b/tests/platform/loot_suction_animation_tests.cpp
+index 921b6ca..b6533b7 100644
+--- a/tests/platform/loot_suction_animation_tests.cpp
++++ b/tests/platform/loot_suction_animation_tests.cpp
+@@ -32,21 +32,22 @@ platform::DungeonRenderStatus saved_equipment_receipt(
+     platform::DungeonRenderStatus status{};
+     status.indicator = platform::SaveIndicator::saved;
+     status.loot_pickup = {true, generation, item_id, 3U, 24U,
+         items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
+     status.loot_pickup.slot = items::ItemSlot::weapon;
+     return status;
+ }
+ 
+ platform::ControlHints control_hints() noexcept {
+     platform::ControlHints hints{};
+-    hints.revision = 1U;
++    platform::refresh_control_hints(
++        hints, arpg::settings::default_settings());
+     return hints;
+ }
+ 
+ dungeon::GroundItemSnapshot equipment(
+     std::uint16_t ordinal, std::uint64_t item_id,
+     combat::Vec3 position = {9.0F, 0.0F, 0.0F}) noexcept {
+     return {ordinal, dungeon::GroundItemSource::monster_drop, 0xFFU,
+         position, item_id, 3U, 24U, items::ItemSlot::weapon,
+         items::ItemRarity::rare};
+ }
+diff --git a/tests/platform/stage12_material_formal_game_validation.cpp b/tests/platform/stage12_material_formal_game_validation.cpp
+index e809dd1..da98f1f 100644
+--- a/tests/platform/stage12_material_formal_game_validation.cpp
++++ b/tests/platform/stage12_material_formal_game_validation.cpp
+@@ -1081,21 +1081,23 @@ bool write_integration_render_snapshot(
+             platform::default_material_manifest(), {transition}));
+ 
+     std::array<std::uint64_t, kIntegrationDoorDirections.size()> door_before{};
+     for (std::size_t index{}; index < kIntegrationDoorDirections.size(); ++index) {
+         door_before[index] = renderer.material_sprite_draw_count(
+             platform::door_render_decision(platform::DoorVisualMode::open,
+                 kIntegrationDoorDirections[index]).sprite);
+     }
+ 
+     const platform::DungeonRenderStatus runtime_status{};
+-    const platform::ControlHints control_hints{};
++    platform::ControlHints control_hints{};
++    platform::refresh_control_hints(
++        control_hints, arpg::settings::default_settings());
+     renderer.observe_presented_hud_frame(snapshot.death.has_value()
+             ? platform::HudPresentedFrame::death_overlay
+             : platform::HudPresentedFrame::normal,
+         snapshot, snapshot, runtime_status, control_hints, 1.0F / 60.0F, false);
+ 
+     const std::unique_ptr<dungeon::DungeonRenderSnapshot> world{
+         new (std::nothrow) dungeon::DungeonRenderSnapshot{}};
+     platform::CombatCameraView camera{};
+     if (world == nullptr || !write_integration_render_snapshot(
+             snapshot, resolution, camera, *world)) {
+diff --git a/tests/platform/stage16_loot_reinforcement_game_validation.cpp b/tests/platform/stage16_loot_reinforcement_game_validation.cpp
+index a148586..9e43b01 100644
+--- a/tests/platform/stage16_loot_reinforcement_game_validation.cpp
++++ b/tests/platform/stage16_loot_reinforcement_game_validation.cpp
+@@ -282,21 +282,23 @@ bool render_world_capture(const std::filesystem::path& run,
+     dungeon::DungeonRenderSnapshot* const world =
+         runtime.render_snapshot_storage();
+     if (world == nullptr || !current->combat.has_value()) return false;
+     const platform::CombatCameraView camera =
+         platform::make_combat_camera_view(
+             current->combat->player.position, 1280.0F, 720.0F);
+     const dungeon::WorldViewQuery query = platform::make_world_view_query(
+         camera, 1280.0F, 720.0F, 1U);
+     if (!runtime.session()->write_render_snapshot(query, *world)) return false;
+     const platform::CombatFeedback feedback{};
+-    const platform::ControlHints hints{};
++    platform::ControlHints hints{};
++    platform::refresh_control_hints(
++        hints, arpg::settings::default_settings());
+     room->observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         *current, *current, runtime.render_status(), hints, 1.0F / 60.0F, false);
+     BeginDrawing();
+     ClearBackground(BLACK);
+     static_cast<void>(room->draw(*current, *current, *world, camera,
+         runtime.render_status(), 1.0F, false, feedback, false, "E"));
+     const auto image = run / name;
+     const bool exported = export_flushed_frame(image);
+     EndDrawing();
+     std::error_code error{};
+@@ -738,21 +740,23 @@ bool render_inventory_capture(const std::filesystem::path& run,
+     dungeon::DungeonRenderSnapshot* const world =
+         runtime.render_snapshot_storage();
+     if (world == nullptr || !current->combat.has_value()) return false;
+     const platform::CombatCameraView camera =
+         platform::make_combat_camera_view(
+             current->combat->player.position, 1280.0F, 720.0F);
+     const dungeon::WorldViewQuery query = platform::make_world_view_query(
+         camera, 1280.0F, 720.0F, 2U);
+     if (!runtime.session()->write_render_snapshot(query, *world)) return false;
+     const platform::CombatFeedback feedback{};
+-    const platform::ControlHints hints{};
++    platform::ControlHints hints{};
++    platform::refresh_control_hints(
++        hints, arpg::settings::default_settings());
+     room->observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         *current, *current, runtime.render_status(), hints, 1.0F / 60.0F, false);
+     BeginDrawing();
+     ClearBackground(BLACK);
+     static_cast<void>(room->draw(*current, *current, *world, camera,
+         runtime.render_status(), 1.0F, false, feedback, false, "E"));
+     inventory.draw(*runtime.session(), *current, runtime.render_status(),
+         room->material_pack(), "I", room->hud_font(), room->hud_font_ready());
+     const auto image = run / name;
+     const bool exported = export_flushed_frame(image);

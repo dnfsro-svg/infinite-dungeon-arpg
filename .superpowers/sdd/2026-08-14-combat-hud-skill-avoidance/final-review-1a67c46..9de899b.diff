@@ -1,0 +1,657 @@
+# Review package: 1a67c463a287d7c6f7e0e27525263c57691611fa..9de899b
+
+## Commits
+9de899b fix(ui): keep combat HUD clear of active skills
+
+## Files changed
+ src/platform/raylib/active_skill_view.cpp  | 156 +++++++++++++++++++----------
+ src/platform/raylib/active_skill_view.hpp  |   9 ++
+ src/platform/raylib/combat_renderer.cpp    |  14 ++-
+ src/platform/raylib/combat_renderer.hpp    |   1 +
+ src/platform/raylib/hud_layout.cpp         |  30 ++++++
+ src/platform/raylib/hud_layout.hpp         |   2 +
+ tests/platform/active_skill_view_tests.cpp |  71 ++++++++++---
+ 7 files changed, 209 insertions(+), 74 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/active_skill_view.cpp b/src/platform/raylib/active_skill_view.cpp
+index 2f54981..b54e072 100644
+--- a/src/platform/raylib/active_skill_view.cpp
++++ b/src/platform/raylib/active_skill_view.cpp
+@@ -39,20 +39,28 @@ constexpr float kBottomMargin = 20.0F;
+     Rectangle first, Rectangle second) noexcept {
+     const float left = std::min(first.x, second.x);
+     const float top = std::min(first.y, second.y);
+     const float right = std::max(first.x + first.width,
+         second.x + second.width);
+     const float bottom = std::max(first.y + first.height,
+         second.y + second.height);
+     return {left, top, right - left, bottom - top};
+ }
+ 
++[[nodiscard]] bool rectangles_overlap(
++    Rectangle first, Rectangle second) noexcept {
++    return first.x < second.x + second.width
++        && second.x < first.x + first.width
++        && first.y < second.y + second.height
++        && second.y < first.y + first.height;
++}
++
+ [[nodiscard]] ActiveSkillTextPlatePlan make_text_plate_plan(
+     const char* source, Rectangle backing, float scale, UiTextAuditRole role,
+     UiTextMeasureFn measure, void* measure_context) noexcept {
+     ActiveSkillTextPlatePlan result{};
+     result.backing = backing;
+     result.role = role;
+     const UiCenteredTextLayout fitted = fit_centered_ui_text(
+         result.text.data(), result.text.size(), source, backing,
+         16.0F * scale, 9.0F * scale, 0.5F * scale, measure,
+         measure_context);
+@@ -67,20 +75,90 @@ constexpr float kBottomMargin = 20.0F;
+     return result;
+ }
+ 
+ [[nodiscard]] const char* active_skill_hud_name(
+     skills::ActiveSkillId id,
+     const skills::ActiveSkillDefinition& definition) noexcept {
+     if (id == skills::ActiveSkillId::storm_swords) return u8"暴风式";
+     return definition.display_name;
+ }
+ 
++[[nodiscard]] ActiveSkillHudLayout make_active_skill_hud_layout(
++    int width, int height, Rectangle player_blocker) noexcept {
++    if (width <= 0 || height <= 0) return {};
++    const float scale = ui_viewport_scale(width, height);
++    if (!finite(scale) || scale <= 0.0F) return {};
++    const float total_width = scale * (
++        static_cast<float>(skills::kActiveSkillSlotCount) * kSlotSize
++        + static_cast<float>(skills::kActiveSkillSlotCount - 1U) * kSlotGap);
++    float x = (static_cast<float>(width) - total_width) * 0.5F;
++    const float y = static_cast<float>(height)
++        - (kSlotSize + kBottomMargin) * scale;
++    const Rectangle viewport{0.0F, 0.0F, static_cast<float>(width),
++        static_cast<float>(height)};
++    Rectangle visual_candidate{x, y - 20.0F * scale, total_width,
++        115.0F * scale};
++    if (!valid_rectangle(viewport) || !valid_rectangle(visual_candidate)) {
++        return {};
++    }
++    if (valid_rectangle(player_blocker)
++            && rectangles_overlap(visual_candidate, player_blocker)) {
++        x = player_blocker.x + player_blocker.width + 12.0F * scale;
++        visual_candidate.x = x;
++    }
++    if (!ui_text_bounds_inside(visual_candidate, viewport)) return {};
++
++    ActiveSkillHudLayout result{};
++    result.bounds = {x, y, total_width, kSlotSize * scale};
++    result.scale = scale;
++    if (!valid_rectangle(result.bounds)) return {};
++    for (std::size_t index = 0U; index < result.slots.size(); ++index) {
++        result.slots[index] = {
++            x + static_cast<float>(index) * (kSlotSize + kSlotGap) * scale,
++            y, kSlotSize * scale, kSlotSize * scale,
++        };
++        ActiveSkillHudTextRegions& regions = result.text_regions[index];
++        const Rectangle& slot = result.slots[index];
++        regions.key = {slot.x + 4.0F * scale, slot.y - 20.0F * scale,
++            slot.width - 8.0F * scale, 18.0F * scale};
++        regions.cooldown = {slot.x + 16.0F * scale,
++            slot.y + 28.0F * scale, slot.width - 32.0F * scale,
++            20.0F * scale};
++        regions.name = {slot.x + 7.0F * scale, slot.y + 77.0F * scale,
++            slot.width - 14.0F * scale, 18.0F * scale};
++        regions.visual_bounds = rectangle_union(slot, regions.key);
++        regions.visual_bounds = rectangle_union(
++            regions.visual_bounds, regions.cooldown);
++        regions.visual_bounds = rectangle_union(
++            regions.visual_bounds, regions.name);
++        if (!valid_rectangle(slot) || !valid_rectangle(regions.key)
++                || !valid_rectangle(regions.cooldown)
++                || !valid_rectangle(regions.name)
++                || !valid_rectangle(regions.visual_bounds)
++                || !ui_text_bounds_inside(regions.visual_bounds, viewport)) {
++            return {};
++        }
++        if (index == 0U) {
++            result.visual_bounds = regions.visual_bounds;
++        } else {
++            result.visual_bounds = rectangle_union(
++                result.visual_bounds, regions.visual_bounds);
++        }
++    }
++    if (!valid_rectangle(result.visual_bounds)
++            || !ui_text_bounds_inside(result.visual_bounds, viewport)) {
++        return {};
++    }
++    result.valid = true;
++    return result;
++}
++
+ }  // namespace
+ 
+ MaterialSpriteId active_skill_icon_sprite(skills::ActiveSkillId id) noexcept {
+     switch (id) {
+     case skills::ActiveSkillId::draw_slash:
+         return MaterialSpriteId::skill_icon_draw_slash;
+     case skills::ActiveSkillId::storm_swords:
+         return MaterialSpriteId::skill_icon_storm_swords;
+     case skills::ActiveSkillId::none:
+     case skills::ActiveSkillId::count:
+@@ -126,75 +204,43 @@ ActiveSkillHudModel make_active_skill_hud_model(
+                 static_cast<void>(ui_utf8_format(slot.cooldown_label.data(),
+                     slot.cooldown_label.size(), u8"%.0f秒", seconds));
+             }
+         }
+     }
+     return result;
+ }
+ 
+ ActiveSkillHudLayout active_skill_hud_layout(
+     int width, int height) noexcept {
+-    if (width <= 0 || height <= 0) return {};
+-    const float scale = ui_viewport_scale(width, height);
+-    if (!finite(scale) || scale <= 0.0F) return {};
+-    const float total_width = scale * (
+-        static_cast<float>(skills::kActiveSkillSlotCount) * kSlotSize
+-        + static_cast<float>(skills::kActiveSkillSlotCount - 1U) * kSlotGap);
+-    const float x = (static_cast<float>(width) - total_width) * 0.5F;
+-    const float y = static_cast<float>(height)
+-        - (kSlotSize + kBottomMargin) * scale;
+-    const Rectangle viewport{0.0F, 0.0F, static_cast<float>(width),
+-        static_cast<float>(height)};
+-    ActiveSkillHudLayout result{};
+-    result.bounds = {x, y, total_width, kSlotSize * scale};
+-    result.scale = scale;
+-    if (!valid_rectangle(viewport) || !valid_rectangle(result.bounds)) {
+-        return {};
+-    }
+-    for (std::size_t index = 0U; index < result.slots.size(); ++index) {
+-        result.slots[index] = {
+-            x + static_cast<float>(index) * (kSlotSize + kSlotGap) * scale,
+-            y, kSlotSize * scale, kSlotSize * scale,
+-        };
+-        ActiveSkillHudTextRegions& regions = result.text_regions[index];
+-        const Rectangle& slot = result.slots[index];
+-        regions.key = {slot.x + 4.0F * scale, slot.y - 20.0F * scale,
+-            slot.width - 8.0F * scale, 18.0F * scale};
+-        regions.cooldown = {slot.x + 16.0F * scale,
+-            slot.y + 28.0F * scale, slot.width - 32.0F * scale,
+-            20.0F * scale};
+-        regions.name = {slot.x + 7.0F * scale, slot.y + 77.0F * scale,
+-            slot.width - 14.0F * scale, 18.0F * scale};
+-        regions.visual_bounds = rectangle_union(slot, regions.key);
+-        regions.visual_bounds = rectangle_union(
+-            regions.visual_bounds, regions.cooldown);
+-        regions.visual_bounds = rectangle_union(
+-            regions.visual_bounds, regions.name);
+-        if (!valid_rectangle(slot) || !valid_rectangle(regions.key)
+-                || !valid_rectangle(regions.cooldown)
+-                || !valid_rectangle(regions.name)
+-                || !valid_rectangle(regions.visual_bounds)
+-                || !ui_text_bounds_inside(regions.visual_bounds, viewport)) {
+-            return {};
+-        }
+-        if (index == 0U) {
+-            result.visual_bounds = regions.visual_bounds;
+-        } else {
+-            result.visual_bounds = rectangle_union(
+-                result.visual_bounds, regions.visual_bounds);
+-        }
+-    }
+-    if (!valid_rectangle(result.visual_bounds)
+-            || !ui_text_bounds_inside(result.visual_bounds, viewport)) {
+-        return {};
+-    }
+-    result.valid = true;
++    const HudLayout hud = make_hud_layout(width, height, false);
++    return make_active_skill_hud_layout(width, height, {
++        hud.player_panel.x, hud.player_panel.y,
++        hud.player_panel.width, hud.player_panel.height,
++    });
++}
++
++CombatHudLayout make_combat_hud_layout(
++    int width, int height, bool debug_visible) noexcept {
++    CombatHudLayout result{};
++    result.hud = make_hud_layout(width, height, debug_visible);
++    result.active_skill = make_active_skill_hud_layout(width, height, {
++        result.hud.player_panel.x, result.hud.player_panel.y,
++        result.hud.player_panel.width, result.hud.player_panel.height,
++    });
++    result.hud = hud_layout_avoiding_bottom_blocker(result.hud, {
++        result.active_skill.visual_bounds.x, result.active_skill.visual_bounds.y,
++        result.active_skill.visual_bounds.width,
++        result.active_skill.visual_bounds.height,
++    });
++    result.valid = result.active_skill.valid
++        && hud_rect_inside(result.hud.primary_notice, result.hud.safe_area)
++        && hud_rect_inside(result.hud.secondary_notice, result.hud.safe_area);
+     return result;
+ }
+ 
+ ActiveSkillHudTextPlan make_active_skill_hud_text_plan(
+     const ActiveSkillHudSlot& slot,
+     const ActiveSkillHudTextRegions& regions,
+     float scale, bool font_ready,
+     UiTextMeasureFn measure, void* measure_context) noexcept {
+     if (!font_ready || !finite(scale) || scale <= 0.0F || measure == nullptr
+             || !valid_rectangle(regions.key)
+diff --git a/src/platform/raylib/active_skill_view.hpp b/src/platform/raylib/active_skill_view.hpp
+index 4bf78b6..83c499c 100644
+--- a/src/platform/raylib/active_skill_view.hpp
++++ b/src/platform/raylib/active_skill_view.hpp
+@@ -1,12 +1,13 @@
+ #pragma once
+ 
++#include "hud_layout.hpp"
+ #include "material_asset_types.hpp"
+ #include "skills/active_skill_types.hpp"
+ #include "ui_text_bounds_audit.hpp"
+ #include "ui_text_layout.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstdint>
+ 
+@@ -61,29 +62,37 @@ struct ActiveSkillHudTextPlan final {
+ struct ActiveSkillHudLayout final {
+     Rectangle bounds{};
+     Rectangle visual_bounds{};
+     std::array<Rectangle, skills::kActiveSkillSlotCount> slots{};
+     float scale{};
+     bool valid{};
+     std::array<ActiveSkillHudTextRegions,
+         skills::kActiveSkillSlotCount> text_regions{};
+ };
+ 
++struct CombatHudLayout final {
++    HudLayout hud{};
++    ActiveSkillHudLayout active_skill{};
++    bool valid{};
++};
++
+ [[nodiscard]] constexpr Color active_skill_text_plate_backing() noexcept {
+     return {5, 9, 16, 255};
+ }
+ 
+ [[nodiscard]] ActiveSkillHudModel make_active_skill_hud_model(
+     const skills::SkillLoadoutState& loadout,
+     const std::array<std::uint16_t, skills::kActiveSkillCount>& cooldowns)
+     noexcept;
+ 
+ [[nodiscard]] ActiveSkillHudLayout active_skill_hud_layout(
+     int width, int height) noexcept;
++[[nodiscard]] CombatHudLayout make_combat_hud_layout(
++    int width, int height, bool debug_visible) noexcept;
+ 
+ [[nodiscard]] ActiveSkillHudTextPlan make_active_skill_hud_text_plan(
+     const ActiveSkillHudSlot& slot,
+     const ActiveSkillHudTextRegions& regions,
+     float scale, bool font_ready,
+     UiTextMeasureFn measure, void* measure_context) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 955b812..54edd80 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -466,23 +466,29 @@ void CombatRenderer::observe_hud(
+     hud_projector_.build(
+         model, current, runtime_status, control_hints, presented_world);
+     attach_notice_view(model, hud_notices_.view());
+     hud_model_ = model;
+     const std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns =
+         current.combat.has_value()
+         ? current.combat->skill_cooldowns
+         : std::array<std::uint16_t, skills::kActiveSkillCount>{};
+     active_skill_hud_model_ = make_active_skill_hud_model(
+         current.skill_loadout, cooldowns);
+-    hud_layout_ = IsWindowReady()
+-        ? make_hud_layout(GetScreenWidth(), GetScreenHeight(), false)
+-        : HudLayout{};
++    if (IsWindowReady()) {
++        const CombatHudLayout composition = make_combat_hud_layout(
++            GetScreenWidth(), GetScreenHeight(), false);
++        hud_layout_ = composition.hud;
++        active_skill_hud_layout_ = composition.active_skill;
++    } else {
++        hud_layout_ = {};
++        active_skill_hud_layout_ = {};
++    }
+     hud_binding_revision_ = control_hints.revision;
+     ++hud_observation_count_;
+ }
+ 
+ void CombatRenderer::observe_presented_hud_frame(
+     HudPresentedFrame frame,
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& control_hints,
+@@ -624,21 +630,21 @@ GroundLootView CombatRenderer::draw(
+             draw_loot_suction(loot_suction_.build_plan(camera,
+                 interpolated_player, width, height), material_pack_);
+             break;
+         case CombatRenderStage::ground_loot_labels:
+             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
+             hud_renderer_.draw_material_loot(render_plan.material_loot);
+             break;
+         case CombatRenderStage::normal_hud:
+             draw_hud();
+             active_skill_renderer_.draw_hud(active_skill_hud_model_,
+-                active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
++                active_skill_hud_layout_,
+                 hud_renderer_.hud_font(), hud_renderer_.font_ready(),
+                 material_pack_);
+             break;
+         }
+     }
+     if (world_mode) EndMode2D();
+ 
+     if (draw_debug) {
+         const DebugOverlayDiagnosticsPlan diagnostics =
+             make_debug_overlay_diagnostics_plan(current_hud,
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index e48c8e0..232399a 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -232,20 +232,21 @@ private:
+     MaterialPack material_pack_{};
+     MonsterMaterialPresenter monster_presenter_{};
+     std::array<MonsterMaterialDrawRuntimeStatus,
+         static_cast<std::size_t>(combat::MonsterId::count)>
+         monster_material_draw_statuses_{};
+     RoomBackgroundDrawRuntimeStatus room_background_draw_status_{};
+     ActiveSkillDrawRuntimeStatus active_skill_draw_status_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
+     ActiveSkillHudModel active_skill_hud_model_{};
++    ActiveSkillHudLayout active_skill_hud_layout_{};
+     HudLayout hud_layout_{};
+     std::uint64_t hud_binding_revision_{};
+     std::uint64_t hud_observation_count_{};
+     std::array<std::uint64_t,
+         static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
+     Font world_ui_font_{};
+     bool world_ui_font_ready_{};
+     settings::LootFilterMode loot_filter_mode_{
+         settings::LootFilterMode::show_all};
+ };
+diff --git a/src/platform/raylib/hud_layout.cpp b/src/platform/raylib/hud_layout.cpp
+index b31916a..0dec592 100644
+--- a/src/platform/raylib/hud_layout.cpp
++++ b/src/platform/raylib/hud_layout.cpp
+@@ -1,13 +1,14 @@
+ #include "hud_layout.hpp"
+ 
+ #include <algorithm>
++#include <cmath>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kLogicalWidth = 1280.0F;
+ constexpr float kLogicalHeight = 720.0F;
+ constexpr float kMinimumScale = 0.625F;
+ constexpr float kMaximumScale = 1.5F;
+ constexpr float kLogicalMargin = 16.0F;
+ constexpr float kPlayerWidth = 420.0F;
+@@ -35,20 +36,27 @@ constexpr float kDebugHeight = 228.0F;
+     float width,
+     float height,
+     float scale) noexcept {
+     return {origin_x, origin_y, width * scale, height * scale};
+ }
+ 
+ [[nodiscard]] bool has_area(HudRect rect) noexcept {
+     return rect.width > 0.0F && rect.height > 0.0F;
+ }
+ 
++[[nodiscard]] bool valid_rect(HudRect rect) noexcept {
++    return std::isfinite(rect.x) && std::isfinite(rect.y)
++        && std::isfinite(rect.width) && std::isfinite(rect.height)
++        && has_area(rect) && std::isfinite(rect.x + rect.width)
++        && std::isfinite(rect.y + rect.height);
++}
++
+ }  // namespace
+ 
+ HudLayout make_hud_layout(
+     int screen_width, int screen_height, bool debug_visible) noexcept {
+     if (screen_width <= 0 || screen_height <= 0) {
+         HudLayout empty{};
+         empty.scale = 0.0F;
+         return empty;
+     }
+ 
+@@ -92,20 +100,42 @@ HudLayout make_hud_layout(
+     layout.combat_exclusion = scaled_rect(canvas_x + (kCombatExclusionX * scale),
+         canvas_y + (kCombatExclusionY * scale), kCombatExclusionWidth,
+         kCombatExclusionHeight, scale);
+     if (debug_visible) {
+         layout.debug_panel = scaled_rect(safe_area.x,
+             canvas_y + (kDebugY * scale), kDebugWidth, kDebugHeight, scale);
+     }
+     return layout;
+ }
+ 
++HudLayout hud_layout_avoiding_bottom_blocker(
++    HudLayout layout, HudRect blocker) noexcept {
++    if (!std::isfinite(layout.scale) || layout.scale <= 0.0F
++            || !valid_rect(blocker) || !valid_rect(layout.safe_area)
++            || !valid_rect(layout.primary_notice)
++            || !valid_rect(layout.secondary_notice)) {
++        return layout;
++    }
++    const float blocker_gap = 12.0F * layout.scale;
++    const float notice_gap = 6.0F * layout.scale;
++    const float desired_primary_y = blocker.y - blocker_gap
++        - layout.primary_notice.height;
++    const float minimum_primary_y = layout.safe_area.y
++        + layout.secondary_notice.height + notice_gap;
++    const float target_primary_y = std::max(minimum_primary_y,
++        std::min(layout.primary_notice.y, desired_primary_y));
++    const float delta_y = target_primary_y - layout.primary_notice.y;
++    layout.primary_notice.y += delta_y;
++    layout.secondary_notice.y += delta_y;
++    return layout;
++}
++
+ HudTextSafeLayout make_hud_text_safe_layout(
+     const HudLayout& layout) noexcept {
+     if (layout.scale <= 0.0F) return {};
+     const float scale = layout.scale;
+     const auto inset = [scale](HudRect panel, float x, float y,
+                                float height) noexcept {
+         return HudRect{panel.x + x * scale, panel.y + y * scale,
+             std::max(0.0F, panel.width - x * 2.0F * scale),
+             height * scale};
+     };
+diff --git a/src/platform/raylib/hud_layout.hpp b/src/platform/raylib/hud_layout.hpp
+index e6beba4..8053193 100644
+--- a/src/platform/raylib/hud_layout.hpp
++++ b/src/platform/raylib/hud_layout.hpp
+@@ -30,16 +30,18 @@ struct HudTextSafeLayout final {
+     HudRect objective_hint{};
+     HudRect objective_movement{};
+     std::array<HudRect, 3U> objective_controls{};
+     HudRect objective_diagnostics{};
+     HudRect navigation_title{};
+     HudRect navigation_ecology{};
+ };
+ 
+ [[nodiscard]] HudLayout make_hud_layout(
+     int screen_width, int screen_height, bool debug_visible) noexcept;
++[[nodiscard]] HudLayout hud_layout_avoiding_bottom_blocker(
++    HudLayout layout, HudRect blocker) noexcept;
+ [[nodiscard]] HudTextSafeLayout make_hud_text_safe_layout(
+     const HudLayout& layout) noexcept;
+ [[nodiscard]] bool hud_rects_overlap(HudRect lhs, HudRect rhs) noexcept;
+ [[nodiscard]] bool hud_rect_inside(HudRect inner, HudRect outer) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/active_skill_view_tests.cpp b/tests/platform/active_skill_view_tests.cpp
+index ca06057..071915c 100644
+--- a/tests/platform/active_skill_view_tests.cpp
++++ b/tests/platform/active_skill_view_tests.cpp
+@@ -1,16 +1,17 @@
+ #include "test_framework.hpp"
+ #include "allocation_probe.hpp"
+ 
+ #include "active_skill_renderer.hpp"
+ #include "active_skill_view.hpp"
+ #include "combat/active_skill_runtime.hpp"
++#include "hud_layout.hpp"
+ #include "skills/active_skill_catalog.hpp"
+ #include "skills/skill_loadout.hpp"
+ #include "ui_text_bounds_audit.hpp"
+ #include "ui_text_contrast.hpp"
+ #include "ui_text_layout.hpp"
+ #include "ui_typography.hpp"
+ #include "ui_utf8.hpp"
+ 
+ #include <algorithm>
+ #include <array>
+@@ -495,36 +496,77 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
+             && repeated_ready.name.visible && !repeated_ready.cooldown.visible);
+         ARPG_REQUIRE(repeated_cooling.key.visible
+             && repeated_cooling.name.visible && repeated_cooling.cooldown.visible);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+     return {};
+ }
+ 
+ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
+     noexcept {
+-    constexpr std::array<std::array<int, 2>, 3> kViewports{{
+-        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
++    struct CollisionCase final {
++        int width;
++        int height;
++        float expected_scale;
++        float expected_x;
++    };
++    constexpr std::array<CollisionCase, 4U> kViewports{{
++        {800, 450, 1.0F, 284.5F},
++        {960, 540, 1.0F, 339.0F},
++        {1280, 720, 1.0F, 448.0F},
++        {1920, 1080, 1.5F, 672.0F},
+     }};
+-    for (const auto viewport : kViewports) {
+-        const float scale = viewport[0] == 1920 ? 1.5F : 1.0F;
++    for (const CollisionCase values : kViewports) {
++        const float scale = values.expected_scale;
+         const float expected_width = (5.0F * 76.0F + 4.0F * 8.0F) * scale;
+         const platform::ActiveSkillHudLayout layout =
+-            platform::active_skill_hud_layout(viewport[0], viewport[1]);
++            platform::active_skill_hud_layout(values.width, values.height);
++        const platform::CombatHudLayout composition =
++            platform::make_combat_hud_layout(values.width, values.height, false);
++        ARPG_REQUIRE(composition.valid);
++        ARPG_REQUIRE(arpg::test::near(
++            composition.active_skill.bounds.x, values.expected_x));
++        const Rectangle player{
++            composition.hud.player_panel.x,
++            composition.hud.player_panel.y,
++            composition.hud.player_panel.width,
++            composition.hud.player_panel.height,
++        };
++        ARPG_REQUIRE(!overlaps(composition.active_skill.visual_bounds, player));
++        ARPG_REQUIRE(composition.hud.primary_notice.y
++                + composition.hud.primary_notice.height
++            <= composition.active_skill.visual_bounds.y
++                - 12.0F * composition.hud.scale);
++        ARPG_REQUIRE(!overlaps(composition.active_skill.visual_bounds,
++            Rectangle{composition.hud.primary_notice.x,
++                composition.hud.primary_notice.y,
++                composition.hud.primary_notice.width,
++                composition.hud.primary_notice.height}));
++        ARPG_REQUIRE(!overlaps(composition.active_skill.visual_bounds,
++            Rectangle{composition.hud.secondary_notice.x,
++                composition.hud.secondary_notice.y,
++                composition.hud.secondary_notice.width,
++                composition.hud.secondary_notice.height}));
++        ARPG_REQUIRE(platform::hud_rect_inside(
++            composition.hud.primary_notice, composition.hud.safe_area));
++        ARPG_REQUIRE(platform::hud_rect_inside(
++            composition.hud.secondary_notice, composition.hud.safe_area));
+         ARPG_REQUIRE(layout.valid);
++        ARPG_REQUIRE(same_rectangle(layout.bounds,
++            composition.active_skill.bounds));
++        ARPG_REQUIRE(same_rectangle(layout.visual_bounds,
++            composition.active_skill.visual_bounds));
+         ARPG_REQUIRE(arpg::test::near(layout.scale, scale));
+         ARPG_REQUIRE(arpg::test::near(layout.bounds.width, expected_width));
+-        ARPG_REQUIRE(arpg::test::near(layout.bounds.x
+-            + layout.bounds.width * 0.5F,
+-            static_cast<float>(viewport[0]) * 0.5F));
++        ARPG_REQUIRE(arpg::test::near(layout.bounds.x, values.expected_x));
+         ARPG_REQUIRE(layout.bounds.y + layout.bounds.height
+-            <= static_cast<float>(viewport[1]));
++            <= static_cast<float>(values.height));
+         for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
+             ARPG_REQUIRE(arpg::test::near(
+                 layout.slots[index].width, 76.0F * scale));
+             ARPG_REQUIRE(arpg::test::near(
+                 layout.slots[index].height, 76.0F * scale));
+             const platform::ActiveSkillHudTextRegions& regions =
+                 layout.text_regions[index];
+             ARPG_REQUIRE(arpg::test::near(regions.key.x,
+                 layout.slots[index].x + 4.0F * scale));
+             ARPG_REQUIRE(arpg::test::near(regions.key.y,
+@@ -541,22 +583,22 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
+             ARPG_REQUIRE(arpg::test::near(
+                 regions.cooldown.height, 20.0F * scale));
+             ARPG_REQUIRE(arpg::test::near(regions.name.x,
+                 layout.slots[index].x + 7.0F * scale));
+             ARPG_REQUIRE(arpg::test::near(regions.name.y,
+                 layout.slots[index].y + 77.0F * scale));
+             ARPG_REQUIRE(arpg::test::near(regions.name.width,
+                 layout.slots[index].width - 14.0F * scale));
+             ARPG_REQUIRE(arpg::test::near(regions.name.height, 18.0F * scale));
+             ARPG_REQUIRE(platform::ui_text_bounds_inside(regions.visual_bounds,
+-                {0.0F, 0.0F, static_cast<float>(viewport[0]),
+-                    static_cast<float>(viewport[1])}));
++                {0.0F, 0.0F, static_cast<float>(values.width),
++                    static_cast<float>(values.height)}));
+             ARPG_REQUIRE(platform::ui_text_bounds_separated(
+                 regions.key, regions.cooldown));
+             ARPG_REQUIRE(platform::ui_text_bounds_separated(
+                 regions.key, regions.name));
+             ARPG_REQUIRE(platform::ui_text_bounds_separated(
+                 regions.cooldown, regions.name));
+             if (index != 0U) {
+                 ARPG_REQUIRE(arpg::test::near(layout.slots[index].x
+                     - (layout.slots[index - 1U].x
+                         + layout.slots[index - 1U].width), 8.0F * scale));
+@@ -568,25 +610,24 @@ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
+             layout.text_regions.front().visual_bounds;
+         for (std::size_t index = 1U;
+              index < layout.text_regions.size(); ++index) {
+             expected_visual = rectangle_union(
+                 expected_visual, layout.text_regions[index].visual_bounds);
+         }
+         ARPG_REQUIRE(same_rectangle(layout.visual_bounds, expected_visual));
+         ARPG_REQUIRE(layout.visual_bounds.x >= 0.0F);
+         ARPG_REQUIRE(layout.visual_bounds.y >= 0.0F);
+         ARPG_REQUIRE(layout.visual_bounds.x + layout.visual_bounds.width
+-            <= static_cast<float>(viewport[0]));
++            <= static_cast<float>(values.width));
+         ARPG_REQUIRE(layout.visual_bounds.y + layout.visual_bounds.height
+-            <= static_cast<float>(viewport[1]));
+-        if (viewport[0] == 800) {
+-            ARPG_REQUIRE(arpg::test::near(layout.bounds.x, 194.0F));
++            <= static_cast<float>(values.height));
++        if (values.width == 800) {
+             ARPG_REQUIRE(arpg::test::near(layout.bounds.y, 354.0F));
+             ARPG_REQUIRE(arpg::test::near(layout.bounds.width, 412.0F));
+             ARPG_REQUIRE(arpg::test::near(layout.bounds.height, 76.0F));
+             const platform::ActiveSkillHudTextRegions& regions =
+                 layout.text_regions[0U];
+             ARPG_REQUIRE(arpg::test::near(regions.key.y, 334.0F));
+             ARPG_REQUIRE(arpg::test::near(
+                 regions.key.y + regions.key.height, 352.0F));
+             ARPG_REQUIRE(arpg::test::near(regions.cooldown.y, 382.0F));
+             ARPG_REQUIRE(arpg::test::near(

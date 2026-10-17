@@ -1,0 +1,272 @@
+# Review package: 6a83e2499f17bc4db4170a0bba4ec9f047aaec8f..b636afce25553a357dccfe7b7a81575ef44da8a3
+
+## Commits
+b636afc fix(ui): harden inventory tooltip sources
+
+## Files changed
+ src/platform/raylib/inventory_view_math.cpp  | 28 ++++++++++-
+ tests/platform/inventory_view_math_tests.cpp | 69 ++++++++++++++++++++++++++++
+ tests/platform/shared_ui_font_tests.cpp      | 43 +++++++++++------
+ 3 files changed, 125 insertions(+), 15 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/inventory_view_math.cpp b/src/platform/raylib/inventory_view_math.cpp
+index 9ca0cc5..00520ea 100644
+--- a/src/platform/raylib/inventory_view_math.cpp
++++ b/src/platform/raylib/inventory_view_math.cpp
+@@ -840,22 +840,28 @@ bool cached_recipe_ready(const InventoryViewCache& cache) noexcept {
+     return cache.recipe_ready;
+ }
+ 
+ InventoryVisibleItemSource inventory_visible_item_source(
+     InventoryShellLayout shell, InventoryPage page,
+     const items::ItemOwnershipState& state, const InventoryViewCache& cache,
+     std::uint64_t item_id, float scroll_rows) noexcept {
+     if (!shell.valid || page != InventoryPage::equipment || item_id == 0U
+         || !std::isfinite(scroll_rows)) return {};
+     for (std::size_t slot{}; slot < state.equipment.equipped_ids.size(); ++slot) {
+-        if (state.equipment.equipped_ids[slot] == item_id)
++        if (state.equipment.equipped_ids[slot] != item_id) continue;
++        const auto found = std::find_if(state.items.begin(), state.items.end(),
++            [item_id](const items::ItemInstance& item) noexcept {
++                return item.id == item_id;
++            });
++        if (found != state.items.end())
+             return {item_id, shell.equipment_slots[slot], false, true};
++        return {};
+     }
+     const VisibleGridRange visible = visible_grid_range(cache.filtered_indices.size(),
+         inventory_grid_columns(shell), scroll_rows, shell.grid_viewport.height,
+         shell.grid_row_stride);
+     for (std::size_t position = visible.first;
+          position < visible.first + visible.count; ++position) {
+         const std::size_t index = cache.filtered_indices[position];
+         if (index >= state.items.size() || state.items[index].id != item_id) continue;
+         const Rectangle bounds = inventory_grid_item_rectangle(shell, position,
+             scroll_rows);
+@@ -1107,22 +1113,40 @@ InventoryTooltipLayout inventory_tooltip_layout(InventoryShellLayout shell,
+     output.font_size = std::max(12.0F, shell.body_font_size);
+     output.title_font_size = std::max(12.0F, output.font_size + 2.0F);
+     output.line_height = std::max(14.0F, output.font_size * 1.25F);
+     constexpr float kPadding = 10.0F;
+     const float maximum_width = std::min(224.0F, shell.content.width - 2.0F * kPadding);
+     if (maximum_width < 80.0F) return output;
+     const UiTextExtent title_extent = measure(view.title.data(),
+         output.title_font_size, 0.0F, measure_context);
+     if (!std::isfinite(title_extent.width) || !std::isfinite(title_extent.height)
+         || title_extent.width > maximum_width) return output;
++    std::size_t visual_lines{};
++    float preview_x{};
++    for (std::size_t line{}; line < view.line_count; ++line) {
++        const InventoryTooltipLine& logical = view.lines[line];
++        for (std::size_t segment{}; segment < logical.segment_count; ++segment) {
++            const UiTextExtent extent = measure(logical.segments[segment].text.data(),
++                output.font_size, 0.0F, measure_context);
++            if (!std::isfinite(extent.width) || !std::isfinite(extent.height)
++                || extent.width > maximum_width) return {};
++            if (preview_x != 0.0F && preview_x + extent.width > maximum_width) {
++                ++visual_lines;
++                preview_x = 0.0F;
++            }
++            preview_x += extent.width + 4.0F;
++        }
++        ++visual_lines;
++        preview_x = 0.0F;
++    }
+     const float requested_height = kPadding * 2.0F + title_extent.height
+-        + output.line_height * (static_cast<float>(view.line_count) + 0.25F);
++        + output.line_height * (static_cast<float>(visual_lines) + 0.25F);
+     const float backing_height = std::min(requested_height,
+         std::max(48.0F, shell.content.height - kPadding * 2.0F));
+     if (backing_height < kPadding * 2.0F + title_extent.height) return output;
+     const float backing_width = maximum_width + kPadding * 2.0F;
+     float x = source_is_in_right_panel
+         ? source.x - backing_width - kPadding : source.x + source.width + kPadding;
+     x = std::clamp(x, shell.viewport.x + kPadding,
+         shell.viewport.x + shell.viewport.width - backing_width - kPadding);
+     const float y = std::clamp(source.y, shell.content.y + kPadding,
+         shell.content.y + shell.content.height - backing_height - kPadding);
+diff --git a/tests/platform/inventory_view_math_tests.cpp b/tests/platform/inventory_view_math_tests.cpp
+index e395032..30ffae9 100644
+--- a/tests/platform/inventory_view_math_tests.cpp
++++ b/tests/platform/inventory_view_math_tests.cpp
+@@ -291,20 +291,54 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
+     ARPG_REQUIRE(std::string_view(filtered_presentation.hint) == u8"切换装备槽及稀有度");
+ 
+     platform::RecipeSelection recipe{};
+     recipe.ids = {{11U, 13U, 14U}};
+     recipe.count = 3U;
+     const auto visual = platform::inventory_item_visual_state({
+         11U, 11U, 11U, recipe, false, false});
+     ARPG_REQUIRE(visual.outline == platform::InventoryItemOutline::recipe);
+     ARPG_REQUIRE(visual.recipe_ordinal == 1U);
+     ARPG_REQUIRE(visual.selected_indicator);
++
++    // These independently exercise each precedence boundary: a later visual
++    // layer must not replace an earlier interaction mode.
++    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 0U,
++        {}, false, false}).outline == platform::InventoryItemOutline::hover);
++    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
++        {}, false, false}).outline == platform::InventoryItemOutline::selected);
++    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
++        recipe, true, true}).outline
++        == platform::InventoryItemOutline::material_target);
++    ARPG_REQUIRE(platform::inventory_item_visual_state({11U, 11U, 11U,
++        recipe, true, false}).outline
++        == platform::InventoryItemOutline::disabled_target);
++
++    const auto shell_1280 = platform::inventory_shell_layout(1280, 720);
++    platform::InventoryViewCache source_cache{};
++    platform::refresh_inventory_view_cache(source_cache, state, 8U, {}, 11U, {});
++    const auto grid_source = platform::inventory_visible_item_source(shell_1280,
++        platform::InventoryPage::equipment, state, source_cache, 11U, 0.0F);
++    ARPG_REQUIRE(grid_source.valid && grid_source.source_is_in_right_panel);
++    ARPG_REQUIRE(grid_source.bounds.x == platform::inventory_grid_item_rectangle(
++        shell_1280, 0U, 0.0F).x);
++    const auto hidden_by_page = platform::inventory_visible_item_source(shell_1280,
++        platform::InventoryPage::materials, state, source_cache, 11U, 0.0F);
++    ARPG_REQUIRE(!hidden_by_page.valid);
++    items::ItemOwnershipState stale{};
++    stale.equipment.equipped_ids[0] = 999U;
++    platform::InventoryViewCache stale_cache{};
++    platform::refresh_inventory_view_cache(stale_cache, stale, 9U, {}, 999U, {});
++    ARPG_REQUIRE(!platform::inventory_visible_item_source(shell_1280,
++        platform::InventoryPage::equipment, stale, stale_cache, 999U, 0.0F).valid);
++    const auto unknown_source = platform::inventory_visible_item_source(shell_1280,
++        platform::InventoryPage::equipment, state, source_cache, 999U, 0.0F);
++    ARPG_REQUIRE(!unknown_source.valid);
+     return {};
+ }
+ 
+ test::Failure click_tracker_distinguishes_single_and_double_click() noexcept {
+     platform::InventoryClickTracker tracker{};
+     ARPG_REQUIRE(platform::register_inventory_click(tracker, 7U, 10.0)
+         == platform::InventoryClickKind::single);
+     ARPG_REQUIRE(platform::register_inventory_click(tracker, 7U, 10.29)
+         == platform::InventoryClickKind::double_click);
+     ARPG_REQUIRE(platform::register_inventory_click(tracker, 7U, 10.60)
+@@ -462,20 +496,55 @@ test::Failure comparison_uses_full_build_fields() noexcept {
+     ARPG_REQUIRE(new_receipt.presentation.kind
+         == platform::InventoryTransientStatusKind::reinforcement_receipt);
+ 
+     const items::ItemInstance tooltip_item = make_item(
+         9001U, 1U, items::ItemRarity::rare);
+     const auto tooltip = platform::inventory_tooltip_view(tooltip_item,
+         difference);
+     ARPG_REQUIRE(tooltip.valid);
+     ARPG_REQUIRE(tooltip.line_count <= tooltip.lines.size());
+     ARPG_REQUIRE(tooltip.line_count > 0U);
++
++    // A narrow 224px content region must reserve visual lines before placing
++    // wrapped segments. The old implementation reserved only logical lines.
++    platform::InventoryTooltipView wrapped{};
++    static_cast<void>(platform::ui_utf8_copy(wrapped.title.data(),
++        wrapped.title.size(), u8"装备后变化"));
++    for (std::size_t line{}; line < 6U; ++line) {
++        wrapped.lines[line].segment_count = 2U;
++        for (std::size_t segment{}; segment < 2U; ++segment) {
++            static_cast<void>(platform::ui_utf8_copy(
++                wrapped.lines[line].segments[segment].text.data(),
++                wrapped.lines[line].segments[segment].text.size(),
++                u8"强化结果：成功强化结果：成功强化结果：成功强化"));
++        }
++    }
++    wrapped.line_count = 6U;
++    wrapped.valid = true;
++    const auto shell = platform::inventory_shell_layout(1280, 720);
++    const auto wrapped_layout = platform::inventory_tooltip_layout(shell,
++        shell.equipment_slots[0], false, wrapped, &linear_measure, nullptr);
++    ARPG_REQUIRE(wrapped_layout.valid);
++    ARPG_REQUIRE(wrapped_layout.placement_count == 12U);
++    ARPG_REQUIRE(wrapped_layout.visual_line_count > wrapped.line_count);
++    for (std::size_t line{}; line < wrapped.line_count; ++line) {
++        for (std::size_t segment{}; segment < wrapped.lines[line].segment_count;
++             ++segment) {
++            std::size_t placements{};
++            for (std::size_t index{}; index < wrapped_layout.placement_count;
++                 ++index) {
++                placements += wrapped_layout.placements[index].logical_line == line
++                    && wrapped_layout.placements[index].segment == segment ? 1U : 0U;
++            }
++            ARPG_REQUIRE(placements == 1U);
++        }
++    }
+     return {};
+ }
+ 
+ test::Failure recipe_cache_rejects_same_slot_different_bases() noexcept {
+     items::ItemOwnershipState state{};
+     state.items = {
+         make_item(701U, 1U, items::ItemRarity::normal),
+         make_item(702U, 7U, items::ItemRarity::normal),
+         make_item(703U, 8U, items::ItemRarity::normal),
+     };
+diff --git a/tests/platform/shared_ui_font_tests.cpp b/tests/platform/shared_ui_font_tests.cpp
+index 497d278..fcccd6f 100644
+--- a/tests/platform/shared_ui_font_tests.cpp
++++ b/tests/platform/shared_ui_font_tests.cpp
+@@ -62,34 +62,51 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
+     ARPG_REQUIRE(!platform::ui_glyph_plan_has_codepoint(plan, 0x8715));
+     ARPG_REQUIRE(platform::ui_glyph_plan_has_codepoint(plan, 0x888B));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
+         plan, u8"挥击 冲击汇总 是 否"));
+     ARPG_REQUIRE(!plan.capacity_exceeded);
+     ARPG_REQUIRE(plan.codepoint_count > 384U);
+     ARPG_REQUIRE(plan.codepoint_count < platform::kUiGlyphCapacity);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
+         u8"装备值 / 按键提示 / 小节点 / 重要节点 / 地面危险 / 来源 / 最终伤害 ×1.12"));
+-    constexpr const char* kInventoryShellTexts[] = {
+-        u8"技能石", u8"材料", u8"背包无装备", u8"击败怪物，拾取装备",
+-        u8"无剩余装备", u8"左击左方装备取出", u8"当前过滤无结果",
+-        u8"切换装备槽及稀有度", u8"暂无未装备主动技能石",
+-        u8"选择技能石后点击空槽装备", u8"选择两个技能槽交换",
+-        u8"选择已装备技能后可取出", u8"装备后变化", u8"装备后无变化",
+-        u8"已选择：%s · 切换至装备 · 右键取消", u8"三合一（%u/3）",
+-        u8"危险：三合一取消强化", u8"装备槽：%s", u8"稀有度：%s",
+-        u8"左键选择 · 快速左击两次装备 · 右键三合一", u8"取出", u8"全部",
+-        u8"强化结果：成功 / +%u → +%u", u8"强化结果：失败 / +%u → +%u",
+-        u8"强化结果：失败 / 装备丢失 / +%u", u8"强化券结果：成功 / +%u → +%u",
++    constexpr platform::UiTextId kInventoryShellIds[] = {
++        platform::UiTextId::inventory_page_skill_stones,
++        platform::UiTextId::inventory_page_materials,
++        platform::UiTextId::inventory_empty_title,
++        platform::UiTextId::inventory_empty_hint,
++        platform::UiTextId::inventory_all_equipped_title,
++        platform::UiTextId::inventory_all_equipped_hint,
++        platform::UiTextId::inventory_filter_empty_title,
++        platform::UiTextId::inventory_filter_empty_hint,
++        platform::UiTextId::inventory_skill_empty,
++        platform::UiTextId::inventory_skill_equip_hint,
++        platform::UiTextId::inventory_skill_swap_hint,
++        platform::UiTextId::inventory_skill_remove_hint,
++        platform::UiTextId::inventory_comparison_title,
++        platform::UiTextId::inventory_no_change,
++        platform::UiTextId::inventory_material_selected_format,
++        platform::UiTextId::inventory_recipe_action_format,
++        platform::UiTextId::inventory_recipe_danger,
++        platform::UiTextId::inventory_slot_filter_format,
++        platform::UiTextId::inventory_rarity_filter_format,
++        platform::UiTextId::inventory_context_hint,
++        platform::UiTextId::inventory_action_remove,
++        platform::UiTextId::inventory_filter_all,
++        platform::UiTextId::inventory_reinforcement_success_format,
++        platform::UiTextId::inventory_reinforcement_failure_format,
++        platform::UiTextId::inventory_reinforcement_destroyed_format,
++        platform::UiTextId::inventory_coupon_success_format,
+     };
+-    for (const char* text : kInventoryShellTexts)
+-        ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, text));
++    for (const platform::UiTextId id : kInventoryShellIds)
++        ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan,
++            platform::ui_text(id)));
+     ARPG_REQUIRE(plan.codepoint_count == 639U);
+     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+         platform::death_overlay_font_plan(), u8"混沌之眼"));
+     ARPG_REQUIRE(platform::hud_font_plan().covers_required_text);
+     return {};
+ }
+ 
+ arpg::test::Failure plan_codepoints_are_unique() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     for (std::size_t lhs = 0U; lhs < plan.codepoint_count; ++lhs) {

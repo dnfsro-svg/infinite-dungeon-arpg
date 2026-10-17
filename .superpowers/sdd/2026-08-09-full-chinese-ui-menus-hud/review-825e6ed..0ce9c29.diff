@@ -1,0 +1,29 @@
+# Review package: 825e6ed..0ce9c29
+
+## Commits
+0ce9c29 fix: preserve platform test count baseline
+
+## Files changed
+ tests/platform/platform_test_main.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+## Diff
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index d6723f1..dc0f715 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -508,13 +508,13 @@ int main() {
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+         large_room_render_plan_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 666,
++    return arpg::test::run_suites(suites, 665,
+         "host settings runtime contract");
+ }

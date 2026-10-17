@@ -1,0 +1,267 @@
+# Review package: d14f61b..be0cb64
+
+## Commits
+be0cb64 test: parse launcher formatter body structurally
+
+## Files changed
+ tests/launcher/launcher_window_smoke_test.ps1 | 165 ++++++++++++++++++++++++--
+ 1 file changed, 156 insertions(+), 9 deletions(-)
+
+## Diff
+diff --git a/tests/launcher/launcher_window_smoke_test.ps1 b/tests/launcher/launcher_window_smoke_test.ps1
+index 54f025b..7a8d34a 100644
+--- a/tests/launcher/launcher_window_smoke_test.ps1
++++ b/tests/launcher/launcher_window_smoke_test.ps1
+@@ -133,20 +133,116 @@ function Remove-Task8CppComments {
+         }
+         ++$index
+     }
+ 
+     if ($state -eq 'block_comment' -or $state -eq 'string' -or $state -eq 'character') {
+         throw "Task 8 lexical audit found unterminated C++ $state"
+     }
+     return $result.ToString()
+ }
+ 
++function Get-Task8CppStructuralSource {
++    param([Parameter(Mandatory = $true)][string] $Source)
++
++    $commentFreeSource = Remove-Task8CppComments $Source
++    $result = [System.Text.StringBuilder]::new($commentFreeSource.Length)
++    $state = 'code'
++    $index = 0
++    while ($index -lt $commentFreeSource.Length) {
++        $character = $commentFreeSource[$index]
++
++        if ($state -eq 'code') {
++            if ($character -eq '"') {
++                if ($index -gt 0 -and $commentFreeSource[$index - 1] -eq 'R') {
++                    throw 'Task 8 structural audit does not support C++ raw string literals'
++                }
++                [void] $result.Append(' ')
++                $state = 'string'
++                ++$index
++                continue
++            }
++            if ($character -eq "'" -and
++                (Test-Task8CppCharacterLiteralStart $commentFreeSource $index)) {
++                [void] $result.Append(' ')
++                $state = 'character'
++                ++$index
++                continue
++            }
++            [void] $result.Append($character)
++            ++$index
++            continue
++        }
++
++        if ($character -eq '\' -and $index + 1 -lt $commentFreeSource.Length) {
++            [void] $result.Append('  ')
++            $index += 2
++            continue
++        }
++        if (($state -eq 'string' -and $character -eq '"') -or
++            ($state -eq 'character' -and $character -eq "'")) {
++            $state = 'code'
++        }
++        [void] $result.Append(' ')
++        ++$index
++    }
++
++    if ($state -ne 'code') {
++        throw "Task 8 structural audit found unterminated C++ $state"
++    }
++    return $result.ToString()
++}
++
++function Get-Task8CppFunctionBody {
++    param(
++        [Parameter(Mandatory = $true)][string] $Source,
++        [Parameter(Mandatory = $true)][string] $SignaturePattern,
++        [Parameter(Mandatory = $true)][string] $Name
++    )
++
++    $structuralSource = Get-Task8CppStructuralSource $Source
++    $signatureMatches = [regex]::Matches(
++        $structuralSource,
++        $SignaturePattern,
++        [Text.RegularExpressions.RegexOptions]::CultureInvariant)
++    if ($signatureMatches.Count -ne 1) {
++        throw "Task 8 must locate exactly one real $Name signature"
++    }
++
++    $openingBrace = $signatureMatches[0].Index + $signatureMatches[0].Length
++    while ($openingBrace -lt $structuralSource.Length -and
++        [char]::IsWhiteSpace($structuralSource[$openingBrace])) {
++        ++$openingBrace
++    }
++    if ($openingBrace -ge $structuralSource.Length -or
++        $structuralSource[$openingBrace] -ne '{') {
++        throw "Task 8 $Name signature must be followed by a function body"
++    }
++
++    $depth = 0
++    for ($index = $openingBrace; $index -lt $structuralSource.Length; ++$index) {
++        if ($structuralSource[$index] -eq '{') {
++            ++$depth
++            continue
++        }
++        if ($structuralSource[$index] -ne '}') { continue }
++
++        --$depth
++        if ($depth -eq 0) {
++            return $Source.Substring($openingBrace + 1, $index - $openingBrace - 1)
++        }
++        if ($depth -lt 0) {
++            throw "Task 8 $Name function body has an unmatched closing brace"
++        }
++    }
++    throw "Task 8 $Name function body is unterminated"
++}
++
+ function Assert-Task8ActiveSource {
+     param(
+         [Parameter(Mandatory = $true)][string] $Source,
+         [Parameter(Mandatory = $true)][string] $Name
+     )
+ 
+     if ([regex]::IsMatch(
+             $Source,
+             '(?m)^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif|define|undef)\b')) {
+         throw "Task 8 audited player-copy source cannot use conditional or macro preprocessing: $Name"
+@@ -319,29 +415,24 @@ function Assert-Task8ChineseCopyGuard {
+     foreach ($contract in @(
+         @{ Pattern = 'path_text_\s*=\s*L"安装目录：不可用";'; Name = 'unavailable install path' },
+         @{ Pattern = 'path_text_\s*=\s*L"安装目录："\s*\+\s*full_path_;'; Name = 'dynamic install path prefix' },
+         @{ Pattern = 'set_error\(L"无法创建游戏启动请求"\);'; Name = 'launch request failure' },
+         @{ Pattern = 'set_error\(L"无法解析本地应用数据目录（LOCALAPPDATA）"\);'; Name = 'LOCALAPPDATA failure with technical suffix' },
+         @{ Pattern = 'set_error\(L"无法解析存档目录"\);'; Name = 'save path failure' }
+     )) {
+         Assert-Task8SourcePattern $Sources.Main $contract.Pattern "launcher error/status copy must be exact Chinese: $($contract.Name)"
+     }
+ 
+-    $renderFailureMatches = [regex]::Matches(
+-        $Sources.Main,
+-        'std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)\s*\{(?<Body>.*?)\r?\n\}\s*\r?\n\s*RECT\s+fallback_rectangle',
+-        [Text.RegularExpressions.RegexOptions]::Singleline -bor
+-            [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+-    if ($renderFailureMatches.Count -ne 1) {
+-        throw 'Task 8 must isolate exactly one render_failure_message function body'
+-    }
+-    $renderFailureBody = $renderFailureMatches[0].Groups['Body'].Value
++    $renderFailureBody = Get-Task8CppFunctionBody `
++        $Sources.Main `
++        '(?<![A-Za-z0-9_])std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)' `
++        'render_failure_message'
+     if ([regex]::Matches($renderFailureBody, '\breturn\b').Count -ne 1) {
+         throw 'Task 8 render_failure_message must contain exactly one return statement'
+     }
+     if ([regex]::IsMatch($renderFailureBody, '\[[^\]\r\n]*\]\s*\(')) {
+         throw 'Task 8 render_failure_message cannot hide its formatter in a lambda'
+     }
+     Assert-Task8SourcePattern $renderFailureBody 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";\s*$' 'render_failure_message actual return must keep API stage and HRESULT inside Chinese parentheses'
+     if ([regex]::IsMatch($Sources.Main, '渲染失败：[^\r\n]*HRESULT')) {
+         throw 'Task 8 Chinese-copy guard rejected an unparenthesized renderer API stage'
+     }
+@@ -507,24 +598,70 @@ function Assert-Task8ChineseCopyGuard {
+     }
+ }
+ 
+ function Copy-Task8ChineseCopySources {
+     param([Parameter(Mandatory = $true)] $Sources)
+     $copy = [ordered]@{}
+     foreach ($key in $Sources.Keys) { $copy[$key] = $Sources[$key] }
+     return $copy
+ }
+ 
++function Test-Task8CppFunctionBodyExtraction {
++    $newline = [Environment]::NewLine
++    $signaturePattern = 'std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)'
++    $source = @(
++        'const char* signature_decoy = "std::wstring render_failure_message(const RendererResult& result) {";'
++        '/* std::wstring render_failure_message(const RendererResult& result) { */'
++        'std::wstring render_failure_message(const RendererResult& result) {'
++        '    const wchar_t* string_brace = L"}";'
++        "    const char character_brace = '}';"
++        '    // }'
++        '    /* { } */'
++        '    if (result.hresult < 0) {'
++        '        return std::wstring{renderer_stage_name(result.stage)};'
++        '    }'
++        '    return std::wstring{};'
++        '}'
++        'int after_marker() { return 0; }'
++    ) -join $newline
++
++    $body = Get-Task8CppFunctionBody $source $signaturePattern 'render_failure_message probe'
++    if (-not $body.Contains('return std::wstring{};') -or $body.Contains('after_marker')) {
++        throw 'Task 8 function-body extractor did not honor lexical brace boundaries'
++    }
++
++    $duplicateSource = $source + $newline +
++        'std::wstring render_failure_message(const RendererResult& result) { return {}; }'
++    $acceptedDuplicate = $true
++    try { [void] (Get-Task8CppFunctionBody $duplicateSource $signaturePattern 'duplicate probe') }
++    catch { $acceptedDuplicate = $false }
++    if ($acceptedDuplicate) {
++        throw 'Task 8 function-body extractor accepted duplicate real signatures'
++    }
++
++    $unterminatedSource = 'std::wstring render_failure_message(const RendererResult& result) {' +
++        $newline + '    if (result.hresult < 0) {' +
++        $newline + '        return {};' +
++        $newline + '    }'
++    $acceptedUnterminated = $true
++    try { [void] (Get-Task8CppFunctionBody $unterminatedSource $signaturePattern 'unterminated probe') }
++    catch { $acceptedUnterminated = $false }
++    if ($acceptedUnterminated) {
++        throw 'Task 8 function-body extractor accepted an unterminated definition'
++    }
++}
++
+ function Invoke-Task8ChineseCopyGuardSelfTest {
+     param([Parameter(Mandatory = $true)] $Sources)
+ 
+     Assert-Task8ChineseCopyGuard $Sources
++    Test-Task8CppFunctionBodyExtraction
+     $newline = [Environment]::NewLine
+     $mutations = @(
+         @{ Name = 'English game title'; File = 'Host'; Needle = 'u8"无限地城"'; Replacement = '"Infinite Dungeon"' },
+         @{ Name = 'English launcher title'; File = 'Main'; Needle = 'L"无限地下城启动器"'; Replacement = 'L"Infinite Dungeon Launcher"' },
+         @{ Name = 'English fallback button'; File = 'Main'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
+         @{ Name = 'English DirectWrite button'; File = 'Renderer'; Needle = 'L"开始游戏"'; Replacement = 'L"Start Game"' },
+         @{ Name = 'English status prefix'; File = 'Core'; Needle = 'L"游戏已就绪"'; Replacement = 'L"Ready"' },
+         @{ Name = 'unparenthesized renderer stage'; File = 'Main'; Needle = 'return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'; Replacement = 'return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";' },
+         @{
+             Name = 'added English error while preserving Chinese error'
+@@ -588,20 +725,30 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
+                 '            set_error(std::filesystem::path{"Launch failed"}.wstring());'
+         },
+         @{
+             Name = 'uninvoked lambda decoys renderer failure return'
+             File = 'Main'
+             Needle = '    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'
+             Replacement = '    [[maybe_unused]] const auto task8_decoy = [&]() -> std::wstring {' + $newline +
+                 '        return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";' + $newline +
+                 '    };' + $newline +
+                 '    return std::wstring{stage};'
++        },
++        @{
++            Name = 'local fallback rectangle creates a false formatter boundary'
++            File = 'Main'
++            Needle = '    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'
++            Replacement = '    if (result.hresult < 0) {' + $newline +
++                '        return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";' + $newline +
++                '}' + $newline +
++                '    RECT fallback_rectangle{};' + $newline +
++                '    return std::wstring{stage};'
+         }
+     )
+     $acceptedMutations = @()
+     foreach ($mutation in $mutations) {
+         $mutated = Copy-Task8ChineseCopySources $Sources
+         if (-not $mutated[$mutation.File].Contains($mutation.Needle)) {
+             throw "Task 8 mutation anchor is missing: $($mutation.Name)"
+         }
+         $mutated[$mutation.File] = $mutated[$mutation.File].Replace(
+             $mutation.Needle, $mutation.Replacement)

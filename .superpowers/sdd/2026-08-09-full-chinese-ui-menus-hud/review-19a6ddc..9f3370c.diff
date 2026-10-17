@@ -1,0 +1,100 @@
+# Review package: 19a6ddc..HEAD
+
+## Commits
+9f3370c test: parse C++ digit separators safely
+
+## Files changed
+ tests/platform/cpp_source_function_body.cmake           | 3 ++-
+ tests/platform/cpp_source_function_body_self_test.cmake | 9 ++++++++-
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/tests/platform/cpp_source_function_body.cmake b/tests/platform/cpp_source_function_body.cmake
+index 36a384b..f5f672a 100644
+--- a/tests/platform/cpp_source_function_body.cmake
++++ b/tests/platform/cpp_source_function_body.cmake
+@@ -46,21 +46,22 @@ function(_scan_cpp_source SOURCE FUNCTION_MARKER PRESERVED_OUTPUT CODE_OUTPUT)
+                 PREVIOUS_CHARACTER)
+         else()
+             set(PREVIOUS_CHARACTER "")
+         endif()
+         set(DIGIT_SEPARATOR FALSE)
+         if(CHARACTER STREQUAL "'")
+             string(REGEX MATCH "^[0-9A-Fa-f]$" PREVIOUS_IS_DIGIT
+                 "${PREVIOUS_CHARACTER}")
+             string(REGEX MATCH "^[0-9A-Fa-f]$" NEXT_IS_DIGIT
+                 "${NEXT_CHARACTER}")
+-            if(PREVIOUS_IS_DIGIT AND NEXT_IS_DIGIT)
++            if(NOT PREVIOUS_IS_DIGIT STREQUAL ""
++                    AND NOT NEXT_IS_DIGIT STREQUAL "")
+                 set(DIGIT_SEPARATOR TRUE)
+             endif()
+         endif()
+ 
+         if(STATE STREQUAL line_comment)
+             if(BODY_STARTED)
+                 if(CHARACTER STREQUAL "\r" OR CHARACTER STREQUAL "\n")
+                     string(APPEND PRESERVED "${CHARACTER}")
+                     string(APPEND CODE "${CHARACTER}")
+                 else()
+diff --git a/tests/platform/cpp_source_function_body_self_test.cmake b/tests/platform/cpp_source_function_body_self_test.cmake
+index b2ccb5b..c4d11a8 100644
+--- a/tests/platform/cpp_source_function_body_self_test.cmake
++++ b/tests/platform/cpp_source_function_body_self_test.cmake
+@@ -22,20 +22,24 @@ function(run_parser_case LABEL SOURCE MARKER EXPECT_SUCCESS EXPECTED_BODY
+         "file(READ \"${ROOT}/marker.txt\" MARKER)\n"
+         "file(READ \"${ROOT}/expected.txt\" EXPECTED)\n"
+         "extract_cpp_function_body(\"\${SOURCE}\" \"\${MARKER}\" BODY CODE)\n"
+         "if(NOT BODY STREQUAL EXPECTED)\n"
+         "  message(FATAL_ERROR \"unexpected preserved body: [\${BODY}]\")\n"
+         "endif()\n"
+         "string(FIND \"\${CODE}\" \"if (ready) { consume(); }\" REQUIRED_CODE)\n"
+         "if(REQUIRED_CODE EQUAL -1)\n"
+         "  message(FATAL_ERROR \"real code missing from code projection\")\n"
+         "endif()\n"
++        "string(FIND \"\${CODE}\" \"const auto decimal = 1'000; const auto decimal_zero = 10'000; const auto hex = 0xFF'00;\" DIGIT_SEPARATORS)\n"
++        "if(DIGIT_SEPARATORS EQUAL -1)\n"
++        "  message(FATAL_ERROR \"digit separators containing zero missing from code projection: [\${CODE}]\")\n"
++        "endif()\n"
+         "foreach(FORBIDDEN IN ITEMS http://x /*x*/ literal-braces raw-comment fake-marker)\n"
+         "  string(FIND \"\${CODE}\" \"\${FORBIDDEN}\" FOUND)\n"
+         "  if(NOT FOUND EQUAL -1)\n"
+         "    message(FATAL_ERROR \"literal/comment content leaked into code projection\")\n"
+         "  endif()\n"
+         "endforeach()\n")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}" -P "${ROOT}/runner.cmake"
+         RESULT_VARIABLE RESULT
+         OUTPUT_VARIABLE OUTPUT
+@@ -60,27 +64,30 @@ endfunction()
+ set(POSITIVE_SOURCE [=[void ignored() {}
+ void target() {
+     const char* url = "http://x";
+     const char* comment_text = "/*x*/";
+     const char* escaped = "escaped \" quote and } literal-braces";
+     const char close = '}';
+     const char quote = '\'';
+     const char* raw = R"tag({ raw-comment // /* } })tag";
+     // } void fake-marker() {
+     /* { fake-marker } */
++    const auto decimal = 1'000;
++    const auto decimal_zero = 10'000;
++    const auto hex = 0xFF'00;
+     if (ready) { consume(); }
+ }
+ void after() { reject(); }
+ ]=])
+ string(REPLACE "\n" "\r\n" POSITIVE_SOURCE "${POSITIVE_SOURCE}")
+ set(POSITIVE_EXPECTED
+-    "const char* url = \"http://x\"; const char* comment_text = \"/*x*/\"; const char* escaped = \"escaped \\\" quote and } literal-braces\"; const char close = '}'; const char quote = '\\''; const char* raw = R\"tag({ raw-comment // /* } })tag\"; if (ready) { consume(); }")
++    "const char* url = \"http://x\"; const char* comment_text = \"/*x*/\"; const char* escaped = \"escaped \\\" quote and } literal-braces\"; const char close = '}'; const char quote = '\\''; const char* raw = R\"tag({ raw-comment // /* } })tag\"; const auto decimal = 1'000; const auto decimal_zero = 10'000; const auto hex = 0xFF'00; if (ready) { consume(); }")
+ run_parser_case(crlf_literals_raw_nested "${POSITIVE_SOURCE}"
+     "void target()" TRUE "${POSITIVE_EXPECTED}" "")
+ 
+ run_parser_case(missing_function "void other() {}" "void target()" FALSE ""
+     "Unable to find C++ function marker")
+ run_parser_case(unclosed_brace "void target() { if (ready) { consume(); }"
+     "void target()" FALSE "" "Unbalanced C++ function body")
+ run_parser_case(unclosed_block_comment "void target() { /* never closed"
+     "void target()" FALSE "" "Unterminated C++ lexical construct")
+ run_parser_case(unclosed_string "void target() { const char* x = \"never closed; }"

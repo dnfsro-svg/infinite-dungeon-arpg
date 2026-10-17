@@ -1,0 +1,609 @@
+# Review package: 07e8c3f..65f0a53
+
+## Commits
+65f0a53 feat: add bounded UTF-8 UI formatting
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt    |   1 +
+ src/platform/raylib/ui_utf8.cpp       | 274 ++++++++++++++++++++++++++++++++++
+ src/platform/raylib/ui_utf8.hpp       |  31 ++++
+ tests/platform/CMakeLists.txt         |   1 +
+ tests/platform/platform_test_main.cpp |   4 +-
+ tests/platform/ui_utf8_tests.cpp      | 168 +++++++++++++++++++++
+ 6 files changed, 478 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 38406e4..b0bef45 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -44,20 +44,21 @@ add_library(arpg_raylib STATIC
+     loot_pickup_feedback.cpp
+     loot_suction_animation.cpp
+     material_bag_renderer.cpp
+     material_loot_view.cpp
+     hud_layout.cpp
+     hud_renderer.cpp
+     inventory_renderer.cpp
+     inventory_view_math.cpp
+     ui_text_bounds_audit.cpp
+     ui_text_catalog.cpp
++    ui_utf8.cpp
+     ui_text_renderer.cpp
+     material_animation.cpp
+     material_asset_validation.cpp
+     material_pack.cpp
+     material_residency.cpp
+     monster_material_presenter.cpp
+     passive_tree_renderer.cpp
+     passive_tree_view_math.cpp
+     pause_menu_state.cpp
+     pause_menu_view.cpp
+diff --git a/src/platform/raylib/ui_utf8.cpp b/src/platform/raylib/ui_utf8.cpp
+new file mode 100644
+index 0000000..2723dbc
+--- /dev/null
++++ b/src/platform/raylib/ui_utf8.cpp
+@@ -0,0 +1,274 @@
++#include "ui_utf8.hpp"
++
++#include <cstdarg>
++#include <cstdio>
++
++namespace arpg::platform {
++namespace {
++
++enum class DecodeKind : unsigned char {
++    valid,
++    invalid,
++    incomplete,
++};
++
++struct DecodedCodePoint final {
++    DecodeKind kind{DecodeKind::invalid};
++    std::size_t length{1U};
++};
++
++[[nodiscard]] bool is_continuation(unsigned char byte) noexcept {
++    return byte >= 0x80U && byte <= 0xBFU;
++}
++
++[[nodiscard]] DecodedCodePoint decode(const char* text) noexcept {
++    const auto first = static_cast<unsigned char>(text[0]);
++    if (first <= 0x7FU) return {DecodeKind::valid, 1U};
++
++    if (first >= 0xC2U && first <= 0xDFU) {
++        const auto second = static_cast<unsigned char>(text[1]);
++        return is_continuation(second)
++            ? DecodedCodePoint{DecodeKind::valid, 2U}
++            : DecodedCodePoint{second == 0U ? DecodeKind::incomplete
++                                             : DecodeKind::invalid,
++                1U};
++    }
++
++    if (first >= 0xE0U && first <= 0xEFU) {
++        const auto second = static_cast<unsigned char>(text[1]);
++        if (second == 0U) return {DecodeKind::incomplete, 1U};
++        const bool valid_second = is_continuation(second)
++            && !(first == 0xE0U && second < 0xA0U)
++            && !(first == 0xEDU && second > 0x9FU);
++        if (!valid_second) return {DecodeKind::invalid, 1U};
++        const auto third = static_cast<unsigned char>(text[2]);
++        return is_continuation(third)
++            ? DecodedCodePoint{DecodeKind::valid, 3U}
++            : DecodedCodePoint{third == 0U ? DecodeKind::incomplete
++                                            : DecodeKind::invalid,
++                1U};
++    }
++
++    if (first >= 0xF0U && first <= 0xF4U) {
++        const auto second = static_cast<unsigned char>(text[1]);
++        if (second == 0U) return {DecodeKind::incomplete, 1U};
++        const bool valid_second = is_continuation(second)
++            && !(first == 0xF0U && second < 0x90U)
++            && !(first == 0xF4U && second > 0x8FU);
++        if (!valid_second) return {DecodeKind::invalid, 1U};
++        const auto third = static_cast<unsigned char>(text[2]);
++        if (third == 0U) return {DecodeKind::incomplete, 1U};
++        if (!is_continuation(third)) return {DecodeKind::invalid, 1U};
++        const auto fourth = static_cast<unsigned char>(text[3]);
++        return is_continuation(fourth)
++            ? DecodedCodePoint{DecodeKind::valid, 4U}
++            : DecodedCodePoint{fourth == 0U ? DecodeKind::incomplete
++                                             : DecodeKind::invalid,
++                1U};
++    }
++
++    return {DecodeKind::invalid, 1U};
++}
++
++[[nodiscard]] std::size_t writable_capacity(
++    const char* destination, std::size_t capacity) noexcept {
++    return destination == nullptr || capacity == 0U ? 0U : capacity - 1U;
++}
++
++void write_bytes(char* destination, std::size_t& written,
++    const char* source, std::size_t length) noexcept {
++    for (std::size_t index{}; index < length; ++index) {
++        destination[written++] = source[index];
++    }
++}
++
++void terminate(char* destination, std::size_t capacity,
++    std::size_t written) noexcept {
++    if (destination != nullptr && capacity != 0U) {
++        destination[written] = '\0';
++    }
++}
++
++struct Utf8Scan final {
++    bool input_was_valid{true};
++    bool fits{};
++    bool has_output{};
++};
++
++[[nodiscard]] Utf8Scan scan_for_capacity(
++    const char* source, std::size_t capacity) noexcept {
++    Utf8Scan scan{};
++    if (source == nullptr) {
++        scan.input_was_valid = false;
++        scan.fits = true;
++        return scan;
++    }
++
++    std::size_t used{};
++    scan.fits = true;
++    for (const char* cursor = source; *cursor != '\0';) {
++        const DecodedCodePoint decoded = decode(cursor);
++        const std::size_t output_length = decoded.kind == DecodeKind::valid
++            ? decoded.length
++            : 1U;
++        scan.input_was_valid = scan.input_was_valid
++            && decoded.kind == DecodeKind::valid;
++        scan.has_output = true;
++        if (output_length > capacity - used) {
++            scan.fits = false;
++        } else {
++            used += output_length;
++        }
++        cursor += decoded.length;
++    }
++    return scan;
++}
++
++void write_transformed_prefix(char* destination, std::size_t& written,
++    std::size_t capacity, const char* source) noexcept {
++    for (const char* cursor = source; *cursor != '\0';) {
++        const DecodedCodePoint decoded = decode(cursor);
++        const std::size_t output_length = decoded.kind == DecodeKind::valid
++            ? decoded.length
++            : 1U;
++        if (output_length > capacity - written) break;
++        if (decoded.kind == DecodeKind::valid) {
++            write_bytes(destination, written, cursor, decoded.length);
++        } else {
++            destination[written++] = '?';
++        }
++        cursor += decoded.length;
++    }
++}
++
++[[nodiscard]] UiUtf8CopyResult repair_formatted_tail(
++    char* destination, std::size_t capacity, bool format_was_truncated) noexcept {
++    UiUtf8CopyResult result{};
++    result.input_was_valid = true;
++    const std::size_t writable = writable_capacity(destination, capacity);
++    std::size_t written{};
++
++    for (const char* cursor = destination; *cursor != '\0';) {
++        const DecodedCodePoint decoded = decode(cursor);
++        if (decoded.kind == DecodeKind::valid) {
++            write_bytes(destination, written, cursor, decoded.length);
++            cursor += decoded.length;
++            continue;
++        }
++        if (format_was_truncated && decoded.kind == DecodeKind::incomplete) {
++            result.truncated = true;
++            break;
++        }
++        destination[written++] = '?';
++        result.input_was_valid = false;
++        cursor += decoded.length;
++    }
++
++    terminate(destination, capacity, written);
++    result.bytes_written = written;
++    result.truncated = result.truncated || written == writable
++        && format_was_truncated;
++    return result;
++}
++
++}  // namespace
++
++bool ui_utf8_is_valid(const char* text) noexcept {
++    if (text == nullptr) return false;
++    for (const char* cursor = text; *cursor != '\0';) {
++        const DecodedCodePoint decoded = decode(cursor);
++        if (decoded.kind != DecodeKind::valid) return false;
++        cursor += decoded.length;
++    }
++    return true;
++}
++
++UiUtf8CopyResult ui_utf8_copy(
++    char* destination, std::size_t capacity, const char* source) noexcept {
++    UiUtf8CopyResult result{};
++    result.input_was_valid = source != nullptr;
++    const std::size_t writable = writable_capacity(destination, capacity);
++    std::size_t written{};
++    terminate(destination, capacity, written);
++    if (source == nullptr) return result;
++
++    for (const char* cursor = source; *cursor != '\0';) {
++        const DecodedCodePoint decoded = decode(cursor);
++        const std::size_t output_length = decoded.kind == DecodeKind::valid
++            ? decoded.length
++            : 1U;
++        result.input_was_valid = result.input_was_valid
++            && decoded.kind == DecodeKind::valid;
++        if (output_length > writable - written) {
++            result.truncated = true;
++        } else if (decoded.kind == DecodeKind::valid) {
++            write_bytes(destination, written, cursor, decoded.length);
++        } else {
++            destination[written++] = '?';
++        }
++        cursor += decoded.length;
++    }
++    terminate(destination, capacity, written);
++    result.bytes_written = written;
++    return result;
++}
++
++UiUtf8CopyResult ui_utf8_fit_with_ellipsis(
++    char* destination, std::size_t capacity, const char* source) noexcept {
++    const std::size_t writable = writable_capacity(destination, capacity);
++    Utf8Scan scan = scan_for_capacity(source, writable);
++    UiUtf8CopyResult result{};
++    result.input_was_valid = scan.input_was_valid;
++    terminate(destination, capacity, 0U);
++    if (scan.fits) return ui_utf8_copy(destination, capacity, source);
++
++    result.truncated = scan.has_output;
++    constexpr char kEllipsis[] = u8"…";
++    constexpr std::size_t kEllipsisBytes = sizeof(kEllipsis) - 1U;
++    if (destination == nullptr || writable < kEllipsisBytes || source == nullptr) {
++        return result;
++    }
++
++    std::size_t written{};
++    write_transformed_prefix(destination, written, writable - kEllipsisBytes,
++        source);
++    write_bytes(destination, written, kEllipsis, kEllipsisBytes);
++    terminate(destination, capacity, written);
++    result.bytes_written = written;
++    return result;
++}
++
++UiUtf8CopyResult ui_utf8_format(
++    char* destination, std::size_t capacity, const char* format, ...) noexcept {
++    UiUtf8CopyResult result{};
++    if (format == nullptr) {
++        terminate(destination, capacity, 0U);
++        return result;
++    }
++
++    va_list arguments;
++    va_start(arguments, format);
++    const std::size_t format_capacity = destination == nullptr ? 0U : capacity;
++    const int formatted = std::vsnprintf(
++        destination, format_capacity, format, arguments);
++    va_end(arguments);
++    if (formatted < 0) {
++        terminate(destination, capacity, 0U);
++        return result;
++    }
++
++    if (format_capacity == 0U) {
++        result.input_was_valid = true;
++        result.truncated = formatted > 0;
++        return result;
++    }
++
++    destination[capacity - 1U] = '\0';
++    const bool format_was_truncated = static_cast<std::size_t>(formatted)
++        >= capacity;
++    result = repair_formatted_tail(destination, capacity, format_was_truncated);
++    result.truncated = result.truncated || format_was_truncated;
++    return result;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/ui_utf8.hpp b/src/platform/raylib/ui_utf8.hpp
+new file mode 100644
+index 0000000..11a19ad
+--- /dev/null
++++ b/src/platform/raylib/ui_utf8.hpp
+@@ -0,0 +1,31 @@
++#pragma once
++
++#include <cstddef>
++
++namespace arpg::platform {
++
++struct UiUtf8CopyResult final {
++    std::size_t bytes_written{};
++    // For format(), this reports validation of bytes materialized in the
++    // fixed destination. Bytes omitted by printf truncation are not observed.
++    bool input_was_valid{};
++    bool truncated{};
++};
++
++[[nodiscard]] bool ui_utf8_is_valid(const char* text) noexcept;
++
++// Malformed input consumes exactly one input byte and writes one ASCII '?',
++// allowing following ASCII and valid UTF-8 bytes to be recovered.
++[[nodiscard]] UiUtf8CopyResult ui_utf8_copy(
++    char* destination, std::size_t capacity, const char* source) noexcept;
++
++// On truncation, writes the longest whole-code-point prefix followed by UTF-8
++// ellipsis '…'. If the destination cannot hold the complete ellipsis, writes
++// an empty NUL-terminated string instead.
++[[nodiscard]] UiUtf8CopyResult ui_utf8_fit_with_ellipsis(
++    char* destination, std::size_t capacity, const char* source) noexcept;
++
++[[nodiscard]] UiUtf8CopyResult ui_utf8_format(
++    char* destination, std::size_t capacity, const char* format, ...) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 5db5d46..b097260 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -5,20 +5,21 @@ add_test(NAME app.runtime_asset_sync
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime_asset_sync_self_test.cmake")
+ set_tests_properties(app.runtime_asset_sync PROPERTIES
+     LABELS "headless;platform;assets;app"
+     TIMEOUT 60)
+ 
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         ui_text_catalog_tests.cpp
++        ui_utf8_tests.cpp
+         host_input_tests.cpp
+         host_validation_exit_tests.cpp
+         active_skill_input_tests.cpp
+         raylib_input_tests.cpp
+         active_skill_view_tests.cpp
+         active_skill_asset_tests.cpp
+         active_skill_loadout_view_tests.cpp
+         audio_pack_tests.cpp
+         audio_routing_tests.cpp
+         audio_scene_tests.cpp
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 6fbba17..b5e6ce0 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -55,20 +55,21 @@ arpg::test::TestSuite audio_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_animation_suite() noexcept;
+ arpg::test::TestSuite fire_room_material_slice_suite() noexcept;
+ arpg::test::TestSuite ecology_material_coverage_suite() noexcept;
+ arpg::test::TestSuite room_background_render_plan_suite() noexcept;
+ arpg::test::TestSuite stage12_environment_render_suite() noexcept;
+ arpg::test::TestSuite stage12_actor_render_suite() noexcept;
+ arpg::test::TestSuite stage12_material_render_suite() noexcept;
+ arpg::test::TestSuite large_room_render_plan_suite() noexcept;
+ arpg::test::TestSuite ui_text_catalog_suite() noexcept;
++arpg::test::TestSuite ui_utf8_suite() noexcept;
+ 
+ namespace {
+ 
+ bool task11_large_room_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_TASK11_LARGE_ROOM_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+@@ -273,22 +274,23 @@ int main() {
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+ #endif
+     if (full_chinese_ui_foundation_only()) {
+         const arpg::test::TestSuite full_chinese_ui_foundation[] = {
+             ui_text_catalog_suite(),
++            ui_utf8_suite(),
+         };
+-        return arpg::test::run_suites(full_chinese_ui_foundation, 5,
++        return arpg::test::run_suites(full_chinese_ui_foundation, 11,
+             "full Chinese UI foundation");
+     }
+     if (cplay038_save_directory_only()) {
+         const arpg::test::TestSuite cplay038_only[] = {
+             dungeon_runtime_save_directory_lease_suite(),
+         };
+         return arpg::test::run_suites(cplay038_only, 8,
+             "CPLAY-038 runtime save directory lease");
+     }
+     if (cplay035_settings_conflict_only()) {
+diff --git a/tests/platform/ui_utf8_tests.cpp b/tests/platform/ui_utf8_tests.cpp
+new file mode 100644
+index 0000000..be4c212
+--- /dev/null
++++ b/tests/platform/ui_utf8_tests.cpp
+@@ -0,0 +1,168 @@
++#include "allocation_probe.hpp"
++#include "test_framework.hpp"
++
++#include "ui_utf8.hpp"
++
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++namespace {
++
++namespace platform = arpg::platform;
++
++arpg::test::Failure strict_validation_accepts_utf8_boundaries_and_rejects_invalid_forms()
++    noexcept {
++    ARPG_REQUIRE(platform::ui_utf8_is_valid("\x7F"));
++    ARPG_REQUIRE(platform::ui_utf8_is_valid("\xC2\x80"));
++    ARPG_REQUIRE(platform::ui_utf8_is_valid("\xE0\xA0\x80"));
++    ARPG_REQUIRE(platform::ui_utf8_is_valid("\xF0\x90\x80\x80"));
++    ARPG_REQUIRE(platform::ui_utf8_is_valid("\xF4\x8F\xBF\xBF"));
++
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\xC0\x80"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\xC1\xBF"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\xE0\x80\x80"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\xF0\x80\x80\x80"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\x80"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\x80\xBF"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\xED\xA0\x80"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\xF4\x90\x80\x80"));
++    ARPG_REQUIRE(!platform::ui_utf8_is_valid("\xE8\xAE"));
++    return {};
++}
++
++arpg::test::Failure copy_replaces_each_invalid_input_byte_without_losing_recoverable_ascii()
++    noexcept {
++    char buffer[8]{};
++    const auto mixed = platform::ui_utf8_copy(
++        buffer, sizeof(buffer), "\xE8\x28\xA1");
++    ARPG_REQUIRE(std::strcmp(buffer, "?(?") == 0);
++    ARPG_REQUIRE(mixed.bytes_written == 3U);
++    ARPG_REQUIRE(!mixed.input_was_valid);
++    ARPG_REQUIRE(!mixed.truncated);
++    ARPG_REQUIRE(platform::ui_utf8_is_valid(buffer));
++
++    const auto incomplete = platform::ui_utf8_copy(
++        buffer, sizeof(buffer), "\xE8\xAE");
++    ARPG_REQUIRE(std::strcmp(buffer, "??") == 0);
++    ARPG_REQUIRE(incomplete.bytes_written == 2U);
++    ARPG_REQUIRE(!incomplete.input_was_valid);
++    ARPG_REQUIRE(!incomplete.truncated);
++    return {};
++}
++
++arpg::test::Failure copy_never_splits_one_to_four_byte_code_points_at_capacity_boundaries()
++    noexcept {
++    constexpr char kText[] = "A\xC2\xA2\xE4\xB8\xAD\xF0\x9F\x98\x80";
++    char buffer[11]{};
++
++    const auto one = platform::ui_utf8_copy(buffer, 2U, kText);
++    ARPG_REQUIRE(std::strcmp(buffer, "A") == 0);
++    ARPG_REQUIRE(one.bytes_written == 1U);
++    ARPG_REQUIRE(one.truncated);
++
++    const auto two = platform::ui_utf8_copy(buffer, 4U, kText);
++    ARPG_REQUIRE(std::strcmp(buffer, "A\xC2\xA2") == 0);
++    ARPG_REQUIRE(two.bytes_written == 3U);
++    ARPG_REQUIRE(two.truncated);
++
++    const auto three = platform::ui_utf8_copy(buffer, 7U, kText);
++    ARPG_REQUIRE(std::strcmp(buffer, "A\xC2\xA2\xE4\xB8\xAD") == 0);
++    ARPG_REQUIRE(three.bytes_written == 6U);
++    ARPG_REQUIRE(three.truncated);
++
++    const auto four = platform::ui_utf8_copy(buffer, sizeof(buffer), kText);
++    ARPG_REQUIRE(std::strcmp(buffer, kText) == 0);
++    ARPG_REQUIRE(four.bytes_written == 10U);
++    ARPG_REQUIRE(!four.truncated);
++    return {};
++}
++
++arpg::test::Failure ellipsis_preserves_chinese_utf8_or_returns_empty_when_it_cannot_fit()
++    noexcept {
++    char buffer[7]{};
++    const auto result = platform::ui_utf8_fit_with_ellipsis(
++        buffer, sizeof(buffer), u8"设置界面");
++    ARPG_REQUIRE(result.truncated);
++    ARPG_REQUIRE(result.input_was_valid);
++    ARPG_REQUIRE(result.bytes_written == 6U);
++    ARPG_REQUIRE(std::strcmp(buffer, u8"设…") == 0);
++    ARPG_REQUIRE(platform::ui_utf8_is_valid(buffer));
++    ARPG_REQUIRE(buffer[sizeof(buffer) - 1U] == '\0');
++
++    const auto too_small = platform::ui_utf8_fit_with_ellipsis(
++        buffer, 3U, u8"设置界面");
++    ARPG_REQUIRE(too_small.truncated);
++    ARPG_REQUIRE(too_small.bytes_written == 0U);
++    ARPG_REQUIRE(buffer[0] == '\0');
++    return {};
++}
++
++arpg::test::Failure empty_or_nul_only_destinations_remain_safely_terminated()
++    noexcept {
++    char destination{'x'};
++    const auto empty = platform::ui_utf8_copy(nullptr, 0U, u8"设置");
++    ARPG_REQUIRE(empty.bytes_written == 0U);
++    ARPG_REQUIRE(empty.input_was_valid);
++    ARPG_REQUIRE(empty.truncated);
++
++    const auto nul_only = platform::ui_utf8_copy(
++        &destination, 1U, u8"设置");
++    ARPG_REQUIRE(nul_only.bytes_written == 0U);
++    ARPG_REQUIRE(nul_only.input_was_valid);
++    ARPG_REQUIRE(nul_only.truncated);
++    ARPG_REQUIRE(destination == '\0');
++
++    const auto null_destination = platform::ui_utf8_format(
++        nullptr, 1U, "%s", "A");
++    ARPG_REQUIRE(null_destination.bytes_written == 0U);
++    ARPG_REQUIRE(null_destination.input_was_valid);
++    ARPG_REQUIRE(null_destination.truncated);
++    return {};
++}
++
++arpg::test::Failure format_repairs_partial_tail_and_remains_allocation_free()
++    noexcept {
++    char buffer[8]{};
++    const auto repaired = platform::ui_utf8_format(
++        buffer, sizeof(buffer), "%s", u8"设置界面");
++    ARPG_REQUIRE(std::strcmp(buffer, u8"设置") == 0);
++    ARPG_REQUIRE(repaired.bytes_written == 6U);
++    ARPG_REQUIRE(repaired.input_was_valid);
++    ARPG_REQUIRE(repaired.truncated);
++    ARPG_REQUIRE(platform::ui_utf8_is_valid(buffer));
++    ARPG_REQUIRE(buffer[sizeof(buffer) - 1U] == '\0');
++
++    static_cast<void>(platform::ui_utf8_format(
++        buffer, sizeof(buffer), u8"第%u项", 1U));
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (std::size_t index{}; index < 10000U; ++index) {
++        const auto formatted = platform::ui_utf8_format(
++            buffer, sizeof(buffer), u8"第%u项", static_cast<unsigned>(index));
++        ARPG_REQUIRE(formatted.input_was_valid);
++        ARPG_REQUIRE(platform::ui_utf8_is_valid(buffer));
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == before);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"strict UTF-8 validation boundaries",
++        &strict_validation_accepts_utf8_boundaries_and_rejects_invalid_forms},
++    {"invalid byte recovery",
++        &copy_replaces_each_invalid_input_byte_without_losing_recoverable_ascii},
++    {"complete code point copy boundaries",
++        &copy_never_splits_one_to_four_byte_code_points_at_capacity_boundaries},
++    {"Chinese ellipsis truncation",
++        &ellipsis_preserves_chinese_utf8_or_returns_empty_when_it_cannot_fit},
++    {"empty and NUL-only destinations",
++        &empty_or_nul_only_destinations_remain_safely_terminated},
++    {"format repair and zero allocation",
++        &format_repairs_partial_tail_and_remains_allocation_free},
++};
++
++}  // namespace
++
++arpg::test::TestSuite ui_utf8_suite() noexcept {
++    return arpg::test::make_suite("ui_utf8", kCases);
++}

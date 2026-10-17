@@ -1,0 +1,867 @@
+# Review package: 7c52b96..HEAD
+
+## Commits
+3cf22d3 feat: localize settings feedback
+
+## Files changed
+ src/platform/raylib/host_settings_runtime.cpp  | 28 +++++++++++++---------
+ src/platform/raylib/pause_menu_state.cpp       | 12 ++++------
+ src/platform/raylib/stable_key_raylib.cpp      | 20 ++++++++--------
+ src/platform/raylib/ui_text_catalog.cpp        |  8 +++++--
+ src/platform/raylib/ui_text_catalog.hpp        |  4 ++++
+ tests/platform/host_input_tests.cpp            |  6 ++---
+ tests/platform/host_settings_runtime_tests.cpp | 20 ++++++++--------
+ tests/platform/pause_menu_state_tests.cpp      |  3 +++
+ tests/platform/pause_menu_view_tests.cpp       |  6 ++---
+ tests/platform/shared_ui_font_tests.cpp        |  1 +
+ tests/platform/ui_text_catalog_tests.cpp       | 33 ++++++++++++++++++++++----
+ 11 files changed, 90 insertions(+), 51 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/host_settings_runtime.cpp b/src/platform/raylib/host_settings_runtime.cpp
+index 207b43c..01f4b52 100644
+--- a/src/platform/raylib/host_settings_runtime.cpp
++++ b/src/platform/raylib/host_settings_runtime.cpp
+@@ -1,32 +1,38 @@
+ #include "host_settings_runtime.hpp"
+ 
++#include "ui_text_catalog.hpp"
++
+ #include "pause_menu_state.hpp"
+ #include "platform/settings/settings_store.hpp"
+ #include "raylib_host.hpp"
+ 
+ #include <cassert>
+ 
+ namespace arpg::platform {
++
+ namespace {
+ 
+-constexpr char kSettingsPreviewFailed[] = "Live preview failed";
+-constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
+-constexpr char kSettingsSaveBusy[] =
+-    "Settings save busy in another game instance; try again";
+-constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
+-constexpr char kSettingsSaved[] = "Settings saved";
+-constexpr char kSettingsReloadedElsewhere[] =
+-    "Settings changed in another game instance; reloaded";
+-constexpr char kSettingsStorageConflict[] =
+-    "Settings storage conflict; restart to recover";
+-constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
++const char* const kSettingsPreviewFailed =
++    ui_text(UiTextId::settings_preview_failed);
++const char* const kSettingsSaveFailed =
++    ui_text(UiTextId::settings_save_failed_retry);
++const char* const kSettingsSaveBusy = ui_text(UiTextId::settings_save_busy);
++const char* const kSettingsRollbackFailed =
++    ui_text(UiTextId::settings_rollback_failed);
++const char* const kSettingsSaved = ui_text(UiTextId::settings_saved);
++const char* const kSettingsReloadedElsewhere =
++    ui_text(UiTextId::settings_reloaded_elsewhere);
++const char* const kSettingsStorageConflict =
++    ui_text(UiTextId::settings_storage_conflict);
++const char* const kSettingsRecoveredDefaults =
++    ui_text(UiTextId::settings_recovered_defaults);
+ 
+ }  // namespace
+ 
+ HostSettingsNotice make_host_settings_notice(
+     settings::SettingsLoadStatus status) noexcept {
+     return {status == settings::SettingsLoadStatus::defaults_corrupt};
+ }
+ 
+ settings::LootFilterMode renderer_loot_filter_mode(
+     PauseScreen screen,
+diff --git a/src/platform/raylib/pause_menu_state.cpp b/src/platform/raylib/pause_menu_state.cpp
+index 22ce75b..3dfb422 100644
+--- a/src/platform/raylib/pause_menu_state.cpp
++++ b/src/platform/raylib/pause_menu_state.cpp
+@@ -1,12 +1,14 @@
+ #include "pause_menu_state.hpp"
+ 
++#include "ui_text_catalog.hpp"
++
+ #include <cstddef>
+ #include <cstdint>
+ #include <limits>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr std::size_t kRootRowCount = 3U;
+ constexpr std::size_t kSettingsHomeRowCount = 6U;
+ constexpr std::size_t kSettingsAudioRowCount = 6U;
+@@ -17,24 +19,20 @@ constexpr std::size_t kSettingsHomeAudioRow = 0U;
+ constexpr std::size_t kSettingsHomeDisplayRow = 1U;
+ constexpr std::size_t kSettingsHomeBindingsRow = 2U;
+ constexpr std::size_t kSettingsHomeResetRow = 3U;
+ constexpr std::size_t kSettingsHomeApplyRow = 4U;
+ constexpr std::size_t kSettingsHomeCancelRow = 5U;
+ constexpr std::size_t kSettingsAudioBackRow = 5U;
+ constexpr std::size_t kSettingsDisplayLootFilterRow = 2U;
+ constexpr std::size_t kSettingsDisplayBackRow = 3U;
+ constexpr std::size_t kSettingsBindingsBackRow = 10U;
+ 
+-constexpr char kInvalidBindingMessage[] = "Key cannot be assigned";
+-constexpr char kInvalidSettingsMessage[] = "Settings are invalid";
+-constexpr char kRevisionOverflowMessage[] = "Settings revision limit reached";
+-
+ [[nodiscard]] bool confirmed(const PauseInput& input) noexcept {
+     return input.enter || input.activate;
+ }
+ 
+ [[nodiscard]] bool navigate(
+     std::size_t& selected_row,
+     std::size_t row_count,
+     const PauseInput& input) noexcept {
+     selected_row %= row_count;
+     if (input.up) {
+@@ -231,26 +229,26 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
+             }
+             if (state.selected_row == kSettingsHomeResetRow) {
+                 const std::uint64_t revision = state.draft.revision;
+                 state.draft = settings::default_settings();
+                 state.draft.revision = revision;
+                 return PauseCommand::preview;
+             }
+             if (state.selected_row == kSettingsHomeApplyRow) {
+                 if (settings::validate_settings(state.draft) !=
+                     settings::SettingsValidationError::none) {
+-                    state.message = kInvalidSettingsMessage;
++                    state.message = ui_text(UiTextId::settings_invalid);
+                     return PauseCommand::none;
+                 }
+                 if (state.committed.revision ==
+                     std::numeric_limits<std::uint64_t>::max()) {
+-                    state.message = kRevisionOverflowMessage;
++                    state.message = ui_text(UiTextId::settings_revision_limit);
+                     return PauseCommand::none;
+                 }
+                 state.draft.revision = state.committed.revision + 1U;
+                 return PauseCommand::apply;
+             }
+             if (state.selected_row == kSettingsHomeCancelRow) {
+                 return rollback_to_root(state);
+             }
+             return PauseCommand::none;
+ 
+@@ -320,21 +318,21 @@ void return_to_settings_home(PauseMenuState& state) noexcept {
+         state.capture_action.reset();
+         state.message = nullptr;
+         return PauseCommand::none;
+     }
+     if (!input.captured_key.has_value()) {
+         return PauseCommand::none;
+     }
+     if (!state.capture_action.has_value() ||
+         !settings::assign_or_swap(
+             state.draft, *state.capture_action, *input.captured_key)) {
+-        state.message = kInvalidBindingMessage;
++        state.message = ui_text(UiTextId::settings_invalid_binding);
+         return PauseCommand::none;
+     }
+     state.screen = PauseScreen::settings;
+     state.settings_page = PauseSettingsPage::bindings;
+     state.capture_action.reset();
+     state.message = nullptr;
+     return PauseCommand::none;
+ }
+ 
+ [[nodiscard]] PauseCommand update_quit_confirm(
+diff --git a/src/platform/raylib/stable_key_raylib.cpp b/src/platform/raylib/stable_key_raylib.cpp
+index 9e84ab3..a2e8b86 100644
+--- a/src/platform/raylib/stable_key_raylib.cpp
++++ b/src/platform/raylib/stable_key_raylib.cpp
+@@ -45,41 +45,41 @@ constexpr std::array<StableKeyEntry,
+     {settings::StableKey::digit_0, KEY_ZERO, "0"},
+     {settings::StableKey::digit_1, KEY_ONE, "1"},
+     {settings::StableKey::digit_2, KEY_TWO, "2"},
+     {settings::StableKey::digit_3, KEY_THREE, "3"},
+     {settings::StableKey::digit_4, KEY_FOUR, "4"},
+     {settings::StableKey::digit_5, KEY_FIVE, "5"},
+     {settings::StableKey::digit_6, KEY_SIX, "6"},
+     {settings::StableKey::digit_7, KEY_SEVEN, "7"},
+     {settings::StableKey::digit_8, KEY_EIGHT, "8"},
+     {settings::StableKey::digit_9, KEY_NINE, "9"},
+-    {settings::StableKey::arrow_up, KEY_UP, "Up"},
+-    {settings::StableKey::arrow_down, KEY_DOWN, "Down"},
+-    {settings::StableKey::arrow_left, KEY_LEFT, "Left"},
+-    {settings::StableKey::arrow_right, KEY_RIGHT, "Right"},
+-    {settings::StableKey::space, KEY_SPACE, "Space"},
+-    {settings::StableKey::left_shift, KEY_LEFT_SHIFT, "Left Shift"},
+-    {settings::StableKey::right_shift, KEY_RIGHT_SHIFT, "Right Shift"},
+-    {settings::StableKey::left_control, KEY_LEFT_CONTROL, "Left Ctrl"},
+-    {settings::StableKey::right_control, KEY_RIGHT_CONTROL, "Right Ctrl"},
++    {settings::StableKey::arrow_up, KEY_UP, u8"上方向键"},
++    {settings::StableKey::arrow_down, KEY_DOWN, u8"下方向键"},
++    {settings::StableKey::arrow_left, KEY_LEFT, u8"左方向键"},
++    {settings::StableKey::arrow_right, KEY_RIGHT, u8"右方向键"},
++    {settings::StableKey::space, KEY_SPACE, u8"空格"},
++    {settings::StableKey::left_shift, KEY_LEFT_SHIFT, u8"左 Shift"},
++    {settings::StableKey::right_shift, KEY_RIGHT_SHIFT, u8"右 Shift"},
++    {settings::StableKey::left_control, KEY_LEFT_CONTROL, u8"左 Ctrl"},
++    {settings::StableKey::right_control, KEY_RIGHT_CONTROL, u8"右 Ctrl"},
+ }};
+ 
+ }  // namespace
+ 
+ int raylib_key(settings::StableKey key) noexcept {
+     const std::size_t index = static_cast<std::size_t>(key);
+     return index < kStableKeys.size() ? kStableKeys[index].raylib : KEY_NULL;
+ }
+ 
+ std::optional<settings::StableKey> stable_key_from_raylib(int key) noexcept {
+     for (const StableKeyEntry& entry : kStableKeys) {
+         if (entry.raylib == key) return entry.stable;
+     }
+     return std::nullopt;
+ }
+ 
+ const char* stable_key_label(settings::StableKey key) noexcept {
+     const std::size_t index = static_cast<std::size_t>(key);
+-    return index < kStableKeys.size() ? kStableKeys[index].label : "Unknown";
++    return index < kStableKeys.size() ? kStableKeys[index].label : u8"未知";
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index 5da438e..881bec1 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -1,24 +1,28 @@
+ #include "ui_text_catalog.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr const char* kUnknown = u8"未知";
+ 
+-constexpr std::array<const char*, 32U> kUiTexts{{
++constexpr std::array<const char*, 43U> kUiTexts{{
+     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
+     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
+     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
++    u8"该按键不可绑定", u8"设置无效", u8"版本号已达上限",
++    u8"实时预览失败", u8"设置保存失败，请重试", u8"另一实例保存繁忙",
++    u8"设置回滚失败", u8"设置已保存", u8"另一实例修改已重载",
++    u8"设置存储冲突，需重启", u8"设置已恢复默认值",
+     u8"生命", u8"护盾", u8"经验", u8"等级",
+     u8"正在保存", u8"保存完成", u8"已恢复存档", u8"存档错误",
+     u8"需要恢复存档", u8"无效存档槽",
+     u8"背包", u8"装备", u8"物品详情",
+     u8"被动星图", u8"未分配点", u8"关闭",
+     u8"调试就绪", u8"调试不可用", kUnknown,
+ }};
+ 
+ constexpr std::array<const char*, 18U> kItemBaseNames{{
+     u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套", u8"行者战靴", u8"元素护符",
+@@ -80,21 +84,21 @@ constexpr std::array<const char*, 2U> kSkillNames{{
+     u8"拔刀斩", u8"风暴剑阵",
+ }};
+ 
+ // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
+ // its existing death-overlay/HUD corpus in the single catalog visitor so the
+ // shared glyph plan covers it without a second hand-maintained font list.
+ constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
+     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
+     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
+     "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
+-    "方向键导航选择返回重置房间上下左右调整请按下可绑定用于的当前"
++    "方向键导航选择返回重置房间上下左右调整请按下可绑定用于的当前空格"
+     "窗口模式全屏窗口化垂直同步开关拾取过滤显示全部魔法及以上仅稀有"
+     "确认退出绑定按键总音量音效音乐环境音界面音｜（）？"
+     "剩余出口已开放未分配点减速无敌目标个敌人待结算经验深度 · 层房间生态第波下一波即将开始待领奖励未领取"
+     "正在保存房间正在处理撤退房间状态异常"
+     "需要恢复存档再次交互，以放弃奖励离开后触碰同一出口全部剩余并下降进入下一层进入出口已清理升级至级有被动点打开背包树"
+     "投弹者冲锋之壁垒支援射手突袭追猎灾术师原生燃烧连锁爆破雷暴"
+     "猎杀之焰扩张强力狂热迅捷装甲多重寒冷腐蚀闪现无规则追猎狂怒"
+     "沉重脚步疲惫恢复献祭"
+     "装备背包技能石暂停继续设置退出游戏关闭选择操作提示材料条目",
+     u8"生命药", u8"第 层 → 第 层",
+diff --git a/src/platform/raylib/ui_text_catalog.hpp b/src/platform/raylib/ui_text_catalog.hpp
+index 65bd23d..6eb7293 100644
+--- a/src/platform/raylib/ui_text_catalog.hpp
++++ b/src/platform/raylib/ui_text_catalog.hpp
+@@ -9,20 +9,24 @@
+ 
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ enum class UiTextId : std::uint16_t {
+     pause_title, pause_continue, pause_settings, pause_quit,
+     settings_title, settings_audio, settings_display, settings_bindings,
+     settings_restore_defaults, settings_apply, settings_cancel,
+     settings_saved_prefix, settings_unknown,
++    settings_invalid_binding, settings_invalid, settings_revision_limit,
++    settings_preview_failed, settings_save_failed_retry, settings_save_busy,
++    settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
++    settings_storage_conflict, settings_recovered_defaults,
+     hud_health, hud_barrier, hud_experience, hud_level,
+     save_saving, save_saved, save_recovered, save_error,
+     recovery_title, recovery_invalid_slots,
+     inventory_title, equipment_title, item_detail_title,
+     passive_title, passive_points, passive_close,
+     debug_ready, debug_unavailable,
+     unknown,
+     count,
+ };
+ 
+diff --git a/tests/platform/host_input_tests.cpp b/tests/platform/host_input_tests.cpp
+index 21c7bc2..5fb1e6c 100644
+--- a/tests/platform/host_input_tests.cpp
++++ b/tests/platform/host_input_tests.cpp
+@@ -27,22 +27,22 @@ constexpr std::array<int, kStableKeyCount> kExpectedRaylibKeys{{
+     KEY_ZERO, KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE,
+     KEY_SIX, KEY_SEVEN, KEY_EIGHT, KEY_NINE,
+     KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_SPACE,
+     KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, KEY_LEFT_CONTROL, KEY_RIGHT_CONTROL,
+ }};
+ 
+ constexpr std::array<const char*, kStableKeyCount> kExpectedLabels{{
+     "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L",
+     "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X",
+     "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+-    "Up", "Down", "Left", "Right", "Space", "Left Shift", "Right Shift",
+-    "Left Ctrl", "Right Ctrl",
++    u8"上方向键", u8"下方向键", u8"左方向键", u8"右方向键", u8"空格",
++    u8"左 Shift", u8"右 Shift", u8"左 Ctrl", u8"右 Ctrl",
+ }};
+ 
+ [[nodiscard]] constexpr std::size_t key_index(settings::StableKey key) noexcept {
+     return static_cast<std::size_t>(key);
+ }
+ 
+ void press(platform::PhysicalKeySnapshot& snapshot,
+     settings::StableKey key) noexcept {
+     snapshot.pressed[key_index(key)] = true;
+ }
+@@ -71,21 +71,21 @@ test::Failure adapter_round_trips_all_45_keys_with_unique_codes_and_labels() noe
+         }
+     }
+     return {};
+ }
+ 
+ test::Failure adapter_rejects_unknown_values() noexcept {
+     ARPG_REQUIRE(platform::raylib_key(settings::StableKey::count) == KEY_NULL);
+     ARPG_REQUIRE(!platform::stable_key_from_raylib(KEY_NULL).has_value());
+     ARPG_REQUIRE(!platform::stable_key_from_raylib(KEY_ESCAPE).has_value());
+     ARPG_REQUIRE(std::strcmp(
+-        platform::stable_key_label(settings::StableKey::count), "Unknown") == 0);
++        platform::stable_key_label(settings::StableKey::count), u8"未知") == 0);
+     return {};
+ }
+ 
+ struct QueryLog final {
+     std::array<unsigned, 512> pressed{};
+     std::array<unsigned, 512> down{};
+     unsigned mouse_left_pressed{};
+     unsigned mouse_right_pressed{};
+     unsigned mouse_left_down{};
+     unsigned mouse_right_down{};
+diff --git a/tests/platform/host_settings_runtime_tests.cpp b/tests/platform/host_settings_runtime_tests.cpp
+index de3126b..a019c39 100644
+--- a/tests/platform/host_settings_runtime_tests.cpp
++++ b/tests/platform/host_settings_runtime_tests.cpp
+@@ -273,21 +273,21 @@ arpg::test::Failure preview_failure_preserves_live_and_reports_message()
+     const settings::SettingsData input_before = input;
+     platform::HostSettingsRuntime runtime = make_runtime(
+         nullptr, menu, live, input, store, backend_for(backend));
+ 
+     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::preview, false));
+     ARPG_REQUIRE(same_settings(live, live_before));
+     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
+     ARPG_REQUIRE(same_settings(menu.draft, draft_before));
+     ARPG_REQUIRE(same_settings(input, input_before));
+     ARPG_REQUIRE(menu.message != nullptr);
+-    ARPG_REQUIRE(std::strcmp(menu.message, "Live preview failed") == 0);
++    ARPG_REQUIRE(std::strcmp(menu.message, u8"实时预览失败") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure apply_commits_every_field_and_advances_revision() noexcept {
+     MemorySettingsFiles files{};
+     const settings::SettingsStore store = memory_store(files);
+     FakeBackend backend{};
+     platform::PauseMenuState menu{};
+     menu.committed = settings::default_settings();
+     menu.committed.revision = 7U;
+@@ -300,21 +300,21 @@ arpg::test::Failure apply_commits_every_field_and_advances_revision() noexcept {
+         nullptr, menu, live, input, store, backend_for(backend));
+ 
+     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+     settings::SettingsData expected = changed_settings(menu.committed);
+     expected.revision = 8U;
+     ARPG_REQUIRE(same_settings(menu.committed, expected));
+     ARPG_REQUIRE(same_settings(menu.draft, expected));
+     ARPG_REQUIRE(same_settings(live, expected));
+     ARPG_REQUIRE(same_settings(input, expected));
+     ARPG_REQUIRE(menu.message != nullptr);
+-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings saved") == 0);
++    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置已保存") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure save_failure_rolls_back_live_and_reports_retry()
+     noexcept {
+     MemorySettingsFiles files{};
+     files.fail_replace = true;
+     const settings::SettingsStore store = memory_store(files);
+     FakeBackend backend{};
+     platform::PauseMenuState menu{};
+@@ -329,21 +329,21 @@ arpg::test::Failure save_failure_rolls_back_live_and_reports_retry()
+ 
+     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+     ARPG_REQUIRE(same_settings(live, committed));
+     ARPG_REQUIRE(same_settings(input, committed));
+     ARPG_REQUIRE(same_settings(menu.committed, committed));
+     settings::SettingsData expected_draft = edited;
+     expected_draft.loot_filter_mode = committed.loot_filter_mode;
+     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+     ARPG_REQUIRE(menu.message != nullptr);
+     ARPG_REQUIRE(std::strcmp(menu.message,
+-        "Settings save failed; retry") == 0);
++        u8"设置保存失败，请重试") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure stale_apply_reloads_external_settings() noexcept {
+     MemorySettingsFiles files{};
+     settings::SettingsData external = settings::default_settings();
+     external.revision = 1U;
+     external.master_sfx_percent = 40U;
+     external.window_mode = settings::WindowMode::fullscreen;
+     external.vsync_enabled = false;
+@@ -364,21 +364,21 @@ arpg::test::Failure stale_apply_reloads_external_settings() noexcept {
+     ARPG_REQUIRE(files.replacements == 0U);
+     ARPG_REQUIRE(same_settings(menu.committed, external));
+     ARPG_REQUIRE(same_settings(menu.draft, external));
+     ARPG_REQUIRE(same_settings(live, external));
+     ARPG_REQUIRE(same_settings(input, external));
+     ARPG_REQUIRE(backend.volume == external.master_sfx_percent);
+     ARPG_REQUIRE(backend.mode == external.window_mode);
+     ARPG_REQUIRE(backend.vsync == external.vsync_enabled);
+     ARPG_REQUIRE(menu.message != nullptr);
+     ARPG_REQUIRE(std::strcmp(menu.message,
+-        "Settings changed in another game instance; reloaded") == 0);
++        u8"另一实例修改已重载") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
+     noexcept {
+     {
+         MemorySettingsFiles files{};
+         files.write_lock_held = true;
+         const settings::SettingsStore store = memory_store(files);
+         FakeBackend backend{};
+@@ -394,21 +394,21 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
+         ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+         ARPG_REQUIRE(same_settings(menu.committed,
+             settings::default_settings()));
+         ARPG_REQUIRE(same_settings(live, menu.committed));
+         ARPG_REQUIRE(same_settings(input, menu.committed));
+         settings::SettingsData expected_draft = edited;
+         expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
+         ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+         ARPG_REQUIRE(menu.message != nullptr);
+         ARPG_REQUIRE(std::strcmp(menu.message,
+-            "Settings save busy in another game instance; try again") == 0);
++            u8"另一实例保存繁忙") == 0);
+     }
+     {
+         MemorySettingsFiles files{};
+         files.path = "memory-settings/settings-a.bin";
+         files.bytes = {0x01U};
+         const settings::SettingsStore store = memory_store(files);
+         FakeBackend backend{};
+         platform::PauseMenuState menu{};
+         menu.committed = settings::default_settings();
+         menu.draft = changed_settings(menu.committed);
+@@ -416,21 +416,21 @@ arpg::test::Failure busy_and_corrupt_apply_report_actionable_messages()
+         settings::SettingsData input = menu.committed;
+         platform::HostSettingsRuntime runtime = make_runtime(
+             nullptr, menu, live, input, store, backend_for(backend));
+ 
+         ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+         ARPG_REQUIRE(same_settings(menu.draft, menu.committed));
+         ARPG_REQUIRE(same_settings(live, menu.committed));
+         ARPG_REQUIRE(same_settings(input, menu.committed));
+         ARPG_REQUIRE(menu.message != nullptr);
+         ARPG_REQUIRE(std::strcmp(menu.message,
+-            "Settings storage conflict; restart to recover") == 0);
++            u8"设置存储冲突，需重启") == 0);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure rollback_failure_preserves_live_and_reports_message()
+     noexcept {
+     MemorySettingsFiles files{};
+     const settings::SettingsStore store = memory_store(files);
+     FakeBackend backend{};
+     backend.fail_volume_call_a = 1U;
+@@ -445,21 +445,21 @@ arpg::test::Failure rollback_failure_preserves_live_and_reports_message()
+     const settings::SettingsData input_before = input;
+     platform::HostSettingsRuntime runtime = make_runtime(
+         nullptr, menu, live, input, store, backend_for(backend));
+ 
+     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::rollback, false));
+     ARPG_REQUIRE(same_settings(live, previewed));
+     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
+     ARPG_REQUIRE(same_settings(menu.draft, draft_before));
+     ARPG_REQUIRE(same_settings(input, input_before));
+     ARPG_REQUIRE(menu.message != nullptr);
+-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings rollback failed") == 0);
++    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure renderer_filter_uses_draft_only_on_settings_screen()
+     noexcept {
+     settings::SettingsData live = settings::default_settings();
+     settings::SettingsData draft = live;
+     draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+     constexpr platform::PauseScreen kCommittedScreens[] = {
+         platform::PauseScreen::closed,
+@@ -498,21 +498,21 @@ arpg::test::Failure apply_preview_failure_rolls_back_and_reports_preview()
+     platform::HostSettingsRuntime runtime = make_runtime(
+         nullptr, menu, live, input, store, backend_for(backend));
+ 
+     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+     ARPG_REQUIRE(same_settings(live, menu.committed));
+     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
+     ARPG_REQUIRE(same_settings(input, input_before));
+     settings::SettingsData expected_draft = edited;
+     expected_draft.loot_filter_mode = menu.committed.loot_filter_mode;
+     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+-    ARPG_REQUIRE(std::strcmp(menu.message, "Live preview failed") == 0);
++    ARPG_REQUIRE(std::strcmp(menu.message, u8"实时预览失败") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure apply_preview_and_rollback_failure_reports_rollback()
+     noexcept {
+     MemorySettingsFiles files{};
+     const settings::SettingsStore store = memory_store(files);
+     FakeBackend backend{};
+     backend.fail_volume_call_a = 1U;
+     backend.fail_volume_call_b = 3U;
+@@ -532,21 +532,21 @@ arpg::test::Failure apply_preview_and_rollback_failure_reports_rollback()
+     settings::SettingsData expected_live = live;
+     expected_live.loot_filter_mode = menu.committed.loot_filter_mode;
+     platform::HostSettingsRuntime runtime = make_runtime(
+         nullptr, menu, live, input, store, backend_for(backend));
+ 
+     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+     ARPG_REQUIRE(same_settings(live, expected_live));
+     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
+     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+     ARPG_REQUIRE(same_settings(input, input_before));
+-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings rollback failed") == 0);
++    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure apply_save_and_rollback_failure_keeps_previewed_live()
+     noexcept {
+     MemorySettingsFiles files{};
+     files.fail_replace = true;
+     const settings::SettingsStore store = memory_store(files);
+     FakeBackend backend{};
+     backend.fail_volume_call_a = 2U;
+@@ -562,21 +562,21 @@ arpg::test::Failure apply_save_and_rollback_failure_keeps_previewed_live()
+     settings::SettingsData expected_live = menu.draft;
+     expected_live.loot_filter_mode = menu.committed.loot_filter_mode;
+     platform::HostSettingsRuntime runtime = make_runtime(
+         nullptr, menu, live, input, store, backend_for(backend));
+ 
+     ARPG_REQUIRE(!runtime.settle(platform::PauseCommand::apply, false));
+     ARPG_REQUIRE(same_settings(live, expected_live));
+     ARPG_REQUIRE(same_settings(menu.committed, committed_before));
+     ARPG_REQUIRE(same_settings(menu.draft, expected_draft));
+     ARPG_REQUIRE(same_settings(input, input_before));
+-    ARPG_REQUIRE(std::strcmp(menu.message, "Settings rollback failed") == 0);
++    ARPG_REQUIRE(std::strcmp(menu.message, u8"设置回滚失败") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure rollback_success_restores_only_live_settings() noexcept {
+     MemorySettingsFiles files{};
+     const settings::SettingsStore store = memory_store(files);
+     FakeBackend backend{};
+     platform::PauseMenuState menu{};
+     menu.committed = settings::default_settings();
+     menu.draft = changed_settings(menu.committed);
+diff --git a/tests/platform/pause_menu_state_tests.cpp b/tests/platform/pause_menu_state_tests.cpp
+index 789c4b6..9c7bf92 100644
+--- a/tests/platform/pause_menu_state_tests.cpp
++++ b/tests/platform/pause_menu_state_tests.cpp
+@@ -409,20 +409,21 @@ test::Failure reserved_and_invalid_capture_remain_active() noexcept {
+     auto state = make_state();
+     state.screen = platform::PauseScreen::capture_binding;
+     state.settings_page = platform::PauseSettingsPage::bindings;
+     state.selected_row = 4U;
+     state.capture_action = settings::SettingAction::light_attack;
+     const auto original = state.draft;
+     ARPG_REQUIRE(update(state, capture_input(settings::StableKey::v)) ==
+         platform::PauseCommand::none);
+     ARPG_REQUIRE(state.screen == platform::PauseScreen::capture_binding);
+     ARPG_REQUIRE(state.message != nullptr);
++    ARPG_REQUIRE(std::strcmp(state.message, u8"该按键不可绑定") == 0);
+     ARPG_REQUIRE(state.draft.bindings == original.bindings);
+     const char* reserved_message = state.message;
+     ARPG_REQUIRE(update(state, capture_input(settings::StableKey::count)) ==
+         platform::PauseCommand::none);
+     ARPG_REQUIRE(state.screen == platform::PauseScreen::capture_binding);
+     ARPG_REQUIRE(state.message != nullptr);
+     ARPG_REQUIRE(state.message == reserved_message);
+     ARPG_REQUIRE(state.draft.bindings == original.bindings);
+     return {};
+ }
+@@ -511,32 +512,34 @@ test::Failure apply_preserves_host_retry_message() noexcept {
+ test::Failure apply_rejects_invalid_draft() noexcept {
+     auto state = make_state();
+     state.screen = platform::PauseScreen::settings;
+     state.settings_page = platform::PauseSettingsPage::home;
+     state.selected_row = 4U;
+     state.draft.master_sfx_percent = 53U;
+     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+     ARPG_REQUIRE(state.draft.revision == 0U);
+     ARPG_REQUIRE(state.message != nullptr);
++    ARPG_REQUIRE(std::strcmp(state.message, u8"设置无效") == 0);
+     return {};
+ }
+ 
+ test::Failure apply_rejects_revision_overflow() noexcept {
+     auto state = make_state();
+     state.screen = platform::PauseScreen::settings;
+     state.settings_page = platform::PauseSettingsPage::home;
+     state.selected_row = 4U;
+     state.committed.revision = std::numeric_limits<std::uint64_t>::max();
+     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+     ARPG_REQUIRE(state.draft.revision == 0U);
+     ARPG_REQUIRE(state.message != nullptr);
++    ARPG_REQUIRE(std::strcmp(state.message, u8"版本号已达上限") == 0);
+     return {};
+ }
+ 
+ test::Failure settings_escape_rolls_back_to_committed() noexcept {
+     auto state = make_state();
+     state.screen = platform::PauseScreen::settings;
+     state.settings_page = platform::PauseSettingsPage::home;
+     state.draft.master_sfx_percent = 20U;
+     state.message = "error";
+     ARPG_REQUIRE(update(state, input_for(InputKind::escape)) == platform::PauseCommand::rollback);
+diff --git a/tests/platform/pause_menu_view_tests.cpp b/tests/platform/pause_menu_view_tests.cpp
+index 5aa5796..2cfc9c9 100644
+--- a/tests/platform/pause_menu_view_tests.cpp
++++ b/tests/platform/pause_menu_view_tests.cpp
+@@ -427,21 +427,21 @@ test::Failure capture_text_fits_centered_with_real_font_measurement() noexcept {
+     ARPG_REQUIRE(font.initialize());
+     platform::PauseMenuState state = settings_state();
+     state.screen = platform::PauseScreen::capture_binding;
+     state.capture_action = settings::SettingAction::light_attack;
+     state.draft.bindings[static_cast<std::size_t>(
+         settings::SettingAction::light_attack)] =
+             settings::StableKey::right_shift;
+     const platform::PauseMenuView view =
+         platform::make_pause_menu_view(state);
+     ARPG_REQUIRE(std::strcmp(view.rows[0].primary.data(),
+-        u8"请按下用于轻攻击的按键（当前：Right Shift）") == 0);
++        u8"请按下用于轻攻击的按键（当前：右 Shift）") == 0);
+ 
+     constexpr std::array<std::array<int, 2>, 3> kSizes{{
+         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+     }};
+     for (const auto& size : kSizes) {
+         const auto layout = platform::pause_menu_layout(
+             size[0], size[1], view.row_count);
+         std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
+         const auto centered = platform::fit_centered_pause_text_layout(
+             font.font(), view.rows[0].primary.data(),
+@@ -475,22 +475,22 @@ test::Failure capture_text_fits_centered_with_real_font_measurement() noexcept {
+             * platform::ui_viewport_scale(size[0], size[1]);
+         ARPG_REQUIRE(centered.text.x >= centered.backing.x + inset);
+         ARPG_REQUIRE(centered.text.x + centered.text.width
+             <= centered.backing.x + centered.backing.width - inset);
+         ARPG_REQUIRE(centered.text.y >= centered.backing.y);
+         ARPG_REQUIRE(centered.text.y + centered.text.height
+             <= centered.backing.y + centered.backing.height);
+     }
+ 
+     constexpr const char* kOversized =
+-        u8"请按下用于轻攻击的按键（当前：Right Shift）"
+-        u8"请按下用于轻攻击的按键（当前：Right Shift）";
++        u8"请按下用于轻攻击的按键（当前：右 Shift）"
++        u8"请按下用于轻攻击的按键（当前：右 Shift）";
+     const auto layout = platform::pause_menu_layout(800, 450, 1U);
+     std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
+     const auto shortened = platform::fit_centered_pause_text_layout(
+         font.font(), kOversized, fitted.data(), fitted.size(), layout.rows[0],
+         layout.row_font_size, 0.5F,
+         platform::kPauseMenuMinimumRowFontSize,
+         12.0F * platform::ui_viewport_scale(800, 450));
+     ARPG_REQUIRE(shortened.truncated);
+     ARPG_REQUIRE(platform::ui_utf8_is_valid(fitted.data()));
+     ARPG_REQUIRE(std::strstr(fitted.data(), u8"…") != nullptr);
+diff --git a/tests/platform/shared_ui_font_tests.cpp b/tests/platform/shared_ui_font_tests.cpp
+index 45705af..a0620d6 100644
+--- a/tests/platform/shared_ui_font_tests.cpp
++++ b/tests/platform/shared_ui_font_tests.cpp
+@@ -48,20 +48,21 @@ void visit_one_codepoint_over_capacity(platform::UiTextVisitor visitor,
+ }
+ 
+ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     CatalogCoverage coverage{&plan};
+     platform::visit_ui_text_catalog(&record_catalog_coverage, &coverage);
+ 
+     ARPG_REQUIRE(coverage.covered);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"最后一击"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"主动技能石槽"));
++    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"空格"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"…、"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"蜕变石"));
+     ARPG_REQUIRE(plan.codepoint_count > 384U);
+     ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
+     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+         platform::death_overlay_font_plan(), u8"混沌之眼"));
+     ARPG_REQUIRE(platform::hud_font_plan().covers_required_text);
+     return {};
+ }
+diff --git a/tests/platform/ui_text_catalog_tests.cpp b/tests/platform/ui_text_catalog_tests.cpp
+index 88116d3..47f4c6d 100644
+--- a/tests/platform/ui_text_catalog_tests.cpp
++++ b/tests/platform/ui_text_catalog_tests.cpp
+@@ -21,35 +21,46 @@ void count_text(const char* text, void* context) noexcept {
+ std::size_t utf8_codepoint_count(const char* text) noexcept {
+     std::size_t count{};
+     for (const auto* byte = reinterpret_cast<const unsigned char*>(text);
+          *byte != 0U; ++byte) {
+         if ((*byte & 0xC0U) != 0x80U) ++count;
+     }
+     return count;
+ }
+ 
+ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 32U>
++    constexpr std::array<std::pair<platform::UiTextId, const char*>, 43U>
+         kExpectedTexts{{
+             {platform::UiTextId::pause_title, u8"暂停"},
+             {platform::UiTextId::pause_continue, u8"继续游戏"},
+             {platform::UiTextId::pause_settings, u8"设置"},
+             {platform::UiTextId::pause_quit, u8"退出游戏"},
+             {platform::UiTextId::settings_title, u8"设置"},
+             {platform::UiTextId::settings_audio, u8"音频设置"},
+             {platform::UiTextId::settings_display, u8"显示设置"},
+             {platform::UiTextId::settings_bindings, u8"按键设置"},
+             {platform::UiTextId::settings_restore_defaults, u8"恢复默认设置"},
+             {platform::UiTextId::settings_apply, u8"应用"},
+             {platform::UiTextId::settings_cancel, u8"取消"},
+             {platform::UiTextId::settings_saved_prefix, u8"已保存："},
+             {platform::UiTextId::settings_unknown, u8"未知"},
++            {platform::UiTextId::settings_invalid_binding, u8"该按键不可绑定"},
++            {platform::UiTextId::settings_invalid, u8"设置无效"},
++            {platform::UiTextId::settings_revision_limit, u8"版本号已达上限"},
++            {platform::UiTextId::settings_preview_failed, u8"实时预览失败"},
++            {platform::UiTextId::settings_save_failed_retry, u8"设置保存失败，请重试"},
++            {platform::UiTextId::settings_save_busy, u8"另一实例保存繁忙"},
++            {platform::UiTextId::settings_rollback_failed, u8"设置回滚失败"},
++            {platform::UiTextId::settings_saved, u8"设置已保存"},
++            {platform::UiTextId::settings_reloaded_elsewhere, u8"另一实例修改已重载"},
++            {platform::UiTextId::settings_storage_conflict, u8"设置存储冲突，需重启"},
++            {platform::UiTextId::settings_recovered_defaults, u8"设置已恢复默认值"},
+             {platform::UiTextId::hud_health, u8"生命"},
+             {platform::UiTextId::hud_barrier, u8"护盾"},
+             {platform::UiTextId::hud_experience, u8"经验"},
+             {platform::UiTextId::hud_level, u8"等级"},
+             {platform::UiTextId::save_saving, u8"正在保存"},
+             {platform::UiTextId::save_saved, u8"保存完成"},
+             {platform::UiTextId::save_recovered, u8"已恢复存档"},
+             {platform::UiTextId::save_error, u8"存档错误"},
+             {platform::UiTextId::recovery_title, u8"需要恢复存档"},
+             {platform::UiTextId::recovery_invalid_slots, u8"无效存档槽"},
+@@ -91,28 +102,40 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+             static_cast<arpg::items::MaterialId>(index)),
+             kExpectedMaterialNames[index]) == 0);
+     }
+ 
+     ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+         arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
+-    constexpr std::array<platform::UiTextId, 32U> texts{{
++    constexpr std::array<platform::UiTextId, 43U> texts{{
+         platform::UiTextId::pause_title, platform::UiTextId::pause_continue,
+         platform::UiTextId::pause_settings, platform::UiTextId::pause_quit,
+         platform::UiTextId::settings_title, platform::UiTextId::settings_audio,
+         platform::UiTextId::settings_display, platform::UiTextId::settings_bindings,
+         platform::UiTextId::settings_restore_defaults, platform::UiTextId::settings_apply,
+         platform::UiTextId::settings_cancel, platform::UiTextId::settings_saved_prefix,
+-        platform::UiTextId::settings_unknown, platform::UiTextId::hud_health,
++        platform::UiTextId::settings_unknown,
++        platform::UiTextId::settings_invalid_binding,
++        platform::UiTextId::settings_invalid,
++        platform::UiTextId::settings_revision_limit,
++        platform::UiTextId::settings_preview_failed,
++        platform::UiTextId::settings_save_failed_retry,
++        platform::UiTextId::settings_save_busy,
++        platform::UiTextId::settings_rollback_failed,
++        platform::UiTextId::settings_saved,
++        platform::UiTextId::settings_reloaded_elsewhere,
++        platform::UiTextId::settings_storage_conflict,
++        platform::UiTextId::settings_recovered_defaults,
++        platform::UiTextId::hud_health,
+         platform::UiTextId::hud_barrier, platform::UiTextId::hud_experience,
+         platform::UiTextId::hud_level, platform::UiTextId::save_saving,
+         platform::UiTextId::save_saved, platform::UiTextId::save_recovered,
+         platform::UiTextId::save_error, platform::UiTextId::recovery_title,
+         platform::UiTextId::recovery_invalid_slots, platform::UiTextId::inventory_title,
+         platform::UiTextId::equipment_title, platform::UiTextId::item_detail_title,
+         platform::UiTextId::passive_title, platform::UiTextId::passive_points,
+         platform::UiTextId::passive_close, platform::UiTextId::debug_ready,
+         platform::UiTextId::debug_unavailable, platform::UiTextId::unknown,
+     }};
+@@ -204,32 +227,32 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
+     ARPG_REQUIRE(std::strcmp(platform::ui_setting_action_name(
+         static_cast<arpg::settings::SettingAction>(255U)), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_skill_name(
+         static_cast<arpg::skills::ActiveSkillId>(255U)), u8"未知") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
+     std::size_t count{};
+     platform::visit_ui_text_catalog(&count_text, &count);
+-    ARPG_REQUIRE(count == 271U);
++    ARPG_REQUIRE(count == 282U);
+     return {};
+ }
+ 
+ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
+     std::size_t warmup_count{};
+     platform::visit_ui_text_catalog(&count_text, &warmup_count);
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
+         std::size_t count{};
+         platform::visit_ui_text_catalog(&count_text, &count);
+-        ARPG_REQUIRE(count == 271U);
++        ARPG_REQUIRE(count == 282U);
+         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+             arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {

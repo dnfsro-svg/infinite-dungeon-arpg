@@ -1,0 +1,240 @@
+# Review package: a12f56911499..0179b69d324c93542b1a7d4b3f8ddd8035205a62
+
+## Commits
+0179b69 fix: harden debug overlay text coverage
+
+## Files changed
+ src/platform/raylib/actor_renderer.cpp                  |  7 +++++--
+ src/platform/raylib/ui_text_catalog.cpp                 |  2 +-
+ tests/platform/shared_ui_font_tests.cpp                 |  2 ++
+ .../platform/task7_debug_overlay_source_self_test.cmake | 17 +++++++++++++++++
+ tests/platform/task7_debug_overlay_source_test.cmake    | 16 +++++++++++++++-
+ 5 files changed, 40 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/actor_renderer.cpp b/src/platform/raylib/actor_renderer.cpp
+index aa1f4e5..0b00443 100644
+--- a/src/platform/raylib/actor_renderer.cpp
++++ b/src/platform/raylib/actor_renderer.cpp
+@@ -1,20 +1,21 @@
+ #include "combat_renderer.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
+ #include "combat_view_math.hpp"
+ #include "hud_font.hpp"
+ #include "hud_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "material_animation.hpp"
+ #include "ui_text_renderer.hpp"
+ #include "ui_typography.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cmath>
+ 
+ namespace arpg::platform {
+@@ -425,22 +426,24 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
+             const MonsterBarPlan& bar = bar_visual.bars[index];
+             if (!bar.visible) continue;
+             draw_bar(x - bar_width * .5F,
+                 y + presentation.resource_bar_offset_y * scale
+                     - static_cast<float>(index) * 7.0F,
+                 bar_width, bar.ratio, hud_palette_color(bar.palette_id));
+         }
+     }
+     for (std::size_t index = 0U; index < affix_count; ++index) {
+         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
+-        draw_scene_label(hud_font, hud_font_ready,
+-            TextFormat("%s %s", badge.short_name, badge.tier_text),
++        std::array<char, 64U> affix_text{};
++        static_cast<void>(ui_utf8_format(affix_text.data(), affix_text.size(),
++            u8"%s %s", badge.short_name, badge.tier_text));
++        draw_scene_label(hud_font, hud_font_ready, affix_text.data(),
+             x - bar_width * .5F,
+             phase_y + static_cast<float>(text_style.phase_font_size + 2)
+                 + static_cast<float>(index)
+                     * static_cast<float>(text_style.affix_font_size + 2),
+             text_style.affix_font_size, to_color(badge.color));
+     }
+     if (presentation.role_label_visible) {
+         draw_scene_label(hud_font, hud_font_ready, visual.role_label,
+             x - bar_width * .5F, role_y, text_style.role_font_size,
+             Color{248, 246, 238, 255});
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index e48031b..35b8418 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -134,21 +134,21 @@ constexpr std::array<const char*, 67U> kUiDynamicGlyphCoverage{{
+     u8"火焰水流闪电混沌未知低危中危高危雷暴猎杀之焰混沌扩张迅捷追猎深渊壁垒深渊狂怒沉重脚步疲惫恢复生命献祭无规则"
+     "每180帧：预警45帧/半径0.8，造成15%最大生命闪电伤害"
+     "每240帧：预警45帧/半径1.0，灼烧180帧，每60帧造成10%最大生命伤害"
+     "每180帧扩张至半径1.0/2.3/3.6/4.9/6.2，每60帧造成8%最大生命混沌伤害"
+     "怪物：移动速度+15%，冷却时间×85%护甲×130%，护盾+30%伤害与攻击速度×145%"
+     "玩家：地面移动速度×85%入场资源及后续恢复×70%最大生命×55%"
+     "封闭可进入保存中异常已保存已恢复存档错误锁定战斗中等待下一波已清理等待离开切换房间处理撤退中"
+     "上方下方左方右方无方向Q：下潜进入下一层离开后再次触碰同一出口以放弃全部剩余奖励再次交互，放弃剩余奖励并下潜"
+     u8"辅助判定攻击受击待机移动预警生效恢复冷却已击败词缀ⅠⅡⅢ起手后摇结束空中无未知"
+     "根种子房间种子提交代次存档空闲洞口槽错误故障预算总计当前实体怪物投射物危险地下城事件溢出转发拒绝出口地面饱和房间索引"
+-    "战斗帧玩家状态高度命中停顿效果所有者活跃指令动作连段输入队列过期最近事件目标反馈丢弃震屏音频就绪不可用资源无效界面钳制截断战斗缺失通知绑定版本中文字体转场期间无战斗快照",
++    "战斗帧玩家状态高度命中停顿效果所有者活跃指令动作连段输入队列过期最近事件目标反馈丢弃震屏音频就绪不可用资源无效界面钳制截断战斗缺失通知绑定版本中文字体转场期间无战斗快照挥击冲击汇总是否",
+ }};
+ 
+ template <typename Id, std::size_t Count>
+ const char* value_or_unknown(const std::array<const char*, Count>& values,
+     Id id) noexcept {
+     const std::size_t index = static_cast<std::size_t>(id);
+     return index < values.size() ? values[index] : kUnknown;
+ }
+ 
+ template <std::size_t Count>
+diff --git a/tests/platform/shared_ui_font_tests.cpp b/tests/platform/shared_ui_font_tests.cpp
+index a0620d6..5f38563 100644
+--- a/tests/platform/shared_ui_font_tests.cpp
++++ b/tests/platform/shared_ui_font_tests.cpp
+@@ -51,20 +51,22 @@ arpg::test::Failure complete_catalog_is_covered_by_one_shared_plan() noexcept {
+     const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
+     CatalogCoverage coverage{&plan};
+     platform::visit_ui_text_catalog(&record_catalog_coverage, &coverage);
+ 
+     ARPG_REQUIRE(coverage.covered);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"最后一击"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"主动技能石槽"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"空格"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"…、"));
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"蜕变石"));
++    ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(
++        plan, u8"挥击 冲击汇总 是 否"));
+     ARPG_REQUIRE(plan.codepoint_count > 384U);
+     ARPG_REQUIRE(plan.codepoint_count <= platform::kUiGlyphCapacity);
+     ARPG_REQUIRE(platform::ui_glyph_plan_covers_text(plan, u8"混沌之眼"));
+     ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+         platform::death_overlay_font_plan(), u8"混沌之眼"));
+     ARPG_REQUIRE(platform::hud_font_plan().covers_required_text);
+     return {};
+ }
+ 
+ arpg::test::Failure plan_codepoints_are_unique() noexcept {
+diff --git a/tests/platform/task7_debug_overlay_source_self_test.cmake b/tests/platform/task7_debug_overlay_source_self_test.cmake
+index 97c5c95..399f38d 100644
+--- a/tests/platform/task7_debug_overlay_source_self_test.cmake
++++ b/tests/platform/task7_debug_overlay_source_self_test.cmake
+@@ -54,20 +54,28 @@ run_guard(pristine TRUE)
+ function(expect_mutation_rejected LABEL SOURCE_NAME NEEDLE REPLACEMENT)
+     set(_source "${_original_${SOURCE_NAME}}")
+     string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_source}")
+     if(_mutated STREQUAL _source)
+         message(FATAL_ERROR "Task 7 mutation anchor is missing: ${LABEL}")
+     endif()
+     set(_mutated_${SOURCE_NAME} "${_mutated}")
+     run_guard("${LABEL}" FALSE)
+ endfunction()
+ 
++expect_mutation_rejected(unsafe_affix_textformat ACTOR_SOURCE
++    "    for (std::size_t index = 0U; index < affix_count; ++index) {"
++    "    draw_scene_label(hud_font, hud_font_ready,
++        TextFormat(\"%s %s\", u8\"词缀\", u8\"Ⅰ\"),
++        x - bar_width * .5F, phase_y, text_style.affix_font_size,
++        Color{205, 218, 237, 255});
++    for (std::size_t index = 0U; index < affix_count; ++index) {")
++
+ expect_mutation_rejected(line_capacity OVERLAY_HEADER
+     "std::array<DebugOverlayLine, 12U> lines{};"
+     "std::array<DebugOverlayLine, 11U> lines{};")
+ expect_mutation_rejected(dynamic_format OVERLAY_SOURCE
+     "ui_utf8_format(view.lines[0].text.data(),"
+     "std::snprintf(view.lines[0].text.data(),")
+ expect_mutation_rejected(wrong_breakpoint OVERLAY_SOURCE
+     "screen_width < 1280 ? 1U : 2U"
+     "screen_width < 1279 ? 1U : 2U")
+ expect_mutation_rejected(translucent_backing OVERLAY_SOURCE
+@@ -85,20 +93,29 @@ expect_mutation_rejected(default_overlay_text OVERLAY_SOURCE
+             layout.spacing, view.lines[index].color);")
+ expect_mutation_rejected(dead_shared_font_decoy OVERLAY_SOURCE
+     "draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
+             {bounds.x, bounds.y + 2.0F}, layout.font_size,
+             layout.spacing, view.lines[index].color, 1);"
+     "if (false) {
+             draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
+                 {bounds.x, bounds.y + 2.0F}, layout.font_size,
+                 layout.spacing, view.lines[index].color, 1);
+         }")
++expect_mutation_rejected(compound_false_shared_font_decoy OVERLAY_SOURCE
++    "draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
++            {bounds.x, bounds.y + 2.0F}, layout.font_size,
++            layout.spacing, view.lines[index].color, 1);"
++    "if (shared_ui_font_ready && false) {
++            draw_crisp_ui_text(shared_ui_font, view.lines[index].text.data(),
++                {bounds.x, bounds.y + 2.0F}, layout.font_size,
++                layout.spacing, view.lines[index].color, 1);
++        }")
+ expect_mutation_rejected(unshared_overlay_call COMBAT_SOURCE
+     "debug_overlay_.draw(world_ui_font_, world_ui_font_ready_,"
+     "debug_overlay_.draw(Font{}, true,")
+ expect_mutation_rejected(hardcoded_world_label DEBUG_SOURCE
+     "debug_world_volume_label(DebugWorldVolumeKind::assist)"
+     "\"Assist\"")
+ expect_mutation_rejected(hardcoded_monster_role VIEW_MATH_SOURCE
+     "MonsterShapeId::bomber, ui_monster_name(id), MonsterWarningMode::none"
+     "MonsterShapeId::bomber, \"BOMBER\", MonsterWarningMode::none")
+ expect_mutation_rejected(english_monster_phase VIEW_MATH_SOURCE
+diff --git a/tests/platform/task7_debug_overlay_source_test.cmake b/tests/platform/task7_debug_overlay_source_test.cmake
+index 9cc99e9..73201d2 100644
+--- a/tests/platform/task7_debug_overlay_source_test.cmake
++++ b/tests/platform/task7_debug_overlay_source_test.cmake
+@@ -36,21 +36,23 @@ file(READ "${COMBAT_SOURCE}" _combat_source)
+ file(READ "${VIEW_MATH_SOURCE}" _view_math_source)
+ 
+ function(require_token TEXT TOKEN MESSAGE_TEXT)
+     string(FIND "${TEXT}" "${TOKEN}" _found)
+     if(_found EQUAL -1)
+         message(FATAL_ERROR "${MESSAGE_TEXT}: ${TOKEN}")
+     endif()
+ endfunction()
+ 
+ function(reject_dead_branch CODE MESSAGE_TEXT)
+-    if("${CODE}" MATCHES "if[ ]*\\([ ]*(false|0)[ ]*\\)")
++    if("${CODE}" MATCHES "if[ ]*\\([ ]*(false|0)[ ]*\\)"
++            OR "${CODE}" MATCHES
++                "if[ ]*\\([^\\)]*&&[ ]*false([^A-Za-z0-9_]|$)")
+         message(FATAL_ERROR "${MESSAGE_TEXT} cannot live in a dead branch")
+     endif()
+ endfunction()
+ 
+ normalize_cpp_source("${_overlay_header}" _overlay_header_normalized)
+ string(REGEX REPLACE "[ \t\r\n]+" "" _overlay_header_compact
+     "${_overlay_header_normalized}")
+ require_token("${_overlay_header_compact}"
+     "std::array<char,192U>text{};"
+     "Task 7 overlay line must own a fixed UTF-8 buffer")
+@@ -182,14 +184,26 @@ endforeach()
+ reject_dead_branch("${_tier_code}" "Task 7 affix tier mapping")
+ 
+ extract_cpp_function_body("${_actor_source}"
+     "void draw_effects(" _effects_body _effects_code)
+ require_token("${_effects_body}" "u8\"已击败\""
+     "Task 7 defeat marker must be Chinese")
+ extract_cpp_function_body("${_actor_source}"
+     "void draw_monster_presentation(" _presentation_body _presentation_code)
+ require_token("${_presentation_body}" "monster_phase_label(monster.ai_phase)"
+     "Task 7 monster presentation must consume the Chinese phase mapping")
++foreach(_token IN ITEMS
++        "std::array<char, 64U> affix_text{}"
++        "ui_utf8_format(affix_text.data(), affix_text.size(), u8\"%s %s\""
++        "draw_scene_label(hud_font, hud_font_ready, affix_text.data()")
++    require_token("${_presentation_body}" "${_token}"
++        "Task 7 affix labels must use a fixed UTF-8 stack buffer")
++endforeach()
++string(FIND "${_presentation_code}" "TextFormat(" _affix_textformat)
++if(NOT _affix_textformat EQUAL -1)
++    message(FATAL_ERROR
++        "Task 7 monster presentation must not use TextFormat")
++endif()
+ reject_dead_branch("${_effects_code}" "Task 7 defeat marker")
+ reject_dead_branch("${_presentation_code}" "Task 7 monster presentation")
+ 
+ message(STATUS "Task 7 debug overlay source guard accepted")

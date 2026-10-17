@@ -1,0 +1,1216 @@
+# Review package: d55e7de..HEAD
+
+## Commits
+11a2650 fix: preserve loot suction pickup origins
+138668d feat: render loot flying into backpack
+
+## Files changed
+ src/dungeon/dungeon_transition.cpp              |  22 +++++
+ src/dungeon/dungeon_types.hpp                   |   4 +
+ src/platform/raylib/combat_renderer.cpp         |  63 ++++++++++++
+ src/platform/raylib/combat_renderer.hpp         |   3 +
+ src/platform/raylib/dungeon_runtime.cpp         |   3 +-
+ src/platform/raylib/dungeon_runtime.hpp         |   2 +
+ src/platform/raylib/ground_loot_view.cpp        |   5 +
+ src/platform/raylib/ground_loot_view.hpp        |   2 +
+ src/platform/raylib/loot_pickup_feedback.cpp    |  10 +-
+ src/platform/raylib/loot_suction_animation.cpp  |  79 +++++++++++++--
+ src/platform/raylib/loot_suction_animation.hpp  |   1 +
+ tests/dungeon/dungeon_stress_tests.cpp          |  10 ++
+ tests/platform/dungeon_runtime_tests.cpp        |  20 +++-
+ tests/platform/hud_host_integration_tests.cpp   |   4 +
+ tests/platform/loot_pickup_feedback_tests.cpp   |   2 +
+ tests/platform/loot_suction_animation_tests.cpp | 126 ++++++++++++++++++++++++
+ tests/platform/platform_test_main.cpp           |  20 +++-
+ 17 files changed, 365 insertions(+), 11 deletions(-)
+
+## Diff
+diff --git a/src/dungeon/dungeon_transition.cpp b/src/dungeon/dungeon_transition.cpp
+index e07a22e..f56ab90 100644
+--- a/src/dungeon/dungeon_transition.cpp
++++ b/src/dungeon/dungeon_transition.cpp
+@@ -1913,20 +1913,42 @@ void DungeonSession::commit_pending_save(
+         published_material_receipt.valid = true;
+         published_material_receipt.room_vacuum = clear_commit;
+         published_material_receipt.commit_generation =
+             pending_save_->next_state.commit_generation;
+         for (std::size_t index = 0U;
+                 index < published_material_receipt.counts.size(); ++index) {
+             published_material_receipt.counts[index] =
+                 pending_save_->next_state.item_ownership.materials[index]
+                 - stable_state_.item_ownership.materials[index];
+         }
++        for (std::uint16_t ordinal = 0U;
++                ordinal < ground_materials_.size(); ++ordinal) {
++            const GroundMaterial& ground = ground_materials_[ordinal];
++            if (!ground.active || (material_pickup_commit
++                    && ordinal != pickup_ordinal)) {
++                continue;
++            }
++            const std::size_t material_index = items::material_index(
++                ground.material);
++            if (material_index >= published_material_receipt.counts.size()
++                    || published_material_receipt.counts[material_index] == 0U) {
++                continue;
++            }
++            const std::uint16_t bit = static_cast<std::uint16_t>(
++                std::uint16_t{1U} << material_index);
++            if ((published_material_receipt.origin_valid_mask & bit) != 0U) {
++                continue;
++            }
++            published_material_receipt.representative_origins[material_index] =
++                ground.position;
++            published_material_receipt.origin_valid_mask |= bit;
++        }
+     }
+     if (death_commit && !can_emit(1U)) {
+         enter_fault(DungeonFault::event_overflow);
+         return;
+     }
+ 
+     if ((pickup_commit || claim_commit)
+             && !room_drop_state_.can_mark_equipment_claimed(
+                 pickup_ordinal)) {
+         enter_fault(DungeonFault::save_receipt_mismatch);
+diff --git a/src/dungeon/dungeon_types.hpp b/src/dungeon/dungeon_types.hpp
+index e3ebb0a..1d7549e 100644
+--- a/src/dungeon/dungeon_types.hpp
++++ b/src/dungeon/dungeon_types.hpp
+@@ -188,22 +188,26 @@ struct DeathSnapshot final {
+     bool saving{};
+     bool can_continue{};
+     bool continue_failed{};
+ };
+ 
+ struct MaterialPickupReceipt final {
+     bool valid{};
+     bool room_vacuum{};
+     std::uint64_t commit_generation{};
+     std::array<std::uint64_t, items::kMaterialCount> counts{};
++    std::array<combat::Vec3, items::kMaterialCount> representative_origins{};
++    std::uint16_t origin_valid_mask{};
+ };
+ 
++static_assert(items::kMaterialCount <= 16U);
++
+ struct ReinforcementReceipt final {
+     bool valid{};
+     bool coupon{};
+     bool success{};
+     bool destroyed{};
+     std::uint64_t commit_generation{};
+     std::uint64_t item_id{};
+     std::uint32_t before{};
+     std::uint32_t after{};
+     std::uint16_t success_chance_bp{};
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 7b1465c..4c2a0f9 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -181,20 +181,61 @@ MaterialResidencyRequest world_material_residency_request_impl(
+     const std::size_t monster_count = (std::min)(
+         static_cast<std::size_t>(world.combat.monster_count),
+         world.combat.monsters.size());
+     for (std::size_t index = 0U; index < monster_count; ++index) {
+         const combat::MonsterSnapshot& monster = world.combat.monsters[index];
+         if (monster.active) require_world_monster_atlas(request, monster.id);
+     }
+     return request;
+ }
+ 
++Color raylib_color(Rgba8 color) noexcept {
++    return {color.r, color.g, color.b, color.a};
++}
++
++void draw_loot_suction(const LootSuctionPlan& plan,
++    const MaterialPack& material_pack) noexcept {
++    for (std::size_t index{}; index < plan.count; ++index) {
++        const LootSuctionFlight& flight = plan.flights[index];
++        const Vector2 center{flight.center.x, flight.center.y};
++        const Color color = raylib_color(flight.color);
++        if (flight.equipment) {
++            const bool halo_drawn = material_pack.draw(flight.rarity_sprite,
++                center, false, 0.38F);
++            const bool item_drawn = material_pack.draw(flight.sprite,
++                center, false, 0.28F, color);
++            if (!halo_drawn) {
++                DrawCircleLines(static_cast<int>(center.x),
++                    static_cast<int>(center.y), 13.0F, color);
++            }
++            if (!item_drawn) DrawRectangleV(
++                {center.x - 4.0F, center.y - 4.0F}, {8.0F, 8.0F}, color);
++            continue;
++        }
++
++        if (!material_pack.draw(flight.sprite, center, false, 0.24F, color)) {
++            DrawCircleV(center, 5.0F, color);
++        }
++        DrawCircleLines(static_cast<int>(center.x),
++            static_cast<int>(center.y), 7.0F, Fade(color, 0.85F));
++    }
++
++    if (plan.destination_pulse <= 0.0F) return;
++    const Vector2 destination{plan.destination.x, plan.destination.y};
++    const float pulse = std::clamp(plan.destination_pulse, 0.0F, 1.0F);
++    DrawCircleV(destination, 7.0F + 8.0F * (1.0F - pulse),
++        Fade(RAYWHITE, 0.18F * pulse));
++    DrawCircleLines(static_cast<int>(destination.x),
++        static_cast<int>(destination.y), 10.0F + 10.0F * (1.0F - pulse),
++        Fade(RAYWHITE, 0.9F * pulse));
++}
++
+ }  // namespace
+ 
+ MaterialResidencyRequest world_material_residency_request(
+     const dungeon::DungeonRenderSnapshot& world,
+     const skills::SkillLoadoutState& skill_loadout) noexcept {
+     return world_material_residency_request_impl(world, skill_loadout);
+ }
+ 
+ MaterialEcology material_ecology(
+     dungeon::DungeonElement ecology) noexcept {
+@@ -346,20 +387,21 @@ void CombatRenderer::consume_event(const combat::CombatEvent& event) noexcept {
+ 
+ void CombatRenderer::consume_dungeon_event(
+     const dungeon::DungeonEvent& event) noexcept {
+     transition_ = transition_after_dungeon_event(transition_, event.kind);
+ }
+ 
+ void CombatRenderer::clear_combat_transients() noexcept {
+     last_event_ = combat::CombatEvent{};
+     has_last_event_ = false;
+     monster_presenter_.reset();
++    loot_suction_.clear();
+ }
+ 
+ void CombatRenderer::set_loot_filter_mode(
+     settings::LootFilterMode mode) noexcept {
+     loot_filter_mode_ = mode;
+ }
+ 
+ void CombatRenderer::update(float frame_seconds) noexcept {
+     transition_ = advance_transition(transition_, frame_seconds);
+ }
+@@ -369,20 +411,35 @@ void CombatRenderer::publish_passive_tree_blocked() noexcept {
+ }
+ 
+ void CombatRenderer::observe_hud(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& control_hints,
+     float frame_seconds,
+     bool paused,
+     const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
++    const bool room_changed = previous.room_index != current.room_index
++        || previous.room_instance_generation != current.room_instance_generation;
++    const bool unsafe_to_play = room_changed
++        || runtime_status.indicator == SaveIndicator::error
++        || runtime_status.recovery_required || runtime_status.faulted;
++    if (unsafe_to_play) {
++        loot_suction_.clear();
++        loot_suction_.observe(current, current, runtime_status);
++    } else {
++        loot_suction_.update(frame_seconds, paused);
++        // The renderer may first observe the exact frame that commits a
++        // pickup.  Attach a receipt-free baseline before processing it.
++        loot_suction_.observe(previous, previous, {});
++        loot_suction_.observe(previous, current, runtime_status);
++    }
+     const LootPickupFeedback pickup_feedback =
+         loot_pickup_feedback_.observe(runtime_status);
+     if (pickup_feedback.ready) {
+         hud_notices_.publish_loot_pickup(
+             pickup_feedback.text, pickup_feedback.abyss);
+     }
+     material_pickup_feedback_.update(frame_seconds, paused);
+     const MaterialPickupFeedback material_feedback =
+         material_pickup_feedback_.observe(current);
+     if (material_feedback.ready) {
+@@ -446,20 +503,24 @@ HudStaticFormattingDiagnostics
+ CombatRenderer::hud_static_formatting_diagnostics() const noexcept {
+     return hud_projector_.static_formatting_diagnostics();
+ }
+ 
+ std::uint64_t CombatRenderer::hud_presented_frame_count(
+     HudPresentedFrame frame) const noexcept {
+     const auto index = hud_presented_frame_index(frame);
+     return index.has_value() ? hud_presented_frame_counts_[*index] : 0U;
+ }
+ 
++std::size_t CombatRenderer::loot_suction_active_count() const noexcept {
++    return loot_suction_.active_count();
++}
++
+ const ActiveSkillHudModel& CombatRenderer::active_skill_hud_model()
+     const noexcept {
+     return active_skill_hud_model_;
+ }
+ 
+ Font CombatRenderer::hud_font() const noexcept {
+     return hud_renderer_.hud_font();
+ }
+ 
+ bool CombatRenderer::hud_font_ready() const noexcept {
+@@ -538,20 +599,22 @@ GroundLootView CombatRenderer::draw(
+                 draw_debug, feedback);
+             if (world.has_combat) {
+                 const bool base_player_drawn =
+                     active_skill_draw_status_.base_player_drawn;
+                 active_skill_draw_status_ = active_skill_renderer_.draw_world(
+                     active_skill_plan, material_pack_,
+                     camera, width, height);
+                 active_skill_draw_status_.base_player_drawn =
+                     base_player_drawn;
+             }
++            draw_loot_suction(loot_suction_.build_plan(camera,
++                interpolated_player, width, height), material_pack_);
+             break;
+         case CombatRenderStage::ground_loot_labels:
+             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
+             hud_renderer_.draw_material_loot(render_plan.material_loot);
+             break;
+         case CombatRenderStage::normal_hud:
+             draw_hud();
+             active_skill_renderer_.draw_hud(active_skill_hud_model_,
+                 active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
+                 hud_renderer_.hud_font(), hud_renderer_.font_ready(),
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 265fadf..caff56b 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -3,20 +3,21 @@
+ #include "active_skill_renderer.hpp"
+ #include "active_skill_view.hpp"
+ #include "combat_feedback.hpp"
+ #include "death_overlay_renderer.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "ground_loot_view.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_renderer.hpp"
+ #include "loot_pickup_feedback.hpp"
++#include "loot_suction_animation.hpp"
+ #include "material_loot_view.hpp"
+ #include "material_pack.hpp"
+ #include "monster_material_presenter.hpp"
+ 
+ #include <cstdint>
+ #include <array>
+ #include <optional>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+@@ -161,20 +162,21 @@ public:
+         const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
+         noexcept;
+     [[nodiscard]] const HudViewModel& hud_model() const noexcept;
+     [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
+     [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;
+     [[nodiscard]] std::uint64_t hud_observation_count() const noexcept;
+     [[nodiscard]] HudStaticFormattingDiagnostics
+         hud_static_formatting_diagnostics() const noexcept;
+     [[nodiscard]] std::uint64_t hud_presented_frame_count(
+         HudPresentedFrame) const noexcept;
++    [[nodiscard]] std::size_t loot_suction_active_count() const noexcept;
+     [[nodiscard]] const ActiveSkillHudModel& active_skill_hud_model()
+         const noexcept;
+     [[nodiscard]] Font hud_font() const noexcept;
+     [[nodiscard]] bool hud_font_ready() const noexcept;
+     [[nodiscard]] GroundLootView draw(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current_hud,
+         const dungeon::DungeonRenderSnapshot& world,
+         const CombatCameraView& camera,
+         const DungeonRenderStatus& runtime_status,
+@@ -215,20 +217,21 @@ private:
+     combat::CombatEvent last_event_{};
+     bool has_last_event_{};
+     TransitionVisualState transition_{};
+     DeathOverlayRenderer death_overlay_{};
+     HudRenderer hud_renderer_{};
+     ActiveSkillRenderer active_skill_renderer_{};
+     DebugOverlayRenderer debug_overlay_{};
+     HudNoticeState hud_notices_{};
+     LootPickupFeedbackState loot_pickup_feedback_{};
+     MaterialPickupFeedbackState material_pickup_feedback_{};
++    LootSuctionState loot_suction_{};
+     MaterialPack material_pack_{};
+     MonsterMaterialPresenter monster_presenter_{};
+     std::array<MonsterMaterialDrawRuntimeStatus,
+         static_cast<std::size_t>(combat::MonsterId::count)>
+         monster_material_draw_statuses_{};
+     RoomBackgroundDrawRuntimeStatus room_background_draw_status_{};
+     ActiveSkillDrawRuntimeStatus active_skill_draw_status_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
+     ActiveSkillHudModel active_skill_hud_model_{};
+diff --git a/src/platform/raylib/dungeon_runtime.cpp b/src/platform/raylib/dungeon_runtime.cpp
+index 6c6d1ac..0b0cf54 100644
+--- a/src/platform/raylib/dungeon_runtime.cpp
++++ b/src/platform/raylib/dungeon_runtime.cpp
+@@ -41,21 +41,22 @@ struct PickupCandidate final {
+             && index < snapshot.ground_items.size(); ++index) {
+         const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+         if (item.ordinal != ordinal || item.item_id == 0U) continue;
+         const bool source_matches =
+             (kind == dungeon::PendingSaveKind::loot_pickup
+                 && item.source == dungeon::GroundItemSource::monster_drop)
+             || (kind == dungeon::PendingSaveKind::abyss_reward_claim
+                 && item.source == dungeon::GroundItemSource::abyss_chest);
+         if (!source_matches) return std::nullopt;
+         return PickupCandidate{{true, expected_generation, item.item_id,
+-            item.base_id, item.item_level, item.rarity, item.source}, ordinal};
++            item.base_id, item.item_level, item.rarity, item.source,
++            item.position, item.slot}, ordinal};
+     }
+     return std::nullopt;
+ }
+ 
+ [[nodiscard]] std::optional<PickupCandidate> capture_pickup_candidate(
+     const dungeon::DungeonSession& session,
+     const dungeon::PendingSave& pending) noexcept {
+     const dungeon::DungeonSnapshot snapshot = session.snapshot();
+     return pickup_candidate(snapshot, pending.kind, pending.pickup_ordinal,
+         pending.expected_generation);
+diff --git a/src/platform/raylib/dungeon_runtime.hpp b/src/platform/raylib/dungeon_runtime.hpp
+index acd68d2..1f8f77f 100644
+--- a/src/platform/raylib/dungeon_runtime.hpp
++++ b/src/platform/raylib/dungeon_runtime.hpp
+@@ -45,20 +45,22 @@ struct DungeonRuntimeConfig final {
+ };
+ 
+ struct LootPickupReceipt final {
+     bool valid{};
+     std::uint64_t commit_generation{};
+     std::uint64_t item_id{};
+     std::uint8_t base_id{};
+     std::uint8_t item_level{};
+     items::ItemRarity rarity{items::ItemRarity::normal};
+     dungeon::GroundItemSource source{dungeon::GroundItemSource::monster_drop};
++    combat::Vec3 position{};
++    items::ItemSlot slot{items::ItemSlot::count};
+ };
+ 
+ struct DungeonRenderStatus final {
+     SaveIndicator indicator{SaveIndicator::none};
+     persistence::SaveSlot active_slot{persistence::SaveSlot::none};
+     persistence::SaveError error{persistence::SaveError::none};
+     bool recovery_required{};
+     bool faulted{};
+     LootPickupReceipt loot_pickup{};
+ };
+diff --git a/src/platform/raylib/ground_loot_view.cpp b/src/platform/raylib/ground_loot_view.cpp
+index e2f2a8d..3aecbf5 100644
+--- a/src/platform/raylib/ground_loot_view.cpp
++++ b/src/platform/raylib/ground_loot_view.cpp
+@@ -233,20 +233,25 @@ MaterialSpriteId ground_loot_rarity_sprite(
+     items::ItemRarity rarity, bool abyss) noexcept {
+     if (abyss) return MaterialSpriteId::loot_rarity_abyss;
+     switch (rarity) {
+     case items::ItemRarity::normal: return MaterialSpriteId::loot_rarity_normal;
+     case items::ItemRarity::magic: return MaterialSpriteId::loot_rarity_magic;
+     case items::ItemRarity::rare: return MaterialSpriteId::loot_rarity_rare;
+     }
+     return MaterialSpriteId::missing;
+ }
+ 
++Rgba8 ground_loot_rarity_color(
++    items::ItemRarity rarity, bool abyss) noexcept {
++    return abyss ? kAbyssBorderColor : rarity_color(rarity);
++}
++
+ GroundLootView build_ground_loot_view(
+     const dungeon::DungeonRenderSnapshot& snapshot,
+     settings::LootFilterMode mode,
+     const CombatCameraView& camera,
+     float width,
+     float height) noexcept {
+     LootLabelObstacleSet obstacles{};
+     return build_ground_loot_view(
+         snapshot, mode, camera, width, height, obstacles);
+ }
+diff --git a/src/platform/raylib/ground_loot_view.hpp b/src/platform/raylib/ground_loot_view.hpp
+index 1dcb147..c37f175 100644
+--- a/src/platform/raylib/ground_loot_view.hpp
++++ b/src/platform/raylib/ground_loot_view.hpp
+@@ -68,20 +68,22 @@ struct GroundLootView final {
+ };
+ 
+ [[nodiscard]] bool ground_loot_visible(
+     const dungeon::GroundItemSnapshot& item,
+     settings::LootFilterMode mode) noexcept;
+ 
+ [[nodiscard]] MaterialSpriteId ground_loot_item_sprite(
+     items::ItemSlot slot) noexcept;
+ [[nodiscard]] MaterialSpriteId ground_loot_rarity_sprite(
+     items::ItemRarity rarity, bool abyss) noexcept;
++[[nodiscard]] Rgba8 ground_loot_rarity_color(
++    items::ItemRarity rarity, bool abyss) noexcept;
+ 
+ [[nodiscard]] GroundLootView build_ground_loot_view(
+     const dungeon::DungeonRenderSnapshot& snapshot,
+     settings::LootFilterMode mode,
+     const CombatCameraView& camera,
+     float width,
+     float height) noexcept;
+ [[nodiscard]] GroundLootView build_ground_loot_view(
+     const dungeon::DungeonRenderSnapshot& snapshot,
+     settings::LootFilterMode mode,
+diff --git a/src/platform/raylib/loot_pickup_feedback.cpp b/src/platform/raylib/loot_pickup_feedback.cpp
+index 99cb4a4..ea09b43 100644
+--- a/src/platform/raylib/loot_pickup_feedback.cpp
++++ b/src/platform/raylib/loot_pickup_feedback.cpp
+@@ -1,45 +1,53 @@
+ #include "loot_pickup_feedback.hpp"
+ 
+ #include "items/item_catalog.hpp"
+ 
++#include <cmath>
+ #include <cstdio>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ [[nodiscard]] const char* rarity_name(items::ItemRarity rarity) noexcept {
+     switch (rarity) {
+     case items::ItemRarity::normal: return "普通";
+     case items::ItemRarity::magic: return "魔法";
+     case items::ItemRarity::rare: return "稀有";
+     }
+     return nullptr;
+ }
+ 
+ [[nodiscard]] bool valid_receipt(const LootPickupReceipt& receipt) noexcept {
+     return receipt.valid && receipt.commit_generation != 0U
+         && receipt.item_id != 0U && receipt.item_level != 0U
+         && receipt.item_level <= 100U
++        && std::isfinite(receipt.position.x) && std::isfinite(receipt.position.y)
++        && std::isfinite(receipt.position.z)
++        && static_cast<std::size_t>(receipt.slot)
++            < static_cast<std::size_t>(items::ItemSlot::count)
+         && rarity_name(receipt.rarity) != nullptr
+         && items::base_definition(receipt.base_id) != nullptr
+         && (receipt.source == dungeon::GroundItemSource::monster_drop
+             || receipt.source == dungeon::GroundItemSource::abyss_chest);
+ }
+ 
+ [[nodiscard]] bool strictly_empty_receipt(
+     const LootPickupReceipt& receipt) noexcept {
+     return !receipt.valid && receipt.commit_generation == 0U
+         && receipt.item_id == 0U && receipt.base_id == 0U
+         && receipt.item_level == 0U
+         && receipt.rarity == items::ItemRarity::normal
+-        && receipt.source == dungeon::GroundItemSource::monster_drop;
++        && receipt.source == dungeon::GroundItemSource::monster_drop
++        && receipt.position.x == 0.0F && receipt.position.y == 0.0F
++        && receipt.position.z == 0.0F
++        && receipt.slot == items::ItemSlot::count;
+ }
+ 
+ [[nodiscard]] LootPickupFeedback format_feedback(
+     const LootPickupReceipt& receipt) noexcept {
+     LootPickupFeedback feedback{};
+     const items::BaseDefinition* const base =
+         items::base_definition(receipt.base_id);
+     const int written = std::snprintf(feedback.text.bytes.data(),
+         feedback.text.bytes.size(), u8"已拾取：%s %.*s · i%u",
+         rarity_name(receipt.rarity), static_cast<int>(base->name.size()),
+diff --git a/src/platform/raylib/loot_suction_animation.cpp b/src/platform/raylib/loot_suction_animation.cpp
+index 6fa7cee..a2601a2 100644
+--- a/src/platform/raylib/loot_suction_animation.cpp
++++ b/src/platform/raylib/loot_suction_animation.cpp
+@@ -45,20 +45,69 @@ constexpr float kPi = 3.14159265358979323846F;
+     std::uint16_t ordinal) noexcept {
+     const std::size_t count = (std::min)(
+         static_cast<std::size_t>(snapshot.ground_material_count),
+         snapshot.ground_materials.size());
+     for (std::size_t index{}; index < count; ++index) {
+         if (snapshot.ground_materials[index].ordinal == ordinal) return true;
+     }
+     return false;
+ }
+ 
++[[nodiscard]] bool contains_material_origin(
++    const dungeon::DungeonSnapshot& snapshot, items::MaterialId material,
++    combat::Vec3 position) noexcept {
++    const std::size_t count = (std::min)(
++        static_cast<std::size_t>(snapshot.ground_material_count),
++        snapshot.ground_materials.size());
++    for (std::size_t index{}; index < count; ++index) {
++        const dungeon::GroundMaterialSnapshot& candidate =
++            snapshot.ground_materials[index];
++        if (candidate.material == material && candidate.position.x == position.x
++                && candidate.position.y == position.y
++                && candidate.position.z == position.z) {
++            return true;
++        }
++    }
++    return false;
++}
++
++[[nodiscard]] bool valid_receipt_origin(
++    const LootPickupReceipt& receipt) noexcept {
++    return std::isfinite(receipt.position.x) && std::isfinite(receipt.position.y)
++        && std::isfinite(receipt.position.z)
++        && static_cast<std::size_t>(receipt.slot)
++            < static_cast<std::size_t>(items::ItemSlot::count);
++}
++
++[[nodiscard]] bool material_origin_valid(
++    const dungeon::MaterialPickupReceipt& receipt,
++    std::size_t material_index) noexcept {
++    return material_index < receipt.representative_origins.size()
++        && (receipt.origin_valid_mask & (std::uint16_t{1U} << material_index))
++            != 0U;
++}
++
++[[nodiscard]] LootSuctionFlight equipment_flight(
++    combat::Vec3 position, items::ItemSlot slot, items::ItemRarity rarity,
++    dungeon::GroundItemSource source) noexcept {
++    const bool abyss = source == dungeon::GroundItemSource::abyss_chest;
++    return {position, {}, ground_loot_item_sprite(slot),
++        ground_loot_rarity_sprite(rarity, abyss),
++        ground_loot_rarity_color(rarity, abyss), 0.0F, true, true};
++}
++
++[[nodiscard]] LootSuctionFlight material_flight(
++    combat::Vec3 position, items::MaterialId material) noexcept {
++    return {position, {}, material_loot_sprite(material),
++        MaterialSpriteId::missing, material_color(material), 0.0F, true, false};
++}
++
+ [[nodiscard]] bool same_room(const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current) noexcept {
+     return previous.room_index == current.room_index
+         && previous.room_instance_generation == current.room_instance_generation;
+ }
+ 
+ [[nodiscard]] float smoothstep(float value) noexcept {
+     const float clamped = std::clamp(value, 0.0F, 1.0F);
+     return clamped * clamped * (3.0F - 2.0F * clamped);
+ }
+@@ -103,51 +152,67 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
+     }
+ 
+     if (equipment_receipt.valid
+             && equipment_receipt.commit_generation > equipment_generation_) {
+         equipment_generation_ = equipment_receipt.commit_generation;
+         equipment_item_id_ = equipment_receipt.item_id;
+         const dungeon::GroundItemSnapshot* const item = find_equipment(
+             previous, equipment_receipt.item_id);
+         if (item != nullptr && !contains_equipment(current,
+                 equipment_receipt.item_id)) {
+-            reserve_flight(flights_) = {item->position, {},
+-                ground_loot_item_sprite(item->slot),
+-                {255U, 255U, 255U, 255U}, 0.0F, true, true};
++            reserve_flight(flights_) = equipment_flight(item->position,
++                item->slot, item->rarity, item->source);
++        } else if (!contains_equipment(current, equipment_receipt.item_id)
++                && valid_receipt_origin(equipment_receipt)) {
++            reserve_flight(flights_) = equipment_flight(
++                equipment_receipt.position, equipment_receipt.slot,
++                equipment_receipt.rarity, equipment_receipt.source);
+         }
+     }
+ 
+     if (!material_receipt.valid
+             || material_receipt.commit_generation <= material_generation_) {
+         return;
+     }
+     material_generation_ = material_receipt.commit_generation;
+     if (!same_room(previous, current)) return;
+ 
+     std::array<std::uint64_t, items::kMaterialCount> remaining =
+         material_receipt.counts;
++    std::array<bool, items::kMaterialCount> emitted{};
+     const std::size_t count = (std::min)(
+         static_cast<std::size_t>(previous.ground_material_count),
+         previous.ground_materials.size());
+     for (std::size_t index{}; index < count; ++index) {
+         const dungeon::GroundMaterialSnapshot& material =
+             previous.ground_materials[index];
+         const std::size_t material_index = items::material_index(material.material);
+         if (material_index >= remaining.size() || remaining[material_index] == 0U
+-                || contains_material(current, material.ordinal)) {
++                || contains_material(current, material.ordinal)
++                || (material_receipt.room_vacuum && emitted[material_index])) {
+             continue;
+         }
+-        reserve_flight(flights_) = {material.position, {},
+-            material_loot_sprite(material.material), material_color(material.material),
+-            0.0F, true, false};
++        reserve_flight(flights_) = material_flight(material.position,
++            material.material);
++        emitted[material_index] = true;
+         --remaining[material_index];
+     }
++    for (std::size_t index{}; index < remaining.size(); ++index) {
++        if (remaining[index] == 0U || emitted[index]
++                || !material_origin_valid(material_receipt, index)) {
++            continue;
++        }
++        const items::MaterialId material = static_cast<items::MaterialId>(index);
++        const combat::Vec3 origin = material_receipt.representative_origins[index];
++        if (contains_material_origin(current, material, origin)) continue;
++        reserve_flight(flights_) = material_flight(origin, material);
++    }
+ }
+ 
+ void LootSuctionState::update(float frame_seconds, bool paused) noexcept {
+     if (paused || frame_seconds <= 0.0F) return;
+     destination_pulse_seconds_ = (std::max)(0.0F,
+         destination_pulse_seconds_ - frame_seconds);
+     for (LootSuctionFlight& flight : flights_) {
+         if (!flight.active) continue;
+         flight.elapsed_seconds += frame_seconds;
+         if (flight.elapsed_seconds < kFlightDurationSeconds) continue;
+diff --git a/src/platform/raylib/loot_suction_animation.hpp b/src/platform/raylib/loot_suction_animation.hpp
+index 4f23aeb..5c480e3 100644
+--- a/src/platform/raylib/loot_suction_animation.hpp
++++ b/src/platform/raylib/loot_suction_animation.hpp
+@@ -13,20 +13,21 @@ namespace arpg::platform {
+ 
+ struct LootSuctionPoint final {
+     float x{};
+     float y{};
+ };
+ 
+ struct LootSuctionFlight final {
+     combat::Vec3 world_position{};
+     LootSuctionPoint center{};
+     MaterialSpriteId sprite{MaterialSpriteId::missing};
++    MaterialSpriteId rarity_sprite{MaterialSpriteId::missing};
+     Rgba8 color{255U, 255U, 255U, 255U};
+     float elapsed_seconds{};
+     bool active{};
+     bool equipment{};
+ };
+ 
+ struct LootSuctionPlan final {
+     std::array<LootSuctionFlight, 12U> flights{};
+     LootSuctionPoint destination{};
+     float destination_pulse{};
+diff --git a/tests/dungeon/dungeon_stress_tests.cpp b/tests/dungeon/dungeon_stress_tests.cpp
+index 95cd3d3..14c770a 100644
+--- a/tests/dungeon/dungeon_stress_tests.cpp
++++ b/tests/dungeon/dungeon_stress_tests.cpp
+@@ -296,20 +296,22 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
+             || lhs.ground_health_potion_count
+                 != rhs.ground_health_potion_count
+             || lhs.material_pickup_receipt.valid
+                 != rhs.material_pickup_receipt.valid
+             || lhs.material_pickup_receipt.room_vacuum
+                 != rhs.material_pickup_receipt.room_vacuum
+             || lhs.material_pickup_receipt.commit_generation
+                 != rhs.material_pickup_receipt.commit_generation
+             || lhs.material_pickup_receipt.counts
+                 != rhs.material_pickup_receipt.counts
++            || lhs.material_pickup_receipt.origin_valid_mask
++                != rhs.material_pickup_receipt.origin_valid_mask
+             || lhs.health_potion_pickup_receipt.valid
+                 != rhs.health_potion_pickup_receipt.valid
+             || lhs.health_potion_pickup_receipt.room_clear
+                 != rhs.health_potion_pickup_receipt.room_clear
+             || lhs.health_potion_pickup_receipt.consumed_count
+                 != rhs.health_potion_pickup_receipt.consumed_count
+             || lhs.health_potion_pickup_receipt.commit_generation
+                 != rhs.health_potion_pickup_receipt.commit_generation
+             || lhs.health_potion_pickup_receipt.restored_hp
+                 != rhs.health_potion_pickup_receipt.restored_hp
+@@ -350,20 +352,28 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
+             return false;
+         }
+     }
+     for (std::size_t index = 0U;
+             index < lhs.ground_materials.size(); ++index) {
+         if (!same_ground_material(
+                 lhs.ground_materials[index], rhs.ground_materials[index])) {
+             return false;
+         }
+     }
++    for (std::size_t index = 0U;
++            index < lhs.material_pickup_receipt.representative_origins.size();
++            ++index) {
++        if (!same_vec(lhs.material_pickup_receipt.representative_origins[index],
++                rhs.material_pickup_receipt.representative_origins[index])) {
++            return false;
++        }
++    }
+     for (std::size_t index = 0U;
+             index < lhs.ground_health_potion_count; ++index) {
+         if (!same_ground_health_potion(
+                 lhs.ground_health_potions[index],
+                 rhs.ground_health_potions[index])) {
+             return false;
+         }
+     }
+     return !lhs.combat.has_value() || same_combat(*lhs.combat, *rhs.combat);
+ }
+diff --git a/tests/platform/dungeon_runtime_tests.cpp b/tests/platform/dungeon_runtime_tests.cpp
+index 36b30c1..6bc3263 100644
+--- a/tests/platform/dungeon_runtime_tests.cpp
++++ b/tests/platform/dungeon_runtime_tests.cpp
+@@ -1075,21 +1075,25 @@ bool install_pickup_if_needed(platform::DungeonRuntime& runtime,
+ }
+ 
+ bool same_receipt(const platform::LootPickupReceipt& left,
+     const platform::LootPickupReceipt& right) noexcept {
+     return left.valid == right.valid
+         && left.commit_generation == right.commit_generation
+         && left.item_id == right.item_id
+         && left.base_id == right.base_id
+         && left.item_level == right.item_level
+         && left.rarity == right.rarity
+-        && left.source == right.source;
++        && left.source == right.source
++        && left.position.x == right.position.x
++        && left.position.y == right.position.y
++        && left.position.z == right.position.z
++        && left.slot == right.slot;
+ }
+ 
+ bool replace_ground_before_publish(persistence::SaveFaultPoint point,
+     void* opaque) noexcept {
+     auto* const context = static_cast<GroundReplacementContext*>(opaque);
+     if (context != nullptr && context->armed && context->session != nullptr
+             && point == persistence::SaveFaultPoint::before_publish) {
+         context->invoked =
+             arpg::test::replace_indexed_ground_item_for_fault(
+                 *context->session, context->ordinal,
+@@ -1183,35 +1187,41 @@ arpg::test::Failure synchronous_pickup_publishes_exact_committed_receipt()
+     noexcept {
+     TempDirectory directory;
+     platform::DungeonRuntime runtime(config_for(directory, 0x51A7E11U));
+     ARPG_REQUIRE(runtime.initialize());
+     const auto before = runtime.session()->snapshot();
+     ARPG_REQUIRE(before.combat.has_value());
+     const items::ItemInstance item = normal_item(0x51A7E1101U, 3U);
+     const InstalledPickupGround ground =
+         install_pickup_ground_at_active_spawn(runtime, before, item);
+     ARPG_REQUIRE(ground.valid);
++    const auto captured_ground = arpg::test::ground_items(
++        *runtime.session())[ground.ordinal];
+ 
+     runtime.fixed_tick({});
+     settle_runtime_save(runtime);
+ 
+     const auto after = runtime.session()->snapshot();
+     const auto receipt = runtime.render_status().loot_pickup;
+     ARPG_REQUIRE(after.commit_generation == before.commit_generation + 1U);
+     ARPG_REQUIRE(after.ground_item_count == 0U);
+     ARPG_REQUIRE(receipt.valid);
+     ARPG_REQUIRE(receipt.commit_generation == after.commit_generation);
+     ARPG_REQUIRE(receipt.item_id == item.id);
+     ARPG_REQUIRE(receipt.base_id == item.base_id);
+     ARPG_REQUIRE(receipt.item_level == item.item_level);
+     ARPG_REQUIRE(receipt.rarity == item.rarity);
+     ARPG_REQUIRE(receipt.source == dungeon::GroundItemSource::monster_drop);
++    ARPG_REQUIRE(receipt.position.x == captured_ground.position.x);
++    ARPG_REQUIRE(receipt.position.y == captured_ground.position.y);
++    ARPG_REQUIRE(receipt.position.z == captured_ground.position.z);
++    ARPG_REQUIRE(receipt.slot == items::ItemSlot::chest);
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_claim_publishes_committed_abyss_receipt() noexcept {
+     TempDirectory directory;
+     auto config = config_for(directory, 0xAB155U);
+     persistence::SaveStore seed_store(config.save);
+     const auto initial = runtime_cleared_abyss_state();
+     ARPG_REQUIRE(initial.current_room.is_abyss);
+     ARPG_REQUIRE(seed_store.commit(initial).state
+@@ -2762,10 +2772,18 @@ constexpr arpg::test::TestCase kV10MigrationCases[] = {
+ }  // namespace
+ 
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept {
+     return arpg::test::make_suite("dungeon_runtime", kCases);
+ }
+ 
+ arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept {
+     return arpg::test::make_suite(
+         "dungeon_runtime_v10_migration", kV10MigrationCases);
+ }
++
++arpg::test::TestSuite loot_suction_runtime_origin_suite() noexcept {
++    static constexpr arpg::test::TestCase kOriginCases[] = {
++        {"committed pickup receipt preserves origin and slot",
++            &synchronous_pickup_publishes_exact_committed_receipt},
++    };
++    return arpg::test::make_suite("loot_suction_runtime_origin", kOriginCases);
++}
+diff --git a/tests/platform/hud_host_integration_tests.cpp b/tests/platform/hud_host_integration_tests.cpp
+index 1de1e9e..a50db1a 100644
+--- a/tests/platform/hud_host_integration_tests.cpp
++++ b/tests/platform/hud_host_integration_tests.cpp
+@@ -455,20 +455,22 @@ arpg::test::Failure renderer_uses_draft_only_on_the_settings_screen() noexcept {
+ }
+ 
+ arpg::test::Failure renderer_observes_committed_pickup_receipts_before_notices()
+     noexcept {
+     platform::CombatRenderer renderer{};
+     const auto current = snapshot();
+     const auto hints = committed_hints(1U);
+     platform::DungeonRenderStatus baseline = saved_status();
+     baseline.loot_pickup = {true, 7U, 70U, 3U, 24U,
+         items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
++    baseline.loot_pickup.position = {3.0F, -2.0F, 0.0F};
++    baseline.loot_pickup.slot = items::ItemSlot::chest;
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         current, current, baseline, hints, 0.0F, false);
+     ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
+         != platform::HudNoticeKind::loot_pickup);
+ 
+     platform::DungeonRenderStatus committed = baseline;
+     committed.loot_pickup.commit_generation = 8U;
+     committed.loot_pickup.item_id = 80U;
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         current, current, committed, hints, 0.0F, false);
+@@ -493,20 +495,22 @@ arpg::test::Failure abyss_pickup_cross_room_keeps_purple_context_end_to_end()
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         previous, previous, empty, hints, 0.0F, false);
+ 
+     dungeon::DungeonSnapshot next = previous;
+     ++next.room_index;
+     ++next.commit_generation;
+     platform::DungeonRenderStatus claimed = saved_status();
+     claimed.loot_pickup = {true, next.commit_generation, 0xAB155U,
+         3U, 24U, items::ItemRarity::rare,
+         dungeon::GroundItemSource::abyss_chest};
++    claimed.loot_pickup.position = {3.0F, -2.0F, 0.0F};
++    claimed.loot_pickup.slot = items::ItemSlot::chest;
+     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+         previous, next, claimed, hints, 0.0F, false);
+ 
+     const auto notice = renderer.hud_notice_view().primary;
+     ARPG_REQUIRE(notice.kind == platform::HudNoticeKind::loot_pickup);
+     ARPG_REQUIRE(notice.abyss);
+     ARPG_REQUIRE(notice.priority == 60U);
+     ARPG_REQUIRE(renderer.hud_model().context.primary_kind
+         == platform::HudNoticeKind::loot_pickup);
+     ARPG_REQUIRE(renderer.hud_model().context.primary_abyss);
+diff --git a/tests/platform/loot_pickup_feedback_tests.cpp b/tests/platform/loot_pickup_feedback_tests.cpp
+index 9c34499..3247059 100644
+--- a/tests/platform/loot_pickup_feedback_tests.cpp
++++ b/tests/platform/loot_pickup_feedback_tests.cpp
+@@ -15,20 +15,22 @@ namespace platform = arpg::platform;
+ platform::DungeonRenderStatus status_with_receipt(
+     std::uint64_t generation,
+     std::uint64_t item_id,
+     dungeon::GroundItemSource source =
+         dungeon::GroundItemSource::monster_drop) noexcept {
+     platform::DungeonRenderStatus status{};
+     status.indicator = platform::SaveIndicator::saved;
+     status.loot_pickup = {
+         true, generation, item_id, 3U, 24U,
+         items::ItemRarity::rare, source};
++    status.loot_pickup.position = {3.0F, -2.0F, 0.0F};
++    status.loot_pickup.slot = items::ItemSlot::chest;
+     return status;
+ }
+ 
+ arpg::test::Failure first_receipt_is_baselined_and_newer_receipt_emits_once()
+     noexcept {
+     platform::LootPickupFeedbackState state{};
+     const auto old = status_with_receipt(7U, 101U);
+     ARPG_REQUIRE(!state.observe(old).ready);
+ 
+     const auto current = status_with_receipt(8U, 102U);
+diff --git a/tests/platform/loot_suction_animation_tests.cpp b/tests/platform/loot_suction_animation_tests.cpp
+index 49f6191..43ebb18 100644
+--- a/tests/platform/loot_suction_animation_tests.cpp
++++ b/tests/platform/loot_suction_animation_tests.cpp
+@@ -1,13 +1,15 @@
+ #include "allocation_probe.hpp"
+ #include "test_framework.hpp"
+ 
++#include "combat_renderer.hpp"
++#include "control_hints.hpp"
+ #include "loot_suction_animation.hpp"
+ 
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ namespace combat = arpg::combat;
+ namespace dungeon = arpg::dungeon;
+ namespace items = arpg::items;
+@@ -24,23 +26,30 @@ constexpr float kHeight = 720.0F;
+     return left.r == right.r && left.g == right.g && left.b == right.b
+         && left.a == right.a;
+ }
+ 
+ platform::DungeonRenderStatus saved_equipment_receipt(
+     std::uint64_t generation, std::uint64_t item_id) noexcept {
+     platform::DungeonRenderStatus status{};
+     status.indicator = platform::SaveIndicator::saved;
+     status.loot_pickup = {true, generation, item_id, 3U, 24U,
+         items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
++    status.loot_pickup.slot = items::ItemSlot::weapon;
+     return status;
+ }
+ 
++platform::ControlHints control_hints() noexcept {
++    platform::ControlHints hints{};
++    hints.revision = 1U;
++    return hints;
++}
++
+ dungeon::GroundItemSnapshot equipment(
+     std::uint16_t ordinal, std::uint64_t item_id,
+     combat::Vec3 position = {9.0F, 0.0F, 0.0F}) noexcept {
+     return {ordinal, dungeon::GroundItemSource::monster_drop, 0xFFU,
+         position, item_id, 3U, 24U, items::ItemSlot::weapon,
+         items::ItemRarity::rare};
+ }
+ 
+ dungeon::GroundMaterialSnapshot material(
+     std::uint16_t ordinal, items::MaterialId id,
+@@ -71,20 +80,22 @@ arpg::test::Failure committed_equipment_disappearance_flies_to_player_waist()
+     state.observe(previous, current, saved_equipment_receipt(1U, 42U));
+ 
+     ARPG_REQUIRE(state.active_count() == 1U);
+     const platform::LootSuctionPlan start = state.build_plan(
+         kCamera, kPlayerPosition, kWidth, kHeight);
+     ARPG_REQUIRE(start.count == 1U);
+     ARPG_REQUIRE(start.flights[0].center.x > start.destination.x);
+     ARPG_REQUIRE(start.flights[0].equipment);
+     ARPG_REQUIRE(start.flights[0].sprite
+         == platform::ground_loot_item_sprite(items::ItemSlot::weapon));
++    ARPG_REQUIRE(start.flights[0].rarity_sprite
++        == platform::ground_loot_rarity_sprite(items::ItemRarity::rare, false));
+ 
+     state.update(0.35F, false);
+     const platform::LootSuctionPlan middle = state.build_plan(
+         kCamera, kPlayerPosition, kWidth, kHeight);
+     ARPG_REQUIRE(middle.flights[0].center.x < start.flights[0].center.x);
+     ARPG_REQUIRE(middle.flights[0].center.x > middle.destination.x);
+     ARPG_REQUIRE(middle.flights[0].center.y < start.flights[0].center.y
+         + (middle.destination.y - start.flights[0].center.y) * 0.75F);
+     return {};
+ }
+@@ -209,26 +220,141 @@ arpg::test::Failure full_capacity_replaces_most_elapsed_flight_and_allocates_not
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t index{}; index < 100000U; ++index) {
+         state.observe(empty, empty, saved_equipment_receipt(13U, 13U));
+         static_cast<void>(state.build_plan(kCamera, kPlayerPosition,
+             kWidth, kHeight));
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
++arpg::test::Failure combat_renderer_commits_and_clears_loot_suction()
++    noexcept {
++    platform::CombatRenderer renderer{};
++    dungeon::DungeonSnapshot previous{};
++    append(previous, equipment(1U, 42U));
++    const dungeon::DungeonSnapshot current{};
++
++    renderer.observe_hud(previous, current, saved_equipment_receipt(1U, 42U),
++        control_hints(), 0.0F, false);
++    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
++
++    renderer.clear_combat_transients();
++    ARPG_REQUIRE(renderer.loot_suction_active_count() == 0U);
++    return {};
++}
++
++arpg::test::Failure committed_receipt_origin_survives_same_step_equipment_pickup()
++    noexcept {
++    constexpr combat::Vec3 kOrigin{6.0F, -2.0F, 0.0F};
++    const dungeon::DungeonSnapshot empty{};
++    auto receipt = saved_equipment_receipt(8U, 88U);
++    receipt.loot_pickup.position = kOrigin;
++    receipt.loot_pickup.slot = items::ItemSlot::helmet;
++
++    platform::CombatRenderer renderer{};
++    renderer.observe_hud(empty, empty, receipt, control_hints(), 0.0F, false);
++    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
++
++    platform::LootSuctionState state{};
++    state.observe(empty, empty, {});
++    state.observe(empty, empty, receipt);
++    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
++    ARPG_REQUIRE(plan.count == 1U);
++    ARPG_REQUIRE(plan.flights[0].world_position.x == kOrigin.x);
++    ARPG_REQUIRE(plan.flights[0].world_position.y == kOrigin.y);
++    ARPG_REQUIRE(plan.flights[0].sprite
++        == platform::ground_loot_item_sprite(items::ItemSlot::helmet));
++    return {};
++}
++
++arpg::test::Failure committed_receipt_origin_survives_same_step_material_pickup()
++    noexcept {
++    constexpr combat::Vec3 kOrigin{5.0F, 3.0F, 0.0F};
++    const dungeon::DungeonSnapshot empty{};
++    dungeon::DungeonSnapshot current{};
++    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
++    current.material_pickup_receipt.valid = true;
++    current.material_pickup_receipt.commit_generation = 9U;
++    current.material_pickup_receipt.counts[chaos] = 1U;
++    current.material_pickup_receipt.representative_origins[chaos] = kOrigin;
++    current.material_pickup_receipt.origin_valid_mask =
++        static_cast<std::uint16_t>(std::uint16_t{1U} << chaos);
++    platform::DungeonRenderStatus committed{};
++    committed.indicator = platform::SaveIndicator::saved;
++
++    platform::CombatRenderer renderer{};
++    renderer.observe_hud(empty, current, committed, control_hints(), 0.0F,
++        false);
++    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
++
++    platform::LootSuctionState state{};
++    state.observe(empty, empty, {});
++    state.observe(empty, current, committed);
++    const auto plan = state.build_plan(kCamera, kPlayerPosition, kWidth, kHeight);
++    ARPG_REQUIRE(plan.count == 1U);
++    ARPG_REQUIRE(plan.flights[0].world_position.x == kOrigin.x);
++    ARPG_REQUIRE(plan.flights[0].world_position.y == kOrigin.y);
++    ARPG_REQUIRE(plan.flights[0].sprite
++        == platform::material_loot_sprite(items::MaterialId::chaos));
++    return {};
++}
++
++arpg::test::Failure receipt_fallback_keeps_rare_and_abyss_colors_distinct()
++    noexcept {
++    constexpr combat::Vec3 kOrigin{6.0F, 0.0F, 0.0F};
++    const dungeon::DungeonSnapshot empty{};
++    auto rare = saved_equipment_receipt(10U, 100U);
++    rare.loot_pickup.position = kOrigin;
++    rare.loot_pickup.slot = items::ItemSlot::weapon;
++    rare.loot_pickup.rarity = items::ItemRarity::rare;
++
++    platform::LootSuctionState rare_state{};
++    rare_state.observe(empty, empty, {});
++    rare_state.observe(empty, empty, rare);
++    const auto rare_plan = rare_state.build_plan(
++        kCamera, kPlayerPosition, kWidth, kHeight);
++
++    auto abyss = rare;
++    abyss.loot_pickup.commit_generation = 11U;
++    abyss.loot_pickup.item_id = 101U;
++    abyss.loot_pickup.source = dungeon::GroundItemSource::abyss_chest;
++    platform::LootSuctionState abyss_state{};
++    abyss_state.observe(empty, empty, {});
++    abyss_state.observe(empty, empty, abyss);
++    const auto abyss_plan = abyss_state.build_plan(
++        kCamera, kPlayerPosition, kWidth, kHeight);
++
++    constexpr platform::Rgba8 kWhite{255U, 255U, 255U, 255U};
++    ARPG_REQUIRE(rare_plan.count == 1U);
++    ARPG_REQUIRE(abyss_plan.count == 1U);
++    ARPG_REQUIRE(!same_color(rare_plan.flights[0].color, kWhite));
++    ARPG_REQUIRE(!same_color(abyss_plan.flights[0].color, kWhite));
++    ARPG_REQUIRE(!same_color(rare_plan.flights[0].color,
++        abyss_plan.flights[0].color));
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"equipment trajectory to player waist",
+         &committed_equipment_disappearance_flies_to_player_waist},
+     {"failed or still present equipment", &failed_or_unremoved_equipment_never_starts_flight},
+     {"duplicate equipment receipt", &same_equipment_receipt_is_not_duplicated},
+     {"material only disappeared ordinals", &material_receipt_only_flies_disappeared_matching_ordinals},
+     {"pause and arrival pulse", &pause_freezes_and_arrival_reclaims_with_pulse},
+     {"full capacity replacement and zero allocation",
+         &full_capacity_replaces_most_elapsed_flight_and_allocates_nothing},
++    {"combat renderer loot suction lifecycle",
++        &combat_renderer_commits_and_clears_loot_suction},
++    {"same-step equipment receipt origin",
++        &committed_receipt_origin_survives_same_step_equipment_pickup},
++    {"same-step material receipt origin",
++        &committed_receipt_origin_survives_same_step_material_pickup},
++    {"receipt fallback rarity colors",
++        &receipt_fallback_keeps_rare_and_abyss_colors_distinct},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite loot_suction_animation_suite() noexcept {
+     return arpg::test::make_suite("loot_suction_animation", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 80e578d..bac2572 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -20,20 +20,21 @@ arpg::test::TestSuite active_skill_input_suite() noexcept;
+ arpg::test::TestSuite raylib_input_suite() noexcept;
+ arpg::test::TestSuite active_skill_view_suite() noexcept;
+ arpg::test::TestSuite active_skill_asset_suite() noexcept;
+ arpg::test::TestSuite active_skill_loadout_view_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite task6_exit_unlock_view_suite() noexcept;
+ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept;
++arpg::test::TestSuite loot_suction_runtime_origin_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+ arpg::test::TestSuite window_settings_suite() noexcept;
+ arpg::test::TestSuite pause_host_gate_suite() noexcept;
+ arpg::test::TestSuite host_settings_runtime_suite() noexcept;
+ arpg::test::TestSuite host_window_lifetime_suite() noexcept;
+ arpg::test::TestSuite control_hints_suite() noexcept;
+@@ -135,37 +136,54 @@ bool cplay016_ground_potion_label_only() noexcept {
+ bool cplay021_loot_suction_only() noexcept {
+     char* value = nullptr;
+     std::size_t length = 0U;
+     const errno_t error = _dupenv_s(&value, &length,
+         "ARPG_CPLAY021_LOOT_SUCTION_ONLY");
+     const bool enabled = error == 0 && value != nullptr;
+     std::free(value);
+     return enabled;
+ }
+ 
++bool cplay021_loot_suction_runtime_only() noexcept {
++    char* value = nullptr;
++    std::size_t length = 0U;
++    const errno_t error = _dupenv_s(&value, &length,
++        "ARPG_CPLAY021_LOOT_SUCTION_RUNTIME_ONLY");
++    const bool enabled = error == 0 && value != nullptr;
++    std::free(value);
++    return enabled;
++}
++
+ }  // namespace
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+ #endif
++    if (cplay021_loot_suction_runtime_only()) {
++        const arpg::test::TestSuite cplay021_runtime_only[] = {
++            loot_suction_runtime_origin_suite(),
++        };
++        return arpg::test::run_suites(cplay021_runtime_only, 1,
++            "CPLAY-021 loot suction runtime origin");
++    }
+     if (cplay021_loot_suction_only()) {
+         const arpg::test::TestSuite cplay021_only[] = {
+             loot_suction_animation_suite(),
+         };
+-        return arpg::test::run_suites(cplay021_only, 6,
++        return arpg::test::run_suites(cplay021_only, 10,
+             "CPLAY-021 bounded loot suction animation");
+     }
+     if (cplay016_ground_potion_label_only()) {
+         const arpg::test::TestSuite cplay016_only[] = {
+             hud_host_integration_suite(),
+             material_loot_view_suite(),
+         };
+         return arpg::test::run_suites(cplay016_only, 31,
+             "CPLAY-016 compact ground potion labels");
+     }

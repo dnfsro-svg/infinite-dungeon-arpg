@@ -1,0 +1,52 @@
+# Review package: 9613108..HEAD
+
+## Commits
+48c529b fix: align pause menu test counts
+
+## Files changed
+ tests/platform/platform_test_main.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index aaa3767..00b5aa8 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -344,21 +344,21 @@ int main() {
+         const arpg::test::TestSuite cplay030_only[] = {
+             dungeon_view_math_suite(),
+         };
+         return arpg::test::run_suites(cplay030_only, 20,
+             "CPLAY-030 dynamic hole interaction prompt");
+     }
+     if (cplay028_pause_focus_only()) {
+         const arpg::test::TestSuite cplay028_only[] = {
+             pause_menu_state_suite(),
+         };
+-        return arpg::test::run_suites(cplay028_only, 30,
++        return arpg::test::run_suites(cplay028_only, 32,
+             "CPLAY-028 unfocused pause input");
+     }
+     if (cplay027_inventory_binding_label_only()) {
+         const arpg::test::TestSuite cplay027_only[] = {
+             inventory_view_math_suite(),
+         };
+         return arpg::test::run_suites(cplay027_only, 16,
+             "CPLAY-027 inventory binding label");
+     }
+     if (cplay023_pause_reset_only()) {
+@@ -498,13 +498,13 @@ int main() {
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+         large_room_render_plan_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 654,
++    return arpg::test::run_suites(suites, 656,
+         "host settings runtime contract");
+ }

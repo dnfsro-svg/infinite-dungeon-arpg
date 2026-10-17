@@ -1,0 +1,899 @@
+# Review package: 30fffc8..HEAD
+
+## Commits
+19a6ddc test: close structured HUD guard bypasses
+
+## Files changed
+ tests/platform/CMakeLists.txt                      |  10 +
+ tests/platform/cpp_source_function_body.cmake      | 333 ++++++++++++++++++---
+ .../cpp_source_function_body_self_test.cmake       |  89 ++++++
+ ...otice_structured_binding_source_self_test.cmake |   7 +
+ ...hud_notice_structured_binding_source_test.cmake |  28 +-
+ ...enderer_structured_model_source_self_test.cmake |  57 ++++
+ ...hud_renderer_structured_model_source_test.cmake |  77 ++++-
+ 7 files changed, 554 insertions(+), 47 deletions(-)
+
+## Diff
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 6026440..975a6ba 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1904,20 +1904,30 @@ set_tests_properties(
+ 
+ add_test(
+     NAME platform.hud_notice_structured_binding_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake")
+ set_tests_properties(
+     platform.hud_notice_structured_binding_source
+     PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
+ 
++add_test(
++    NAME platform.cpp_source_function_body_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DPARSER_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/cpp_source_function_body.cmake"
++        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cpp-source-function-body-mutations"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/cpp_source_function_body_self_test.cmake")
++set_tests_properties(
++    platform.cpp_source_function_body_self_test
++    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
++
+ add_test(
+     NAME platform.hud_notice_structured_binding_source_self_test
+     COMMAND "${CMAKE_COMMAND}"
+         "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
+         "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake"
+         "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hud-notice-structured-binding-mutations"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_self_test.cmake")
+ set_tests_properties(
+     platform.hud_notice_structured_binding_source_self_test
+     PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
+diff --git a/tests/platform/cpp_source_function_body.cmake b/tests/platform/cpp_source_function_body.cmake
+index cb94188..36a384b 100644
+--- a/tests/platform/cpp_source_function_body.cmake
++++ b/tests/platform/cpp_source_function_body.cmake
+@@ -1,65 +1,324 @@
+ cmake_minimum_required(VERSION 3.25)
+ 
+-function(normalize_cpp_source INPUT OUTPUT)
+-    string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" VALUE "${INPUT}")
+-    string(REGEX REPLACE "//[^\r\n]*" "" VALUE "${VALUE}")
+-    string(REGEX REPLACE "[ \t\r\n]+" " " VALUE "${VALUE}")
+-    string(STRIP "${VALUE}" VALUE)
+-    set(${OUTPUT} "${VALUE}" PARENT_SCOPE)
+-endfunction()
+-
+-function(extract_cpp_function_body SOURCE FUNCTION_MARKER OUTPUT)
+-    string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" CODE "${SOURCE}")
+-    string(REGEX REPLACE "//[^\r\n]*" "" CODE "${CODE}")
+-    string(FIND "${CODE}" "${FUNCTION_MARKER}" MARKER_INDEX)
+-    if(MARKER_INDEX EQUAL -1)
++function(_scan_cpp_source SOURCE FUNCTION_MARKER PRESERVED_OUTPUT CODE_OUTPUT)
++    string(LENGTH "${SOURCE}" SOURCE_LENGTH)
++    if(SOURCE_LENGTH EQUAL 0)
++        if(FUNCTION_MARKER STREQUAL "")
++            set(${PRESERVED_OUTPUT} "" PARENT_SCOPE)
++            set(${CODE_OUTPUT} "" PARENT_SCOPE)
++            return()
++        endif()
+         message(FATAL_ERROR
+             "Unable to find C++ function marker: ${FUNCTION_MARKER}")
+     endif()
+ 
+-    string(LENGTH "${CODE}" CODE_LENGTH)
+-    math(EXPR LAST_INDEX "${CODE_LENGTH} - 1")
+-    set(OPEN_FOUND FALSE)
+-    set(IN_STRING FALSE)
++    string(LENGTH "${FUNCTION_MARKER}" MARKER_LENGTH)
++    if(FUNCTION_MARKER STREQUAL "")
++        set(EXTRACT_FUNCTION FALSE)
++        set(MARKER_FOUND TRUE)
++        set(BODY_STARTED TRUE)
++    else()
++        set(EXTRACT_FUNCTION TRUE)
++        set(MARKER_FOUND FALSE)
++        set(BODY_STARTED FALSE)
++    endif()
++
++    set(STATE normal)
+     set(ESCAPED FALSE)
+     set(DEPTH 0)
+-    foreach(INDEX RANGE ${MARKER_INDEX} ${LAST_INDEX})
+-        string(SUBSTRING "${CODE}" ${INDEX} 1 CHARACTER)
+-        if(IN_STRING)
++    set(PRESERVED)
++    set(CODE)
++    set(RAW_DELIMITER)
++    set(RAW_END_REMAINING 0)
++    math(EXPR LAST_INDEX "${SOURCE_LENGTH} - 1")
++
++    foreach(INDEX RANGE 0 ${LAST_INDEX})
++        string(SUBSTRING "${SOURCE}" ${INDEX} 1 CHARACTER)
++        math(EXPR NEXT_INDEX "${INDEX} + 1")
++        if(NEXT_INDEX LESS SOURCE_LENGTH)
++            string(SUBSTRING "${SOURCE}" ${NEXT_INDEX} 1 NEXT_CHARACTER)
++        else()
++            set(NEXT_CHARACTER "")
++        endif()
++        if(INDEX GREATER 0)
++            math(EXPR PREVIOUS_INDEX "${INDEX} - 1")
++            string(SUBSTRING "${SOURCE}" ${PREVIOUS_INDEX} 1
++                PREVIOUS_CHARACTER)
++        else()
++            set(PREVIOUS_CHARACTER "")
++        endif()
++        set(DIGIT_SEPARATOR FALSE)
++        if(CHARACTER STREQUAL "'")
++            string(REGEX MATCH "^[0-9A-Fa-f]$" PREVIOUS_IS_DIGIT
++                "${PREVIOUS_CHARACTER}")
++            string(REGEX MATCH "^[0-9A-Fa-f]$" NEXT_IS_DIGIT
++                "${NEXT_CHARACTER}")
++            if(PREVIOUS_IS_DIGIT AND NEXT_IS_DIGIT)
++                set(DIGIT_SEPARATOR TRUE)
++            endif()
++        endif()
++
++        if(STATE STREQUAL line_comment)
++            if(BODY_STARTED)
++                if(CHARACTER STREQUAL "\r" OR CHARACTER STREQUAL "\n")
++                    string(APPEND PRESERVED "${CHARACTER}")
++                    string(APPEND CODE "${CHARACTER}")
++                else()
++                    string(APPEND PRESERVED " ")
++                    string(APPEND CODE " ")
++                endif()
++            endif()
++            if(CHARACTER STREQUAL "\n")
++                set(STATE normal)
++            endif()
++            continue()
++        endif()
++
++        if(STATE STREQUAL block_comment)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED " ")
++                string(APPEND CODE " ")
++            endif()
++            if(CHARACTER STREQUAL "/" AND INDEX GREATER 0)
++                if(PREVIOUS_CHARACTER STREQUAL "*")
++                    set(STATE normal)
++                endif()
++            endif()
++            continue()
++        endif()
++
++        if(STATE STREQUAL string OR STATE STREQUAL character)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
++            endif()
+             if(ESCAPED)
+                 set(ESCAPED FALSE)
+             elseif(CHARACTER STREQUAL "\\")
+                 set(ESCAPED TRUE)
+-            elseif(CHARACTER STREQUAL "\"")
+-                set(IN_STRING FALSE)
++            elseif((STATE STREQUAL string AND CHARACTER STREQUAL "\"")
++                    OR (STATE STREQUAL character AND CHARACTER STREQUAL "'"))
++                set(STATE normal)
+             endif()
+             continue()
+         endif()
+-        if(CHARACTER STREQUAL "\"")
+-            set(IN_STRING TRUE)
++
++        if(STATE STREQUAL raw_quote)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
++            endif()
++            if(NOT CHARACTER STREQUAL "\"")
++                message(FATAL_ERROR "Malformed C++ raw string opener")
++            endif()
++            set(STATE raw_delimiter)
+             continue()
+         endif()
+-        if(CHARACTER STREQUAL "{")
+-            if(NOT OPEN_FOUND)
+-                set(OPEN_FOUND TRUE)
+-                set(DEPTH 1)
+-                math(EXPR BODY_START "${INDEX} + 1")
++
++        if(STATE STREQUAL raw_delimiter)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
++            endif()
++            if(CHARACTER STREQUAL "(")
++                set(RAW_TERMINATOR ")${RAW_DELIMITER}\"")
++                set(STATE raw_body)
+             else()
+-                math(EXPR DEPTH "${DEPTH} + 1")
++                string(APPEND RAW_DELIMITER "${CHARACTER}")
++                string(LENGTH "${RAW_DELIMITER}" RAW_DELIMITER_LENGTH)
++                if(RAW_DELIMITER_LENGTH GREATER 16
++                        OR CHARACTER STREQUAL "\r"
++                        OR CHARACTER STREQUAL "\n")
++                    message(FATAL_ERROR "Malformed C++ raw string delimiter")
++                endif()
++            endif()
++            continue()
++        endif()
++
++        if(STATE STREQUAL raw_body)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
++            endif()
++            if(CHARACTER STREQUAL ")")
++                string(LENGTH "${RAW_TERMINATOR}" RAW_TERMINATOR_LENGTH)
++                math(EXPR AVAILABLE "${SOURCE_LENGTH} - ${INDEX}")
++                if(AVAILABLE GREATER_EQUAL RAW_TERMINATOR_LENGTH)
++                    string(SUBSTRING "${SOURCE}" ${INDEX}
++                        ${RAW_TERMINATOR_LENGTH} RAW_CANDIDATE)
++                    if(RAW_CANDIDATE STREQUAL RAW_TERMINATOR)
++                        math(EXPR RAW_END_REMAINING
++                            "${RAW_TERMINATOR_LENGTH} - 1")
++                        if(RAW_END_REMAINING EQUAL 0)
++                            set(STATE normal)
++                        else()
++                            set(STATE raw_end)
++                        endif()
++                    endif()
++                endif()
++            endif()
++            continue()
++        endif()
++
++        if(STATE STREQUAL raw_end)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
++            endif()
++            math(EXPR RAW_END_REMAINING "${RAW_END_REMAINING} - 1")
++            if(RAW_END_REMAINING EQUAL 0)
++                set(STATE normal)
++            endif()
++            continue()
++        endif()
++
++        if(NOT BODY_STARTED AND CHARACTER STREQUAL "/"
++                AND NEXT_CHARACTER STREQUAL "/")
++            set(STATE line_comment)
++            continue()
++        endif()
++        if(NOT BODY_STARTED AND CHARACTER STREQUAL "/"
++                AND NEXT_CHARACTER STREQUAL "*")
++            set(STATE block_comment)
++            continue()
++        endif()
++        if(NOT BODY_STARTED AND CHARACTER STREQUAL "R"
++                AND NEXT_CHARACTER STREQUAL "\"")
++            set(STATE raw_quote)
++            set(RAW_DELIMITER)
++            continue()
++        endif()
++        if(NOT BODY_STARTED AND CHARACTER STREQUAL "\"")
++            set(STATE string)
++            set(ESCAPED FALSE)
++            continue()
++        endif()
++        if(NOT BODY_STARTED AND CHARACTER STREQUAL "'"
++                AND NOT DIGIT_SEPARATOR)
++            set(STATE character)
++            set(ESCAPED FALSE)
++            continue()
++        endif()
++
++        if(NOT MARKER_FOUND)
++            math(EXPR AVAILABLE "${SOURCE_LENGTH} - ${INDEX}")
++            if(AVAILABLE GREATER_EQUAL MARKER_LENGTH)
++                string(SUBSTRING "${SOURCE}" ${INDEX} ${MARKER_LENGTH}
++                    MARKER_CANDIDATE)
++                if(MARKER_CANDIDATE STREQUAL FUNCTION_MARKER)
++                    set(MARKER_FOUND TRUE)
++                endif()
++            endif()
++        endif()
++
++        if(MARKER_FOUND AND NOT BODY_STARTED)
++            if(CHARACTER STREQUAL "{")
++                set(BODY_STARTED TRUE)
++                set(DEPTH 1)
++            endif()
++            continue()
++        endif()
++
++        if(CHARACTER STREQUAL "/" AND NEXT_CHARACTER STREQUAL "/")
++            set(STATE line_comment)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED " ")
++                string(APPEND CODE " ")
++            endif()
++            continue()
++        endif()
++        if(CHARACTER STREQUAL "/" AND NEXT_CHARACTER STREQUAL "*")
++            set(STATE block_comment)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED " ")
++                string(APPEND CODE " ")
++            endif()
++            continue()
++        endif()
++        if(CHARACTER STREQUAL "R" AND NEXT_CHARACTER STREQUAL "\"")
++            set(STATE raw_quote)
++            set(RAW_DELIMITER)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
+             endif()
+             continue()
+         endif()
+-        if(OPEN_FOUND AND CHARACTER STREQUAL "}")
++        if(CHARACTER STREQUAL "\"")
++            set(STATE string)
++            set(ESCAPED FALSE)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
++            endif()
++            continue()
++        endif()
++        if(CHARACTER STREQUAL "'" AND NOT DIGIT_SEPARATOR)
++            set(STATE character)
++            set(ESCAPED FALSE)
++            if(BODY_STARTED)
++                string(APPEND PRESERVED "${CHARACTER}")
++                string(APPEND CODE " ")
++            endif()
++            continue()
++        endif()
++
++        if(EXTRACT_FUNCTION AND BODY_STARTED AND CHARACTER STREQUAL "{")
++            math(EXPR DEPTH "${DEPTH} + 1")
++        elseif(EXTRACT_FUNCTION AND BODY_STARTED AND CHARACTER STREQUAL "}")
+             math(EXPR DEPTH "${DEPTH} - 1")
+             if(DEPTH EQUAL 0)
+-                math(EXPR BODY_LENGTH "${INDEX} - ${BODY_START}")
+-                string(SUBSTRING "${CODE}" ${BODY_START} ${BODY_LENGTH} BODY)
+-                normalize_cpp_source("${BODY}" NORMALIZED_BODY)
+-                set(${OUTPUT} "${NORMALIZED_BODY}" PARENT_SCOPE)
++                string(REGEX REPLACE "[ \t\r\n]+" " " PRESERVED
++                    "${PRESERVED}")
++                string(REGEX REPLACE "[ \t\r\n]+" " " CODE "${CODE}")
++                string(STRIP "${PRESERVED}" PRESERVED)
++                string(STRIP "${CODE}" CODE)
++                set(${PRESERVED_OUTPUT} "${PRESERVED}" PARENT_SCOPE)
++                set(${CODE_OUTPUT} "${CODE}" PARENT_SCOPE)
+                 return()
+             endif()
+         endif()
++        if(BODY_STARTED)
++            string(APPEND PRESERVED "${CHARACTER}")
++            string(APPEND CODE "${CHARACTER}")
++        endif()
+     endforeach()
+-    message(FATAL_ERROR
+-        "Unbalanced C++ function body: ${FUNCTION_MARKER}")
++
++    if(STATE STREQUAL line_comment)
++        set(STATE normal)
++    endif()
++    if(NOT STATE STREQUAL normal)
++        message(FATAL_ERROR "Unterminated C++ lexical construct: ${STATE}")
++    endif()
++    if(EXTRACT_FUNCTION)
++        if(NOT MARKER_FOUND)
++            message(FATAL_ERROR
++                "Unable to find C++ function marker: ${FUNCTION_MARKER}")
++        endif()
++        message(FATAL_ERROR
++            "Unbalanced C++ function body: ${FUNCTION_MARKER}")
++    endif()
++
++    string(REGEX REPLACE "[ \t\r\n]+" " " PRESERVED "${PRESERVED}")
++    string(REGEX REPLACE "[ \t\r\n]+" " " CODE "${CODE}")
++    string(STRIP "${PRESERVED}" PRESERVED)
++    string(STRIP "${CODE}" CODE)
++    set(${PRESERVED_OUTPUT} "${PRESERVED}" PARENT_SCOPE)
++    set(${CODE_OUTPUT} "${CODE}" PARENT_SCOPE)
++endfunction()
++
++function(normalize_cpp_source INPUT OUTPUT)
++    _scan_cpp_source("${INPUT}" "" PRESERVED CODE)
++    set(${OUTPUT} "${PRESERVED}" PARENT_SCOPE)
++    if(ARGC GREATER 2)
++        set(${ARGV2} "${CODE}" PARENT_SCOPE)
++    endif()
++endfunction()
++
++function(extract_cpp_function_body SOURCE FUNCTION_MARKER OUTPUT)
++    _scan_cpp_source("${SOURCE}" "${FUNCTION_MARKER}" PRESERVED CODE)
++    set(${OUTPUT} "${PRESERVED}" PARENT_SCOPE)
++    if(ARGC GREATER 3)
++        set(${ARGV3} "${CODE}" PARENT_SCOPE)
++    endif()
+ endfunction()
+diff --git a/tests/platform/cpp_source_function_body_self_test.cmake b/tests/platform/cpp_source_function_body_self_test.cmake
+new file mode 100644
+index 0000000..b2ccb5b
+--- /dev/null
++++ b/tests/platform/cpp_source_function_body_self_test.cmake
+@@ -0,0 +1,89 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED PARSER_SCRIPT OR NOT EXISTS "${PARSER_SCRIPT}"
++        OR NOT DEFINED MUTATION_ROOT)
++    message(FATAL_ERROR "C++ source parser self-test inputs are required")
++endif()
++
++file(REMOVE_RECURSE "${MUTATION_ROOT}")
++file(MAKE_DIRECTORY "${MUTATION_ROOT}")
++
++function(run_parser_case LABEL SOURCE MARKER EXPECT_SUCCESS EXPECTED_BODY
++        EXPECTED_ERROR)
++    set(ROOT "${MUTATION_ROOT}/${LABEL}")
++    file(MAKE_DIRECTORY "${ROOT}")
++    file(WRITE "${ROOT}/source.cpp" "${SOURCE}")
++    file(WRITE "${ROOT}/marker.txt" "${MARKER}")
++    file(WRITE "${ROOT}/expected.txt" "${EXPECTED_BODY}")
++    file(WRITE "${ROOT}/runner.cmake"
++        "cmake_minimum_required(VERSION 3.25)\n"
++        "include(\"${PARSER_SCRIPT}\")\n"
++        "file(READ \"${ROOT}/source.cpp\" SOURCE)\n"
++        "file(READ \"${ROOT}/marker.txt\" MARKER)\n"
++        "file(READ \"${ROOT}/expected.txt\" EXPECTED)\n"
++        "extract_cpp_function_body(\"\${SOURCE}\" \"\${MARKER}\" BODY CODE)\n"
++        "if(NOT BODY STREQUAL EXPECTED)\n"
++        "  message(FATAL_ERROR \"unexpected preserved body: [\${BODY}]\")\n"
++        "endif()\n"
++        "string(FIND \"\${CODE}\" \"if (ready) { consume(); }\" REQUIRED_CODE)\n"
++        "if(REQUIRED_CODE EQUAL -1)\n"
++        "  message(FATAL_ERROR \"real code missing from code projection\")\n"
++        "endif()\n"
++        "foreach(FORBIDDEN IN ITEMS http://x /*x*/ literal-braces raw-comment fake-marker)\n"
++        "  string(FIND \"\${CODE}\" \"\${FORBIDDEN}\" FOUND)\n"
++        "  if(NOT FOUND EQUAL -1)\n"
++        "    message(FATAL_ERROR \"literal/comment content leaked into code projection\")\n"
++        "  endif()\n"
++        "endforeach()\n")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}" -P "${ROOT}/runner.cmake"
++        RESULT_VARIABLE RESULT
++        OUTPUT_VARIABLE OUTPUT
++        ERROR_VARIABLE ERROR)
++    if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
++        message(FATAL_ERROR
++            "C++ source parser rejected positive case ${LABEL}: ${OUTPUT}${ERROR}")
++    endif()
++    if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
++        message(FATAL_ERROR
++            "C++ source parser accepted malformed case ${LABEL}")
++    endif()
++    if(NOT EXPECT_SUCCESS)
++        string(FIND "${OUTPUT}${ERROR}" "${EXPECTED_ERROR}" ERROR_MATCH)
++        if(ERROR_MATCH EQUAL -1)
++            message(FATAL_ERROR
++                "C++ source parser failed ${LABEL} for the wrong reason: ${OUTPUT}${ERROR}")
++        endif()
++    endif()
++endfunction()
++
++set(POSITIVE_SOURCE [=[void ignored() {}
++void target() {
++    const char* url = "http://x";
++    const char* comment_text = "/*x*/";
++    const char* escaped = "escaped \" quote and } literal-braces";
++    const char close = '}';
++    const char quote = '\'';
++    const char* raw = R"tag({ raw-comment // /* } })tag";
++    // } void fake-marker() {
++    /* { fake-marker } */
++    if (ready) { consume(); }
++}
++void after() { reject(); }
++]=])
++string(REPLACE "\n" "\r\n" POSITIVE_SOURCE "${POSITIVE_SOURCE}")
++set(POSITIVE_EXPECTED
++    "const char* url = \"http://x\"; const char* comment_text = \"/*x*/\"; const char* escaped = \"escaped \\\" quote and } literal-braces\"; const char close = '}'; const char quote = '\\''; const char* raw = R\"tag({ raw-comment // /* } })tag\"; if (ready) { consume(); }")
++run_parser_case(crlf_literals_raw_nested "${POSITIVE_SOURCE}"
++    "void target()" TRUE "${POSITIVE_EXPECTED}" "")
++
++run_parser_case(missing_function "void other() {}" "void target()" FALSE ""
++    "Unable to find C++ function marker")
++run_parser_case(unclosed_brace "void target() { if (ready) { consume(); }"
++    "void target()" FALSE "" "Unbalanced C++ function body")
++run_parser_case(unclosed_block_comment "void target() { /* never closed"
++    "void target()" FALSE "" "Unterminated C++ lexical construct")
++run_parser_case(unclosed_string "void target() { const char* x = \"never closed; }"
++    "void target()" FALSE "" "Unterminated C++ lexical construct")
++run_parser_case(unclosed_raw "void target() { const char* x = R\"tag(raw }"
++    "void target()" FALSE "" "Unterminated C++ lexical construct")
+diff --git a/tests/platform/hud_notice_structured_binding_source_self_test.cmake b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+index b71a0d0..203d228 100644
+--- a/tests/platform/hud_notice_structured_binding_source_self_test.cmake
++++ b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+@@ -25,20 +25,27 @@ function(run_guard LABEL SOURCE_TEXT EXPECT_SUCCESS)
+     if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
+         message(FATAL_ERROR "HUD notice guard rejected clean source: ${LABEL}")
+     endif()
+     if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
+         message(FATAL_ERROR "HUD notice guard missed mutation: ${LABEL}")
+     endif()
+ endfunction()
+ 
+ run_guard(clean "${ORIGINAL}" TRUE)
+ 
++set(OBSERVE_LOOP_LOOKUP
++    "const char* parsed_key = u8\"未知\";\n    for (const char* cursor = notices_[0].text.bytes.data(); *cursor != '\\0'; ++cursor) {\n        if (*cursor == ':') parsed_key = cursor + 1;\n    }\n    static_cast<void>(parsed_key);\n    if (context_changed && exits_unlocked && current.has_hole) {")
++string(REPLACE
++    "if (context_changed && exits_unlocked && current.has_hole) {"
++    "${OBSERVE_LOOP_LOOKUP}" MUTATED "${ORIGINAL}")
++run_guard(observe_live_handwritten_display_lookup "${MUTATED}" FALSE)
++
+ set(DEAD_REQUIRED_CALL
+     "if (false) {\n        format_notice(notice, \"%s %s\",\n            control_hint_key_label(hints, action), suffix);\n    }")
+ set(LOOP_LOOKUP
+     "${DEAD_REQUIRED_CALL}\n    const char* parsed_key = u8\"未知\";\n    for (const char* cursor = suffix; *cursor != '\\0'; ++cursor) {\n        if (*cursor == ':') parsed_key = cursor + 1;\n    }\n    format_notice(notice, \"%s %s\", parsed_key, suffix);")
+ string(REPLACE
+     "format_notice(notice, \"%s %s\",\n        control_hint_key_label(hints, action), suffix);"
+     "${LOOP_LOOKUP}" MUTATED "${ORIGINAL}")
+ run_guard(dead_required_call_with_loop_lookup "${MUTATED}" FALSE)
+ 
+ set(STD_SEARCH_LOOKUP
+diff --git a/tests/platform/hud_notice_structured_binding_source_test.cmake b/tests/platform/hud_notice_structured_binding_source_test.cmake
+index 70f11cf..54a3bb1 100644
+--- a/tests/platform/hud_notice_structured_binding_source_test.cmake
++++ b/tests/platform/hud_notice_structured_binding_source_test.cmake
+@@ -1,46 +1,72 @@
+ cmake_minimum_required(VERSION 3.25)
+ 
+ if(NOT DEFINED HUD_NOTICE_SOURCE OR NOT EXISTS "${HUD_NOTICE_SOURCE}")
+     message(FATAL_ERROR "HUD notice source is required")
+ endif()
+ 
+ include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
+ file(READ "${HUD_NOTICE_SOURCE}" SOURCE)
++normalize_cpp_source("${SOURCE}" NORMALIZED_SOURCE SOURCE_CODE)
++
++foreach(FORBIDDEN_CODE_REGEX IN ITEMS
++        "(std::)?strstr[ ]*\\("
++        "(std::)?strchr[ ]*\\("
++        "(std::)?memcmp[ ]*\\("
++        "std::search[ ]*\\("
++        "(std::)?string_view"
++        "\\.[ ]*find[ ]*\\(")
++    string(REGEX MATCH "${FORBIDDEN_CODE_REGEX}" FOUND "${SOURCE_CODE}")
++    if(FOUND)
++        message(FATAL_ERROR
++            "HUD notice display-text lookup is forbidden in real code: ${FORBIDDEN_CODE_REGEX}")
++    endif()
++endforeach()
+ 
+ extract_cpp_function_body("${SOURCE}" "void add_action_notice("
+     ADD_ACTION_BODY)
+ set(EXPECTED_ADD_ACTION_BODY
+     "HudNotice notice{}; notice.kind = kind; notice.priority = priority; notice.seconds_left = kTransientSeconds; format_notice(notice, \"%s %s\", control_hint_key_label(hints, action), suffix); enqueue(notices, dropped_count, notice);")
+ if(NOT ADD_ACTION_BODY STREQUAL EXPECTED_ADD_ACTION_BODY)
+     message(FATAL_ERROR
+         "add_action_notice must be the exact structured-binding formatter")
+ endif()
+ 
+ extract_cpp_function_body("${SOURCE}"
+     "void add_abyss_confirmation_notice(" ABYSS_BODY)
+ set(EXPECTED_ABYSS_BODY
+     "const AbyssHudValues values = abyss_hud_values(current); if (values.confirmation_transition == dungeon::TransitionKind::descent) { add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, hints, settings::SettingAction::interact, u8\"再次交互，放弃剩余奖励并下降\"); return; } add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, u8\"离开后再次触碰同一出口以放弃全部剩余奖励\");")
+ if(NOT ABYSS_BODY STREQUAL EXPECTED_ABYSS_BODY)
+     message(FATAL_ERROR
+         "Abyss action notice must use the exact structured interact call")
+ endif()
+ 
+ extract_cpp_function_body("${SOURCE}" "void HudNoticeState::observe("
+-    OBSERVE_BODY)
++    OBSERVE_BODY OBSERVE_CODE)
+ foreach(REQUIRED_BLOCK IN ITEMS
+         "if (context_changed && exits_unlocked && current.has_hole) { add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact, kHolePriority, hints, settings::SettingAction::interact, u8\"交互：进入下一层\"); }"
+         "if (context_changed && current.inventory_count != 0U) { add_action_notice(notices_, dropped_count_, HudNoticeKind::inventory, kInventoryPriority, hints, settings::SettingAction::inventory, u8\"打开背包\"); }"
+         "if (context_changed && awaiting_exit && current.progression.unspent_passive_points != 0U) { add_action_notice(notices_, dropped_count_, HudNoticeKind::passive_tree, kPassiveTreePriority, hints, settings::SettingAction::passive_tree, u8\"打开被动树\"); }")
+     string(FIND "${OBSERVE_BODY}" "${REQUIRED_BLOCK}" FOUND)
+     if(FOUND EQUAL -1)
+         message(FATAL_ERROR
+             "HudNoticeState::observe structured action block missing")
+     endif()
+ endforeach()
+ string(REGEX MATCHALL "add_action_notice\\(" OBSERVE_ACTION_CALLS
+     "${OBSERVE_BODY}")
+ list(LENGTH OBSERVE_ACTION_CALLS OBSERVE_ACTION_CALL_COUNT)
+ if(NOT OBSERVE_ACTION_CALL_COUNT EQUAL 3)
+     message(FATAL_ERROR
+         "HudNoticeState::observe must contain exactly three action calls")
+ endif()
++
++foreach(FORBIDDEN_OBSERVE_REGEX IN ITEMS
++        "for[ ]*\\("
++        "while[ ]*\\("
++        "hints[ ]*\\.")
++    string(REGEX MATCH "${FORBIDDEN_OBSERVE_REGEX}" FOUND "${OBSERVE_CODE}")
++    if(FOUND)
++        message(FATAL_ERROR
++            "HudNoticeState::observe must not scan display text: ${FORBIDDEN_OBSERVE_REGEX}")
++    endif()
++endforeach()
+diff --git a/tests/platform/hud_renderer_structured_model_source_self_test.cmake b/tests/platform/hud_renderer_structured_model_source_self_test.cmake
+index 120d88b..365900e 100644
+--- a/tests/platform/hud_renderer_structured_model_source_self_test.cmake
++++ b/tests/platform/hud_renderer_structured_model_source_self_test.cmake
+@@ -38,20 +38,29 @@ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
+     file(WRITE "${ACTIVE_MUTANT}" "${ACTIVE_TEXT}")
+     set(CURRENT_DUNGEON_FIXTURE_TEXT "${DUNGEON_FIXTURE_TEXT}")
+     set(CURRENT_LOOT_FIXTURE_TEXT "${LOOT_FIXTURE_TEXT}")
+     set(CURRENT_STAGE12_FIXTURE_TEXT "${STAGE12_FIXTURE_TEXT}")
+     set(CURRENT_STAGE16_FIXTURE_TEXT "${STAGE16_FIXTURE_TEXT}")
+     if(DEFINED FIXTURE_OVERRIDE)
+         set(CURRENT_DUNGEON_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
+         set(CURRENT_LOOT_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
+         set(CURRENT_STAGE12_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
+     endif()
++    if(DEFINED DUNGEON_FIXTURE_OVERRIDE)
++        set(CURRENT_DUNGEON_FIXTURE_TEXT "${DUNGEON_FIXTURE_OVERRIDE}")
++    endif()
++    if(DEFINED LOOT_FIXTURE_OVERRIDE)
++        set(CURRENT_LOOT_FIXTURE_TEXT "${LOOT_FIXTURE_OVERRIDE}")
++    endif()
++    if(DEFINED STAGE12_FIXTURE_OVERRIDE)
++        set(CURRENT_STAGE12_FIXTURE_TEXT "${STAGE12_FIXTURE_OVERRIDE}")
++    endif()
+     if(DEFINED STAGE16_FIXTURE_OVERRIDE)
+         set(CURRENT_STAGE16_FIXTURE_TEXT "${STAGE16_FIXTURE_OVERRIDE}")
+     endif()
+     file(WRITE "${DUNGEON_FIXTURE}" "${CURRENT_DUNGEON_FIXTURE_TEXT}")
+     file(WRITE "${LOOT_FIXTURE}" "${CURRENT_LOOT_FIXTURE_TEXT}")
+     file(WRITE "${STAGE12_FIXTURE}" "${CURRENT_STAGE12_FIXTURE_TEXT}")
+     file(WRITE "${STAGE16_FIXTURE}" "${CURRENT_STAGE16_FIXTURE_TEXT}")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}"
+             "-DHUD_RENDERER_SOURCE=${HUD_MUTANT}"
+@@ -67,20 +76,68 @@ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
+         message(FATAL_ERROR "HUD renderer guard rejected clean sources: ${LABEL}")
+     endif()
+     if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
+         list(APPEND MISSED_MUTATIONS "${LABEL}")
+         set(MISSED_MUTATIONS "${MISSED_MUTATIONS}" PARENT_SCOPE)
+     endif()
+ endfunction()
+ 
+ run_guard(clean "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" TRUE)
+ 
++string(REPLACE "bar.label.bytes.data()" "legacy_bar_label(bar)"
++    HUD_MUTATED "${HUD_ORIGINAL}")
++set(HUD_COMPLETE_DECOY
++    "if (false) {\n                record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,\n                    bar.label.bytes.data(), label_position,\n                    style.player_bar_font_size * layout.scale,\n                    1.0F, label_container,\n                    style.player_bar_font_size * layout.scale, &blocker, 1U);\n                draw_hud_text(draw_font, bar.label.bytes.data(), label_position,\n                    style.player_bar_font_size * layout.scale,\n                    palette.text, style.outline_pixels);\n            }\n            ")
++string(REPLACE
++    "record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,"
++    "${HUD_COMPLETE_DECOY}record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,"
++    HUD_MUTATED "${HUD_MUTATED}")
++run_guard(hud_complete_dead_calls_with_live_legacy_path
++    "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
++
++string(REPLACE "slot.key_label.data()" "legacy_key_label(slot)"
++    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
++string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
++    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
++set(ACTIVE_COMPLETE_DECOY
++    "if (false) {\n            if (!hud_font_ready) continue;\n            draw_skill_text(hud_font, slot.key_label.data(),\n                bounds.x + 5.0F * scale,\n                bounds.y + 3.0F * scale, 16.0F * scale,\n                ui_text_contrast_style().primary);\n            if (!slot.empty) { }\n            if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;\n            draw_skill_text(hud_font, slot.cooldown_label.data(),\n                bounds.x + 18.0F * scale,\n                bounds.y + 22.0F * scale, 16.0F * scale,\n                ui_text_contrast_style().primary);\n        }\n        ")
++string(REPLACE "if (!hud_font_ready) continue;"
++    "${ACTIVE_COMPLETE_DECOY}if (!hud_font_ready) continue;"
++    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
++run_guard(active_complete_dead_calls_with_live_legacy_path
++    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
++
++macro(run_fixture_reset_mutant LABEL RESET_HINTS RESET_CONTROL_HINTS)
++    set(DUNGEON_FIXTURE_OVERRIDE
++        "void fixture(){ platform::ControlHints hints{}; platform::refresh_control_hints(hints, arpg::settings::default_settings()); ${RESET_HINTS} renderer.observe_hud(previous, current, status, hints, 0.0F, false); }")
++    set(LOOT_FIXTURE_OVERRIDE
++        "platform::ControlHints control_hints(){ platform::ControlHints hints{}; platform::refresh_control_hints(hints, arpg::settings::default_settings()); ${RESET_HINTS} return hints; } void fixture(){ renderer.observe_hud(previous, current, status, control_hints(), 0.0F, false); }")
++    set(STAGE12_FIXTURE_OVERRIDE
++        "void fixture(){ platform::ControlHints control_hints{}; platform::refresh_control_hints(control_hints, arpg::settings::default_settings()); ${RESET_CONTROL_HINTS} renderer.observe_hud(previous, current, status, control_hints, 0.0F, false); }")
++    set(STAGE16_FIXTURE_OVERRIDE
++        "${DUNGEON_FIXTURE_OVERRIDE}${DUNGEON_FIXTURE_OVERRIDE}")
++    run_guard("${LABEL}" "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" FALSE)
++    unset(DUNGEON_FIXTURE_OVERRIDE)
++    unset(LOOT_FIXTURE_OVERRIDE)
++    unset(STAGE12_FIXTURE_OVERRIDE)
++    unset(STAGE16_FIXTURE_OVERRIDE)
++endmacro()
++
++run_fixture_reset_mutant(refresh_then_brace_assignment
++    "hints = {};" "control_hints = {};")
++run_fixture_reset_mutant(refresh_then_typed_reassignment
++    "hints = platform::ControlHints{};"
++    "control_hints = platform::ControlHints{};")
++run_fixture_reset_mutant(refresh_then_memset_clear
++    "std::memset(&hints, 0, sizeof(hints));"
++    "std::memset(&control_hints, 0, sizeof(control_hints));")
++
+ string(REPLACE "bar.label.bytes.data()" "u8\"生命\""
+     HUD_MUTATED "${HUD_ORIGINAL}")
+ set(HUD_DECOY
+     "if (false) {\n        static_cast<void>(bar.label.bytes.data());\n        static_cast<void>(bar.label.bytes.data());\n    }\n    ")
+ string(REPLACE
+     "const HudLayout& layout, const MaterialPack& assets) const noexcept {\n    if (!IsWindowReady()) return;"
+     "const HudLayout& layout, const MaterialPack& assets) const noexcept {\n    ${HUD_DECOY}if (!IsWindowReady()) return;"
+     HUD_MUTATED "${HUD_MUTATED}")
+ run_guard(hud_dead_correct_decoy_with_real_hardcode
+     "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
+diff --git a/tests/platform/hud_renderer_structured_model_source_test.cmake b/tests/platform/hud_renderer_structured_model_source_test.cmake
+index fad6819..8f4cfff 100644
+--- a/tests/platform/hud_renderer_structured_model_source_test.cmake
++++ b/tests/platform/hud_renderer_structured_model_source_test.cmake
+@@ -24,53 +24,55 @@ function(count_substring INPUT NEEDLE OUTPUT)
+         string(SUBSTRING "${REMAINDER}" ${NEXT} -1 REMAINDER)
+     endwhile()
+     set(${OUTPUT} ${COUNT} PARENT_SCOPE)
+ endfunction()
+ 
+ file(READ "${HUD_RENDERER_SOURCE}" HUD_SOURCE)
+ set(HUD_DRAW_MARKER
+     "void HudRenderer::draw(const HudViewModel& view,\n    const HudLayout& layout, const MaterialPack& assets) const noexcept")
+ extract_cpp_function_body("${HUD_SOURCE}"
+     "${HUD_DRAW_MARKER}"
+-    HUD_DRAW_BODY)
++    HUD_DRAW_BODY HUD_DRAW_CODE)
+ set(REQUIRED_BAR_AUDIT
+     "record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font, bar.label.bytes.data(), label_position, style.player_bar_font_size * layout.scale, 1.0F, label_container, style.player_bar_font_size * layout.scale, &blocker, 1U);")
+ set(REQUIRED_BAR_DRAW
+     "draw_hud_text(draw_font, bar.label.bytes.data(), label_position, style.player_bar_font_size * layout.scale, palette.text, style.outline_pixels);")
+ foreach(REQUIRED_CALL IN ITEMS REQUIRED_BAR_AUDIT REQUIRED_BAR_DRAW)
+-    string(FIND "${HUD_DRAW_BODY}" "${${REQUIRED_CALL}}" FOUND)
+-    if(FOUND EQUAL -1)
++    count_substring("${HUD_DRAW_BODY}" "${${REQUIRED_CALL}}"
++        REQUIRED_CALL_COUNT)
++    if(NOT REQUIRED_CALL_COUNT EQUAL 1)
+         message(FATAL_ERROR
+-            "HudRenderer::draw must consume HudBarPlan::label in the real audit/draw call")
++            "HudRenderer::draw must contain exactly one required audit/draw call")
+     endif()
+ endforeach()
+ string(REGEX MATCHALL "bar\\.label\\.bytes\\.data\\(\\)" BAR_LABEL_USES
+     "${HUD_DRAW_BODY}")
+ list(LENGTH BAR_LABEL_USES BAR_LABEL_USE_COUNT)
+ if(NOT BAR_LABEL_USE_COUNT EQUAL 2)
+     message(FATAL_ERROR
+         "HudRenderer::draw must contain exactly the audit and draw label uses")
+ endif()
+ 
+ file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_SOURCE)
+ extract_cpp_function_body("${ACTIVE_SOURCE}"
+     "void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,"
+-    ACTIVE_DRAW_BODY)
++    ACTIVE_DRAW_BODY ACTIVE_DRAW_CODE)
+ set(REQUIRED_KEY_DRAW
+     "if (!hud_font_ready) continue; draw_skill_text(hud_font, slot.key_label.data(), bounds.x + 5.0F * scale, bounds.y + 3.0F * scale, 16.0F * scale, ui_text_contrast_style().primary); if (!slot.empty) {")
+ set(REQUIRED_COOLDOWN_DRAW
+     "if (slot.cooldown_ratio <= 0.0F || slot.empty) continue; draw_skill_text(hud_font, slot.cooldown_label.data(), bounds.x + 18.0F * scale, bounds.y + 22.0F * scale, 16.0F * scale, ui_text_contrast_style().primary);")
+ foreach(REQUIRED_CALL IN ITEMS REQUIRED_KEY_DRAW REQUIRED_COOLDOWN_DRAW)
+-    string(FIND "${ACTIVE_DRAW_BODY}" "${${REQUIRED_CALL}}" FOUND)
+-    if(FOUND EQUAL -1)
++    count_substring("${ACTIVE_DRAW_BODY}" "${${REQUIRED_CALL}}"
++        REQUIRED_CALL_COUNT)
++    if(NOT REQUIRED_CALL_COUNT EQUAL 1)
+         message(FATAL_ERROR
+-            "ActiveSkillRenderer::draw_hud must consume model text on the real draw path")
++            "ActiveSkillRenderer::draw_hud must contain exactly one required model draw call")
+     endif()
+ endforeach()
+ foreach(MODEL_TOKEN IN ITEMS
+         "slot.key_label.data()" "slot.cooldown_label.data()")
+     string(REGEX REPLACE "([][+.*()^$?\\\\|])" "\\\\\\1"
+         TOKEN_REGEX "${MODEL_TOKEN}")
+     string(REGEX MATCHALL "${TOKEN_REGEX}" MODEL_USES "${ACTIVE_DRAW_BODY}")
+     list(LENGTH MODEL_USES MODEL_USE_COUNT)
+     if(NOT MODEL_USE_COUNT EQUAL 1)
+         message(FATAL_ERROR
+@@ -83,26 +85,46 @@ foreach(DRAW_BODY IN ITEMS HUD_DRAW_BODY ACTIVE_DRAW_BODY)
+             "TextFormat(" "snprintf(" "\"Num" "\"HP" "\"XP" "\"LV"
+             "\"seconds" "\"second" "%.0fs")
+         string(FIND "${${DRAW_BODY}}" "${FORBIDDEN}" FOUND)
+         if(NOT FOUND EQUAL -1)
+             message(FATAL_ERROR
+                 "HUD draw function must not recalculate model text: ${FORBIDDEN}")
+         endif()
+     endforeach()
+ endforeach()
+ 
++foreach(DRAW_CODE IN ITEMS HUD_DRAW_CODE ACTIVE_DRAW_CODE)
++    string(REGEX MATCH "if[ ]*\\([ ]*(false|0)[ ]*\\)"
++        DEAD_BRANCH "${${DRAW_CODE}}")
++    if(DEAD_BRANCH)
++        message(FATAL_ERROR
++            "HUD draw function must not hide required calls in a compile-time dead branch")
++    endif()
++    foreach(FORBIDDEN_CODE_REGEX IN ITEMS
++            "TextFormat[ ]*\\("
++            "(std::)?snprintf[ ]*\\(")
++        string(REGEX MATCH "${FORBIDDEN_CODE_REGEX}" FOUND "${${DRAW_CODE}}")
++        if(FOUND)
++            message(FATAL_ERROR
++                "HUD draw function must not format legacy model text")
++        endif()
++    endforeach()
++endforeach()
++
+ function(require_initialized_fixture PATH EXPECTED_COUNT OWNER
+         CONSUMER_TOKEN MIN_CONSUMERS LABEL)
+     file(READ "${PATH}" FIXTURE_SOURCE)
+-    normalize_cpp_source("${FIXTURE_SOURCE}" FIXTURE)
++    normalize_cpp_source("${FIXTURE_SOURCE}" FIXTURE FIXTURE_CODE)
+     string(REGEX REPLACE "\\( +" "(" FIXTURE "${FIXTURE}")
+     string(REGEX REPLACE " +\\)" ")" FIXTURE "${FIXTURE}")
++    string(REGEX REPLACE "\\( +" "(" FIXTURE_CODE "${FIXTURE_CODE}")
++    string(REGEX REPLACE " +\\)" ")" FIXTURE_CODE "${FIXTURE_CODE}")
+     set(DECLARATION_COUNT 0)
+     set(INITIALIZED_OWNER_COUNT 0)
+     foreach(CANDIDATE_OWNER IN ITEMS hints control_hints initialized)
+         count_substring("${FIXTURE}"
+             "platform::ControlHints ${CANDIDATE_OWNER}{};" OWNER_DECLARATIONS)
+         math(EXPR DECLARATION_COUNT
+             "${DECLARATION_COUNT} + ${OWNER_DECLARATIONS}")
+         count_substring("${FIXTURE}"
+             "platform::ControlHints ${CANDIDATE_OWNER}{}; platform::refresh_control_hints(${CANDIDATE_OWNER}, arpg::settings::default_settings());"
+             OWNER_INITIALIZERS)
+@@ -115,20 +137,57 @@ function(require_initialized_fixture PATH EXPECTED_COUNT OWNER
+     endif()
+     if(NOT INITIALIZED_OWNER_COUNT EQUAL DECLARATION_COUNT)
+         message(FATAL_ERROR
+             "${LABEL} must refresh every ControlHints owner before it can be consumed")
+     endif()
+     count_substring("${FIXTURE}" "${CONSUMER_TOKEN}" CONSUMER_COUNT)
+     if(CONSUMER_COUNT LESS MIN_CONSUMERS)
+         message(FATAL_ERROR
+             "${LABEL} must consume the refreshed ${OWNER} owner")
+     endif()
++
++    set(INITIALIZER
++        "platform::ControlHints ${OWNER}{}; platform::refresh_control_hints(${OWNER}, arpg::settings::default_settings());")
++    set(REMAINDER "${FIXTURE_CODE}")
++    foreach(SEQUENCE_INDEX RANGE 1 ${EXPECTED_COUNT})
++        string(FIND "${REMAINDER}" "${INITIALIZER}" INITIALIZER_INDEX)
++        if(INITIALIZER_INDEX EQUAL -1)
++            message(FATAL_ERROR
++                "${LABEL} must initialize each consumed ${OWNER} owner")
++        endif()
++        string(LENGTH "${INITIALIZER}" INITIALIZER_LENGTH)
++        math(EXPR AFTER_INITIALIZER
++            "${INITIALIZER_INDEX} + ${INITIALIZER_LENGTH}")
++        string(SUBSTRING "${REMAINDER}" ${AFTER_INITIALIZER} -1
++            AFTER_REFRESH)
++        string(FIND "${AFTER_REFRESH}" "${CONSUMER_TOKEN}" CONSUMER_INDEX)
++        if(CONSUMER_INDEX EQUAL -1)
++            message(FATAL_ERROR
++                "${LABEL} must consume ${OWNER} after refresh")
++        endif()
++        string(SUBSTRING "${AFTER_REFRESH}" 0 ${CONSUMER_INDEX}
++            REFRESH_TO_CONSUMER)
++        foreach(INVALIDATION_REGEX IN ITEMS
++                "${OWNER}[ ]*=[^=]"
++                "(std::)?memset[ ]*\\([ ]*&[ ]*${OWNER}"
++                "${OWNER}[ ]*\\.[ ]*(reset|clear)[ ]*\\(")
++            string(REGEX MATCH "${INVALIDATION_REGEX}" INVALIDATION
++                "${REFRESH_TO_CONSUMER}")
++            if(INVALIDATION)
++                message(FATAL_ERROR
++                    "${LABEL} invalidates ${OWNER} after refresh and before consumption")
++            endif()
++        endforeach()
++        string(LENGTH "${CONSUMER_TOKEN}" CONSUMER_LENGTH)
++        math(EXPR AFTER_CONSUMER "${CONSUMER_INDEX} + ${CONSUMER_LENGTH}")
++        string(SUBSTRING "${AFTER_REFRESH}" ${AFTER_CONSUMER} -1 REMAINDER)
++    endforeach()
+ endfunction()
+ 
+ require_initialized_fixture("${DUNGEON_RUNTIME_SOURCE}" 1 hints
+     ", hints," 1 "Dungeon runtime fixture")
+ require_initialized_fixture("${LOOT_SUCTION_SOURCE}" 1 hints
+     "return hints;" 1 "Loot suction fixture")
+ require_initialized_fixture("${STAGE12_SOURCE}" 1 control_hints
+     ", control_hints," 1 "Stage 12 fixture")
+ require_initialized_fixture("${STAGE16_SOURCE}" 2 hints
+     ", hints," 2 "Stage 16 fixtures")

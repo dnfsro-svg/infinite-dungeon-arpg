@@ -1,0 +1,2573 @@
+# Review package: 424a37e..HEAD
+
+## Commits
+461192e feat: localize structured HUD controls
+
+## Files changed
+ src/platform/raylib/active_skill_renderer.cpp      |  11 +-
+ src/platform/raylib/active_skill_view.cpp          |  18 ++-
+ src/platform/raylib/active_skill_view.hpp          |   3 +-
+ src/platform/raylib/control_hints.cpp              |  41 ++----
+ src/platform/raylib/control_hints.hpp              |  12 +-
+ src/platform/raylib/hud_notice_state.cpp           | 109 ++++-----------
+ src/platform/raylib/hud_renderer.cpp               |  53 +++----
+ src/platform/raylib/hud_renderer.hpp               |   1 +
+ src/platform/raylib/hud_view_model.cpp             | 153 +++++----------------
+ src/platform/raylib/ui_text_catalog.cpp            |   4 +-
+ src/platform/raylib/ui_text_catalog.hpp            |   1 +
+ tests/platform/CMakeLists.txt                      |  20 +++
+ tests/platform/active_skill_view_tests.cpp         |  21 ++-
+ tests/platform/control_hints_tests.cpp             | 123 ++++++++++-------
+ tests/platform/hud_font_tests.cpp                  |  11 +-
+ tests/platform/hud_host_integration_tests.cpp      |   7 +-
+ tests/platform/hud_notice_state_tests.cpp          |  75 ++++++++--
+ ...otice_structured_binding_source_self_test.cmake |  54 ++++++++
+ ...hud_notice_structured_binding_source_test.cmake |  33 +++++
+ tests/platform/hud_render_plan_tests.cpp           |  26 +++-
+ tests/platform/hud_stress_tests.cpp                |  17 ++-
+ tests/platform/hud_view_model_tests.cpp            | 120 ++++++++++------
+ tests/platform/platform_test_main.cpp              |  12 +-
+ tests/platform/ui_text_catalog_tests.cpp           |  33 +++--
+ 24 files changed, 541 insertions(+), 417 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/active_skill_renderer.cpp b/src/platform/raylib/active_skill_renderer.cpp
+index 966a200..76be473 100644
+--- a/src/platform/raylib/active_skill_renderer.cpp
++++ b/src/platform/raylib/active_skill_renderer.cpp
+@@ -439,25 +439,18 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
+             const Vector2 name_position{name_container.x + 3.0F * scale,
+                 name_container.y + 2.0F * scale};
+             record_ui_text_bounds(UiTextAuditPage::hud,
+                 UiTextAuditRole::hud_skill_name, hud_font, fitted_name,
+                 name_position, name_size, 0.5F, name_container, name_size);
+             draw_skill_text(hud_font, fitted_name, name_position.x,
+                 name_position.y, name_size,
+                 ui_text_contrast_style().primary);
+         }
+         if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;
+-        const skills::ActiveSkillDefinition* const definition =
+-            skills::active_skill_definition(slot.id);
+-        if (definition == nullptr) continue;
+-        const float seconds = std::ceil(slot.cooldown_ratio
+-            * static_cast<float>(definition->cooldown_ticks) / 60.0F);
+-        char remaining[12]{};
+-        static_cast<void>(std::snprintf(remaining, sizeof(remaining),
+-            "%.0fs", seconds));
+-        draw_skill_text(hud_font, remaining, bounds.x + 18.0F * scale,
++        draw_skill_text(hud_font, slot.cooldown_label.data(),
++            bounds.x + 18.0F * scale,
+             bounds.y + 22.0F * scale, 16.0F * scale,
+             ui_text_contrast_style().primary);
+     }
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/active_skill_view.cpp b/src/platform/raylib/active_skill_view.cpp
+index 3463070..d57401b 100644
+--- a/src/platform/raylib/active_skill_view.cpp
++++ b/src/platform/raylib/active_skill_view.cpp
+@@ -1,16 +1,18 @@
+ #include "active_skill_view.hpp"
+ 
+ #include "skills/active_skill_catalog.hpp"
+ #include "ui_typography.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <cstdio>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kSlotSize = 76.0F;
+ constexpr float kSlotGap = 8.0F;
+ constexpr float kBottomMargin = 20.0F;
+ 
+ [[nodiscard]] const char* active_skill_hud_name(
+@@ -36,45 +38,49 @@ MaterialSpriteId active_skill_icon_sprite(skills::ActiveSkillId id) noexcept {
+ }
+ 
+ ActiveSkillHudModel make_active_skill_hud_model(
+     const skills::SkillLoadoutState& loadout,
+     const std::array<std::uint16_t, skills::kActiveSkillCount>& cooldowns)
+     noexcept {
+     ActiveSkillHudModel result{};
+     for (std::size_t index = 0U; index < result.slots.size(); ++index) {
+         ActiveSkillHudSlot& slot = result.slots[index];
+         slot.key_number = static_cast<std::uint8_t>(index + 1U);
+-        static_cast<void>(std::snprintf(slot.key_label.data(),
+-            slot.key_label.size(), "Num%u",
++        static_cast<void>(ui_utf8_format(slot.key_label.data(),
++            slot.key_label.size(), u8"小键盘%u",
+             static_cast<unsigned>(slot.key_number)));
+-        slot.key_label.back() = '\0';
+         slot.id = loadout.slots[index].active;
+         slot.icon = active_skill_icon_sprite(slot.id);
+         slot.empty = slot.id == skills::ActiveSkillId::none;
+         if (slot.empty) continue;
+         const skills::ActiveSkillDefinition* const definition =
+             skills::active_skill_definition(slot.id);
+         if (definition == nullptr || definition->cooldown_ticks == 0U) {
+             slot.id = skills::ActiveSkillId::none;
+             slot.icon = MaterialSpriteId::missing;
+             slot.empty = true;
+             continue;
+         }
+-        static_cast<void>(std::snprintf(slot.name.data(), slot.name.size(),
+-            "%s", active_skill_hud_name(slot.id, *definition)));
+-        slot.name.back() = '\0';
++        static_cast<void>(ui_utf8_copy(slot.name.data(), slot.name.size(),
++            active_skill_hud_name(slot.id, *definition)));
+         const std::size_t cooldown_index = static_cast<std::size_t>(slot.id);
+         if (cooldown_index < cooldowns.size()) {
+             slot.cooldown_ratio = std::clamp(
+                 static_cast<float>(cooldowns[cooldown_index])
+                     / static_cast<float>(definition->cooldown_ticks),
+                 0.0F, 1.0F);
++            if (slot.cooldown_ratio > 0.0F) {
++                const float seconds = std::ceil(slot.cooldown_ratio
++                    * static_cast<float>(definition->cooldown_ticks) / 60.0F);
++                static_cast<void>(ui_utf8_format(slot.cooldown_label.data(),
++                    slot.cooldown_label.size(), u8"%.0f秒", seconds));
++            }
+         }
+     }
+     return result;
+ }
+ 
+ ActiveSkillHudLayout active_skill_hud_layout(
+     int width, int height) noexcept {
+     if (width <= 0 || height <= 0) return {};
+     const float scale = ui_viewport_scale(width, height);
+     const float total_width = scale * (
+diff --git a/src/platform/raylib/active_skill_view.hpp b/src/platform/raylib/active_skill_view.hpp
+index a790412..2b350eb 100644
+--- a/src/platform/raylib/active_skill_view.hpp
++++ b/src/platform/raylib/active_skill_view.hpp
+@@ -5,24 +5,25 @@
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ struct ActiveSkillHudSlot final {
+     std::uint8_t key_number{};
+-    std::array<char, 5> key_label{};
++    std::array<char, 16> key_label{};
+     skills::ActiveSkillId id{skills::ActiveSkillId::none};
+     MaterialSpriteId icon{MaterialSpriteId::missing};
+     std::array<char, 48> name{};
++    std::array<char, 16> cooldown_label{};
+     float cooldown_ratio{};
+     bool empty{};
+ };
+ 
+ [[nodiscard]] MaterialSpriteId active_skill_icon_sprite(
+     skills::ActiveSkillId id) noexcept;
+ 
+ struct ActiveSkillHudModel final {
+     std::array<ActiveSkillHudSlot,
+         skills::kActiveSkillSlotCount> slots{};
+diff --git a/src/platform/raylib/control_hints.cpp b/src/platform/raylib/control_hints.cpp
+index 33d9816..06a81fb 100644
+--- a/src/platform/raylib/control_hints.cpp
++++ b/src/platform/raylib/control_hints.cpp
+@@ -1,46 +1,33 @@
+ #include "control_hints.hpp"
+ 
+ #include "stable_key_raylib.hpp"
+ 
+-#include <cstdio>
+-
+ namespace arpg::platform {
+-namespace {
+ 
+-[[nodiscard]] const char* key_for(
+-    const settings::SettingsData& settings,
++settings::StableKey control_hint_binding(
++    const ControlHints& hints,
+     settings::SettingAction action) noexcept {
+-    return stable_key_label(settings::binding_for(settings, action));
++    if (!hints.initialized) return settings::StableKey::count;
++    const std::size_t index = static_cast<std::size_t>(action);
++    return index < hints.bindings.size()
++        ? hints.bindings[index] : settings::StableKey::count;
+ }
+ 
+-}  // namespace
++const char* control_hint_key_label(
++    const ControlHints& hints,
++    settings::SettingAction action) noexcept {
++    return stable_key_label(control_hint_binding(hints, action));
++}
+ 
+ void refresh_control_hints(
+     ControlHints& hints,
+     const settings::SettingsData& settings) noexcept {
+-    if ((hints.primary[0] != '\0' || hints.secondary[0] != '\0')
+-            && hints.revision == settings.revision) {
++    if (hints.initialized && hints.revision == settings.revision) {
+         return;
+     }
+-
+-    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+-        "%s Move Up  %s Move Down  %s Move Left  %s Move Right",
+-        key_for(settings, settings::SettingAction::move_up),
+-        key_for(settings, settings::SettingAction::move_down),
+-        key_for(settings, settings::SettingAction::move_left),
+-        key_for(settings, settings::SettingAction::move_right)));
+-    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+-        "%s Light Attack  %s Jump  %s Launcher  %s Interact  %s Inventory  "
+-        "%s Passive Tree (After Full Clear)  F1 Debug  F12 Screenshot  Esc Pause",
+-        key_for(settings, settings::SettingAction::light_attack),
+-        key_for(settings, settings::SettingAction::jump),
+-        key_for(settings, settings::SettingAction::launcher),
+-        key_for(settings, settings::SettingAction::interact),
+-        key_for(settings, settings::SettingAction::inventory),
+-        key_for(settings, settings::SettingAction::passive_tree)));
+-    hints.primary.back() = '\0';
+-    hints.secondary.back() = '\0';
++    hints.bindings = settings.bindings;
+     hints.revision = settings.revision;
++    hints.initialized = true;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/control_hints.hpp b/src/platform/raylib/control_hints.hpp
+index 6d1f5b6..ba842f2 100644
+--- a/src/platform/raylib/control_hints.hpp
++++ b/src/platform/raylib/control_hints.hpp
+@@ -1,20 +1,28 @@
+ #pragma once
+ 
+ #include "platform/settings/settings_types.hpp"
+ 
+ #include <array>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+ struct ControlHints final {
+-    std::array<char, 160> primary{};
+-    std::array<char, 160> secondary{};
++    std::array<settings::StableKey,
++        static_cast<std::size_t>(settings::SettingAction::count)> bindings{};
+     std::uint64_t revision{};
++    bool initialized{};
+ };
+ 
++[[nodiscard]] settings::StableKey control_hint_binding(
++    const ControlHints& hints,
++    settings::SettingAction action) noexcept;
++[[nodiscard]] const char* control_hint_key_label(
++    const ControlHints& hints,
++    settings::SettingAction action) noexcept;
++
+ void refresh_control_hints(
+     ControlHints& hints,
+     const settings::SettingsData& settings) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_notice_state.cpp b/src/platform/raylib/hud_notice_state.cpp
+index 8762612..521cdee 100644
+--- a/src/platform/raylib/hud_notice_state.cpp
++++ b/src/platform/raylib/hud_notice_state.cpp
+@@ -1,102 +1,42 @@
+ #include "hud_notice_state.hpp"
+ 
+ #include "dungeon_view_math.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <cmath>
+-#include <cstdarg>
+-#include <cstdio>
+-#include <cstring>
+ #include <limits>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kTransientSeconds = 3.0F;
+ constexpr std::uint8_t kSaveErrorPriority = 110U;
+ constexpr std::uint8_t kRecoveryPriority = 109U;
+ constexpr std::uint8_t kAbyssPriority = 100U;
+ constexpr std::uint8_t kHolePriority = 90U;
+ constexpr std::uint8_t kExitPriority = 80U;
+ constexpr std::uint8_t kRoomClearPriority = 70U;
+ constexpr std::uint8_t kPassiveTreeBlockedPriority = 65U;
+ constexpr std::uint8_t kRewardPriority = 60U;
+ constexpr std::uint8_t kLevelPriority = 50U;
+ constexpr std::uint8_t kPassivePointsPriority = 40U;
+ constexpr std::uint8_t kInventoryPriority = 30U;
+ constexpr std::uint8_t kPassiveTreePriority = 20U;
+ 
+-[[nodiscard]] std::size_t bounded_length(
+-    const std::array<char, 160>& text) noexcept {
+-    std::size_t length{};
+-    while (length < text.size() && text[length] != '\0') {
+-        ++length;
+-    }
+-    return length;
+-}
+-
+-[[nodiscard]] bool action_key(char* output,
+-    std::size_t output_size,
+-    const ControlHints& hints,
+-    const char* action) noexcept {
+-    if (output_size == 0U) {
+-        return false;
+-    }
+-    output[0] = '\0';
+-    const std::size_t action_length = std::strlen(action);
+-    const std::size_t length = bounded_length(hints.secondary);
+-    if (action_length == 0U || action_length + 1U > length) {
+-        return false;
+-    }
+-
+-    for (std::size_t cursor{}; cursor + action_length <= length; ++cursor) {
+-        if (std::memcmp(hints.secondary.data() + cursor,
+-                action, action_length) != 0) {
+-            continue;
+-        }
+-        if (cursor == 0U || hints.secondary[cursor - 1U] != ' ') {
+-            continue;
+-        }
+-        std::size_t end = cursor - 1U;
+-        while (end > 0U && hints.secondary[end - 1U] == ' ') {
+-            --end;
+-        }
+-        std::size_t begin{};
+-        for (std::size_t index = end; index > 1U; --index) {
+-            if (hints.secondary[index - 1U] == ' '
+-                && hints.secondary[index - 2U] == ' ') {
+-                begin = index;
+-                break;
+-            }
+-        }
+-        if (begin == end) {
+-            return false;
+-        }
+-        const std::size_t count = end - begin;
+-        const std::size_t copied = count < output_size - 1U
+-            ? count : output_size - 1U;
+-        std::memcpy(output, hints.secondary.data() + begin, copied);
+-        output[copied] = '\0';
+-        return copied != 0U;
+-    }
+-    return false;
+-}
+-
+-void format_notice(HudNotice& notice, const char* format, ...) noexcept {
+-    va_list arguments;
+-    va_start(arguments, format);
+-    const int written = std::vsnprintf(notice.text.bytes.data(),
+-        notice.text.bytes.size(), format, arguments);
+-    va_end(arguments);
+-    notice.text.bytes.back() = '\0';
+-    notice.text.truncated = written < 0
+-        || static_cast<std::size_t>(written) >= notice.text.bytes.size();
++template <typename... Args>
++void format_notice(HudNotice& notice,
++    const char* format,
++    Args... args) noexcept {
++    const UiUtf8CopyResult result = ui_utf8_format(notice.text.bytes.data(),
++        notice.text.bytes.size(), format, args...);
++    notice.text.truncated = result.truncated;
+ }
+ 
+ [[nodiscard]] bool is_room_context(HudNoticeKind kind) noexcept {
+     return kind != HudNoticeKind::none
+         && kind != HudNoticeKind::save_error
+         && kind != HudNoticeKind::recovery_required
+         && kind != HudNoticeKind::loot_pickup;
+ }
+ 
+ [[nodiscard]] bool has_open_exit(
+@@ -196,43 +136,39 @@ void add_transient(std::array<HudNotice, 4>& notices,
+     notice.seconds_left = kTransientSeconds;
+     format_notice(notice, "%s", text);
+     enqueue(notices, dropped_count, notice);
+ }
+ 
+ void add_action_notice(std::array<HudNotice, 4>& notices,
+     std::uint32_t& dropped_count,
+     HudNoticeKind kind,
+     std::uint8_t priority,
+     const ControlHints& hints,
+-    const char* action,
++    settings::SettingAction action,
+     const char* suffix) noexcept {
+-    char key[32]{};
+-    if (action_key(key, sizeof(key), hints, action)) {
+-        HudNotice notice{};
+-        notice.kind = kind;
+-        notice.priority = priority;
+-        notice.seconds_left = kTransientSeconds;
+-        format_notice(notice, "%s %s", key, suffix);
+-        enqueue(notices, dropped_count, notice);
+-        return;
+-    }
+-    add_transient(notices, dropped_count, kind, priority, suffix);
++    HudNotice notice{};
++    notice.kind = kind;
++    notice.priority = priority;
++    notice.seconds_left = kTransientSeconds;
++    format_notice(notice, "%s %s",
++        control_hint_key_label(hints, action), suffix);
++    enqueue(notices, dropped_count, notice);
+ }
+ 
+ void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
+     std::uint32_t& dropped_count,
+     const dungeon::DungeonSnapshot& current,
+     const ControlHints& hints) noexcept {
+     const AbyssHudValues values = abyss_hud_values(current);
+     if (values.confirmation_transition == dungeon::TransitionKind::descent) {
+         add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon,
+-            kAbyssPriority, hints, "Interact",
++            kAbyssPriority, hints, settings::SettingAction::interact,
+             u8"再次交互，放弃剩余奖励并下降");
+         return;
+     }
+     add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon,
+         kAbyssPriority,
+         u8"离开后再次触碰同一出口以放弃全部剩余奖励");
+ }
+ 
+ }  // namespace
+ 
+@@ -262,21 +198,22 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
+     if ((context_changed && current.abyss_exit_confirmation_armed)
+             || abyss_confirmation_started) {
+         add_abyss_confirmation_notice(notices_, dropped_count_, current, hints);
+     }
+     const bool awaiting_exit = current.has_active_room
+         && current.phase == dungeon::RoomPhase::awaiting_exit;
+     const bool exits_unlocked = current.has_active_room
+         && current.exits_unlocked;
+     if (context_changed && exits_unlocked && current.has_hole) {
+         add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact,
+-            kHolePriority, hints, "Interact", u8"进入下一层");
++            kHolePriority, hints, settings::SettingAction::interact,
++            u8"交互：进入下一层");
+     }
+     if (context_changed && exits_unlocked && has_open_exit(current)) {
+         add_transient(notices_, dropped_count_, HudNoticeKind::exit_ready,
+             kExitPriority, u8"进入出口");
+     }
+     if (current.phase == dungeon::RoomPhase::cleared
+         && current.remaining_targets == 0U
+         && previous.phase != dungeon::RoomPhase::cleared
+         && (!has_room_clear_observation_
+             || last_room_clear_room_index_ != current.room_index)) {
+@@ -284,21 +221,21 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
+             kRoomClearPriority, u8"房间已清理");
+         last_room_clear_room_index_ = current.room_index;
+         has_room_clear_observation_ = true;
+     }
+     if (current.last_room_experience != 0U
+         && current.last_room_experience != last_room_experience_) {
+         HudNotice notice{};
+         notice.kind = HudNoticeKind::reward;
+         notice.priority = kRewardPriority;
+         notice.seconds_left = kTransientSeconds;
+-        format_notice(notice, u8"奖励 +%llu XP",
++        format_notice(notice, u8"奖励 +%llu 经验",
+             static_cast<unsigned long long>(current.last_room_experience));
+         enqueue(notices_, dropped_count_, notice);
+     }
+     const bool level_started_between_ticks =
+         current.progression.level > previous.progression.level
+         && current.progression.level != last_level_;
+     const bool level_started_between_presented_frames = has_observation_
+         && current.progression.level > last_level_;
+     if (level_started_between_ticks
+             || level_started_between_presented_frames) {
+@@ -315,26 +252,28 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
+                 > last_unspent_passive_points_) {
+         add_transient(notices_, dropped_count_, HudNoticeKind::passive_points,
+             kPassivePointsPriority, u8"有未分配被动点");
+     }
+     if (context_changed && current.progression.unspent_passive_points != 0U) {
+         add_transient(notices_, dropped_count_, HudNoticeKind::passive_points,
+             kPassivePointsPriority, u8"有未分配被动点");
+     }
+     if (context_changed && current.inventory_count != 0U) {
+         add_action_notice(notices_, dropped_count_, HudNoticeKind::inventory,
+-            kInventoryPriority, hints, "Inventory", u8"打开背包");
++            kInventoryPriority, hints, settings::SettingAction::inventory,
++            u8"打开背包");
+     }
+     if (context_changed && awaiting_exit
+         && current.progression.unspent_passive_points != 0U) {
+         add_action_notice(notices_, dropped_count_, HudNoticeKind::passive_tree,
+-            kPassiveTreePriority, hints, "Passive Tree", u8"打开被动树");
++            kPassiveTreePriority, hints, settings::SettingAction::passive_tree,
++            u8"打开被动树");
+     }
+ 
+     last_commit_generation_ = current.commit_generation;
+     last_room_index_ = current.room_index;
+     last_room_experience_ = current.last_room_experience;
+     last_level_ = current.progression.level;
+     last_unspent_passive_points_ =
+         current.progression.unspent_passive_points;
+     last_abyss_confirmation_armed_ =
+         current.abyss_exit_confirmation_armed;
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index 844e3bb..137b33e 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -4,22 +4,24 @@
+ #include "control_hints.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "hud_font.hpp"
+ #include "hud_palette.hpp"
+ #include "hud_renderer.hpp"
+ 
+ #include "ui_text_contrast.hpp"
+ #include "ui_text_renderer.hpp"
+ #include "ui_text_bounds_audit.hpp"
++#include "ui_text_catalog.hpp"
+ #include "render_layout.hpp"
+ #include "ui_material.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ #include <cmath>
+ #include <cstdio>
+ #include <cstring>
+ #include <limits>
+ 
+ namespace arpg::platform {
+@@ -123,32 +125,52 @@ PlayerPanelPlan make_player_panel_plan(const PlayerHudModel& player,
+     const HudLayout& layout, float presentation_seconds) noexcept {
+     PlayerPanelPlan plan{};
+     if (!player.visible || layout.player_panel.width <= 0.0F
+             || layout.player_panel.height <= 0.0F || layout.scale <= 0.0F) {
+         return plan;
+     }
+ 
+     plan.bars[plan.bar_count++] = {
+         player_bar_bounds(layout, 26.0F), clamped_ratio(player.hp_ratio),
+         HudBarKind::health};
++    static_cast<void>(ui_utf8_format(plan.bars[0].label.bytes.data(),
++        plan.bars[0].label.bytes.size(), u8"%s %d/%d",
++        ui_text(UiTextId::hud_health), player.hp, player.max_hp));
+     if (player.max_barrier > 0) {
+         plan.bars[plan.bar_count++] = {
+             player_bar_bounds(layout, 52.0F), clamped_ratio(player.barrier_ratio),
+             HudBarKind::barrier};
++        static_cast<void>(ui_utf8_format(plan.bars[1].label.bytes.data(),
++            plan.bars[1].label.bytes.size(), u8"%s %d/%d",
++            ui_text(UiTextId::hud_barrier), player.barrier,
++            player.max_barrier));
+     }
+     plan.experience_maxed = player.level >= 100U;
+-    plan.bars[plan.bar_count++] = {
++    HudBarPlan& experience_bar = plan.bars[plan.bar_count++];
++    experience_bar = {
+         player_bar_bounds(layout, 78.0F),
+         plan.experience_maxed ? 1.0F : clamped_ratio(player.experience_ratio),
+         HudBarKind::experience};
+-    static_cast<void>(std::snprintf(plan.progression_text.bytes.data(),
+-        plan.progression_text.bytes.size(), u8"LV %u · 未分配点 %u",
++    if (plan.experience_maxed) {
++        static_cast<void>(ui_utf8_format(experience_bar.label.bytes.data(),
++            experience_bar.label.bytes.size(), "%s",
++            ui_text(UiTextId::hud_experience_maxed)));
++    } else {
++        static_cast<void>(ui_utf8_format(experience_bar.label.bytes.data(),
++            experience_bar.label.bytes.size(), u8"%s %llu/%llu",
++            ui_text(UiTextId::hud_experience),
++            static_cast<unsigned long long>(player.experience),
++            static_cast<unsigned long long>(player.required_experience)));
++    }
++    static_cast<void>(ui_utf8_format(plan.progression_text.bytes.data(),
++        plan.progression_text.bytes.size(), u8"%s %u · 未分配点 %u",
++        ui_text(UiTextId::hud_level),
+         static_cast<unsigned>(player.level),
+         static_cast<unsigned>(player.unspent_passive_points)));
+ 
+     plan.tag_count = std::min<std::uint8_t>(player.status_tag_count,
+         static_cast<std::uint8_t>(plan.tags.size()));
+     for (std::size_t index = 0U; index < plan.tag_count; ++index) {
+         plan.tags[index] = player.status_tags[index];
+     }
+ 
+     const float seconds = std::max(0.0F, presentation_seconds);
+@@ -495,42 +517,22 @@ void HudRenderer::draw(const HudViewModel& view,
+                 Color{7, 10, 17, 220});
+         }
+         static_cast<void>(assets.draw_region_fit(
+             ui_material_sprite(UiMaterialElement::label_plate),
+             {4.0F, 30.0F, 120.0F, 67.0F},
+             {panel_bounds.x + 8.0F * layout.scale,
+                 panel_bounds.y + 3.0F * layout.scale,
+                 panel_bounds.width - 16.0F * layout.scale,
+                 23.0F * layout.scale}));
+ 
+-        char text[96]{};
+         for (std::size_t index = 0U; index < plan.bar_count; ++index) {
+             const HudBarPlan& bar = plan.bars[index];
+-            switch (bar.kind) {
+-            case HudBarKind::health:
+-                std::snprintf(text, sizeof(text), u8"生命 HP %d/%d", view.player.hp,
+-                    view.player.max_hp);
+-                break;
+-            case HudBarKind::barrier:
+-                std::snprintf(text, sizeof(text), u8"护盾 %d/%d", view.player.barrier,
+-                    view.player.max_barrier);
+-                break;
+-            case HudBarKind::experience:
+-                if (plan.experience_maxed) {
+-                    std::snprintf(text, sizeof(text), "XP MAX");
+-                } else {
+-                    std::snprintf(text, sizeof(text), "XP %llu/%llu",
+-                        static_cast<unsigned long long>(view.player.experience),
+-                        static_cast<unsigned long long>(view.player.required_experience));
+-                }
+-                break;
+-            }
+             draw_player_bar(bar, assets);
+             std::size_t label_index{};
+             if (bar.kind == HudBarKind::barrier) {
+                 label_index = 1U;
+             } else if (bar.kind == HudBarKind::experience) {
+                 label_index = 2U;
+             }
+             const HudRect label = text_layout.player_bar_labels[label_index];
+             const Vector2 label_position{label.x + 2.0F * layout.scale,
+                 bar.bounds.y - 3.0F * layout.scale};
+@@ -538,24 +540,25 @@ void HudRenderer::draw(const HudViewModel& view,
+                 label.height};
+             const Rectangle blocker{bar.bounds.x, bar.bounds.y,
+                 bar.bounds.width, bar.bounds.height};
+             UiTextAuditRole role = UiTextAuditRole::hud_health;
+             if (bar.kind == HudBarKind::barrier) {
+                 role = UiTextAuditRole::hud_barrier;
+             } else if (bar.kind == HudBarKind::experience) {
+                 role = UiTextAuditRole::hud_experience;
+             }
+             record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font,
+-                text, label_position, style.player_bar_font_size * layout.scale,
++                bar.label.bytes.data(), label_position,
++                style.player_bar_font_size * layout.scale,
+                 1.0F, label_container,
+                 style.player_bar_font_size * layout.scale, &blocker, 1U);
+-            draw_hud_text(draw_font, text, label_position,
++            draw_hud_text(draw_font, bar.label.bytes.data(), label_position,
+                 style.player_bar_font_size * layout.scale,
+                 palette.text, style.outline_pixels);
+         }
+         if (plan.low_health_emphasis) {
+             DrawRectangleLinesEx({layout.player_panel.x, layout.player_panel.y,
+                 layout.player_panel.width, layout.player_panel.height},
+                 2.0F * layout.scale,
+                 palette.health);
+         }
+         const Vector2 progression_position{
+diff --git a/src/platform/raylib/hud_renderer.hpp b/src/platform/raylib/hud_renderer.hpp
+index e972575..7ef6a03 100644
+--- a/src/platform/raylib/hud_renderer.hpp
++++ b/src/platform/raylib/hud_renderer.hpp
+@@ -18,20 +18,21 @@ struct MonsterSnapshot;
+ }
+ 
+ namespace arpg::platform {
+ 
+ enum class HudBarKind : std::uint8_t { health, barrier, experience };
+ 
+ struct HudBarPlan final {
+     HudRect bounds{};
+     float ratio{};
+     HudBarKind kind{HudBarKind::health};
++    HudText96 label{};
+ };
+ 
+ struct PlayerPanelPlan final {
+     std::array<HudBarPlan, 3> bars{};
+     std::uint8_t bar_count{};
+     HudText96 progression_text{};
+     bool low_health_emphasis{};
+     std::array<HudStatusTagKind, 3> tags{};
+     std::uint8_t tag_count{};
+     bool experience_maxed{};
+diff --git a/src/platform/raylib/hud_view_model.cpp b/src/platform/raylib/hud_view_model.cpp
+index 7a92a75..683ac1e 100644
+--- a/src/platform/raylib/hud_view_model.cpp
++++ b/src/platform/raylib/hud_view_model.cpp
+@@ -1,37 +1,36 @@
+ #include "hud_view_model.hpp"
+ 
+ #include "combat/room_spatial_grid.hpp"
+ #include "dungeon/dungeon_render_snapshot.hpp"
+ #include "dungeon/room_drop_spatial_index.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "hud_notice_state.hpp"
+ #include "progression/progression_rules.hpp"
++#include "ui_text_catalog.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <algorithm>
+ #include <cstdio>
+-#include <cstring>
+ #include <limits>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ template <typename... Args>
+ void format_text(HudText96& output,
+     HudBuildDiagnostics& diagnostics,
+     const char* format,
+     Args... args) noexcept {
+-    const int written = std::snprintf(
++    const UiUtf8CopyResult result = ui_utf8_format(
+         output.bytes.data(), output.bytes.size(), format, args...);
+-    output.bytes.back() = '\0';
+-    output.truncated = written < 0
+-        || static_cast<std::size_t>(written) >= output.bytes.size();
++    output.truncated = result.truncated;
+     if (output.truncated) {
+         ++diagnostics.truncated_texts;
+     }
+ }
+ 
+ int clamped_resource(int value,
+     int maximum,
+     HudBuildDiagnostics& diagnostics) noexcept {
+     const int bounded_maximum = std::max(0, maximum);
+     const int bounded_value = std::clamp(value, 0, bounded_maximum);
+@@ -198,131 +197,50 @@ void build_navigation(NavigationHudModel& navigation,
+     }};
+     navigation.element_count = static_cast<std::uint8_t>(kElements.size());
+     for (std::size_t index{}; index < kElements.size(); ++index) {
+         navigation.elements[index].color_id = element_color(kElements[index]);
+         format_text(navigation.elements[index].label, diagnostics, u8"%s %u",
+             ecology_name(kElements[index]),
+             static_cast<unsigned>(navigation.biases[index]));
+     }
+ }
+ 
+-[[nodiscard]] std::size_t bounded_hint_length(
+-    const std::array<char, 160U>& source) noexcept {
+-    std::size_t length{};
+-    while (length < source.size() && source[length] != '\0') ++length;
+-    return length;
+-}
+-
+-void mark_truncated(HudText96& output,
+-    HudBuildDiagnostics& diagnostics) noexcept {
+-    if (output.truncated) return;
+-    output.truncated = true;
+-    ++diagnostics.truncated_texts;
+-}
+-
+-void copy_movement_hint(HudText96& output,
+-    HudBuildDiagnostics& diagnostics,
+-    const std::array<char, 160U>& source) noexcept {
+-    const std::size_t length = bounded_hint_length(source);
+-    const std::size_t copied = std::min(length, output.bytes.size() - 1U);
+-    if (copied != 0U) {
+-        std::memcpy(output.bytes.data(), source.data(), copied);
+-    }
+-    output.bytes[copied] = '\0';
+-    if (copied != length || length == source.size()) {
+-        mark_truncated(output, diagnostics);
+-    }
+-}
+-
+-[[nodiscard]] std::size_t text_length(const HudText96& text) noexcept {
+-    std::size_t length{};
+-    while (length < text.bytes.size() && text.bytes[length] != '\0') ++length;
+-    return length;
+-}
+-
+-void split_control_hints(std::array<HudText96, 3U>& output,
++void build_control_hints(HudText96& movement,
++    std::array<HudText96, 3U>& controls,
+     HudBuildDiagnostics& diagnostics,
+-    const std::array<char, 160U>& source) noexcept {
+-    constexpr std::size_t kPreferredLineBytes = 42U;
+-    const std::size_t source_length = bounded_hint_length(source);
+-    std::size_t cursor{};
+-    std::size_t line_index{};
+-    while (cursor < source_length) {
+-        while (cursor < source_length && source[cursor] == ' ') ++cursor;
+-        if (cursor == source_length) break;
+-
+-        const std::size_t token_begin = cursor;
+-        while (cursor < source_length) {
+-            if (source[cursor] == ' ' && cursor + 1U < source_length
+-                && source[cursor + 1U] == ' ') {
+-                break;
+-            }
+-            ++cursor;
+-        }
+-        std::size_t token_end = cursor;
+-        while (token_end > token_begin && source[token_end - 1U] == ' ') {
+-            --token_end;
+-        }
+-        const std::size_t token_length = token_end - token_begin;
+-        if (token_length == 0U) continue;
+-
+-        for (;;) {
+-            HudText96& line = output[line_index];
+-            const std::size_t line_length = text_length(line);
+-            const std::size_t separator = line_length == 0U ? 0U : 2U;
+-            const std::size_t required = separator + token_length;
+-            if (line_length != 0U
+-                && line_length + required > kPreferredLineBytes
+-                && line_index + 1U < output.size()) {
+-                ++line_index;
+-                continue;
+-            }
+-            if (line_length + required >= line.bytes.size()) {
+-                if (line_length != 0U && line_index + 1U < output.size()) {
+-                    ++line_index;
+-                    continue;
+-                }
+-                const std::size_t available = line.bytes.size() - 1U
+-                    - line_length - separator;
+-                std::size_t destination = line_length;
+-                if (separator != 0U) {
+-                    line.bytes[destination++] = ' ';
+-                    line.bytes[destination++] = ' ';
+-                }
+-                if (available != 0U) {
+-                    std::memcpy(line.bytes.data() + destination,
+-                        source.data() + token_begin, available);
+-                    destination += available;
+-                }
+-                line.bytes[destination] = '\0';
+-                mark_truncated(line, diagnostics);
+-                return;
+-            }
+-
+-            std::size_t destination = line_length;
+-            if (separator != 0U) {
+-                line.bytes[destination++] = ' ';
+-                line.bytes[destination++] = ' ';
+-            }
+-            std::memcpy(line.bytes.data() + destination,
+-                source.data() + token_begin, token_length);
+-            destination += token_length;
+-            line.bytes[destination] = '\0';
+-            break;
+-        }
+-
+-        while (cursor < source_length && source[cursor] == ' ') ++cursor;
+-    }
+-
+-    if (source_length == source.size()) {
+-        mark_truncated(output[line_index], diagnostics);
+-    }
++    const ControlHints& hints) noexcept {
++    using settings::SettingAction;
++    format_text(movement, diagnostics, u8"%s %s  %s %s  %s %s  %s %s",
++        control_hint_key_label(hints, SettingAction::move_up),
++        ui_setting_action_name(SettingAction::move_up),
++        control_hint_key_label(hints, SettingAction::move_down),
++        ui_setting_action_name(SettingAction::move_down),
++        control_hint_key_label(hints, SettingAction::move_left),
++        ui_setting_action_name(SettingAction::move_left),
++        control_hint_key_label(hints, SettingAction::move_right),
++        ui_setting_action_name(SettingAction::move_right));
++    format_text(controls[0], diagnostics, u8"%s %s  %s %s  %s %s",
++        control_hint_key_label(hints, SettingAction::light_attack),
++        ui_setting_action_name(SettingAction::light_attack),
++        control_hint_key_label(hints, SettingAction::jump),
++        ui_setting_action_name(SettingAction::jump),
++        control_hint_key_label(hints, SettingAction::launcher),
++        ui_setting_action_name(SettingAction::launcher));
++    format_text(controls[1], diagnostics, u8"%s %s  %s %s  %s %s",
++        control_hint_key_label(hints, SettingAction::interact),
++        ui_setting_action_name(SettingAction::interact),
++        control_hint_key_label(hints, SettingAction::inventory),
++        ui_setting_action_name(SettingAction::inventory),
++        control_hint_key_label(hints, SettingAction::passive_tree),
++        ui_setting_action_name(SettingAction::passive_tree));
++    format_text(controls[2], diagnostics,
++        u8"F1 调试  F12 截图  Esc 暂停");
+ }
+ 
+ void increment_saturating(std::uint64_t& value) noexcept {
+     if (value != (std::numeric_limits<std::uint64_t>::max)()) {
+         ++value;
+     }
+ }
+ 
+ }  // namespace
+ 
+@@ -378,23 +296,22 @@ void HudViewModelProjector::build(HudViewModel& output,
+     }
+     output.room = cached_objective_;
+     output.room.abyss = snapshot.is_abyss;
+     output.diagnostics.truncated_texts += cached_objective_truncations_;
+ 
+     if (!control_hints_ready_
+         || control_hints_revision_ != hints.revision) {
+         cached_movement_hint_ = {};
+         cached_control_hint_lines_ = {};
+         HudBuildDiagnostics diagnostics{};
+-        copy_movement_hint(cached_movement_hint_, diagnostics, hints.primary);
+-        split_control_hints(cached_control_hint_lines_, diagnostics,
+-            hints.secondary);
++        build_control_hints(cached_movement_hint_, cached_control_hint_lines_,
++            diagnostics, hints);
+         cached_control_hint_truncations_ = diagnostics.truncated_texts;
+         control_hints_revision_ = hints.revision;
+         control_hints_ready_ = true;
+         increment_saturating(
+             static_formatting_diagnostics_.control_hint_rebuilds);
+     }
+     output.diagnostics.truncated_texts += cached_control_hint_truncations_;
+     output.room.movement = cached_movement_hint_;
+     output.room.controls = cached_control_hint_lines_;
+     if (presented_world != nullptr) {
+diff --git a/src/platform/raylib/ui_text_catalog.cpp b/src/platform/raylib/ui_text_catalog.cpp
+index e1e000a..74939d6 100644
+--- a/src/platform/raylib/ui_text_catalog.cpp
++++ b/src/platform/raylib/ui_text_catalog.cpp
+@@ -1,35 +1,36 @@
+ #include "ui_text_catalog.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr const char* kUnknown = u8"未知";
+ 
+-constexpr std::array<const char*, 43U> kUiTexts{{
++constexpr std::array<const char*, 44U> kUiTexts{{
+     u8"暂停", u8"继续游戏", u8"设置", u8"退出游戏",
+     u8"设置", u8"音频设置", u8"显示设置", u8"按键设置",
+     u8"恢复默认设置", u8"应用", u8"取消", u8"已保存：", kUnknown,
+     u8"生命", u8"护盾", u8"经验", u8"等级",
+     u8"正在保存", u8"保存完成", u8"已恢复存档", u8"存档错误",
+     u8"需要恢复存档", u8"无效存档槽",
+     u8"背包", u8"装备", u8"物品详情",
+     u8"被动星图", u8"未分配点", u8"关闭",
+     u8"调试就绪", u8"调试不可用", kUnknown,
+     u8"该按键不可绑定", u8"设置无效", u8"版本号已达上限",
+     u8"实时预览失败", u8"设置保存失败，请重试",
+     u8"另一游戏实例正在保存，请稍后重试",
+     u8"设置回滚失败", u8"设置已保存", u8"另一实例修改已重载",
+     u8"设置存储冲突，需重启", u8"设置已恢复默认值",
++    u8"经验已满",
+ }};
+ 
+ constexpr std::array<const char*, 18U> kItemBaseNames{{
+     u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套", u8"行者战靴", u8"元素护符",
+     u8"迅捷匕首", u8"攻城巨刃", u8"暗影兜帽", u8"堡垒头盔", u8"夜行者外衣", u8"城塞胸甲",
+     u8"猎手护腕", u8"碎骨护手", u8"轻捷战靴", u8"铁护胫", u8"三元吊坠", u8"混沌之眼",
+ }};
+ 
+ constexpr std::array<const char*, 14U> kMaterialNames{{
+     u8"嬗变石", u8"增幅石", u8"富豪石", u8"混沌石", u8"崇高石", u8"剥离石", u8"神圣石",
+@@ -83,20 +84,21 @@ constexpr std::array<const char*, 10U> kSettingActionNames{{
+ 
+ constexpr std::array<const char*, 2U> kSkillNames{{
+     u8"拔刀斩", u8"风暴剑阵",
+ }};
+ 
+ // Dynamic and formatted player-facing text has no stable lookup ID.  Keep
+ // its existing death-overlay/HUD corpus in the single catalog visitor so the
+ // shared glyph plan covers it without a second hand-maintained font list.
+ constexpr std::array<const char*, 66U> kUiDynamicGlyphCoverage{{
+     u8"死亡回顾第层房间火焰水闪电混沌深渊普通致死来源未知伤害物理"
++    "上移下移左移右移轻攻击跳跃挑飞交互背包被动树调试截图暂停小键盘秒经验已满"
+     "怪物攻击投射地面危险词缀环境最后一击原始最终护盾损失生命"
+     "最近秒实际承伤时防御护甲减闪避率元素上限正在记录继续保存失败请重试设置已恢复默认值返回本层入口"
+     "方向键导航选择返回重置房间上下左右调整请按下可绑定用于的当前空格"
+     "窗口模式全屏窗口化垂直同步开关拾取过滤显示全部魔法及以上仅稀有"
+     "确认退出绑定按键总音量音效音乐环境音界面音｜（）？"
+     "剩余出口已开放未分配点减速无敌目标个敌人待结算经验深度 · 层房间生态第波下一波即将开始待领奖励未领取"
+     "正在保存房间正在处理撤退房间状态异常"
+     "需要恢复存档再次交互，以放弃奖励离开后触碰同一出口全部剩余并下降进入下一层进入出口已清理升级至级有被动点打开背包树"
+     "投弹者冲锋之壁垒支援射手突袭追猎灾术师原生燃烧连锁爆破雷暴"
+     "猎杀之焰扩张强力狂热迅捷装甲多重寒冷腐蚀闪现无规则追猎狂怒"
+diff --git a/src/platform/raylib/ui_text_catalog.hpp b/src/platform/raylib/ui_text_catalog.hpp
+index 6835b85..9d818fd 100644
+--- a/src/platform/raylib/ui_text_catalog.hpp
++++ b/src/platform/raylib/ui_text_catalog.hpp
+@@ -20,20 +20,21 @@ enum class UiTextId : std::uint16_t {
+     save_saving, save_saved, save_recovered, save_error,
+     recovery_title, recovery_invalid_slots,
+     inventory_title, equipment_title, item_detail_title,
+     passive_title, passive_points, passive_close,
+     debug_ready, debug_unavailable,
+     unknown,
+     settings_invalid_binding, settings_invalid, settings_revision_limit,
+     settings_preview_failed, settings_save_failed_retry, settings_save_busy,
+     settings_rollback_failed, settings_saved, settings_reloaded_elsewhere,
+     settings_storage_conflict, settings_recovered_defaults,
++    hud_experience_maxed,
+     count,
+ };
+ 
+ [[nodiscard]] const char* ui_text(UiTextId id) noexcept;
+ [[nodiscard]] const char* ui_item_base_name(std::uint8_t base_id) noexcept;
+ [[nodiscard]] const char* ui_material_name(items::MaterialId id) noexcept;
+ [[nodiscard]] const char* ui_item_slot_name(items::ItemSlot id) noexcept;
+ [[nodiscard]] const char* ui_item_rarity_name(items::ItemRarity id) noexcept;
+ [[nodiscard]] const char* ui_item_affix_name(std::uint16_t affix_id) noexcept;
+ [[nodiscard]] const char* ui_passive_node_name(
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 5fe02d9..6cf9acf 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1895,20 +1895,40 @@ set_tests_properties(
+ 
+ add_test(
+     NAME platform.hole_prompt_binding_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/hole_prompt_binding_source_test.cmake")
+ set_tests_properties(
+     platform.hole_prompt_binding_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
++add_test(
++    NAME platform.hud_notice_structured_binding_source
++    COMMAND "${CMAKE_COMMAND}"
++        "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake")
++set_tests_properties(
++    platform.hud_notice_structured_binding_source
++    PROPERTIES LABELS "headless;platform;architecture;full_chinese_ui")
++
++add_test(
++    NAME platform.hud_notice_structured_binding_source_self_test
++    COMMAND "${CMAKE_COMMAND}"
++        "-DHUD_NOTICE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/hud_notice_state.cpp"
++        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_test.cmake"
++        "-DMUTATION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/hud-notice-structured-binding-mutations"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/hud_notice_structured_binding_source_self_test.cmake")
++set_tests_properties(
++    platform.hud_notice_structured_binding_source_self_test
++    PROPERTIES LABELS "headless;platform;architecture;negative;full_chinese_ui")
++
+ add_test(
+     NAME platform.passive_tree_binding_label_source
+     COMMAND "${CMAKE_COMMAND}"
+         "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/passive_tree_binding_label_source_test.cmake")
+ set_tests_properties(
+     platform.passive_tree_binding_label_source
+     PROPERTIES LABELS "headless;platform;architecture")
+ 
+ add_test(
+diff --git a/tests/platform/active_skill_view_tests.cpp b/tests/platform/active_skill_view_tests.cpp
+index d53a7c4..39125ed 100644
+--- a/tests/platform/active_skill_view_tests.cpp
++++ b/tests/platform/active_skill_view_tests.cpp
+@@ -1,19 +1,20 @@
+ #include "test_framework.hpp"
+ #include "allocation_probe.hpp"
+ 
+ #include "active_skill_renderer.hpp"
+ #include "active_skill_view.hpp"
+ #include "combat/active_skill_runtime.hpp"
+ #include "skills/active_skill_catalog.hpp"
+ #include "skills/skill_loadout.hpp"
+ #include "ui_typography.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstring>
+ #include <type_traits>
+ #include <utility>
+ 
+ namespace {
+ 
+ namespace combat = arpg::combat;
+@@ -186,45 +187,63 @@ arpg::test::Failure hud_projects_exactly_five_numbered_slots_and_catalog_names()
+         view.slots[1U].name.data(), u8"暴风式") == 0);
+     ARPG_REQUIRE(view.slots[2U].name[0U] == '\0');
+     return {};
+ }
+ 
+ arpg::test::Failure hud_labels_skill_slots_as_numpad_keys() noexcept {
+     const platform::ActiveSkillHudModel view =
+         platform::make_active_skill_hud_model(
+             skills::default_skill_loadout(), {});
+     constexpr std::array<const char*, skills::kActiveSkillSlotCount>
+-        kExpectedLabels{{"Num1", "Num2", "Num3", "Num4", "Num5"}};
++        kExpectedLabels{{u8"小键盘1", u8"小键盘2", u8"小键盘3",
++            u8"小键盘4", u8"小键盘5"}};
++
++    static_assert(std::tuple_size<decltype(
++        platform::ActiveSkillHudSlot{}.key_label)>::value >= 16U,
++        "Chinese numpad labels require at least 16 bytes");
+ 
+     for (std::size_t index = 0U; index < view.slots.size(); ++index) {
+         ARPG_REQUIRE(SkillKeyLabelContract<
+             platform::ActiveSkillHudSlot>::matches(
+                 view.slots[index], kExpectedLabels[index]));
++        ARPG_REQUIRE(platform::ui_utf8_is_valid(
++            view.slots[index].key_label.data()));
++        ARPG_REQUIRE(std::strstr(view.slots[index].key_label.data(), "Num")
++            == nullptr);
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
+     noexcept {
+     const skills::SkillLoadoutState loadout = skills::default_skill_loadout();
+     std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns{{
+         static_cast<std::uint16_t>(skills::kDrawSlashCooldownTicks / 2U),
+         0xFFFFU,
+     }};
+     const platform::ActiveSkillHudModel view =
+         platform::make_active_skill_hud_model(loadout, cooldowns);
+ 
+     ARPG_REQUIRE(arpg::test::near(view.slots[0U].cooldown_ratio, 0.5F));
+     ARPG_REQUIRE(arpg::test::near(view.slots[1U].cooldown_ratio, 1.0F));
++    ARPG_REQUIRE(std::strcmp(view.slots[0U].cooldown_label.data(), u8"2秒")
++        == 0);
++    ARPG_REQUIRE(std::strcmp(view.slots[1U].cooldown_label.data(), u8"30秒")
++        == 0);
++    ARPG_REQUIRE(platform::ui_utf8_is_valid(
++        view.slots[0U].cooldown_label.data()));
++    ARPG_REQUIRE(std::strstr(view.slots[0U].cooldown_label.data(), "s")
++        == nullptr);
+     for (std::size_t index = 2U; index < view.slots.size(); ++index) {
+         ARPG_REQUIRE(arpg::test::near(
+             view.slots[index].cooldown_ratio, 0.0F));
++        ARPG_REQUIRE(view.slots[index].cooldown_label[0] == '\0');
+     }
+     return {};
+ }
+ 
+ arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
+     noexcept {
+     constexpr std::array<std::array<int, 2>, 3> kViewports{{
+         {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
+     }};
+     for (const auto viewport : kViewports) {
+diff --git a/tests/platform/control_hints_tests.cpp b/tests/platform/control_hints_tests.cpp
+index 78a68e9..cbb94fa 100644
+--- a/tests/platform/control_hints_tests.cpp
++++ b/tests/platform/control_hints_tests.cpp
+@@ -1,126 +1,147 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "control_hints.hpp"
+ #include "platform/settings/settings_types.hpp"
+ 
+-#include <cstring>
++#include <cstddef>
+ #include <cstdint>
++#include <cstring>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ namespace settings = arpg::settings;
+ 
+-[[nodiscard]] bool contains(const char* text, const char* needle) noexcept {
+-    return std::strstr(text, needle) != nullptr;
+-}
+-
+-arpg::test::Failure defaults_render_every_configurable_action() noexcept {
++arpg::test::Failure revision_zero_initializes_all_structured_bindings()
++    noexcept {
+     const settings::SettingsData values = settings::default_settings();
++    ARPG_REQUIRE(values.revision == 0U);
+     platform::ControlHints hints{};
++
+     platform::refresh_control_hints(hints, values);
+ 
+-    ARPG_REQUIRE(std::strcmp(hints.primary.data(),
+-        "W Move Up  S Move Down  A Move Left  D Move Right") == 0);
+-    ARPG_REQUIRE(std::strcmp(hints.secondary.data(),
+-        "J Light Attack  K Jump  L Launcher  E Interact  I Inventory  P Passive Tree (After Full Clear)  F1 Debug  F12 Screenshot  Esc Pause") == 0);
+-    ARPG_REQUIRE(hints.revision == values.revision);
++    ARPG_REQUIRE(hints.initialized);
++    ARPG_REQUIRE(hints.revision == 0U);
++    ARPG_REQUIRE(hints.bindings == values.bindings);
++    for (std::size_t index = 0U; index < hints.bindings.size(); ++index) {
++        const auto action = static_cast<settings::SettingAction>(index);
++        ARPG_REQUIRE(platform::control_hint_binding(hints, action)
++            == values.bindings[index]);
++    }
+     return {};
+ }
+ 
+-arpg::test::Failure arbitrary_swaps_refresh_the_current_key_labels() noexcept {
++arpg::test::Failure rebound_action_queries_return_current_key_labels()
++    noexcept {
+     settings::SettingsData values = settings::default_settings();
+     ARPG_REQUIRE(settings::assign_or_swap(values,
+-        settings::SettingAction::light_attack, settings::StableKey::q));
++        settings::SettingAction::interact, settings::StableKey::q));
+     ARPG_REQUIRE(settings::assign_or_swap(values,
+-        settings::SettingAction::move_right, settings::StableKey::j));
++        settings::SettingAction::inventory, settings::StableKey::o));
++    ARPG_REQUIRE(settings::assign_or_swap(values,
++        settings::SettingAction::passive_tree, settings::StableKey::t));
+     values.revision = 7U;
+-
+     platform::ControlHints hints{};
++
+     platform::refresh_control_hints(hints, values);
+ 
+-    ARPG_REQUIRE(contains(hints.primary.data(), "J Move Right"));
+-    ARPG_REQUIRE(contains(hints.secondary.data(), "Q Light Attack"));
+-    ARPG_REQUIRE(!contains(hints.secondary.data(), "J Light Attack"));
++    ARPG_REQUIRE(platform::control_hint_binding(
++        hints, settings::SettingAction::interact) == settings::StableKey::q);
++    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
++        hints, settings::SettingAction::interact), "Q") == 0);
++    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
++        hints, settings::SettingAction::inventory), "O") == 0);
++    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
++        hints, settings::SettingAction::passive_tree), "T") == 0);
+     ARPG_REQUIRE(hints.revision == 7U);
+     return {};
+ }
+ 
+-arpg::test::Failure unchanged_revision_does_not_rebuild_and_new_revision_does() noexcept {
++arpg::test::Failure same_revision_preserves_the_complete_cache() noexcept {
+     settings::SettingsData values = settings::default_settings();
+     values.revision = 3U;
+     platform::ControlHints hints{};
+     platform::refresh_control_hints(hints, values);
+     const platform::ControlHints original = hints;
+ 
+     ARPG_REQUIRE(settings::assign_or_swap(values,
+         settings::SettingAction::jump, settings::StableKey::q));
+     platform::refresh_control_hints(hints, values);
+-    ARPG_REQUIRE(std::memcmp(&hints, &original, sizeof(hints)) == 0);
+ 
+-    values.revision = 4U;
+-    platform::refresh_control_hints(hints, values);
+-    ARPG_REQUIRE(hints.revision == 4U);
+-    ARPG_REQUIRE(contains(hints.secondary.data(), "Q Jump"));
+-    ARPG_REQUIRE(!contains(hints.secondary.data(), "K Jump"));
++    ARPG_REQUIRE(std::memcmp(&hints, &original, sizeof(hints)) == 0);
+     return {};
+ }
+ 
+-arpg::test::Failure buffers_are_terminated_and_keep_global_labels_fixed() noexcept {
++arpg::test::Failure new_revision_replaces_the_complete_cache() noexcept {
+     settings::SettingsData values = settings::default_settings();
+-    values.revision = 11U;
++    values.revision = 3U;
+     platform::ControlHints hints{};
+     platform::refresh_control_hints(hints, values);
++    const auto old_jump = platform::control_hint_binding(
++        hints, settings::SettingAction::jump);
++
++    ARPG_REQUIRE(settings::assign_or_swap(values,
++        settings::SettingAction::jump, settings::StableKey::q));
++    values.revision = 4U;
++    platform::refresh_control_hints(hints, values);
+ 
+-    ARPG_REQUIRE(hints.primary.back() == '\0');
+-    ARPG_REQUIRE(hints.secondary.back() == '\0');
+-    ARPG_REQUIRE(contains(hints.secondary.data(), "F1 Debug"));
+-    ARPG_REQUIRE(contains(hints.secondary.data(), "F12 Screenshot"));
+-    ARPG_REQUIRE(contains(hints.secondary.data(), "Esc Pause"));
++    ARPG_REQUIRE(hints.revision == 4U);
++    ARPG_REQUIRE(hints.bindings == values.bindings);
++    ARPG_REQUIRE(platform::control_hint_binding(
++        hints, settings::SettingAction::jump) == settings::StableKey::q);
++    ARPG_REQUIRE(platform::control_hint_binding(
++        hints, settings::SettingAction::jump) != old_jump);
+     return {};
+ }
+ 
+-arpg::test::Failure all_action_labels_are_present_in_the_cached_text() noexcept {
+-    const settings::SettingsData values = settings::default_settings();
++arpg::test::Failure invalid_actions_return_safe_unknown_values() noexcept {
+     platform::ControlHints hints{};
+-    platform::refresh_control_hints(hints, values);
+-
+-    for (std::size_t index = 0U;
+-            index < static_cast<std::size_t>(settings::SettingAction::count);
+-            ++index) {
+-        const auto action = static_cast<settings::SettingAction>(index);
+-        const char* label = settings::action_label(action);
+-        ARPG_REQUIRE(contains(hints.primary.data(), label)
+-            || contains(hints.secondary.data(), label));
+-    }
++    ARPG_REQUIRE(platform::control_hint_binding(
++        hints, settings::SettingAction::interact) == settings::StableKey::count);
++    ARPG_REQUIRE(std::strcmp(platform::control_hint_key_label(
++        hints, settings::SettingAction::interact), u8"未知") == 0);
++    platform::refresh_control_hints(hints, settings::default_settings());
++    const auto invalid = static_cast<settings::SettingAction>(255U);
++
++    ARPG_REQUIRE(platform::control_hint_binding(hints, invalid)
++        == settings::StableKey::count);
++    ARPG_REQUIRE(std::strcmp(
++        platform::control_hint_key_label(hints, invalid), u8"未知") == 0);
+     return {};
+ }
+ 
+-arpg::test::Failure unchanged_refresh_performs_no_heap_allocation() noexcept {
++arpg::test::Failure unchanged_refresh_and_queries_allocate_nothing() noexcept {
+     settings::SettingsData values = settings::default_settings();
+     values.revision = 91U;
+     platform::ControlHints hints{};
+     platform::refresh_control_hints(hints, values);
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (int iteration = 0; iteration < 10000; ++iteration) {
+         platform::refresh_control_hints(hints, values);
++        ARPG_REQUIRE(platform::control_hint_binding(
++            hints, settings::SettingAction::interact)
++            == settings::StableKey::e);
++        ARPG_REQUIRE(platform::control_hint_key_label(
++            hints, settings::SettingAction::interact)[0] == 'E');
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+-    {"defaults render every action", &defaults_render_every_configurable_action},
+-    {"swaps refresh current labels", &arbitrary_swaps_refresh_the_current_key_labels},
+-    {"revision refresh policy", &unchanged_revision_does_not_rebuild_and_new_revision_does},
+-    {"buffers and global labels", &buffers_are_terminated_and_keep_global_labels_fixed},
+-    {"all action labels", &all_action_labels_are_present_in_the_cached_text},
+-    {"unchanged refresh no allocation", &unchanged_refresh_performs_no_heap_allocation},
++    {"revision zero initializes structured bindings",
++        &revision_zero_initializes_all_structured_bindings},
++    {"rebound action queries", &rebound_action_queries_return_current_key_labels},
++    {"same revision preserves cache", &same_revision_preserves_the_complete_cache},
++    {"new revision replaces cache", &new_revision_replaces_the_complete_cache},
++    {"invalid actions are safe", &invalid_actions_return_safe_unknown_values},
++    {"unchanged refresh and queries no allocation",
++        &unchanged_refresh_and_queries_allocate_nothing},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite control_hints_suite() noexcept {
+     return arpg::test::make_suite("control_hints", kCases);
+ }
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index 4d22ae9..ca10240 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -13,51 +13,51 @@
+ #include "ui_text_contrast.hpp"
+ #include "ui_typography.hpp"
+ 
+ #include <cstddef>
+ #include <cstring>
+ #include <cstdio>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
++namespace settings = arpg::settings;
+ 
+ bool same_color(Color lhs, Color rhs) noexcept {
+     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
+         && lhs.a == rhs.a;
+ }
+ 
+ [[nodiscard]] bool model_texts_are_covered(const platform::HudFontPlan& plan,
+     const platform::HudViewModel& model) noexcept {
+     const platform::HudText96* const texts[] = {
+         &model.room.objective, &model.room.secondary,
++        &model.room.movement, &model.room.controls[0],
++        &model.room.controls[1], &model.room.controls[2],
+         &model.navigation.primary, &model.navigation.ecology_label,
+         &model.navigation.elements[0].label, &model.navigation.elements[1].label,
+         &model.navigation.elements[2].label, &model.navigation.elements[3].label,
+     };
+     for (const platform::HudText96* const text : texts) {
+         if (text->bytes[0] != '\0'
+             && !platform::death_overlay_font_covers_text(plan.shared,
+                 text->bytes.data())) {
+             return false;
+         }
+     }
+     return true;
+ }
+ 
+ arpg::test::Failure production_view_model_texts_and_player_labels_are_covered() noexcept {
+     const platform::HudFontPlan plan = platform::hud_font_plan();
+     platform::ControlHints hints{};
+-    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+-        "W Move Up"));
+-    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+-        "F Interact"));
++    platform::refresh_control_hints(hints, settings::default_settings());
+     arpg::dungeon::DungeonSnapshot snapshot{};
+     snapshot.depth = 9U;
+     snapshot.floor_room_index = 7U;
+     snapshot.ecology = arpg::dungeon::DungeonElement::chaos;
+     snapshot.biases = {{1U, 2U, 3U, 4U}};
+     snapshot.remaining_targets = 6U;
+     snapshot.pending_room_experience = 99U;
+     snapshot.wave_count = 3U;
+     snapshot.wave_index = 1U;
+     snapshot.combat.emplace();
+@@ -87,21 +87,22 @@ arpg::test::Failure production_view_model_texts_and_player_labels_are_covered()
+         ARPG_REQUIRE(model_texts_are_covered(plan, model));
+     }
+ 
+     snapshot.is_abyss = true;
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+     platform::HudViewModel abyss{};
+     platform::build_hud_view_model(abyss, snapshot, {}, hints);
+     ARPG_REQUIRE(model_texts_are_covered(plan, abyss));
+ 
+     constexpr const char* kRendererLabels[] = {
+-        u8"生命 HP 1/1", u8"护盾 1/1", "XP MAX",
++        u8"生命 1/1", u8"护盾 1/1", u8"经验已满",
++        u8"等级 100 · 未分配点 0", u8"小键盘5", u8"30秒",
+         u8"减速", u8"腐蚀", u8"无敌",
+     };
+     for (const char* text : kRendererLabels) {
+         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+     }
+     ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+     return {};
+ }
+ 
+ arpg::test::Failure visible_set_model_text_is_covered_by_shared_font_plan()
+diff --git a/tests/platform/hud_host_integration_tests.cpp b/tests/platform/hud_host_integration_tests.cpp
+index b0c08af..3ee7c3e 100644
+--- a/tests/platform/hud_host_integration_tests.cpp
++++ b/tests/platform/hud_host_integration_tests.cpp
+@@ -26,25 +26,24 @@ dungeon::GroundItemSnapshot ground_item(
+     dungeon::GroundItemSnapshot item{};
+     item.ordinal = ordinal;
+     item.item_id = 1000U + ordinal;
+     item.base_id = 1U;
+     item.item_level = 20U;
+     item.rarity = rarity;
+     return item;
+ }
+ 
+ platform::ControlHints committed_hints(std::uint64_t revision) noexcept {
++    settings::SettingsData values = settings::default_settings();
++    values.revision = revision;
+     platform::ControlHints hints{};
+-    static constexpr char kPrimary[] = "WASD Move";
+-    static_assert(sizeof(kPrimary) <= 160U);
+-    std::memcpy(hints.primary.data(), kPrimary, sizeof(kPrimary));
+-    hints.revision = revision;
++    platform::refresh_control_hints(hints, values);
+     return hints;
+ }
+ 
+ dungeon::DungeonSnapshot snapshot() noexcept {
+     dungeon::DungeonSnapshot value{};
+     value.commit_generation = 7U;
+     value.room_index = 3U;
+     value.phase = dungeon::RoomPhase::combat;
+     value.has_active_room = true;
+     value.remaining_targets = 2U;
+diff --git a/tests/platform/hud_notice_state_tests.cpp b/tests/platform/hud_notice_state_tests.cpp
+index b1eb143..e6302ce 100644
+--- a/tests/platform/hud_notice_state_tests.cpp
++++ b/tests/platform/hud_notice_state_tests.cpp
+@@ -1,37 +1,42 @@
+ #include "test_framework.hpp"
+ 
++#include "allocation_probe.hpp"
+ #include "death_overlay_font.hpp"
+ #include "hud_font.hpp"
+ #include "hud_notice_state.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <cmath>
+ #include <cstdio>
+ #include <cstring>
+ #include <limits>
+ 
+ namespace {
+ 
+ namespace dungeon = arpg::dungeon;
+ namespace platform = arpg::platform;
++namespace settings = arpg::settings;
+ 
+ constexpr float kTransientSeconds = 3.0F;
+ 
+ platform::ControlHints rebound_hints() noexcept {
++    settings::SettingsData values = settings::default_settings();
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::interact, settings::StableKey::q));
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::inventory, settings::StableKey::o));
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::passive_tree, settings::StableKey::t));
++    values.revision = 17U;
+     platform::ControlHints hints{};
+-    static constexpr char kSecondary[] =
+-        "J Light Attack  K Jump  L Launcher  Q Interact  O Inventory  "
+-        "T Passive Tree";
+-    static_assert(sizeof(kSecondary) - 1U < 160U);
+-    hints.secondary.fill('Z');
+-    std::memcpy(hints.secondary.data(), kSecondary, sizeof(kSecondary) - 1U);
+-    hints.revision = 17U;
++    platform::refresh_control_hints(hints, values);
+     return hints;
+ }
+ 
+ dungeon::DungeonSnapshot baseline_snapshot() noexcept {
+     dungeon::DungeonSnapshot snapshot{};
+     snapshot.commit_generation = 7U;
+     snapshot.room_index = 11U;
+     snapshot.phase = dungeon::RoomPhase::combat;
+     snapshot.has_active_room = true;
+     snapshot.remaining_targets = 2U;
+@@ -290,53 +295,96 @@ arpg::test::Failure save_error_and_recovery_are_persistent_and_state_owned() noe
+ 
+     state.observe(snapshot, snapshot, saved_status(), rebound_hints(), true);
+     ARPG_REQUIRE(state.view().primary.kind
+         == platform::HudNoticeKind::recovery_required);
+     ARPG_REQUIRE(std::isinf(state.view().primary.seconds_left));
+     state.observe(snapshot, snapshot, saved_status(), rebound_hints(), false);
+     ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::none);
+     return {};
+ }
+ 
+-arpg::test::Failure rebound_labels_and_non_terminated_arrays_are_bounded() noexcept {
++arpg::test::Failure rebound_action_notices_are_structured_and_chinese()
++    noexcept {
+     const dungeon::DungeonSnapshot previous = baseline_snapshot();
+     const platform::ControlHints hints = rebound_hints();
+ 
+     dungeon::DungeonSnapshot hole = previous;
+     hole.phase = dungeon::RoomPhase::awaiting_exit;
+     hole.exits_unlocked = true;
+     hole.has_hole = true;
+     platform::HudNoticeState hole_state{};
+     hole_state.observe(previous, hole, saved_status(), hints, false);
+     ARPG_REQUIRE(std::strstr(hole_state.view().primary.text.bytes.data(), "Q")
+         != nullptr);
++    ARPG_REQUIRE(std::strstr(hole_state.view().primary.text.bytes.data(),
++        u8"交互") != nullptr);
++    ARPG_REQUIRE(std::strstr(hole_state.view().primary.text.bytes.data(),
++        "Interact") == nullptr);
+ 
+     dungeon::DungeonSnapshot inventory = previous;
+     inventory.inventory_count = 1U;
+     platform::HudNoticeState inventory_state{};
+     inventory_state.observe(previous, inventory, saved_status(), hints, false);
+     ARPG_REQUIRE(std::strstr(inventory_state.view().primary.text.bytes.data(), "O")
+         != nullptr);
++    ARPG_REQUIRE(std::strstr(inventory_state.view().primary.text.bytes.data(),
++        u8"背包") != nullptr);
++    ARPG_REQUIRE(std::strstr(inventory_state.view().primary.text.bytes.data(),
++        "Inventory") == nullptr);
+ 
+     dungeon::DungeonSnapshot passive = previous;
+     passive.phase = dungeon::RoomPhase::awaiting_exit;
+     passive.progression.unspent_passive_points = 1U;
+     platform::HudNoticeState passive_state{};
+     passive_state.observe(previous, passive, saved_status(), hints, false);
+     ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(), "T")
+         != nullptr);
++    ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(),
++        u8"被动树") != nullptr);
++    ARPG_REQUIRE(std::strstr(passive_state.view().secondary.text.bytes.data(),
++        "Passive Tree") == nullptr);
+     ARPG_REQUIRE(hole_state.view().primary.text.bytes.back() == '\0');
+     ARPG_REQUIRE(inventory_state.view().primary.text.bytes.back() == '\0');
+     ARPG_REQUIRE(passive_state.view().secondary.text.bytes.back() == '\0');
+     return {};
+ }
+ 
++arpg::test::Failure longest_key_notice_is_utf8_safe_and_allocation_free()
++    noexcept {
++    settings::SettingsData values = settings::default_settings();
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::interact, settings::StableKey::arrow_right));
++    values.revision = 19U;
++    platform::ControlHints hints{};
++    platform::refresh_control_hints(hints, values);
++    const dungeon::DungeonSnapshot previous = baseline_snapshot();
++    dungeon::DungeonSnapshot hole = previous;
++    hole.phase = dungeon::RoomPhase::awaiting_exit;
++    hole.exits_unlocked = true;
++    hole.has_hole = true;
++
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
++        platform::HudNoticeState state{};
++        state.observe(previous, hole, saved_status(), hints, false);
++        ARPG_REQUIRE(platform::ui_utf8_is_valid(
++            state.view().primary.text.bytes.data()));
++        ARPG_REQUIRE(!state.view().primary.text.truncated);
++    }
++    ARPG_REQUIRE(arpg::test::allocation_count() == before);
++    platform::HudNoticeState state{};
++    state.observe(previous, hole, saved_status(), hints, false);
++    ARPG_REQUIRE(std::strstr(state.view().primary.text.bytes.data(),
++        u8"右方向键") != nullptr);
++    return {};
++}
++
+ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covered() noexcept {
+     const dungeon::DungeonSnapshot previous = baseline_snapshot();
+     const platform::ControlHints hints = rebound_hints();
+     const platform::HudFontPlan font = platform::hud_font_plan();
+     const auto require_primary = [&](const dungeon::DungeonSnapshot& current,
+                                      platform::DungeonRenderStatus status,
+                                      bool recovery,
+                                      const char* expected) noexcept {
+         platform::HudNoticeState state{};
+         state.observe(previous, current, status, hints, recovery);
+@@ -352,36 +400,38 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
+     current.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+     current.abyss_exit_confirmation_armed = true;
+     current.abyss_exit_confirmation_transition = dungeon::TransitionKind::door;
+     ARPG_REQUIRE(require_primary(current, saved_status(), false,
+         u8"离开后再次触碰同一出口以放弃全部剩余奖励"));
+ 
+     current = previous;
+     current.phase = dungeon::RoomPhase::awaiting_exit;
+     current.exits_unlocked = true;
+     current.has_hole = true;
+-    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"Q 进入下一层"));
++    ARPG_REQUIRE(require_primary(current, saved_status(), false,
++        u8"Q 交互：进入下一层"));
+ 
+     current = previous;
+     current.phase = dungeon::RoomPhase::awaiting_exit;
+     current.exits_unlocked = true;
+     current.exits_open[0] = true;
+     ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"进入出口"));
+ 
+     current = previous;
+     current.phase = dungeon::RoomPhase::cleared;
+     current.remaining_targets = 0U;
+     ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"房间已清理"));
+ 
+     current = previous;
+     current.last_room_experience = 25U;
+-    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"奖励 +25 XP"));
++    ARPG_REQUIRE(require_primary(current, saved_status(), false,
++        u8"奖励 +25 经验"));
+ 
+     current = previous;
+     current.progression.level = 5U;
+     ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"升级至 5 级"));
+ 
+     current = previous;
+     current.progression.unspent_passive_points = 1U;
+     ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"有未分配被动点"));
+ 
+     current = previous;
+@@ -565,21 +615,24 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"priority order and two-line limit", &priority_order_and_two_line_limit_are_deterministic},
+     {"complete priority order", &complete_priority_order_is_exposed_by_each_trigger},
+     {"pause freezes notice timer", &pause_freezes_and_unpaused_time_saturates},
+     {"duplicate commit room level suppression", &duplicate_commit_room_and_level_signals_do_not_requeue},
+     {"room context clearing", &room_transition_and_explicit_clear_remove_room_context},
+     {"bounded queue overflow", &full_queue_discards_lowest_priority_and_counts_drop},
+     {"unchanged context has no repeat overflow", &unchanged_context_does_not_repeat_overflow_drops},
+     {"room clear edge without commit", &room_clear_edge_does_not_require_commit_or_room_change},
+     {"room zero context transition", &room_zero_context_clears_on_next_room},
+     {"persistent save and recovery ownership", &save_error_and_recovery_are_persistent_and_state_owned},
+-    {"rebound bounded control hints", &rebound_labels_and_non_terminated_arrays_are_bounded},
++    {"rebound structured Chinese notices",
++        &rebound_action_notices_are_structured_and_chinese},
++    {"longest notice key is UTF-8 safe and allocation free",
++        &longest_key_notice_is_utf8_safe_and_allocation_free},
+     {"production Chinese notice corpus", &production_visible_notices_are_chinese_first_and_font_covered},
+     {"abyss confirmation presented edge once", &abyss_confirmation_between_presented_frames_enqueues_once},
+     {"progression presented edges once", &progression_between_presented_frames_enqueues_each_edge_once},
+     {"pickup feedback reward priority abyss style",
+         &pickup_feedback_is_reward_priority_and_keeps_abyss_style},
+     {"blocked passive tree feedback",
+         &blocked_passive_tree_feedback_is_clear_and_transient},
+     {"pickup feedback survives room change",
+         &pickup_feedback_survives_room_change_for_full_lifetime},
+     {"pickup feedback priority ordering",
+diff --git a/tests/platform/hud_notice_structured_binding_source_self_test.cmake b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+new file mode 100644
+index 0000000..bf18264
+--- /dev/null
++++ b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+@@ -0,0 +1,54 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED HUD_NOTICE_SOURCE
++        OR NOT EXISTS "${HUD_NOTICE_SOURCE}"
++        OR NOT DEFINED GUARD_SCRIPT
++        OR NOT EXISTS "${GUARD_SCRIPT}"
++        OR NOT DEFINED MUTATION_ROOT)
++    message(FATAL_ERROR "HUD notice guard self-test inputs are required")
++endif()
++
++file(REMOVE_RECURSE "${MUTATION_ROOT}")
++file(MAKE_DIRECTORY "${MUTATION_ROOT}")
++file(READ "${HUD_NOTICE_SOURCE}" ORIGINAL)
++
++function(run_guard LABEL SOURCE_TEXT EXPECT_SUCCESS)
++    set(MUTANT "${MUTATION_ROOT}/${LABEL}.cpp")
++    file(WRITE "${MUTANT}" "${SOURCE_TEXT}")
++    execute_process(
++        COMMAND "${CMAKE_COMMAND}"
++            "-DHUD_NOTICE_SOURCE=${MUTANT}"
++            -P "${GUARD_SCRIPT}"
++        RESULT_VARIABLE RESULT
++        OUTPUT_QUIET
++        ERROR_QUIET)
++    if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
++        message(FATAL_ERROR "HUD notice guard rejected clean source: ${LABEL}")
++    endif()
++    if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
++        message(FATAL_ERROR "HUD notice guard missed mutation: ${LABEL}")
++    endif()
++endfunction()
++
++run_guard(clean "${ORIGINAL}" TRUE)
++
++string(REPLACE "control_hint_key_label(hints, action)"
++    "legacy_action_key(hints, action)" MUTATED "${ORIGINAL}")
++run_guard(missing_structured_query "${MUTATED}" FALSE)
++
++string(REPLACE "settings::SettingAction::interact" "\"Interact\""
++    MUTATED "${ORIGINAL}")
++run_guard(english_interact_literal "${MUTATED}" FALSE)
++
++string(REPLACE "settings::SettingAction::inventory" "\"Inventory\""
++    MUTATED "${ORIGINAL}")
++run_guard(english_inventory_literal "${MUTATED}" FALSE)
++
++string(REPLACE "settings::SettingAction::passive_tree" "\"Passive Tree\""
++    MUTATED "${ORIGINAL}")
++run_guard(english_passive_literal "${MUTATED}" FALSE)
++
++string(REPLACE "format_notice(notice, \"%s %s\","
++    "std::memcmp(hints.secondary.data(), action, 1);\n    format_notice(notice, \"%s %s\","
++    MUTATED "${ORIGINAL}")
++run_guard(display_text_memcmp "${MUTATED}" FALSE)
+diff --git a/tests/platform/hud_notice_structured_binding_source_test.cmake b/tests/platform/hud_notice_structured_binding_source_test.cmake
+new file mode 100644
+index 0000000..70b50b8
+--- /dev/null
++++ b/tests/platform/hud_notice_structured_binding_source_test.cmake
+@@ -0,0 +1,33 @@
++cmake_minimum_required(VERSION 3.25)
++
++if(NOT DEFINED HUD_NOTICE_SOURCE OR NOT EXISTS "${HUD_NOTICE_SOURCE}")
++    message(FATAL_ERROR "HUD notice source is required")
++endif()
++
++file(READ "${HUD_NOTICE_SOURCE}" SOURCE)
++
++foreach(FORBIDDEN IN ITEMS
++        "hints.secondary"
++        "std::memcmp"
++        "memcmp("
++        "\"Interact\""
++        "\"Inventory\""
++        "\"Passive Tree\"")
++    string(FIND "${SOURCE}" "${FORBIDDEN}" FOUND)
++    if(NOT FOUND EQUAL -1)
++        message(FATAL_ERROR
++            "HUD notice display-text parsing is forbidden: ${FORBIDDEN}")
++    endif()
++endforeach()
++
++foreach(REQUIRED IN ITEMS
++        "control_hint_key_label(hints, action)"
++        "settings::SettingAction::interact"
++        "settings::SettingAction::inventory"
++        "settings::SettingAction::passive_tree")
++    string(FIND "${SOURCE}" "${REQUIRED}" FOUND)
++    if(FOUND EQUAL -1)
++        message(FATAL_ERROR
++            "HUD notice structured binding token missing: ${REQUIRED}")
++    endif()
++endforeach()
+diff --git a/tests/platform/hud_render_plan_tests.cpp b/tests/platform/hud_render_plan_tests.cpp
+index 70fbc3d..7690e84 100644
+--- a/tests/platform/hud_render_plan_tests.cpp
++++ b/tests/platform/hud_render_plan_tests.cpp
+@@ -44,69 +44,81 @@ bool same_color(Color lhs, Color rhs) noexcept {
+     return platform::hud_rect_inside(inner, outer);
+ }
+ 
+ arpg::test::Failure health_is_always_the_first_visible_player_bar() noexcept {
+     const platform::PlayerPanelPlan plan = platform::make_player_panel_plan(
+         player_model(), player_layout(), 0.0F);
+ 
+     ARPG_REQUIRE(plan.bar_count == 2U);
+     ARPG_REQUIRE(plan.bars[0].kind == platform::HudBarKind::health);
+     ARPG_REQUIRE(arpg::test::near(plan.bars[0].ratio, 0.75F));
++    ARPG_REQUIRE(std::strcmp(plan.bars[0].label.bytes.data(),
++        u8"生命 75/100") == 0);
++    ARPG_REQUIRE(std::strstr(plan.bars[0].label.bytes.data(), "HP") == nullptr);
+     ARPG_REQUIRE(rect_inside(plan.bars[0].bounds, player_layout().player_panel));
+     return {};
+ }
+ 
+ arpg::test::Failure barrier_bar_is_visible_only_with_a_positive_maximum() noexcept {
+     platform::PlayerHudModel without_barrier = player_model();
+     without_barrier.max_barrier = 0;
+     const platform::PlayerPanelPlan hidden = platform::make_player_panel_plan(
+         without_barrier, player_layout(), 0.0F);
+     ARPG_REQUIRE(hidden.bar_count == 2U);
+ 
+     platform::PlayerHudModel with_barrier = player_model();
+     with_barrier.barrier = 30;
+     with_barrier.max_barrier = 60;
+     with_barrier.barrier_ratio = 0.5F;
+     const platform::PlayerPanelPlan visible = platform::make_player_panel_plan(
+         with_barrier, player_layout(), 0.0F);
+     ARPG_REQUIRE(visible.bar_count == 3U);
+     ARPG_REQUIRE(visible.bars[1].kind == platform::HudBarKind::barrier);
+     ARPG_REQUIRE(arpg::test::near(visible.bars[1].ratio, 0.5F));
++    ARPG_REQUIRE(std::strcmp(visible.bars[1].label.bytes.data(),
++        u8"护盾 30/60") == 0);
+     ARPG_REQUIRE(rect_inside(visible.bars[1].bounds, player_layout().player_panel));
+     return {};
+ }
+ 
+ arpg::test::Failure max_level_experience_uses_the_max_presentation() noexcept {
+     platform::PlayerHudModel model = player_model();
+     model.level = 100U;
+     model.experience = 99999U;
+     model.required_experience = 0U;
+     model.experience_ratio = -1.0F;
+     const platform::PlayerPanelPlan plan = platform::make_player_panel_plan(
+         model, player_layout(), 0.0F);
+ 
+     ARPG_REQUIRE(plan.experience_maxed);
+     ARPG_REQUIRE(plan.bar_count == 2U);
+     ARPG_REQUIRE(plan.bars[1].kind == platform::HudBarKind::experience);
+     ARPG_REQUIRE(arpg::test::near(plan.bars[1].ratio, 1.0F));
++    ARPG_REQUIRE(std::strcmp(plan.bars[1].label.bytes.data(),
++        u8"经验已满") == 0);
++    ARPG_REQUIRE(std::strstr(plan.bars[1].label.bytes.data(), "XP") == nullptr);
+     return {};
+ }
+ 
+ arpg::test::Failure player_plan_exposes_level_and_unspent_points_text() noexcept {
+     platform::PlayerHudModel model = player_model();
+     model.level = 12U;
+     model.unspent_passive_points = 7U;
+     const platform::PlayerPanelPlan plan = platform::make_player_panel_plan(
+         model, player_layout(), 0.0F);
+ 
+     ARPG_REQUIRE(std::strcmp(plan.progression_text.bytes.data(),
+-        u8"LV 12 · 未分配点 7") == 0);
++        u8"等级 12 · 未分配点 7") == 0);
++    ARPG_REQUIRE(std::strcmp(plan.bars[1].label.bytes.data(),
++        u8"经验 25/100") == 0);
++    ARPG_REQUIRE(std::strstr(plan.progression_text.bytes.data(), "LV")
++        == nullptr);
+     return {};
+ }
+ 
+ arpg::test::Failure low_health_emphasis_is_presentation_time_bounded_to_two_hz() noexcept {
+     platform::PlayerHudModel model = player_model();
+     model.hp_ratio = 0.24F;
+     const platform::HudLayout layout = player_layout();
+     const platform::PlayerPanelPlan first = platform::make_player_panel_plan(
+         model, layout, 0.0F);
+     const platform::PlayerPanelPlan before_edge = platform::make_player_panel_plan(
+@@ -236,42 +248,42 @@ arpg::test::Failure monster_resource_plan_consumes_snapshot_values_and_palette_i
+     ARPG_REQUIRE(full.bars[2].palette_id == platform::HudPaletteId::experience);
+     return {};
+ }
+ 
+ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_panels() noexcept {
+     const platform::HudLayout layout = platform::make_hud_layout(1920, 1080, false);
+     platform::RoomHudModel room{};
+     static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
+         u8"第 1/2 波 · 剩余 3"));
+     static_cast<void>(std::snprintf(room.secondary.bytes.data(), room.secondary.bytes.size(),
+-        "Pending room experience +18446744073709551615"));
++        u8"待结算经验 +18446744073709551615"));
+     static_cast<void>(std::snprintf(room.movement.bytes.data(), room.movement.bytes.size(),
+-        "W Move Up  S Move Down  A Move Left  D Move Right"));
++        u8"W 上移  S 下移  A 左移  D 右移"));
+     static_cast<void>(std::snprintf(room.controls[0].bytes.data(),
+-        room.controls[0].bytes.size(), "J Light Attack  K Jump  L Launcher"));
++        room.controls[0].bytes.size(), u8"J 轻攻击  K 跳跃  L 挑飞"));
+     static_cast<void>(std::snprintf(room.controls[1].bytes.data(),
+         room.controls[1].bytes.size(),
+-        "E Interact  I Inventory  P Passive Tree"));
++        u8"E 交互  I 背包  P 被动树"));
+     static_cast<void>(std::snprintf(room.controls[2].bytes.data(),
+         room.controls[2].bytes.size(),
+-        "F1 Debug  F12 Screenshot  Esc Pause"));
++        u8"F1 调试  F12 截图  Esc 暂停"));
+     static_cast<void>(std::snprintf(room.visible_set.text.bytes.data(),
+         room.visible_set.text.bytes.size(),
+         u8"可见：怪 105/105 环境 73/105 掉落 53/331"));
+     platform::NavigationHudModel navigation{};
+     static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
+         u8"深度 1 · 层房间 2"));
+     platform::ContextHudModel context{};
+     context.primary_kind = platform::HudNoticeKind::exit_ready;
+     context.primary_abyss = true;
+     static_cast<void>(std::snprintf(context.primary.bytes.data(), context.primary.bytes.size(),
+-        "E to enter exit"));
++        u8"E 进入出口"));
+ 
+     const platform::ObjectivePanelPlan objective =
+         platform::make_objective_panel_plan(room, layout);
+     const platform::NavigationPanelPlan navigation_plan =
+         platform::make_navigation_panel_plan(navigation, layout);
+     const platform::ContextPanelPlan context_plan =
+         platform::make_context_panel_plan(context, layout);
+ 
+     ARPG_REQUIRE(objective.visible);
+     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
+diff --git a/tests/platform/hud_stress_tests.cpp b/tests/platform/hud_stress_tests.cpp
+index 3180a25..0957480 100644
+--- a/tests/platform/hud_stress_tests.cpp
++++ b/tests/platform/hud_stress_tests.cpp
+@@ -15,20 +15,21 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ #include <limits>
+ 
+ namespace {
+ 
+ namespace combat = arpg::combat;
+ namespace dungeon = arpg::dungeon;
+ namespace platform = arpg::platform;
++namespace settings = arpg::settings;
+ 
+ constexpr std::size_t kScenarioCount = 5U;
+ constexpr std::size_t kIterations = 100000U;
+ constexpr std::uint64_t kHashOffset = 1469598103934665603ULL;
+ constexpr std::uint64_t kHashPrime = 1099511628211ULL;
+ 
+ struct StressScenario final {
+     dungeon::DungeonSnapshot previous{};
+     dungeon::DungeonSnapshot current{};
+     dungeon::DungeonSnapshot alternate{};
+@@ -72,28 +73,30 @@ void fold_object(std::uint64_t& hash, const Value& value) noexcept {
+         fold_object(hash, scenario.height);
+         fold_object(hash, scenario.debug_visible);
+         fold_object(hash, scenario.recovery_required);
+         fold_object(hash, scenario.has_last_event);
+         fold_object(hash, scenario.cjk_font_ready);
+     }
+     return hash;
+ }
+ 
+ [[nodiscard]] platform::ControlHints stress_hints() noexcept {
++    settings::SettingsData values = settings::default_settings();
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::interact, settings::StableKey::q));
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::inventory, settings::StableKey::o));
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::passive_tree, settings::StableKey::t));
++    values.revision = 23U;
+     platform::ControlHints hints{};
+-    static constexpr char kPrimary[] = "W Move Up  S Move Down";
+-    static constexpr char kSecondary[] =
+-        "J Light Attack  K Jump  L Launcher  Q Interact  O Inventory  "
+-        "T Passive Tree";
+-    std::memcpy(hints.primary.data(), kPrimary, sizeof(kPrimary));
+-    std::memcpy(hints.secondary.data(), kSecondary, sizeof(kSecondary));
+-    hints.revision = 23U;
++    platform::refresh_control_hints(hints, values);
+     return hints;
+ }
+ 
+ [[nodiscard]] dungeon::DungeonSnapshot base_snapshot() noexcept {
+     dungeon::DungeonSnapshot snapshot{};
+     snapshot.session_tick = 17U;
+     snapshot.commit_generation = 3U;
+     snapshot.room_index = 4U;
+     snapshot.depth = 7U;
+     snapshot.floor_room_index = 2U;
+diff --git a/tests/platform/hud_view_model_tests.cpp b/tests/platform/hud_view_model_tests.cpp
+index 64ed688..6e0247f 100644
+--- a/tests/platform/hud_view_model_tests.cpp
++++ b/tests/platform/hud_view_model_tests.cpp
+@@ -1,33 +1,46 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "dungeon/dungeon_render_snapshot.hpp"
+ #include "hud_view_model.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_palette.hpp"
+ #include "dungeon/room_affix.hpp"
++#include "ui_utf8.hpp"
+ 
+ #include <cstring>
+ #include <limits>
+ 
+ namespace {
+ 
+ namespace dungeon = arpg::dungeon;
+ namespace platform = arpg::platform;
++namespace settings = arpg::settings;
+ 
+ platform::ControlHints default_hints() noexcept {
+     platform::ControlHints hints{};
+-    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+-        "W Move Up  S Move Down"));
+-    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+-        "J Attack  K Jump"));
++    platform::refresh_control_hints(hints, settings::default_settings());
++    return hints;
++}
++
++platform::ControlHints rebound_hints() noexcept {
++    settings::SettingsData values = settings::default_settings();
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::interact, settings::StableKey::q));
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::inventory, settings::StableKey::o));
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::passive_tree, settings::StableKey::t));
++    values.revision = 17U;
++    platform::ControlHints hints{};
++    platform::refresh_control_hints(hints, values);
+     return hints;
+ }
+ 
+ dungeon::DungeonSnapshot normal_snapshot() noexcept {
+     dungeon::DungeonSnapshot snapshot{};
+     snapshot.depth = 7U;
+     snapshot.floor_room_index = 3U;
+     snapshot.ecology = dungeon::DungeonElement::water;
+     snapshot.biases = {{11U, 22U, 33U, 44U}};
+     snapshot.remaining_targets = 5U;
+@@ -259,93 +272,106 @@ arpg::test::Failure exit_copy_distinguishes_threshold_full_clear_and_abyss_warni
+ 
+     snapshot.phase = dungeon::RoomPhase::awaiting_exit;
+     snapshot.defeated_monster_count = 1125U;
+     snapshot.remaining_targets = 0U;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+         u8"出口已开放") == 0);
+     return {};
+ }
+ 
+-arpg::test::Failure objective_preserves_the_complete_movement_hint() noexcept {
++arpg::test::Failure objective_builds_structured_chinese_control_lines() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.pending_room_experience = 75U;
+-    platform::ControlHints hints{};
+-    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+-        "W Move Up  S Move Down  A Move Left  D Move Right"));
+-    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+-        "J Light Attack  K Jump  L Launcher  E Interact  I Inventory  "
+-        "P Passive Tree  F1 Debug  F12 Screenshot  Esc Pause"));
++    const platform::ControlHints hints = rebound_hints();
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, snapshot, {}, hints);
+ 
+     ARPG_REQUIRE(std::strcmp(output.room.secondary.bytes.data(),
+         u8"待结算经验 +75") == 0);
+     ARPG_REQUIRE(std::strcmp(output.room.movement.bytes.data(),
+-        "W Move Up  S Move Down  A Move Left  D Move Right") == 0);
++        u8"W 上移  S 下移  A 左移  D 右移") == 0);
+     ARPG_REQUIRE(std::strcmp(output.room.controls[0].bytes.data(),
+-        "J Light Attack  K Jump  L Launcher") == 0);
++        u8"J 轻攻击  K 跳跃  L 挑飞") == 0);
+     ARPG_REQUIRE(std::strcmp(output.room.controls[1].bytes.data(),
+-        "E Interact  I Inventory  P Passive Tree") == 0);
++        u8"Q 交互  O 背包  T 被动树") == 0);
+     ARPG_REQUIRE(std::strcmp(output.room.controls[2].bytes.data(),
+-        "F1 Debug  F12 Screenshot  Esc Pause") == 0);
++        u8"F1 调试  F12 截图  Esc 暂停") == 0);
++    ARPG_REQUIRE(std::strstr(output.room.controls[1].bytes.data(), "Interact")
++        == nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.controls[1].bytes.data(), "Inventory")
++        == nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.controls[1].bytes.data(), "Passive")
++        == nullptr);
+     ARPG_REQUIRE(!output.room.secondary.truncated);
+     ARPG_REQUIRE(!output.room.movement.truncated);
+     for (const platform::HudText96& line : output.room.controls) {
+         ARPG_REQUIRE(!line.truncated);
+         ARPG_REQUIRE(line.bytes.back() == '\0');
+     }
+     ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+     return {};
+ }
+ 
+-arpg::test::Failure non_terminated_hint_buffers_are_bounded_and_terminated() noexcept {
++arpg::test::Failure longest_chinese_key_labels_are_utf8_safe_and_untruncated()
++    noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+-    snapshot.pending_room_experience = 1U;
++    settings::SettingsData values = settings::default_settings();
++    constexpr std::array<settings::StableKey, 10U> kLongKeys{{
++        settings::StableKey::arrow_up, settings::StableKey::arrow_down,
++        settings::StableKey::arrow_left, settings::StableKey::arrow_right,
++        settings::StableKey::left_shift, settings::StableKey::right_shift,
++        settings::StableKey::left_control, settings::StableKey::right_control,
++        settings::StableKey::space, settings::StableKey::q,
++    }};
++    values.bindings = kLongKeys;
++    values.revision = 99U;
+     platform::ControlHints hints{};
+-    hints.primary.fill('P');
+-    hints.secondary.fill('S');
+-    hints.revision = (std::numeric_limits<std::uint64_t>::max)();
++    platform::refresh_control_hints(hints, values);
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, snapshot, {}, hints);
+ 
+-    ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(),
+-        "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP") != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(), "SSSS")
++    ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(), u8"上方向键")
++        != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(), u8"左 Shift")
++        != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.controls[1].bytes.data(), u8"右 Ctrl")
+         != nullptr);
+-    ARPG_REQUIRE(output.room.movement.truncated);
+-    ARPG_REQUIRE(output.room.controls[0].truncated);
++    ARPG_REQUIRE(!output.room.movement.truncated);
++    ARPG_REQUIRE(platform::ui_utf8_is_valid(output.room.movement.bytes.data()));
+     ARPG_REQUIRE(output.room.movement.bytes.back() == '\0');
+     for (const platform::HudText96& line : output.room.controls) {
++        ARPG_REQUIRE(!line.truncated);
++        ARPG_REQUIRE(platform::ui_utf8_is_valid(line.bytes.data()));
+         ARPG_REQUIRE(line.bytes.back() == '\0');
+     }
+-    ARPG_REQUIRE(output.diagnostics.truncated_texts == 2U);
++    ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure truncated_secondary_text_remains_nul_terminated() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.pending_room_experience =
+         (std::numeric_limits<std::uint64_t>::max)();
+-    platform::ControlHints hints{};
+-    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+-        "W Move Up  S Move Down  A Move Left  D Move Right"));
+-    hints.secondary.fill('S');
+-    hints.secondary.back() = '\0';
++    platform::ControlHints hints = default_hints();
++    hints.bindings[static_cast<std::size_t>(
++        settings::SettingAction::light_attack)] = settings::StableKey::count;
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, snapshot, {}, hints);
+ 
+     ARPG_REQUIRE(!output.room.secondary.truncated);
+     ARPG_REQUIRE(output.room.secondary.bytes.back() == '\0');
+-    ARPG_REQUIRE(output.room.controls[0].truncated);
++    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(), u8"未知")
++        != nullptr);
++    ARPG_REQUIRE(!output.room.controls[0].truncated);
+     ARPG_REQUIRE(output.room.controls[0].bytes.back() == '\0');
+-    ARPG_REQUIRE(output.diagnostics.truncated_texts == 1U);
++    ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure objective_describes_every_player_visible_room_state() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.wave_index = 1U;
+     snapshot.wave_count = 3U;
+     platform::HudViewModel output{};
+ 
+     snapshot.phase = dungeon::RoomPhase::combat;
+@@ -370,24 +396,29 @@ arpg::test::Failure objective_describes_every_player_visible_room_state() noexce
+     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+     snapshot.abyss_pending_rewards = 3U;
+     snapshot.abyss_unpicked_rewards = 2U;
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS HIGH") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+         u8"待领奖励 3") != nullptr);
+     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+         u8"未领取 2") != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(), "W Move Up")
++    ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(), u8"W 上移")
+         != nullptr);
+-    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(), "J Attack")
++    ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(), "Move Up")
++        == nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(),
++        u8"J 轻攻击")
+         != nullptr);
++    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(),
++        "Light Attack") == nullptr);
+     return {};
+ }
+ 
+ arpg::test::Failure navigation_formats_extremes_and_four_shared_element_visuals() noexcept {
+     dungeon::DungeonSnapshot snapshot = normal_snapshot();
+     snapshot.depth = (std::numeric_limits<std::uint64_t>::max)();
+     snapshot.floor_room_index = (std::numeric_limits<std::uint64_t>::max)();
+     snapshot.biases.fill((std::numeric_limits<std::uint32_t>::max)());
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, snapshot, {}, default_hints());
+@@ -439,23 +470,21 @@ arpg::test::Failure context_attaches_notice_priority_without_changing_abyss_valu
+     return {};
+ }
+ 
+ arpg::test::Failure rebound_context_hints_use_committed_e_i_and_p_labels() noexcept {
+     dungeon::DungeonSnapshot previous{};
+     dungeon::DungeonSnapshot current = normal_snapshot();
+     current.has_active_room = true;
+     current.phase = dungeon::RoomPhase::awaiting_exit;
+     current.has_hole = true;
+     current.exits_unlocked = true;
+-    platform::ControlHints hints{};
+-    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+-        "E Interact  I Inventory  P Passive Tree"));
++    const platform::ControlHints hints = default_hints();
+     platform::HudNoticeState notices{};
+     notices.observe(previous, current, {}, hints, false);
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, current, {}, hints);
+     platform::attach_notice_view(output, notices.view());
+ 
+     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::hole_interact);
+     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "E ") != nullptr);
+ 
+     current = normal_snapshot();
+@@ -480,23 +509,25 @@ arpg::test::Failure rebound_context_hints_use_committed_e_i_and_p_labels() noexc
+     platform::attach_notice_view(output, passive_notices.view());
+     ARPG_REQUIRE(output.context.secondary_kind == platform::HudNoticeKind::passive_tree);
+     ARPG_REQUIRE(std::strstr(output.context.secondary.bytes.data(), "P ") != nullptr);
+     return {};
+ }
+ 
+ arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meaning_after_rebind() noexcept {
+     dungeon::DungeonSnapshot previous = normal_snapshot();
+     previous.is_abyss = true;
+     previous.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
++    settings::SettingsData values = settings::default_settings();
++    static_cast<void>(settings::assign_or_swap(values,
++        settings::SettingAction::interact, settings::StableKey::f));
+     platform::ControlHints hints{};
+-    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+-        "F Interact"));
++    platform::refresh_control_hints(hints, values);
+ 
+     dungeon::DungeonSnapshot descent = previous;
+     descent.abyss_exit_confirmation_armed = true;
+     descent.abyss_exit_confirmation_transition = dungeon::TransitionKind::descent;
+     platform::HudNoticeState descent_notices{};
+     descent_notices.observe(previous, descent, {}, hints, false);
+     platform::HudViewModel output{};
+     platform::build_hud_view_model(output, descent, {}, hints);
+     platform::attach_notice_view(output, descent_notices.view());
+     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
+@@ -529,24 +560,25 @@ constexpr arpg::test::TestCase kCases[] = {
+     {"pending experience text", &pending_experience_is_shown_in_secondary_text},
+     {"status tag capacity", &active_statuses_project_in_fixed_priority_order},
+     {"uint32 navigation biases", &navigation_preserves_all_uint32_biases},
+     {"Chinese objective text", &objective_uses_chinese_target_text},
+     {"large room explicit progression text",
+         &large_room_progression_uses_explicit_chinese_fields},
+     {"same-frame visible set diagnostics",
+         &visible_set_diagnostics_use_the_same_presented_frame},
+     {"large room exit copy",
+         &exit_copy_distinguishes_threshold_full_clear_and_abyss_warning},
+-    {"complete movement objective hint",
+-        &objective_preserves_the_complete_movement_hint},
+-    {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},
+-    {"truncated secondary text", &truncated_secondary_text_remains_nul_terminated},
++    {"structured Chinese control hints",
++        &objective_builds_structured_chinese_control_lines},
++    {"long Chinese key labels stay UTF-8 safe",
++        &longest_chinese_key_labels_are_utf8_safe_and_untruncated},
++    {"invalid structured key label", &truncated_secondary_text_remains_nul_terminated},
+     {"room objective states", &objective_describes_every_player_visible_room_state},
+     {"navigation extremes and elements", &navigation_formats_extremes_and_four_shared_element_visuals},
+     {"abyss context attachment", &context_attaches_notice_priority_without_changing_abyss_values},
+     {"rebound context hints", &rebound_context_hints_use_committed_e_i_and_p_labels},
+     {"abyss confirmation context semantics", &abyss_confirmation_context_preserves_descent_and_door_meaning_after_rebind},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_view_model_suite() noexcept {
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 746910d..e61d967 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -295,22 +295,28 @@ int main() {
+             ui_utf8_suite(),
+             shared_ui_font_suite(),
+         };
+         return arpg::test::run_suites(full_chinese_ui_foundation, 15,
+             "full Chinese UI foundation");
+     }
+     if (full_chinese_ui_menu_hud_only()) {
+         const arpg::test::TestSuite full_chinese_ui_menu_hud[] = {
+             pause_menu_state_suite(),
+             pause_menu_view_suite(),
++            control_hints_suite(),
++            hud_view_model_suite(),
++            hud_notice_state_suite(),
++            active_skill_view_suite(),
++            hud_render_plan_suite(),
++            hud_host_integration_suite(),
+         };
+-        return arpg::test::run_suites(full_chinese_ui_menu_hud, 47,
++        return arpg::test::run_suites(full_chinese_ui_menu_hud, 130,
+             "full Chinese UI menus and HUD");
+     }
+     if (cplay038_save_directory_only()) {
+         const arpg::test::TestSuite cplay038_only[] = {
+             dungeon_runtime_save_directory_lease_suite(),
+         };
+         return arpg::test::run_suites(cplay038_only, 8,
+             "CPLAY-038 runtime save directory lease");
+     }
+     if (cplay035_settings_conflict_only()) {
+@@ -398,21 +404,21 @@ int main() {
+         return arpg::test::run_suites(cplay016_only, 31,
+             "CPLAY-016 compact ground potion labels");
+     }
+ 
+     if (cplay015_passive_feedback_only()) {
+         const arpg::test::TestSuite cplay015_only[] = {
+             passive_tree_view_suite(),
+             control_hints_suite(),
+             hud_notice_state_suite(),
+         };
+-        return arpg::test::run_suites(cplay015_only, 32,
++        return arpg::test::run_suites(cplay015_only, 33,
+             "CPLAY-015 blocked passive tree feedback");
+     }
+ 
+     if (cplay014_pause_menu_only()) {
+         const arpg::test::TestSuite cplay014_only[] = {
+             pause_menu_view_suite(),
+             material_asset_validation_suite(),
+         };
+         return arpg::test::run_suites(cplay014_only, 55,
+             "CPLAY-014 pause menu visual contract");
+@@ -499,13 +505,13 @@ int main() {
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+         large_room_render_plan_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 658,
++    return arpg::test::run_suites(suites, 659,
+         "host settings runtime contract");
+ }
+diff --git a/tests/platform/ui_text_catalog_tests.cpp b/tests/platform/ui_text_catalog_tests.cpp
+index 04f174a..de4406a 100644
+--- a/tests/platform/ui_text_catalog_tests.cpp
++++ b/tests/platform/ui_text_catalog_tests.cpp
+@@ -6,21 +6,21 @@
+ 
+ #include <array>
+ #include <cstdint>
+ #include <cstring>
+ #include <utility>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ 
+-constexpr std::array<platform::UiTextId, 32U> kBaseUiTextIds{{
++constexpr std::array<platform::UiTextId, 43U> kPreTask4UiTextIds{{
+     platform::UiTextId::pause_title,
+     platform::UiTextId::pause_continue,
+     platform::UiTextId::pause_settings,
+     platform::UiTextId::pause_quit,
+     platform::UiTextId::settings_title,
+     platform::UiTextId::settings_audio,
+     platform::UiTextId::settings_display,
+     platform::UiTextId::settings_bindings,
+     platform::UiTextId::settings_restore_defaults,
+     platform::UiTextId::settings_apply,
+@@ -39,49 +39,60 @@ constexpr std::array<platform::UiTextId, 32U> kBaseUiTextIds{{
+     platform::UiTextId::recovery_invalid_slots,
+     platform::UiTextId::inventory_title,
+     platform::UiTextId::equipment_title,
+     platform::UiTextId::item_detail_title,
+     platform::UiTextId::passive_title,
+     platform::UiTextId::passive_points,
+     platform::UiTextId::passive_close,
+     platform::UiTextId::debug_ready,
+     platform::UiTextId::debug_unavailable,
+     platform::UiTextId::unknown,
++    platform::UiTextId::settings_invalid_binding,
++    platform::UiTextId::settings_invalid,
++    platform::UiTextId::settings_revision_limit,
++    platform::UiTextId::settings_preview_failed,
++    platform::UiTextId::settings_save_failed_retry,
++    platform::UiTextId::settings_save_busy,
++    platform::UiTextId::settings_rollback_failed,
++    platform::UiTextId::settings_saved,
++    platform::UiTextId::settings_reloaded_elsewhere,
++    platform::UiTextId::settings_storage_conflict,
++    platform::UiTextId::settings_recovered_defaults,
+ }};
+ 
+-constexpr bool base_ui_text_ordinals_are_stable() noexcept {
+-    for (std::size_t index = 0U; index < kBaseUiTextIds.size(); ++index) {
+-        if (static_cast<std::size_t>(kBaseUiTextIds[index]) != index)
++constexpr bool pre_task4_ui_text_ordinals_are_stable() noexcept {
++    for (std::size_t index = 0U; index < kPreTask4UiTextIds.size(); ++index) {
++        if (static_cast<std::size_t>(kPreTask4UiTextIds[index]) != index)
+             return false;
+     }
+     return true;
+ }
+ 
+-static_assert(base_ui_text_ordinals_are_stable(),
+-    "Base UiTextId ordinals 0-31 are a stable compatibility contract");
++static_assert(pre_task4_ui_text_ordinals_are_stable(),
++    "Pre-Task4 UiTextId ordinals 0-42 are a stable compatibility contract");
+ 
+ void count_text(const char* text, void* context) noexcept {
+     auto* const count = static_cast<std::size_t*>(context);
+     if (text != nullptr && text[0] != '\0') ++(*count);
+ }
+ 
+ std::size_t utf8_codepoint_count(const char* text) noexcept {
+     std::size_t count{};
+     for (const auto* byte = reinterpret_cast<const unsigned char*>(text);
+          *byte != 0U; ++byte) {
+         if ((*byte & 0xC0U) != 0x80U) ++count;
+     }
+     return count;
+ }
+ 
+ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+-    constexpr std::array<std::pair<platform::UiTextId, const char*>, 43U>
++    constexpr std::array<std::pair<platform::UiTextId, const char*>, 44U>
+         kExpectedTexts{{
+             {platform::UiTextId::pause_title, u8"暂停"},
+             {platform::UiTextId::pause_continue, u8"继续游戏"},
+             {platform::UiTextId::pause_settings, u8"设置"},
+             {platform::UiTextId::pause_quit, u8"退出游戏"},
+             {platform::UiTextId::settings_title, u8"设置"},
+             {platform::UiTextId::settings_audio, u8"音频设置"},
+             {platform::UiTextId::settings_display, u8"显示设置"},
+             {platform::UiTextId::settings_bindings, u8"按键设置"},
+             {platform::UiTextId::settings_restore_defaults, u8"恢复默认设置"},
+@@ -113,20 +124,21 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+             {platform::UiTextId::recovery_invalid_slots, u8"无效存档槽"},
+             {platform::UiTextId::inventory_title, u8"背包"},
+             {platform::UiTextId::equipment_title, u8"装备"},
+             {platform::UiTextId::item_detail_title, u8"物品详情"},
+             {platform::UiTextId::passive_title, u8"被动星图"},
+             {platform::UiTextId::passive_points, u8"未分配点"},
+             {platform::UiTextId::passive_close, u8"关闭"},
+             {platform::UiTextId::debug_ready, u8"调试就绪"},
+             {platform::UiTextId::debug_unavailable, u8"调试不可用"},
+             {platform::UiTextId::unknown, u8"未知"},
++            {platform::UiTextId::hud_experience_maxed, u8"经验已满"},
+         }};
+     for (const auto& expected : kExpectedTexts) {
+         ARPG_REQUIRE(std::strcmp(
+             platform::ui_text(expected.first), expected.second) == 0);
+     }
+ 
+     constexpr std::array<const char*, 18U> kExpectedItemBaseNames{{
+         u8"精炼之刃", u8"守卫头盔", u8"守护外衣", u8"突击手套",
+         u8"行者战靴", u8"元素护符", u8"迅捷匕首", u8"攻城巨刃",
+         u8"暗影兜帽", u8"堡垒头盔", u8"夜行者外衣", u8"城塞胸甲",
+@@ -149,21 +161,21 @@ arpg::test::Failure fixed_messages_are_chinese() noexcept {
+             static_cast<arpg::items::MaterialId>(index)),
+             kExpectedMaterialNames[index]) == 0);
+     }
+ 
+     ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+         arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
+-    constexpr std::array<platform::UiTextId, 43U> texts{{
++    constexpr std::array<platform::UiTextId, 44U> texts{{
+         platform::UiTextId::pause_title, platform::UiTextId::pause_continue,
+         platform::UiTextId::pause_settings, platform::UiTextId::pause_quit,
+         platform::UiTextId::settings_title, platform::UiTextId::settings_audio,
+         platform::UiTextId::settings_display, platform::UiTextId::settings_bindings,
+         platform::UiTextId::settings_restore_defaults, platform::UiTextId::settings_apply,
+         platform::UiTextId::settings_cancel, platform::UiTextId::settings_saved_prefix,
+         platform::UiTextId::settings_unknown,
+         platform::UiTextId::settings_invalid_binding,
+         platform::UiTextId::settings_invalid,
+         platform::UiTextId::settings_revision_limit,
+@@ -178,20 +190,21 @@ arpg::test::Failure all_stable_ids_have_named_mappings() noexcept {
+         platform::UiTextId::hud_health,
+         platform::UiTextId::hud_barrier, platform::UiTextId::hud_experience,
+         platform::UiTextId::hud_level, platform::UiTextId::save_saving,
+         platform::UiTextId::save_saved, platform::UiTextId::save_recovered,
+         platform::UiTextId::save_error, platform::UiTextId::recovery_title,
+         platform::UiTextId::recovery_invalid_slots, platform::UiTextId::inventory_title,
+         platform::UiTextId::equipment_title, platform::UiTextId::item_detail_title,
+         platform::UiTextId::passive_title, platform::UiTextId::passive_points,
+         platform::UiTextId::passive_close, platform::UiTextId::debug_ready,
+         platform::UiTextId::debug_unavailable, platform::UiTextId::unknown,
++        platform::UiTextId::hud_experience_maxed,
+     }};
+     for (const platform::UiTextId id : texts)
+         ARPG_REQUIRE(platform::ui_text(id)[0] != '\0');
+ 
+     for (std::uint8_t id = 1U; id <= 18U; ++id)
+         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(id), u8"未知") != 0);
+     for (std::uint8_t raw = 0U; raw < 14U; ++raw)
+         ARPG_REQUIRE(std::strcmp(platform::ui_material_name(
+             static_cast<arpg::items::MaterialId>(raw)), u8"未知") != 0);
+     for (std::uint8_t raw = 0U; raw < 6U; ++raw)
+@@ -274,32 +287,32 @@ arpg::test::Failure unknown_ids_have_a_single_safe_fallback() noexcept {
+     ARPG_REQUIRE(std::strcmp(platform::ui_setting_action_name(
+         static_cast<arpg::settings::SettingAction>(255U)), u8"未知") == 0);
+     ARPG_REQUIRE(std::strcmp(platform::ui_skill_name(
+         static_cast<arpg::skills::ActiveSkillId>(255U)), u8"未知") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure visitor_covers_the_complete_static_catalog() noexcept {
+     std::size_t count{};
+     platform::visit_ui_text_catalog(&count_text, &count);
+-    ARPG_REQUIRE(count == 282U);
++    ARPG_REQUIRE(count == 283U);
+     return {};
+ }
+ 
+ arpg::test::Failure catalog_lookups_and_visiting_do_not_allocate() noexcept {
+     std::size_t warmup_count{};
+     platform::visit_ui_text_catalog(&count_text, &warmup_count);
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
+         std::size_t count{};
+         platform::visit_ui_text_catalog(&count_text, &count);
+-        ARPG_REQUIRE(count == 282U);
++        ARPG_REQUIRE(count == 283U);
+         ARPG_REQUIRE(std::strcmp(platform::ui_item_base_name(18U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_passive_node_name(63U), u8"未知") != 0);
+         ARPG_REQUIRE(std::strcmp(platform::ui_monster_affix_short_name(
+             arpg::combat::MonsterAffixId::death_blast), u8"死爆") == 0);
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {

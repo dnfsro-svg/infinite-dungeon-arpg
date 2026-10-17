@@ -1,0 +1,555 @@
+# Review package: 4050666..HEAD
+
+## Commits
+7c52b96 fix: fit centered pause menu labels
+
+## Files changed
+ src/platform/raylib/pause_menu_renderer.cpp        |  23 ++--
+ src/platform/raylib/pause_menu_view.cpp            |  73 +++++++++++
+ src/platform/raylib/pause_menu_view.hpp            |  20 +++
+ .../pause_menu_host_layout_source_test.cmake       |  16 +++
+ tests/platform/pause_menu_view_tests.cpp           | 144 +++++++++++++++++++--
+ tests/platform/platform_test_main.cpp              |   2 +-
+ 6 files changed, 259 insertions(+), 19 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/pause_menu_renderer.cpp b/src/platform/raylib/pause_menu_renderer.cpp
+index 03a50a3..0b02b7d 100644
+--- a/src/platform/raylib/pause_menu_renderer.cpp
++++ b/src/platform/raylib/pause_menu_renderer.cpp
+@@ -129,34 +129,37 @@ void draw_pause_menu_with_font(
+                         Color{42, 91, 126, 235});
+                     DrawRectangleRoundedLinesEx(
+                         bounds, 0.18F, 5, 1.0F,
+                         Color{121, 197, 244, 255});
+                 }
+                 const float viewport_scale = ui_viewport_scale(
+                     screen_width, screen_height);
+                 const float row_font_size = layout.row_font_size;
+                 constexpr float kRowTextSpacing = 0.5F;
+                 const PauseMenuRowView& row = view.rows[op.row_index];
+-                const Vector2 measured = MeasureTextEx(
+-                    font, row.primary.data(), row_font_size, kRowTextSpacing);
+-                const PauseMenuCenteredTextLayout centered =
+-                    centered_pause_text_layout(bounds,
+-                        measured.x, measured.y, 12.0F * viewport_scale);
++                char fitted_primary[kPauseMenuPrimaryTextCapacity]{};
++                const PauseMenuFittedTextLayout centered =
++                    fit_centered_pause_text_layout(font, row.primary.data(),
++                        fitted_primary, sizeof(fitted_primary), bounds,
++                        row_font_size, kRowTextSpacing,
++                        kPauseMenuMinimumRowFontSize,
++                        12.0F * viewport_scale);
+                 const Vector2 row_position{
+                     centered.text.x, centered.text.y};
+                 record_ui_text_bounds(UiTextAuditPage::pause,
+                     UiTextAuditRole::pause_row, font,
+-                    row.primary.data(), row_position,
+-                    row_font_size, kRowTextSpacing, centered.backing,
+-                    row_font_size);
+-                draw_crisp_ui_text(font, row.primary.data(),
+-                    row_position, row_font_size, kRowTextSpacing,
++                    fitted_primary, row_position,
++                    centered.font_size, centered.spacing, centered.backing,
++                    (std::min)(row_font_size,
++                        kPauseMenuMinimumRowFontSize));
++                draw_crisp_ui_text(font, fitted_primary,
++                    row_position, centered.font_size, centered.spacing,
+                     op.selected ? style.interaction : style.primary);
+                 if (row.saved[0] != '\0') {
+                     const float saved_font_size = row_font_size * 0.68F;
+                     const Vector2 saved_size = MeasureTextEx(font,
+                         row.saved.data(), saved_font_size, kRowTextSpacing);
+                     const float saved_x = bounds.x + bounds.width
+                         - 12.0F * viewport_scale - saved_size.x;
+                     const float safe_gap = 16.0F * viewport_scale;
+                     if (saved_x >= centered.text.x
+                             + centered.text.width + safe_gap) {
+diff --git a/src/platform/raylib/pause_menu_view.cpp b/src/platform/raylib/pause_menu_view.cpp
+index 46bad2a..4841cff 100644
+--- a/src/platform/raylib/pause_menu_view.cpp
++++ b/src/platform/raylib/pause_menu_view.cpp
+@@ -1,18 +1,19 @@
+ #include "pause_menu_view.hpp"
+ 
+ #include "stable_key_raylib.hpp"
+ #include "ui_text_catalog.hpp"
+ #include "ui_typography.hpp"
+ #include "ui_utf8.hpp"
+ 
+ #include <algorithm>
++#include <cstring>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+ constexpr float kPanelWidth = 760.0F;
+ constexpr float kPanelHeight = 620.0F;
+ constexpr float kRowInsetX = 24.0F;
+ constexpr float kFirstRowY = 62.0F;
+ constexpr float kRowHeight = 23.0F;
+ constexpr float kRowStride = 24.0F;
+@@ -274,20 +275,92 @@ PauseMenuCenteredTextLayout centered_pause_text_layout(
+         row_bounds,
+         {
+             row_bounds.x + (row_bounds.width - clamped_text_width) * 0.5F,
+             row_bounds.y + (row_bounds.height - clamped_text_height) * 0.5F,
+             clamped_text_width,
+             clamped_text_height,
+         },
+     };
+ }
+ 
++PauseMenuFittedTextLayout fit_centered_pause_text_layout(
++    Font font,
++    const char* source,
++    char* output,
++    std::size_t output_capacity,
++    Rectangle row_bounds,
++    float preferred_font_size,
++    float preferred_spacing,
++    float minimum_font_size,
++    float horizontal_inset) noexcept {
++    const float desired_font_size = (std::max)(0.0F, preferred_font_size);
++    const float minimum = (std::min)(desired_font_size,
++        (std::max)(0.0F, minimum_font_size));
++    float font_size = desired_font_size;
++    float spacing = (std::max)(0.0F, preferred_spacing);
++    bool truncated = false;
++    if (output == nullptr || output_capacity == 0U) {
++        return {row_bounds, {}, font_size, spacing, true};
++    }
++
++    const UiUtf8CopyResult copied = ui_utf8_fit_with_ellipsis(
++        output, output_capacity, source == nullptr ? "" : source);
++    truncated = copied.truncated;
++    const float inset = (std::max)(0.0F, horizontal_inset);
++    const float available_width = (std::max)(
++        0.0F, row_bounds.width - inset * 2.0F);
++    Vector2 measured = MeasureTextEx(font, output, font_size, spacing);
++    if (measured.x > available_width && measured.x > 0.0F) {
++        const float ratio = available_width / measured.x;
++        font_size = (std::max)(minimum, font_size * ratio);
++        spacing *= ratio;
++        measured = MeasureTextEx(font, output, font_size, spacing);
++        while (measured.x > available_width && font_size > minimum) {
++            font_size = (std::max)(minimum, font_size - 0.25F);
++            spacing = desired_font_size > 0.0F
++                ? (std::max)(0.0F, preferred_spacing)
++                    * (font_size / desired_font_size)
++                : 0.0F;
++            measured = MeasureTextEx(font, output, font_size, spacing);
++        }
++    }
++
++    constexpr char kEllipsis[] = u8"…";
++    constexpr std::size_t kEllipsisBytes = sizeof(kEllipsis) - 1U;
++    while (measured.x > available_width && output[0] != '\0') {
++        std::size_t length = std::strlen(output);
++        if (length >= kEllipsisBytes
++                && std::memcmp(output + length - kEllipsisBytes,
++                    kEllipsis, kEllipsisBytes) == 0) {
++            length -= kEllipsisBytes;
++        }
++        if (length == 0U) {
++            output[0] = '\0';
++            break;
++        }
++        do {
++            --length;
++        } while (length > 0U
++            && (static_cast<unsigned char>(output[length]) & 0xC0U) == 0x80U);
++        output[length] = '\0';
++        if (length + kEllipsisBytes < output_capacity) {
++            std::memcpy(output + length, kEllipsis, sizeof(kEllipsis));
++        }
++        truncated = true;
++        measured = MeasureTextEx(font, output, font_size, spacing);
++    }
++
++    const PauseMenuCenteredTextLayout centered = centered_pause_text_layout(
++        row_bounds, measured.x, measured.y, inset);
++    return {centered.backing, centered.text, font_size, spacing, truncated};
++}
++
+ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
+     PauseMenuView view{};
+     view.message = state.message;
+     switch (state.screen) {
+         case PauseScreen::closed:
+             return view;
+         case PauseScreen::root:
+             view.title = ui_text(UiTextId::pause_title);
+             view.footer = std::find(state.committed.bindings.begin(),
+                 state.committed.bindings.end(), settings::StableKey::r)
+diff --git a/src/platform/raylib/pause_menu_view.hpp b/src/platform/raylib/pause_menu_view.hpp
+index 420d11e..5d6f04f 100644
+--- a/src/platform/raylib/pause_menu_view.hpp
++++ b/src/platform/raylib/pause_menu_view.hpp
+@@ -6,31 +6,40 @@
+ 
+ #include <array>
+ #include <cstddef>
+ #include <optional>
+ 
+ namespace arpg::platform {
+ 
+ inline constexpr std::size_t kPauseMenuRowCapacity = 21U;
+ inline constexpr std::size_t kPauseMenuPrimaryTextCapacity = 96U;
+ inline constexpr std::size_t kPauseMenuSavedTextCapacity = 64U;
++inline constexpr float kPauseMenuMinimumRowFontSize = 12.0F;
+ 
+ struct PauseMenuRowView final {
+     std::array<char, kPauseMenuPrimaryTextCapacity> primary{};
+     std::array<char, kPauseMenuSavedTextCapacity> saved{};
+ };
+ 
+ struct PauseMenuCenteredTextLayout final {
+     Rectangle backing{};
+     Rectangle text{};
+ };
+ 
++struct PauseMenuFittedTextLayout final {
++    Rectangle backing{};
++    Rectangle text{};
++    float font_size{};
++    float spacing{};
++    bool truncated{};
++};
++
+ struct PauseMenuLayout final {
+     Rectangle panel{};
+     Rectangle title{};
+     Rectangle rows[kPauseMenuRowCapacity]{};
+     Rectangle footer{};
+     std::size_t visible_row_count{};
+     float title_font_size{};
+     float row_font_size{};
+     float footer_font_size{};
+ };
+@@ -52,18 +61,29 @@ struct PauseMenuView final {
+     int width,
+     int height,
+     std::size_t visible_row_count) noexcept;
+ 
+ [[nodiscard]] PauseMenuCenteredTextLayout centered_pause_text_layout(
+     Rectangle row_bounds,
+     float text_width,
+     float text_height,
+     float horizontal_inset) noexcept;
+ 
++[[nodiscard]] PauseMenuFittedTextLayout fit_centered_pause_text_layout(
++    Font font,
++    const char* source,
++    char* output,
++    std::size_t output_capacity,
++    Rectangle row_bounds,
++    float preferred_font_size,
++    float preferred_spacing,
++    float minimum_font_size,
++    float horizontal_inset) noexcept;
++
+ [[nodiscard]] PauseMenuView make_pause_menu_view(
+     const PauseMenuState& state) noexcept;
+ 
+ [[nodiscard]] std::optional<std::size_t> hit_test_pause_row(
+     const PauseMenuLayout& layout,
+     Vector2 point) noexcept;
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/pause_menu_host_layout_source_test.cmake b/tests/platform/pause_menu_host_layout_source_test.cmake
+index 73069ce..efa9bd5 100644
+--- a/tests/platform/pause_menu_host_layout_source_test.cmake
++++ b/tests/platform/pause_menu_host_layout_source_test.cmake
+@@ -67,12 +67,28 @@ if(NOT LEGACY_LEFT_TEXT_INDEX EQUAL -1)
+         "pause renderer must not restore the legacy left-aligned row text")
+ endif()
+ 
+ string(FIND "${RENDERER_COMPACT}" "row_text_width+"
+     LEGACY_TEXT_BACKING_INDEX)
+ if(NOT LEGACY_TEXT_BACKING_INDEX EQUAL -1)
+     message(FATAL_ERROR
+         "pause renderer must not size row backing from measured text width")
+ endif()
+ 
++string(FIND "${RENDERER_COMPACT}"
++    "fit_centered_pause_text_layout(font,row.primary.data(),"
++    FITTED_PRIMARY_INDEX)
++if(FITTED_PRIMARY_INDEX EQUAL -1)
++    message(FATAL_ERROR
++        "pause renderer must fit real primary text measurements to the row")
++endif()
++
++string(FIND "${RENDERER_COMPACT}"
++    "draw_crisp_ui_text(font,fitted_primary,row_position,centered.font_size,centered.spacing,"
++    FITTED_DRAW_INDEX)
++if(FITTED_DRAW_INDEX EQUAL -1)
++    message(FATAL_ERROR
++        "pause renderer must draw the final fitted text with its final metrics")
++endif()
++
+ message(STATUS
+     "[CPLAY-031] pause host and renderer share row-count layout geometry")
+diff --git a/tests/platform/pause_menu_view_tests.cpp b/tests/platform/pause_menu_view_tests.cpp
+index f36d4ff..5aa5796 100644
+--- a/tests/platform/pause_menu_view_tests.cpp
++++ b/tests/platform/pause_menu_view_tests.cpp
+@@ -1,16 +1,17 @@
+ #include "allocation_probe.hpp"
+ #include "test_framework.hpp"
+ 
+ #include "pause_menu_renderer.hpp"
+ #include "pause_menu_view.hpp"
+ #include "shared_ui_font.hpp"
++#include "ui_typography.hpp"
+ #include "ui_utf8.hpp"
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstring>
+ #include <limits>
+ 
+ namespace {
+ 
+ using namespace arpg;
+@@ -51,20 +52,67 @@ platform::PauseMenuState settings_state() noexcept {
+         settings::StableKey::digit_5,
+         settings::StableKey::digit_6,
+         settings::StableKey::digit_7,
+         settings::StableKey::digit_8,
+         settings::StableKey::digit_9,
+     };
+     state.message = "Apply failed; retry";
+     return state;
+ }
+ 
++class TestPauseFont final {
++public:
++    ~TestPauseFont() noexcept {
++        if (glyphs_ != nullptr) UnloadFontData(glyphs_, glyph_count_);
++        if (file_data_ != nullptr) UnloadFileData(file_data_);
++    }
++
++    [[nodiscard]] bool initialize() noexcept {
++        const platform::UiGlyphPlan plan = platform::ui_glyph_plan();
++        if (plan.capacity_exceeded || plan.codepoint_count == 0U) return false;
++        file_data_ = LoadFileData(
++            ARPG_PROJECT_SOURCE_DIR "/assets/fonts/NotoSansCJKsc-Medium.otf",
++            &file_size_);
++        if (file_data_ == nullptr || file_size_ <= 0) return false;
++        glyphs_ = LoadFontData(file_data_, file_size_,
++            platform::kUiFontSourceBaseSize, plan.codepoints.data(),
++            static_cast<int>(plan.codepoint_count), FONT_DEFAULT,
++            &glyph_count_);
++        if (glyphs_ == nullptr
++                || glyph_count_ != static_cast<int>(plan.codepoint_count)) {
++            return false;
++        }
++        for (int index = 0; index < glyph_count_; ++index) {
++            recs_[static_cast<std::size_t>(index)].width =
++                static_cast<float>(glyphs_[index].image.width);
++            recs_[static_cast<std::size_t>(index)].height =
++                static_cast<float>(glyphs_[index].image.height);
++        }
++        font_.baseSize = platform::kUiFontSourceBaseSize;
++        font_.glyphCount = glyph_count_;
++        font_.glyphs = glyphs_;
++        font_.recs = recs_.data();
++        font_.texture.id = 1U;
++        return true;
++    }
++
++    [[nodiscard]] Font font() const noexcept { return font_; }
++
++private:
++    unsigned char* file_data_{};
++    int file_size_{};
++    GlyphInfo* glyphs_{};
++    int glyph_count_{};
++    std::array<Rectangle, platform::kUiGlyphCapacity> recs_{};
++    Font font_{};
++};
++
+ bool row_equals(
+     const platform::PauseMenuRowView& row,
+     const char* primary,
+     const char* saved = "") noexcept {
+     return std::strcmp(row.primary.data(), primary) == 0
+         && std::strcmp(row.saved.data(), saved) == 0;
+ }
+ 
+ test::Failure layouts_are_bounded_centered_and_fixed() noexcept {
+     constexpr std::array<std::array<int, 2>, 3> kSizes{{
+@@ -367,42 +415,122 @@ test::Failure settings_pages_have_exact_chinese_primary_and_saved_text() noexcep
+         ARPG_REQUIRE(row_equals(
+             view.rows[row], kBindingPrimary[row], kBindingSaved[row]));
+     }
+ 
+     state.draft.bindings[0] = state.committed.bindings[0];
+     view = platform::make_pause_menu_view(state);
+     ARPG_REQUIRE(row_equals(view.rows[0], u8"上移：W"));
+     return {};
+ }
+ 
+-test::Failure row_text_is_centered_inside_full_width_backing() noexcept {
++test::Failure capture_text_fits_centered_with_real_font_measurement() noexcept {
++    TestPauseFont font{};
++    ARPG_REQUIRE(font.initialize());
++    platform::PauseMenuState state = settings_state();
++    state.screen = platform::PauseScreen::capture_binding;
++    state.capture_action = settings::SettingAction::light_attack;
++    state.draft.bindings[static_cast<std::size_t>(
++        settings::SettingAction::light_attack)] =
++            settings::StableKey::right_shift;
++    const platform::PauseMenuView view =
++        platform::make_pause_menu_view(state);
++    ARPG_REQUIRE(std::strcmp(view.rows[0].primary.data(),
++        u8"请按下用于轻攻击的按键（当前：Right Shift）") == 0);
++
+     constexpr std::array<std::array<int, 2>, 3> kSizes{{
+         {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+     }};
+     for (const auto& size : kSizes) {
+-        const auto layout = platform::pause_menu_layout(size[0], size[1], 6U);
+-        const auto centered = platform::centered_pause_text_layout(
+-            layout.rows[0], 180.0F, 24.0F, 12.0F);
++        const auto layout = platform::pause_menu_layout(
++            size[0], size[1], view.row_count);
++        std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
++        const auto centered = platform::fit_centered_pause_text_layout(
++            font.font(), view.rows[0].primary.data(),
++            fitted.data(), fitted.size(), layout.rows[0],
++            layout.row_font_size, 0.5F,
++            platform::kPauseMenuMinimumRowFontSize,
++            12.0F * platform::ui_viewport_scale(size[0], size[1]));
++        ARPG_REQUIRE(!centered.truncated);
++        ARPG_REQUIRE(std::strcmp(
++            fitted.data(), view.rows[0].primary.data()) == 0);
++        ARPG_REQUIRE(centered.font_size
++            >= platform::kPauseMenuMinimumRowFontSize);
++        ARPG_REQUIRE(centered.font_size <= layout.row_font_size);
++        ARPG_REQUIRE(centered.spacing >= 0.0F);
++        ARPG_REQUIRE(centered.spacing <= 0.5F);
++        const Vector2 measured = MeasureTextEx(font.font(), fitted.data(),
++            centered.font_size, centered.spacing);
++        ARPG_REQUIRE(test::near(centered.text.width, measured.x, 0.01));
++        ARPG_REQUIRE(test::near(centered.text.height, measured.y, 0.01));
+         ARPG_REQUIRE(test::near(
+             centered.text.x + centered.text.width * 0.5F,
+             layout.rows[0].x + layout.rows[0].width * 0.5F));
+         ARPG_REQUIRE(test::near(
+             centered.text.y + centered.text.height * 0.5F,
+             layout.rows[0].y + layout.rows[0].height * 0.5F));
+         ARPG_REQUIRE(centered.backing.x == layout.rows[0].x);
+         ARPG_REQUIRE(centered.backing.y == layout.rows[0].y);
+         ARPG_REQUIRE(centered.backing.width == layout.rows[0].width);
+         ARPG_REQUIRE(centered.backing.height == layout.rows[0].height);
+-        ARPG_REQUIRE(centered.text.x >= centered.backing.x + 12.0F);
++        const float inset = 12.0F
++            * platform::ui_viewport_scale(size[0], size[1]);
++        ARPG_REQUIRE(centered.text.x >= centered.backing.x + inset);
+         ARPG_REQUIRE(centered.text.x + centered.text.width
+-            <= centered.backing.x + centered.backing.width - 12.0F);
++            <= centered.backing.x + centered.backing.width - inset);
++        ARPG_REQUIRE(centered.text.y >= centered.backing.y);
++        ARPG_REQUIRE(centered.text.y + centered.text.height
++            <= centered.backing.y + centered.backing.height);
++    }
++
++    constexpr const char* kOversized =
++        u8"请按下用于轻攻击的按键（当前：Right Shift）"
++        u8"请按下用于轻攻击的按键（当前：Right Shift）";
++    const auto layout = platform::pause_menu_layout(800, 450, 1U);
++    std::array<char, platform::kPauseMenuPrimaryTextCapacity> fitted{};
++    const auto shortened = platform::fit_centered_pause_text_layout(
++        font.font(), kOversized, fitted.data(), fitted.size(), layout.rows[0],
++        layout.row_font_size, 0.5F,
++        platform::kPauseMenuMinimumRowFontSize,
++        12.0F * platform::ui_viewport_scale(800, 450));
++    ARPG_REQUIRE(shortened.truncated);
++    ARPG_REQUIRE(platform::ui_utf8_is_valid(fitted.data()));
++    ARPG_REQUIRE(std::strstr(fitted.data(), u8"…") != nullptr);
++    const Vector2 shortened_measure = MeasureTextEx(font.font(), fitted.data(),
++        shortened.font_size, shortened.spacing);
++    ARPG_REQUIRE(test::near(shortened.text.width,
++        shortened_measure.x, 0.01));
++    ARPG_REQUIRE(inside(shortened.text, shortened.backing));
++
++    std::array<char, platform::kPauseMenuPrimaryTextCapacity> ordinary{};
++    const auto ordinary_fit = platform::fit_centered_pause_text_layout(
++        font.font(), u8"继续游戏", ordinary.data(), ordinary.size(),
++        layout.rows[0], layout.row_font_size, 0.5F,
++        platform::kPauseMenuMinimumRowFontSize,
++        12.0F * platform::ui_viewport_scale(800, 450));
++    ARPG_REQUIRE(!ordinary_fit.truncated);
++    ARPG_REQUIRE(std::strcmp(ordinary.data(), u8"继续游戏") == 0);
++    ARPG_REQUIRE(test::near(
++        ordinary_fit.font_size, layout.row_font_size, 0.01));
++    ARPG_REQUIRE(test::near(ordinary_fit.spacing, 0.5F, 0.01));
++
++    const std::uint64_t before = test::allocation_count();
++    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
++        std::array<char, platform::kPauseMenuPrimaryTextCapacity> output{};
++        const auto fitted_layout = platform::fit_centered_pause_text_layout(
++            font.font(), view.rows[0].primary.data(),
++            output.data(), output.size(), layout.rows[0],
++            layout.row_font_size, 0.5F,
++            platform::kPauseMenuMinimumRowFontSize,
++            12.0F * platform::ui_viewport_scale(800, 450));
++        ARPG_REQUIRE(!fitted_layout.truncated);
+     }
++    ARPG_REQUIRE(test::allocation_count() == before);
+     return {};
+ }
+ 
+ test::Failure capture_and_closed_views_are_explicit() noexcept {
+     platform::PauseMenuState state = settings_state();
+     state.screen = platform::PauseScreen::capture_binding;
+     state.capture_action = settings::SettingAction::light_attack;
+     const auto capture = platform::make_pause_menu_view(state);
+     ARPG_REQUIRE(std::strcmp(capture.title, u8"绑定按键") == 0);
+     ARPG_REQUIRE(capture.row_count == 1U);
+@@ -628,22 +756,22 @@ constexpr test::TestCase kCases[] = {
+     {"layouts are bounded and centered", &layouts_are_bounded_centered_and_fixed},
+     {"layout has exact 1024 golden geometry", &layout_has_exact_1024_golden_geometry},
+     {"full-HD layout scales physical pixels",
+         &full_hd_layout_scales_panel_and_rows_by_one_and_a_half},
+     {"root layout is compact and legible",
+         &root_layout_is_compact_and_legible_at_reference_viewport},
+     {"hit test is half open", &hit_test_uses_half_open_rows_only},
+     {"root and quit content", &root_and_quit_views_have_complete_content},
+     {"settings pages have exact Chinese text",
+         &settings_pages_have_exact_chinese_primary_and_saved_text},
+-    {"row text is centered in full backing",
+-        &row_text_is_centered_inside_full_width_backing},
++    {"capture text fits centered using real font",
++        &capture_text_fits_centered_with_real_font_measurement},
+     {"capture and closed content", &capture_and_closed_views_are_explicit},
+     {"selected rows clamp to visible views", &selected_rows_clamp_to_each_visible_view},
+     {"render plans have exact screen orders", &render_plans_have_exact_screen_orders},
+     {"render plan layers message over footer",
+         &render_plan_draws_footer_surface_before_message_text},
+     {"row buffers terminate deterministically", &row_buffers_terminate_and_generation_is_deterministic},
+     {"pause view text has shared font coverage",
+         &every_static_pause_view_text_has_shared_font_coverage},
+     {"view layout hit have zero allocations", &all_view_layout_and_hit_paths_allocate_nothing},
+ };
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 6d22215..746910d 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -499,13 +499,13 @@ int main() {
+         material_animation_suite(),
+         fire_room_material_slice_suite(),
+         ecology_material_coverage_suite(),
+         room_background_render_plan_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+         large_room_render_plan_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 656,
++    return arpg::test::run_suites(suites, 658,
+         "host settings runtime contract");
+ }

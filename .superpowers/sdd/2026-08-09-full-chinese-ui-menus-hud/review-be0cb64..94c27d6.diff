@@ -1,0 +1,1035 @@
+# Review package: be0cb64..94c27d6
+
+## Commits
+94c27d6 fix: harden launcher player feedback
+
+## Files changed
+ src/launcher/launcher_layout.cpp                 |  12 ++
+ src/launcher/launcher_layout.hpp                 |  16 +++
+ src/launcher/launcher_main.cpp                   |  14 ++-
+ src/launcher/launcher_platform_win32.cpp         |  29 +++--
+ src/launcher/launcher_platform_win32.hpp         |   6 +
+ src/launcher/launcher_renderer.cpp               |  36 ++++--
+ src/launcher/launcher_renderer.hpp               |   4 +-
+ tests/launcher/launcher_layout_tests.cpp         |  45 +++++++
+ tests/launcher/launcher_platform_win32_tests.cpp |  19 ++-
+ tests/launcher/launcher_test_main.cpp            |   2 +-
+ tests/launcher/launcher_window_smoke_test.ps1    | 145 ++++++++++++++++++++---
+ 11 files changed, 285 insertions(+), 43 deletions(-)
+
+## Diff
+diff --git a/src/launcher/launcher_layout.cpp b/src/launcher/launcher_layout.cpp
+index 6a7009f..1700470 100644
+--- a/src/launcher/launcher_layout.cpp
++++ b/src/launcher/launcher_layout.cpp
+@@ -1,17 +1,25 @@
+ #include "launcher_layout.hpp"
+ 
+ namespace arpg::launcher {
+ namespace {
+ 
+ constexpr float kLogicalWidth = 920.0F;
+ constexpr float kLogicalHeight = 560.0F;
++constexpr LauncherStatusStyle kReadyStatusStyle{
++    {6U, 42U, 30U, 255U},
++    {184U, 255U, 213U, 255U},
++};
++constexpr LauncherStatusStyle kErrorStatusStyle{
++    {55U, 16U, 24U, 255U},
++    {255U, 207U, 211U, 255U},
++};
+ 
+ constexpr LauncherLayout kDesignLayout{
+     {56.0F, 42.0F, 864.0F, 98.0F},
+     {58.0F, 102.0F, 862.0F, 132.0F},
+     {58.0F, 174.0F, 862.0F, 226.0F},
+     {58.0F, 260.0F, 862.0F, 342.0F},
+     {58.0F, 370.0F, 308.0F, 426.0F},
+     {335.0F, 370.0F, 585.0F, 426.0F},
+     {612.0F, 370.0F, 862.0F, 426.0F},
+     {58.0F, 474.0F, 862.0F, 522.0F},
+@@ -21,20 +29,24 @@ RectF offset(RectF rectangle, float horizontal, float vertical) noexcept {
+     return {
+         rectangle.left + horizontal,
+         rectangle.top + vertical,
+         rectangle.right + horizontal,
+         rectangle.bottom + vertical,
+     };
+ }
+ 
+ }  // namespace
+ 
++LauncherStatusStyle launcher_status_style(const bool ready) noexcept {
++    return ready ? kReadyStatusStyle : kErrorStatusStyle;
++}
++
+ LauncherLayout make_launcher_layout(float width, float height) noexcept {
+     if (width < 800.0F || height < 450.0F) {
+         return {};
+     }
+ 
+     const float horizontal = (width - kLogicalWidth) / 2.0F;
+     const float vertical = (height - kLogicalHeight) / 2.0F;
+     return {
+         offset(kDesignLayout.title, horizontal, vertical),
+         offset(kDesignLayout.subtitle, horizontal, vertical),
+diff --git a/src/launcher/launcher_layout.hpp b/src/launcher/launcher_layout.hpp
+index a083f64..4ce0cb2 100644
+--- a/src/launcher/launcher_layout.hpp
++++ b/src/launcher/launcher_layout.hpp
+@@ -1,14 +1,30 @@
+ #pragma once
+ 
++#include <cstdint>
++
+ namespace arpg::launcher {
+ 
++struct LauncherColor {
++    std::uint8_t red;
++    std::uint8_t green;
++    std::uint8_t blue;
++    std::uint8_t alpha;
++};
++
++struct LauncherStatusStyle {
++    LauncherColor backing;
++    LauncherColor foreground;
++};
++
++[[nodiscard]] LauncherStatusStyle launcher_status_style(bool ready) noexcept;
++
+ struct RectF {
+     float left;
+     float top;
+     float right;
+     float bottom;
+ };
+ 
+ struct LauncherLayout {
+     RectF title;
+     RectF subtitle;
+diff --git a/src/launcher/launcher_main.cpp b/src/launcher/launcher_main.cpp
+index ec7dea5..862dd66 100644
+--- a/src/launcher/launcher_main.cpp
++++ b/src/launcher/launcher_main.cpp
+@@ -13,20 +13,24 @@
+ #include <string>
+ #include <vector>
+ 
+ namespace arpg::launcher {
+ namespace {
+ 
+ constexpr wchar_t kWindowClassName[] = L"InfiniteDungeonLauncherWindow";
+ constexpr wchar_t kWindowTitle[] = L"无限地下城启动器";
+ constexpr int kLauncherIconId = 101;
+ 
++COLORREF launcher_color_ref(const LauncherColor color) noexcept {
++    return RGB(color.red, color.green, color.blue);
++}
++
+ bool contains(const RectF rectangle, const float x, const float y) noexcept {
+     return x >= rectangle.left && x < rectangle.right &&
+         y >= rectangle.top && y < rectangle.bottom;
+ }
+ 
+ std::optional<std::wstring> local_app_data_value() noexcept {
+     try {
+         DWORD required = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0U);
+         if (required == 0U) {
+             return std::nullopt;
+@@ -165,30 +169,36 @@ void draw_fallback_button(
+         DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+ }
+ 
+ void paint_native_fallback(
+     const HDC device_context,
+     const HWND window,
+     const LauncherView& view,
+     const UINT dpi,
+     const std::wstring_view message) noexcept {
+     const float scale = static_cast<float>(dpi == 0U ? 96U : dpi) / 96.0F;
++    const LauncherStatusStyle status_style =
++        launcher_status_style(message.empty() && view.status_ready);
+     RECT client{};
+     if (GetClientRect(window, &client) == FALSE) {
+         return;
+     }
+     const HBRUSH background = CreateSolidBrush(RGB(6, 23, 36));
+     FillRect(device_context, &client, background);
+     DeleteObject(background);
+ 
+     draw_fallback_card(
+-        device_context, view.layout.status, scale, RGB(6, 23, 36), RGB(192, 199, 209));
++        device_context,
++        view.layout.status,
++        scale,
++        launcher_color_ref(status_style.backing),
++        launcher_color_ref(status_style.foreground));
+     draw_fallback_button(
+         device_context, view.layout.start, L"开始游戏", LauncherButton::start, view, scale);
+     draw_fallback_button(
+         device_context, view.layout.verify, L"检查游戏文件", LauncherButton::verify, view, scale);
+     draw_fallback_button(
+         device_context, view.layout.save, L"打开存档目录", LauncherButton::save, view, scale);
+     draw_fallback_button(
+         device_context, view.layout.exit, L"退出", LauncherButton::exit, view, scale);
+     draw_fallback_card(
+         device_context, view.layout.path, scale, RGB(6, 23, 36), RGB(192, 199, 209));
+@@ -208,21 +218,21 @@ void paint_native_fallback(
+         scale,
+         16,
+         RGB(255, 255, 255),
+         DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+     draw_fallback_text(
+         device_context,
+         message.empty() ? view.status_text : message,
+         view.layout.status,
+         scale,
+         18,
+-        message.empty() && view.status_ready ? RGB(0, 255, 0) : RGB(255, 0, 0),
++        launcher_color_ref(status_style.foreground),
+         DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+     draw_fallback_text(
+         device_context,
+         view.path_text,
+         view.layout.path,
+         scale,
+         13,
+         RGB(255, 255, 255),
+         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+     if (view.show_full_path) {
+diff --git a/src/launcher/launcher_platform_win32.cpp b/src/launcher/launcher_platform_win32.cpp
+index ca92da0..77081c4 100644
+--- a/src/launcher/launcher_platform_win32.cpp
++++ b/src/launcher/launcher_platform_win32.cpp
+@@ -2,54 +2,63 @@
+ 
+ #include <Windows.h>
+ #include <shellapi.h>
+ 
+ #include <limits>
+ #include <string_view>
+ #include <system_error>
+ #include <vector>
+ 
+ namespace arpg::launcher {
++
++std::wstring format_platform_failure_message(
++    const std::wstring_view operation,
++    const unsigned long error_code,
++    const std::wstring_view system_detail) {
++    static_cast<void>(system_detail);
++    std::wstring message{operation};
++    message += L"（错误代码 ";
++    message += std::to_wstring(error_code);
++    message += L"）";
++    return message;
++}
++
+ namespace {
+ 
+ std::wstring format_failure(
+     const std::wstring_view operation,
+     const unsigned long error_code) {
+     wchar_t* system_message = nullptr;
+     const DWORD length = FormatMessageW(
+         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+             FORMAT_MESSAGE_IGNORE_INSERTS,
+         nullptr,
+         error_code,
+         0,
+         reinterpret_cast<wchar_t*>(&system_message),
+         0,
+         nullptr);
+ 
+-    std::wstring message{operation};
+-    message += L"（错误代码 ";
+-    message += std::to_wstring(error_code);
+-    message += L"）：";
++    std::wstring detail;
+     if (length != 0U && system_message != nullptr) {
+-        std::wstring detail{system_message, length};
++        detail.assign(system_message, length);
+         LocalFree(system_message);
+         while (!detail.empty() &&
+             (detail.back() == L'\r' || detail.back() == L'\n' ||
+                 detail.back() == L' ')) {
+             detail.pop_back();
+         }
+-        message += detail;
+-    }
+-    else {
+-        message += L"无法获取系统错误消息";
++        if (!detail.empty()) {
++            OutputDebugStringW(detail.c_str());
++        }
+     }
+-    return message;
++    return format_platform_failure_message(operation, error_code, detail);
+ }
+ 
+ PlatformResult failure(
+     const std::wstring_view operation,
+     const unsigned long error_code) {
+     return {false, error_code, format_failure(operation, error_code)};
+ }
+ 
+ }  // namespace
+ 
+diff --git a/src/launcher/launcher_platform_win32.hpp b/src/launcher/launcher_platform_win32.hpp
+index 8b5d9dc..a7f83ba 100644
+--- a/src/launcher/launcher_platform_win32.hpp
++++ b/src/launcher/launcher_platform_win32.hpp
+@@ -1,22 +1,28 @@
+ #pragma once
+ 
+ #include "launcher_core.hpp"
+ 
+ #include <filesystem>
+ #include <optional>
+ #include <string>
++#include <string_view>
+ 
+ namespace arpg::launcher {
+ 
+ std::optional<std::filesystem::path> current_executable_path() noexcept;
+ 
+ struct PlatformResult {
+     bool ok;
+     unsigned long error_code;
+     std::wstring message;
+ };
+ 
++[[nodiscard]] std::wstring format_platform_failure_message(
++    std::wstring_view operation,
++    unsigned long error_code,
++    std::wstring_view system_detail);
++
+ PlatformResult launch_game(const LaunchRequest&) noexcept;
+ PlatformResult open_save_directory(const std::filesystem::path&) noexcept;
+ 
+ }  // namespace arpg::launcher
+diff --git a/src/launcher/launcher_renderer.cpp b/src/launcher/launcher_renderer.cpp
+index 5508240..cabbe4c 100644
+--- a/src/launcher/launcher_renderer.cpp
++++ b/src/launcher/launcher_renderer.cpp
+@@ -13,20 +13,29 @@ constexpr RectF kTooltipRectangle{58.0F, 430.0F, 862.0F, 522.0F};
+ 
+ D2D1_RECT_F to_d2d_rectangle(const RectF rectangle) noexcept {
+     return D2D1::RectF(
+         rectangle.left, rectangle.top, rectangle.right, rectangle.bottom);
+ }
+ 
+ D2D1_ROUNDED_RECT rounded_rectangle(const RectF rectangle) noexcept {
+     return D2D1::RoundedRect(to_d2d_rectangle(rectangle), 6.0F, 6.0F);
+ }
+ 
++D2D1_COLOR_F to_d2d_color(const LauncherColor color) noexcept {
++    constexpr float kColorScale = 1.0F / 255.0F;
++    return D2D1::ColorF(
++        static_cast<float>(color.red) * kColorScale,
++        static_cast<float>(color.green) * kColorScale,
++        static_cast<float>(color.blue) * kColorScale,
++        static_cast<float>(color.alpha) * kColorScale);
++}
++
+ }  // namespace
+ 
+ std::wstring_view renderer_stage_name(const RendererStage stage) noexcept {
+     switch (stage) {
+     case RendererStage::none:
+         return L"none";
+     case RendererStage::create_hwnd_render_target:
+         return L"CreateHwndRenderTarget";
+     case RendererStage::create_gradient_stop_collection:
+         return L"CreateGradientStopCollection";
+@@ -179,24 +188,30 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
+     const auto create_solid = [this](
+                                   const UINT32 color,
+                                   ID2D1SolidColorBrush** destination) noexcept {
+         return render_target_->CreateSolidColorBrush(
+             D2D1::ColorF(color, 1.0F), destination);
+     };
+     if (SUCCEEDED(result)) {
+         result = create_solid(0xFFFFFF, white_brush_.ReleaseAndGetAddressOf());
+     }
+     if (SUCCEEDED(result)) {
+-        result = create_solid(0x00FF00, green_brush_.ReleaseAndGetAddressOf());
++        const LauncherStatusStyle style = launcher_status_style(true);
++        result = render_target_->CreateSolidColorBrush(
++            to_d2d_color(style.backing),
++            status_backing_brush_.ReleaseAndGetAddressOf());
+     }
+     if (SUCCEEDED(result)) {
+-        result = create_solid(0xFF0000, red_brush_.ReleaseAndGetAddressOf());
++        const LauncherStatusStyle style = launcher_status_style(true);
++        result = render_target_->CreateSolidColorBrush(
++            to_d2d_color(style.foreground),
++            status_foreground_brush_.ReleaseAndGetAddressOf());
+     }
+     if (SUCCEEDED(result)) {
+         result = create_solid(0xC0C7D1, silver_brush_.ReleaseAndGetAddressOf());
+     }
+     if (SUCCEEDED(result)) {
+         result = create_solid(0x00D9FF, cyan_brush_.ReleaseAndGetAddressOf());
+     }
+     if (SUCCEEDED(result)) {
+         result = create_solid(0x24455E, button_brush_.ReleaseAndGetAddressOf());
+     }
+@@ -328,29 +343,34 @@ RendererResult LauncherRenderer::render(const LauncherView& view) noexcept {
+         DWRITE_WORD_WRAPPING_NO_WRAP);
+     if (SUCCEEDED(result)) {
+         result = draw_text(
+             L"版本 0.1.0 · 单人无限地下城",
+             subtitle_format_.Get(),
+             view.layout.subtitle,
+             white_brush_.Get(),
+             DWRITE_WORD_WRAPPING_NO_WRAP);
+     }
+ 
+-    render_target_->DrawRoundedRectangle(
+-        rounded_rectangle(view.layout.status), silver_brush_.Get(), 1.5F);
++    const LauncherStatusStyle status_style = launcher_status_style(view.status_ready);
++    status_backing_brush_->SetColor(to_d2d_color(status_style.backing));
++    status_foreground_brush_->SetColor(to_d2d_color(status_style.foreground));
++    ID2D1Brush* const status_backing = status_backing_brush_.Get();
++    ID2D1Brush* const status_foreground = status_foreground_brush_.Get();
++    const D2D1_ROUNDED_RECT status_shape = rounded_rectangle(view.layout.status);
++    render_target_->FillRoundedRectangle(status_shape, status_backing);
++    render_target_->DrawRoundedRectangle(status_shape, status_foreground, 1.5F);
+     if (SUCCEEDED(result)) {
+         result = draw_text(
+             view.status_text,
+             status_format_.Get(),
+             view.layout.status,
+-            view.status_ready ? static_cast<ID2D1Brush*>(green_brush_.Get())
+-                              : static_cast<ID2D1Brush*>(red_brush_.Get()),
++            status_foreground,
+             DWRITE_WORD_WRAPPING_NO_WRAP);
+     }
+ 
+     if (SUCCEEDED(result)) {
+         result = draw_button(
+         view.layout.start, L"开始游戏", LauncherButton::start, view);
+     }
+     if (SUCCEEDED(result)) {
+         result = draw_button(
+             view.layout.verify, L"检查游戏文件", LauncherButton::verify, view);
+@@ -432,18 +452,18 @@ HRESULT LauncherRenderer::record_failure(
+     return result;
+ }
+ 
+ void LauncherRenderer::discard_device_resources() noexcept {
+     card_brush_.Reset();
+     disabled_brush_.Reset();
+     pressed_brush_.Reset();
+     button_brush_.Reset();
+     cyan_brush_.Reset();
+     silver_brush_.Reset();
+-    red_brush_.Reset();
+-    green_brush_.Reset();
++    status_foreground_brush_.Reset();
++    status_backing_brush_.Reset();
+     white_brush_.Reset();
+     background_brush_.Reset();
+     render_target_.Reset();
+ }
+ 
+ }  // namespace arpg::launcher
+diff --git a/src/launcher/launcher_renderer.hpp b/src/launcher/launcher_renderer.hpp
+index 2a208a7..84310af 100644
+--- a/src/launcher/launcher_renderer.hpp
++++ b/src/launcher/launcher_renderer.hpp
+@@ -82,22 +82,22 @@ private:
+         const LauncherView& view) noexcept;
+     HRESULT record_failure(RendererStage stage, HRESULT result) noexcept;
+ 
+     HWND window_{};
+     UINT dpi_{96U};
+     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_factory_;
+     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_factory_;
+     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> render_target_;
+     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> background_brush_;
+     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> white_brush_;
+-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> green_brush_;
+-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> red_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> status_backing_brush_;
++    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> status_foreground_brush_;
+     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> silver_brush_;
+     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> cyan_brush_;
+     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> button_brush_;
+     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> pressed_brush_;
+     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> disabled_brush_;
+     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> card_brush_;
+     Microsoft::WRL::ComPtr<IDWriteTextFormat> title_format_;
+     Microsoft::WRL::ComPtr<IDWriteTextFormat> subtitle_format_;
+     Microsoft::WRL::ComPtr<IDWriteTextFormat> status_format_;
+     Microsoft::WRL::ComPtr<IDWriteTextFormat> button_format_;
+diff --git a/tests/launcher/launcher_layout_tests.cpp b/tests/launcher/launcher_layout_tests.cpp
+index 5e1b545..126a222 100644
+--- a/tests/launcher/launcher_layout_tests.cpp
++++ b/tests/launcher/launcher_layout_tests.cpp
+@@ -1,13 +1,16 @@
+ #include "launcher_layout.hpp"
+ #include "test_framework.hpp"
+ 
++#include <algorithm>
++#include <cmath>
++
+ namespace {
+ 
+ using arpg::launcher::LauncherLayout;
+ using arpg::launcher::PixelSize;
+ using arpg::launcher::RectF;
+ 
+ constexpr RectF kEmptyRect{};
+ 
+ bool inside(RectF rectangle, float width, float height) noexcept {
+     return rectangle.left >= 0.0F && rectangle.top >= 0.0F &&
+@@ -22,20 +25,43 @@ bool empty(RectF rectangle) noexcept {
+ 
+ bool same(RectF first, RectF second) noexcept {
+     return first.left == second.left && first.top == second.top &&
+         first.right == second.right && first.bottom == second.bottom;
+ }
+ 
+ bool same(PixelSize first, PixelSize second) noexcept {
+     return first.width == second.width && first.height == second.height;
+ }
+ 
++double linear_channel(const unsigned char channel) noexcept {
++    const double srgb = static_cast<double>(channel) / 255.0;
++    return srgb <= 0.04045
++        ? srgb / 12.92
++        : std::pow((srgb + 0.055) / 1.055, 2.4);
++}
++
++double relative_luminance(const arpg::launcher::LauncherColor color) noexcept {
++    return 0.2126 * linear_channel(color.red) +
++        0.7152 * linear_channel(color.green) +
++        0.0722 * linear_channel(color.blue);
++}
++
++double contrast_ratio(
++    const arpg::launcher::LauncherColor first,
++    const arpg::launcher::LauncherColor second) noexcept {
++    const double lighter =
++        (std::max)(relative_luminance(first), relative_luminance(second));
++    const double darker =
++        (std::min)(relative_luminance(first), relative_luminance(second));
++    return (lighter + 0.05) / (darker + 0.05);
++}
++
+ arpg::test::Failure design_size_keeps_every_rect_inside_client_area() noexcept {
+     constexpr float width = 920.0F;
+     constexpr float height = 560.0F;
+     const LauncherLayout layout = arpg::launcher::make_launcher_layout(width, height);
+ 
+     ARPG_REQUIRE(same(layout.title, RectF{56.0F, 42.0F, 864.0F, 98.0F}));
+     ARPG_REQUIRE(same(layout.subtitle, RectF{58.0F, 102.0F, 862.0F, 132.0F}));
+     ARPG_REQUIRE(same(layout.status, RectF{58.0F, 174.0F, 862.0F, 226.0F}));
+     ARPG_REQUIRE(same(layout.start, RectF{58.0F, 260.0F, 862.0F, 342.0F}));
+     ARPG_REQUIRE(same(layout.verify, RectF{58.0F, 370.0F, 308.0F, 426.0F}));
+@@ -92,22 +118,41 @@ arpg::test::Failure undersized_client_area_returns_empty_layout() noexcept {
+ 
+ arpg::test::Failure dpi_scaling_preserves_the_fixed_logical_size() noexcept {
+     ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(96U), PixelSize{920, 560}));
+     ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(120U), PixelSize{1150, 700}));
+     ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(144U), PixelSize{1380, 840}));
+     ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(192U), PixelSize{1840, 1120}));
+     ARPG_REQUIRE(same(arpg::launcher::launcher_pixel_size(0U), PixelSize{0, 0}));
+     return {};
+ }
+ 
++arpg::test::Failure status_styles_have_opaque_high_contrast_backings() noexcept {
++    const auto ready = arpg::launcher::launcher_status_style(true);
++    const auto error = arpg::launcher::launcher_status_style(false);
++
++    ARPG_REQUIRE(ready.backing.alpha == 255U);
++    ARPG_REQUIRE(error.backing.alpha == 255U);
++    ARPG_REQUIRE(ready.foreground.alpha == 255U);
++    ARPG_REQUIRE(error.foreground.alpha == 255U);
++    ARPG_REQUIRE(contrast_ratio(ready.foreground, ready.backing) >= 4.5);
++    ARPG_REQUIRE(contrast_ratio(error.foreground, error.backing) >= 4.5);
++    ARPG_REQUIRE(
++        ready.backing.red != error.backing.red ||
++        ready.backing.green != error.backing.green ||
++        ready.backing.blue != error.backing.blue);
++    return {};
++}
++
+ }  // namespace
+ 
+ arpg::test::TestSuite launcher_layout_suite() noexcept {
+     static const arpg::test::TestCase cases[] = {
+         {"design size keeps every rect inside client area", design_size_keeps_every_rect_inside_client_area},
+         {"buttons never overlap each other", buttons_never_overlap_each_other},
+         {"status and path do not overlap actions", status_and_path_do_not_overlap_actions},
+         {"undersized client area returns empty layout", undersized_client_area_returns_empty_layout},
+         {"dpi scaling preserves the fixed logical size", dpi_scaling_preserves_the_fixed_logical_size},
++        {"status styles have opaque high contrast backings",
++            status_styles_have_opaque_high_contrast_backings},
+     };
+     return arpg::test::make_suite("launcher_layout", cases);
+ }
+diff --git a/tests/launcher/launcher_platform_win32_tests.cpp b/tests/launcher/launcher_platform_win32_tests.cpp
+index 377e3ae..cc2f007 100644
+--- a/tests/launcher/launcher_platform_win32_tests.cpp
++++ b/tests/launcher/launcher_platform_win32_tests.cpp
+@@ -50,26 +50,39 @@ arpg::test::Failure failed_game_launch_reports_numeric_error_code() noexcept {
+     const arpg::launcher::LaunchRequest request{
+         missing_game,
+         temporary.root(),
+         L"\"" + missing_game.native() + L"\"",
+     };
+ 
+     const arpg::launcher::PlatformResult result =
+         arpg::launcher::launch_game(request);
+     ARPG_REQUIRE(!result.ok);
+     ARPG_REQUIRE(result.error_code != ERROR_SUCCESS);
+-    ARPG_REQUIRE(result.message.find(L"无法启动游戏") != std::wstring::npos);
+     ARPG_REQUIRE(
+-        result.message.find(std::to_wstring(result.error_code)) !=
+-        std::wstring::npos);
++        result.message == L"无法启动游戏（错误代码 " +
++            std::to_wstring(result.error_code) + L"）");
++    return {};
++}
++
++arpg::test::Failure system_error_detail_stays_out_of_player_message() noexcept {
++    constexpr std::wstring_view english_system_detail =
++        L"The system cannot find the file specified.";
++
++    const std::wstring message = arpg::launcher::format_platform_failure_message(
++        L"无法启动游戏", ERROR_FILE_NOT_FOUND, english_system_detail);
++
++    ARPG_REQUIRE(message == L"无法启动游戏（错误代码 2）");
++    ARPG_REQUIRE(message.find(english_system_detail) == std::wstring::npos);
+     return {};
+ }
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite launcher_platform_win32_suite() noexcept {
+     static const arpg::test::TestCase cases[] = {
+         {"failed game launch reports numeric error code",
+             failed_game_launch_reports_numeric_error_code},
++        {"system error detail stays out of player message",
++            system_error_detail_stays_out_of_player_message},
+     };
+     return arpg::test::make_suite("launcher_platform_win32", cases);
+ }
+diff --git a/tests/launcher/launcher_test_main.cpp b/tests/launcher/launcher_test_main.cpp
+index dd89d10..b754601 100644
+--- a/tests/launcher/launcher_test_main.cpp
++++ b/tests/launcher/launcher_test_main.cpp
+@@ -4,12 +4,12 @@ arpg::test::TestSuite launcher_core_suite() noexcept;
+ arpg::test::TestSuite launcher_layout_suite() noexcept;
+ arpg::test::TestSuite launcher_platform_win32_suite() noexcept;
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         launcher_core_suite(),
+         launcher_layout_suite(),
+         launcher_platform_win32_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 13, "desktop launcher core");
++    return arpg::test::run_suites(suites, 15, "desktop launcher core");
+ }
+diff --git a/tests/launcher/launcher_window_smoke_test.ps1 b/tests/launcher/launcher_window_smoke_test.ps1
+index 7a8d34a..2c7a3c8 100644
+--- a/tests/launcher/launcher_window_smoke_test.ps1
++++ b/tests/launcher/launcher_window_smoke_test.ps1
+@@ -385,20 +385,36 @@ function Assert-Task8ChineseCopyGuard {
+             ',\s*L"' + [regex]::Escape($button.Label) +
+             '",\s*LauncherButton::' + $button.Button + ',\s*view\);'
+         Assert-Task8SourcePattern $Sources.Renderer $directWritePattern "DirectWrite button must be exact Chinese: $($button.Label)"
+     }
+ 
+     foreach ($source in @($Sources.Main, $Sources.Renderer)) {
+         Assert-Task8SourcePattern $source 'L"无限地下城"' 'launcher product title must be Chinese in both rendering paths'
+         Assert-Task8SourcePattern $source 'L"版本 0\.1\.0 · 单人无限地下城"' 'launcher subtitle must be Chinese in both rendering paths'
+     }
+ 
++    $directWriteRenderBody = Get-Task8CppFunctionBody `
++        $Sources.Renderer `
++        'RendererResult\s+LauncherRenderer::render\s*\(\s*const\s+LauncherView&\s+view\s*\)\s*noexcept' `
++        'LauncherRenderer::render'
++    Assert-Task8SourcePattern $directWriteRenderBody `
++        'const\s+LauncherStatusStyle\s+status_style\s*=\s*launcher_status_style\(\s*view\.status_ready\s*\);.*?const\s+D2D1_ROUNDED_RECT\s+status_shape\s*=\s*rounded_rectangle\(\s*view\.layout\.status\s*\);.*?FillRoundedRectangle\(\s*status_shape\s*,\s*status_backing\s*\);.*?DrawRoundedRectangle\(\s*status_shape\s*,\s*status_foreground\s*,\s*1\.5F\s*\);.*?draw_text\(\s*view\.status_text\s*,\s*status_format_\.Get\(\)\s*,\s*view\.layout\.status\s*,\s*status_foreground\s*,' `
++        'DirectWrite status must fill an opaque palette backing before its border and text'
++
++    $nativeFallbackBody = Get-Task8CppFunctionBody `
++        $Sources.Main `
++        'void\s+paint_native_fallback\s*\([^\)]*const\s+std::wstring_view\s+message\s*\)\s*noexcept' `
++        'paint_native_fallback'
++    Assert-Task8SourcePattern $nativeFallbackBody `
++        'const\s+LauncherStatusStyle\s+status_style\s*=\s*launcher_status_style\(\s*message\.empty\(\)\s*&&\s*view\.status_ready\s*\);.*?draw_fallback_card\(\s*device_context\s*,\s*view\.layout\.status\s*,\s*scale\s*,\s*launcher_color_ref\(\s*status_style\.backing\s*\)\s*,\s*launcher_color_ref\(\s*status_style\.foreground\s*\)\s*\);.*?draw_fallback_text\(\s*device_context\s*,\s*message\.empty\(\)\s*\?\s*view\.status_text\s*:\s*message\s*,\s*view\.layout\.status\s*,.*?launcher_color_ref\(\s*status_style\.foreground\s*\)' `
++        'native fallback status must reuse the opaque high-contrast palette'
++
+     foreach ($contract in @(
+         @{ Pattern = 'case\s+InstallationState::ready:\s*return\s+L"游戏已就绪";'; Name = 'ready status' },
+         @{ Pattern = 'case\s+InstallationState::invalid_launcher_path:\s*return\s+L"启动器路径无效";'; Name = 'invalid path status' },
+         @{ Pattern = 'case\s+InstallationState::missing_game_executable:\s*return\s+L"缺少 arpg_game\.exe";'; Name = 'missing executable status' },
+         @{ Pattern = 'case\s+InstallationState::missing_asset_directory:\s*return\s+L"缺少资源："\s*\+'; Name = 'missing asset prefix' }
+     )) {
+         Assert-Task8SourcePattern $Sources.Core $contract.Pattern "installation copy must be exact Chinese: $($contract.Name)"
+     }
+     foreach ($pathToken in @(
+         'arpg_game.exe',
+@@ -426,27 +442,53 @@ function Assert-Task8ChineseCopyGuard {
+         $Sources.Main `
+         '(?<![A-Za-z0-9_])std::wstring\s+render_failure_message\s*\(\s*const\s+RendererResult&\s+result\s*\)' `
+         'render_failure_message'
+     if ([regex]::Matches($renderFailureBody, '\breturn\b').Count -ne 1) {
+         throw 'Task 8 render_failure_message must contain exactly one return statement'
+     }
+     if ([regex]::IsMatch($renderFailureBody, '\[[^\]\r\n]*\]\s*\(')) {
+         throw 'Task 8 render_failure_message cannot hide its formatter in a lambda'
+     }
+     Assert-Task8SourcePattern $renderFailureBody 'return\s+L"渲染失败（"\s*\+\s*std::wstring\{stage\}\s*\+\s*L"，HRESULT 0x"\s*\+\s*hresult\s*\+\s*L"）";\s*$' 'render_failure_message actual return must keep API stage and HRESULT inside Chinese parentheses'
++    if ([regex]::Matches(
++            $renderFailureBody,
++            'renderer_stage_name\s*\(\s*result\.stage\s*\)').Count -ne 1) {
++        throw 'Task 8 render_failure_message must obtain its only renderer stage from the real result'
++    }
+     if ([regex]::IsMatch($Sources.Main, '渲染失败：[^\r\n]*HRESULT')) {
+         throw 'Task 8 Chinese-copy guard rejected an unparenthesized renderer API stage'
+     }
+     if ([regex]::Matches($Sources.Main, 'renderer_stage_name\s*\(').Count -ne 1) {
+         throw 'Task 8 renderer stage names must flow only through render_failure_message'
+     }
+ 
++    $paintBody = Get-Task8CppFunctionBody `
++        $Sources.Main `
++        'void\s+paint\s*\(\s*\)\s*noexcept' `
++        'WindowController::paint'
++    $rendererFailureHandlerBody = Get-Task8CppFunctionBody `
++        $Sources.Main `
++        'void\s+handle_renderer_failure\s*\(\s*const\s+RendererResult&\s+result\s*\)\s*noexcept' `
++        'WindowController::handle_renderer_failure'
++    foreach ($consumer in @(
++        @{ Body = $paintBody; Name = 'paint fallback' },
++        @{ Body = $rendererFailureHandlerBody; Name = 'window-title failure handler' })) {
++        if ([regex]::Matches(
++                $consumer.Body,
++                'const\s+std::wstring\s+message\s*=\s*render_failure_message\(\s*result\s*\);').Count -ne 1) {
++            throw "Task 8 $($consumer.Name) must call render_failure_message(result) exactly once"
++        }
++    }
++    if ([regex]::Matches($Sources.Main, '\brender_failure_message\s*\(').Count -ne 3) {
++        throw 'Task 8 render_failure_message must have exactly two real failure consumers'
++    }
++
+     $stageBody = [regex]::Match(
+         $Sources.Renderer,
+         'std::wstring_view\s+renderer_stage_name\([^\{]+\{(?<Body>.*?)\n\}\s*\n\s*bool\s+LauncherRenderer::initialize',
+         [Text.RegularExpressions.RegexOptions]::Singleline).Groups['Body'].Value
+     if ([string]::IsNullOrEmpty($stageBody)) {
+         throw 'Task 8 could not isolate renderer_stage_name for contextual audit'
+     }
+     $actualStages = @([regex]::Matches($stageBody, 'return\s+L"([^"]+)";') |
+         ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+     $allowedStages = @(
+@@ -459,27 +501,43 @@ function Assert-Task8ChineseCopyGuard {
+         'ID2D1RenderTarget::EndDraw',
+         'IDWriteTextLayout::SetTrimming',
+         'IDWriteTextLayout::SetWordWrapping',
+         'none',
+         'unknown'
+     ) | Sort-Object
+     if (($actualStages -join "`n") -cne ($allowedStages -join "`n")) {
+         throw 'Task 8 renderer-stage technical allowlist changed'
+     }
+ 
++    $platformMessageBody = Get-Task8CppFunctionBody `
++        $Sources.Platform `
++        'std::wstring\s+format_platform_failure_message\s*\(\s*const\s+std::wstring_view\s+operation\s*,\s*const\s+unsigned\s+long\s+error_code\s*,\s*const\s+std::wstring_view\s+system_detail\s*\)' `
++        'format_platform_failure_message'
++    if ([regex]::Matches($platformMessageBody, '\breturn\b').Count -ne 1 -or
++        [regex]::Matches($platformMessageBody, '\bsystem_detail\b').Count -ne 1) {
++        throw 'Task 8 platform player formatter must ignore the injected system detail'
++    }
++    Assert-Task8SourcePattern $platformMessageBody `
++        'static_cast<void>\(\s*system_detail\s*\);' `
++        'platform player formatter must explicitly keep system detail diagnostic-only'
++    if ([regex]::IsMatch(
++            $platformMessageBody,
++            '(?:\+=|append\s*\(|push_back\s*\()[^;]*system_detail')) {
++        throw 'Task 8 platform player formatter cannot append dynamic system detail'
++    }
++
+     foreach ($contract in @(
+         @{ Pattern = 'message\s*\+=\s*L"（错误代码 ";'; Name = 'numeric error prefix' },
+-        @{ Pattern = 'message\s*\+=\s*L"）：";'; Name = 'numeric error suffix' },
++        @{ Pattern = 'message\s*\+=\s*L"）";'; Name = 'numeric error suffix' },
+         @{ Pattern = 'failure\(L"无法启动游戏",\s*error_code\)'; Name = 'game launch failure' },
+         @{ Pattern = 'failure\(\s*L"无法创建存档目录",'; Name = 'save create failure' },
+-        @{ Pattern = 'failure\(\s*L"无法打开存档目录",'; Name = 'save open failure' },
+-        @{ Pattern = 'message\s*\+=\s*L"无法获取系统错误消息";'; Name = 'system message fallback' }
++        @{ Pattern = 'failure\(\s*L"无法打开存档目录",'; Name = 'save open failure' }
+     )) {
+         Assert-Task8SourcePattern $Sources.Platform $contract.Pattern "Win32 error path must keep a Chinese main message: $($contract.Name)"
+     }
+     Assert-Task8SourcePattern $Sources.Platform 'ShellExecuteW\(\s*nullptr,\s*L"open"' 'open is allowed only as the ShellExecuteW verb'
+ 
+     $playerLiteralContracts = @(
+         @{ File = 'Host'; Literal = 'u8"无限地城"'; Count = 1; Reason = 'exact game window title' },
+         @{ File = 'Main'; Literal = 'L"安装目录："'; Count = 1; Reason = 'dynamic install-path Chinese prefix' },
+         @{ File = 'Main'; Literal = 'L"安装目录：不可用"'; Count = 1; Reason = 'unavailable install-path state' },
+         @{ File = 'Main'; Literal = 'L"开始游戏"'; Count = 1; Reason = 'native fallback Start button' },
+@@ -498,22 +556,21 @@ function Assert-Task8ChineseCopyGuard {
+         @{ File = 'Renderer'; Literal = 'L"无限地下城"'; Count = 1; Reason = 'DirectWrite product title' },
+         @{ File = 'Renderer'; Literal = 'L"检查游戏文件"'; Count = 1; Reason = 'DirectWrite Verify button' },
+         @{ File = 'Renderer'; Literal = 'L"版本 0.1.0 · 单人无限地下城"'; Count = 1; Reason = 'DirectWrite subtitle' },
+         @{ File = 'Renderer'; Literal = 'L"退出"'; Count = 1; Reason = 'DirectWrite Exit button' },
+         @{ File = 'Core'; Literal = 'L"启动器路径无效"'; Count = 2; Reason = 'invalid installation state and defensive fallback' },
+         @{ File = 'Core'; Literal = 'L"游戏已就绪"'; Count = 1; Reason = 'ready installation state' },
+         @{ File = 'Core'; Literal = 'L"缺少 arpg_game.exe"'; Count = 1; Reason = 'Chinese missing-game state with immutable executable suffix' },
+         @{ File = 'Core'; Literal = 'L"缺少资源："'; Count = 1; Reason = 'missing-asset Chinese prefix' },
+         @{ File = 'Platform'; Literal = 'L"无法创建存档目录"'; Count = 1; Reason = 'save-directory creation operation' },
+         @{ File = 'Platform'; Literal = 'L"无法启动游戏"'; Count = 2; Reason = 'game launch operation and catch fallback' },
+-        @{ File = 'Platform'; Literal = 'L"无法打开存档目录"'; Count = 2; Reason = 'save-directory open operation and catch fallback' },
+-        @{ File = 'Platform'; Literal = 'L"无法获取系统错误消息"'; Count = 1; Reason = 'FormatMessage fallback' }
++        @{ File = 'Platform'; Literal = 'L"无法打开存档目录"'; Count = 2; Reason = 'save-directory open operation and catch fallback' }
+     )
+     $technicalAllowlist = @(
+         @{ File = 'Host'; Literal = '"combat/room_bounds.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Host'; Literal = '"core/fixed_step.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Host'; Literal = '"dungeon_runtime.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Host'; Literal = '"dungeon/dungeon_types.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Host'; Literal = '"material_asset_types.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Main'; Literal = '"launcher_core.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Main'; Literal = '"launcher_layout.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Main'; Literal = '"launcher_platform_win32.hpp"'; Count = 1; Reason = 'compile-time include path' },
+@@ -546,21 +603,21 @@ function Assert-Task8ChineseCopyGuard {
+         @{ File = 'Core'; Literal = 'L"assets/fonts"'; Count = 1; Reason = 'immutable package path' },
+         @{ File = 'Core'; Literal = 'L"assets/player"'; Count = 1; Reason = 'immutable package path' },
+         @{ File = 'Core'; Literal = 'L"assets/skills"'; Count = 1; Reason = 'immutable package path' },
+         @{ File = 'Core'; Literal = 'L"assets/stage12"'; Count = 1; Reason = 'immutable package path' },
+         @{ File = 'Core'; Literal = 'L"assets/stage14/audio"'; Count = 1; Reason = 'immutable package path' },
+         @{ File = 'Core'; Literal = 'L"assets/stage15/audio"'; Count = 1; Reason = 'immutable package path' },
+         @{ File = 'Core'; Literal = 'L"InfiniteDungeon"'; Count = 1; Reason = 'immutable default save-path component' },
+         @{ File = 'Core'; Literal = 'L"save"'; Count = 1; Reason = 'immutable default save-path component' },
+         @{ File = 'Platform'; Literal = '"launcher_platform_win32.hpp"'; Count = 1; Reason = 'compile-time include path' },
+         @{ File = 'Platform'; Literal = 'L"（错误代码 "'; Count = 1; Reason = 'Win32 numeric-detail prefix' },
+-        @{ File = 'Platform'; Literal = 'L"）："'; Count = 1; Reason = 'Win32 numeric-detail separator' },
++        @{ File = 'Platform'; Literal = 'L"）"'; Count = 1; Reason = 'Win32 numeric-detail closing punctuation' },
+         @{ File = 'Platform'; Literal = 'L"open"'; Count = 1; Reason = 'ShellExecuteW verb' }
+     )
+ 
+     $literalContracts = @($playerLiteralContracts) + @($technicalAllowlist)
+     $contractByKey = [System.Collections.Generic.Dictionary[string, object]]::new(
+         [StringComparer]::Ordinal)
+     foreach ($entry in $literalContracts) {
+         if (-not $Sources.Contains($entry.File) -or
+             [string]::IsNullOrWhiteSpace($entry.Literal) -or
+             $entry.Count -le 0 -or
+@@ -735,38 +792,88 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
+         },
+         @{
+             Name = 'local fallback rectangle creates a false formatter boundary'
+             File = 'Main'
+             Needle = '    return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";'
+             Replacement = '    if (result.hresult < 0) {' + $newline +
+                 '        return L"渲染失败（" + std::wstring{stage} + L"，HRESULT 0x" + hresult + L"）";' + $newline +
+                 '}' + $newline +
+                 '    RECT fallback_rectangle{};' + $newline +
+                 '    return std::wstring{stage};'
++        },
++        @{
++            Name = 'dynamic system detail is rejoined to the player message'
++            File = 'Platform'
++            Needle = '    return message;'
++            Replacement = '    message += system_detail;' + $newline +
++                '    return message;'
++        },
++        @{
++            Name = 'DirectWrite status regresses to outline-only rendering'
++            File = 'Renderer'
++            Needle =
++                '    render_target_->FillRoundedRectangle(status_shape, status_backing);'
++            Replacement =
++                '    render_target_->DrawRoundedRectangle(status_shape, status_backing, 1.0F);'
+         }
+     )
+     $acceptedMutations = @()
+     foreach ($mutation in $mutations) {
+         $mutated = Copy-Task8ChineseCopySources $Sources
+         if (-not $mutated[$mutation.File].Contains($mutation.Needle)) {
+             throw "Task 8 mutation anchor is missing: $($mutation.Name)"
+         }
+         $mutated[$mutation.File] = $mutated[$mutation.File].Replace(
+             $mutation.Needle, $mutation.Replacement)
+         $accepted = $true
+         try { Assert-Task8ChineseCopyGuard $mutated }
+         catch { $accepted = $false }
+         if ($accepted) {
+             $acceptedMutations += $mutation.Name
+         }
+     }
+ 
++    $disconnectedFormatter = Copy-Task8ChineseCopySources $Sources
++    $formatterStageNeedle =
++        '    const std::wstring_view stage = renderer_stage_name(result.stage);'
++    $formatterStageReplacement = '    const std::wstring_view stage{};'
++    $externalHelperAnchor =
++        'RECT fallback_rectangle(const RectF rectangle, const float scale) noexcept {'
++    $externalHelper = @(
++        ''
++        'std::wstring task8_unlocalized_renderer_failure(const RendererResult& result) {'
++        '    return std::wstring{renderer_stage_name(result.stage)};'
++        '}'
++    ) -join $newline
++    foreach ($anchor in @(
++        $formatterStageNeedle,
++        $externalHelperAnchor,
++        'render_failure_message(result);')) {
++        if (-not $disconnectedFormatter.Main.Contains($anchor)) {
++            throw "Task 8 disconnected-formatter mutation anchor is missing: $anchor"
++        }
++    }
++    $disconnectedFormatter.Main = $disconnectedFormatter.Main.Replace(
++        $formatterStageNeedle, $formatterStageReplacement)
++    $disconnectedFormatter.Main = $disconnectedFormatter.Main.Replace(
++        $externalHelperAnchor,
++        $externalHelper + $newline + $newline + $externalHelperAnchor)
++    $disconnectedFormatter.Main = $disconnectedFormatter.Main.Replace(
++        'render_failure_message(result);',
++        'task8_unlocalized_renderer_failure(result);')
++    $acceptedDisconnectedFormatter = $true
++    try { Assert-Task8ChineseCopyGuard $disconnectedFormatter }
++    catch { $acceptedDisconnectedFormatter = $false }
++    if ($acceptedDisconnectedFormatter) {
++        $acceptedMutations += 'disconnected renderer formatter consumers'
++    }
++
+     $acceptedBroadAllowlist = $true
+     try { Assert-Task8ChineseCopyGuard $Sources -WholeFileAllowlist @('launcher_main.cpp') }
+     catch { $acceptedBroadAllowlist = $false }
+     if ($acceptedBroadAllowlist) {
+         $acceptedMutations += 'broad-file allowlist attempt'
+     }
+ 
+     $validVariants = @(
+         @{
+             Name = 'C++17 digit separator'
+@@ -800,21 +907,21 @@ function Invoke-Task8ChineseCopyGuardSelfTest {
+         $mutated[$variant.File] = $mutated[$variant.File].Replace(
+             $variant.Needle, $variant.Replacement)
+         try { Assert-Task8ChineseCopyGuard $mutated }
+         catch { $rejectedValidVariants += $variant.Name }
+     }
+ 
+     if ($acceptedMutations.Count -ne 0 -or $rejectedValidVariants.Count -ne 0) {
+         throw "Task 8 Chinese-copy guard self-test mismatch; accepted mutations: $($acceptedMutations -join '; '); rejected valid variants: $($rejectedValidVariants -join '; ')"
+     }
+     return [pscustomobject]@{
+-        MutationCount = $mutations.Count + 1
++        MutationCount = $mutations.Count + 2
+         ValidVariantCount = $validVariants.Count
+     }
+ }
+ 
+ $LauncherSmokeDirectoryPrefix = 'arpg-launcher-window-smoke-'
+ $LauncherSmokeDirectoryPattern = '^arpg-launcher-window-smoke-[0-9a-f]{32}$'
+ $LauncherSmokeMarkerName = '.launcher-window-smoke-owner.marker'
+ $LauncherSmokeMarkerMagic = 'ARPG_LAUNCHER_WINDOW_SMOKE_OWNER_V1'
+ $LauncherSmokeStaleAgeSeconds = 15
+ 
+@@ -1205,21 +1312,22 @@ function Get-VerifiedClientBitmap {
+ 
+         if ($null -ne $bitmap) { $bitmap.Dispose() }
+         if ($attempt -lt 3) {
+             Start-Sleep -Milliseconds 80
+         }
+     }
+ 
+     if ($null -ne $lastReadiness) {
+         $start = $lastReadiness.StartPixel
+         $verify = $lastReadiness.VerifyPixel
+-        throw "Launcher client was not ready after 3 captures ($lastFailure): dark=$($lastReadiness.DarkPixels)/$($lastReadiness.SampleCount), disabledStart=RGB($($start.R),$($start.G),$($start.B)), verify=RGB($($verify.R),$($verify.G),$($verify.B)), pureRed=$($lastReadiness.PureRed)"
++        $status = $lastReadiness.StatusBackingPixel
++        throw "Launcher client was not ready after 3 captures ($lastFailure): dark=$($lastReadiness.DarkPixels)/$($lastReadiness.SampleCount), disabledStart=RGB($($start.R),$($start.G),$($start.B)), verify=RGB($($verify.R),$($verify.G),$($verify.B)), errorBacking=RGB($($status.R),$($status.G),$($status.B))"
+     }
+     throw "Launcher client was not ready after 3 captures: $lastFailure; pixel diagnostics unavailable"
+ }
+ 
+ function Get-InitialPixelReadiness {
+     param($Bitmap, [uint32] $Dpi)
+ 
+     $darkPixels = 0
+     for ($y = 0; $y -lt $Bitmap.Height; $y += 4) {
+         for ($x = 0; $x -lt $Bitmap.Width; $x += 4) {
+@@ -1227,37 +1335,35 @@ function Get-InitialPixelReadiness {
+             if ((($pixel.R * 30) + ($pixel.G * 59) + ($pixel.B * 11)) -lt 24000) { ++$darkPixels }
+         }
+     }
+     $sampleCount = [math]::Ceiling($Bitmap.Width / 4) * [math]::Ceiling($Bitmap.Height / 4)
+     $scale = $Dpi / 96.0
+     $startX = Convert-DipToPixels 58 $Dpi
+     $startY = Convert-DipToPixels 260 $Dpi
+     $verifyY = Convert-DipToPixels 370 $Dpi
+     $startPixel = $Bitmap.GetPixel($startX + [int](20 * $scale), $startY + [int](20 * $scale))
+     $verifyPixel = $Bitmap.GetPixel($startX + [int](20 * $scale), $verifyY + [int](20 * $scale))
+-    $pureRed = 0
+-    for ($y = (Convert-DipToPixels 174 $Dpi); $y -lt (Convert-DipToPixels 226 $Dpi); ++$y) {
+-        for ($x = (Convert-DipToPixels 58 $Dpi); $x -lt (Convert-DipToPixels 862 $Dpi); ++$x) {
+-            $pixel = $Bitmap.GetPixel($x, $y)
+-            if ($pixel.R -ge 220 -and $pixel.G -le 20 -and $pixel.B -le 20) { ++$pureRed }
+-        }
+-    }
++    $statusBackingPixel = $Bitmap.GetPixel(
++        (Convert-DipToPixels 840 $Dpi),
++        (Convert-DipToPixels 200 $Dpi))
+     [pscustomobject]@{
+         Ready = ($darkPixels -ge ($sampleCount * 0.55)) -and
+             ([math]::Abs($startPixel.R - 85) -le 6) -and ([math]::Abs($startPixel.G - 91) -le 6) -and ([math]::Abs($startPixel.B - 99) -le 6) -and
+             ([math]::Abs($verifyPixel.R - 36) -le 6) -and ([math]::Abs($verifyPixel.G - 69) -le 6) -and ([math]::Abs($verifyPixel.B - 94) -le 6) -and
+-            ($pureRed -ge 8)
++            ([math]::Abs($statusBackingPixel.R - 55) -le 6) -and
++            ([math]::Abs($statusBackingPixel.G - 16) -le 6) -and
++            ([math]::Abs($statusBackingPixel.B - 24) -le 6)
+         DarkPixels = $darkPixels
+         SampleCount = $sampleCount
+         StartPixel = $startPixel
+         VerifyPixel = $verifyPixel
+-        PureRed = $pureRed
++        StatusBackingPixel = $statusBackingPixel
+     }
+ }
+ 
+ function Send-LauncherMouse {
+     param($Process, $Origin, [uint32] $Message, [uint32] $Buttons, [int] $X, [int] $Y)
+     if (-not [LauncherPixelSmokeNative]::SetCursorPos($Origin.X + $X, $Origin.Y + $Y)) {
+         throw 'Could not move cursor into launcher client'
+     }
+     $packed = [IntPtr](($Y -shl 16) -bor ($X -band 0xffff))
+     [void][LauncherPixelSmokeNative]::SendMessage(
+@@ -1320,20 +1426,25 @@ function Assert-RenderedClientPixels {
+     $origin = [LauncherPixelSmokeNative+POINT]@{ X = 0; Y = 0 }
+     if (-not [LauncherPixelSmokeNative]::ClientToScreen($Process.MainWindowHandle, [ref] $origin)) {
+         throw "Could not resolve launcher client origin: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+     }
+     $scale = $dpi / 96.0
+     $bitmap = Get-VerifiedClientBitmap $Process $origin $width $height $dpi
+     try {
+         $startX = Convert-DipToPixels 58 $dpi
+         $startY = Convert-DipToPixels 260 $dpi
+         $verifyY = Convert-DipToPixels 370 $dpi
++        Assert-ColorNear `
++            ($bitmap.GetPixel(
++                (Convert-DipToPixels 840 $dpi),
++                (Convert-DipToPixels 200 $dpi))) `
++            55 16 24 'Error status opaque backing'
+ 
+         $brightXs = @()
+         for ($y = $startY; $y -lt ($startY + (Convert-DipToPixels 82 $dpi)); ++$y) {
+             for ($x = $startX; $x -lt (Convert-DipToPixels 862 $dpi); ++$x) {
+                 $pixel = $bitmap.GetPixel($x, $y)
+                 if ($pixel.R -ge 210 -and $pixel.G -ge 210 -and $pixel.B -ge 210) { $brightXs += $x }
+             }
+         }
+         if ($brightXs.Count -lt 40 -or (($brightXs | Measure-Object -Maximum).Maximum - ($brightXs | Measure-Object -Minimum).Minimum) -lt (60 * $scale)) {
+             throw 'Launcher Start text was not high-contrast and spatially distributed'

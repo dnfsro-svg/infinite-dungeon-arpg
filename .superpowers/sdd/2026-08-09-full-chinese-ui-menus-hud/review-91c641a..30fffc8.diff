@@ -1,0 +1,558 @@
+# Review package: 91c641a..HEAD
+
+## Commits
+30fffc8 test: harden structured HUD architecture guards
+
+## Files changed
+ tests/platform/cpp_source_function_body.cmake      |  65 ++++++++
+ ...otice_structured_binding_source_self_test.cmake |  16 ++
+ ...hud_notice_structured_binding_source_test.cmake |  62 ++++----
+ ...enderer_structured_model_source_self_test.cmake |  73 ++++++++-
+ ...hud_renderer_structured_model_source_test.cmake | 172 +++++++++++++--------
+ 5 files changed, 287 insertions(+), 101 deletions(-)
+
+## Diff
+diff --git a/tests/platform/cpp_source_function_body.cmake b/tests/platform/cpp_source_function_body.cmake
+new file mode 100644
+index 0000000..cb94188
+--- /dev/null
++++ b/tests/platform/cpp_source_function_body.cmake
+@@ -0,0 +1,65 @@
++cmake_minimum_required(VERSION 3.25)
++
++function(normalize_cpp_source INPUT OUTPUT)
++    string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" VALUE "${INPUT}")
++    string(REGEX REPLACE "//[^\r\n]*" "" VALUE "${VALUE}")
++    string(REGEX REPLACE "[ \t\r\n]+" " " VALUE "${VALUE}")
++    string(STRIP "${VALUE}" VALUE)
++    set(${OUTPUT} "${VALUE}" PARENT_SCOPE)
++endfunction()
++
++function(extract_cpp_function_body SOURCE FUNCTION_MARKER OUTPUT)
++    string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" CODE "${SOURCE}")
++    string(REGEX REPLACE "//[^\r\n]*" "" CODE "${CODE}")
++    string(FIND "${CODE}" "${FUNCTION_MARKER}" MARKER_INDEX)
++    if(MARKER_INDEX EQUAL -1)
++        message(FATAL_ERROR
++            "Unable to find C++ function marker: ${FUNCTION_MARKER}")
++    endif()
++
++    string(LENGTH "${CODE}" CODE_LENGTH)
++    math(EXPR LAST_INDEX "${CODE_LENGTH} - 1")
++    set(OPEN_FOUND FALSE)
++    set(IN_STRING FALSE)
++    set(ESCAPED FALSE)
++    set(DEPTH 0)
++    foreach(INDEX RANGE ${MARKER_INDEX} ${LAST_INDEX})
++        string(SUBSTRING "${CODE}" ${INDEX} 1 CHARACTER)
++        if(IN_STRING)
++            if(ESCAPED)
++                set(ESCAPED FALSE)
++            elseif(CHARACTER STREQUAL "\\")
++                set(ESCAPED TRUE)
++            elseif(CHARACTER STREQUAL "\"")
++                set(IN_STRING FALSE)
++            endif()
++            continue()
++        endif()
++        if(CHARACTER STREQUAL "\"")
++            set(IN_STRING TRUE)
++            continue()
++        endif()
++        if(CHARACTER STREQUAL "{")
++            if(NOT OPEN_FOUND)
++                set(OPEN_FOUND TRUE)
++                set(DEPTH 1)
++                math(EXPR BODY_START "${INDEX} + 1")
++            else()
++                math(EXPR DEPTH "${DEPTH} + 1")
++            endif()
++            continue()
++        endif()
++        if(OPEN_FOUND AND CHARACTER STREQUAL "}")
++            math(EXPR DEPTH "${DEPTH} - 1")
++            if(DEPTH EQUAL 0)
++                math(EXPR BODY_LENGTH "${INDEX} - ${BODY_START}")
++                string(SUBSTRING "${CODE}" ${BODY_START} ${BODY_LENGTH} BODY)
++                normalize_cpp_source("${BODY}" NORMALIZED_BODY)
++                set(${OUTPUT} "${NORMALIZED_BODY}" PARENT_SCOPE)
++                return()
++            endif()
++        endif()
++    endforeach()
++    message(FATAL_ERROR
++        "Unbalanced C++ function body: ${FUNCTION_MARKER}")
++endfunction()
+diff --git a/tests/platform/hud_notice_structured_binding_source_self_test.cmake b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+index d5d5b0e..b71a0d0 100644
+--- a/tests/platform/hud_notice_structured_binding_source_self_test.cmake
++++ b/tests/platform/hud_notice_structured_binding_source_self_test.cmake
+@@ -25,20 +25,36 @@ function(run_guard LABEL SOURCE_TEXT EXPECT_SUCCESS)
+     if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
+         message(FATAL_ERROR "HUD notice guard rejected clean source: ${LABEL}")
+     endif()
+     if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
+         message(FATAL_ERROR "HUD notice guard missed mutation: ${LABEL}")
+     endif()
+ endfunction()
+ 
+ run_guard(clean "${ORIGINAL}" TRUE)
+ 
++set(DEAD_REQUIRED_CALL
++    "if (false) {\n        format_notice(notice, \"%s %s\",\n            control_hint_key_label(hints, action), suffix);\n    }")
++set(LOOP_LOOKUP
++    "${DEAD_REQUIRED_CALL}\n    const char* parsed_key = u8\"未知\";\n    for (const char* cursor = suffix; *cursor != '\\0'; ++cursor) {\n        if (*cursor == ':') parsed_key = cursor + 1;\n    }\n    format_notice(notice, \"%s %s\", parsed_key, suffix);")
++string(REPLACE
++    "format_notice(notice, \"%s %s\",\n        control_hint_key_label(hints, action), suffix);"
++    "${LOOP_LOOKUP}" MUTATED "${ORIGINAL}")
++run_guard(dead_required_call_with_loop_lookup "${MUTATED}" FALSE)
++
++set(STD_SEARCH_LOOKUP
++    "${DEAD_REQUIRED_CALL}\n    const char* parsed_key = std::search(suffix, suffix + 4, suffix, suffix + 1);\n    format_notice(notice, \"%s %s\", parsed_key, suffix);")
++string(REPLACE
++    "format_notice(notice, \"%s %s\",\n        control_hint_key_label(hints, action), suffix);"
++    "${STD_SEARCH_LOOKUP}" MUTATED "${ORIGINAL}")
++run_guard(dead_required_call_with_std_search "${MUTATED}" FALSE)
++
+ set(COMMENTED_FORBIDDEN "${ORIGINAL}\n// memcmp(hints.primary, hints.secondary)\n/* std::strstr std::strchr std::string_view::find */\n")
+ run_guard(forbidden_tokens_in_comments_are_ignored "${COMMENTED_FORBIDDEN}" TRUE)
+ 
+ string(REPLACE "control_hint_key_label(hints, action)"
+     "legacy_action_key(hints, action)" MUTATED "${ORIGINAL}")
+ run_guard(missing_structured_query "${MUTATED}" FALSE)
+ 
+ string(REPLACE "control_hint_key_label(hints, action)"
+     "legacy_action_key(hints, action)"
+     MUTATED "${ORIGINAL}")
+diff --git a/tests/platform/hud_notice_structured_binding_source_test.cmake b/tests/platform/hud_notice_structured_binding_source_test.cmake
+index 3982546..70f11cf 100644
+--- a/tests/platform/hud_notice_structured_binding_source_test.cmake
++++ b/tests/platform/hud_notice_structured_binding_source_test.cmake
+@@ -1,46 +1,46 @@
+ cmake_minimum_required(VERSION 3.25)
+ 
+ if(NOT DEFINED HUD_NOTICE_SOURCE OR NOT EXISTS "${HUD_NOTICE_SOURCE}")
+     message(FATAL_ERROR "HUD notice source is required")
+ endif()
+ 
++include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
+ file(READ "${HUD_NOTICE_SOURCE}" SOURCE)
+ 
+-string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" CODE "${SOURCE}")
+-string(REGEX REPLACE "//[^\r\n]*" "" CODE "${CODE}")
+-string(REGEX REPLACE "[ \t\r\n]+" " " NORMALIZED_CODE "${CODE}")
+-
+-foreach(FORBIDDEN_REGEX IN ITEMS
+-        "hints[ \t\r\n]*\\.[ \t\r\n]*(primary|secondary)"
+-        "(std::)?strstr[ \t\r\n]*\\("
+-        "(std::)?strchr[ \t\r\n]*\\("
+-        "(std::)?memcmp[ \t\r\n]*\\("
+-        "(std::)?string_view"
+-        "\\.[ \t\r\n]*find[ \t\r\n]*\\("
+-        "\"Interact\""
+-        "\"Inventory\""
+-        "\"Passive Tree\"")
+-    string(REGEX MATCH "${FORBIDDEN_REGEX}" FOUND "${CODE}")
+-    if(FOUND)
+-        message(FATAL_ERROR
+-            "HUD notice display-text parsing is forbidden: ${FORBIDDEN_REGEX}")
+-    endif()
+-endforeach()
++extract_cpp_function_body("${SOURCE}" "void add_action_notice("
++    ADD_ACTION_BODY)
++set(EXPECTED_ADD_ACTION_BODY
++    "HudNotice notice{}; notice.kind = kind; notice.priority = priority; notice.seconds_left = kTransientSeconds; format_notice(notice, \"%s %s\", control_hint_key_label(hints, action), suffix); enqueue(notices, dropped_count, notice);")
++if(NOT ADD_ACTION_BODY STREQUAL EXPECTED_ADD_ACTION_BODY)
++    message(FATAL_ERROR
++        "add_action_notice must be the exact structured-binding formatter")
++endif()
+ 
+-set(REQUIRED_FORMAT_CALL
+-    "format_notice(notice, \"%s %s\", control_hint_key_label(hints, action), suffix);")
+-string(FIND "${NORMALIZED_CODE}" "${REQUIRED_FORMAT_CALL}" FOUND)
+-if(FOUND EQUAL -1)
++extract_cpp_function_body("${SOURCE}"
++    "void add_abyss_confirmation_notice(" ABYSS_BODY)
++set(EXPECTED_ABYSS_BODY
++    "const AbyssHudValues values = abyss_hud_values(current); if (values.confirmation_transition == dungeon::TransitionKind::descent) { add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, hints, settings::SettingAction::interact, u8\"再次交互，放弃剩余奖励并下降\"); return; } add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon, kAbyssPriority, u8\"离开后再次触碰同一出口以放弃全部剩余奖励\");")
++if(NOT ABYSS_BODY STREQUAL EXPECTED_ABYSS_BODY)
+     message(FATAL_ERROR
+-        "HUD notice action formatter must consume control_hint_key_label")
++        "Abyss action notice must use the exact structured interact call")
+ endif()
+ 
+-foreach(REQUIRED_ACTION IN ITEMS interact inventory passive_tree)
+-    set(REQUIRED_CALL_REGEX
+-        "add_action_notice\\([^;]*hints,[ \t\r\n]*settings::SettingAction::${REQUIRED_ACTION},")
+-    string(REGEX MATCH "${REQUIRED_CALL_REGEX}" FOUND "${CODE}")
+-    if(NOT FOUND)
++extract_cpp_function_body("${SOURCE}" "void HudNoticeState::observe("
++    OBSERVE_BODY)
++foreach(REQUIRED_BLOCK IN ITEMS
++        "if (context_changed && exits_unlocked && current.has_hole) { add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact, kHolePriority, hints, settings::SettingAction::interact, u8\"交互：进入下一层\"); }"
++        "if (context_changed && current.inventory_count != 0U) { add_action_notice(notices_, dropped_count_, HudNoticeKind::inventory, kInventoryPriority, hints, settings::SettingAction::inventory, u8\"打开背包\"); }"
++        "if (context_changed && awaiting_exit && current.progression.unspent_passive_points != 0U) { add_action_notice(notices_, dropped_count_, HudNoticeKind::passive_tree, kPassiveTreePriority, hints, settings::SettingAction::passive_tree, u8\"打开被动树\"); }")
++    string(FIND "${OBSERVE_BODY}" "${REQUIRED_BLOCK}" FOUND)
++    if(FOUND EQUAL -1)
+         message(FATAL_ERROR
+-            "HUD notice structured action call missing: ${REQUIRED_ACTION}")
++            "HudNoticeState::observe structured action block missing")
+     endif()
+ endforeach()
++string(REGEX MATCHALL "add_action_notice\\(" OBSERVE_ACTION_CALLS
++    "${OBSERVE_BODY}")
++list(LENGTH OBSERVE_ACTION_CALLS OBSERVE_ACTION_CALL_COUNT)
++if(NOT OBSERVE_ACTION_CALL_COUNT EQUAL 3)
++    message(FATAL_ERROR
++        "HudNoticeState::observe must contain exactly three action calls")
++endif()
+diff --git a/tests/platform/hud_renderer_structured_model_source_self_test.cmake b/tests/platform/hud_renderer_structured_model_source_self_test.cmake
+index eb7cc56..120d88b 100644
+--- a/tests/platform/hud_renderer_structured_model_source_self_test.cmake
++++ b/tests/platform/hud_renderer_structured_model_source_self_test.cmake
+@@ -7,61 +7,112 @@ foreach(REQUIRED_INPUT IN ITEMS HUD_RENDERER_SOURCE ACTIVE_SKILL_RENDERER_SOURCE
+             OR (NOT REQUIRED_INPUT STREQUAL "MUTATION_ROOT"
+                 AND NOT EXISTS "${${REQUIRED_INPUT}}"))
+         message(FATAL_ERROR "HUD renderer guard self-test input missing: ${REQUIRED_INPUT}")
+     endif()
+ endforeach()
+ 
+ file(REMOVE_RECURSE "${MUTATION_ROOT}")
+ file(MAKE_DIRECTORY "${MUTATION_ROOT}")
+ file(READ "${HUD_RENDERER_SOURCE}" HUD_ORIGINAL)
+ file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_ORIGINAL)
++set(MISSED_MUTATIONS)
+ 
+-set(FIXTURE_TEXT
+-    "void fixture(){ arpg::platform::ControlHints hints{}; arpg::platform::refresh_control_hints(hints, arpg::settings::default_settings()); }\n")
+-set(STAGE16_FIXTURE_TEXT "${FIXTURE_TEXT}${FIXTURE_TEXT}")
++set(DUNGEON_FIXTURE_TEXT
++    "void fixture(){ platform::ControlHints hints{}; platform::refresh_control_hints(hints, arpg::settings::default_settings()); renderer.observe_hud(previous, current, status, hints, 0.0F, false); }\n")
++set(LOOT_FIXTURE_TEXT
++    "platform::ControlHints control_hints(){ platform::ControlHints hints{}; platform::refresh_control_hints(hints, arpg::settings::default_settings()); return hints; }\nvoid fixture(){ renderer.observe_hud(previous, current, status, control_hints(), 0.0F, false); }\n")
++set(STAGE12_FIXTURE_TEXT
++    "void fixture(){ platform::ControlHints control_hints{}; platform::refresh_control_hints(control_hints, arpg::settings::default_settings()); renderer.observe_hud(previous, current, status, control_hints, 0.0F, false); }\n")
++set(STAGE16_FIXTURE_TEXT
++    "${DUNGEON_FIXTURE_TEXT}${DUNGEON_FIXTURE_TEXT}")
+ 
+ function(run_guard LABEL HUD_TEXT ACTIVE_TEXT EXPECT_SUCCESS)
+     set(ROOT "${MUTATION_ROOT}/${LABEL}")
+     file(MAKE_DIRECTORY "${ROOT}")
+     set(HUD_MUTANT "${ROOT}/hud_renderer.cpp")
+     set(ACTIVE_MUTANT "${ROOT}/active_skill_renderer.cpp")
+     set(DUNGEON_FIXTURE "${ROOT}/dungeon.cpp")
+     set(LOOT_FIXTURE "${ROOT}/loot.cpp")
+     set(STAGE12_FIXTURE "${ROOT}/stage12.cpp")
+     set(STAGE16_FIXTURE "${ROOT}/stage16.cpp")
+     file(WRITE "${HUD_MUTANT}" "${HUD_TEXT}")
+     file(WRITE "${ACTIVE_MUTANT}" "${ACTIVE_TEXT}")
+-    file(WRITE "${DUNGEON_FIXTURE}" "${FIXTURE_TEXT}")
+-    file(WRITE "${LOOT_FIXTURE}" "${FIXTURE_TEXT}")
+-    file(WRITE "${STAGE12_FIXTURE}" "${FIXTURE_TEXT}")
+-    file(WRITE "${STAGE16_FIXTURE}" "${STAGE16_FIXTURE_TEXT}")
++    set(CURRENT_DUNGEON_FIXTURE_TEXT "${DUNGEON_FIXTURE_TEXT}")
++    set(CURRENT_LOOT_FIXTURE_TEXT "${LOOT_FIXTURE_TEXT}")
++    set(CURRENT_STAGE12_FIXTURE_TEXT "${STAGE12_FIXTURE_TEXT}")
++    set(CURRENT_STAGE16_FIXTURE_TEXT "${STAGE16_FIXTURE_TEXT}")
++    if(DEFINED FIXTURE_OVERRIDE)
++        set(CURRENT_DUNGEON_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
++        set(CURRENT_LOOT_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
++        set(CURRENT_STAGE12_FIXTURE_TEXT "${FIXTURE_OVERRIDE}")
++    endif()
++    if(DEFINED STAGE16_FIXTURE_OVERRIDE)
++        set(CURRENT_STAGE16_FIXTURE_TEXT "${STAGE16_FIXTURE_OVERRIDE}")
++    endif()
++    file(WRITE "${DUNGEON_FIXTURE}" "${CURRENT_DUNGEON_FIXTURE_TEXT}")
++    file(WRITE "${LOOT_FIXTURE}" "${CURRENT_LOOT_FIXTURE_TEXT}")
++    file(WRITE "${STAGE12_FIXTURE}" "${CURRENT_STAGE12_FIXTURE_TEXT}")
++    file(WRITE "${STAGE16_FIXTURE}" "${CURRENT_STAGE16_FIXTURE_TEXT}")
+     execute_process(
+         COMMAND "${CMAKE_COMMAND}"
+             "-DHUD_RENDERER_SOURCE=${HUD_MUTANT}"
+             "-DACTIVE_SKILL_RENDERER_SOURCE=${ACTIVE_MUTANT}"
+             "-DDUNGEON_RUNTIME_SOURCE=${DUNGEON_FIXTURE}"
+             "-DLOOT_SUCTION_SOURCE=${LOOT_FIXTURE}"
+             "-DSTAGE12_SOURCE=${STAGE12_FIXTURE}"
+             "-DSTAGE16_SOURCE=${STAGE16_FIXTURE}"
+             -P "${GUARD_SCRIPT}"
+         RESULT_VARIABLE RESULT
+         OUTPUT_QUIET ERROR_QUIET)
+     if(EXPECT_SUCCESS AND NOT RESULT EQUAL 0)
+         message(FATAL_ERROR "HUD renderer guard rejected clean sources: ${LABEL}")
+     endif()
+     if(NOT EXPECT_SUCCESS AND RESULT EQUAL 0)
+-        message(FATAL_ERROR "HUD renderer guard missed mutation: ${LABEL}")
++        list(APPEND MISSED_MUTATIONS "${LABEL}")
++        set(MISSED_MUTATIONS "${MISSED_MUTATIONS}" PARENT_SCOPE)
+     endif()
+ endfunction()
+ 
+ run_guard(clean "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" TRUE)
+ 
++string(REPLACE "bar.label.bytes.data()" "u8\"生命\""
++    HUD_MUTATED "${HUD_ORIGINAL}")
++set(HUD_DECOY
++    "if (false) {\n        static_cast<void>(bar.label.bytes.data());\n        static_cast<void>(bar.label.bytes.data());\n    }\n    ")
++string(REPLACE
++    "const HudLayout& layout, const MaterialPack& assets) const noexcept {\n    if (!IsWindowReady()) return;"
++    "const HudLayout& layout, const MaterialPack& assets) const noexcept {\n    ${HUD_DECOY}if (!IsWindowReady()) return;"
++    HUD_MUTATED "${HUD_MUTATED}")
++run_guard(hud_dead_correct_decoy_with_real_hardcode
++    "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
++
++string(REPLACE "slot.key_label.data()" "legacy_key_label(slot)"
++    ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
++string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
++    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
++set(ACTIVE_DECOY
++    "if (false) {\n        draw_skill_text(hud_font, slot.key_label.data(), 0.0F, 0.0F, 1.0F, WHITE);\n        draw_skill_text(hud_font, slot.cooldown_label.data(), 0.0F, 0.0F, 1.0F, WHITE);\n    }\n    ")
++string(REPLACE
++    "const MaterialPack& material_pack) const noexcept {\n    const float scale"
++    "const MaterialPack& material_pack) const noexcept {\n    ${ACTIVE_DECOY}const float scale"
++    ACTIVE_MUTATED "${ACTIVE_MUTATED}")
++run_guard(active_dead_correct_decoy_with_real_legacy_text
++    "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
++
++set(FIXTURE_OVERRIDE
++    "void fixture(){ platform::ControlHints initialized{}; platform::refresh_control_hints(initialized, arpg::settings::default_settings()); platform::ControlHints hints{}; renderer.observe_hud(previous, current, status, hints, 0.0F, false); }\n")
++set(STAGE16_FIXTURE_OVERRIDE "${FIXTURE_OVERRIDE}${FIXTURE_OVERRIDE}")
++run_guard(refreshes_unused_hints_but_passes_uninitialized
++    "${HUD_ORIGINAL}" "${ACTIVE_ORIGINAL}" FALSE)
++unset(FIXTURE_OVERRIDE)
++unset(STAGE16_FIXTURE_OVERRIDE)
++
+ string(REPLACE "bar.label.bytes.data()" "u8\"生命\""
+     HUD_MUTATED "${HUD_ORIGINAL}")
+ set(HUD_MUTATED
+     "${HUD_MUTATED}\nvoid decoy_bar_label_use(){ bar.label.bytes.data(); }\n")
+ run_guard(hud_ignores_bar_label "${HUD_MUTATED}" "${ACTIVE_ORIGINAL}" FALSE)
+ 
+ string(REPLACE "slot.key_label.data()" "\"Num1\""
+     ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
+ set(ACTIVE_MUTATED
+     "${ACTIVE_MUTATED}\nvoid decoy_key_label_use(){ slot.key_label.data(); }\n")
+@@ -81,10 +132,16 @@ set(ACTIVE_MUTATED
+     "${ACTIVE_MUTATED}\nvoid decoy_cooldown_use(){ slot.cooldown_label.data(); }\n")
+ run_guard(active_hardcodes_seconds
+     "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
+ 
+ string(REPLACE "slot.cooldown_label.data()" "legacy_cooldown_label(slot)"
+     ACTIVE_MUTATED "${ACTIVE_ORIGINAL}")
+ set(ACTIVE_MUTATED
+     "${ACTIVE_MUTATED}\nvoid decoy_cooldown_use(){ slot.cooldown_label.data(); }\n")
+ run_guard(active_ignores_cooldown_label
+     "${HUD_ORIGINAL}" "${ACTIVE_MUTATED}" FALSE)
++
++if(MISSED_MUTATIONS)
++    list(JOIN MISSED_MUTATIONS ", " MISSED_LABELS)
++    message(FATAL_ERROR
++        "HUD renderer guard missed mutations: ${MISSED_LABELS}")
++endif()
+diff --git a/tests/platform/hud_renderer_structured_model_source_test.cmake b/tests/platform/hud_renderer_structured_model_source_test.cmake
+index 49694b2..fad6819 100644
+--- a/tests/platform/hud_renderer_structured_model_source_test.cmake
++++ b/tests/platform/hud_renderer_structured_model_source_test.cmake
+@@ -1,93 +1,141 @@
+ cmake_minimum_required(VERSION 3.25)
+ 
+ foreach(REQUIRED_INPUT IN ITEMS HUD_RENDERER_SOURCE ACTIVE_SKILL_RENDERER_SOURCE
+         DUNGEON_RUNTIME_SOURCE LOOT_SUCTION_SOURCE STAGE12_SOURCE STAGE16_SOURCE)
+     if(NOT DEFINED ${REQUIRED_INPUT} OR NOT EXISTS "${${REQUIRED_INPUT}}")
+-        message(FATAL_ERROR "HUD renderer structured-model source input missing: ${REQUIRED_INPUT}")
++        message(FATAL_ERROR
++            "HUD renderer structured-model source input missing: ${REQUIRED_INPUT}")
+     endif()
+ endforeach()
+ 
+-function(read_normalized_source PATH OUTPUT)
+-    file(READ "${PATH}" VALUE)
+-    string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" VALUE "${VALUE}")
+-    string(REGEX REPLACE "//[^\r\n]*" "" VALUE "${VALUE}")
+-    string(REGEX REPLACE "[ \t\r\n]+" " " VALUE "${VALUE}")
+-    set(${OUTPUT} "${VALUE}" PARENT_SCOPE)
+-endfunction()
++include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_function_body.cmake")
+ 
+-function(extract_between SOURCE_VARIABLE START_MARKER END_MARKER OUTPUT)
+-    set(SOURCE_TEXT "${${SOURCE_VARIABLE}}")
+-    string(FIND "${SOURCE_TEXT}" "${START_MARKER}" START)
+-    if(START EQUAL -1)
+-        message(FATAL_ERROR "Unable to isolate renderer function body")
+-    endif()
+-    string(SUBSTRING "${SOURCE_TEXT}" ${START} -1 SOURCE_TAIL)
+-    string(FIND "${SOURCE_TAIL}" "${END_MARKER}" LENGTH)
+-    if(LENGTH EQUAL -1)
+-        message(FATAL_ERROR "Unable to isolate renderer function body")
+-    endif()
+-    string(SUBSTRING "${SOURCE_TEXT}" ${START} ${LENGTH} BODY)
+-    set(${OUTPUT} "${BODY}" PARENT_SCOPE)
++function(count_substring INPUT NEEDLE OUTPUT)
++    set(REMAINDER "${INPUT}")
++    set(COUNT 0)
++    string(LENGTH "${NEEDLE}" NEEDLE_LENGTH)
++    while(TRUE)
++        string(FIND "${REMAINDER}" "${NEEDLE}" FOUND)
++        if(FOUND EQUAL -1)
++            break()
++        endif()
++        math(EXPR COUNT "${COUNT} + 1")
++        math(EXPR NEXT "${FOUND} + ${NEEDLE_LENGTH}")
++        string(SUBSTRING "${REMAINDER}" ${NEXT} -1 REMAINDER)
++    endwhile()
++    set(${OUTPUT} ${COUNT} PARENT_SCOPE)
+ endfunction()
+ 
+-read_normalized_source("${HUD_RENDERER_SOURCE}" HUD_SOURCE)
+-extract_between(HUD_SOURCE
+-    "void HudRenderer::draw(const HudViewModel& view, const HudLayout& layout, const MaterialPack& assets) const noexcept {"
+-    "void CombatRenderer::draw_abyss_hud" HUD_DRAW_BODY)
++file(READ "${HUD_RENDERER_SOURCE}" HUD_SOURCE)
++set(HUD_DRAW_MARKER
++    "void HudRenderer::draw(const HudViewModel& view,\n    const HudLayout& layout, const MaterialPack& assets) const noexcept")
++extract_cpp_function_body("${HUD_SOURCE}"
++    "${HUD_DRAW_MARKER}"
++    HUD_DRAW_BODY)
++set(REQUIRED_BAR_AUDIT
++    "record_ui_text_bounds(UiTextAuditPage::hud, role, draw_font, bar.label.bytes.data(), label_position, style.player_bar_font_size * layout.scale, 1.0F, label_container, style.player_bar_font_size * layout.scale, &blocker, 1U);")
++set(REQUIRED_BAR_DRAW
++    "draw_hud_text(draw_font, bar.label.bytes.data(), label_position, style.player_bar_font_size * layout.scale, palette.text, style.outline_pixels);")
++foreach(REQUIRED_CALL IN ITEMS REQUIRED_BAR_AUDIT REQUIRED_BAR_DRAW)
++    string(FIND "${HUD_DRAW_BODY}" "${${REQUIRED_CALL}}" FOUND)
++    if(FOUND EQUAL -1)
++        message(FATAL_ERROR
++            "HudRenderer::draw must consume HudBarPlan::label in the real audit/draw call")
++    endif()
++endforeach()
+ string(REGEX MATCHALL "bar\\.label\\.bytes\\.data\\(\\)" BAR_LABEL_USES
+     "${HUD_DRAW_BODY}")
+ list(LENGTH BAR_LABEL_USES BAR_LABEL_USE_COUNT)
+-if(BAR_LABEL_USE_COUNT LESS 2)
++if(NOT BAR_LABEL_USE_COUNT EQUAL 2)
+     message(FATAL_ERROR
+-        "HudRenderer::draw must consume each HudBarPlan label for audit and draw")
++        "HudRenderer::draw must contain exactly the audit and draw label uses")
+ endif()
+ 
+-read_normalized_source("${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_SOURCE)
+-extract_between(ACTIVE_SOURCE
++file(READ "${ACTIVE_SKILL_RENDERER_SOURCE}" ACTIVE_SOURCE)
++extract_cpp_function_body("${ACTIVE_SOURCE}"
+     "void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,"
+-    "} }" ACTIVE_DRAW_BODY)
+-foreach(REQUIRED_USE IN ITEMS
+-        "draw_skill_text(hud_font, slot.key_label.data()"
+-        "draw_skill_text(hud_font, slot.cooldown_label.data()")
+-    string(FIND "${ACTIVE_DRAW_BODY}" "${REQUIRED_USE}" FOUND)
++    ACTIVE_DRAW_BODY)
++set(REQUIRED_KEY_DRAW
++    "if (!hud_font_ready) continue; draw_skill_text(hud_font, slot.key_label.data(), bounds.x + 5.0F * scale, bounds.y + 3.0F * scale, 16.0F * scale, ui_text_contrast_style().primary); if (!slot.empty) {")
++set(REQUIRED_COOLDOWN_DRAW
++    "if (slot.cooldown_ratio <= 0.0F || slot.empty) continue; draw_skill_text(hud_font, slot.cooldown_label.data(), bounds.x + 18.0F * scale, bounds.y + 22.0F * scale, 16.0F * scale, ui_text_contrast_style().primary);")
++foreach(REQUIRED_CALL IN ITEMS REQUIRED_KEY_DRAW REQUIRED_COOLDOWN_DRAW)
++    string(FIND "${ACTIVE_DRAW_BODY}" "${${REQUIRED_CALL}}" FOUND)
+     if(FOUND EQUAL -1)
+         message(FATAL_ERROR
+-            "ActiveSkillRenderer::draw_hud must consume model text: ${REQUIRED_USE}")
++            "ActiveSkillRenderer::draw_hud must consume model text on the real draw path")
+     endif()
+ endforeach()
+-foreach(FORBIDDEN IN ITEMS "\"Num" "\"seconds" "\"second" "%.0fs")
+-    string(FIND "${ACTIVE_DRAW_BODY}" "${FORBIDDEN}" FOUND)
+-    if(NOT FOUND EQUAL -1)
++foreach(MODEL_TOKEN IN ITEMS
++        "slot.key_label.data()" "slot.cooldown_label.data()")
++    string(REGEX REPLACE "([][+.*()^$?\\\\|])" "\\\\\\1"
++        TOKEN_REGEX "${MODEL_TOKEN}")
++    string(REGEX MATCHALL "${TOKEN_REGEX}" MODEL_USES "${ACTIVE_DRAW_BODY}")
++    list(LENGTH MODEL_USES MODEL_USE_COUNT)
++    if(NOT MODEL_USE_COUNT EQUAL 1)
+         message(FATAL_ERROR
+-            "ActiveSkillRenderer::draw_hud hard-coded fallback text is forbidden: ${FORBIDDEN}")
++            "ActiveSkillRenderer::draw_hud model text must have one real use")
+     endif()
+ endforeach()
+ 
+-read_normalized_source("${DUNGEON_RUNTIME_SOURCE}" DUNGEON_FIXTURE)
+-read_normalized_source("${LOOT_SUCTION_SOURCE}" LOOT_FIXTURE)
+-read_normalized_source("${STAGE12_SOURCE}" STAGE12_FIXTURE)
+-read_normalized_source("${STAGE16_SOURCE}" STAGE16_FIXTURE)
++foreach(DRAW_BODY IN ITEMS HUD_DRAW_BODY ACTIVE_DRAW_BODY)
++    foreach(FORBIDDEN IN ITEMS
++            "TextFormat(" "snprintf(" "\"Num" "\"HP" "\"XP" "\"LV"
++            "\"seconds" "\"second" "%.0fs")
++        string(FIND "${${DRAW_BODY}}" "${FORBIDDEN}" FOUND)
++        if(NOT FOUND EQUAL -1)
++            message(FATAL_ERROR
++                "HUD draw function must not recalculate model text: ${FORBIDDEN}")
++        endif()
++    endforeach()
++endforeach()
+ 
+-foreach(FIXTURE IN ITEMS DUNGEON_FIXTURE LOOT_FIXTURE STAGE12_FIXTURE)
+-    string(REGEX MATCHALL
+-        "refresh_control_hints\\([^;]*arpg::settings::default_settings\\(\\)\\);"
+-        INITIALIZERS "${${FIXTURE}}")
+-    list(LENGTH INITIALIZERS INITIALIZER_COUNT)
+-    if(INITIALIZER_COUNT LESS 1)
++function(require_initialized_fixture PATH EXPECTED_COUNT OWNER
++        CONSUMER_TOKEN MIN_CONSUMERS LABEL)
++    file(READ "${PATH}" FIXTURE_SOURCE)
++    normalize_cpp_source("${FIXTURE_SOURCE}" FIXTURE)
++    string(REGEX REPLACE "\\( +" "(" FIXTURE "${FIXTURE}")
++    string(REGEX REPLACE " +\\)" ")" FIXTURE "${FIXTURE}")
++    set(DECLARATION_COUNT 0)
++    set(INITIALIZED_OWNER_COUNT 0)
++    foreach(CANDIDATE_OWNER IN ITEMS hints control_hints initialized)
++        count_substring("${FIXTURE}"
++            "platform::ControlHints ${CANDIDATE_OWNER}{};" OWNER_DECLARATIONS)
++        math(EXPR DECLARATION_COUNT
++            "${DECLARATION_COUNT} + ${OWNER_DECLARATIONS}")
++        count_substring("${FIXTURE}"
++            "platform::ControlHints ${CANDIDATE_OWNER}{}; platform::refresh_control_hints(${CANDIDATE_OWNER}, arpg::settings::default_settings());"
++            OWNER_INITIALIZERS)
++        math(EXPR INITIALIZED_OWNER_COUNT
++            "${INITIALIZED_OWNER_COUNT} + ${OWNER_INITIALIZERS}")
++    endforeach()
++    if(NOT DECLARATION_COUNT EQUAL EXPECTED_COUNT)
+         message(FATAL_ERROR
+-            "Renderer fixture must initialize ControlHints from SettingsData: ${FIXTURE}")
++            "${LABEL} must have exactly ${EXPECTED_COUNT} ControlHints owners")
+     endif()
+-endforeach()
+-string(REGEX MATCHALL
+-    "refresh_control_hints\\([^;]*arpg::settings::default_settings\\(\\)\\);"
+-    STAGE16_INITIALIZERS "${STAGE16_FIXTURE}")
+-list(LENGTH STAGE16_INITIALIZERS STAGE16_INITIALIZER_COUNT)
+-if(STAGE16_INITIALIZER_COUNT LESS 2)
+-    message(FATAL_ERROR
+-        "Both Stage 16 renderer fixtures must initialize ControlHints from SettingsData")
+-endif()
+-string(FIND "${LOOT_FIXTURE}" "hints.revision =" LEGACY_REVISION_WRITE)
+-if(NOT LEGACY_REVISION_WRITE EQUAL -1)
++    if(NOT INITIALIZED_OWNER_COUNT EQUAL DECLARATION_COUNT)
++        message(FATAL_ERROR
++            "${LABEL} must refresh every ControlHints owner before it can be consumed")
++    endif()
++    count_substring("${FIXTURE}" "${CONSUMER_TOKEN}" CONSUMER_COUNT)
++    if(CONSUMER_COUNT LESS MIN_CONSUMERS)
++        message(FATAL_ERROR
++            "${LABEL} must consume the refreshed ${OWNER} owner")
++    endif()
++endfunction()
++
++require_initialized_fixture("${DUNGEON_RUNTIME_SOURCE}" 1 hints
++    ", hints," 1 "Dungeon runtime fixture")
++require_initialized_fixture("${LOOT_SUCTION_SOURCE}" 1 hints
++    "return hints;" 1 "Loot suction fixture")
++require_initialized_fixture("${STAGE12_SOURCE}" 1 control_hints
++    ", control_hints," 1 "Stage 12 fixture")
++require_initialized_fixture("${STAGE16_SOURCE}" 2 hints
++    ", hints," 2 "Stage 16 fixtures")
++file(READ "${LOOT_SUCTION_SOURCE}" LOOT_SOURCE)
++normalize_cpp_source("${LOOT_SOURCE}" LOOT_SOURCE)
++count_substring("${LOOT_SOURCE}" "control_hints()" LOOT_HELPER_USES)
++if(LOOT_HELPER_USES LESS 2)
+     message(FATAL_ERROR
+-        "Loot suction fixture must not fake ControlHints initialization by revision")
++        "Loot suction renderer paths must consume the initialized helper")
+ endif()

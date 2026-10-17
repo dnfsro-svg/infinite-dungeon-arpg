@@ -1,0 +1,477 @@
+# Review package: d55e7de..HEAD
+
+## Commits
+138668d feat: render loot flying into backpack
+
+## Files changed
+ src/platform/raylib/combat_renderer.cpp         | 63 +++++++++++++++++++++++++
+ src/platform/raylib/combat_renderer.hpp         |  3 ++
+ src/platform/raylib/loot_suction_animation.cpp  |  6 ++-
+ src/platform/raylib/loot_suction_animation.hpp  |  1 +
+ tests/platform/loot_suction_animation_tests.cpp | 28 +++++++++++
+ tests/platform/platform_test_main.cpp           |  2 +-
+ 6 files changed, 100 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index 7b1465c..4c2a0f9 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -181,20 +181,61 @@ MaterialResidencyRequest world_material_residency_request_impl(
+     const std::size_t monster_count = (std::min)(
+         static_cast<std::size_t>(world.combat.monster_count),
+         world.combat.monsters.size());
+     for (std::size_t index = 0U; index < monster_count; ++index) {
+         const combat::MonsterSnapshot& monster = world.combat.monsters[index];
+         if (monster.active) require_world_monster_atlas(request, monster.id);
+     }
+     return request;
+ }
+ 
++Color raylib_color(Rgba8 color) noexcept {
++    return {color.r, color.g, color.b, color.a};
++}
++
++void draw_loot_suction(const LootSuctionPlan& plan,
++    const MaterialPack& material_pack) noexcept {
++    for (std::size_t index{}; index < plan.count; ++index) {
++        const LootSuctionFlight& flight = plan.flights[index];
++        const Vector2 center{flight.center.x, flight.center.y};
++        const Color color = raylib_color(flight.color);
++        if (flight.equipment) {
++            const bool halo_drawn = material_pack.draw(flight.rarity_sprite,
++                center, false, 0.38F);
++            const bool item_drawn = material_pack.draw(flight.sprite,
++                center, false, 0.28F, color);
++            if (!halo_drawn) {
++                DrawCircleLines(static_cast<int>(center.x),
++                    static_cast<int>(center.y), 13.0F, color);
++            }
++            if (!item_drawn) DrawRectangleV(
++                {center.x - 4.0F, center.y - 4.0F}, {8.0F, 8.0F}, color);
++            continue;
++        }
++
++        if (!material_pack.draw(flight.sprite, center, false, 0.24F, color)) {
++            DrawCircleV(center, 5.0F, color);
++        }
++        DrawCircleLines(static_cast<int>(center.x),
++            static_cast<int>(center.y), 7.0F, Fade(color, 0.85F));
++    }
++
++    if (plan.destination_pulse <= 0.0F) return;
++    const Vector2 destination{plan.destination.x, plan.destination.y};
++    const float pulse = std::clamp(plan.destination_pulse, 0.0F, 1.0F);
++    DrawCircleV(destination, 7.0F + 8.0F * (1.0F - pulse),
++        Fade(RAYWHITE, 0.18F * pulse));
++    DrawCircleLines(static_cast<int>(destination.x),
++        static_cast<int>(destination.y), 10.0F + 10.0F * (1.0F - pulse),
++        Fade(RAYWHITE, 0.9F * pulse));
++}
++
+ }  // namespace
+ 
+ MaterialResidencyRequest world_material_residency_request(
+     const dungeon::DungeonRenderSnapshot& world,
+     const skills::SkillLoadoutState& skill_loadout) noexcept {
+     return world_material_residency_request_impl(world, skill_loadout);
+ }
+ 
+ MaterialEcology material_ecology(
+     dungeon::DungeonElement ecology) noexcept {
+@@ -346,20 +387,21 @@ void CombatRenderer::consume_event(const combat::CombatEvent& event) noexcept {
+ 
+ void CombatRenderer::consume_dungeon_event(
+     const dungeon::DungeonEvent& event) noexcept {
+     transition_ = transition_after_dungeon_event(transition_, event.kind);
+ }
+ 
+ void CombatRenderer::clear_combat_transients() noexcept {
+     last_event_ = combat::CombatEvent{};
+     has_last_event_ = false;
+     monster_presenter_.reset();
++    loot_suction_.clear();
+ }
+ 
+ void CombatRenderer::set_loot_filter_mode(
+     settings::LootFilterMode mode) noexcept {
+     loot_filter_mode_ = mode;
+ }
+ 
+ void CombatRenderer::update(float frame_seconds) noexcept {
+     transition_ = advance_transition(transition_, frame_seconds);
+ }
+@@ -369,20 +411,35 @@ void CombatRenderer::publish_passive_tree_blocked() noexcept {
+ }
+ 
+ void CombatRenderer::observe_hud(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& control_hints,
+     float frame_seconds,
+     bool paused,
+     const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
++    const bool room_changed = previous.room_index != current.room_index
++        || previous.room_instance_generation != current.room_instance_generation;
++    const bool unsafe_to_play = room_changed
++        || runtime_status.indicator == SaveIndicator::error
++        || runtime_status.recovery_required || runtime_status.faulted;
++    if (unsafe_to_play) {
++        loot_suction_.clear();
++        loot_suction_.observe(current, current, runtime_status);
++    } else {
++        loot_suction_.update(frame_seconds, paused);
++        // The renderer may first observe the exact frame that commits a
++        // pickup.  Attach a receipt-free baseline before processing it.
++        loot_suction_.observe(previous, previous, {});
++        loot_suction_.observe(previous, current, runtime_status);
++    }
+     const LootPickupFeedback pickup_feedback =
+         loot_pickup_feedback_.observe(runtime_status);
+     if (pickup_feedback.ready) {
+         hud_notices_.publish_loot_pickup(
+             pickup_feedback.text, pickup_feedback.abyss);
+     }
+     material_pickup_feedback_.update(frame_seconds, paused);
+     const MaterialPickupFeedback material_feedback =
+         material_pickup_feedback_.observe(current);
+     if (material_feedback.ready) {
+@@ -446,20 +503,24 @@ HudStaticFormattingDiagnostics
+ CombatRenderer::hud_static_formatting_diagnostics() const noexcept {
+     return hud_projector_.static_formatting_diagnostics();
+ }
+ 
+ std::uint64_t CombatRenderer::hud_presented_frame_count(
+     HudPresentedFrame frame) const noexcept {
+     const auto index = hud_presented_frame_index(frame);
+     return index.has_value() ? hud_presented_frame_counts_[*index] : 0U;
+ }
+ 
++std::size_t CombatRenderer::loot_suction_active_count() const noexcept {
++    return loot_suction_.active_count();
++}
++
+ const ActiveSkillHudModel& CombatRenderer::active_skill_hud_model()
+     const noexcept {
+     return active_skill_hud_model_;
+ }
+ 
+ Font CombatRenderer::hud_font() const noexcept {
+     return hud_renderer_.hud_font();
+ }
+ 
+ bool CombatRenderer::hud_font_ready() const noexcept {
+@@ -538,20 +599,22 @@ GroundLootView CombatRenderer::draw(
+                 draw_debug, feedback);
+             if (world.has_combat) {
+                 const bool base_player_drawn =
+                     active_skill_draw_status_.base_player_drawn;
+                 active_skill_draw_status_ = active_skill_renderer_.draw_world(
+                     active_skill_plan, material_pack_,
+                     camera, width, height);
+                 active_skill_draw_status_.base_player_drawn =
+                     base_player_drawn;
+             }
++            draw_loot_suction(loot_suction_.build_plan(camera,
++                interpolated_player, width, height), material_pack_);
+             break;
+         case CombatRenderStage::ground_loot_labels:
+             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
+             hud_renderer_.draw_material_loot(render_plan.material_loot);
+             break;
+         case CombatRenderStage::normal_hud:
+             draw_hud();
+             active_skill_renderer_.draw_hud(active_skill_hud_model_,
+                 active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
+                 hud_renderer_.hud_font(), hud_renderer_.font_ready(),
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 265fadf..caff56b 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -3,20 +3,21 @@
+ #include "active_skill_renderer.hpp"
+ #include "active_skill_view.hpp"
+ #include "combat_feedback.hpp"
+ #include "death_overlay_renderer.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_view_math.hpp"
+ #include "ground_loot_view.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_renderer.hpp"
+ #include "loot_pickup_feedback.hpp"
++#include "loot_suction_animation.hpp"
+ #include "material_loot_view.hpp"
+ #include "material_pack.hpp"
+ #include "monster_material_presenter.hpp"
+ 
+ #include <cstdint>
+ #include <array>
+ #include <optional>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+@@ -161,20 +162,21 @@ public:
+         const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
+         noexcept;
+     [[nodiscard]] const HudViewModel& hud_model() const noexcept;
+     [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
+     [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;
+     [[nodiscard]] std::uint64_t hud_observation_count() const noexcept;
+     [[nodiscard]] HudStaticFormattingDiagnostics
+         hud_static_formatting_diagnostics() const noexcept;
+     [[nodiscard]] std::uint64_t hud_presented_frame_count(
+         HudPresentedFrame) const noexcept;
++    [[nodiscard]] std::size_t loot_suction_active_count() const noexcept;
+     [[nodiscard]] const ActiveSkillHudModel& active_skill_hud_model()
+         const noexcept;
+     [[nodiscard]] Font hud_font() const noexcept;
+     [[nodiscard]] bool hud_font_ready() const noexcept;
+     [[nodiscard]] GroundLootView draw(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current_hud,
+         const dungeon::DungeonRenderSnapshot& world,
+         const CombatCameraView& camera,
+         const DungeonRenderStatus& runtime_status,
+@@ -215,20 +217,21 @@ private:
+     combat::CombatEvent last_event_{};
+     bool has_last_event_{};
+     TransitionVisualState transition_{};
+     DeathOverlayRenderer death_overlay_{};
+     HudRenderer hud_renderer_{};
+     ActiveSkillRenderer active_skill_renderer_{};
+     DebugOverlayRenderer debug_overlay_{};
+     HudNoticeState hud_notices_{};
+     LootPickupFeedbackState loot_pickup_feedback_{};
+     MaterialPickupFeedbackState material_pickup_feedback_{};
++    LootSuctionState loot_suction_{};
+     MaterialPack material_pack_{};
+     MonsterMaterialPresenter monster_presenter_{};
+     std::array<MonsterMaterialDrawRuntimeStatus,
+         static_cast<std::size_t>(combat::MonsterId::count)>
+         monster_material_draw_statuses_{};
+     RoomBackgroundDrawRuntimeStatus room_background_draw_status_{};
+     ActiveSkillDrawRuntimeStatus active_skill_draw_status_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
+     ActiveSkillHudModel active_skill_hud_model_{};
+diff --git a/src/platform/raylib/loot_suction_animation.cpp b/src/platform/raylib/loot_suction_animation.cpp
+index 6fa7cee..ade9376 100644
+--- a/src/platform/raylib/loot_suction_animation.cpp
++++ b/src/platform/raylib/loot_suction_animation.cpp
+@@ -105,20 +105,22 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
+     if (equipment_receipt.valid
+             && equipment_receipt.commit_generation > equipment_generation_) {
+         equipment_generation_ = equipment_receipt.commit_generation;
+         equipment_item_id_ = equipment_receipt.item_id;
+         const dungeon::GroundItemSnapshot* const item = find_equipment(
+             previous, equipment_receipt.item_id);
+         if (item != nullptr && !contains_equipment(current,
+                 equipment_receipt.item_id)) {
+             reserve_flight(flights_) = {item->position, {},
+                 ground_loot_item_sprite(item->slot),
++                ground_loot_rarity_sprite(item->rarity,
++                    item->source == dungeon::GroundItemSource::abyss_chest),
+                 {255U, 255U, 255U, 255U}, 0.0F, true, true};
+         }
+     }
+ 
+     if (!material_receipt.valid
+             || material_receipt.commit_generation <= material_generation_) {
+         return;
+     }
+     material_generation_ = material_receipt.commit_generation;
+     if (!same_room(previous, current)) return;
+@@ -130,22 +132,22 @@ void LootSuctionState::observe(const dungeon::DungeonSnapshot& previous,
+         previous.ground_materials.size());
+     for (std::size_t index{}; index < count; ++index) {
+         const dungeon::GroundMaterialSnapshot& material =
+             previous.ground_materials[index];
+         const std::size_t material_index = items::material_index(material.material);
+         if (material_index >= remaining.size() || remaining[material_index] == 0U
+                 || contains_material(current, material.ordinal)) {
+             continue;
+         }
+         reserve_flight(flights_) = {material.position, {},
+-            material_loot_sprite(material.material), material_color(material.material),
+-            0.0F, true, false};
++            material_loot_sprite(material.material), MaterialSpriteId::missing,
++            material_color(material.material), 0.0F, true, false};
+         --remaining[material_index];
+     }
+ }
+ 
+ void LootSuctionState::update(float frame_seconds, bool paused) noexcept {
+     if (paused || frame_seconds <= 0.0F) return;
+     destination_pulse_seconds_ = (std::max)(0.0F,
+         destination_pulse_seconds_ - frame_seconds);
+     for (LootSuctionFlight& flight : flights_) {
+         if (!flight.active) continue;
+diff --git a/src/platform/raylib/loot_suction_animation.hpp b/src/platform/raylib/loot_suction_animation.hpp
+index 4f23aeb..5c480e3 100644
+--- a/src/platform/raylib/loot_suction_animation.hpp
++++ b/src/platform/raylib/loot_suction_animation.hpp
+@@ -13,20 +13,21 @@ namespace arpg::platform {
+ 
+ struct LootSuctionPoint final {
+     float x{};
+     float y{};
+ };
+ 
+ struct LootSuctionFlight final {
+     combat::Vec3 world_position{};
+     LootSuctionPoint center{};
+     MaterialSpriteId sprite{MaterialSpriteId::missing};
++    MaterialSpriteId rarity_sprite{MaterialSpriteId::missing};
+     Rgba8 color{255U, 255U, 255U, 255U};
+     float elapsed_seconds{};
+     bool active{};
+     bool equipment{};
+ };
+ 
+ struct LootSuctionPlan final {
+     std::array<LootSuctionFlight, 12U> flights{};
+     LootSuctionPoint destination{};
+     float destination_pulse{};
+diff --git a/tests/platform/loot_suction_animation_tests.cpp b/tests/platform/loot_suction_animation_tests.cpp
+index 49f6191..76782a3 100644
+--- a/tests/platform/loot_suction_animation_tests.cpp
++++ b/tests/platform/loot_suction_animation_tests.cpp
+@@ -1,13 +1,15 @@
+ #include "allocation_probe.hpp"
+ #include "test_framework.hpp"
+ 
++#include "combat_renderer.hpp"
++#include "control_hints.hpp"
+ #include "loot_suction_animation.hpp"
+ 
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace {
+ 
+ namespace combat = arpg::combat;
+ namespace dungeon = arpg::dungeon;
+ namespace items = arpg::items;
+@@ -27,20 +29,26 @@ constexpr float kHeight = 720.0F;
+ 
+ platform::DungeonRenderStatus saved_equipment_receipt(
+     std::uint64_t generation, std::uint64_t item_id) noexcept {
+     platform::DungeonRenderStatus status{};
+     status.indicator = platform::SaveIndicator::saved;
+     status.loot_pickup = {true, generation, item_id, 3U, 24U,
+         items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
+     return status;
+ }
+ 
++platform::ControlHints control_hints() noexcept {
++    platform::ControlHints hints{};
++    hints.revision = 1U;
++    return hints;
++}
++
+ dungeon::GroundItemSnapshot equipment(
+     std::uint16_t ordinal, std::uint64_t item_id,
+     combat::Vec3 position = {9.0F, 0.0F, 0.0F}) noexcept {
+     return {ordinal, dungeon::GroundItemSource::monster_drop, 0xFFU,
+         position, item_id, 3U, 24U, items::ItemSlot::weapon,
+         items::ItemRarity::rare};
+ }
+ 
+ dungeon::GroundMaterialSnapshot material(
+     std::uint16_t ordinal, items::MaterialId id,
+@@ -71,20 +79,22 @@ arpg::test::Failure committed_equipment_disappearance_flies_to_player_waist()
+     state.observe(previous, current, saved_equipment_receipt(1U, 42U));
+ 
+     ARPG_REQUIRE(state.active_count() == 1U);
+     const platform::LootSuctionPlan start = state.build_plan(
+         kCamera, kPlayerPosition, kWidth, kHeight);
+     ARPG_REQUIRE(start.count == 1U);
+     ARPG_REQUIRE(start.flights[0].center.x > start.destination.x);
+     ARPG_REQUIRE(start.flights[0].equipment);
+     ARPG_REQUIRE(start.flights[0].sprite
+         == platform::ground_loot_item_sprite(items::ItemSlot::weapon));
++    ARPG_REQUIRE(start.flights[0].rarity_sprite
++        == platform::ground_loot_rarity_sprite(items::ItemRarity::rare, false));
+ 
+     state.update(0.35F, false);
+     const platform::LootSuctionPlan middle = state.build_plan(
+         kCamera, kPlayerPosition, kWidth, kHeight);
+     ARPG_REQUIRE(middle.flights[0].center.x < start.flights[0].center.x);
+     ARPG_REQUIRE(middle.flights[0].center.x > middle.destination.x);
+     ARPG_REQUIRE(middle.flights[0].center.y < start.flights[0].center.y
+         + (middle.destination.y - start.flights[0].center.y) * 0.75F);
+     return {};
+ }
+@@ -209,26 +219,44 @@ arpg::test::Failure full_capacity_replaces_most_elapsed_flight_and_allocates_not
+     const std::uint64_t before = arpg::test::allocation_count();
+     for (std::size_t index{}; index < 100000U; ++index) {
+         state.observe(empty, empty, saved_equipment_receipt(13U, 13U));
+         static_cast<void>(state.build_plan(kCamera, kPlayerPosition,
+             kWidth, kHeight));
+     }
+     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+     return {};
+ }
+ 
++arpg::test::Failure combat_renderer_commits_and_clears_loot_suction()
++    noexcept {
++    platform::CombatRenderer renderer{};
++    dungeon::DungeonSnapshot previous{};
++    append(previous, equipment(1U, 42U));
++    const dungeon::DungeonSnapshot current{};
++
++    renderer.observe_hud(previous, current, saved_equipment_receipt(1U, 42U),
++        control_hints(), 0.0F, false);
++    ARPG_REQUIRE(renderer.loot_suction_active_count() == 1U);
++
++    renderer.clear_combat_transients();
++    ARPG_REQUIRE(renderer.loot_suction_active_count() == 0U);
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"equipment trajectory to player waist",
+         &committed_equipment_disappearance_flies_to_player_waist},
+     {"failed or still present equipment", &failed_or_unremoved_equipment_never_starts_flight},
+     {"duplicate equipment receipt", &same_equipment_receipt_is_not_duplicated},
+     {"material only disappeared ordinals", &material_receipt_only_flies_disappeared_matching_ordinals},
+     {"pause and arrival pulse", &pause_freezes_and_arrival_reclaims_with_pulse},
+     {"full capacity replacement and zero allocation",
+         &full_capacity_replaces_most_elapsed_flight_and_allocates_nothing},
++    {"combat renderer loot suction lifecycle",
++        &combat_renderer_commits_and_clears_loot_suction},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite loot_suction_animation_suite() noexcept {
+     return arpg::test::make_suite("loot_suction_animation", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 80e578d..1598391 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -151,21 +151,21 @@ int main() {
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+ #endif
+     if (cplay021_loot_suction_only()) {
+         const arpg::test::TestSuite cplay021_only[] = {
+             loot_suction_animation_suite(),
+         };
+-        return arpg::test::run_suites(cplay021_only, 6,
++        return arpg::test::run_suites(cplay021_only, 7,
+             "CPLAY-021 bounded loot suction animation");
+     }
+     if (cplay016_ground_potion_label_only()) {
+         const arpg::test::TestSuite cplay016_only[] = {
+             hud_host_integration_suite(),
+             material_loot_view_suite(),
+         };
+         return arpg::test::run_suites(cplay016_only, 31,
+             "CPLAY-016 compact ground potion labels");
+     }
