@@ -1,0 +1,1041 @@
+# Review package: 7ceef4f..03e30b1
+
+## Commits
+03e30b1 refactor: route deterministic combat audio
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt       |   1 +
+ src/platform/raylib/audio_routing.cpp    | 168 +++++++++++++++++++++++
+ src/platform/raylib/audio_routing.hpp    |  64 +++++++++
+ src/platform/raylib/combat_audio.cpp     | 117 +++++++---------
+ src/platform/raylib/combat_audio.hpp     |  33 +----
+ tests/platform/CMakeLists.txt            |   1 +
+ tests/platform/audio_routing_tests.cpp   | 227 +++++++++++++++++++++++++++++++
+ tests/platform/combat_feedback_tests.cpp |  19 +--
+ tests/platform/monster_view_tests.cpp    |  36 ++---
+ tests/platform/platform_test_main.cpp    |   4 +-
+ 10 files changed, 537 insertions(+), 133 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 233c482..0bbe708 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -1,13 +1,14 @@
+ add_library(arpg_raylib STATIC
+     actor_renderer.cpp
+     audio_asset_validation.cpp
++    audio_routing.cpp
+     combat_audio.cpp
+     combat_feedback.cpp
+     combat_renderer.cpp
+     control_hints.cpp
+     combat_view_math.cpp
+     death_overlay_font.cpp
+     death_overlay_renderer.cpp
+     death_overlay_view.cpp
+     debug_renderer.cpp
+     debug_overlay_renderer.cpp
+diff --git a/src/platform/raylib/audio_routing.cpp b/src/platform/raylib/audio_routing.cpp
+new file mode 100644
+index 0000000..fe421ec
+--- /dev/null
++++ b/src/platform/raylib/audio_routing.cpp
+@@ -0,0 +1,168 @@
++#include "audio_routing.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace arpg::platform {
++namespace {
++
++constexpr std::size_t kInvalidIndex = 9U;
++constexpr std::size_t kWarningBlinkIndex = 6U;
++constexpr std::size_t kWarningChainIndex = 7U;
++constexpr std::size_t kWarningDeathIndex = 8U;
++
++[[nodiscard]] constexpr AudioPlan plan_for(AudioCue cue) noexcept {
++    return AudioPlan{audio_cue_mask(cue)};
++}
++
++[[nodiscard]] constexpr std::size_t cue_category_index(AudioCue cue) noexcept {
++    switch (cue) {
++    case AudioCue::swing_light:
++    case AudioCue::swing_finisher:
++    case AudioCue::swing_launcher:
++        return 0U;
++    case AudioCue::impact: return 1U;
++    case AudioCue::impact_low: return 2U;
++    case AudioCue::player_hurt: return 3U;
++    case AudioCue::landing: return 4U;
++    case AudioCue::enemy_defeat: return 5U;
++    case AudioCue::warning_blink: return kWarningBlinkIndex;
++    case AudioCue::warning_chain: return kWarningChainIndex;
++    case AudioCue::warning_death: return kWarningDeathIndex;
++    }
++    return kInvalidIndex;
++}
++
++[[nodiscard]] constexpr std::size_t warning_index(AudioCue cue) noexcept {
++    switch (cue) {
++    case AudioCue::warning_blink: return 0U;
++    case AudioCue::warning_chain: return 1U;
++    case AudioCue::warning_death: return 2U;
++    default: return 3U;
++    }
++}
++
++[[nodiscard]] constexpr std::uint8_t cue_limit(
++    std::size_t category) noexcept {
++    constexpr std::array<std::uint8_t, 9> kLimits{{
++        1U, 3U, 1U, 1U, 1U, 2U, 1U, 1U, 1U,
++    }};
++    return category < kLimits.size() ? kLimits[category] : 0U;
++}
++
++}  // namespace
++
++AudioPlan route_audio_plan(const combat::CombatEvent& event) noexcept {
++    switch (event.kind) {
++    case combat::CombatEventKind::swing:
++        switch (event.attack) {
++        case combat::AttackId::j1:
++        case combat::AttackId::j2:
++        case combat::AttackId::air_j:
++            return plan_for(AudioCue::swing_light);
++        case combat::AttackId::j3:
++            return plan_for(AudioCue::swing_finisher);
++        case combat::AttackId::launcher:
++            return plan_for(AudioCue::swing_launcher);
++        case combat::AttackId::none:
++            return {};
++        }
++        return {};
++    case combat::CombatEventKind::hit:
++        return plan_for(AudioCue::impact);
++    case combat::CombatEventKind::impact_summary:
++        return event.feedback == combat::FeedbackLevel::heavy
++            ? plan_for(AudioCue::impact_low)
++            : AudioPlan{};
++    case combat::CombatEventKind::player_hit:
++        return plan_for(AudioCue::player_hurt);
++    case combat::CombatEventKind::landing:
++        return plan_for(AudioCue::landing);
++    case combat::CombatEventKind::defeated:
++        return plan_for(AudioCue::enemy_defeat);
++    case combat::CombatEventKind::affix_blink_warning:
++        return plan_for(AudioCue::warning_blink);
++    case combat::CombatEventKind::affix_chain_warning:
++        return plan_for(AudioCue::warning_chain);
++    case combat::CombatEventKind::affix_death_warning:
++        return plan_for(AudioCue::warning_death);
++    default:
++        return {};
++    }
++}
++
++AudioAssetId AudioSelectionState::select(AudioCue cue) noexcept {
++    switch (cue) {
++    case AudioCue::swing_light: {
++        const AudioAssetId selected = swing_light_variant_ == 0U
++            ? AudioAssetId::swing_light_1
++            : AudioAssetId::swing_light_2;
++        swing_light_variant_ = static_cast<std::uint8_t>(
++            (swing_light_variant_ + 1U) % 2U);
++        return selected;
++    }
++    case AudioCue::swing_finisher: return AudioAssetId::swing_finisher;
++    case AudioCue::swing_launcher: return AudioAssetId::swing_launcher;
++    case AudioCue::impact: {
++        constexpr std::array<AudioAssetId, 3> kImpactVariants{{
++            AudioAssetId::impact_1, AudioAssetId::impact_2,
++            AudioAssetId::impact_3,
++        }};
++        const AudioAssetId selected = kImpactVariants[impact_variant_];
++        impact_variant_ = static_cast<std::uint8_t>(
++            (impact_variant_ + 1U) % kImpactVariants.size());
++        return selected;
++    }
++    case AudioCue::impact_low: return AudioAssetId::impact_low;
++    case AudioCue::player_hurt: return AudioAssetId::player_hurt;
++    case AudioCue::landing: return AudioAssetId::landing;
++    case AudioCue::enemy_defeat: return AudioAssetId::enemy_defeat;
++    case AudioCue::warning_blink: return AudioAssetId::warning_blink;
++    case AudioCue::warning_chain: return AudioAssetId::warning_chain;
++    case AudioCue::warning_death: return AudioAssetId::warning_death;
++    }
++    return AudioAssetId::count;
++}
++
++void AudioSelectionState::reset() noexcept {
++    swing_light_variant_ = 0U;
++    impact_variant_ = 0U;
++}
++
++bool AudioPlaybackBudget::allow(AudioCue cue, std::uint64_t tick) noexcept {
++    const std::size_t category = cue_category_index(cue);
++    if (category >= counts_.size()) {
++        return false;
++    }
++    if (!has_counted_tick_ || tick != counted_tick_) {
++        counts_.fill(0U);
++        counted_tick_ = tick;
++        has_counted_tick_ = true;
++    }
++    if (counts_[category] >= cue_limit(category)) {
++        return false;
++    }
++
++    const std::size_t warning = warning_index(cue);
++    if (warning < last_warning_ticks_.size()) {
++        if (has_last_warning_tick_[warning] && tick >= last_warning_ticks_[warning]
++            && tick - last_warning_ticks_[warning] < 12U) {
++            return false;
++        }
++        last_warning_ticks_[warning] = tick;
++        has_last_warning_tick_[warning] = true;
++    }
++
++    ++counts_[category];
++    return true;
++}
++
++void AudioPlaybackBudget::reset() noexcept {
++    counts_.fill(0U);
++    last_warning_ticks_.fill(0U);
++    has_last_warning_tick_.fill(false);
++    counted_tick_ = 0U;
++    has_counted_tick_ = false;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/audio_routing.hpp b/src/platform/raylib/audio_routing.hpp
+new file mode 100644
+index 0000000..64952b9
+--- /dev/null
++++ b/src/platform/raylib/audio_routing.hpp
+@@ -0,0 +1,64 @@
++#pragma once
++
++#include "audio_asset_types.hpp"
++#include "combat/combat_types.hpp"
++
++#include <array>
++#include <cstdint>
++
++namespace arpg::platform {
++
++enum class AudioCue : std::uint16_t {
++    swing_light = 1U << 0U,
++    swing_finisher = 1U << 1U,
++    swing_launcher = 1U << 2U,
++    impact = 1U << 3U,
++    impact_low = 1U << 4U,
++    player_hurt = 1U << 5U,
++    landing = 1U << 6U,
++    enemy_defeat = 1U << 7U,
++    warning_blink = 1U << 8U,
++    warning_chain = 1U << 9U,
++    warning_death = 1U << 10U,
++};
++
++using AudioCueMask = std::uint16_t;
++
++[[nodiscard]] constexpr AudioCueMask audio_cue_mask(AudioCue cue) noexcept {
++    return static_cast<AudioCueMask>(cue);
++}
++
++struct AudioPlan final {
++    AudioCueMask cues{};
++};
++
++[[nodiscard]] AudioPlan route_audio_plan(
++    const combat::CombatEvent& event) noexcept;
++
++class AudioSelectionState final {
++public:
++    [[nodiscard]] AudioAssetId select(AudioCue cue) noexcept;
++    void reset() noexcept;
++
++private:
++    std::uint8_t swing_light_variant_{};
++    std::uint8_t impact_variant_{};
++};
++
++class AudioPlaybackBudget final {
++public:
++    [[nodiscard]] bool allow(AudioCue cue, std::uint64_t tick) noexcept;
++    void reset() noexcept;
++
++private:
++    static constexpr std::size_t kCueCategoryCount = 9U;
++    static constexpr std::size_t kWarningCount = 3U;
++
++    std::array<std::uint8_t, kCueCategoryCount> counts_{};
++    std::array<std::uint64_t, kWarningCount> last_warning_ticks_{};
++    std::array<bool, kWarningCount> has_last_warning_tick_{};
++    std::uint64_t counted_tick_{};
++    bool has_counted_tick_{};
++};
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_audio.cpp b/src/platform/raylib/combat_audio.cpp
+index 263f8c7..eb0bf78 100644
+--- a/src/platform/raylib/combat_audio.cpp
++++ b/src/platform/raylib/combat_audio.cpp
+@@ -17,68 +17,47 @@ Wave make_wave(std::array<std::int16_t, N>& samples) noexcept {
+     wave.sampleSize = 16;
+     wave.channels = 1;
+     wave.data = samples.data();
+     return wave;
+ }
+ 
+ bool has_cue(AudioCueMask mask, AudioCue cue) noexcept {
+     return (mask & audio_cue_mask(cue)) != 0;
+ }
+ 
+-std::size_t warning_cue_index(AudioCue cue) noexcept {
+-    switch (cue) {
+-    case AudioCue::blink_warning: return 0U;
+-    case AudioCue::chain_warning: return 1U;
+-    case AudioCue::death_warning: return 2U;
+-    default: return 3U;
+-    }
++Sound* sound_for(AudioAssetId id, Sound& weapon,
++    std::array<Sound, 3>& material, Sound& low, Sound& blink_warning,
++    Sound& chain_warning, Sound& death_warning) noexcept {
++    switch (id) {
++    case AudioAssetId::swing_light_1:
++    case AudioAssetId::swing_light_2:
++    case AudioAssetId::swing_finisher:
++    case AudioAssetId::swing_launcher:
++        return &weapon;
++    case AudioAssetId::impact_1: return &material[0];
++    case AudioAssetId::impact_2: return &material[1];
++    case AudioAssetId::impact_3: return &material[2];
++    case AudioAssetId::impact_low:
++    case AudioAssetId::player_hurt:
++    case AudioAssetId::landing:
++    case AudioAssetId::enemy_defeat:
++        return &low;
++    case AudioAssetId::warning_blink: return &blink_warning;
++    case AudioAssetId::warning_chain: return &chain_warning;
++    case AudioAssetId::warning_death: return &death_warning;
++    case AudioAssetId::count: return nullptr;
++    }
++    return nullptr;
+ }
+ 
+ }  // namespace
+ 
+-AudioCueMask route_audio_cues(const combat::CombatEvent& event) noexcept {
+-    switch (event.kind) {
+-    case combat::CombatEventKind::swing:
+-        return audio_cue_mask(AudioCue::weapon);
+-    case combat::CombatEventKind::hit:
+-        return audio_cue_mask(AudioCue::material);
+-    case combat::CombatEventKind::impact_summary:
+-        return event.feedback == combat::FeedbackLevel::heavy
+-            ? audio_cue_mask(AudioCue::low)
+-            : 0;
+-    case combat::CombatEventKind::player_hit:
+-        return audio_cue_mask(AudioCue::low);
+-    case combat::CombatEventKind::affix_blink_warning:
+-        return audio_cue_mask(AudioCue::blink_warning);
+-    case combat::CombatEventKind::affix_chain_warning:
+-        return audio_cue_mask(AudioCue::chain_warning);
+-    case combat::CombatEventKind::affix_death_warning:
+-        return audio_cue_mask(AudioCue::death_warning);
+-    default:
+-        return 0;
+-    }
+-}
+-
+-bool WarningAudioThrottle::allow(AudioCue cue, std::uint64_t tick) noexcept {
+-    const std::size_t index = warning_cue_index(cue);
+-    if (index >= last_ticks_.size()) {
+-        return false;
+-    }
+-    if (!has_last_tick_[index] || tick < last_ticks_[index]
+-        || tick - last_ticks_[index] >= 12U) {
+-        last_ticks_[index] = tick;
+-        has_last_tick_[index] = true;
+-        return true;
+-    }
+-    return false;
+-}
+-
+ CombatAudio::~CombatAudio() noexcept {
+     shutdown();
+ }
+ 
+ bool CombatAudio::initialize() noexcept {
+     if (ready_) {
+         return true;
+     }
+ 
+     if (!IsAudioDeviceReady()) {
+@@ -165,61 +144,62 @@ bool CombatAudio::initialize() noexcept {
+         ready_ = ready_ && IsSoundValid(voice);
+     }
+     if (!ready_) {
+         shutdown();
+     }
+     return ready_;
+ }
+ 
+ void CombatAudio::consume_event(
+     const combat::CombatEvent& event) noexcept {
+-    if (!ready_) {
++    if (event.kind == combat::CombatEventKind::reset) {
++        selection_.reset();
++        playback_budget_.reset();
+         return;
+     }
+-    const AudioCueMask cues = route_audio_cues(event);
+-    if (has_cue(cues, AudioCue::weapon)) {
+-        PlaySound(weapon_);
+-    }
+-    if (has_cue(cues, AudioCue::material)) {
+-        PlaySound(material_[material_voice_]);
+-        material_voice_ = (material_voice_ + 1) % material_.size();
+-    }
+-    if (has_cue(cues, AudioCue::low)) {
+-        PlaySound(low_);
+-    }
+-    if (has_cue(cues, AudioCue::blink_warning)
+-        && warning_throttle_.allow(AudioCue::blink_warning, event.tick)) {
+-        PlaySound(blink_warning_);
+-    }
+-    if (has_cue(cues, AudioCue::chain_warning)
+-        && warning_throttle_.allow(AudioCue::chain_warning, event.tick)) {
+-        PlaySound(chain_warning_);
++    if (!ready_) {
++        return;
+     }
+-    if (has_cue(cues, AudioCue::death_warning)
+-        && warning_throttle_.allow(AudioCue::death_warning, event.tick)) {
+-        PlaySound(death_warning_);
++    const AudioPlan plan = route_audio_plan(event);
++    constexpr std::array<AudioCue, 11> kCues{{
++        AudioCue::swing_light, AudioCue::swing_finisher,
++        AudioCue::swing_launcher, AudioCue::impact, AudioCue::impact_low,
++        AudioCue::player_hurt, AudioCue::landing, AudioCue::enemy_defeat,
++        AudioCue::warning_blink, AudioCue::warning_chain,
++        AudioCue::warning_death,
++    }};
++    for (const AudioCue cue : kCues) {
++        if (!has_cue(plan.cues, cue) || !playback_budget_.allow(cue, event.tick)) {
++            continue;
++        }
++        Sound* const sound = sound_for(selection_.select(cue), weapon_, material_,
++            low_, blink_warning_, chain_warning_, death_warning_);
++        if (sound != nullptr) {
++            PlaySound(*sound);
++        }
+     }
+ }
+ 
+ void CombatAudio::stop_all() noexcept {
++    selection_.reset();
++    playback_budget_.reset();
+     if (!ready_) {
+         return;
+     }
+     StopSound(weapon_);
+     for (const Sound& voice : material_) {
+         StopSound(voice);
+     }
+     StopSound(low_);
+     StopSound(blink_warning_);
+     StopSound(chain_warning_);
+     StopSound(death_warning_);
+-    material_voice_ = 0;
+ }
+ 
+ void CombatAudio::shutdown() noexcept {
+     if (IsSoundValid(weapon_)) {
+         UnloadSound(weapon_);
+     }
+     for (Sound& voice : material_) {
+         if (IsSoundValid(voice)) {
+             UnloadSound(voice);
+         }
+@@ -235,21 +215,22 @@ void CombatAudio::shutdown() noexcept {
+         UnloadSound(chain_warning_);
+     }
+     if (IsSoundValid(death_warning_)) {
+         UnloadSound(death_warning_);
+     }
+     weapon_ = Sound{};
+     low_ = Sound{};
+     blink_warning_ = Sound{};
+     chain_warning_ = Sound{};
+     death_warning_ = Sound{};
+-    material_voice_ = 0;
++    selection_.reset();
++    playback_budget_.reset();
+     ready_ = false;
+     if (owns_device_ && IsAudioDeviceReady()) {
+         CloseAudioDevice();
+     }
+     owns_device_ = false;
+ }
+ 
+ bool CombatAudio::ready() const noexcept {
+     return ready_;
+ }
+diff --git a/src/platform/raylib/combat_audio.hpp b/src/platform/raylib/combat_audio.hpp
+index 754744a..12845cd 100644
+--- a/src/platform/raylib/combat_audio.hpp
++++ b/src/platform/raylib/combat_audio.hpp
+@@ -1,49 +1,22 @@
+ #pragma once
+ 
+-#include "combat/combat_types.hpp"
++#include "audio_routing.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace arpg::platform {
+ 
+-enum class AudioCue : std::uint8_t {
+-    weapon = 1U << 0U,
+-    material = 1U << 1U,
+-    low = 1U << 2U,
+-    blink_warning = 1U << 3U,
+-    chain_warning = 1U << 4U,
+-    death_warning = 1U << 5U,
+-};
+-
+-using AudioCueMask = std::uint8_t;
+-
+-[[nodiscard]] constexpr AudioCueMask audio_cue_mask(AudioCue cue) noexcept {
+-    return static_cast<AudioCueMask>(cue);
+-}
+-
+-[[nodiscard]] AudioCueMask route_audio_cues(
+-    const combat::CombatEvent& event) noexcept;
+-
+-class WarningAudioThrottle final {
+-public:
+-    [[nodiscard]] bool allow(AudioCue cue, std::uint64_t tick) noexcept;
+-
+-private:
+-    std::array<std::uint64_t, 3> last_ticks_{};
+-    std::array<bool, 3> has_last_tick_{};
+-};
+-
+ class CombatAudio final {
+ public:
+     CombatAudio() noexcept = default;
+     ~CombatAudio() noexcept;
+ 
+     CombatAudio(const CombatAudio&) = delete;
+     CombatAudio& operator=(const CombatAudio&) = delete;
+     CombatAudio(CombatAudio&&) = delete;
+     CombatAudio& operator=(CombatAudio&&) = delete;
+ 
+@@ -67,17 +40,17 @@ private:
+     std::array<std::int16_t, kLowSampleCount> low_samples_{};
+     std::array<std::int16_t, kBlinkWarningSampleCount> blink_warning_samples_{};
+     std::array<std::int16_t, kChainWarningSampleCount> chain_warning_samples_{};
+     std::array<std::int16_t, kDeathWarningSampleCount> death_warning_samples_{};
+     Sound weapon_{};
+     std::array<Sound, 3> material_{};
+     Sound low_{};
+     Sound blink_warning_{};
+     Sound chain_warning_{};
+     Sound death_warning_{};
+-    std::size_t material_voice_{};
+-    WarningAudioThrottle warning_throttle_{};
++    AudioSelectionState selection_{};
++    AudioPlaybackBudget playback_budget_{};
+     bool ready_{};
+     bool owns_device_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 6205fd7..5bb6f86 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,15 +1,16 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         host_input_tests.cpp
++        audio_routing_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
+         passive_tree_view_tests.cpp
+         host_launch_options_tests.cpp
+         dungeon_runtime_tests.cpp
+         pause_host_gate_tests.cpp
+         pause_menu_state_tests.cpp
+         pause_menu_view_tests.cpp
+diff --git a/tests/platform/audio_routing_tests.cpp b/tests/platform/audio_routing_tests.cpp
+new file mode 100644
+index 0000000..bea204b
+--- /dev/null
++++ b/tests/platform/audio_routing_tests.cpp
+@@ -0,0 +1,227 @@
++#include "test_framework.hpp"
++
++#include "allocation_probe.hpp"
++#include "audio_routing.hpp"
++
++#include <array>
++#include <cstdint>
++#include <limits>
++
++namespace {
++
++using arpg::combat::AttackId;
++using arpg::combat::CombatEvent;
++using arpg::combat::CombatEventKind;
++using arpg::combat::FeedbackLevel;
++using arpg::platform::AudioAssetId;
++using arpg::platform::AudioCue;
++using arpg::platform::AudioPlaybackBudget;
++using arpg::platform::AudioSelectionState;
++using arpg::platform::route_audio_plan;
++
++arpg::test::Failure light_swing_attacks_share_the_light_cue() noexcept {
++    constexpr std::array<AttackId, 3> kLightAttacks{{
++        AttackId::j1, AttackId::j2, AttackId::air_j,
++    }};
++    CombatEvent event{};
++    event.kind = CombatEventKind::swing;
++    for (const AttackId attack : kLightAttacks) {
++        event.attack = attack;
++        ARPG_REQUIRE(route_audio_plan(event).cues
++            == arpg::platform::audio_cue_mask(AudioCue::swing_light));
++    }
++    event.attack = AttackId::none;
++    ARPG_REQUIRE(route_audio_plan(event).cues == 0U);
++    return {};
++}
++
++arpg::test::Failure finisher_and_launcher_use_distinct_swing_cues() noexcept {
++    CombatEvent event{};
++    event.kind = CombatEventKind::swing;
++    event.attack = AttackId::j3;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(AudioCue::swing_finisher));
++    event.attack = AttackId::launcher;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(AudioCue::swing_launcher));
++    return {};
++}
++
++arpg::test::Failure combat_events_route_their_dedicated_cues() noexcept {
++    CombatEvent event{};
++    event.kind = CombatEventKind::hit;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(AudioCue::impact));
++
++    event.kind = CombatEventKind::impact_summary;
++    event.feedback = FeedbackLevel::heavy;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(AudioCue::impact_low));
++    event.feedback = FeedbackLevel::medium;
++    ARPG_REQUIRE(route_audio_plan(event).cues == 0U);
++
++    event.kind = CombatEventKind::player_hit;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(AudioCue::player_hurt));
++    event.kind = CombatEventKind::landing;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(AudioCue::landing));
++    event.kind = CombatEventKind::defeated;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(AudioCue::enemy_defeat));
++
++    constexpr std::array<CombatEventKind, 6> kSilentKinds{{
++        CombatEventKind::break_started, CombatEventKind::respawned,
++        CombatEventKind::reset, CombatEventKind::player_hurt_started,
++        CombatEventKind::player_health_reset, CombatEventKind::player_defeated,
++    }};
++    for (const CombatEventKind kind : kSilentKinds) {
++        event.kind = kind;
++        ARPG_REQUIRE(route_audio_plan(event).cues == 0U);
++    }
++    return {};
++}
++
++arpg::test::Failure warning_events_route_independent_cues() noexcept {
++    constexpr std::array<CombatEventKind, 3> kWarningEvents{{
++        CombatEventKind::affix_blink_warning,
++        CombatEventKind::affix_chain_warning,
++        CombatEventKind::affix_death_warning,
++    }};
++    constexpr std::array<AudioCue, 3> kWarningCues{{
++        AudioCue::warning_blink, AudioCue::warning_chain,
++        AudioCue::warning_death,
++    }};
++    CombatEvent event{};
++    for (std::size_t index{}; index < kWarningEvents.size(); ++index) {
++        event.kind = kWarningEvents[index];
++        ARPG_REQUIRE(route_audio_plan(event).cues
++            == arpg::platform::audio_cue_mask(kWarningCues[index]));
++    }
++    return {};
++}
++
++arpg::test::Failure selection_rotates_two_and_three_way_variants() noexcept {
++    AudioSelectionState selection{};
++    ARPG_REQUIRE(selection.select(AudioCue::swing_light)
++        == AudioAssetId::swing_light_1);
++    ARPG_REQUIRE(selection.select(AudioCue::swing_light)
++        == AudioAssetId::swing_light_2);
++    ARPG_REQUIRE(selection.select(AudioCue::swing_light)
++        == AudioAssetId::swing_light_1);
++
++    ARPG_REQUIRE(selection.select(AudioCue::impact) == AudioAssetId::impact_1);
++    ARPG_REQUIRE(selection.select(AudioCue::impact) == AudioAssetId::impact_2);
++    ARPG_REQUIRE(selection.select(AudioCue::impact) == AudioAssetId::impact_3);
++    ARPG_REQUIRE(selection.select(AudioCue::impact) == AudioAssetId::impact_1);
++    return {};
++}
++
++arpg::test::Failure selection_reset_restarts_every_rotation() noexcept {
++    AudioSelectionState selection{};
++    static_cast<void>(selection.select(AudioCue::swing_light));
++    static_cast<void>(selection.select(AudioCue::impact));
++    static_cast<void>(selection.select(AudioCue::impact));
++    selection.reset();
++    ARPG_REQUIRE(selection.select(AudioCue::swing_light)
++        == AudioAssetId::swing_light_1);
++    ARPG_REQUIRE(selection.select(AudioCue::impact) == AudioAssetId::impact_1);
++    ARPG_REQUIRE(selection.select(AudioCue::swing_finisher)
++        == AudioAssetId::swing_finisher);
++    ARPG_REQUIRE(selection.select(AudioCue::swing_launcher)
++        == AudioAssetId::swing_launcher);
++    ARPG_REQUIRE(selection.select(AudioCue::impact_low)
++        == AudioAssetId::impact_low);
++    ARPG_REQUIRE(selection.select(AudioCue::player_hurt)
++        == AudioAssetId::player_hurt);
++    ARPG_REQUIRE(selection.select(AudioCue::landing) == AudioAssetId::landing);
++    ARPG_REQUIRE(selection.select(AudioCue::enemy_defeat)
++        == AudioAssetId::enemy_defeat);
++    ARPG_REQUIRE(selection.select(AudioCue::warning_blink)
++        == AudioAssetId::warning_blink);
++    ARPG_REQUIRE(selection.select(AudioCue::warning_chain)
++        == AudioAssetId::warning_chain);
++    ARPG_REQUIRE(selection.select(AudioCue::warning_death)
++        == AudioAssetId::warning_death);
++    return {};
++}
++
++arpg::test::Failure playback_budget_enforces_each_cue_category_per_tick() noexcept {
++    constexpr std::uint64_t kTick = 67U;
++    AudioPlaybackBudget budget{};
++    ARPG_REQUIRE(budget.allow(AudioCue::swing_light, kTick));
++    ARPG_REQUIRE(!budget.allow(AudioCue::swing_finisher, kTick));
++    ARPG_REQUIRE(!budget.allow(AudioCue::swing_launcher, kTick));
++
++    ARPG_REQUIRE(budget.allow(AudioCue::impact, kTick));
++    ARPG_REQUIRE(budget.allow(AudioCue::impact, kTick));
++    ARPG_REQUIRE(budget.allow(AudioCue::impact, kTick));
++    ARPG_REQUIRE(!budget.allow(AudioCue::impact, kTick));
++
++    constexpr std::array<AudioCue, 6> kSingleVoiceCues{{
++        AudioCue::impact_low, AudioCue::player_hurt, AudioCue::landing,
++        AudioCue::warning_blink, AudioCue::warning_chain, AudioCue::warning_death,
++    }};
++    for (const AudioCue cue : kSingleVoiceCues) {
++        ARPG_REQUIRE(budget.allow(cue, kTick));
++        ARPG_REQUIRE(!budget.allow(cue, kTick));
++    }
++
++    ARPG_REQUIRE(budget.allow(AudioCue::enemy_defeat, kTick));
++    ARPG_REQUIRE(budget.allow(AudioCue::enemy_defeat, kTick));
++    ARPG_REQUIRE(!budget.allow(AudioCue::enemy_defeat, kTick));
++    return {};
++}
++
++arpg::test::Failure warning_budget_throttles_resets_wraps_and_never_allocates() noexcept {
++    AudioPlaybackBudget budget{};
++    ARPG_REQUIRE(budget.allow(AudioCue::warning_blink, 100U));
++    ARPG_REQUIRE(!budget.allow(AudioCue::warning_blink, 111U));
++    ARPG_REQUIRE(budget.allow(AudioCue::warning_chain, 111U));
++    ARPG_REQUIRE(budget.allow(AudioCue::warning_death, 111U));
++    ARPG_REQUIRE(budget.allow(AudioCue::warning_blink, 112U));
++    budget.reset();
++    ARPG_REQUIRE(budget.allow(AudioCue::warning_blink, 112U));
++
++    AudioPlaybackBudget near_wrap{};
++    constexpr std::uint64_t kMax = (std::numeric_limits<std::uint64_t>::max)();
++    ARPG_REQUIRE(near_wrap.allow(AudioCue::warning_blink, kMax - 5U));
++    ARPG_REQUIRE(!near_wrap.allow(AudioCue::warning_blink, kMax - 1U));
++    ARPG_REQUIRE(near_wrap.allow(AudioCue::warning_blink, 2U));
++
++    AudioSelectionState selection{};
++    CombatEvent event{};
++    event.kind = CombatEventKind::swing;
++    event.attack = AttackId::j1;
++    std::uint64_t checksum{};
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (std::uint64_t tick{}; tick < 100000U; ++tick) {
++        event.tick = tick;
++        const auto plan = route_audio_plan(event);
++        if (plan.cues != 0U && budget.allow(AudioCue::swing_light, tick)) {
++            checksum += static_cast<std::uint8_t>(
++                selection.select(AudioCue::swing_light));
++        }
++    }
++    const std::uint64_t after = arpg::test::allocation_count();
++    ARPG_REQUIRE(after == before);
++    ARPG_REQUIRE(checksum != 0U);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"light swing cue routing", &light_swing_attacks_share_the_light_cue},
++    {"finisher and launcher cue routing", &finisher_and_launcher_use_distinct_swing_cues},
++    {"combat event cue routing", &combat_events_route_their_dedicated_cues},
++    {"warning cue routing", &warning_events_route_independent_cues},
++    {"two and three way selection", &selection_rotates_two_and_three_way_variants},
++    {"selection reset", &selection_reset_restarts_every_rotation},
++    {"per tick playback budget", &playback_budget_enforces_each_cue_category_per_tick},
++    {"warning throttle wrap and allocation", &warning_budget_throttles_resets_wraps_and_never_allocates},
++};
++
++}  // namespace
++
++arpg::test::TestSuite audio_routing_suite() noexcept {
++    return arpg::test::make_suite("audio_routing", kCases);
++}
+diff --git a/tests/platform/combat_feedback_tests.cpp b/tests/platform/combat_feedback_tests.cpp
+index 4680372..56174ee 100644
+--- a/tests/platform/combat_feedback_tests.cpp
++++ b/tests/platform/combat_feedback_tests.cpp
+@@ -1,13 +1,13 @@
+ #include "test_framework.hpp"
+ 
+-#include "combat_audio.hpp"
++#include "audio_routing.hpp"
+ #include "combat_feedback.hpp"
+ 
+ #include <cstddef>
+ 
+ namespace {
+ 
+ using namespace arpg::combat;
+ using namespace arpg::platform;
+ 
+ arpg::test::Failure multi_target_feedback_uses_one_max_shake() noexcept {
+@@ -127,37 +127,38 @@ arpg::test::Failure defeated_event_spawns_one_distinct_marker() noexcept {
+     for (int frame = 0; frame < 7; ++frame) {
+         feedback.update(0.1F);
+     }
+     ARPG_REQUIRE(feedback.active_count() == 0U);
+     return {};
+ }
+ 
+ arpg::test::Failure audio_routes_weapon_material_and_low_once() noexcept {
+     CombatEvent event{};
+     event.kind = CombatEventKind::swing;
+-    ARPG_REQUIRE(route_audio_cues(event)
+-                 == audio_cue_mask(AudioCue::weapon));
++    event.attack = AttackId::j1;
++    ARPG_REQUIRE(route_audio_plan(event).cues
++                 == audio_cue_mask(AudioCue::swing_light));
+ 
+     event.kind = CombatEventKind::hit;
+     event.feedback = FeedbackLevel::heavy;
+-    ARPG_REQUIRE(route_audio_cues(event)
+-                 == audio_cue_mask(AudioCue::material));
++    ARPG_REQUIRE(route_audio_plan(event).cues
++                 == audio_cue_mask(AudioCue::impact));
+ 
+     event.kind = CombatEventKind::impact_summary;
+     event.feedback = FeedbackLevel::heavy;
+-    ARPG_REQUIRE(route_audio_cues(event)
+-                 == audio_cue_mask(AudioCue::low));
++    ARPG_REQUIRE(route_audio_plan(event).cues
++                 == audio_cue_mask(AudioCue::impact_low));
+     event.feedback = FeedbackLevel::medium;
+-    ARPG_REQUIRE(route_audio_cues(event) == 0);
++    ARPG_REQUIRE(route_audio_plan(event).cues == 0);
+ 
+     event.kind = CombatEventKind::reset;
+-    ARPG_REQUIRE(route_audio_cues(event) == 0);
++    ARPG_REQUIRE(route_audio_plan(event).cues == 0);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"multi-target max feedback",
+      &multi_target_feedback_uses_one_max_shake},
+     {"fixed pool overflow and reset",
+      &fixed_pool_overflow_and_reset_are_exact},
+     {"player hit source indicator", &player_hit_keeps_a_short_source_indicator},
+     {"defeated marker", &defeated_event_spawns_one_distinct_marker},
+diff --git a/tests/platform/monster_view_tests.cpp b/tests/platform/monster_view_tests.cpp
+index 3cf92a3..669fa12 100644
+--- a/tests/platform/monster_view_tests.cpp
++++ b/tests/platform/monster_view_tests.cpp
+@@ -1,13 +1,13 @@
+ #include "test_framework.hpp"
+ 
+-#include "combat_audio.hpp"
++#include "audio_routing.hpp"
+ #include "combat_view_math.hpp"
+ #include "combat/monster_affix_catalog.hpp"
+ #include "dungeon_view_math.hpp"
+ 
+ #include <array>
+ #include <cstring>
+ #include <cstdint>
+ 
+ namespace {
+ 
+@@ -142,24 +142,25 @@ arpg::test::Failure hazard_modes_and_projected_effects_are_explicit() noexcept {
+         hazard, 1280.0F, 720.0F);
+     ARPG_REQUIRE(arpg::test::near(projected_hazard.x,
+         arpg::platform::project_combat_position(hazard.center, 1280.0F, 720.0F).x,
+         1.0e-4));
+     return {};
+ }
+ 
+ arpg::test::Failure monster_attack_audio_emits_one_low_layer() noexcept {
+     arpg::combat::CombatEvent event{};
+     event.kind = arpg::combat::CombatEventKind::player_hit;
+-    ARPG_REQUIRE(arpg::platform::route_audio_cues(event)
+-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::low));
++    ARPG_REQUIRE(arpg::platform::route_audio_plan(event).cues
++        == arpg::platform::audio_cue_mask(
++            arpg::platform::AudioCue::player_hurt));
+     event.kind = arpg::combat::CombatEventKind::player_hurt_started;
+-    ARPG_REQUIRE(arpg::platform::route_audio_cues(event) == 0);
++    ARPG_REQUIRE(arpg::platform::route_audio_plan(event).cues == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure affix_badges_consume_catalog_names_tiers_and_danger() noexcept {
+     constexpr std::array<MonsterAffixId, 12> kAffixes{{
+         MonsterAffixId::mighty, MonsterAffixId::frenzy,
+         MonsterAffixId::swift, MonsterAffixId::armored,
+         MonsterAffixId::shielding, MonsterAffixId::multishot,
+         MonsterAffixId::burning_ground, MonsterAffixId::chilling,
+         MonsterAffixId::chain_lightning, MonsterAffixId::chaos_corrosion,
+@@ -258,41 +259,26 @@ arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled()
+     ARPG_REQUIRE(!same_color(native, death));
+     ARPG_REQUIRE(!same_color(burning, chain));
+     ARPG_REQUIRE(!same_color(chain, death));
+ 
+     arpg::combat::CombatEvent blink{};
+     blink.kind = arpg::combat::CombatEventKind::affix_blink_warning;
+     arpg::combat::CombatEvent chain_event{};
+     chain_event.kind = arpg::combat::CombatEventKind::affix_chain_warning;
+     arpg::combat::CombatEvent death_event{};
+     death_event.kind = arpg::combat::CombatEventKind::affix_death_warning;
+-    ARPG_REQUIRE(arpg::platform::route_audio_cues(blink)
+-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::blink_warning));
+-    ARPG_REQUIRE(arpg::platform::route_audio_cues(chain_event)
+-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::chain_warning));
+-    ARPG_REQUIRE(arpg::platform::route_audio_cues(death_event)
+-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::death_warning));
+-
+-    arpg::platform::WarningAudioThrottle throttle{};
+-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
+-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
+-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 28U));
+-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 35U));
+-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 36U));
+-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::chain_warning, 24U));
+-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 2U));
+-
+-    arpg::platform::WarningAudioThrottle near_wrap{};
+-    constexpr std::uint64_t kMax = UINT64_MAX;
+-    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 5U));
+-    ARPG_REQUIRE(!near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 1U));
+-    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, 2U));
++    ARPG_REQUIRE(arpg::platform::route_audio_plan(blink).cues
++        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_blink));
++    ARPG_REQUIRE(arpg::platform::route_audio_plan(chain_event).cues
++        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_chain));
++    ARPG_REQUIRE(arpg::platform::route_audio_plan(death_event).cues
++        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_death));
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"monster labels retain readable text treatment", &monster_labels_keep_a_readable_size_and_outline},
+     {"unique monster labels and ecology accent",
+      &all_monster_roles_have_unique_labels_and_ecology_accent},
+     {"priority monster warnings", &priority_phases_expose_warning_visuals},
+     {"inactive slots and player HP clamp",
+      &inactive_monsters_are_hidden_and_player_hp_is_clamped},
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 8d45ee8..0946d60 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -1,20 +1,21 @@
+ #include "test_framework.hpp"
+ 
+ #if defined(_WIN32) && defined(_DEBUG)
+ #include <crtdbg.h>
+ #include <cstdlib>
+ #endif
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
++arpg::test::TestSuite audio_routing_suite() noexcept;
+ arpg::test::TestSuite host_input_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+@@ -43,20 +44,21 @@ int main() {
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+ #endif
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
++        audio_routing_suite(),
+         host_input_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         pause_host_gate_suite(),
+         inventory_view_math_suite(),
+         death_input_gate_suite(),
+         death_overlay_view_suite(),
+         pause_menu_state_suite(),
+@@ -72,12 +74,12 @@ int main() {
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 316, "stage 14 audio manifest");
++    return arpg::test::run_suites(suites, 324, "stage 14 audio routing");
+ }

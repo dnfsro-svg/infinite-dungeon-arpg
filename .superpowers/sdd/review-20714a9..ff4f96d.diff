@@ -1,0 +1,1016 @@
+# Review package: 20714a9..ff4f96d
+
+## Commits
+ff4f96d test: add stage 14 audio evidence
+
+## Files changed
+ .../stage14-audio-evidence.txt                     |  40 ++
+ .../stage14-audio-showcase.wav                     | Bin 0 -> 761226 bytes
+ tests/platform/CMakeLists.txt                      |  36 ++
+ .../stage14_audio_formal_game_validation.cpp       | 633 +++++++++++++++++++++
+ tests/platform/stage14_audio_validator.ps1         | 246 ++++++++
+ 5 files changed, 955 insertions(+)
+
+## Diff
+diff --git a/docs/validation/evidence/stage14-audio-material-pack/stage14-audio-evidence.txt b/docs/validation/evidence/stage14-audio-material-pack/stage14-audio-evidence.txt
+new file mode 100644
+index 0000000..ec70db6
+--- /dev/null
++++ b/docs/validation/evidence/stage14-audio-material-pack/stage14-audio-evidence.txt
+@@ -0,0 +1,40 @@
++schema=stage14-audio-evidence-v1
++asset_count=14
++pcm_total_bytes=474532
++pcm_budget_limit=8388608
++single_resource_fallback=PASS
++fallback_corrupt_id=impact_1
++fallback_count=1
++cue_trace_count=14
++playback_budget_allowed=14
++showcase_frames=380591
++showcase_sha256=d6d9a10fc62b7891bb099aae50887ead49ed6fbda0d8b821aec4adc8dd234c40
++asset|swing_light_1|assets/stage14/audio/swing-light-1.wav|6eb2feac0706af75545a07062603f5dee54b55751b4c287798b0424c6f705dac|44100|16|1|26440|599546|23602|52880
++asset|swing_light_2|assets/stage14/audio/swing-light-2.wav|8effb82b470f24c4f8fa9346ce24bf44ca55887dc47bc26de3a8b1dd5395e8a2|44100|16|1|25084|568798|32767|50168
++asset|swing_finisher|assets/stage14/audio/swing-finisher.wav|98d933f6dc9492049d3b098ea1d5379c2941fff3447be9977714453b75bb4b6f|44100|16|1|10596|240272|32197|21192
++asset|swing_launcher|assets/stage14/audio/swing-launcher.wav|6d1ca23691ef73998996bad43474cc3f3c3a1b5d10d05e4480b37c8197297439|44100|16|1|21017|476576|7990|42034
++asset|impact_1|assets/stage14/audio/impact-1.wav|43bda71447af8aeebc98f99be339271cdfd52cfbcd13a79f02d2fcf69d539620|44100|16|1|18987|430544|28839|37974
++asset|impact_2|assets/stage14/audio/impact-2.wav|b400ab6ec2d861f1eb2d92d4ee8b5aabc88a135b35cb9979b1c0825c9199266f|44100|16|1|17715|401701|28746|35430
++asset|impact_3|assets/stage14/audio/impact-3.wav|ba0d45a39dafa3672a0a4c79fe4c1357ba8aa842df51761dc3ec896a5fb1e39f|44100|16|1|23876|541406|29714|47752
++asset|impact_low|assets/stage14/audio/impact-low.wav|c30a8d61b3287e334948665c893a53acb7e37b4b2570c5dce1c88518664909cd|44100|16|1|23653|536349|29301|47306
++asset|player_hurt|assets/stage14/audio/player-hurt.wav|8aa27503f7ad62b782b58c4399c5c193923e42475670726eee221cc7062e558a|44100|16|1|23870|541270|29170|47740
++asset|landing|assets/stage14/audio/landing.wav|1a9794470419e037bdc883a27e180dca0ee004240d2e031ac08807df511e2c98|44100|16|1|4915|111451|29212|9830
++asset|enemy_defeat|assets/stage14/audio/enemy-defeat.wav|43c8fe617351253ae24f60340697f25059e6e310cb071b90f76977c7fd3961ce|44100|16|1|5773|130907|28265|11546
++asset|warning_blink|assets/stage14/audio/warning-blink.wav|fc336a1ff1eec833911512c45d5f9a63a75a6099626fefae10befb2a9d324ec8|44100|16|1|13166|298549|28752|26332
++asset|warning_chain|assets/stage14/audio/warning-chain.wav|78a13000234ca8b94b040d5e201c353c7accbcc0d004b5ff79434b164b2ecf76|44100|16|1|4698|106531|29117|9396
++asset|warning_death|assets/stage14/audio/warning-death.wav|b2a3333ab383fecea62e14c7d9384c020c9a1895052d4a3fd5f95ef928e99d48|44100|16|1|17476|396281|28396|34952
++trace|0|swing_light|swing:j1|swing_light_1|ALLOW|100
++trace|1|swing_light|swing:j2|swing_light_2|ALLOW|120
++trace|2|swing_finisher|swing:j3|swing_finisher|ALLOW|140
++trace|3|swing_launcher|swing:launcher|swing_launcher|ALLOW|160
++trace|4|impact|hit:light|impact_1|ALLOW|180
++trace|5|impact|hit:medium|impact_2|ALLOW|200
++trace|6|impact|hit:heavy|impact_3|ALLOW|220
++trace|7|impact_low|impact_summary:heavy|impact_low|ALLOW|240
++trace|8|player_hurt|player_hit:heavy|player_hurt|ALLOW|260
++trace|9|landing|landing:light|landing|ALLOW|280
++trace|10|enemy_defeat|defeated:heavy|enemy_defeat|ALLOW|300
++trace|11|warning_blink|affix_blink_warning:light|warning_blink|ALLOW|320
++trace|12|warning_chain|affix_chain_warning:light|warning_chain|ALLOW|340
++trace|13|warning_death|affix_death_warning:heavy|warning_death|ALLOW|360
++result=PASS
+diff --git a/docs/validation/evidence/stage14-audio-material-pack/stage14-audio-showcase.wav b/docs/validation/evidence/stage14-audio-material-pack/stage14-audio-showcase.wav
+new file mode 100644
+index 0000000..90be8ea
+Binary files /dev/null and b/docs/validation/evidence/stage14-audio-material-pack/stage14-audio-showcase.wav differ
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 3721011..c7bb375 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -75,20 +75,56 @@ if(TARGET arpg_raylib)
+         PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 60
+             FIXTURES_REQUIRED stage12_material_evidence)
+     add_test(
+         NAME stage12.material_root_safety
+         COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
+             --root-safety-self-test
+             "${CMAKE_CURRENT_BINARY_DIR}/stage12-root-safety")
+     set_tests_properties(stage12.material_root_safety
+         PROPERTIES LABELS "headless;platform;stage12" TIMEOUT 30)
+ 
++    add_executable(arpg_stage14_audio_formal
++        stage14_audio_formal_game_validation.cpp)
++    target_compile_features(arpg_stage14_audio_formal PRIVATE cxx_std_17)
++    target_compile_definitions(arpg_stage14_audio_formal
++        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
++    target_link_libraries(arpg_stage14_audio_formal PRIVATE arpg_raylib)
++    if(MSVC)
++        target_compile_options(arpg_stage14_audio_formal PRIVATE /utf-8)
++    endif()
++    arpg_enable_project_warnings(arpg_stage14_audio_formal)
++
++    add_test(
++        NAME stage14.audio_formal
++        COMMAND "$<TARGET_FILE:arpg_stage14_audio_formal>"
++            "${CMAKE_CURRENT_BINARY_DIR}/stage14 audio evidence"
++            "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage14-audio-material-pack")
++    set_tests_properties(stage14.audio_formal
++        PROPERTIES LABELS "platform;raylib;stage14" TIMEOUT 300
++            FIXTURES_SETUP stage14_audio_evidence RUN_SERIAL TRUE)
++    add_test(
++        NAME stage14.audio_evidence_validator
++        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
++            "${CMAKE_CURRENT_SOURCE_DIR}/stage14_audio_validator.ps1"
++            -EvidenceDirectory
++                "${CMAKE_CURRENT_BINARY_DIR}/stage14 audio evidence/stage14-run")
++    set_tests_properties(stage14.audio_evidence_validator
++        PROPERTIES LABELS "platform;raylib;stage14" TIMEOUT 60
++            FIXTURES_REQUIRED stage14_audio_evidence)
++    add_test(
++        NAME stage14.audio_root_safety
++        COMMAND "$<TARGET_FILE:arpg_stage14_audio_formal>"
++            --root-safety-self-test
++            "${CMAKE_CURRENT_BINARY_DIR}/stage14-root-safety")
++    set_tests_properties(stage14.audio_root_safety
++        PROPERTIES LABELS "headless;platform;stage14" TIMEOUT 30)
++
+     add_executable(arpg_stage11c_hud_stress
+         ../core/allocation_probe.cpp
+         hud_stress_tests.cpp)
+     target_compile_features(arpg_stage11c_hud_stress PRIVATE cxx_std_17)
+     target_include_directories(arpg_stage11c_hud_stress
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_stage11c_hud_stress PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_stage11c_hud_stress PRIVATE /utf-8)
+     endif()
+diff --git a/tests/platform/stage14_audio_formal_game_validation.cpp b/tests/platform/stage14_audio_formal_game_validation.cpp
+new file mode 100644
+index 0000000..acddd63
+--- /dev/null
++++ b/tests/platform/stage14_audio_formal_game_validation.cpp
+@@ -0,0 +1,633 @@
++#include "audio_manifest.hpp"
++#include "audio_pack.hpp"
++#include "audio_routing.hpp"
++
++#include <raylib.h>
++
++#include <array>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <iomanip>
++#include <iostream>
++#include <limits>
++#include <sstream>
++#include <string>
++#include <vector>
++
++namespace {
++
++namespace combat = arpg::combat;
++namespace platform = arpg::platform;
++
++constexpr std::size_t kAssetCount =
++    static_cast<std::size_t>(platform::AudioAssetId::count);
++constexpr std::uint32_t kSampleRate = 44100U;
++constexpr std::uint16_t kSampleSize = 16U;
++constexpr std::uint16_t kChannels = 1U;
++constexpr std::uint32_t kSilenceFrames = 11025U;
++constexpr std::uint64_t kPcmBudget = 8U * 1024U * 1024U;
++
++struct DecodedAsset final {
++    platform::AudioAssetId id{platform::AudioAssetId::count};
++    std::string id_name{};
++    std::string path{};
++    std::string sha256{};
++    std::vector<std::int16_t> samples{};
++    std::uint32_t peak{};
++};
++
++struct TraceSpec final {
++    combat::CombatEventKind kind{};
++    combat::AttackId attack{combat::AttackId::none};
++    combat::FeedbackLevel feedback{combat::FeedbackLevel::light};
++    platform::AudioCue cue{platform::AudioCue::swing_light};
++    const char* cue_name{};
++    const char* event_name{};
++};
++
++constexpr std::array<const char*, kAssetCount> kAssetNames{{
++    "swing_light_1", "swing_light_2", "swing_finisher", "swing_launcher",
++    "impact_1", "impact_2", "impact_3", "impact_low", "player_hurt",
++    "landing", "enemy_defeat", "warning_blink", "warning_chain",
++    "warning_death",
++}};
++
++constexpr std::array<TraceSpec, 14> kTraceSpecs{{
++    {combat::CombatEventKind::swing, combat::AttackId::j1,
++        combat::FeedbackLevel::light, platform::AudioCue::swing_light,
++        "swing_light", "swing:j1"},
++    {combat::CombatEventKind::swing, combat::AttackId::j2,
++        combat::FeedbackLevel::light, platform::AudioCue::swing_light,
++        "swing_light", "swing:j2"},
++    {combat::CombatEventKind::swing, combat::AttackId::j3,
++        combat::FeedbackLevel::heavy, platform::AudioCue::swing_finisher,
++        "swing_finisher", "swing:j3"},
++    {combat::CombatEventKind::swing, combat::AttackId::launcher,
++        combat::FeedbackLevel::heavy, platform::AudioCue::swing_launcher,
++        "swing_launcher", "swing:launcher"},
++    {combat::CombatEventKind::hit, combat::AttackId::j1,
++        combat::FeedbackLevel::light, platform::AudioCue::impact,
++        "impact", "hit:light"},
++    {combat::CombatEventKind::hit, combat::AttackId::j2,
++        combat::FeedbackLevel::medium, platform::AudioCue::impact,
++        "impact", "hit:medium"},
++    {combat::CombatEventKind::hit, combat::AttackId::j3,
++        combat::FeedbackLevel::heavy, platform::AudioCue::impact,
++        "impact", "hit:heavy"},
++    {combat::CombatEventKind::impact_summary, combat::AttackId::none,
++        combat::FeedbackLevel::heavy, platform::AudioCue::impact_low,
++        "impact_low", "impact_summary:heavy"},
++    {combat::CombatEventKind::player_hit, combat::AttackId::none,
++        combat::FeedbackLevel::heavy, platform::AudioCue::player_hurt,
++        "player_hurt", "player_hit:heavy"},
++    {combat::CombatEventKind::landing, combat::AttackId::none,
++        combat::FeedbackLevel::light, platform::AudioCue::landing,
++        "landing", "landing:light"},
++    {combat::CombatEventKind::defeated, combat::AttackId::none,
++        combat::FeedbackLevel::heavy, platform::AudioCue::enemy_defeat,
++        "enemy_defeat", "defeated:heavy"},
++    {combat::CombatEventKind::affix_blink_warning, combat::AttackId::none,
++        combat::FeedbackLevel::light, platform::AudioCue::warning_blink,
++        "warning_blink", "affix_blink_warning:light"},
++    {combat::CombatEventKind::affix_chain_warning, combat::AttackId::none,
++        combat::FeedbackLevel::light, platform::AudioCue::warning_chain,
++        "warning_chain", "affix_chain_warning:light"},
++    {combat::CombatEventKind::affix_death_warning, combat::AttackId::none,
++        combat::FeedbackLevel::heavy, platform::AudioCue::warning_death,
++        "warning_death", "affix_death_warning:heavy"},
++}};
++
++[[nodiscard]] bool path_is_within(const std::filesystem::path& child,
++    const std::filesystem::path& parent) {
++    const auto relative = child.lexically_relative(parent);
++    return !relative.empty() && relative != "." && !relative.is_absolute()
++        && *relative.begin() != "..";
++}
++
++[[nodiscard]] bool canonical_path(const std::filesystem::path& path,
++    std::filesystem::path& result) {
++    std::error_code error{};
++    result = std::filesystem::weakly_canonical(
++        std::filesystem::absolute(path, error), error).lexically_normal();
++    return !error && !result.empty();
++}
++
++[[nodiscard]] bool allowed_scratch_parent(
++    const std::filesystem::path& candidate) {
++    std::filesystem::path absolute{};
++    std::filesystem::path allowed{};
++    if (!canonical_path(candidate, absolute)
++        || !canonical_path(std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}
++            / "out" / "build", allowed)) return false;
++    const auto lexical = std::filesystem::absolute(candidate).lexically_normal();
++    return lexical.filename() == "stage14 audio evidence"
++        && path_is_within(absolute, allowed);
++}
++
++[[nodiscard]] bool contains_symlink(const std::filesystem::path& root) {
++    std::error_code error{};
++    const auto status = std::filesystem::symlink_status(root, error);
++    if (!error && std::filesystem::is_symlink(status)) return true;
++    if (error && error != std::errc::no_such_file_or_directory) return true;
++    error.clear();
++    if (!std::filesystem::exists(root, error) || error) return error.value() != 0;
++    std::filesystem::recursive_directory_iterator iterator{
++        root, std::filesystem::directory_options::skip_permission_denied, error};
++    const std::filesystem::recursive_directory_iterator end{};
++    while (!error && iterator != end) {
++        if (std::filesystem::is_symlink(iterator->symlink_status(error))) {
++            return true;
++        }
++        iterator.increment(error);
++    }
++    return error.value() != 0;
++}
++
++[[nodiscard]] bool prepare_run(const std::filesystem::path& candidate,
++    std::filesystem::path& run_root) {
++    if (!allowed_scratch_parent(candidate)) return false;
++    std::filesystem::path parent{};
++    if (!canonical_path(candidate, parent)) return false;
++    run_root = parent / "stage14-run";
++    if (!path_is_within(run_root, parent) || contains_symlink(run_root)) {
++        return false;
++    }
++    std::error_code error{};
++    std::filesystem::remove_all(run_root, error);
++    if (error) return false;
++    std::filesystem::create_directories(run_root, error);
++    return !error;
++}
++
++[[nodiscard]] bool root_safety_self_test(const std::filesystem::path& root) {
++    std::error_code error{};
++    std::filesystem::create_directories(root, error);
++    if (error) return false;
++    const auto sentinel = root / "sentinel.txt";
++    std::ofstream output(sentinel, std::ios::out | std::ios::trunc);
++    output << "must survive";
++    output.close();
++    std::filesystem::path ignored{};
++    const bool rejected_candidate = !prepare_run(root, ignored);
++    const bool rejected_project = !prepare_run(
++        std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}, ignored);
++    const bool rejected_lookalike = !prepare_run(
++        std::filesystem::temp_directory_path()
++            / "stage14-root-safety-outside" / "out" / "build"
++            / "stage14 audio evidence",
++        ignored);
++    return rejected_candidate && rejected_project && rejected_lookalike
++        && std::filesystem::is_regular_file(sentinel, error) && !error;
++}
++
++[[nodiscard]] bool sha256_file(const std::filesystem::path& path,
++    std::string& result) {
++    std::ifstream input(path, std::ios::binary);
++    if (!input) return false;
++    std::vector<unsigned char> bytes{
++        std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
++    if (input.bad()) return false;
++
++    constexpr std::array<std::uint32_t, 64> kRoundConstants{{
++        0x428A2F98U, 0x71374491U, 0xB5C0FBCFU, 0xE9B5DBA5U,
++        0x3956C25BU, 0x59F111F1U, 0x923F82A4U, 0xAB1C5ED5U,
++        0xD807AA98U, 0x12835B01U, 0x243185BEU, 0x550C7DC3U,
++        0x72BE5D74U, 0x80DEB1FEU, 0x9BDC06A7U, 0xC19BF174U,
++        0xE49B69C1U, 0xEFBE4786U, 0x0FC19DC6U, 0x240CA1CCU,
++        0x2DE92C6FU, 0x4A7484AAU, 0x5CB0A9DCU, 0x76F988DAU,
++        0x983E5152U, 0xA831C66DU, 0xB00327C8U, 0xBF597FC7U,
++        0xC6E00BF3U, 0xD5A79147U, 0x06CA6351U, 0x14292967U,
++        0x27B70A85U, 0x2E1B2138U, 0x4D2C6DFCU, 0x53380D13U,
++        0x650A7354U, 0x766A0ABBU, 0x81C2C92EU, 0x92722C85U,
++        0xA2BFE8A1U, 0xA81A664BU, 0xC24B8B70U, 0xC76C51A3U,
++        0xD192E819U, 0xD6990624U, 0xF40E3585U, 0x106AA070U,
++        0x19A4C116U, 0x1E376C08U, 0x2748774CU, 0x34B0BCB5U,
++        0x391C0CB3U, 0x4ED8AA4AU, 0x5B9CCA4FU, 0x682E6FF3U,
++        0x748F82EEU, 0x78A5636FU, 0x84C87814U, 0x8CC70208U,
++        0x90BEFFFAU, 0xA4506CEBU, 0xBEF9A3F7U, 0xC67178F2U,
++    }};
++    auto rotate_right = [](std::uint32_t value, unsigned int shift) noexcept {
++        return (value >> shift) | (value << (32U - shift));
++    };
++    const std::uint64_t bit_length =
++        static_cast<std::uint64_t>(bytes.size()) * 8U;
++    bytes.push_back(0x80U);
++    while (bytes.size() % 64U != 56U) bytes.push_back(0U);
++    for (int shift = 56; shift >= 0; shift -= 8) {
++        bytes.push_back(static_cast<unsigned char>(bit_length >> shift));
++    }
++
++    std::array<std::uint32_t, 8> state{{
++        0x6A09E667U, 0xBB67AE85U, 0x3C6EF372U, 0xA54FF53AU,
++        0x510E527FU, 0x9B05688CU, 0x1F83D9ABU, 0x5BE0CD19U,
++    }};
++    for (std::size_t offset{}; offset < bytes.size(); offset += 64U) {
++        std::array<std::uint32_t, 64> words{};
++        for (std::size_t index{}; index < 16U; ++index) {
++            const std::size_t at = offset + index * 4U;
++            words[index] = (static_cast<std::uint32_t>(bytes[at]) << 24U)
++                | (static_cast<std::uint32_t>(bytes[at + 1U]) << 16U)
++                | (static_cast<std::uint32_t>(bytes[at + 2U]) << 8U)
++                | static_cast<std::uint32_t>(bytes[at + 3U]);
++        }
++        for (std::size_t index = 16U; index < words.size(); ++index) {
++            const std::uint32_t a = words[index - 15U];
++            const std::uint32_t b = words[index - 2U];
++            const std::uint32_t small0 = rotate_right(a, 7U)
++                ^ rotate_right(a, 18U) ^ (a >> 3U);
++            const std::uint32_t small1 = rotate_right(b, 17U)
++                ^ rotate_right(b, 19U) ^ (b >> 10U);
++            words[index] = words[index - 16U] + small0
++                + words[index - 7U] + small1;
++        }
++        std::uint32_t a = state[0];
++        std::uint32_t b = state[1];
++        std::uint32_t c = state[2];
++        std::uint32_t d = state[3];
++        std::uint32_t e = state[4];
++        std::uint32_t f = state[5];
++        std::uint32_t g = state[6];
++        std::uint32_t h = state[7];
++        for (std::size_t index{}; index < words.size(); ++index) {
++            const std::uint32_t big1 = rotate_right(e, 6U)
++                ^ rotate_right(e, 11U) ^ rotate_right(e, 25U);
++            const std::uint32_t choice = (e & f) ^ ((~e) & g);
++            const std::uint32_t temporary1 = h + big1 + choice
++                + kRoundConstants[index] + words[index];
++            const std::uint32_t big0 = rotate_right(a, 2U)
++                ^ rotate_right(a, 13U) ^ rotate_right(a, 22U);
++            const std::uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
++            const std::uint32_t temporary2 = big0 + majority;
++            h = g;
++            g = f;
++            f = e;
++            e = d + temporary1;
++            d = c;
++            c = b;
++            b = a;
++            a = temporary1 + temporary2;
++        }
++        state[0] += a;
++        state[1] += b;
++        state[2] += c;
++        state[3] += d;
++        state[4] += e;
++        state[5] += f;
++        state[6] += g;
++        state[7] += h;
++    }
++
++    std::ostringstream encoded{};
++    encoded << std::hex << std::setfill('0');
++    for (const std::uint32_t word : state) {
++        encoded << std::setw(8) << word;
++    }
++    result = encoded.str();
++    return result.size() == 64U;
++}
++
++[[nodiscard]] std::uint32_t pcm_peak(const std::int16_t* samples,
++    std::size_t count) noexcept {
++    std::uint32_t peak{};
++    for (std::size_t index{}; index < count; ++index) {
++        const std::int32_t sample = samples[index];
++        const std::uint32_t magnitude = sample == -32768
++            ? 32768U
++            : static_cast<std::uint32_t>(sample < 0 ? -sample : sample);
++        if (magnitude > peak) peak = magnitude;
++    }
++    return peak;
++}
++
++[[nodiscard]] bool decode_assets(std::vector<DecodedAsset>& decoded,
++    std::uint64_t& total_pcm_bytes) {
++    const auto manifest = platform::default_audio_manifest();
++    if (manifest.entry_count != kAssetCount) return false;
++    const auto project = std::filesystem::path{ARPG_PROJECT_SOURCE_DIR};
++    decoded.clear();
++    decoded.reserve(kAssetCount);
++    total_pcm_bytes = 0U;
++    for (std::size_t index{}; index < manifest.entry_count; ++index) {
++        const auto& entry = manifest.entries[index];
++        if (static_cast<std::size_t>(entry.id) != index || entry.path == nullptr) {
++            return false;
++        }
++        const auto file = project / std::filesystem::path{entry.path};
++        Wave wave = LoadWave(file.string().c_str());
++        const bool valid = IsWaveValid(wave) && wave.data != nullptr
++            && wave.frameCount != 0U && wave.frameCount <= 66150U
++            && wave.sampleRate == kSampleRate && wave.sampleSize == kSampleSize
++            && wave.channels == kChannels;
++        if (!valid) {
++            if (IsWaveValid(wave)) UnloadWave(wave);
++            return false;
++        }
++        const auto* samples = static_cast<const std::int16_t*>(wave.data);
++        const std::size_t frame_count = wave.frameCount;
++        const std::uint32_t peak = pcm_peak(samples, frame_count);
++        DecodedAsset asset{};
++        asset.id = entry.id;
++        asset.id_name = kAssetNames[index];
++        asset.path = entry.path;
++        asset.samples.assign(samples, samples + frame_count);
++        asset.peak = peak;
++        const bool hashed = sha256_file(file, asset.sha256);
++        UnloadWave(wave);
++        if (!hashed || peak == 0U || peak >= 32768U) return false;
++        total_pcm_bytes += static_cast<std::uint64_t>(frame_count) * 2U;
++        decoded.push_back(std::move(asset));
++    }
++    return decoded.size() == kAssetCount && total_pcm_bytes <= kPcmBudget;
++}
++
++void write_u16(std::ostream& output, std::uint16_t value) {
++    output.put(static_cast<char>(value & 0xFFU));
++    output.put(static_cast<char>((value >> 8U) & 0xFFU));
++}
++
++void write_u32(std::ostream& output, std::uint32_t value) {
++    output.put(static_cast<char>(value & 0xFFU));
++    output.put(static_cast<char>((value >> 8U) & 0xFFU));
++    output.put(static_cast<char>((value >> 16U) & 0xFFU));
++    output.put(static_cast<char>((value >> 24U) & 0xFFU));
++}
++
++void write_i16(std::ostream& output, std::int16_t value) {
++    const auto bits = static_cast<std::uint16_t>(value);
++    write_u16(output, bits);
++}
++
++[[nodiscard]] bool write_showcase(const std::filesystem::path& path,
++    const std::vector<DecodedAsset>& decoded, std::uint64_t& total_frames) {
++    total_frames = 0U;
++    for (std::size_t index{}; index < decoded.size(); ++index) {
++        total_frames += decoded[index].samples.size();
++        if (index + 1U < decoded.size()) total_frames += kSilenceFrames;
++    }
++    const std::uint64_t data_bytes = total_frames * 2U;
++    if (data_bytes > (std::numeric_limits<std::uint32_t>::max)() - 36U) {
++        return false;
++    }
++    std::ofstream output(path, std::ios::binary | std::ios::trunc);
++    output.write("RIFF", 4);
++    write_u32(output, static_cast<std::uint32_t>(36U + data_bytes));
++    output.write("WAVEfmt ", 8);
++    write_u32(output, 16U);
++    write_u16(output, 1U);
++    write_u16(output, kChannels);
++    write_u32(output, kSampleRate);
++    write_u32(output, kSampleRate * kChannels * (kSampleSize / 8U));
++    write_u16(output, kChannels * (kSampleSize / 8U));
++    write_u16(output, kSampleSize);
++    output.write("data", 4);
++    write_u32(output, static_cast<std::uint32_t>(data_bytes));
++    for (std::size_t index{}; index < decoded.size(); ++index) {
++        for (const std::int16_t sample : decoded[index].samples) {
++            write_i16(output, sample);
++        }
++        if (index + 1U < decoded.size()) {
++            for (std::uint32_t silence{}; silence < kSilenceFrames; ++silence) {
++                write_i16(output, 0);
++            }
++        }
++    }
++    output.close();
++    std::error_code error{};
++    return output && std::filesystem::file_size(path, error) == 44U + data_bytes
++        && !error;
++}
++
++struct FakeSoundBoundary final {
++    unsigned int next_handle{1U};
++    std::array<unsigned int, 32> played{};
++    std::size_t played_count{};
++};
++
++FakeSoundBoundary* g_sound_boundary{};
++
++Wave real_load_wave(const char* path) { return LoadWave(path); }
++bool real_wave_valid(Wave wave) { return IsWaveValid(wave); }
++Sound fake_load_sound(Wave) {
++    Sound sound{};
++    if (g_sound_boundary != nullptr) {
++        sound.frameCount = g_sound_boundary->next_handle++;
++    }
++    return sound;
++}
++bool fake_sound_valid(Sound sound) { return sound.frameCount != 0U; }
++void real_unload_wave(Wave wave) { UnloadWave(wave); }
++void fake_unload_sound(Sound) {}
++void fake_play_sound(Sound sound) {
++    if (g_sound_boundary != nullptr
++        && g_sound_boundary->played_count < g_sound_boundary->played.size()) {
++        g_sound_boundary->played[g_sound_boundary->played_count++] =
++            sound.frameCount;
++    }
++}
++void fake_stop_sound(Sound) {}
++
++[[nodiscard]] platform::AudioSoundApi formal_audio_api() noexcept {
++    return {&real_load_wave, &real_wave_valid, &fake_load_sound,
++        &fake_sound_valid, &real_unload_wave, &fake_unload_sound,
++        &fake_play_sound, &fake_stop_sound};
++}
++
++class CurrentPathScope final {
++public:
++    explicit CurrentPathScope(const std::filesystem::path& next)
++        : original_(std::filesystem::current_path()) {
++        std::filesystem::current_path(next);
++    }
++    ~CurrentPathScope() {
++        std::error_code ignored{};
++        std::filesystem::current_path(original_, ignored);
++    }
++    CurrentPathScope(const CurrentPathScope&) = delete;
++    CurrentPathScope& operator=(const CurrentPathScope&) = delete;
++private:
++    std::filesystem::path original_{};
++};
++
++struct FallbackTraceResult final {
++    bool passed{};
++    std::size_t fallback_count{};
++    std::vector<std::string> traces{};
++    std::size_t budget_allowed{};
++};
++
++[[nodiscard]] bool copy_audio_tree(const std::filesystem::path& root) {
++    const auto source = std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}
++        / "assets" / "stage14" / "audio";
++    const auto destination = root / "assets" / "stage14" / "audio";
++    std::error_code error{};
++    std::filesystem::create_directories(destination.parent_path(), error);
++    if (error) return false;
++    std::filesystem::copy(source, destination,
++        std::filesystem::copy_options::recursive, error);
++    return !error;
++}
++
++[[nodiscard]] FallbackTraceResult run_fallback_and_trace(
++    const std::filesystem::path& run_root) {
++    FallbackTraceResult result{};
++    const auto scratch = run_root / "fallback-scratch";
++    if (!copy_audio_tree(scratch)) return result;
++    const auto corrupt = scratch / "assets" / "stage14" / "audio"
++        / "impact-1.wav";
++    {
++        std::fstream file(corrupt, std::ios::binary | std::ios::in | std::ios::out);
++        if (!file) return result;
++        file.write("BAD!", 4);
++        if (!file) return result;
++    }
++
++    FakeSoundBoundary boundary{};
++    g_sound_boundary = &boundary;
++    bool pack_loaded{};
++    bool fallback_exact{};
++    bool trace_ok = true;
++    {
++        CurrentPathScope cwd{scratch};
++        platform::AudioPack pack{formal_audio_api()};
++        pack_loaded = pack.load();
++        for (std::size_t index{}; index < kAssetCount; ++index) {
++            const auto id = static_cast<platform::AudioAssetId>(index);
++            if (pack.using_fallback(id)) ++result.fallback_count;
++        }
++        fallback_exact = result.fallback_count == 1U
++            && pack.using_fallback(platform::AudioAssetId::impact_1);
++
++        platform::AudioSelectionState selection{};
++        platform::AudioPlaybackBudget budget{};
++        for (std::size_t index{}; index < kTraceSpecs.size(); ++index) {
++            const TraceSpec& spec = kTraceSpecs[index];
++            combat::CombatEvent event{};
++            event.kind = spec.kind;
++            event.attack = spec.attack;
++            event.feedback = spec.feedback;
++            event.tick = 100U + static_cast<std::uint64_t>(index) * 20U;
++            const platform::AudioPlan plan = platform::route_audio_plan(event);
++            const bool routed = plan.cues == platform::audio_cue_mask(spec.cue);
++            const bool allowed = routed && budget.allow(spec.cue, event.tick);
++            const auto selected = allowed
++                ? selection.select(spec.cue)
++                : platform::AudioAssetId::count;
++            const std::size_t plays_before = boundary.played_count;
++            if (selected != platform::AudioAssetId::count) pack.play(selected);
++            const bool played = boundary.played_count == plays_before + 1U
++                && boundary.played[plays_before]
++                    == static_cast<unsigned int>(selected) + 1U;
++            if (allowed) ++result.budget_allowed;
++            std::ostringstream line{};
++            line << "trace|" << index << '|' << spec.cue_name << '|'
++                 << spec.event_name << '|'
++                 << (selected == platform::AudioAssetId::count
++                    ? "invalid"
++                    : kAssetNames[static_cast<std::size_t>(selected)])
++                 << '|' << (allowed ? "ALLOW" : "REJECT") << '|'
++                 << event.tick;
++            result.traces.push_back(line.str());
++            trace_ok = trace_ok && routed && allowed && played;
++        }
++        pack.unload();
++    }
++    g_sound_boundary = nullptr;
++    result.passed = pack_loaded && fallback_exact && trace_ok
++        && result.budget_allowed == kTraceSpecs.size()
++        && boundary.next_handle == kAssetCount + 1U;
++    return result;
++}
++
++[[nodiscard]] bool allowed_committed_root(const std::filesystem::path& root) {
++    std::filesystem::path actual{};
++    std::filesystem::path expected{};
++    return canonical_path(root, actual)
++        && canonical_path(std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}
++            / "docs" / "validation" / "evidence"
++            / "stage14-audio-material-pack", expected)
++        && actual == expected;
++}
++
++[[nodiscard]] bool copy_committed_evidence(
++    const std::filesystem::path& run_root,
++    const std::filesystem::path& committed_root) {
++    if (!allowed_committed_root(committed_root)) return false;
++    std::error_code error{};
++    std::filesystem::create_directories(committed_root, error);
++    if (error) return false;
++    for (const char* name : {"stage14-audio-evidence.txt",
++            "stage14-audio-showcase.wav"}) {
++        std::filesystem::copy_file(run_root / name, committed_root / name,
++            std::filesystem::copy_options::overwrite_existing, error);
++        if (error) return false;
++    }
++    return true;
++}
++
++[[nodiscard]] bool write_report(const std::filesystem::path& path,
++    const std::vector<DecodedAsset>& decoded, std::uint64_t total_pcm_bytes,
++    const FallbackTraceResult& trace, std::uint64_t showcase_frames,
++    const std::string& showcase_hash) {
++    std::ofstream report(path, std::ios::out | std::ios::trunc);
++    report << "schema=stage14-audio-evidence-v1\n"
++           << "asset_count=" << decoded.size() << '\n'
++           << "pcm_total_bytes=" << total_pcm_bytes << '\n'
++           << "pcm_budget_limit=" << kPcmBudget << '\n'
++           << "single_resource_fallback="
++           << (trace.passed ? "PASS" : "FAIL") << '\n'
++           << "fallback_corrupt_id=impact_1\n"
++           << "fallback_count=" << trace.fallback_count << '\n'
++           << "cue_trace_count=" << trace.traces.size() << '\n'
++           << "playback_budget_allowed=" << trace.budget_allowed << '\n'
++           << "showcase_frames=" << showcase_frames << '\n'
++           << "showcase_sha256=" << showcase_hash << '\n';
++    for (const DecodedAsset& asset : decoded) {
++        const std::uint64_t frames = asset.samples.size();
++        const std::uint64_t duration_us =
++            (frames * 1000000U + (kSampleRate / 2U)) / kSampleRate;
++        report << "asset|" << asset.id_name << '|' << asset.path << '|'
++               << asset.sha256 << '|' << kSampleRate << '|' << kSampleSize
++               << '|' << kChannels << '|' << frames << '|' << duration_us
++               << '|' << asset.peak << '|' << frames * 2U << '\n';
++    }
++    for (const std::string& line : trace.traces) report << line << '\n';
++    report << "result=" << (trace.passed ? "PASS" : "FAIL") << '\n';
++    return static_cast<bool>(report);
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    if (argc == 3 && argv[1] != nullptr && argv[2] != nullptr
++        && std::string{argv[1]} == "--root-safety-self-test") {
++        return root_safety_self_test(std::filesystem::absolute(argv[2])) ? 0 : 1;
++    }
++    if (argc != 3 || argv[1] == nullptr || argv[2] == nullptr) return 2;
++
++    const auto scratch_parent = std::filesystem::absolute(argv[1]);
++    const auto committed_root = std::filesystem::absolute(argv[2]);
++    std::filesystem::path run_root{};
++    if (!prepare_run(scratch_parent, run_root)
++        || !allowed_committed_root(committed_root)) return 3;
++
++    std::vector<DecodedAsset> decoded{};
++    std::uint64_t total_pcm_bytes{};
++    if (!decode_assets(decoded, total_pcm_bytes)) return 4;
++    const FallbackTraceResult trace = run_fallback_and_trace(run_root);
++    if (!trace.passed) return 5;
++
++    const auto showcase = run_root / "stage14-audio-showcase.wav";
++    std::uint64_t showcase_frames{};
++    std::string showcase_hash{};
++    if (!write_showcase(showcase, decoded, showcase_frames)
++        || !sha256_file(showcase, showcase_hash)
++        || !write_report(run_root / "stage14-audio-evidence.txt", decoded,
++            total_pcm_bytes, trace, showcase_frames, showcase_hash)
++        || !copy_committed_evidence(run_root, committed_root)) return 6;
++
++    std::cout << "stage14 audio formal PASS: 14 real LoadWave decodes, "
++              << "one fallback, 14 cue traces, " << showcase_frames
++              << " showcase frames\n";
++    return 0;
++}
+diff --git a/tests/platform/stage14_audio_validator.ps1 b/tests/platform/stage14_audio_validator.ps1
+new file mode 100644
+index 0000000..db23e47
+--- /dev/null
++++ b/tests/platform/stage14_audio_validator.ps1
+@@ -0,0 +1,246 @@
++param(
++    [Parameter(Mandatory = $true)]
++    [string]$EvidenceDirectory
++)
++
++$ErrorActionPreference = 'Stop'
++
++$ExpectedAssets = @(
++    [pscustomobject]@{ Id = 'swing_light_1'; Path = 'assets/stage14/audio/swing-light-1.wav' },
++    [pscustomobject]@{ Id = 'swing_light_2'; Path = 'assets/stage14/audio/swing-light-2.wav' },
++    [pscustomobject]@{ Id = 'swing_finisher'; Path = 'assets/stage14/audio/swing-finisher.wav' },
++    [pscustomobject]@{ Id = 'swing_launcher'; Path = 'assets/stage14/audio/swing-launcher.wav' },
++    [pscustomobject]@{ Id = 'impact_1'; Path = 'assets/stage14/audio/impact-1.wav' },
++    [pscustomobject]@{ Id = 'impact_2'; Path = 'assets/stage14/audio/impact-2.wav' },
++    [pscustomobject]@{ Id = 'impact_3'; Path = 'assets/stage14/audio/impact-3.wav' },
++    [pscustomobject]@{ Id = 'impact_low'; Path = 'assets/stage14/audio/impact-low.wav' },
++    [pscustomobject]@{ Id = 'player_hurt'; Path = 'assets/stage14/audio/player-hurt.wav' },
++    [pscustomobject]@{ Id = 'landing'; Path = 'assets/stage14/audio/landing.wav' },
++    [pscustomobject]@{ Id = 'enemy_defeat'; Path = 'assets/stage14/audio/enemy-defeat.wav' },
++    [pscustomobject]@{ Id = 'warning_blink'; Path = 'assets/stage14/audio/warning-blink.wav' },
++    [pscustomobject]@{ Id = 'warning_chain'; Path = 'assets/stage14/audio/warning-chain.wav' },
++    [pscustomobject]@{ Id = 'warning_death'; Path = 'assets/stage14/audio/warning-death.wav' }
++)
++
++$ExpectedTraces = @(
++    [pscustomobject]@{ Cue = 'swing_light'; Event = 'swing:j1'; Asset = 'swing_light_1' },
++    [pscustomobject]@{ Cue = 'swing_light'; Event = 'swing:j2'; Asset = 'swing_light_2' },
++    [pscustomobject]@{ Cue = 'swing_finisher'; Event = 'swing:j3'; Asset = 'swing_finisher' },
++    [pscustomobject]@{ Cue = 'swing_launcher'; Event = 'swing:launcher'; Asset = 'swing_launcher' },
++    [pscustomobject]@{ Cue = 'impact'; Event = 'hit:light'; Asset = 'impact_1' },
++    [pscustomobject]@{ Cue = 'impact'; Event = 'hit:medium'; Asset = 'impact_2' },
++    [pscustomobject]@{ Cue = 'impact'; Event = 'hit:heavy'; Asset = 'impact_3' },
++    [pscustomobject]@{ Cue = 'impact_low'; Event = 'impact_summary:heavy'; Asset = 'impact_low' },
++    [pscustomobject]@{ Cue = 'player_hurt'; Event = 'player_hit:heavy'; Asset = 'player_hurt' },
++    [pscustomobject]@{ Cue = 'landing'; Event = 'landing:light'; Asset = 'landing' },
++    [pscustomobject]@{ Cue = 'enemy_defeat'; Event = 'defeated:heavy'; Asset = 'enemy_defeat' },
++    [pscustomobject]@{ Cue = 'warning_blink'; Event = 'affix_blink_warning:light'; Asset = 'warning_blink' },
++    [pscustomobject]@{ Cue = 'warning_chain'; Event = 'affix_chain_warning:light'; Asset = 'warning_chain' },
++    [pscustomobject]@{ Cue = 'warning_death'; Event = 'affix_death_warning:heavy'; Asset = 'warning_death' }
++)
++
++function Read-U16([byte[]]$Bytes, [int]$Offset) {
++    if ($Offset -lt 0 -or $Offset + 2 -gt $Bytes.Length) { throw 'truncated WAV uint16' }
++    return [uint32]$Bytes[$Offset] -bor ([uint32]$Bytes[$Offset + 1] -shl 8)
++}
++
++function Read-U32([byte[]]$Bytes, [int]$Offset) {
++    if ($Offset -lt 0 -or $Offset + 4 -gt $Bytes.Length) { throw 'truncated WAV uint32' }
++    return [uint64]$Bytes[$Offset] -bor ([uint64]$Bytes[$Offset + 1] -shl 8) -bor
++        ([uint64]$Bytes[$Offset + 2] -shl 16) -bor ([uint64]$Bytes[$Offset + 3] -shl 24)
++}
++
++function Read-FourCC([byte[]]$Bytes, [int]$Offset) {
++    if ($Offset -lt 0 -or $Offset + 4 -gt $Bytes.Length) { throw 'truncated WAV FourCC' }
++    return [System.Text.Encoding]::ASCII.GetString($Bytes, $Offset, 4)
++}
++
++function Read-PcmWave([string]$Path) {
++    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "missing WAV: $Path" }
++    [byte[]]$bytes = [System.IO.File]::ReadAllBytes($Path)
++    if ($bytes.Length -lt 44 -or (Read-FourCC $bytes 0) -ne 'RIFF' -or
++            (Read-FourCC $bytes 8) -ne 'WAVE') { throw "invalid RIFF/WAVE: $Path" }
++    if ((Read-U32 $bytes 4) -ne $bytes.Length - 8) { throw "invalid RIFF size: $Path" }
++
++    $format = $null
++    [byte[]]$pcm = $null
++    $offset = 12
++    while ($offset + 8 -le $bytes.Length) {
++        $chunkId = Read-FourCC $bytes $offset
++        [uint64]$chunkSize = Read-U32 $bytes ($offset + 4)
++        [uint64]$dataStart = $offset + 8
++        [uint64]$dataEnd = $dataStart + $chunkSize
++        if ($dataEnd -gt $bytes.Length) { throw "truncated WAV chunk: $Path" }
++        if ($chunkId -eq 'fmt ') {
++            if ($chunkSize -lt 16) { throw "short fmt chunk: $Path" }
++            $format = @{
++                Tag = Read-U16 $bytes ([int]$dataStart)
++                Channels = Read-U16 $bytes ([int]$dataStart + 2)
++                SampleRate = Read-U32 $bytes ([int]$dataStart + 4)
++                ByteRate = Read-U32 $bytes ([int]$dataStart + 8)
++                BlockAlign = Read-U16 $bytes ([int]$dataStart + 12)
++                Bits = Read-U16 $bytes ([int]$dataStart + 14)
++            }
++        } elseif ($chunkId -eq 'data') {
++            if ($null -ne $pcm) { throw "duplicate data chunk: $Path" }
++            $pcm = New-Object byte[] ([int]$chunkSize)
++            [Array]::Copy($bytes, [int]$dataStart, $pcm, 0, [int]$chunkSize)
++        }
++        $offset = [int]($dataEnd + ($chunkSize % 2))
++    }
++    if ($null -eq $format -or $null -eq $pcm) { throw "missing fmt/data chunk: $Path" }
++    if ($format.Tag -ne 1 -or $format.Channels -ne 1 -or
++            $format.SampleRate -ne 44100 -or $format.Bits -ne 16 -or
++            $format.BlockAlign -ne 2 -or $format.ByteRate -ne 88200 -or
++            ($pcm.Length % 2) -ne 0) { throw "WAV is not 44.1 kHz 16-bit mono PCM: $Path" }
++    return @{ Bytes = $bytes; Pcm = $pcm; Frames = [uint64]($pcm.Length / 2); Format = $format }
++}
++
++function Get-Peak([byte[]]$Pcm) {
++    [uint32]$peak = 0
++    for ($i = 0; $i -lt $Pcm.Length; $i += 2) {
++        [uint16]$raw = [uint16]$Pcm[$i] -bor ([uint16]$Pcm[$i + 1] -shl 8)
++        [int]$sample = if ($raw -ge 32768) { [int]$raw - 65536 } else { [int]$raw }
++        [uint32]$magnitude = if ($sample -eq -32768) { 32768 } else { [Math]::Abs($sample) }
++        if ($magnitude -gt $peak) { $peak = $magnitude }
++    }
++    return $peak
++}
++
++function Get-Sha256([string]$Path) {
++    $stream = [System.IO.File]::OpenRead($Path)
++    $algorithm = [System.Security.Cryptography.SHA256]::Create()
++    try {
++        [byte[]]$digest = $algorithm.ComputeHash($stream)
++        return -join ($digest | ForEach-Object { $_.ToString('x2') })
++    } finally {
++        $algorithm.Dispose()
++        $stream.Dispose()
++    }
++}
++
++if (-not (Test-Path -LiteralPath $EvidenceDirectory -PathType Container)) {
++    throw "missing evidence directory: $EvidenceDirectory"
++}
++$evidencePath = Join-Path $EvidenceDirectory 'stage14-audio-evidence.txt'
++$showcasePath = Join-Path $EvidenceDirectory 'stage14-audio-showcase.wav'
++if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
++    throw "missing evidence file: $evidencePath"
++}
++if (-not (Test-Path -LiteralPath $showcasePath -PathType Leaf)) {
++    throw "missing showcase WAV: $showcasePath"
++}
++
++$lines = @(Get-Content -LiteralPath $evidencePath -Encoding UTF8)
++$scalars = @{}
++$assets = @($lines | Where-Object { $_.StartsWith('asset|') })
++$traces = @($lines | Where-Object { $_.StartsWith('trace|') })
++foreach ($line in $lines | Where-Object { -not $_.Contains('|') -and $_.Contains('=') }) {
++    $pair = $line -split '=', 2
++    if ($scalars.ContainsKey($pair[0])) { throw "duplicate evidence field: $($pair[0])" }
++    $scalars[$pair[0]] = $pair[1]
++}
++foreach ($key in @('schema','asset_count','pcm_total_bytes','pcm_budget_limit',
++        'single_resource_fallback','fallback_corrupt_id','fallback_count',
++        'cue_trace_count','playback_budget_allowed','showcase_frames','showcase_sha256','result')) {
++    if (-not $scalars.ContainsKey($key)) { throw "missing evidence field: $key" }
++}
++if ($scalars.schema -ne 'stage14-audio-evidence-v1' -or $scalars.result -ne 'PASS') {
++    throw 'evidence schema/result rejected'
++}
++if ([int]$scalars.asset_count -ne 14 -or $assets.Count -ne 14) {
++    throw "expected exactly 14 asset entries, found $($assets.Count)"
++}
++if ([uint64]$scalars.pcm_budget_limit -ne 8388608 -or
++        [uint64]$scalars.pcm_total_bytes -gt [uint64]$scalars.pcm_budget_limit) {
++    throw 'PCM budget rejected'
++}
++if ($scalars.single_resource_fallback -ne 'PASS' -or
++        $scalars.fallback_corrupt_id -ne 'impact_1' -or [int]$scalars.fallback_count -ne 1) {
++    throw 'single-resource fallback evidence rejected'
++}
++if ([int]$scalars.cue_trace_count -ne 14 -or $traces.Count -ne 14 -or
++        [int]$scalars.playback_budget_allowed -ne 14) {
++    throw 'cue trace count/budget rejected'
++}
++
++$projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
++[uint64]$totalPcmBytes = 0
++$decodedAssets = @()
++for ($index = 0; $index -lt $ExpectedAssets.Count; ++$index) {
++    $columns = $assets[$index] -split '\|', -1
++    if ($columns.Count -ne 11 -or $columns[0] -ne 'asset') {
++        throw "malformed asset entry $index"
++    }
++    $expected = $ExpectedAssets[$index]
++    if ($columns[1] -ne $expected.Id -or $columns[2] -ne $expected.Path) {
++        throw "asset order/id/path mismatch at $index"
++    }
++    $assetPath = Join-Path $projectRoot ($expected.Path -replace '/', '\')
++    $wave = Read-PcmWave $assetPath
++    $hash = Get-Sha256 $assetPath
++    $peak = Get-Peak $wave.Pcm
++    $expectedDurationUs = [uint64][Math]::Round(
++        ([double]$wave.Frames * 1000000.0 / 44100.0),
++        0, [MidpointRounding]::AwayFromZero)
++    if ($columns[3] -cne $hash -or [uint64]$columns[4] -ne 44100 -or
++            [uint64]$columns[5] -ne 16 -or [uint64]$columns[6] -ne 1 -or
++            [uint64]$columns[7] -ne $wave.Frames -or
++            [uint64]$columns[8] -ne $expectedDurationUs -or
++            [uint64]$columns[9] -ne $peak -or
++            [uint64]$columns[10] -ne $wave.Pcm.Length) {
++        throw "decoded metadata/hash mismatch for $($expected.Id)"
++    }
++    if ($wave.Frames -eq 0 -or $wave.Frames -gt 66150 -or $peak -eq 0 -or $peak -ge 32768) {
++        throw "silence, clipping, or duration rejected for $($expected.Id)"
++    }
++    $totalPcmBytes += $wave.Pcm.Length
++    $decodedAssets += ,$wave
++}
++if ($totalPcmBytes -ne [uint64]$scalars.pcm_total_bytes) {
++    throw 'PCM byte total mismatch'
++}
++
++for ($index = 0; $index -lt $ExpectedTraces.Count; ++$index) {
++    $columns = $traces[$index] -split '\|', -1
++    $expected = $ExpectedTraces[$index]
++    if ($columns.Count -ne 7 -or $columns[0] -ne 'trace' -or
++            [int]$columns[1] -ne $index -or $columns[2] -ne $expected.Cue -or
++            $columns[3] -ne $expected.Event -or $columns[4] -ne $expected.Asset -or
++            $columns[5] -ne 'ALLOW' -or [uint64]$columns[6] -ne (100 + $index * 20)) {
++        throw "cue trace mismatch at $index"
++    }
++}
++
++$showcase = Read-PcmWave $showcasePath
++$silenceFrames = 11025
++[uint64]$expectedShowcaseFrames = $totalPcmBytes / 2 +
++    [uint64](($ExpectedAssets.Count - 1) * $silenceFrames)
++if ($showcase.Frames -ne $expectedShowcaseFrames -or
++        [uint64]$scalars.showcase_frames -ne $expectedShowcaseFrames) {
++    throw 'showcase frame count mismatch'
++}
++$showcaseHash = Get-Sha256 $showcasePath
++if ($scalars.showcase_sha256 -cne $showcaseHash) { throw 'showcase hash mismatch' }
++$showcaseOffset = 0
++for ($index = 0; $index -lt $decodedAssets.Count; ++$index) {
++    $sourcePcm = $decodedAssets[$index].Pcm
++    for ($byteIndex = 0; $byteIndex -lt $sourcePcm.Length; ++$byteIndex) {
++        if ($showcase.Pcm[$showcaseOffset + $byteIndex] -ne $sourcePcm[$byteIndex]) {
++            throw "showcase segment mismatch at asset $index"
++        }
++    }
++    $showcaseOffset += $sourcePcm.Length
++    if ($index + 1 -lt $decodedAssets.Count) {
++        $silenceBytes = $silenceFrames * 2
++        for ($byteIndex = 0; $byteIndex -lt $silenceBytes; ++$byteIndex) {
++            if ($showcase.Pcm[$showcaseOffset + $byteIndex] -ne 0) {
++                throw "showcase separator is not 250 ms silence after asset $index"
++            }
++        }
++        $showcaseOffset += $silenceBytes
++    }
++}
++if ($showcaseOffset -ne $showcase.Pcm.Length) { throw 'showcase trailing data rejected' }
++
++Write-Output "stage14 audio evidence validated: 14 real PCM decodes, one-resource fallback, 14 cue traces, showcase WAV"

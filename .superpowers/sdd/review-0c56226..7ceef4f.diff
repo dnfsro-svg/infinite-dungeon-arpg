@@ -1,0 +1,591 @@
+# Review package: 0c56226..7ceef4f
+
+## Commits
+7ceef4f fix: harden stage 14 audio validation
+d7c47c1 feat: validate stage 14 audio manifest
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt              |   1 +
+ src/platform/raylib/audio_asset_types.hpp       |  33 +++++
+ src/platform/raylib/audio_asset_validation.cpp  | 173 ++++++++++++++++++++++++
+ src/platform/raylib/audio_asset_validation.hpp  |  36 +++++
+ src/platform/raylib/audio_manifest.hpp          |  47 +++++++
+ tests/platform/CMakeLists.txt                   |   1 +
+ tests/platform/audio_asset_validation_tests.cpp | 162 ++++++++++++++++++++++
+ tests/platform/platform_test_main.cpp           |   4 +-
+ 8 files changed, 456 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 6c7d342..233c482 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -1,12 +1,13 @@
+ add_library(arpg_raylib STATIC
+     actor_renderer.cpp
++    audio_asset_validation.cpp
+     combat_audio.cpp
+     combat_feedback.cpp
+     combat_renderer.cpp
+     control_hints.cpp
+     combat_view_math.cpp
+     death_overlay_font.cpp
+     death_overlay_renderer.cpp
+     death_overlay_view.cpp
+     debug_renderer.cpp
+     debug_overlay_renderer.cpp
+diff --git a/src/platform/raylib/audio_asset_types.hpp b/src/platform/raylib/audio_asset_types.hpp
+new file mode 100644
+index 0000000..2780a90
+--- /dev/null
++++ b/src/platform/raylib/audio_asset_types.hpp
+@@ -0,0 +1,33 @@
++#pragma once
++
++#include <cstdint>
++
++namespace arpg::platform {
++
++enum class AudioAssetId : std::uint8_t {
++    swing_light_1,
++    swing_light_2,
++    swing_finisher,
++    swing_launcher,
++    impact_1,
++    impact_2,
++    impact_3,
++    impact_low,
++    player_hurt,
++    landing,
++    enemy_defeat,
++    warning_blink,
++    warning_chain,
++    warning_death,
++    count,
++};
++
++struct AudioDecodedMetadata final {
++    unsigned int frame_count{};
++    unsigned int sample_rate{};
++    unsigned int sample_size{};
++    unsigned int channels{};
++    float peak{};
++};
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/audio_asset_validation.cpp b/src/platform/raylib/audio_asset_validation.cpp
+new file mode 100644
+index 0000000..fcb89cd
+--- /dev/null
++++ b/src/platform/raylib/audio_asset_validation.cpp
+@@ -0,0 +1,173 @@
++#include "audio_asset_validation.hpp"
++
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++
++namespace arpg::platform {
++namespace {
++
++constexpr std::size_t kExpectedAudioAssetCount =
++    static_cast<std::size_t>(AudioAssetId::count);
++constexpr std::size_t kMaximumPcmBytes = 8U * 1024U * 1024U;
++constexpr unsigned int kRequiredSampleRate = 44100U;
++constexpr unsigned int kRequiredSampleSize = 16U;
++constexpr unsigned int kRequiredChannels = 1U;
++constexpr unsigned int kMaximumFrameCount = 66150U;
++constexpr char kAudioPathPrefix[] = "assets/stage14/audio/";
++
++[[nodiscard]] constexpr AudioValidationResult valid_result() noexcept {
++    return {true, AudioValidationError::none};
++}
++
++[[nodiscard]] constexpr AudioValidationResult invalid_result(
++    AudioValidationError error) noexcept {
++    return {false, error};
++}
++
++[[nodiscard]] constexpr bool is_known_id(AudioAssetId id) noexcept {
++    return static_cast<std::size_t>(id) < kExpectedAudioAssetCount;
++}
++
++[[nodiscard]] bool has_audio_path_prefix(const char* path) noexcept {
++    if (path == nullptr) return false;
++    for (std::size_t index = 0U; kAudioPathPrefix[index] != '\0'; ++index) {
++        const char character = path[index];
++        if (character == '\0' || character != kAudioPathPrefix[index]) {
++            return false;
++        }
++    }
++    return true;
++}
++
++[[nodiscard]] bool is_safe_audio_path(const char* path) noexcept {
++    if (!has_audio_path_prefix(path)) return false;
++
++    const std::size_t prefix_size = sizeof(kAudioPathPrefix) - 1U;
++    const char* segment = path + prefix_size;
++    if (*segment == '\0') return false;
++
++    for (const char* current = segment;; ++current) {
++        const char character = *current;
++        if (character == '\\') return false;
++        if (character != '/' && character != '\0') continue;
++
++        const std::size_t segment_size =
++            static_cast<std::size_t>(current - segment);
++        if (segment_size == 0U
++            || (segment_size == 1U && segment[0] == '.')
++            || (segment_size == 2U && segment[0] == '.' && segment[1] == '.')) {
++            return false;
++        }
++        if (character == '\0') return true;
++        segment = current + 1;
++    }
++}
++
++[[nodiscard]] AudioValidationResult validate_entry(
++    const AudioManifestEntry& entry) noexcept {
++    if (!is_known_id(entry.id)) return invalid_result(AudioValidationError::invalid_id);
++    if (!is_safe_audio_path(entry.path)) {
++        return invalid_result(AudioValidationError::invalid_path);
++    }
++    return valid_result();
++}
++
++[[nodiscard]] bool pcm_byte_count(const AudioDecodedMetadata& metadata,
++    std::size_t& byte_count) noexcept {
++    if (metadata.sample_size % 8U != 0U) return false;
++
++    const std::size_t factors[] = {
++        static_cast<std::size_t>(metadata.frame_count),
++        static_cast<std::size_t>(metadata.channels),
++        static_cast<std::size_t>(metadata.sample_size / 8U),
++    };
++    byte_count = 1U;
++    for (const std::size_t factor : factors) {
++        if (factor != 0U
++            && byte_count > std::numeric_limits<std::size_t>::max() / factor) {
++            return false;
++        }
++        byte_count *= factor;
++    }
++    return true;
++}
++
++[[nodiscard]] AudioValidationResult validate_metadata_basics(
++    const AudioManifestEntry& entry,
++    const AudioDecodedMetadata& metadata) noexcept {
++    const AudioValidationResult entry_result = validate_entry(entry);
++    if (!entry_result.valid) return entry_result;
++    if (metadata.sample_rate != kRequiredSampleRate
++        || metadata.sample_size != kRequiredSampleSize
++        || metadata.channels != kRequiredChannels) {
++        return invalid_result(AudioValidationError::invalid_format);
++    }
++    if (!(metadata.peak > 0.0F && metadata.peak < 1.0F)) {
++        return invalid_result(AudioValidationError::invalid_peak);
++    }
++    std::size_t unused_byte_count{};
++    if (!pcm_byte_count(metadata, unused_byte_count)) {
++        return invalid_result(AudioValidationError::invalid_format);
++    }
++    return valid_result();
++}
++
++}  // namespace
++
++AudioValidationResult validate_audio_metadata(const AudioManifestEntry& entry,
++    const AudioDecodedMetadata& metadata) noexcept {
++    const AudioValidationResult basic_result = validate_metadata_basics(entry, metadata);
++    if (!basic_result.valid) return basic_result;
++    if (metadata.frame_count == 0U || metadata.frame_count > kMaximumFrameCount) {
++        return invalid_result(AudioValidationError::invalid_duration);
++    }
++    return valid_result();
++}
++
++AudioValidationResult validate_audio_pcm_budget(
++    const AudioDecodedMetadata* metadata, std::size_t count) noexcept {
++    if (count != 0U && metadata == nullptr) {
++        return invalid_result(AudioValidationError::invalid_manifest);
++    }
++
++    std::size_t total_pcm_bytes{};
++    for (std::size_t index = 0U; index < count; ++index) {
++        std::size_t pcm_bytes{};
++        if (!pcm_byte_count(metadata[index], pcm_bytes)
++            || pcm_bytes > kMaximumPcmBytes - total_pcm_bytes) {
++            return invalid_result(AudioValidationError::pcm_budget_exceeded);
++        }
++        total_pcm_bytes += pcm_bytes;
++    }
++    return valid_result();
++}
++
++AudioValidationResult validate_audio_manifest(
++    const AudioManifestDefinition& manifest) noexcept {
++    if (manifest.entries == nullptr || manifest.entry_count != kExpectedAudioAssetCount) {
++        return invalid_result(AudioValidationError::invalid_manifest);
++    }
++
++    for (std::size_t index = 0U; index < manifest.entry_count; ++index) {
++        const AudioValidationResult entry_result = validate_entry(manifest.entries[index]);
++        if (!entry_result.valid) return entry_result;
++        for (std::size_t prior = 0U; prior < index; ++prior) {
++            if (manifest.entries[prior].id == manifest.entries[index].id) {
++                return invalid_result(AudioValidationError::duplicate_id);
++            }
++        }
++    }
++
++    if (manifest.decoded_metadata == nullptr) return valid_result();
++
++    for (std::size_t index = 0U; index < manifest.entry_count; ++index) {
++        const AudioValidationResult metadata_result = validate_audio_metadata(
++            manifest.entries[index], manifest.decoded_metadata[index]);
++        if (!metadata_result.valid) return metadata_result;
++    }
++    return validate_audio_pcm_budget(
++        manifest.decoded_metadata, manifest.entry_count);
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/audio_asset_validation.hpp b/src/platform/raylib/audio_asset_validation.hpp
+new file mode 100644
+index 0000000..a8a0c73
+--- /dev/null
++++ b/src/platform/raylib/audio_asset_validation.hpp
+@@ -0,0 +1,36 @@
++#pragma once
++
++#include "audio_manifest.hpp"
++
++#include <cstdint>
++
++namespace arpg::platform {
++
++enum class AudioValidationError : std::uint8_t {
++    none,
++    invalid_manifest,
++    invalid_id,
++    duplicate_id,
++    invalid_path,
++    invalid_format,
++    invalid_duration,
++    invalid_peak,
++    pcm_budget_exceeded,
++};
++
++struct AudioValidationResult final {
++    bool valid{};
++    AudioValidationError error{AudioValidationError::none};
++};
++
++[[nodiscard]] AudioValidationResult validate_audio_manifest(
++    const AudioManifestDefinition& manifest) noexcept;
++
++[[nodiscard]] AudioValidationResult validate_audio_metadata(
++    const AudioManifestEntry& entry,
++    const AudioDecodedMetadata& metadata) noexcept;
++
++[[nodiscard]] AudioValidationResult validate_audio_pcm_budget(
++    const AudioDecodedMetadata* metadata, std::size_t count) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/audio_manifest.hpp b/src/platform/raylib/audio_manifest.hpp
+new file mode 100644
+index 0000000..996e834
+--- /dev/null
++++ b/src/platform/raylib/audio_manifest.hpp
+@@ -0,0 +1,47 @@
++#pragma once
++
++#include "audio_asset_types.hpp"
++
++#include <cstddef>
++
++namespace arpg::platform {
++
++struct AudioManifestEntry final {
++    AudioAssetId id{AudioAssetId::swing_light_1};
++    const char* path{};
++};
++
++struct AudioManifestDefinition final {
++    const AudioManifestEntry* entries{};
++    std::size_t entry_count{};
++    const AudioDecodedMetadata* decoded_metadata{};
++};
++
++namespace detail {
++
++inline constexpr AudioManifestEntry kDefaultAudioEntries[] = {
++    {AudioAssetId::swing_light_1, "assets/stage14/audio/swing-light-1.wav"},
++    {AudioAssetId::swing_light_2, "assets/stage14/audio/swing-light-2.wav"},
++    {AudioAssetId::swing_finisher, "assets/stage14/audio/swing-finisher.wav"},
++    {AudioAssetId::swing_launcher, "assets/stage14/audio/swing-launcher.wav"},
++    {AudioAssetId::impact_1, "assets/stage14/audio/impact-1.wav"},
++    {AudioAssetId::impact_2, "assets/stage14/audio/impact-2.wav"},
++    {AudioAssetId::impact_3, "assets/stage14/audio/impact-3.wav"},
++    {AudioAssetId::impact_low, "assets/stage14/audio/impact-low.wav"},
++    {AudioAssetId::player_hurt, "assets/stage14/audio/player-hurt.wav"},
++    {AudioAssetId::landing, "assets/stage14/audio/landing.wav"},
++    {AudioAssetId::enemy_defeat, "assets/stage14/audio/enemy-defeat.wav"},
++    {AudioAssetId::warning_blink, "assets/stage14/audio/warning-blink.wav"},
++    {AudioAssetId::warning_chain, "assets/stage14/audio/warning-chain.wav"},
++    {AudioAssetId::warning_death, "assets/stage14/audio/warning-death.wav"},
++};
++
++}  // namespace detail
++
++[[nodiscard]] constexpr AudioManifestDefinition default_audio_manifest() noexcept {
++    return {detail::kDefaultAudioEntries,
++        sizeof(detail::kDefaultAudioEntries) / sizeof(detail::kDefaultAudioEntries[0]),
++        nullptr};
++}
++
++}  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 317bc89..6205fd7 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -18,20 +18,21 @@ if(TARGET arpg_raylib)
+         hud_view_model_tests.cpp
+         hud_notice_state_tests.cpp
+         loot_pickup_feedback_tests.cpp
+         hud_layout_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+         hud_host_integration_tests.cpp
+         death_input_gate_tests.cpp
+         death_overlay_view_tests.cpp
+         ground_loot_view_tests.cpp
++        audio_asset_validation_tests.cpp
+         material_asset_validation_tests.cpp
+         material_animation_tests.cpp
+         stage12_environment_render_tests.cpp
+         stage12_actor_render_tests.cpp
+         stage12_material_render_tests.cpp)
+     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_compile_definitions(arpg_platform_tests
+diff --git a/tests/platform/audio_asset_validation_tests.cpp b/tests/platform/audio_asset_validation_tests.cpp
+new file mode 100644
+index 0000000..9547862
+--- /dev/null
++++ b/tests/platform/audio_asset_validation_tests.cpp
+@@ -0,0 +1,162 @@
++#include "test_framework.hpp"
++
++#include "audio_asset_validation.hpp"
++#include "audio_manifest.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace {
++
++using arpg::platform::AudioAssetId;
++using arpg::platform::AudioDecodedMetadata;
++using arpg::platform::AudioManifestDefinition;
++using arpg::platform::AudioManifestEntry;
++using arpg::platform::AudioValidationError;
++
++constexpr AudioDecodedMetadata kValidMetadata{44100U, 44100U, 16U, 1U, 0.5F};
++
++arpg::test::Failure audio_manifest_accepts_all_fourteen_unique_ids() noexcept {
++    const AudioManifestDefinition manifest = arpg::platform::default_audio_manifest();
++    ARPG_REQUIRE(manifest.entry_count == 14U);
++    ARPG_REQUIRE(arpg::platform::validate_audio_manifest(manifest).valid);
++    return {};
++}
++
++arpg::test::Failure audio_manifest_rejects_duplicate_ids() noexcept {
++    std::array<AudioManifestEntry, 14> entries{};
++    const AudioManifestDefinition default_manifest =
++        arpg::platform::default_audio_manifest();
++    for (std::size_t index = 0U; index < entries.size(); ++index) {
++        entries[index] = default_manifest.entries[index];
++    }
++    entries.back().id = entries.front().id;
++    const AudioManifestDefinition manifest{entries.data(), entries.size(), nullptr};
++    const auto result = arpg::platform::validate_audio_manifest(manifest);
++    ARPG_REQUIRE(!result.valid);
++    ARPG_REQUIRE(result.error == AudioValidationError::duplicate_id);
++    return {};
++}
++
++arpg::test::Failure audio_manifest_rejects_absolute_paths() noexcept {
++    const std::array<AudioManifestEntry, 14> entries{{
++        {AudioAssetId::swing_light_1, "C:/assets/stage14/audio/swing-light-1.wav"},
++        {AudioAssetId::swing_light_2, "assets/stage14/audio/swing-light-2.wav"},
++        {AudioAssetId::swing_finisher, "assets/stage14/audio/swing-finisher.wav"},
++        {AudioAssetId::swing_launcher, "assets/stage14/audio/swing-launcher.wav"},
++        {AudioAssetId::impact_1, "assets/stage14/audio/impact-1.wav"},
++        {AudioAssetId::impact_2, "assets/stage14/audio/impact-2.wav"},
++        {AudioAssetId::impact_3, "assets/stage14/audio/impact-3.wav"},
++        {AudioAssetId::impact_low, "assets/stage14/audio/impact-low.wav"},
++        {AudioAssetId::player_hurt, "assets/stage14/audio/player-hurt.wav"},
++        {AudioAssetId::landing, "assets/stage14/audio/landing.wav"},
++        {AudioAssetId::enemy_defeat, "assets/stage14/audio/enemy-defeat.wav"},
++        {AudioAssetId::warning_blink, "assets/stage14/audio/warning-blink.wav"},
++        {AudioAssetId::warning_chain, "assets/stage14/audio/warning-chain.wav"},
++        {AudioAssetId::warning_death, "assets/stage14/audio/warning-death.wav"},
++    }};
++    const auto result = arpg::platform::validate_audio_manifest(
++        {entries.data(), entries.size(), nullptr});
++    ARPG_REQUIRE(!result.valid);
++    ARPG_REQUIRE(result.error == AudioValidationError::invalid_path);
++    return {};
++}
++
++arpg::test::Failure audio_manifest_rejects_path_escape_and_empty_segments() noexcept {
++    const AudioManifestDefinition default_manifest =
++        arpg::platform::default_audio_manifest();
++    std::array<AudioManifestEntry, 14> entries{};
++    for (std::size_t index = 0U; index < entries.size(); ++index) {
++        entries[index] = default_manifest.entries[index];
++    }
++    entries.front().path = "assets/stage14/audio/../warning-death.wav";
++    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
++        {entries.data(), entries.size(), nullptr}).valid);
++    entries.front().path = "assets/stage14/audio\\warning-death.wav";
++    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
++        {entries.data(), entries.size(), nullptr}).valid);
++    entries.front().path = "assets/stage14/audio//warning-death.wav";
++    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
++        {entries.data(), entries.size(), nullptr}).valid);
++    entries.front().path = "a";
++    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
++        {entries.data(), entries.size(), nullptr}).valid);
++    entries.front().path = "/assets/stage14/audio/warning-death.wav";
++    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
++        {entries.data(), entries.size(), nullptr}).valid);
++    entries.front().path = "assets/stage14/audio/./warning-death.wav";
++    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
++        {entries.data(), entries.size(), nullptr}).valid);
++    return {};
++}
++
++arpg::test::Failure audio_metadata_rejects_wrong_pcm_format() noexcept {
++    const AudioManifestEntry entry{AudioAssetId::swing_light_1,
++        "assets/stage14/audio/swing-light-1.wav"};
++    ARPG_REQUIRE(!arpg::platform::validate_audio_metadata(
++        entry, {44100U, 48000U, 16U, 1U, 0.5F}).valid);
++    ARPG_REQUIRE(!arpg::platform::validate_audio_metadata(
++        entry, {44100U, 44100U, 8U, 1U, 0.5F}).valid);
++    ARPG_REQUIRE(!arpg::platform::validate_audio_metadata(
++        entry, {44100U, 44100U, 16U, 2U, 0.5F}).valid);
++    return {};
++}
++
++arpg::test::Failure audio_metadata_rejects_zero_or_overlong_duration() noexcept {
++    const AudioManifestEntry entry{AudioAssetId::swing_light_1,
++        "assets/stage14/audio/swing-light-1.wav"};
++    ARPG_REQUIRE(!arpg::platform::validate_audio_metadata(
++        entry, {0U, 44100U, 16U, 1U, 0.5F}).valid);
++    ARPG_REQUIRE(!arpg::platform::validate_audio_metadata(
++        entry, {66151U, 44100U, 16U, 1U, 0.5F}).valid);
++    return {};
++}
++
++arpg::test::Failure audio_metadata_rejects_silence_and_clipping() noexcept {
++    const AudioManifestEntry entry{AudioAssetId::swing_light_1,
++        "assets/stage14/audio/swing-light-1.wav"};
++    ARPG_REQUIRE(!arpg::platform::validate_audio_metadata(
++        entry, {44100U, 44100U, 16U, 1U, 0.0F}).valid);
++    ARPG_REQUIRE(!arpg::platform::validate_audio_metadata(
++        entry, {44100U, 44100U, 16U, 1U, 1.0F}).valid);
++    return {};
++}
++
++arpg::test::Failure audio_manifest_rejects_total_pcm_over_eight_mib() noexcept {
++    std::array<AudioDecodedMetadata, 63> within_budget{};
++    for (AudioDecodedMetadata& value : within_budget) {
++        value = {66150U, 44100U, 16U, 1U, 0.5F};
++    }
++    ARPG_REQUIRE(arpg::platform::validate_audio_pcm_budget(
++        within_budget.data(), within_budget.size()).valid);
++
++    std::array<AudioDecodedMetadata, 64> metadata{};
++    for (AudioDecodedMetadata& value : metadata) {
++        value = {66150U, 44100U, 16U, 1U, 0.5F};
++    }
++    const auto result = arpg::platform::validate_audio_pcm_budget(
++        metadata.data(), metadata.size());
++    ARPG_REQUIRE(!result.valid);
++    ARPG_REQUIRE(result.error == AudioValidationError::pcm_budget_exceeded);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"accepts all fourteen unique ids", &audio_manifest_accepts_all_fourteen_unique_ids},
++    {"rejects duplicate ids", &audio_manifest_rejects_duplicate_ids},
++    {"rejects absolute paths", &audio_manifest_rejects_absolute_paths},
++    {"rejects path escape and empty segments",
++        &audio_manifest_rejects_path_escape_and_empty_segments},
++    {"rejects wrong PCM format", &audio_metadata_rejects_wrong_pcm_format},
++    {"rejects zero or overlong duration",
++        &audio_metadata_rejects_zero_or_overlong_duration},
++    {"rejects silence and clipping", &audio_metadata_rejects_silence_and_clipping},
++    {"rejects total PCM over eight MiB",
++        &audio_manifest_rejects_total_pcm_over_eight_mib},
++};
++
++}  // namespace
++
++arpg::test::TestSuite audio_asset_validation_suite() noexcept {
++    return arpg::test::make_suite("audio_asset_validation", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index cd2f438..8d45ee8 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -22,20 +22,21 @@ arpg::test::TestSuite window_settings_suite() noexcept;
+ arpg::test::TestSuite pause_host_gate_suite() noexcept;
+ arpg::test::TestSuite control_hints_suite() noexcept;
+ arpg::test::TestSuite hud_view_model_suite() noexcept;
+ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
+ arpg::test::TestSuite ground_loot_view_suite() noexcept;
++arpg::test::TestSuite audio_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_asset_validation_suite() noexcept;
+ arpg::test::TestSuite material_animation_suite() noexcept;
+ arpg::test::TestSuite stage12_environment_render_suite() noexcept;
+ arpg::test::TestSuite stage12_actor_render_suite() noexcept;
+ arpg::test::TestSuite stage12_material_render_suite() noexcept;
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+@@ -63,19 +64,20 @@ int main() {
+         window_settings_suite(),
+         control_hints_suite(),
+         hud_view_model_suite(),
+         hud_notice_state_suite(),
+         loot_pickup_feedback_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
++        audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 308, "stage 13 combat readability runtime");
++    return arpg::test::run_suites(suites, 316, "stage 14 audio manifest");
+ }

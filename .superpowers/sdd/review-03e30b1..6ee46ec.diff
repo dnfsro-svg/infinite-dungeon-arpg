@@ -1,0 +1,1204 @@
+# Review package: 03e30b1..6ee46ec
+
+## Commits
+6ee46ec feat: load combat audio with per-asset fallback
+
+## Files changed
+ src/platform/raylib/CMakeLists.txt       |   2 +
+ src/platform/raylib/audio_pack.cpp       | 190 ++++++++++++++++++++
+ src/platform/raylib/audio_pack.hpp       |  46 +++++
+ src/platform/raylib/combat_audio.cpp     | 198 ++-------------------
+ src/platform/raylib/combat_audio.hpp     |  28 +--
+ src/platform/raylib/procedural_audio.cpp | 152 ++++++++++++++++
+ src/platform/raylib/procedural_audio.hpp |  26 +++
+ tests/platform/CMakeLists.txt            |   1 +
+ tests/platform/audio_pack_tests.cpp      | 293 +++++++++++++++++++++++++++++++
+ tests/platform/platform_test_main.cpp    |   4 +-
+ 10 files changed, 734 insertions(+), 206 deletions(-)
+
+## Diff
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index 0bbe708..7cd588b 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -1,12 +1,13 @@
+ add_library(arpg_raylib STATIC
+     actor_renderer.cpp
++    audio_pack.cpp
+     audio_asset_validation.cpp
+     audio_routing.cpp
+     combat_audio.cpp
+     combat_feedback.cpp
+     combat_renderer.cpp
+     control_hints.cpp
+     combat_view_math.cpp
+     death_overlay_font.cpp
+     death_overlay_renderer.cpp
+     death_overlay_view.cpp
+@@ -26,20 +27,21 @@ add_library(arpg_raylib STATIC
+     inventory_renderer.cpp
+     inventory_view_math.cpp
+     material_animation.cpp
+     material_asset_validation.cpp
+     material_pack.cpp
+     passive_tree_renderer.cpp
+     passive_tree_view_math.cpp
+     pause_menu_state.cpp
+     pause_menu_view.cpp
+     pause_menu_renderer.cpp
++    procedural_audio.cpp
+     raylib_input.cpp
+     raylib_host.cpp
+     room_renderer.cpp
+     stable_key_raylib.cpp
+     window_settings.cpp)
+ 
+ target_include_directories(arpg_raylib
+     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+ target_compile_features(arpg_raylib PUBLIC cxx_std_17)
+ target_link_libraries(arpg_raylib
+diff --git a/src/platform/raylib/audio_pack.cpp b/src/platform/raylib/audio_pack.cpp
+new file mode 100644
+index 0000000..eed165d
+--- /dev/null
++++ b/src/platform/raylib/audio_pack.cpp
+@@ -0,0 +1,190 @@
++#include "audio_pack.hpp"
++
++#include "audio_asset_validation.hpp"
++#include "audio_manifest.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::platform {
++namespace {
++
++constexpr std::size_t kAssetCount =
++    static_cast<std::size_t>(AudioAssetId::count);
++constexpr unsigned int kRequiredSampleRate = 44100U;
++constexpr unsigned int kRequiredSampleSize = 16U;
++constexpr unsigned int kRequiredChannels = 1U;
++constexpr unsigned int kMaximumFrameCount = 66150U;
++
++[[nodiscard]] constexpr bool is_known_id(AudioAssetId id) noexcept {
++    return static_cast<std::size_t>(id) < kAssetCount;
++}
++
++[[nodiscard]] constexpr bool valid_api(AudioSoundApi api) noexcept {
++    return api.load_wave != nullptr && api.wave_valid != nullptr
++        && api.load_sound_from_wave != nullptr && api.sound_valid != nullptr
++        && api.unload_wave != nullptr && api.unload_sound != nullptr
++        && api.play_sound != nullptr && api.stop_sound != nullptr;
++}
++
++[[nodiscard]] AudioSoundApi default_audio_api() noexcept {
++    return {&LoadWave, &IsWaveValid, &LoadSoundFromWave, &IsSoundValid,
++        &UnloadWave, &UnloadSound, &PlaySound, &StopSound};
++}
++
++[[nodiscard]] const AudioManifestEntry* find_entry(
++    const AudioManifestDefinition& manifest, AudioAssetId id) noexcept {
++    for (std::size_t index{}; index < manifest.entry_count; ++index) {
++        if (manifest.entries[index].id == id) return &manifest.entries[index];
++    }
++    return nullptr;
++}
++
++[[nodiscard]] float scan_pcm_peak(Wave wave) noexcept {
++    const auto* const samples = static_cast<const std::int16_t*>(wave.data);
++    std::uint32_t maximum{};
++    for (std::size_t index{}; index < wave.frameCount; ++index) {
++        const std::int32_t sample = samples[index];
++        const std::uint32_t magnitude = static_cast<std::uint32_t>(
++            sample < 0 ? -sample : sample);
++        if (magnitude > maximum) maximum = magnitude;
++    }
++    return static_cast<float>(maximum) / 32768.0F;
++}
++
++[[nodiscard]] constexpr bool safe_to_scan_pcm(Wave wave) noexcept {
++    return wave.data != nullptr && wave.frameCount != 0U
++        && wave.frameCount <= kMaximumFrameCount
++        && wave.sampleRate == kRequiredSampleRate
++        && wave.sampleSize == kRequiredSampleSize
++        && wave.channels == kRequiredChannels;
++}
++
++[[nodiscard]] AudioDecodedMetadata metadata_for(Wave wave) noexcept {
++    return {wave.frameCount, wave.sampleRate, wave.sampleSize, wave.channels,
++        scan_pcm_peak(wave)};
++}
++
++}  // namespace
++
++AudioPack::AudioPack() noexcept
++    : AudioPack(default_audio_api()) {}
++
++AudioPack::AudioPack(AudioSoundApi api) noexcept
++    : api_(api) {}
++
++bool AudioPack::load() noexcept {
++    unload();
++    if (!valid_api(api_)) return false;
++
++    const AudioManifestDefinition manifest = default_audio_manifest();
++    const bool manifest_valid = validate_audio_manifest(manifest).valid;
++    std::array<AudioDecodedMetadata, kAssetCount> external_metadata{};
++    std::size_t external_metadata_count{};
++    bool all_available = true;
++
++    for (std::size_t index{}; index < kAssetCount; ++index) {
++        const auto id = static_cast<AudioAssetId>(index);
++        const AudioManifestEntry* const entry = manifest_valid
++            ? find_entry(manifest, id)
++            : nullptr;
++        bool external_loaded{};
++
++        if (entry != nullptr) {
++            Wave external_wave = api_.load_wave(entry->path);
++            if (api_.wave_valid(external_wave)) {
++                if (safe_to_scan_pcm(external_wave)) {
++                    const AudioDecodedMetadata metadata = metadata_for(external_wave);
++                    const bool metadata_valid =
++                        validate_audio_metadata(*entry, metadata).valid;
++                    if (metadata_valid) {
++                        external_metadata[external_metadata_count++] = metadata;
++                        Sound sound = api_.load_sound_from_wave(external_wave);
++                        if (api_.sound_valid(sound)) {
++                            sounds_[index] = sound;
++                            available_[index] = true;
++                            external_loaded = true;
++                        }
++                    }
++                }
++                api_.unload_wave(external_wave);
++            }
++        }
++
++        if (!external_loaded) {
++            const Wave fallback_wave = procedural_.wave(id);
++            if (api_.wave_valid(fallback_wave)) {
++                Sound fallback_sound = api_.load_sound_from_wave(fallback_wave);
++                if (api_.sound_valid(fallback_sound)) {
++                    sounds_[index] = fallback_sound;
++                    available_[index] = true;
++                    using_fallback_[index] = true;
++                }
++            }
++        }
++        all_available = all_available && available_[index];
++    }
++
++    if (!validate_audio_pcm_budget(
++            external_metadata.data(), external_metadata_count).valid) {
++        unload();
++        all_available = true;
++        for (std::size_t index{}; index < kAssetCount; ++index) {
++            const auto id = static_cast<AudioAssetId>(index);
++            const Wave fallback_wave = procedural_.wave(id);
++            if (api_.wave_valid(fallback_wave)) {
++                Sound fallback_sound = api_.load_sound_from_wave(fallback_wave);
++                if (api_.sound_valid(fallback_sound)) {
++                    sounds_[index] = fallback_sound;
++                    available_[index] = true;
++                    using_fallback_[index] = true;
++                }
++            }
++            all_available = all_available && available_[index];
++        }
++    }
++    return all_available;
++}
++
++void AudioPack::play(AudioAssetId id) noexcept {
++    if (!is_known_id(id) || api_.play_sound == nullptr
++        || api_.sound_valid == nullptr) {
++        return;
++    }
++    const std::size_t index = static_cast<std::size_t>(id);
++    if (available_[index] && api_.sound_valid(sounds_[index])) {
++        api_.play_sound(sounds_[index]);
++    }
++}
++
++void AudioPack::stop_all() noexcept {
++    if (api_.stop_sound == nullptr || api_.sound_valid == nullptr) return;
++    for (std::size_t index{}; index < kAssetCount; ++index) {
++        if (available_[index] && api_.sound_valid(sounds_[index])) {
++            api_.stop_sound(sounds_[index]);
++        }
++    }
++}
++
++void AudioPack::unload() noexcept {
++    for (std::size_t index{}; index < kAssetCount; ++index) {
++        if (available_[index] && api_.sound_valid != nullptr
++            && api_.unload_sound != nullptr && api_.sound_valid(sounds_[index])) {
++            api_.unload_sound(sounds_[index]);
++        }
++        sounds_[index] = Sound{};
++        available_[index] = false;
++        using_fallback_[index] = false;
++    }
++}
++
++bool AudioPack::available(AudioAssetId id) const noexcept {
++    return is_known_id(id) && available_[static_cast<std::size_t>(id)];
++}
++
++bool AudioPack::using_fallback(AudioAssetId id) const noexcept {
++    return is_known_id(id) && using_fallback_[static_cast<std::size_t>(id)];
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/audio_pack.hpp b/src/platform/raylib/audio_pack.hpp
+new file mode 100644
+index 0000000..0112ecb
+--- /dev/null
++++ b/src/platform/raylib/audio_pack.hpp
+@@ -0,0 +1,46 @@
++#pragma once
++
++#include "audio_asset_types.hpp"
++#include "procedural_audio.hpp"
++
++#include <raylib.h>
++
++#include <array>
++#include <cstddef>
++
++namespace arpg::platform {
++
++struct AudioSoundApi final {
++    Wave (*load_wave)(const char* path){};
++    bool (*wave_valid)(Wave wave){};
++    Sound (*load_sound_from_wave)(Wave wave){};
++    bool (*sound_valid)(Sound sound){};
++    void (*unload_wave)(Wave wave){};
++    void (*unload_sound)(Sound sound){};
++    void (*play_sound)(Sound sound){};
++    void (*stop_sound)(Sound sound){};
++};
++
++class AudioPack final {
++public:
++    AudioPack() noexcept;
++    explicit AudioPack(AudioSoundApi api) noexcept;
++    [[nodiscard]] bool load() noexcept;
++    void play(AudioAssetId id) noexcept;
++    void stop_all() noexcept;
++    void unload() noexcept;
++    [[nodiscard]] bool available(AudioAssetId id) const noexcept;
++    [[nodiscard]] bool using_fallback(AudioAssetId id) const noexcept;
++
++private:
++    static constexpr std::size_t kAssetCount =
++        static_cast<std::size_t>(AudioAssetId::count);
++
++    AudioSoundApi api_{};
++    ProceduralAudio procedural_{};
++    std::array<Sound, kAssetCount> sounds_{};
++    std::array<bool, kAssetCount> available_{};
++    std::array<bool, kAssetCount> using_fallback_{};
++};
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_audio.cpp b/src/platform/raylib/combat_audio.cpp
+index eb0bf78..bf10114 100644
+--- a/src/platform/raylib/combat_audio.cpp
++++ b/src/platform/raylib/combat_audio.cpp
+@@ -1,238 +1,78 @@
+ #include "combat_audio.hpp"
+ 
+-#include <cmath>
+-#include <cstddef>
+-#include <cstdint>
++#include <raylib.h>
++
++#include <array>
+ 
+ namespace arpg::platform {
+ namespace {
+ 
+-constexpr float kPi = 3.14159265358979323846F;
+-
+-template <std::size_t N>
+-Wave make_wave(std::array<std::int16_t, N>& samples) noexcept {
+-    Wave wave{};
+-    wave.frameCount = static_cast<unsigned int>(N);
+-    wave.sampleRate = 22050;
+-    wave.sampleSize = 16;
+-    wave.channels = 1;
+-    wave.data = samples.data();
+-    return wave;
+-}
+-
+-bool has_cue(AudioCueMask mask, AudioCue cue) noexcept {
+-    return (mask & audio_cue_mask(cue)) != 0;
+-}
+-
+-Sound* sound_for(AudioAssetId id, Sound& weapon,
+-    std::array<Sound, 3>& material, Sound& low, Sound& blink_warning,
+-    Sound& chain_warning, Sound& death_warning) noexcept {
+-    switch (id) {
+-    case AudioAssetId::swing_light_1:
+-    case AudioAssetId::swing_light_2:
+-    case AudioAssetId::swing_finisher:
+-    case AudioAssetId::swing_launcher:
+-        return &weapon;
+-    case AudioAssetId::impact_1: return &material[0];
+-    case AudioAssetId::impact_2: return &material[1];
+-    case AudioAssetId::impact_3: return &material[2];
+-    case AudioAssetId::impact_low:
+-    case AudioAssetId::player_hurt:
+-    case AudioAssetId::landing:
+-    case AudioAssetId::enemy_defeat:
+-        return &low;
+-    case AudioAssetId::warning_blink: return &blink_warning;
+-    case AudioAssetId::warning_chain: return &chain_warning;
+-    case AudioAssetId::warning_death: return &death_warning;
+-    case AudioAssetId::count: return nullptr;
+-    }
+-    return nullptr;
++[[nodiscard]] bool has_cue(AudioCueMask mask, AudioCue cue) noexcept {
++    return (mask & audio_cue_mask(cue)) != 0U;
+ }
+ 
+ }  // namespace
+ 
+ CombatAudio::~CombatAudio() noexcept {
+     shutdown();
+ }
+ 
+ bool CombatAudio::initialize() noexcept {
+-    if (ready_) {
+-        return true;
+-    }
++    if (ready_) return true;
+ 
+     if (!IsAudioDeviceReady()) {
+         InitAudioDevice();
+         owns_device_ = IsAudioDeviceReady();
+     }
+-    if (!IsAudioDeviceReady()) {
+-        return false;
+-    }
+-
+-    float phase = 0.0F;
+-    for (std::size_t index = 0; index < weapon_samples_.size(); ++index) {
+-        const float progress = static_cast<float>(index)
+-            / static_cast<float>(weapon_samples_.size());
+-        const float frequency = 900.0F - 680.0F * progress;
+-        phase += 2.0F * kPi * frequency / static_cast<float>(kSampleRate);
+-        const float envelope = 1.0F - progress;
+-        weapon_samples_[index] = static_cast<std::int16_t>(
+-            std::sin(phase) * envelope * 11000.0F);
+-    }
+-
+-    std::uint32_t noise = 0xA341316CU;
+-    for (std::size_t index = 0; index < material_samples_.size(); ++index) {
+-        noise = noise * 1664525U + 1013904223U;
+-        const float sample = static_cast<float>(
+-            static_cast<std::int32_t>(noise >> 16U) - 32768)
+-            / 32768.0F;
+-        const float envelope = 1.0F
+-            - static_cast<float>(index)
+-                / static_cast<float>(material_samples_.size());
+-        material_samples_[index] = static_cast<std::int16_t>(
+-            sample * envelope * 9000.0F);
+-    }
+-
+-    for (std::size_t index = 0; index < low_samples_.size(); ++index) {
+-        const float time = static_cast<float>(index)
+-            / static_cast<float>(kSampleRate);
+-        const float envelope = 1.0F
+-            - static_cast<float>(index)
+-                / static_cast<float>(low_samples_.size());
+-        low_samples_[index] = static_cast<std::int16_t>(
+-            std::sin(2.0F * kPi * 80.0F * time)
+-            * envelope * 12000.0F);
+-    }
+-
+-    for (std::size_t index = 0; index < blink_warning_samples_.size(); ++index) {
+-        const float progress = static_cast<float>(index)
+-            / static_cast<float>(blink_warning_samples_.size());
+-        blink_warning_samples_[index] = static_cast<std::int16_t>(
+-            std::sin(2.0F * kPi * 880.0F * static_cast<float>(index)
+-                / static_cast<float>(kSampleRate))
+-            * (1.0F - progress) * 9500.0F);
+-    }
+-    for (std::size_t index = 0; index < chain_warning_samples_.size(); ++index) {
+-        const float progress = static_cast<float>(index)
+-            / static_cast<float>(chain_warning_samples_.size());
+-        const float time = static_cast<float>(index) / static_cast<float>(kSampleRate);
+-        chain_warning_samples_[index] = static_cast<std::int16_t>(
+-            (std::sin(2.0F * kPi * 480.0F * time)
+-                + std::sin(2.0F * kPi * 960.0F * time) * 0.45F)
+-            * (1.0F - progress) * 7500.0F);
+-    }
+-    for (std::size_t index = 0; index < death_warning_samples_.size(); ++index) {
+-        const float progress = static_cast<float>(index)
+-            / static_cast<float>(death_warning_samples_.size());
+-        death_warning_samples_[index] = static_cast<std::int16_t>(
+-            std::sin(2.0F * kPi * 130.0F * static_cast<float>(index)
+-                / static_cast<float>(kSampleRate))
+-            * (1.0F - progress) * 11500.0F);
+-    }
++    if (!IsAudioDeviceReady()) return false;
+ 
+-    weapon_ = LoadSoundFromWave(make_wave(weapon_samples_));
+-    for (Sound& voice : material_) {
+-        voice = LoadSoundFromWave(make_wave(material_samples_));
+-    }
+-    low_ = LoadSoundFromWave(make_wave(low_samples_));
+-    blink_warning_ = LoadSoundFromWave(make_wave(blink_warning_samples_));
+-    chain_warning_ = LoadSoundFromWave(make_wave(chain_warning_samples_));
+-    death_warning_ = LoadSoundFromWave(make_wave(death_warning_samples_));
+-    ready_ = IsSoundValid(weapon_) && IsSoundValid(low_)
+-        && IsSoundValid(blink_warning_) && IsSoundValid(chain_warning_)
+-        && IsSoundValid(death_warning_);
+-    for (const Sound& voice : material_) {
+-        ready_ = ready_ && IsSoundValid(voice);
+-    }
+-    if (!ready_) {
+-        shutdown();
+-    }
++    ready_ = pack_.load();
++    if (!ready_) shutdown();
+     return ready_;
+ }
+ 
+-void CombatAudio::consume_event(
+-    const combat::CombatEvent& event) noexcept {
++void CombatAudio::consume_event(const combat::CombatEvent& event) noexcept {
+     if (event.kind == combat::CombatEventKind::reset) {
++        pack_.stop_all();
+         selection_.reset();
+         playback_budget_.reset();
+         return;
+     }
+-    if (!ready_) {
+-        return;
+-    }
++    if (!ready_) return;
++
+     const AudioPlan plan = route_audio_plan(event);
+     constexpr std::array<AudioCue, 11> kCues{{
+         AudioCue::swing_light, AudioCue::swing_finisher,
+         AudioCue::swing_launcher, AudioCue::impact, AudioCue::impact_low,
+         AudioCue::player_hurt, AudioCue::landing, AudioCue::enemy_defeat,
+         AudioCue::warning_blink, AudioCue::warning_chain,
+         AudioCue::warning_death,
+     }};
+     for (const AudioCue cue : kCues) {
+-        if (!has_cue(plan.cues, cue) || !playback_budget_.allow(cue, event.tick)) {
+-            continue;
+-        }
+-        Sound* const sound = sound_for(selection_.select(cue), weapon_, material_,
+-            low_, blink_warning_, chain_warning_, death_warning_);
+-        if (sound != nullptr) {
+-            PlaySound(*sound);
++        if (has_cue(plan.cues, cue)
++            && playback_budget_.allow(cue, event.tick)) {
++            pack_.play(selection_.select(cue));
+         }
+     }
+ }
+ 
+ void CombatAudio::stop_all() noexcept {
++    pack_.stop_all();
+     selection_.reset();
+     playback_budget_.reset();
+-    if (!ready_) {
+-        return;
+-    }
+-    StopSound(weapon_);
+-    for (const Sound& voice : material_) {
+-        StopSound(voice);
+-    }
+-    StopSound(low_);
+-    StopSound(blink_warning_);
+-    StopSound(chain_warning_);
+-    StopSound(death_warning_);
+ }
+ 
+ void CombatAudio::shutdown() noexcept {
+-    if (IsSoundValid(weapon_)) {
+-        UnloadSound(weapon_);
+-    }
+-    for (Sound& voice : material_) {
+-        if (IsSoundValid(voice)) {
+-            UnloadSound(voice);
+-        }
+-        voice = Sound{};
+-    }
+-    if (IsSoundValid(low_)) {
+-        UnloadSound(low_);
+-    }
+-    if (IsSoundValid(blink_warning_)) {
+-        UnloadSound(blink_warning_);
+-    }
+-    if (IsSoundValid(chain_warning_)) {
+-        UnloadSound(chain_warning_);
+-    }
+-    if (IsSoundValid(death_warning_)) {
+-        UnloadSound(death_warning_);
+-    }
+-    weapon_ = Sound{};
+-    low_ = Sound{};
+-    blink_warning_ = Sound{};
+-    chain_warning_ = Sound{};
+-    death_warning_ = Sound{};
++    pack_.unload();
+     selection_.reset();
+     playback_budget_.reset();
+     ready_ = false;
+-    if (owns_device_ && IsAudioDeviceReady()) {
+-        CloseAudioDevice();
+-    }
++    if (owns_device_ && IsAudioDeviceReady()) CloseAudioDevice();
+     owns_device_ = false;
+ }
+ 
+ bool CombatAudio::ready() const noexcept {
+     return ready_;
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/combat_audio.hpp b/src/platform/raylib/combat_audio.hpp
+index 12845cd..1b10d73 100644
+--- a/src/platform/raylib/combat_audio.hpp
++++ b/src/platform/raylib/combat_audio.hpp
+@@ -1,56 +1,32 @@
+ #pragma once
+ 
++#include "audio_pack.hpp"
+ #include "audio_routing.hpp"
+ 
+-#include <raylib.h>
+-
+-#include <array>
+-#include <cstddef>
+-#include <cstdint>
+-
+ namespace arpg::platform {
+ 
+ class CombatAudio final {
+ public:
+     CombatAudio() noexcept = default;
+     ~CombatAudio() noexcept;
+ 
+     CombatAudio(const CombatAudio&) = delete;
+     CombatAudio& operator=(const CombatAudio&) = delete;
+     CombatAudio(CombatAudio&&) = delete;
+     CombatAudio& operator=(CombatAudio&&) = delete;
+ 
+     [[nodiscard]] bool initialize() noexcept;
+     void consume_event(const combat::CombatEvent& event) noexcept;
+     void stop_all() noexcept;
+     void shutdown() noexcept;
+     [[nodiscard]] bool ready() const noexcept;
+ 
+ private:
+-    static constexpr unsigned int kSampleRate = 22050;
+-    static constexpr std::size_t kWeaponSampleCount = 1764;
+-    static constexpr std::size_t kMaterialSampleCount = 1323;
+-    static constexpr std::size_t kLowSampleCount = 2646;
+-    static constexpr std::size_t kBlinkWarningSampleCount = 882;
+-    static constexpr std::size_t kChainWarningSampleCount = 1102;
+-    static constexpr std::size_t kDeathWarningSampleCount = 1764;
+-
+-    std::array<std::int16_t, kWeaponSampleCount> weapon_samples_{};
+-    std::array<std::int16_t, kMaterialSampleCount> material_samples_{};
+-    std::array<std::int16_t, kLowSampleCount> low_samples_{};
+-    std::array<std::int16_t, kBlinkWarningSampleCount> blink_warning_samples_{};
+-    std::array<std::int16_t, kChainWarningSampleCount> chain_warning_samples_{};
+-    std::array<std::int16_t, kDeathWarningSampleCount> death_warning_samples_{};
+-    Sound weapon_{};
+-    std::array<Sound, 3> material_{};
+-    Sound low_{};
+-    Sound blink_warning_{};
+-    Sound chain_warning_{};
+-    Sound death_warning_{};
++    AudioPack pack_{};
+     AudioSelectionState selection_{};
+     AudioPlaybackBudget playback_budget_{};
+     bool ready_{};
+     bool owns_device_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/procedural_audio.cpp b/src/platform/raylib/procedural_audio.cpp
+new file mode 100644
+index 0000000..7264863
+--- /dev/null
++++ b/src/platform/raylib/procedural_audio.cpp
+@@ -0,0 +1,152 @@
++#include "procedural_audio.hpp"
++
++#include <array>
++#include <cmath>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::platform {
++namespace {
++
++constexpr unsigned int kSampleRate = 22050U;
++constexpr float kPi = 3.14159265358979323846F;
++constexpr std::size_t kAssetCount =
++    static_cast<std::size_t>(AudioAssetId::count);
++
++constexpr std::array<unsigned int, kAssetCount> kFrameCounts{{
++    1764U, 1543U, 2205U, 1984U,
++    1323U, 1323U, 1323U, 2646U,
++    1984U, 1764U, 2205U,
++    882U, 1102U, 1764U,
++}};
++
++[[nodiscard]] constexpr bool is_known_id(AudioAssetId id) noexcept {
++    return static_cast<std::size_t>(id) < kAssetCount;
++}
++
++[[nodiscard]] float envelope(std::size_t index, unsigned int count) noexcept {
++    return 1.0F - static_cast<float>(index) / static_cast<float>(count);
++}
++
++void synthesize_swing(std::int16_t* samples, unsigned int count,
++    float start_frequency, float end_frequency, float amplitude) noexcept {
++    float phase{};
++    for (std::size_t index{}; index < count; ++index) {
++        const float progress = static_cast<float>(index)
++            / static_cast<float>(count);
++        const float frequency = start_frequency
++            + (end_frequency - start_frequency) * progress;
++        phase += 2.0F * kPi * frequency / static_cast<float>(kSampleRate);
++        samples[index] = static_cast<std::int16_t>(
++            std::sin(phase) * envelope(index, count) * amplitude);
++    }
++}
++
++void synthesize_impact(std::int16_t* samples, unsigned int count,
++    std::uint32_t seed, float tone_frequency, float amplitude) noexcept {
++    std::uint32_t noise = seed;
++    for (std::size_t index{}; index < count; ++index) {
++        noise = noise * 1664525U + 1013904223U;
++        const float random_sample = static_cast<float>(
++            static_cast<std::int32_t>(noise >> 16U) - 32768)
++            / 32768.0F;
++        const float time = static_cast<float>(index)
++            / static_cast<float>(kSampleRate);
++        const float tone = std::sin(2.0F * kPi * tone_frequency * time);
++        samples[index] = static_cast<std::int16_t>(
++            (random_sample * 0.72F + tone * 0.28F)
++            * envelope(index, count) * amplitude);
++    }
++}
++
++void synthesize_low(std::int16_t* samples, unsigned int count,
++    float frequency, float overtone, float amplitude) noexcept {
++    for (std::size_t index{}; index < count; ++index) {
++        const float time = static_cast<float>(index)
++            / static_cast<float>(kSampleRate);
++        const float body = std::sin(2.0F * kPi * frequency * time);
++        const float harmonic = std::sin(
++            2.0F * kPi * frequency * 2.0F * time) * overtone;
++        samples[index] = static_cast<std::int16_t>(
++            (body + harmonic) * envelope(index, count) * amplitude);
++    }
++}
++
++void synthesize_warning(std::int16_t* samples, unsigned int count,
++    float frequency, float harmonic, float amplitude) noexcept {
++    for (std::size_t index{}; index < count; ++index) {
++        const float time = static_cast<float>(index)
++            / static_cast<float>(kSampleRate);
++        const float primary = std::sin(2.0F * kPi * frequency * time);
++        const float secondary = std::sin(
++            2.0F * kPi * frequency * 2.0F * time) * harmonic;
++        samples[index] = static_cast<std::int16_t>(
++            (primary + secondary) * envelope(index, count) * amplitude);
++    }
++}
++
++}  // namespace
++
++Wave ProceduralAudio::wave(AudioAssetId id) noexcept {
++    if (!is_known_id(id)) return {};
++
++    const std::size_t asset_index = static_cast<std::size_t>(id);
++    const unsigned int frame_count = kFrameCounts[asset_index];
++    std::int16_t* const samples = samples_[asset_index].data();
++    switch (id) {
++    case AudioAssetId::swing_light_1:
++        synthesize_swing(samples, frame_count, 940.0F, 240.0F, 10500.0F);
++        break;
++    case AudioAssetId::swing_light_2:
++        synthesize_swing(samples, frame_count, 1080.0F, 310.0F, 9800.0F);
++        break;
++    case AudioAssetId::swing_finisher:
++        synthesize_swing(samples, frame_count, 760.0F, 95.0F, 12500.0F);
++        break;
++    case AudioAssetId::swing_launcher:
++        synthesize_swing(samples, frame_count, 260.0F, 1040.0F, 11200.0F);
++        break;
++    case AudioAssetId::impact_1:
++        synthesize_impact(samples, frame_count, 0xA341316CU, 150.0F, 9000.0F);
++        break;
++    case AudioAssetId::impact_2:
++        synthesize_impact(samples, frame_count, 0xC8013EA4U, 185.0F, 8700.0F);
++        break;
++    case AudioAssetId::impact_3:
++        synthesize_impact(samples, frame_count, 0xAD90777DU, 120.0F, 9400.0F);
++        break;
++    case AudioAssetId::impact_low:
++        synthesize_low(samples, frame_count, 72.0F, 0.22F, 10500.0F);
++        break;
++    case AudioAssetId::player_hurt:
++        synthesize_low(samples, frame_count, 118.0F, 0.34F, 9000.0F);
++        break;
++    case AudioAssetId::landing:
++        synthesize_low(samples, frame_count, 86.0F, 0.12F, 8000.0F);
++        break;
++    case AudioAssetId::enemy_defeat:
++        synthesize_low(samples, frame_count, 56.0F, 0.28F, 11000.0F);
++        break;
++    case AudioAssetId::warning_blink:
++        synthesize_warning(samples, frame_count, 880.0F, 0.0F, 9500.0F);
++        break;
++    case AudioAssetId::warning_chain:
++        synthesize_warning(samples, frame_count, 480.0F, 0.45F, 7500.0F);
++        break;
++    case AudioAssetId::warning_death:
++        synthesize_warning(samples, frame_count, 130.0F, 0.16F, 11000.0F);
++        break;
++    case AudioAssetId::count:
++        return {};
++    }
++
++    Wave result{};
++    result.frameCount = frame_count;
++    result.sampleRate = kSampleRate;
++    result.sampleSize = 16U;
++    result.channels = 1U;
++    result.data = samples;
++    return result;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/procedural_audio.hpp b/src/platform/raylib/procedural_audio.hpp
+new file mode 100644
+index 0000000..7bafc16
+--- /dev/null
++++ b/src/platform/raylib/procedural_audio.hpp
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include "audio_asset_types.hpp"
++
++#include <raylib.h>
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::platform {
++
++class ProceduralAudio final {
++public:
++    [[nodiscard]] Wave wave(AudioAssetId id) noexcept;
++
++private:
++    static constexpr std::size_t kMaximumSampleCount = 2646U;
++    static constexpr std::size_t kAssetCount =
++        static_cast<std::size_t>(AudioAssetId::count);
++
++    std::array<std::array<std::int16_t, kMaximumSampleCount>, kAssetCount>
++        samples_{};
++};
++
++}  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 5bb6f86..76fe093 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1,15 +1,16 @@
+ if(TARGET arpg_raylib)
+     add_executable(arpg_platform_tests
+         ../core/allocation_probe.cpp
+         platform_test_main.cpp
+         host_input_tests.cpp
++        audio_pack_tests.cpp
+         audio_routing_tests.cpp
+         combat_feedback_tests.cpp
+         combat_view_math_tests.cpp
+         monster_view_tests.cpp
+         dungeon_view_math_tests.cpp
+         passive_tree_view_tests.cpp
+         host_launch_options_tests.cpp
+         dungeon_runtime_tests.cpp
+         pause_host_gate_tests.cpp
+         pause_menu_state_tests.cpp
+diff --git a/tests/platform/audio_pack_tests.cpp b/tests/platform/audio_pack_tests.cpp
+new file mode 100644
+index 0000000..b1426e1
+--- /dev/null
++++ b/tests/platform/audio_pack_tests.cpp
+@@ -0,0 +1,293 @@
++#include "test_framework.hpp"
++
++#include "audio_pack.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace {
++
++using arpg::platform::AudioAssetId;
++using arpg::platform::AudioPack;
++using arpg::platform::AudioSoundApi;
++
++constexpr std::size_t kAudioAssetCount =
++    static_cast<std::size_t>(AudioAssetId::count);
++constexpr std::size_t kExternalFrameCount = 64U;
++
++enum class FakeWaveMode : std::uint8_t {
++    valid,
++    missing,
++    invalid_format,
++};
++
++struct FakeAudio final {
++    std::array<FakeWaveMode, kAudioAssetCount> wave_modes{};
++    std::array<std::array<std::int16_t, kExternalFrameCount>,
++        kAudioAssetCount> external_samples{};
++    std::size_t fail_external_sound_index{kAudioAssetCount + 1U};
++    std::size_t load_wave_count{};
++    std::size_t load_sound_count{};
++    std::size_t unload_wave_count{};
++    std::size_t unload_sound_count{};
++    std::size_t play_count{};
++    std::size_t stop_count{};
++    unsigned int next_sound_handle{1U};
++
++    FakeAudio() noexcept {
++        wave_modes.fill(FakeWaveMode::valid);
++        for (auto& samples : external_samples) {
++            samples.fill(2048);
++        }
++    }
++};
++
++FakeAudio* g_fake_audio{};
++
++struct FakeAudioScope final {
++    explicit FakeAudioScope(FakeAudio& fake) noexcept {
++        g_fake_audio = &fake;
++    }
++    ~FakeAudioScope() noexcept {
++        g_fake_audio = nullptr;
++    }
++};
++
++[[nodiscard]] std::size_t external_wave_index(Wave wave) noexcept {
++    if (g_fake_audio == nullptr) return kAudioAssetCount;
++    for (std::size_t index{}; index < kAudioAssetCount; ++index) {
++        if (wave.data == g_fake_audio->external_samples[index].data()) {
++            return index;
++        }
++    }
++    return kAudioAssetCount;
++}
++
++Wave fake_load_wave(const char*) noexcept {
++    if (g_fake_audio == nullptr
++        || g_fake_audio->load_wave_count >= kAudioAssetCount) {
++        return {};
++    }
++    const std::size_t index = g_fake_audio->load_wave_count++;
++    if (g_fake_audio->wave_modes[index] == FakeWaveMode::missing) {
++        return {};
++    }
++    Wave wave{};
++    wave.frameCount = static_cast<unsigned int>(kExternalFrameCount);
++    wave.sampleRate = 44100U;
++    wave.sampleSize = g_fake_audio->wave_modes[index]
++            == FakeWaveMode::invalid_format
++        ? 8U
++        : 16U;
++    wave.channels = 1U;
++    wave.data = g_fake_audio->external_samples[index].data();
++    return wave;
++}
++
++bool fake_wave_valid(Wave wave) noexcept {
++    return wave.data != nullptr && wave.frameCount != 0U;
++}
++
++Sound fake_load_sound_from_wave(Wave wave) noexcept {
++    if (g_fake_audio == nullptr) return {};
++    ++g_fake_audio->load_sound_count;
++    const std::size_t external_index = external_wave_index(wave);
++    if (external_index == g_fake_audio->fail_external_sound_index) {
++        return {};
++    }
++    Sound sound{};
++    sound.frameCount = g_fake_audio->next_sound_handle++;
++    return sound;
++}
++
++bool fake_sound_valid(Sound sound) noexcept {
++    return sound.frameCount != 0U;
++}
++
++void fake_unload_wave(Wave wave) noexcept {
++    if (g_fake_audio != nullptr && fake_wave_valid(wave)) {
++        ++g_fake_audio->unload_wave_count;
++    }
++}
++
++void fake_unload_sound(Sound sound) noexcept {
++    if (g_fake_audio != nullptr && fake_sound_valid(sound)) {
++        ++g_fake_audio->unload_sound_count;
++    }
++}
++
++void fake_play_sound(Sound sound) noexcept {
++    if (g_fake_audio != nullptr && fake_sound_valid(sound)) {
++        ++g_fake_audio->play_count;
++    }
++}
++
++void fake_stop_sound(Sound sound) noexcept {
++    if (g_fake_audio != nullptr && fake_sound_valid(sound)) {
++        ++g_fake_audio->stop_count;
++    }
++}
++
++[[nodiscard]] AudioSoundApi fake_audio_api() noexcept {
++    return {&fake_load_wave, &fake_wave_valid, &fake_load_sound_from_wave,
++        &fake_sound_valid, &fake_unload_wave, &fake_unload_sound,
++        &fake_play_sound, &fake_stop_sound};
++}
++
++arpg::test::Failure audio_pack_loads_all_fourteen_external_assets() noexcept {
++    FakeAudio fake{};
++    FakeAudioScope scope{fake};
++    AudioPack pack{fake_audio_api()};
++
++    ARPG_REQUIRE(pack.load());
++    ARPG_REQUIRE(fake.load_wave_count == kAudioAssetCount);
++    ARPG_REQUIRE(fake.load_sound_count == kAudioAssetCount);
++    ARPG_REQUIRE(fake.unload_wave_count == kAudioAssetCount);
++    for (std::size_t index{}; index < kAudioAssetCount; ++index) {
++        const auto id = static_cast<AudioAssetId>(index);
++        ARPG_REQUIRE(pack.available(id));
++        ARPG_REQUIRE(!pack.using_fallback(id));
++        pack.play(id);
++    }
++    pack.stop_all();
++    ARPG_REQUIRE(fake.play_count == kAudioAssetCount);
++    ARPG_REQUIRE(fake.stop_count == kAudioAssetCount);
++    pack.unload();
++    return {};
++}
++
++arpg::test::Failure audio_pack_falls_back_only_for_one_missing_asset() noexcept {
++    FakeAudio fake{};
++    fake.wave_modes[4] = FakeWaveMode::missing;
++    FakeAudioScope scope{fake};
++    AudioPack pack{fake_audio_api()};
++
++    ARPG_REQUIRE(pack.load());
++    ARPG_REQUIRE(pack.using_fallback(AudioAssetId::impact_1));
++    ARPG_REQUIRE(!pack.using_fallback(AudioAssetId::impact_2));
++    ARPG_REQUIRE(fake.load_sound_count == kAudioAssetCount);
++    ARPG_REQUIRE(fake.unload_wave_count == kAudioAssetCount - 1U);
++    pack.unload();
++    return {};
++}
++
++arpg::test::Failure audio_pack_falls_back_only_for_one_bad_format() noexcept {
++    FakeAudio fake{};
++    fake.wave_modes[9] = FakeWaveMode::invalid_format;
++    FakeAudioScope scope{fake};
++    AudioPack pack{fake_audio_api()};
++
++    ARPG_REQUIRE(pack.load());
++    ARPG_REQUIRE(pack.using_fallback(AudioAssetId::landing));
++    ARPG_REQUIRE(!pack.using_fallback(AudioAssetId::enemy_defeat));
++    ARPG_REQUIRE(fake.load_sound_count == kAudioAssetCount);
++    ARPG_REQUIRE(fake.unload_wave_count == kAudioAssetCount);
++    pack.unload();
++    return {};
++}
++
++arpg::test::Failure audio_pack_falls_back_after_external_sound_creation_fails() noexcept {
++    FakeAudio fake{};
++    fake.fail_external_sound_index = 12U;
++    FakeAudioScope scope{fake};
++    AudioPack pack{fake_audio_api()};
++
++    ARPG_REQUIRE(pack.load());
++    ARPG_REQUIRE(pack.available(AudioAssetId::warning_chain));
++    ARPG_REQUIRE(pack.using_fallback(AudioAssetId::warning_chain));
++    ARPG_REQUIRE(!pack.using_fallback(AudioAssetId::warning_blink));
++    ARPG_REQUIRE(fake.load_sound_count == kAudioAssetCount + 1U);
++    ARPG_REQUIRE(fake.unload_wave_count == kAudioAssetCount);
++    pack.unload();
++    return {};
++}
++
++arpg::test::Failure audio_pack_is_ready_when_all_external_assets_are_missing() noexcept {
++    FakeAudio fake{};
++    fake.wave_modes.fill(FakeWaveMode::missing);
++    FakeAudioScope scope{fake};
++    AudioPack pack{fake_audio_api()};
++
++    ARPG_REQUIRE(pack.load());
++    ARPG_REQUIRE(fake.unload_wave_count == 0U);
++    ARPG_REQUIRE(fake.load_sound_count == kAudioAssetCount);
++    for (std::size_t index{}; index < kAudioAssetCount; ++index) {
++        const auto id = static_cast<AudioAssetId>(index);
++        ARPG_REQUIRE(pack.available(id));
++        ARPG_REQUIRE(pack.using_fallback(id));
++    }
++    pack.unload();
++    return {};
++}
++
++arpg::test::Failure audio_pack_fails_safely_with_incomplete_api() noexcept {
++    FakeAudio fake{};
++    FakeAudioScope scope{fake};
++    AudioSoundApi incomplete = fake_audio_api();
++    incomplete.load_wave = nullptr;
++    AudioPack pack{incomplete};
++
++    ARPG_REQUIRE(!pack.load());
++    pack.play(AudioAssetId::swing_light_1);
++    pack.stop_all();
++    pack.unload();
++    ARPG_REQUIRE(fake.load_wave_count == 0U);
++    ARPG_REQUIRE(fake.load_sound_count == 0U);
++    ARPG_REQUIRE(fake.unload_sound_count == 0U);
++    return {};
++}
++
++arpg::test::Failure audio_pack_unloads_only_valid_resources() noexcept {
++    FakeAudio fake{};
++    fake.wave_modes[2] = FakeWaveMode::missing;
++    fake.fail_external_sound_index = 7U;
++    FakeAudioScope scope{fake};
++    AudioPack pack{fake_audio_api()};
++
++    ARPG_REQUIRE(pack.load());
++    ARPG_REQUIRE(fake.unload_wave_count == kAudioAssetCount - 1U);
++    ARPG_REQUIRE(fake.unload_sound_count == 0U);
++    pack.unload();
++    ARPG_REQUIRE(fake.unload_sound_count == kAudioAssetCount);
++    return {};
++}
++
++arpg::test::Failure audio_pack_repeated_unload_does_not_release_twice() noexcept {
++    FakeAudio fake{};
++    FakeAudioScope scope{fake};
++    AudioPack pack{fake_audio_api()};
++
++    ARPG_REQUIRE(pack.load());
++    pack.unload();
++    pack.unload();
++    ARPG_REQUIRE(fake.unload_sound_count == kAudioAssetCount);
++    ARPG_REQUIRE(!pack.available(AudioAssetId::swing_light_1));
++    ARPG_REQUIRE(!pack.using_fallback(AudioAssetId::swing_light_1));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"loads all fourteen external assets",
++        &audio_pack_loads_all_fourteen_external_assets},
++    {"one missing asset uses one fallback",
++        &audio_pack_falls_back_only_for_one_missing_asset},
++    {"one bad format uses one fallback",
++        &audio_pack_falls_back_only_for_one_bad_format},
++    {"external sound failure uses fallback",
++        &audio_pack_falls_back_after_external_sound_creation_fails},
++    {"all missing assets still ready",
++        &audio_pack_is_ready_when_all_external_assets_are_missing},
++    {"incomplete api fails safely",
++        &audio_pack_fails_safely_with_incomplete_api},
++    {"unloads only valid resources",
++        &audio_pack_unloads_only_valid_resources},
++    {"repeated unload is idempotent",
++        &audio_pack_repeated_unload_does_not_release_twice},
++};
++
++}  // namespace
++
++arpg::test::TestSuite audio_pack_suite() noexcept {
++    return arpg::test::make_suite("audio_pack", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 0946d60..8b464e6 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -1,20 +1,21 @@
+ #include "test_framework.hpp"
+ 
+ #if defined(_WIN32) && defined(_DEBUG)
+ #include <crtdbg.h>
+ #include <cstdlib>
+ #endif
+ 
+ arpg::test::TestSuite combat_view_math_suite() noexcept;
+ arpg::test::TestSuite monster_view_suite() noexcept;
+ arpg::test::TestSuite combat_feedback_suite() noexcept;
++arpg::test::TestSuite audio_pack_suite() noexcept;
+ arpg::test::TestSuite audio_routing_suite() noexcept;
+ arpg::test::TestSuite host_input_suite() noexcept;
+ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+ arpg::test::TestSuite passive_tree_view_suite() noexcept;
+ arpg::test::TestSuite host_launch_options_suite() noexcept;
+ arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+ arpg::test::TestSuite inventory_view_math_suite() noexcept;
+ arpg::test::TestSuite death_input_gate_suite() noexcept;
+ arpg::test::TestSuite death_overlay_view_suite() noexcept;
+ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+@@ -44,20 +45,21 @@ int main() {
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+ #endif
+     const arpg::test::TestSuite suites[] = {
+         combat_view_math_suite(),
+         monster_view_suite(),
+         combat_feedback_suite(),
++        audio_pack_suite(),
+         audio_routing_suite(),
+         host_input_suite(),
+         dungeon_view_math_suite(),
+         passive_tree_view_suite(),
+         host_launch_options_suite(),
+         dungeon_runtime_suite(),
+         pause_host_gate_suite(),
+         inventory_view_math_suite(),
+         death_input_gate_suite(),
+         death_overlay_view_suite(),
+@@ -74,12 +76,12 @@ int main() {
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+         audio_asset_validation_suite(),
+         material_asset_validation_suite(),
+         material_animation_suite(),
+         stage12_environment_render_suite(),
+         stage12_actor_render_suite(),
+         stage12_material_render_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 324, "stage 14 audio routing");
++    return arpg::test::run_suites(suites, 332, "stage 14 audio pack");
+ }
