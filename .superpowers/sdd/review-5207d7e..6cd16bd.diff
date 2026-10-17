@@ -1,0 +1,515 @@
+# Review package: 5207d7e381107ee1449838fa06f1eba778f83036..6cd16bd2b60b7b9dc979b9336c65e801b5459bfb
+
+## Commits
+6cd16bd feat: establish stage 1 combat module
+
+## Files changed
+ CMakeLists.txt                          |  2 +
+ src/combat/CMakeLists.txt               |  9 ++++
+ src/combat/attack_catalog.cpp           | 96 +++++++++++++++++++++++++++++++++
+ src/combat/attack_catalog.hpp           | 19 +++++++
+ src/combat/combat_types.hpp             | 63 ++++++++++++++++++++++
+ tests/combat/CMakeLists.txt             | 12 +++++
+ tests/combat/attack_catalog_tests.cpp   | 56 +++++++++++++++++++
+ tests/combat/combat_test_main.cpp       | 49 +++++++++++++++++
+ tests/platform/CMakeLists.txt           | 14 ++++-
+ tests/platform/core_boundary_test.cmake | 53 +++++++++---------
+ 10 files changed, 348 insertions(+), 25 deletions(-)
+
+## Diff
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f74e411..a3be160 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -33,21 +33,23 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+ 
+ function(arpg_enable_project_warnings target_name)
+     if(MSVC)
+         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
+     endif()
+ endfunction()
+ 
+ include(CTest)
+ add_subdirectory(src/core)
++add_subdirectory(src/combat)
+ 
+ if(ARPG_BUILD_GRAPHICS)
+     include(cmake/Dependencies.cmake)
+     add_subdirectory(src/platform/raylib)
+     add_subdirectory(src/app)
+ endif()
+ 
+ if(BUILD_TESTING)
+     add_subdirectory(tests/core)
++    add_subdirectory(tests/combat)
+     add_subdirectory(tests/platform)
+ endif()
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+new file mode 100644
+index 0000000..7b532e5
+--- /dev/null
++++ b/src/combat/CMakeLists.txt
+@@ -0,0 +1,9 @@
++add_library(arpg_combat STATIC
++    attack_catalog.cpp)
++
++target_include_directories(arpg_combat
++    PUBLIC "${PROJECT_SOURCE_DIR}/src")
++target_compile_features(arpg_combat PUBLIC cxx_std_17)
++target_link_libraries(arpg_combat PRIVATE arpg_core)
++
++arpg_enable_project_warnings(arpg_combat)
+diff --git a/src/combat/attack_catalog.cpp b/src/combat/attack_catalog.cpp
+new file mode 100644
+index 0000000..3de1b07
+--- /dev/null
++++ b/src/combat/attack_catalog.cpp
+@@ -0,0 +1,96 @@
++#include "combat/attack_catalog.hpp"
++
++#include <array>
++
++namespace arpg::combat {
++namespace {
++
++constexpr std::array<AttackDefinition, kAttackCount> kAttackDefinitions{{
++    {AttackId::j1,       5, 3,  9, 28, 10, ImpactKind::light_hitstun,
++     {{0.20F,-0.65F, 0.10F},{1.50F,0.65F,1.50F}},0.10F,0.0F,0.0F,FeedbackLevel::light},
++    {AttackId::j2,       6, 3, 10, 34, 12, ImpactKind::medium_hitstun,
++     {{0.20F,-0.65F, 0.10F},{1.65F,0.65F,1.55F}},0.14F,2.2F,0.0F,FeedbackLevel::medium},
++    {AttackId::j3,       8, 4, 16, 52, 20, ImpactKind::knockdown,
++     {{0.15F,-0.70F, 0.05F},{1.90F,0.70F,1.65F}},0.20F,5.0F,0.0F,FeedbackLevel::heavy},
++    {AttackId::heavy,   14, 5, 22, 90, 40, ImpactKind::knockdown,
++     {{0.10F,-0.75F, 0.00F},{2.20F,0.75F,1.75F}},0.24F,7.0F,0.0F,FeedbackLevel::heavy},
++    {AttackId::launcher, 7, 4, 17, 38, 18, ImpactKind::launch,
++     {{0.10F,-0.65F, 0.00F},{1.40F,0.65F,1.90F}},0.12F,1.2F,9.5F,FeedbackLevel::medium},
++    {AttackId::air_j,    4, 5, 12, 42, 15, ImpactKind::medium_hitstun,
++     {{0.10F,-0.65F,-0.40F},{1.60F,0.65F,1.20F}},0.08F,2.5F,0.0F,FeedbackLevel::medium},
++}};
++
++constexpr bool has_valid_feedback(FeedbackLevel feedback) noexcept {
++    return feedback == FeedbackLevel::light
++        || feedback == FeedbackLevel::medium
++        || feedback == FeedbackLevel::heavy;
++}
++
++constexpr bool has_inverted_hitbox(const Aabb& hitbox) noexcept {
++    return hitbox.minimum.x > hitbox.maximum.x
++        || hitbox.minimum.y > hitbox.maximum.y
++        || hitbox.minimum.z > hitbox.maximum.z;
++}
++
++constexpr bool catalog_is_valid() noexcept {
++    for (std::size_t index = 0; index < kAttackDefinitions.size(); ++index) {
++        const auto& definition = kAttackDefinitions[index];
++        if (definition.startup_ticks == 0
++                || definition.active_ticks == 0
++                || definition.recovery_ticks == 0
++                || definition.damage <= 0
++                || definition.break_damage < 0
++                || has_inverted_hitbox(definition.local_hitbox)
++                || !has_valid_feedback(definition.feedback)) {
++            return false;
++        }
++
++        for (std::size_t other = index + 1;
++             other < kAttackDefinitions.size();
++             ++other) {
++            if (definition.id == kAttackDefinitions[other].id) {
++                return false;
++            }
++        }
++    }
++    return true;
++}
++
++}  // namespace
++
++const AttackDefinition* find_attack_definition(AttackId id) noexcept {
++    for (const auto& definition : kAttackDefinitions) {
++        if (definition.id == id) {
++            return &definition;
++        }
++    }
++    return nullptr;
++}
++
++AttackPhase attack_phase_at(
++    const AttackDefinition& definition,
++    std::uint32_t elapsed_ticks) noexcept {
++    const auto active_start =
++        static_cast<std::uint32_t>(definition.startup_ticks);
++    const auto recovery_start =
++        active_start + static_cast<std::uint32_t>(definition.active_ticks);
++    const auto finished_start =
++        recovery_start + static_cast<std::uint32_t>(definition.recovery_ticks);
++
++    if (elapsed_ticks < active_start) {
++        return AttackPhase::startup;
++    }
++    if (elapsed_ticks < recovery_start) {
++        return AttackPhase::active;
++    }
++    if (elapsed_ticks < finished_start) {
++        return AttackPhase::recovery;
++    }
++    return AttackPhase::finished;
++}
++
++bool validate_attack_catalog() noexcept {
++    return catalog_is_valid();
++}
++
++}  // namespace arpg::combat
+diff --git a/src/combat/attack_catalog.hpp b/src/combat/attack_catalog.hpp
+new file mode 100644
+index 0000000..1725d9c
+--- /dev/null
++++ b/src/combat/attack_catalog.hpp
+@@ -0,0 +1,19 @@
++#pragma once
++
++#include "combat/combat_types.hpp"
++
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::combat {
++
++inline constexpr std::size_t kAttackCount = 6;
++
++[[nodiscard]] const AttackDefinition* find_attack_definition(
++    AttackId id) noexcept;
++[[nodiscard]] AttackPhase attack_phase_at(
++    const AttackDefinition& definition,
++    std::uint32_t elapsed_ticks) noexcept;
++[[nodiscard]] bool validate_attack_catalog() noexcept;
++
++}  // namespace arpg::combat
+diff --git a/src/combat/combat_types.hpp b/src/combat/combat_types.hpp
+new file mode 100644
+index 0000000..cb8157c
+--- /dev/null
++++ b/src/combat/combat_types.hpp
+@@ -0,0 +1,63 @@
++#pragma once
++
++#include <cstdint>
++
++namespace arpg::combat {
++
++struct Vec3 final {
++    float x{};
++    float y{};
++    float z{};
++};
++
++struct Aabb final {
++    Vec3 minimum{};
++    Vec3 maximum{};
++};
++
++enum class AttackId : std::uint8_t {
++    j1 = 0,
++    j2,
++    j3,
++    heavy,
++    launcher,
++    air_j,
++    none = 0xFF,
++};
++
++enum class AttackPhase : std::uint8_t {
++    startup,
++    active,
++    recovery,
++    finished,
++};
++
++enum class FeedbackLevel : std::uint8_t {
++    light,
++    medium,
++    heavy,
++};
++
++enum class ImpactKind : std::uint8_t {
++    light_hitstun,
++    medium_hitstun,
++    knockdown,
++    launch,
++};
++
++struct AttackDefinition final {
++    AttackId id{AttackId::none};
++    std::uint16_t startup_ticks{};
++    std::uint16_t active_ticks{};
++    std::uint16_t recovery_ticks{};
++    int damage{};
++    int break_damage{};
++    ImpactKind impact{ImpactKind::light_hitstun};
++    Aabb local_hitbox{};
++    float lunge_distance{};
++    float knockback_speed{};
++    float launch_speed{};
++    FeedbackLevel feedback{FeedbackLevel::light};
++};
++
++}  // namespace arpg::combat
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+new file mode 100644
+index 0000000..fe27c6f
+--- /dev/null
++++ b/tests/combat/CMakeLists.txt
+@@ -0,0 +1,12 @@
++add_executable(arpg_combat_tests
++    combat_test_main.cpp
++    attack_catalog_tests.cpp)
++
++target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
++target_include_directories(arpg_combat_tests
++    PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
++target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
++arpg_enable_project_warnings(arpg_combat_tests)
++
++add_test(NAME combat.units COMMAND arpg_combat_tests)
++set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/attack_catalog_tests.cpp b/tests/combat/attack_catalog_tests.cpp
+new file mode 100644
+index 0000000..2dfbc53
+--- /dev/null
++++ b/tests/combat/attack_catalog_tests.cpp
+@@ -0,0 +1,56 @@
++#include "test_framework.hpp"
++
++#include "combat/attack_catalog.hpp"
++
++namespace {
++
++using namespace arpg::combat;
++
++static_assert(kAttackCount == 6);
++
++arpg::test::Failure catalog_has_six_attacks() noexcept {
++    ARPG_REQUIRE(find_attack_definition(AttackId::j1) != nullptr);
++    ARPG_REQUIRE(find_attack_definition(AttackId::j2) != nullptr);
++    ARPG_REQUIRE(find_attack_definition(AttackId::j3) != nullptr);
++    ARPG_REQUIRE(find_attack_definition(AttackId::heavy) != nullptr);
++    ARPG_REQUIRE(find_attack_definition(AttackId::launcher) != nullptr);
++    ARPG_REQUIRE(find_attack_definition(AttackId::air_j) != nullptr);
++    ARPG_REQUIRE(find_attack_definition(AttackId::none) == nullptr);
++    return {};
++}
++
++arpg::test::Failure j1_definition_is_stable() noexcept {
++    const AttackDefinition& j1 = *find_attack_definition(AttackId::j1);
++    ARPG_REQUIRE(j1.startup_ticks == 5);
++    ARPG_REQUIRE(j1.active_ticks == 3);
++    ARPG_REQUIRE(j1.recovery_ticks == 9);
++    ARPG_REQUIRE(j1.damage == 28);
++    ARPG_REQUIRE(j1.break_damage == 10);
++    return {};
++}
++
++arpg::test::Failure phases_are_half_open_and_catalog_is_valid() noexcept {
++    const AttackDefinition& j1 = *find_attack_definition(AttackId::j1);
++    ARPG_REQUIRE(attack_phase_at(j1, 4) == AttackPhase::startup);
++    ARPG_REQUIRE(attack_phase_at(j1, 5) == AttackPhase::active);
++    ARPG_REQUIRE(attack_phase_at(j1, 8) == AttackPhase::recovery);
++    ARPG_REQUIRE(attack_phase_at(j1, 17) == AttackPhase::finished);
++    ARPG_REQUIRE(validate_attack_catalog());
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"six attacks", &catalog_has_six_attacks},
++    {"stable j1 definition", &j1_definition_is_stable},
++    {"half-open phases and validation", &phases_are_half_open_and_catalog_is_valid},
++};
++
++}  // namespace
++
++arpg::test::TestSuite attack_catalog_suite() noexcept {
++    return {
++        "attack_catalog",
++        kCases,
++        sizeof(kCases) / sizeof(kCases[0]),
++    };
++}
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+new file mode 100644
+index 0000000..c9590b6
+--- /dev/null
++++ b/tests/combat/combat_test_main.cpp
+@@ -0,0 +1,49 @@
++#include "test_framework.hpp"
++
++#include <cstdio>
++
++arpg::test::TestSuite attack_catalog_suite() noexcept;
++
++namespace {
++
++constexpr int kExpectedCaseCount = 3;
++
++}  // namespace
++
++int main() {
++    const arpg::test::TestSuite suites[] = {
++        attack_catalog_suite(),
++    };
++
++    int failures = 0;
++    int checks = 0;
++    for (const auto& suite : suites) {
++        for (std::size_t index = 0; index < suite.count; ++index) {
++            ++checks;
++            const auto failure = suite.cases[index].function();
++            if (failure.expression != nullptr) {
++                ++failures;
++                std::fprintf(
++                    stderr,
++                    "[FAIL] %s.%s: %s (%s:%d)\n",
++                    suite.name,
++                    suite.cases[index].name,
++                    failure.expression,
++                    failure.file,
++                    failure.line);
++            }
++        }
++    }
++
++    if (checks != kExpectedCaseCount) {
++        ++failures;
++        std::fprintf(
++            stderr,
++            "[FAIL] stage 1 case count: actual %d != expected %d\n",
++            checks,
++            kExpectedCaseCount);
++    }
++
++    std::printf("%d cases, %d failures\n", checks, failures);
++    return failures == 0 ? 0 : 1;
++}
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index 032b906..a6982b9 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -683,19 +683,31 @@ endif()
+ 
+ if(_arpg_remaining_boundary_failures)
+     string(JOIN
+         ", " _arpg_remaining_boundary_failure_summary
+         ${_arpg_remaining_boundary_failures})
+     message(FATAL_ERROR
+         "Remaining boundary detector self-tests failed: ${_arpg_remaining_boundary_failure_summary}")
+ endif()
+ 
+ arpg_assert_target_dependency_boundary(arpg_core)
++arpg_assert_target_dependency_boundary(arpg_combat)
+ 
+ add_test(
+     NAME architecture.core_no_raylib
+     COMMAND "${CMAKE_COMMAND}"
+-        "-DCORE_DIR=${PROJECT_SOURCE_DIR}/src/core"
++        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/core"
++        "-DSOURCE_LABEL=Core"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+ set_tests_properties(
+     architecture.core_no_raylib
+     PROPERTIES LABELS "headless;architecture")
++
++add_test(
++    NAME architecture.combat_no_raylib
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
++        "-DSOURCE_LABEL=Combat"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
++set_tests_properties(
++    architecture.combat_no_raylib
++    PROPERTIES LABELS "headless;architecture")
+diff --git a/tests/platform/core_boundary_test.cmake b/tests/platform/core_boundary_test.cmake
+index df55472..034896b 100644
+--- a/tests/platform/core_boundary_test.cmake
++++ b/tests/platform/core_boundary_test.cmake
+@@ -1,12 +1,15 @@
+-if(NOT DEFINED CORE_DIR)
+-    message(FATAL_ERROR "CORE_DIR is required")
++if(NOT DEFINED SOURCE_DIR)
++    message(FATAL_ERROR "SOURCE_DIR is required")
++endif()
++if(NOT DEFINED SOURCE_LABEL)
++    message(FATAL_ERROR "SOURCE_LABEL is required")
+ endif()
+ 
+ set(ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX
+     [=[^[ \t]*#[ \t]*include[ \t]*[<"]([^>"]*[/\\])?(raylib\.h|raymath\.h|rlgl\.h|raylib-cpp[^>"]*)[>"]]=])
+ set(ARPG_FORBIDDEN_SOURCE_MACRO_REGEX
+     [=[^[ \t]*#[ \t]*define[ \t]+[a-z_][a-z0-9_]*[ \t]+[<"]([^>"]*[/\\])?(raylib\.h|raymath\.h|rlgl\.h|raylib-cpp[^>"]*)[>"]]=])
+ 
+ function(arpg_line_has_forbidden_include INPUT_LINE OUT_FOUND)
+     string(TOLOWER "${INPUT_LINE}" _arpg_line_lower)
+     if(_arpg_line_lower MATCHES
+@@ -440,38 +443,40 @@ get_property(
+     ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES
+     GLOBAL PROPERTY ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES)
+ if(ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES)
+     string(JOIN
+         ", " ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURE_SUMMARY
+         ${ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES})
+     message(FATAL_ERROR
+         "Source lexer self-tests failed: ${ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURE_SUMMARY}")
+ endif()
+ 
+-file(GLOB_RECURSE CORE_FILES
++file(GLOB_RECURSE SOURCE_FILES
+     LIST_DIRECTORIES FALSE
+-    "${CORE_DIR}/*.h"
+-    "${CORE_DIR}/*.hh"
+-    "${CORE_DIR}/*.hpp"
+-    "${CORE_DIR}/*.hxx"
+-    "${CORE_DIR}/*.inl"
+-    "${CORE_DIR}/*.inc"
+-    "${CORE_DIR}/*.ipp"
+-    "${CORE_DIR}/*.tpp"
+-    "${CORE_DIR}/*.tcc"
+-    "${CORE_DIR}/*.c"
+-    "${CORE_DIR}/*.cc"
+-    "${CORE_DIR}/*.cpp"
+-    "${CORE_DIR}/*.cxx"
+-    "${CORE_DIR}/*.ixx"
+-    "${CORE_DIR}/*.cppm"
+-    "${CORE_DIR}/*.mpp")
++    "${SOURCE_DIR}/*.h"
++    "${SOURCE_DIR}/*.hh"
++    "${SOURCE_DIR}/*.hpp"
++    "${SOURCE_DIR}/*.hxx"
++    "${SOURCE_DIR}/*.inl"
++    "${SOURCE_DIR}/*.inc"
++    "${SOURCE_DIR}/*.ipp"
++    "${SOURCE_DIR}/*.tpp"
++    "${SOURCE_DIR}/*.tcc"
++    "${SOURCE_DIR}/*.c"
++    "${SOURCE_DIR}/*.cc"
++    "${SOURCE_DIR}/*.cpp"
++    "${SOURCE_DIR}/*.cxx"
++    "${SOURCE_DIR}/*.ixx"
++    "${SOURCE_DIR}/*.cppm"
++    "${SOURCE_DIR}/*.mpp")
+ 
+-foreach(CORE_FILE IN LISTS CORE_FILES)
+-    file(READ "${CORE_FILE}" CORE_CONTENT)
++foreach(SOURCE_FILE IN LISTS SOURCE_FILES)
++    file(READ "${SOURCE_FILE}" SOURCE_CONTENT)
+     arpg_source_has_forbidden_include(
+-        "${CORE_CONTENT}" CORE_HAS_FORBIDDEN_INCLUDE CORE_FORBIDDEN_LINE)
+-    if(CORE_HAS_FORBIDDEN_INCLUDE)
++        "${SOURCE_CONTENT}"
++        SOURCE_HAS_FORBIDDEN_INCLUDE
++        SOURCE_FORBIDDEN_LINE)
++    if(SOURCE_HAS_FORBIDDEN_INCLUDE)
+         message(FATAL_ERROR
+-            "Core file depends on raylib: ${CORE_FILE}: ${CORE_FORBIDDEN_LINE}")
++            "${SOURCE_LABEL} file depends on raylib: ${SOURCE_FILE}: ${SOURCE_FORBIDDEN_LINE}")
+     endif()
+ endforeach()

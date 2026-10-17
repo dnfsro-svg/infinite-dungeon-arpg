@@ -1,0 +1,757 @@
+# Task 4 Review Package
+
+Base: 7c660d673b265b2df3ce85dcedf3f319bd3c6166
+Head: 1ac0a8eacef0f6b3c0117dc8b4ea2ef0d6053d57
+
+## Commits
+
+```text
+1ac0a8e feat: add combat attack state machine
+```
+
+## Diff Stat
+
+```text
+ src/combat/CMakeLists.txt           |   3 +-
+ src/combat/combat_world.cpp         |  85 +----------
+ src/combat/player_simulation.cpp    | 230 +++++++++++++++++++++++++++++
+ tests/combat/CMakeLists.txt         |   1 +
+ tests/combat/attack_state_tests.cpp | 287 ++++++++++++++++++++++++++++++++++++
+ tests/combat/combat_test_main.cpp   |   4 +-
+ 6 files changed, 529 insertions(+), 81 deletions(-)
+```
+
+## Full Diff
+
+```diff
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+index f75b03e..73e9653 100644
+--- a/src/combat/CMakeLists.txt
++++ b/src/combat/CMakeLists.txt
+@@ -1,11 +1,12 @@
+ add_library(arpg_combat STATIC
+     attack_catalog.cpp
+     combat_world.cpp
+-    input_buffer.cpp)
++    input_buffer.cpp
++    player_simulation.cpp)
+ 
+ target_include_directories(arpg_combat
+     PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_combat PUBLIC cxx_std_17)
+ target_link_libraries(arpg_combat PRIVATE arpg_core)
+ 
+ arpg_enable_project_warnings(arpg_combat)
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index 132d24b..eb184ff 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -1,48 +1,38 @@
+ #include "combat/combat_world.hpp"
+ 
+ #include "combat/attack_catalog.hpp"
+ 
+-#include <algorithm>
+ #include <array>
+ 
+ namespace arpg::combat {
+ namespace {
+ 
+-constexpr float kTickSeconds = 1.0F / 60.0F;
+-constexpr float kGroundSpeed = 5.4F;
+-constexpr float kAirRatio = 0.70F;
+-constexpr float kJumpSpeed = 8.5F;
+-constexpr float kGravity = 24.0F;
+-constexpr float kDiagonal = 0.7071067811865475F;
+-constexpr float kRoomMinX = -8.0F;
+-constexpr float kRoomMaxX = 8.0F;
+-constexpr float kRoomMinY = -3.5F;
+-constexpr float kRoomMaxY = 3.5F;
+-
+ constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
+ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
+ 
+-int direction(std::int8_t value) noexcept {
+-    return value < 0 ? -1 : (value > 0 ? 1 : 0);
+-}
+-
+ }  // namespace
+ 
+ CombatWorld::CombatWorld(CombatLabConfig config) noexcept : config_(config) {
+     reset();
+ }
+ 
+ bool CombatWorld::queue_action(Action action) noexcept {
+     return input_buffer_.push(action);
+ }
+ 
+ void CombatWorld::tick(MovementInput movement) noexcept {
+     ++tick_;
++    if (player_.hit_stop_ticks != 0) {
++        --player_.hit_stop_ticks;
++        input_buffer_.age(true);
++        return;
++    }
++
+     simulate_player(movement);
+     input_buffer_.age(player_.hit_stop_ticks != 0);
+ }
+ 
+ void CombatWorld::reset() noexcept {
+     player_ = PlayerRuntime{};
+     player_.position = config_.player_spawn;
+ 
+@@ -106,72 +96,9 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
+         input_buffer_.size(),
+         input_buffer_.expired_count(),
+         input_buffer_.overflow_count(),
+         event_overflow_count_,
+     };
+     return result;
+ }
+ 
+-void CombatWorld::simulate_player(MovementInput movement) noexcept {
+-    if (player_.state == PlayerState::landing) {
+-        player_.state = PlayerState::idle;
+-    }
+-
+-    const bool started_airborne = player_.position.z > 0.0F;
+-    if (!started_airborne &&
+-        (player_.state == PlayerState::idle ||
+-         player_.state == PlayerState::move) &&
+-        input_buffer_.consume(Action::jump)) {
+-        player_.velocity.z = kJumpSpeed;
+-        player_.state = PlayerState::jump_rise;
+-    }
+-
+-    const bool airborne = player_.position.z > 0.0F ||
+-                          player_.state == PlayerState::jump_rise ||
+-                          player_.state == PlayerState::jump_fall;
+-    const int x_direction = direction(movement.x);
+-    const int y_direction = direction(movement.y);
+-    const float diagonal = x_direction != 0 && y_direction != 0
+-                               ? kDiagonal
+-                               : 1.0F;
+-    const float speed = kGroundSpeed * (airborne ? kAirRatio : 1.0F);
+-
+-    player_.velocity.x = static_cast<float>(x_direction) * speed * diagonal;
+-    player_.velocity.y = static_cast<float>(y_direction) * speed * diagonal;
+-    if (x_direction < 0) {
+-        player_.facing = Facing::left;
+-    } else if (x_direction > 0) {
+-        player_.facing = Facing::right;
+-    }
+-
+-    player_.position.x = std::clamp(
+-        player_.position.x + player_.velocity.x * kTickSeconds,
+-        kRoomMinX,
+-        kRoomMaxX);
+-    player_.position.y = std::clamp(
+-        player_.position.y + player_.velocity.y * kTickSeconds,
+-        kRoomMinY,
+-        kRoomMaxY);
+-
+-    if (airborne) {
+-        player_.position.z += player_.velocity.z * kTickSeconds;
+-        player_.velocity.z -= kGravity * kTickSeconds;
+-        if (player_.position.z <= 0.0F) {
+-            player_.position.z = 0.0F;
+-            player_.velocity.z = 0.0F;
+-            player_.state = PlayerState::landing;
+-            player_.air_attack_available = true;
+-        } else {
+-            player_.state = player_.velocity.z > 0.0F
+-                                ? PlayerState::jump_rise
+-                                : PlayerState::jump_fall;
+-        }
+-        return;
+-    }
+-
+-    player_.velocity.z = 0.0F;
+-    player_.state = x_direction != 0 || y_direction != 0
+-                        ? PlayerState::move
+-                        : PlayerState::idle;
+-}
+-
+ }  // namespace arpg::combat
+diff --git a/src/combat/player_simulation.cpp b/src/combat/player_simulation.cpp
+new file mode 100644
+index 0000000..3f902c5
+--- /dev/null
++++ b/src/combat/player_simulation.cpp
+@@ -0,0 +1,230 @@
++#include "combat/combat_world.hpp"
++
++#include "combat/attack_catalog.hpp"
++
++#include <algorithm>
++
++namespace arpg::combat {
++namespace {
++
++constexpr float kTickSeconds = 1.0F / 60.0F;
++constexpr float kGroundSpeed = 5.4F;
++constexpr float kAirRatio = 0.70F;
++constexpr float kJumpSpeed = 8.5F;
++constexpr float kGravity = 24.0F;
++constexpr float kDiagonal = 0.7071067811865475F;
++constexpr float kRoomMinX = -8.0F;
++constexpr float kRoomMaxX = 8.0F;
++constexpr float kRoomMinY = -3.5F;
++constexpr float kRoomMaxY = 3.5F;
++constexpr std::uint16_t kJ1WhiffCancelTick = 13;
++constexpr std::uint16_t kJ2WhiffCancelTick = 15;
++
++int direction(std::int8_t value) noexcept {
++    return value < 0 ? -1 : (value > 0 ? 1 : 0);
++}
++
++std::uint8_t combo_stage_for(AttackId id) noexcept {
++    switch (id) {
++    case AttackId::j1:
++        return 1;
++    case AttackId::j2:
++        return 2;
++    case AttackId::j3:
++        return 3;
++    default:
++        return 0;
++    }
++}
++
++PlayerState state_for_phase(AttackPhase phase) noexcept {
++    switch (phase) {
++    case AttackPhase::startup:
++        return PlayerState::attack_startup;
++    case AttackPhase::active:
++        return PlayerState::attack_active;
++    case AttackPhase::recovery:
++        return PlayerState::attack_recovery;
++    case AttackPhase::finished:
++        return PlayerState::idle;
++    }
++    return PlayerState::idle;
++}
++
++}  // namespace
++
++void CombatWorld::simulate_player(MovementInput movement) noexcept {
++    const auto is_airborne = [this]() noexcept {
++        return player_.position.z > 0.0F || player_.velocity.z != 0.0F;
++    };
++
++    const auto advance_vertical = [this, &is_airborne](
++                                      bool preserve_attack_state) noexcept {
++        if (!is_airborne()) {
++            player_.velocity.z = 0.0F;
++            return;
++        }
++
++        player_.position.z += player_.velocity.z * kTickSeconds;
++        player_.velocity.z -= kGravity * kTickSeconds;
++        if (player_.position.z <= 0.0F) {
++            player_.position.z = 0.0F;
++            player_.velocity.z = 0.0F;
++            player_.state = PlayerState::landing;
++            player_.air_attack_available = true;
++        } else if (!preserve_attack_state) {
++            player_.state = player_.velocity.z > 0.0F
++                                ? PlayerState::jump_rise
++                                : PlayerState::jump_fall;
++        }
++    };
++
++    const auto start_attack = [this](AttackId id) noexcept {
++        const AttackDefinition* definition = find_attack_definition(id);
++        if (definition == nullptr) {
++            return;
++        }
++
++        attack_.id = id;
++        attack_.elapsed_ticks = 0;
++        ++attack_.serial;
++        if (attack_.serial == 0) {
++            ++attack_.serial;
++        }
++        attack_.connected = false;
++        attack_.impact_event_emitted = false;
++        attack_.hit_targets.fill(false);
++
++        player_.combo_stage = combo_stage_for(id);
++        player_.velocity.x = 0.0F;
++        player_.velocity.y = 0.0F;
++        const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
++        player_.position.x = std::clamp(
++            player_.position.x + definition->lunge_distance * facing,
++            kRoomMinX,
++            kRoomMaxX);
++        player_.state = PlayerState::attack_startup;
++        if (id == AttackId::air_j) {
++            player_.air_attack_available = false;
++        }
++    };
++
++    const auto finish_attack = [this, &is_airborne]() noexcept {
++        attack_.id = AttackId::none;
++        attack_.elapsed_ticks = 0;
++        attack_.connected = false;
++        attack_.impact_event_emitted = false;
++        attack_.hit_targets.fill(false);
++        player_.combo_stage = 0;
++        player_.state = is_airborne()
++                            ? (player_.velocity.z > 0.0F
++                                   ? PlayerState::jump_rise
++                                   : PlayerState::jump_fall)
++                            : PlayerState::idle;
++    };
++
++    if (player_.state == PlayerState::landing && attack_.id == AttackId::none) {
++        player_.state = PlayerState::idle;
++    }
++
++    if (attack_.id != AttackId::none) {
++        player_.velocity.x = 0.0F;
++        player_.velocity.y = 0.0F;
++
++        const bool j1_whiff = attack_.id == AttackId::j1 &&
++                              !attack_.connected &&
++                              attack_.elapsed_ticks >= kJ1WhiffCancelTick;
++        const bool j2_whiff = attack_.id == AttackId::j2 &&
++                              !attack_.connected &&
++                              attack_.elapsed_ticks >= kJ2WhiffCancelTick;
++        if ((j1_whiff || j2_whiff) && input_buffer_.consume(Action::light)) {
++            start_attack(j1_whiff ? AttackId::j2 : AttackId::j3);
++            advance_vertical(true);
++            return;
++        }
++
++        const AttackDefinition* definition = find_attack_definition(attack_.id);
++        if (definition == nullptr) {
++            finish_attack();
++            advance_vertical(false);
++            return;
++        }
++
++        ++attack_.elapsed_ticks;
++        const std::uint32_t total_ticks =
++            static_cast<std::uint32_t>(definition->startup_ticks) +
++            static_cast<std::uint32_t>(definition->active_ticks) +
++            static_cast<std::uint32_t>(definition->recovery_ticks);
++        if (attack_.elapsed_ticks >= total_ticks) {
++            finish_attack();
++            advance_vertical(false);
++            return;
++        }
++
++        player_.state = state_for_phase(
++            attack_phase_at(*definition, attack_.elapsed_ticks));
++        advance_vertical(true);
++        return;
++    }
++
++    bool airborne = is_airborne();
++    if (airborne) {
++        if (player_.air_attack_available &&
++            input_buffer_.consume(Action::light)) {
++            start_attack(AttackId::air_j);
++            advance_vertical(true);
++            return;
++        }
++    } else if (player_.state == PlayerState::idle ||
++               player_.state == PlayerState::move) {
++        if (input_buffer_.consume(Action::jump)) {
++            player_.velocity.z = kJumpSpeed;
++            player_.state = PlayerState::jump_rise;
++            airborne = true;
++        } else if (input_buffer_.consume(Action::heavy)) {
++            start_attack(AttackId::heavy);
++            return;
++        } else if (input_buffer_.consume(Action::launcher)) {
++            start_attack(AttackId::launcher);
++            return;
++        } else if (input_buffer_.consume(Action::light)) {
++            start_attack(AttackId::j1);
++            return;
++        }
++    }
++
++    const int x_direction = direction(movement.x);
++    const int y_direction = direction(movement.y);
++    const float diagonal = x_direction != 0 && y_direction != 0
++                               ? kDiagonal
++                               : 1.0F;
++    const float speed = kGroundSpeed * (airborne ? kAirRatio : 1.0F);
++    player_.velocity.x = static_cast<float>(x_direction) * speed * diagonal;
++    player_.velocity.y = static_cast<float>(y_direction) * speed * diagonal;
++    if (x_direction < 0) {
++        player_.facing = Facing::left;
++    } else if (x_direction > 0) {
++        player_.facing = Facing::right;
++    }
++
++    player_.position.x = std::clamp(
++        player_.position.x + player_.velocity.x * kTickSeconds,
++        kRoomMinX,
++        kRoomMaxX);
++    player_.position.y = std::clamp(
++        player_.position.y + player_.velocity.y * kTickSeconds,
++        kRoomMinY,
++        kRoomMaxY);
++
++    if (airborne) {
++        advance_vertical(false);
++        return;
++    }
++
++    player_.velocity.z = 0.0F;
++    player_.state = x_direction != 0 || y_direction != 0
++                        ? PlayerState::move
++                        : PlayerState::idle;
++}
++
++}  // namespace arpg::combat
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index 88ef186..7f7c24a 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -1,11 +1,12 @@
+ add_executable(arpg_combat_tests
+     combat_test_main.cpp
+     attack_catalog_tests.cpp
++    attack_state_tests.cpp
+     input_buffer_tests.cpp
+     movement_jump_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+diff --git a/tests/combat/attack_state_tests.cpp b/tests/combat/attack_state_tests.cpp
+new file mode 100644
+index 0000000..37a0f37
+--- /dev/null
++++ b/tests/combat/attack_state_tests.cpp
+@@ -0,0 +1,287 @@
++#include "test_framework.hpp"
++
++#include "combat/combat_world.hpp"
++
++namespace {
++
++using namespace arpg::combat;
++
++constexpr double kFloatTolerance = 1.0e-4;
++
++void tick_n(CombatWorld& world, int count, MovementInput movement = {}) noexcept {
++    for (int tick = 0; tick < count; ++tick) {
++        world.tick(movement);
++    }
++}
++
++arpg::test::Failure ground_timelines_and_lunges_are_deterministic() noexcept {
++    CombatWorld light;
++    ARPG_REQUIRE(light.queue_action(Action::light));
++    light.tick(MovementInput{1, 1});
++    CombatSnapshot snapshot = light.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::j1);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::startup);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
++    ARPG_REQUIRE(snapshot.player.combo_stage == 1);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.player.position.x, 0.10, kFloatTolerance));
++    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 0.0));
++
++    tick_n(light, 4, MovementInput{1, 0});
++    snapshot = light.snapshot();
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 4);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::startup);
++    light.tick(MovementInput{1, 0});
++    ARPG_REQUIRE(light.snapshot().player.attack_phase == AttackPhase::active);
++    tick_n(light, 2, MovementInput{1, 0});
++    snapshot = light.snapshot();
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 7);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::active);
++    light.tick(MovementInput{1, 0});
++    ARPG_REQUIRE(light.snapshot().player.attack_phase == AttackPhase::recovery);
++    tick_n(light, 8, MovementInput{1, 0});
++    snapshot = light.snapshot();
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 16);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::recovery);
++    light.tick(MovementInput{1, 0});
++    snapshot = light.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::finished);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
++    ARPG_REQUIRE(snapshot.player.combo_stage == 0);
++    ARPG_REQUIRE(snapshot.player.state == PlayerState::idle);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.player.position.x, 0.10, kFloatTolerance));
++
++    CombatWorld heavy;
++    ARPG_REQUIRE(heavy.queue_action(Action::heavy));
++    heavy.tick(MovementInput{});
++    snapshot = heavy.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.player.position.x, 0.24, kFloatTolerance));
++    tick_n(heavy, 13);
++    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::startup);
++    heavy.tick(MovementInput{});
++    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::active);
++    tick_n(heavy, 4);
++    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::active);
++    heavy.tick(MovementInput{});
++    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::recovery);
++    tick_n(heavy, 21);
++    snapshot = heavy.snapshot();
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 40);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::recovery);
++    heavy.tick(MovementInput{});
++    ARPG_REQUIRE(heavy.snapshot().player.active_attack == AttackId::none);
++
++    CombatWorld launcher;
++    ARPG_REQUIRE(launcher.queue_action(Action::launcher));
++    launcher.tick(MovementInput{});
++    snapshot = launcher.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::launcher);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.player.position.x, 0.12, kFloatTolerance));
++    tick_n(launcher, 27);
++    snapshot = launcher.snapshot();
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 27);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::recovery);
++    launcher.tick(MovementInput{});
++    ARPG_REQUIRE(launcher.snapshot().player.active_attack == AttackId::none);
++    return {};
++}
++
++arpg::test::Failure whiff_windows_chain_j1_j2_and_end_at_j3() noexcept {
++    CombatWorld world;
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++
++    tick_n(world, 12);
++    ARPG_REQUIRE(world.snapshot().player.attack_elapsed_ticks == 12);
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::j1);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 13);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::j2);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
++    ARPG_REQUIRE(snapshot.player.combo_stage == 2);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.player.position.x, 0.24, kFloatTolerance));
++
++    tick_n(world, 14);
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::j2);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 15);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::j3);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
++    ARPG_REQUIRE(snapshot.player.combo_stage == 3);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.player.position.x, 0.44, kFloatTolerance));
++
++    tick_n(world, 7);
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::startup);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    tick_n(world, 3);
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::recovery);
++    tick_n(world, 15);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 27);
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
++    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::finished);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
++    ARPG_REQUIRE(snapshot.player.combo_stage == 0);
++    ARPG_REQUIRE(snapshot.player.state == PlayerState::idle);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
++    return {};
++}
++
++arpg::test::Failure action_priority_and_illegal_cancels_are_deterministic() noexcept {
++    CombatWorld all_actions;
++    ARPG_REQUIRE(all_actions.queue_action(Action::light));
++    ARPG_REQUIRE(all_actions.queue_action(Action::launcher));
++    ARPG_REQUIRE(all_actions.queue_action(Action::heavy));
++    ARPG_REQUIRE(all_actions.queue_action(Action::jump));
++    all_actions.tick(MovementInput{});
++    CombatSnapshot snapshot = all_actions.snapshot();
++    ARPG_REQUIRE(snapshot.player.state == PlayerState::jump_rise);
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 3);
++
++    CombatWorld no_jump;
++    ARPG_REQUIRE(no_jump.queue_action(Action::light));
++    ARPG_REQUIRE(no_jump.queue_action(Action::launcher));
++    ARPG_REQUIRE(no_jump.queue_action(Action::heavy));
++    no_jump.tick(MovementInput{});
++    snapshot = no_jump.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 2);
++
++    CombatWorld no_jump_or_heavy;
++    ARPG_REQUIRE(no_jump_or_heavy.queue_action(Action::light));
++    ARPG_REQUIRE(no_jump_or_heavy.queue_action(Action::launcher));
++    no_jump_or_heavy.tick(MovementInput{});
++    snapshot = no_jump_or_heavy.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::launcher);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
++
++    CombatWorld blocked;
++    ARPG_REQUIRE(blocked.queue_action(Action::heavy));
++    blocked.tick(MovementInput{});
++    ARPG_REQUIRE(blocked.queue_action(Action::jump));
++    ARPG_REQUIRE(blocked.queue_action(Action::heavy));
++    ARPG_REQUIRE(blocked.queue_action(Action::launcher));
++    ARPG_REQUIRE(blocked.queue_action(Action::light));
++    blocked.tick(MovementInput{});
++    snapshot = blocked.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 1);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 4);
++    tick_n(blocked, 7);
++    snapshot = blocked.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 8);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 0);
++    ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 4);
++    return {};
++}
++
++arpg::test::Failure air_j_is_limited_to_once_per_airtime() noexcept {
++    CombatWorld world;
++    ARPG_REQUIRE(world.queue_action(Action::jump));
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.air_attack_available);
++    ARPG_REQUIRE(world.queue_action(Action::heavy));
++    ARPG_REQUIRE(world.queue_action(Action::launcher));
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{1, 0});
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::air_j);
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
++    ARPG_REQUIRE(snapshot.player.state == PlayerState::attack_startup);
++    ARPG_REQUIRE(!snapshot.player.air_attack_available);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 2);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.player.position.x, 0.08, kFloatTolerance));
++
++    tick_n(world, 3);
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::startup);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    tick_n(world, 4);
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::active);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.attack_phase == AttackPhase::recovery);
++    tick_n(world, 11);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 20);
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
++    ARPG_REQUIRE(snapshot.player.state == PlayerState::jump_fall);
++    ARPG_REQUIRE(!snapshot.player.air_attack_available);
++    ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 2);
++
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
++    ARPG_REQUIRE(!snapshot.player.air_attack_available);
++    ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
++
++    for (int tick = 0;
++         tick < 40 && world.snapshot().player.state != PlayerState::landing;
++         ++tick) {
++        world.tick(MovementInput{});
++    }
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.state == PlayerState::landing);
++    ARPG_REQUIRE(snapshot.player.air_attack_available);
++    world.tick(MovementInput{});
++
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    ARPG_REQUIRE(world.queue_action(Action::jump));
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().player.state == PlayerState::jump_rise);
++    ARPG_REQUIRE(world.snapshot().diagnostics.input_size == 1);
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::air_j);
++    ARPG_REQUIRE(!snapshot.player.air_attack_available);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"ground timelines and one-shot lunges",
++     &ground_timelines_and_lunges_are_deterministic},
++    {"J whiff windows and terminal J3",
++     &whiff_windows_chain_j1_j2_and_end_at_j3},
++    {"action priority and illegal cancel rejection",
++     &action_priority_and_illegal_cancels_are_deterministic},
++    {"one air J per airtime", &air_j_is_limited_to_once_per_airtime},
++};
++
++}  // namespace
++
++arpg::test::TestSuite attack_state_suite() noexcept {
++    return {
++        "attack_state",
++        kCases,
++        sizeof(kCases) / sizeof(kCases[0]),
++    };
++}
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index deddf29..d8ad1b1 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -1,25 +1,27 @@
+ #include "test_framework.hpp"
+ 
+ #include <cstdio>
+ 
+ arpg::test::TestSuite attack_catalog_suite() noexcept;
++arpg::test::TestSuite attack_state_suite() noexcept;
+ arpg::test::TestSuite input_buffer_suite() noexcept;
+ arpg::test::TestSuite movement_jump_suite() noexcept;
+ 
+ namespace {
+ 
+-constexpr int kExpectedCaseCount = 11;
++constexpr int kExpectedCaseCount = 15;
+ 
+ }  // namespace
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
++        attack_state_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+     };
+ 
+     int failures = 0;
+     int checks = 0;
+     for (const auto& suite : suites) {
+         for (std::size_t index = 0; index < suite.count; ++index) {
+```
+

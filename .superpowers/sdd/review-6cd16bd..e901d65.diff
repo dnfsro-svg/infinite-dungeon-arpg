@@ -1,0 +1,348 @@
+# Review package: 6cd16bd2b60b7b9dc979b9336c65e801b5459bfb..e901d65250c8325c4d89646388176eb3f74dc7c6
+
+## Commits
+e901d65 feat: add bounded combat input buffer
+
+## Files changed
+ src/combat/CMakeLists.txt           |   3 +-
+ src/combat/input_buffer.cpp         |  80 +++++++++++++++++++++++
+ src/combat/input_buffer.hpp         |  43 +++++++++++++
+ tests/combat/CMakeLists.txt         |   3 +-
+ tests/combat/combat_test_main.cpp   |   4 +-
+ tests/combat/input_buffer_tests.cpp | 124 ++++++++++++++++++++++++++++++++++++
+ 6 files changed, 254 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+index 7b532e5..3adfa70 100644
+--- a/src/combat/CMakeLists.txt
++++ b/src/combat/CMakeLists.txt
+@@ -1,9 +1,10 @@
+ add_library(arpg_combat STATIC
+-    attack_catalog.cpp)
++    attack_catalog.cpp
++    input_buffer.cpp)
+ 
+ target_include_directories(arpg_combat
+     PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_combat PUBLIC cxx_std_17)
+ target_link_libraries(arpg_combat PRIVATE arpg_core)
+ 
+ arpg_enable_project_warnings(arpg_combat)
+diff --git a/src/combat/input_buffer.cpp b/src/combat/input_buffer.cpp
+new file mode 100644
+index 0000000..b0c75f3
+--- /dev/null
++++ b/src/combat/input_buffer.cpp
+@@ -0,0 +1,80 @@
++#include "combat/input_buffer.hpp"
++
++namespace arpg::combat {
++
++bool InputBuffer::push(Action action) noexcept {
++    if (size_ == kCapacity) {
++        ++overflow_count_;
++        return false;
++    }
++
++    entries_[size_] = Entry{action, kLifetimeTicks};
++    ++size_;
++    return true;
++}
++
++bool InputBuffer::consume(Action action) noexcept {
++    for (std::size_t index = 0; index < size_; ++index) {
++        if (entries_[index].action != action) {
++            continue;
++        }
++
++        for (std::size_t next = index + 1; next < size_; ++next) {
++            entries_[next - 1] = entries_[next];
++        }
++        --size_;
++        entries_[size_] = Entry{};
++        return true;
++    }
++    return false;
++}
++
++void InputBuffer::age(bool paused) noexcept {
++    if (paused) {
++        return;
++    }
++
++    std::size_t write_index = 0;
++    for (std::size_t read_index = 0; read_index < size_; ++read_index) {
++        Entry entry = entries_[read_index];
++        --entry.remaining_ticks;
++        if (entry.remaining_ticks == 0) {
++            ++expired_count_;
++            continue;
++        }
++
++        entries_[write_index] = entry;
++        ++write_index;
++    }
++
++    for (std::size_t index = write_index; index < size_; ++index) {
++        entries_[index] = Entry{};
++    }
++    size_ = write_index;
++}
++
++void InputBuffer::clear() noexcept {
++    for (std::size_t index = 0; index < size_; ++index) {
++        entries_[index] = Entry{};
++    }
++    size_ = 0;
++}
++
++void InputBuffer::reset_diagnostics() noexcept {
++    expired_count_ = 0;
++    overflow_count_ = 0;
++}
++
++std::size_t InputBuffer::size() const noexcept {
++    return size_;
++}
++
++std::uint32_t InputBuffer::expired_count() const noexcept {
++    return expired_count_;
++}
++
++std::uint32_t InputBuffer::overflow_count() const noexcept {
++    return overflow_count_;
++}
++
++}  // namespace arpg::combat
+diff --git a/src/combat/input_buffer.hpp b/src/combat/input_buffer.hpp
+new file mode 100644
+index 0000000..2adc825
+--- /dev/null
++++ b/src/combat/input_buffer.hpp
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::combat {
++
++enum class Action : std::uint8_t {
++    light,
++    jump,
++    heavy,
++    launcher,
++};
++
++class InputBuffer final {
++public:
++    static constexpr std::size_t kCapacity = 32;
++    static constexpr std::uint8_t kLifetimeTicks = 8;
++
++    [[nodiscard]] bool push(Action action) noexcept;
++    [[nodiscard]] bool consume(Action action) noexcept;
++    void age(bool paused) noexcept;
++    void clear() noexcept;
++    void reset_diagnostics() noexcept;
++
++    [[nodiscard]] std::size_t size() const noexcept;
++    [[nodiscard]] std::uint32_t expired_count() const noexcept;
++    [[nodiscard]] std::uint32_t overflow_count() const noexcept;
++
++private:
++    struct Entry final {
++        Action action{};
++        std::uint8_t remaining_ticks{};
++    };
++
++    std::array<Entry, kCapacity> entries_{};
++    std::size_t size_{};
++    std::uint32_t expired_count_{};
++    std::uint32_t overflow_count_{};
++};
++
++}  // namespace arpg::combat
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index fe27c6f..9d56ad8 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -1,12 +1,13 @@
+ add_executable(arpg_combat_tests
+     combat_test_main.cpp
+-    attack_catalog_tests.cpp)
++    attack_catalog_tests.cpp
++    input_buffer_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+ arpg_enable_project_warnings(arpg_combat_tests)
+ 
+ add_test(NAME combat.units COMMAND arpg_combat_tests)
+ set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index c9590b6..59a0dce 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -1,25 +1,27 @@
+ #include "test_framework.hpp"
+ 
+ #include <cstdio>
+ 
+ arpg::test::TestSuite attack_catalog_suite() noexcept;
++arpg::test::TestSuite input_buffer_suite() noexcept;
+ 
+ namespace {
+ 
+-constexpr int kExpectedCaseCount = 3;
++constexpr int kExpectedCaseCount = 7;
+ 
+ }  // namespace
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
++        input_buffer_suite(),
+     };
+ 
+     int failures = 0;
+     int checks = 0;
+     for (const auto& suite : suites) {
+         for (std::size_t index = 0; index < suite.count; ++index) {
+             ++checks;
+             const auto failure = suite.cases[index].function();
+             if (failure.expression != nullptr) {
+                 ++failures;
+diff --git a/tests/combat/input_buffer_tests.cpp b/tests/combat/input_buffer_tests.cpp
+new file mode 100644
+index 0000000..571ef8c
+--- /dev/null
++++ b/tests/combat/input_buffer_tests.cpp
+@@ -0,0 +1,124 @@
++#include "test_framework.hpp"
++
++#include "combat/input_buffer.hpp"
++
++namespace {
++
++using namespace arpg::combat;
++
++static_assert(InputBuffer::kCapacity == 32);
++static_assert(InputBuffer::kLifetimeTicks == 8);
++
++arpg::test::Failure consumes_oldest_match_without_head_of_line_blocking() noexcept {
++    InputBuffer buffer;
++    ARPG_REQUIRE(buffer.push(Action::jump));
++    ARPG_REQUIRE(buffer.push(Action::light));
++    buffer.age(false);
++    ARPG_REQUIRE(buffer.push(Action::heavy));
++    ARPG_REQUIRE(buffer.push(Action::light));
++
++    ARPG_REQUIRE(buffer.consume(Action::light));
++    for (int tick = 0; tick < 7; ++tick) {
++        buffer.age(false);
++    }
++
++    ARPG_REQUIRE(buffer.expired_count() == 1);
++    ARPG_REQUIRE(buffer.consume(Action::light));
++    ARPG_REQUIRE(buffer.consume(Action::heavy));
++    ARPG_REQUIRE(buffer.size() == 0);
++    return {};
++}
++
++arpg::test::Failure entries_live_for_eight_active_ticks_and_pause_does_not_age() noexcept {
++    InputBuffer buffer;
++    ARPG_REQUIRE(buffer.push(Action::light));
++    for (int tick = 0; tick < 16; ++tick) {
++        buffer.age(true);
++    }
++    for (int tick = 0; tick < 7; ++tick) {
++        buffer.age(false);
++    }
++    ARPG_REQUIRE(buffer.consume(Action::light));
++
++    ARPG_REQUIRE(buffer.push(Action::heavy));
++    buffer.age(true);
++    for (int tick = 0; tick < 8; ++tick) {
++        buffer.age(false);
++    }
++    ARPG_REQUIRE(!buffer.consume(Action::heavy));
++    ARPG_REQUIRE(buffer.expired_count() == 1);
++    return {};
++}
++
++arpg::test::Failure thirty_third_push_overflows_without_mutating_entries() noexcept {
++    InputBuffer buffer;
++    for (std::size_t index = 0; index < InputBuffer::kCapacity; ++index) {
++        ARPG_REQUIRE(buffer.push(Action::light));
++    }
++
++    ARPG_REQUIRE(!buffer.push(Action::heavy));
++    ARPG_REQUIRE(buffer.size() == InputBuffer::kCapacity);
++    ARPG_REQUIRE(buffer.overflow_count() == 1);
++    ARPG_REQUIRE(buffer.expired_count() == 0);
++    ARPG_REQUIRE(!buffer.consume(Action::heavy));
++    ARPG_REQUIRE(buffer.size() == InputBuffer::kCapacity);
++    return {};
++}
++
++arpg::test::Failure expiry_is_stable_and_clear_preserves_diagnostics() noexcept {
++    InputBuffer buffer;
++    ARPG_REQUIRE(buffer.push(Action::light));
++    buffer.age(false);
++    ARPG_REQUIRE(buffer.push(Action::heavy));
++    buffer.age(false);
++    ARPG_REQUIRE(buffer.push(Action::jump));
++    buffer.age(false);
++    ARPG_REQUIRE(buffer.push(Action::heavy));
++
++    for (int tick = 0; tick < 5; ++tick) {
++        buffer.age(false);
++    }
++    ARPG_REQUIRE(buffer.expired_count() == 1);
++    ARPG_REQUIRE(buffer.size() == 3);
++
++    ARPG_REQUIRE(buffer.consume(Action::heavy));
++    buffer.age(false);
++    ARPG_REQUIRE(buffer.expired_count() == 1);
++    ARPG_REQUIRE(buffer.consume(Action::heavy));
++    ARPG_REQUIRE(buffer.consume(Action::jump));
++
++    for (std::size_t index = 0; index < InputBuffer::kCapacity; ++index) {
++        ARPG_REQUIRE(buffer.push(Action::jump));
++    }
++    ARPG_REQUIRE(!buffer.push(Action::launcher));
++    buffer.clear();
++    ARPG_REQUIRE(buffer.size() == 0);
++    ARPG_REQUIRE(!buffer.consume(Action::jump));
++    ARPG_REQUIRE(buffer.expired_count() == 1);
++    ARPG_REQUIRE(buffer.overflow_count() == 1);
++
++    buffer.reset_diagnostics();
++    ARPG_REQUIRE(buffer.expired_count() == 0);
++    ARPG_REQUIRE(buffer.overflow_count() == 0);
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"oldest match without head-of-line blocking",
++     &consumes_oldest_match_without_head_of_line_blocking},
++    {"eight active ticks and paused aging",
++     &entries_live_for_eight_active_ticks_and_pause_does_not_age},
++    {"bounded overflow", &thirty_third_push_overflows_without_mutating_entries},
++    {"stable expiry, clear, and diagnostics",
++     &expiry_is_stable_and_clear_preserves_diagnostics},
++};
++
++}  // namespace
++
++arpg::test::TestSuite input_buffer_suite() noexcept {
++    return {
++        "input_buffer",
++        kCases,
++        sizeof(kCases) / sizeof(kCases[0]),
++    };
++}

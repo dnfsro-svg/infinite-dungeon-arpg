@@ -1,0 +1,860 @@
+# Task 6 Review Package
+
+Base: 2697027
+Head: 0dcde8a1dd261bda19c88c01bbc5d0e19d09f09d
+
+## Commits
+
+```text
+0dcde8a feat: add combat target reactions
+```
+
+## Diff Stat
+
+```text
+ src/combat/CMakeLists.txt             |   3 +-
+ src/combat/combat_world.cpp           |   8 +-
+ src/combat/combat_world.hpp           |   6 +
+ src/combat/hit_resolution.cpp         |   8 +-
+ src/combat/target_simulation.cpp      | 227 +++++++++++++++++++++++++
+ tests/combat/CMakeLists.txt           |   1 +
+ tests/combat/combat_test_main.cpp     |   4 +-
+ tests/combat/dummy_reaction_tests.cpp | 303 ++++++++++++++++++++++++++++++++++
+ tests/combat/hit_resolution_tests.cpp |  29 ++--
+ 9 files changed, 571 insertions(+), 18 deletions(-)
+```
+
+## Full Diff
+
+```diff
+diff --git a/src/combat/CMakeLists.txt b/src/combat/CMakeLists.txt
+index f12c3e5..82bced0 100644
+--- a/src/combat/CMakeLists.txt
++++ b/src/combat/CMakeLists.txt
+@@ -1,14 +1,15 @@
+ add_library(arpg_combat STATIC
+     attack_catalog.cpp
+     combat_collision.cpp
+     combat_world.cpp
+     hit_resolution.cpp
+     input_buffer.cpp
+-    player_simulation.cpp)
++    player_simulation.cpp
++    target_simulation.cpp)
+ 
+ target_include_directories(arpg_combat
+     PUBLIC "${PROJECT_SOURCE_DIR}/src")
+ target_compile_features(arpg_combat PUBLIC cxx_std_17)
+ target_link_libraries(arpg_combat PRIVATE arpg_core)
+ 
+ arpg_enable_project_warnings(arpg_combat)
+diff --git a/src/combat/combat_world.cpp b/src/combat/combat_world.cpp
+index b1f0e1b..03e35b2 100644
+--- a/src/combat/combat_world.cpp
++++ b/src/combat/combat_world.cpp
+@@ -23,19 +23,23 @@ bool CombatWorld::queue_action(Action action) noexcept {
+ void CombatWorld::tick(MovementInput movement) noexcept {
+     const bool player_frozen = player_.hit_stop_ticks != 0;
+     if (player_frozen) {
+         --player_.hit_stop_ticks;
+     } else {
+         simulate_player(movement);
+     }
+ 
+-    for (DummyRuntime& dummy : dummies_) {
+-        if (dummy.hit_stop_ticks != 0) {
++    for (std::size_t index = 0; index < dummies_.size(); ++index) {
++        DummyRuntime& dummy = dummies_[index];
++        const bool dummy_frozen = dummy.hit_stop_ticks != 0;
++        if (dummy_frozen) {
+             --dummy.hit_stop_ticks;
++        } else {
++            simulate_target(index);
+         }
+     }
+ 
+     if (!player_frozen) {
+         resolve_attack_hits();
+     }
+ 
+     input_buffer_.age(player_frozen);
+diff --git a/src/combat/combat_world.hpp b/src/combat/combat_world.hpp
+index 949fb21..f697aec 100644
+--- a/src/combat/combat_world.hpp
++++ b/src/combat/combat_world.hpp
+@@ -1,15 +1,16 @@
+ #pragma once
+ 
+ #include "combat/combat_types.hpp"
+ #include "combat/input_buffer.hpp"
+ #include "core/bounded_queue.hpp"
+ 
+ #include <array>
++#include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ 
+ namespace arpg::combat {
+ 
+ class CombatWorld final {
+ public:
+     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+@@ -54,16 +55,21 @@ private:
+         std::uint16_t elapsed_ticks{};
+         std::uint64_t serial{};
+         bool connected{};
+         bool impact_event_emitted{};
+         std::array<bool, kDummyCount> hit_targets{};
+     };
+ 
+     void simulate_player(MovementInput movement) noexcept;
++    void simulate_target(std::size_t index) noexcept;
++    void apply_dummy_impact(
++        std::size_t index,
++        const AttackDefinition& definition) noexcept;
++    void respawn_dummy(std::size_t index) noexcept;
+     void apply_attack_assist(const AttackDefinition& definition) noexcept;
+     void resolve_attack_hits() noexcept;
+     void emit_event(const CombatEvent& event) noexcept;
+ 
+     CombatLabConfig config_{};
+     PlayerRuntime player_{};
+     std::array<DummyRuntime, kDummyCount> dummies_{};
+     AttackRuntime attack_{};
+diff --git a/src/combat/hit_resolution.cpp b/src/combat/hit_resolution.cpp
+index 189df87..8b3116c 100644
+--- a/src/combat/hit_resolution.cpp
++++ b/src/combat/hit_resolution.cpp
+@@ -45,16 +45,18 @@ void CombatWorld::apply_attack_assist(
+     const bool facing_right = player_.facing == Facing::right;
+     float best_gap = std::numeric_limits<float>::max();
+     float best_correction = 0.0F;
+ 
+     for (std::size_t index = 0; index < dummies_.size(); ++index) {
+         const DummyRuntime& dummy = dummies_[index];
+         const float relative_x = dummy.position.x - player_.position.x;
+         if (dummy.hp <= 0
++            || dummy.reaction == ReactionState::defeated
++            || dummy.reaction == ReactionState::respawning
+             || (facing_right && relative_x < 0.0F)
+             || (!facing_right && relative_x > 0.0F)
+             || std::fabs(dummy.position.y - player_.position.y)
+                 > kAssistMaxDepth) {
+             continue;
+         }
+ 
+         const Aabb hurtbox = make_dummy_hurtbox(dummy.kind, dummy.position);
+@@ -91,17 +93,20 @@ void CombatWorld::resolve_attack_hits() noexcept {
+     }
+ 
+     const Aabb attack_box = make_world_aabb(
+         definition->local_hitbox, player_.position, player_.facing);
+     std::array<std::uint8_t, kDummyCount> hit_indices{};
+     std::size_t hit_count = 0;
+     for (std::size_t index = 0; index < dummies_.size(); ++index) {
+         const DummyRuntime& dummy = dummies_[index];
+-        if (attack_.hit_targets[index] || dummy.hp <= 0) {
++        if (attack_.hit_targets[index]
++            || dummy.hp <= 0
++            || dummy.reaction == ReactionState::defeated
++            || dummy.reaction == ReactionState::respawning) {
+             continue;
+         }
+         if (overlaps_inclusive(
+                 attack_box,
+                 make_dummy_hurtbox(dummy.kind, dummy.position))) {
+             hit_indices[hit_count] = static_cast<std::uint8_t>(index);
+             ++hit_count;
+         }
+@@ -131,16 +136,17 @@ void CombatWorld::resolve_attack_hits() noexcept {
+         hit.tick = tick_;
+         hit.attack = definition->id;
+         hit.target_index = static_cast<std::uint8_t>(index);
+         hit.hit_count = 1;
+         hit.feedback = definition->feedback;
+         hit.position = dummy.position;
+         hit.value = definition->damage;
+         emit_event(hit);
++        apply_dummy_impact(index, *definition);
+     }
+ 
+     player_.hit_stop_ticks = std::max(player_.hit_stop_ticks, hit_stop);
+     if (!attack_.impact_event_emitted) {
+         attack_.impact_event_emitted = true;
+         CombatEvent summary{};
+         summary.kind = CombatEventKind::impact_summary;
+         summary.tick = tick_;
+diff --git a/src/combat/target_simulation.cpp b/src/combat/target_simulation.cpp
+new file mode 100644
+index 0000000..946d09f
+--- /dev/null
++++ b/src/combat/target_simulation.cpp
+@@ -0,0 +1,227 @@
++#include "combat/combat_world.hpp"
++
++#include <algorithm>
++#include <cstdint>
++
++namespace arpg::combat {
++namespace {
++
++constexpr float kTickSeconds = 1.0F / 60.0F;
++constexpr float kGravity = 24.0F;
++constexpr float kRoomMinX = -8.0F;
++constexpr float kRoomMaxX = 8.0F;
++constexpr std::uint16_t kLightHitstunTicks = 10;
++constexpr std::uint16_t kMediumHitstunTicks = 16;
++constexpr std::uint16_t kKnockdownTicks = 45;
++constexpr std::uint16_t kRisingTicks = 30;
++constexpr std::uint16_t kRespawnTicks = 90;
++
++float impulse_scale(DummyKind kind) noexcept {
++    return kind == DummyKind::light ? 1.25F : 1.0F;
++}
++
++std::uint16_t reaction_ticks(
++    DummyKind kind,
++    std::uint16_t base_ticks) noexcept {
++    if (kind != DummyKind::light) {
++        return base_ticks;
++    }
++    const std::uint32_t scaled =
++        static_cast<std::uint32_t>(base_ticks) * 5U;
++    return static_cast<std::uint16_t>((scaled + 3U) / 4U);
++}
++
++}  // namespace
++
++void CombatWorld::apply_dummy_impact(
++    std::size_t index,
++    const AttackDefinition& definition) noexcept {
++    DummyRuntime& dummy = dummies_[index];
++    if (dummy.hp == 0) {
++        dummy.reaction = ReactionState::defeated;
++        dummy.reaction_ticks = kRespawnTicks;
++        dummy.velocity = Vec3{};
++        dummy.has_pending_impact = false;
++
++        CombatEvent defeated{};
++        defeated.kind = CombatEventKind::defeated;
++        defeated.tick = tick_;
++        defeated.attack = definition.id;
++        defeated.target_index = static_cast<std::uint8_t>(index);
++        defeated.feedback = definition.feedback;
++        defeated.position = dummy.position;
++        emit_event(defeated);
++        return;
++    }
++
++    const float scale = impulse_scale(dummy.kind);
++    const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
++    const bool already_airborne =
++        dummy.reaction == ReactionState::airborne || dummy.position.z > 0.0F;
++    dummy.has_pending_impact = false;
++
++    switch (definition.impact) {
++    case ImpactKind::light_hitstun:
++        dummy.velocity.x = 0.0F;
++        if (already_airborne) {
++            dummy.reaction = ReactionState::airborne;
++            dummy.reaction_ticks = 0;
++        } else {
++            dummy.velocity.z = 0.0F;
++            dummy.reaction = ReactionState::hitstun;
++            dummy.reaction_ticks = reaction_ticks(
++                dummy.kind, kLightHitstunTicks);
++        }
++        break;
++    case ImpactKind::medium_hitstun:
++        dummy.velocity.x =
++            facing * definition.knockback_speed * scale;
++        if (already_airborne) {
++            dummy.reaction = ReactionState::airborne;
++            dummy.reaction_ticks = 0;
++        } else {
++            dummy.velocity.z = 0.0F;
++            dummy.reaction = ReactionState::hitstun;
++            dummy.reaction_ticks = reaction_ticks(
++                dummy.kind, kMediumHitstunTicks);
++        }
++        break;
++    case ImpactKind::knockdown:
++        dummy.velocity.x =
++            facing * definition.knockback_speed * scale;
++        if (already_airborne) {
++            dummy.reaction = ReactionState::airborne;
++            dummy.reaction_ticks = 0;
++            dummy.pending_impact = ImpactKind::knockdown;
++            dummy.has_pending_impact = true;
++        } else {
++            dummy.velocity.z = 0.0F;
++            dummy.reaction = ReactionState::knockdown;
++            dummy.reaction_ticks = reaction_ticks(
++                dummy.kind, kKnockdownTicks);
++        }
++        break;
++    case ImpactKind::launch:
++        dummy.velocity.x =
++            facing * definition.knockback_speed * scale;
++        dummy.velocity.z = definition.launch_speed * scale;
++        dummy.reaction = ReactionState::airborne;
++        dummy.reaction_ticks = 0;
++        dummy.pending_impact = ImpactKind::knockdown;
++        dummy.has_pending_impact = true;
++        break;
++    }
++}
++
++void CombatWorld::respawn_dummy(std::size_t index) noexcept {
++    DummyRuntime& dummy = dummies_[index];
++    dummy.position = dummy.spawn;
++    dummy.velocity = Vec3{};
++    dummy.reaction = ReactionState::respawning;
++    dummy.armor = dummy.kind == DummyKind::heavy
++                      ? ArmorState::armored
++                      : ArmorState::none;
++    dummy.reaction_ticks = 0;
++    dummy.break_window_ticks = 0;
++    dummy.hit_stop_ticks = 0;
++    dummy.pending_impact = ImpactKind::light_hitstun;
++    dummy.has_pending_impact = false;
++    dummy.hp = dummy.max_hp;
++    dummy.break_value = dummy.max_break;
++
++    CombatEvent respawned{};
++    respawned.kind = CombatEventKind::respawned;
++    respawned.tick = tick_;
++    respawned.target_index = static_cast<std::uint8_t>(index);
++    respawned.position = dummy.position;
++    emit_event(respawned);
++}
++
++void CombatWorld::simulate_target(std::size_t index) noexcept {
++    DummyRuntime& dummy = dummies_[index];
++
++    const auto integrate_horizontal = [&dummy]() noexcept {
++        dummy.position.x += dummy.velocity.x * kTickSeconds;
++        if (dummy.position.x <= kRoomMinX) {
++            dummy.position.x = kRoomMinX;
++            if (dummy.velocity.x < 0.0F) {
++                dummy.velocity.x = 0.0F;
++            }
++        } else if (dummy.position.x >= kRoomMaxX) {
++            dummy.position.x = kRoomMaxX;
++            if (dummy.velocity.x > 0.0F) {
++                dummy.velocity.x = 0.0F;
++            }
++        }
++    };
++
++    switch (dummy.reaction) {
++    case ReactionState::idle:
++        dummy.velocity = Vec3{};
++        return;
++    case ReactionState::hitstun:
++        integrate_horizontal();
++        if (dummy.reaction_ticks != 0) {
++            --dummy.reaction_ticks;
++        }
++        if (dummy.reaction_ticks == 0) {
++            dummy.reaction = ReactionState::idle;
++            dummy.velocity = Vec3{};
++        }
++        return;
++    case ReactionState::airborne:
++        integrate_horizontal();
++        dummy.position.z += dummy.velocity.z * kTickSeconds;
++        dummy.velocity.z -= kGravity * kTickSeconds;
++        if (dummy.position.z <= 0.0F) {
++            dummy.position.z = 0.0F;
++            dummy.velocity.z = 0.0F;
++            dummy.reaction = ReactionState::knockdown;
++            dummy.reaction_ticks = reaction_ticks(
++                dummy.kind, kKnockdownTicks);
++            dummy.has_pending_impact = false;
++
++            CombatEvent landing{};
++            landing.kind = CombatEventKind::landing;
++            landing.tick = tick_;
++            landing.target_index = static_cast<std::uint8_t>(index);
++            landing.position = dummy.position;
++            emit_event(landing);
++        }
++        return;
++    case ReactionState::knockdown:
++        integrate_horizontal();
++        if (dummy.reaction_ticks != 0) {
++            --dummy.reaction_ticks;
++        }
++        if (dummy.reaction_ticks == 0) {
++            dummy.reaction = ReactionState::rising;
++            dummy.reaction_ticks = reaction_ticks(
++                dummy.kind, kRisingTicks);
++            dummy.velocity = Vec3{};
++        }
++        return;
++    case ReactionState::rising:
++        if (dummy.reaction_ticks != 0) {
++            --dummy.reaction_ticks;
++        }
++        if (dummy.reaction_ticks == 0) {
++            dummy.reaction = ReactionState::idle;
++            dummy.velocity = Vec3{};
++        }
++        return;
++    case ReactionState::defeated:
++        if (dummy.reaction_ticks != 0) {
++            --dummy.reaction_ticks;
++        }
++        if (dummy.reaction_ticks == 0) {
++            respawn_dummy(index);
++        }
++        return;
++    case ReactionState::respawning:
++        dummy.reaction = ReactionState::idle;
++        return;
++    }
++}
++
++}  // namespace arpg::combat
+diff --git a/tests/combat/CMakeLists.txt b/tests/combat/CMakeLists.txt
+index e0b095b..86f0781 100644
+--- a/tests/combat/CMakeLists.txt
++++ b/tests/combat/CMakeLists.txt
+@@ -1,12 +1,13 @@
+ add_executable(arpg_combat_tests
+     combat_test_main.cpp
+     attack_catalog_tests.cpp
+     attack_state_tests.cpp
++    dummy_reaction_tests.cpp
+     hit_resolution_tests.cpp
+     input_buffer_tests.cpp
+     movement_jump_tests.cpp)
+ 
+ target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
+ target_include_directories(arpg_combat_tests
+     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+ target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
+diff --git a/tests/combat/combat_test_main.cpp b/tests/combat/combat_test_main.cpp
+index 75a01b4..a45ecf3 100644
+--- a/tests/combat/combat_test_main.cpp
++++ b/tests/combat/combat_test_main.cpp
+@@ -1,28 +1,30 @@
+ #include "test_framework.hpp"
+ 
+ #include <cstdio>
+ 
+ arpg::test::TestSuite attack_catalog_suite() noexcept;
+ arpg::test::TestSuite attack_state_suite() noexcept;
++arpg::test::TestSuite dummy_reaction_suite() noexcept;
+ arpg::test::TestSuite input_buffer_suite() noexcept;
+ arpg::test::TestSuite movement_jump_suite() noexcept;
+ arpg::test::TestSuite hit_resolution_suite() noexcept;
+ 
+ namespace {
+ 
+-constexpr int kExpectedCaseCount = 20;
++constexpr int kExpectedCaseCount = 25;
+ 
+ }  // namespace
+ 
+ int main() {
+     const arpg::test::TestSuite suites[] = {
+         attack_catalog_suite(),
+         attack_state_suite(),
++        dummy_reaction_suite(),
+         input_buffer_suite(),
+         movement_jump_suite(),
+         hit_resolution_suite(),
+     };
+ 
+     int failures = 0;
+     int checks = 0;
+     for (const auto& suite : suites) {
+diff --git a/tests/combat/dummy_reaction_tests.cpp b/tests/combat/dummy_reaction_tests.cpp
+new file mode 100644
+index 0000000..8d2f0f0
+--- /dev/null
++++ b/tests/combat/dummy_reaction_tests.cpp
+@@ -0,0 +1,303 @@
++#include "test_framework.hpp"
++
++#include "combat/combat_world.hpp"
++
++#include <array>
++#include <cstddef>
++
++namespace {
++
++using namespace arpg::combat;
++
++void tick_n(CombatWorld& world, int count) noexcept {
++    for (int tick = 0; tick < count; ++tick) {
++        world.tick(MovementInput{});
++    }
++}
++
++CombatLabConfig single_target_config() noexcept {
++    CombatLabConfig config;
++    config.dummy_spawns = {{{1.20F, 0.0F, 0.0F},
++                            {6.00F, 3.0F, 0.0F},
++                            {7.00F, -3.0F, 0.0F}}};
++    return config;
++}
++
++CombatLabConfig light_and_normal_config() noexcept {
++    CombatLabConfig config;
++    config.dummy_spawns = {{{1.20F, 0.0F, 0.0F},
++                            {1.20F, 0.0F, 0.0F},
++                            {7.00F, -3.0F, 0.0F}}};
++    return config;
++}
++
++CombatLabConfig normal_target_config() noexcept {
++    CombatLabConfig config;
++    config.dummy_spawns = {{{6.00F, 3.0F, 0.0F},
++                            {1.20F, 0.0F, 0.0F},
++                            {7.00F, -3.0F, 0.0F}}};
++    return config;
++}
++
++bool finish_attack(CombatWorld& world) noexcept {
++    for (int tick = 0; tick < 128; ++tick) {
++        if (world.snapshot().player.active_attack == AttackId::none) {
++            return true;
++        }
++        world.tick(MovementInput{});
++    }
++    return world.snapshot().player.active_attack == AttackId::none;
++}
++
++void drain_events(CombatWorld& world) noexcept {
++    while (world.try_pop_event().has_value()) {
++    }
++}
++
++bool start_j2_after_j1_hit(CombatWorld& world) noexcept {
++    if (!world.queue_action(Action::light)) {
++        return false;
++    }
++    world.tick(MovementInput{});
++    tick_n(world, 5);
++    tick_n(world, 3);
++    tick_n(world, 3);
++    if (world.snapshot().player.attack_elapsed_ticks != 8
++        || !world.queue_action(Action::light)) {
++        return false;
++    }
++    world.tick(MovementInput{});
++    return world.snapshot().player.active_attack == AttackId::j2;
++}
++
++arpg::test::Failure j1_hitstun_uses_local_frozen_ticks() noexcept {
++    CombatWorld world{light_and_normal_config()};
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    tick_n(world, 5);
++
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
++    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 3);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[0].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[1].position.x, 1.20, 1.0e-4));
++
++    tick_n(world, 3);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 0);
++    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 0);
++
++    tick_n(world, 9);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::idle);
++    tick_n(world, 2);
++    ARPG_REQUIRE(
++        world.snapshot().dummies[0].reaction == ReactionState::hitstun);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().dummies[0].reaction == ReactionState::idle);
++    return {};
++}
++
++arpg::test::Failure j2_knockback_scales_for_light_and_normal() noexcept {
++    CombatWorld world{light_and_normal_config()};
++    ARPG_REQUIRE(start_j2_after_j1_hit(world));
++    tick_n(world, 6);
++
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.x, 2.75, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 2.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 1.20, 1.0e-4));
++
++    tick_n(world, 5);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 1.20, 1.0e-4));
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[0].position.x, 1.20 + 2.75 / 60.0, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[1].position.x, 1.20 + 2.20 / 60.0, 1.0e-4));
++    return {};
++}
++
++arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
++    CombatWorld world{normal_target_config()};
++    ARPG_REQUIRE(world.queue_action(Action::launcher));
++    world.tick(MovementInput{});
++    tick_n(world, 7);
++
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 5);
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 1.2, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
++
++    tick_n(world, 5);
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[1].position.z, 9.5 / 60.0, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.1, 1.0e-4));
++
++    for (int tick = 0;
++         tick < 120
++         && world.snapshot().dummies[1].reaction != ReactionState::knockdown;
++         ++tick) {
++        world.tick(MovementInput{});
++    }
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 0.0));
++    tick_n(world, 44);
++    ARPG_REQUIRE(
++        world.snapshot().dummies[1].reaction == ReactionState::knockdown);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().dummies[1].reaction == ReactionState::rising);
++    return {};
++}
++
++arpg::test::Failure knockdown_and_rising_have_exact_boundaries() noexcept {
++    CombatWorld heavy{normal_target_config()};
++    ARPG_REQUIRE(heavy.queue_action(Action::heavy));
++    heavy.tick(MovementInput{});
++    tick_n(heavy, 14);
++    CombatSnapshot snapshot = heavy.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 7.0, 1.0e-4));
++    tick_n(heavy, 7);
++    tick_n(heavy, 44);
++    ARPG_REQUIRE(
++        heavy.snapshot().dummies[1].reaction == ReactionState::knockdown);
++    heavy.tick(MovementInput{});
++    ARPG_REQUIRE(heavy.snapshot().dummies[1].reaction == ReactionState::rising);
++    tick_n(heavy, 29);
++    ARPG_REQUIRE(heavy.snapshot().dummies[1].reaction == ReactionState::rising);
++    heavy.tick(MovementInput{});
++    ARPG_REQUIRE(heavy.snapshot().dummies[1].reaction == ReactionState::idle);
++
++    CombatWorld j3{normal_target_config()};
++    ARPG_REQUIRE(start_j2_after_j1_hit(j3));
++    tick_n(j3, 6);
++    tick_n(j3, 5);
++    tick_n(j3, 3);
++    ARPG_REQUIRE(j3.snapshot().player.attack_elapsed_ticks == 9);
++    ARPG_REQUIRE(j3.queue_action(Action::light));
++    j3.tick(MovementInput{});
++    ARPG_REQUIRE(j3.snapshot().player.active_attack == AttackId::j3);
++    tick_n(j3, 8);
++    snapshot = j3.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 5.0, 1.0e-4));
++    return {};
++}
++
++arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
++    CombatWorld world{single_target_config()};
++    ARPG_REQUIRE(start_j2_after_j1_hit(world));
++    tick_n(world, 6);
++    ARPG_REQUIRE(finish_attack(world));
++    drain_events(world);
++
++    for (int attack = 0; attack < 8; ++attack) {
++        ARPG_REQUIRE(world.queue_action(Action::light));
++        world.tick(MovementInput{});
++        tick_n(world, 5);
++        ARPG_REQUIRE(finish_attack(world));
++        drain_events(world);
++    }
++
++    ARPG_REQUIRE(world.snapshot().dummies[0].hp == 14);
++    ARPG_REQUIRE(world.queue_action(Action::light));
++    world.tick(MovementInput{});
++    tick_n(world, 5);
++    CombatSnapshot snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
++    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
++    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.x, 0.0));
++    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.z, 0.0));
++
++    std::array<CombatEventKind, 4> kinds{};
++    std::size_t event_count = 0;
++    while (const auto event = world.try_pop_event()) {
++        ARPG_REQUIRE(event_count < kinds.size());
++        kinds[event_count] = event->kind;
++        if (event->kind == CombatEventKind::defeated) {
++            ARPG_REQUIRE(event->attack == AttackId::j1);
++            ARPG_REQUIRE(event->target_index == 0);
++        }
++        ++event_count;
++    }
++    ARPG_REQUIRE(event_count == 4);
++    ARPG_REQUIRE(kinds[0] == CombatEventKind::swing);
++    ARPG_REQUIRE(kinds[1] == CombatEventKind::hit);
++    ARPG_REQUIRE(kinds[2] == CombatEventKind::defeated);
++    ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
++
++    tick_n(world, 3);
++    tick_n(world, 89);
++    ARPG_REQUIRE(world.snapshot().dummies[0].reaction == ReactionState::defeated);
++    world.tick(MovementInput{});
++    snapshot = world.snapshot();
++    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::respawning);
++    ARPG_REQUIRE(snapshot.dummies[0].hp == snapshot.dummies[0].max_hp);
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[0].position.x, 1.20, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[0].position.y, 0.0, 1.0e-4));
++    ARPG_REQUIRE(arpg::test::near(
++        snapshot.dummies[0].position.z, 0.0, 1.0e-4));
++
++    int respawn_events = 0;
++    while (const auto event = world.try_pop_event()) {
++        if (event->kind == CombatEventKind::respawned) {
++            ++respawn_events;
++            ARPG_REQUIRE(event->target_index == 0);
++            ARPG_REQUIRE(event->attack == AttackId::none);
++            ARPG_REQUIRE(arpg::test::near(
++                event->position.x, 1.20, 1.0e-4));
++        }
++    }
++    ARPG_REQUIRE(respawn_events == 1);
++    world.tick(MovementInput{});
++    ARPG_REQUIRE(world.snapshot().dummies[0].reaction == ReactionState::idle);
++    while (const auto event = world.try_pop_event()) {
++        ARPG_REQUIRE(event->kind != CombatEventKind::respawned);
++    }
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"J1 light and normal hitstun", &j1_hitstun_uses_local_frozen_ticks},
++    {"J2 light and normal knockback", &j2_knockback_scales_for_light_and_normal},
++    {"launcher gravity and landing", &launcher_integrates_then_lands_in_knockdown},
++    {"knockdown and rising boundaries", &knockdown_and_rising_have_exact_boundaries},
++    {"defeated and ninety-tick respawn", &defeated_respawns_after_ninety_active_ticks},
++};
++
++}  // namespace
++
++arpg::test::TestSuite dummy_reaction_suite() noexcept {
++    return {"dummy_reaction", kCases, sizeof(kCases) / sizeof(kCases[0])};
++}
+diff --git a/tests/combat/hit_resolution_tests.cpp b/tests/combat/hit_resolution_tests.cpp
+index add7112..ed88f7e 100644
+--- a/tests/combat/hit_resolution_tests.cpp
++++ b/tests/combat/hit_resolution_tests.cpp
+@@ -11,16 +11,26 @@ namespace {
+ using namespace arpg::combat;
+ 
+ void tick_n(CombatWorld& world, int count) noexcept {
+     for (int tick = 0; tick < count; ++tick) {
+         world.tick(MovementInput{});
+     }
+ }
+ 
++bool finish_attack(CombatWorld& world) noexcept {
++    for (int tick = 0; tick < 80; ++tick) {
++        if (world.snapshot().player.active_attack == AttackId::none) {
++            return true;
++        }
++        world.tick(MovementInput{});
++    }
++    return world.snapshot().player.active_attack == AttackId::none;
++}
++
+ arpg::test::Failure inclusive_xyz_mirror_and_depth_are_deterministic() noexcept {
+     constexpr Aabb local{{0.20F, -0.65F, 0.10F}, {1.50F, 0.65F, 1.50F}};
+     const Aabb right = make_world_aabb(
+         local, Vec3{1.0F, 2.0F, 3.0F}, Facing::right);
+     const Aabb left = make_world_aabb(
+         local, Vec3{1.0F, 2.0F, 3.0F}, Facing::left);
+ 
+     ARPG_REQUIRE(arpg::test::near(right.minimum.x, 1.20, 1.0e-4));
+@@ -88,38 +98,31 @@ arpg::test::Failure attack_assist_is_single_bounded_and_x_only() noexcept {
+     CombatWorld capped{capped_config};
+     ARPG_REQUIRE(capped.queue_action(Action::light));
+     capped.tick(MovementInput{});
+     snapshot = capped.snapshot();
+     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 0.28, 1.0e-4));
+     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 0.0, 1.0e-4));
+ 
+     CombatLabConfig defeated_config;
+-    defeated_config.dummy_spawns = {{{2.30F, 0.0F, 0.0F},
+-                                     {3.29F, 0.0F, 0.0F},
++    defeated_config.dummy_spawns = {{{2.13F, 0.0F, 0.0F},
++                                     {3.51F, 0.0F, 0.0F},
+                                      {7.00F, 3.0F, 0.0F}}};
+     CombatWorld defeated{defeated_config};
+-    for (int attack = 0; attack < 4; ++attack) {
+-        ARPG_REQUIRE(defeated.queue_action(Action::heavy));
++    for (int attack = 0; attack < 11; ++attack) {
++        ARPG_REQUIRE(defeated.queue_action(Action::light));
+         defeated.tick(MovementInput{});
+-        for (int tick = 0;
+-             tick < 80
+-             && defeated.snapshot().player.active_attack != AttackId::none;
+-             ++tick) {
+-            defeated.tick(MovementInput{});
+-        }
+-        ARPG_REQUIRE(
+-            defeated.snapshot().player.active_attack == AttackId::none);
++        ARPG_REQUIRE(finish_attack(defeated));
+     }
+     ARPG_REQUIRE(defeated.snapshot().dummies[0].hp == 0);
+     ARPG_REQUIRE(defeated.snapshot().dummies[1].hp > 0);
+     ARPG_REQUIRE(defeated.queue_action(Action::light));
+     defeated.tick(MovementInput{});
+     ARPG_REQUIRE(arpg::test::near(
+-        defeated.snapshot().player.position.x, 1.24, 1.0e-4));
++        defeated.snapshot().player.position.x, 1.46, 1.0e-4));
+     return {};
+ }
+ 
+ arpg::test::Failure one_attack_hits_one_target_once_across_active_ticks() noexcept {
+     CombatLabConfig config;
+     config.dummy_spawns = {{{1.20F, 0.0F, 0.0F},
+                             {5.00F, 2.0F, 0.0F},
+                             {6.00F, -2.0F, 0.0F}}};
+```
+
