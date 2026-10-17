@@ -1,0 +1,830 @@
+# Review package: 9ceb9ae..af3c3de
+
+## Commits
+af3c3de feat: build fixed ground loot labels
+
+## Files changed
+ .superpowers/sdd/task-5-report.md         | 121 +++++++-----
+ src/platform/raylib/CMakeLists.txt        |   1 +
+ src/platform/raylib/ground_loot_view.cpp  | 189 ++++++++++++++++++
+ src/platform/raylib/ground_loot_view.hpp  |  57 ++++++
+ tests/platform/CMakeLists.txt             |   3 +-
+ tests/platform/ground_loot_view_tests.cpp | 307 ++++++++++++++++++++++++++++++
+ tests/platform/platform_test_main.cpp     |   4 +-
+ 7 files changed, 637 insertions(+), 45 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-5-report.md b/.superpowers/sdd/task-5-report.md
+index b7ee2a6..93d0798 100644
+--- a/.superpowers/sdd/task-5-report.md
++++ b/.superpowers/sdd/task-5-report.md
+@@ -1,63 +1,98 @@
+-# Stage 10 Task 5 报告
++# Stage 11-D Task 5 报告
+ 
+-## Status
++## 状态
+ 
+-完成纯 `build_abyss_encounter_plan` 与 `supplement_abyss_affixes`，未接入房间生命周期。
++完成 Fixed-Capacity Ground Loot View，并按真实 RED -> GREEN 执行 TDD。范围严格停在纯 ViewModel 构建；未加入实际 Draw 调用、host preview、room renderer 接线或 pickup feedback。
+ 
+-## RED / GREEN
++## 实现
+ 
+-- RED：先加入预算 8→12、9→14、24→36 与深度词缀下限测试；在正确加载 VS 2022 开发环境后，编译分别因 `build_abyss_encounter_plan` 和 `supplement_abyss_affixes` 不存在而失败，确认失败来自缺失功能。
+-- GREEN：实现预算缩放、普通 plan/普通 affix 先生成、深渊补足与强化合法性后，`combat.units` 136/136、`dungeon.units` 145/145 通过。
+-- Refactor：抽出共享的指定预算 plan 构造路径，使普通 `build_encounter_plan` 继续使用原 RNG 域和普通 affix 生成；Stage 9 既有 golden 测试通过。
++- 新增 `LootLabelRect`、`GroundLootLabel`、`GroundLootViewDiagnostics` 与 `GroundLootView`。
++- `GroundLootView::labels` 为 `std::array<GroundLootLabel, dungeon::kGroundDropCapacity>`，容量精确等于 192；文本为 64 字节固定数组并强制末字节 NUL。
++- `ground_loot_visible` 支持 `show_all`、`magic_or_better`、`rare_only`；深渊宝箱奖励绕过所有过滤，非法过滤枚举回退为 show-all。
++- View builder 只读 `DungeonSnapshot`，按 ordinal 稳定插入；标签正文使用中文稀有度、catalog 基底名和 `iLvl`，非法 base 固定显示 `未知装备`。
++- 普通/魔法/稀有分别使用白/蓝/金文本色；深渊条目额外设置 `abyss=true` 和紫色边框色。
++- 重叠处理只向上移动后续 ordinal，循环上限为 `kGroundDropCapacity`；随后将每个矩形夹紧到 12 像素屏幕安全区。
++- 诊断计数覆盖非法 base、文本截断、重叠调整和容量饱和。
++- 实现使用 `std::snprintf`、固定数组和值类型，不使用 `std::string`、`std::vector` 或堆分配。
+ 
+-## 确定性与命名域
++## TDD 证据
+ 
+-- 普通词缀仍使用 Stage 9 的 count/selection/tier/context 域，未重抽。
+-- 深渊选择域：`ABYSEL01`（`0x41425953454C3031`）。
+-- 深渊 tier 域：`ABYTIER1`（`0x4142595449455231`）。
+-- 每个 append 输出位置都从对应命名域再按绝对 `output_index` 派生独立子流；补足从 `normal.count` 开始，只写新增槽位。
+-- 已满足深度下限的合法集合原值返回，包括未使用槽位，逐字节语义不变。
++### RED
+ 
+-## 候选不足与容量
++先只新增并注册 `ground_loot_view_tests.cpp`，未创建生产头/实现。
+ 
+-- 补足复用 required/forbidden tags、重复与双向 conflict 校验。
+-- 测试用受限合法 catalog 只留下一个兼容候选；深度 20 需要两条时返回 `nullopt`，不静默少给。
+-- `MonsterAffixSet` 仍为固定 3 槽，40+ 精确补到 3，不增加高危词缀上限。
+-- 强化预算为 `(normal * 3 + 1) / 2`；合法性使用 `ceil(config.max_budget*1.5)` 上限。
+-- 可表示边界 normal max 170→abyss max 255 构造出单波 96 spawn 并合法；171→257 超出固定 DTO 表示范围时显式 `invalid_rules`，不降级。
+-- 纯接口只使用固定 `std::array`/值类型；4096 次补足与 1024 次强化 plan 测试的 allocation delta 均为 0。
++首次尝试共享 preset build 目录时，由于该目录在当前沙箱身份下不可写且未加载 SDK，出现 `.ninja_lock permission denied` 与 SDK 检测失败；该环境失败不计作 RED。
+ 
+-## 依赖重排
++随后加载 VS 2022 BuildTools 环境并使用独立构建目录：
+ 
+-原计划由 Task 4 先接生命周期，但 started 门禁要求在落盘前完整调用本任务的纯构造接口。按批准的依赖重排，本任务保持 `src/dungeon/dungeon_session.cpp` 不改；`available → started` 前置计算及 runtime 接线由紧接着的 Task 4 完成。因此 available 房不会在本提交中提前启动强化战斗。
++```powershell
++cmake -S . -B out/build/task5-debug -G Ninja `
++  -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug `
++  -DFETCHCONTENT_SOURCE_DIR_RAYLIB=out/build/windows-msvc-debug/_deps/raylib-src
++cmake --build out/build/task5-debug --target arpg_platform_tests
++```
++
++有效 RED：
++
++```text
++tests/platform/ground_loot_view_tests.cpp(4): fatal error C1083:
++无法打开包括文件: “ground_loot_view.hpp”: No such file or directory
++```
++
++失败原因准确来自 Task 5 生产接口尚不存在。
++
++### GREEN
++
++实现生产头/源并注册 `ground_loot_view.cpp` 后：
++
++```powershell
++cmake --build out/build/task5-debug --target arpg_platform_tests
++```
++
++结果：4/4 增量步骤成功，`arpg_raylib.lib` 与 `arpg_platform_tests.exe` 链接成功。
++
++提交前 fresh focused test：
++
++```powershell
++ctest --test-dir out/build/task5-debug -R '^platform\.units$' -V
++```
++
++结果：1/1 CTest 通过，253 cases、0 failures，3.50 秒。100k 探针明确输出：
++
++```text
++[stage11d-ground-loot] builds=100000 unchanged=50000 alternating=50000 allocations=0
++```
++
++Task 5 新增 9 个用例覆盖：三档可见性与 builder 过滤、深渊绕过、非法 filter 回退、非法 base、中文 catalog 文本、NUL、白/蓝/金 palette、深渊紫边、ordinal 稳定、合理重叠消解、1024x576/1280x720/1920x1080 安全区、192 容量极端、快照逐字节不变、100k unchanged/alternating 零分配。
+ 
+ ## 文件
+ 
+-- `src/combat/monster_affix_generation.hpp/.cpp`
+-- `src/dungeon/encounter_director.hpp/.cpp`
+-- `src/dungeon/encounter_budget.cpp`
+-- `tests/combat/monster_affix_generation_tests.cpp`
+-- `tests/combat/monster_affix_test_support.hpp`
+-- `tests/dungeon/encounter_director_tests.cpp`
+-- `tests/combat/combat_test_main.cpp`
+-- `tests/dungeon/dungeon_test_main.cpp`
++- `src/platform/raylib/ground_loot_view.hpp`
++- `src/platform/raylib/ground_loot_view.cpp`
++- `src/platform/raylib/CMakeLists.txt`
++- `tests/platform/ground_loot_view_tests.cpp`
++- `tests/platform/CMakeLists.txt`
++- `tests/platform/platform_test_main.cpp`
+ - `.superpowers/sdd/task-5-report.md`
+ 
+-## 验证
++## 提交
+ 
+-```text
+-ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure
+-combat.units: passed (0.77 s)
+-dungeon.units: passed (142.99 s)
+-100% tests passed, 0 failed
++主题：`feat: build fixed ground loot labels`
+ 
+-ARPG_STAGE9_AFFIX_STRESS_ONLY=1 arpg_dungeon_tests.exe
+-2 cases, 0 failures
+-```
++## 自审
+ 
+-`git diff --check` 通过。普通 Stage 9 affix golden、掉落与压力用例均包含在上述通过套件中。
++- 头/源未 include `raylib.h`，未调用 raylib、Draw/TextFormat、Session、Store、随机、输入或 fixed tick。
++- 唯一允许的跨模块读取为 `project_combat_position`、无 raylib 的 `Rgba8`、settings 枚举与只读 item catalog。
++- 生产文件中不存在 `std::string`、`std::vector`、`<string>` 或 `<vector>`；100k 实测 allocation delta 为 0。
++- ordinal 插入在相同输入下完全确定；同 ordinal 时保留快照原顺序。
++- source count 先夹紧到 192；输出数组写入前再次检查容量。192 个同锚点时，重叠循环和前向扫描均受固定容量约束。
++- 每个标签最终都经过安全区 clamp；极端堆叠在顶部可能重合，但任务明确不要求 192 个矩形数学上全部互斥。
++- `std::snprintf` 使用 catalog `string_view` 的显式长度，非法 base 不越界；无论首选或短格式，末字节均强制 NUL。
++- `git diff --check` 通过；源码禁用依赖扫描无命中。
+ 
+-## 疑虑
++## 顾虑
+ 
+-- 无 Task 5 纯接口遗留疑虑。
+-- 生命周期尚未消费纯 plan 是刻意的依赖重排边界，必须由 Task 4 接线后再验证 started 原子门禁。
++- 无已知功能顾虑。
++- 本任务只产生 ViewModel；后续 renderer 必须消费 `text_color`/`border_color`/`abyss`，当前没有实际 Draw 或字体覆盖验证，符合 Task 5 边界。
++- 192 个极端同锚点标签在安全区顶部可重叠，这是任务允许的有界退化；不会越界或分配。
++- 共享 `out/build/windows-msvc-debug` 在当前执行身份下不可写，因此验证使用独立 `out/build/task5-debug`；编译器为 MSVC 19.44.35228.0、Windows SDK 10.0.26100.0。
+diff --git a/src/platform/raylib/CMakeLists.txt b/src/platform/raylib/CMakeLists.txt
+index e97f719..49155d3 100644
+--- a/src/platform/raylib/CMakeLists.txt
++++ b/src/platform/raylib/CMakeLists.txt
+@@ -5,20 +5,21 @@ add_library(arpg_raylib STATIC
+     combat_renderer.cpp
+     control_hints.cpp
+     combat_view_math.cpp
+     death_overlay_font.cpp
+     death_overlay_renderer.cpp
+     death_overlay_view.cpp
+     debug_renderer.cpp
+     debug_overlay_renderer.cpp
+     dungeon_view_math.cpp
+     dungeon_runtime.cpp
++    ground_loot_view.cpp
+     host_input.cpp
+     host_launch_options.cpp
+     hud_font.cpp
+     hud_view_model.cpp
+     hud_notice_state.cpp
+     hud_layout.cpp
+     hud_renderer.cpp
+     inventory_renderer.cpp
+     inventory_view_math.cpp
+     passive_tree_renderer.cpp
+diff --git a/src/platform/raylib/ground_loot_view.cpp b/src/platform/raylib/ground_loot_view.cpp
+new file mode 100644
+index 0000000..5315713
+--- /dev/null
++++ b/src/platform/raylib/ground_loot_view.cpp
+@@ -0,0 +1,189 @@
++#include "ground_loot_view.hpp"
++
++#include "combat_view_math.hpp"
++#include "items/item_catalog.hpp"
++
++#include <algorithm>
++#include <cmath>
++#include <cstdio>
++
++namespace arpg::platform {
++namespace {
++
++constexpr float kLabelWidth = 220.0F;
++constexpr float kLabelHeight = 24.0F;
++constexpr float kLabelAnchorGap = 14.0F;
++constexpr float kOverlapGap = 4.0F;
++constexpr Rgba8 kNormalColor{232U, 232U, 232U, 255U};
++constexpr Rgba8 kMagicColor{96U, 170U, 255U, 255U};
++constexpr Rgba8 kRareColor{255U, 205U, 70U, 255U};
++constexpr Rgba8 kAbyssBorderColor{184U, 96U, 255U, 255U};
++
++[[nodiscard]] const char* rarity_name(items::ItemRarity rarity) noexcept {
++    switch (rarity) {
++    case items::ItemRarity::normal: return "普通";
++    case items::ItemRarity::magic: return "魔法";
++    case items::ItemRarity::rare: return "稀有";
++    }
++    return "普通";
++}
++
++[[nodiscard]] Rgba8 rarity_color(items::ItemRarity rarity) noexcept {
++    switch (rarity) {
++    case items::ItemRarity::normal: return kNormalColor;
++    case items::ItemRarity::magic: return kMagicColor;
++    case items::ItemRarity::rare: return kRareColor;
++    }
++    return kNormalColor;
++}
++
++[[nodiscard]] bool overlaps(LootLabelRect lhs, LootLabelRect rhs) noexcept {
++    return lhs.x < rhs.x + rhs.width && rhs.x < lhs.x + lhs.width
++        && lhs.y < rhs.y + rhs.height && rhs.y < lhs.y + lhs.height;
++}
++
++void format_label_text(GroundLootLabel& label,
++    const dungeon::GroundItemSnapshot& item,
++    GroundLootViewDiagnostics& diagnostics) noexcept {
++    const items::BaseDefinition* const base =
++        items::base_definition(item.base_id);
++    const char* const rarity = rarity_name(item.rarity);
++    const char* const base_name = base == nullptr
++        ? "未知装备" : base->name.data();
++    const int base_name_length = base == nullptr
++        ? static_cast<int>(sizeof("未知装备") - 1U)
++        : static_cast<int>(base->name.size());
++    if (base == nullptr) {
++        ++diagnostics.invalid_base_count;
++    }
++
++    const int written = std::snprintf(label.text.data(), label.text.size(),
++        "%s %.*s · i%u", rarity, base_name_length, base_name,
++        static_cast<unsigned>(item.item_level));
++    if (written < 0
++            || static_cast<std::size_t>(written) >= label.text.size()) {
++        ++diagnostics.text_truncation_count;
++        static_cast<void>(std::snprintf(label.text.data(), label.text.size(),
++            "%s #%u · i%u", rarity, static_cast<unsigned>(item.base_id),
++            static_cast<unsigned>(item.item_level)));
++    }
++    label.text.back() = '\0';
++}
++
++void insert_by_ordinal(GroundLootView& view,
++    GroundLootLabel label) noexcept {
++    std::size_t insertion = view.count;
++    while (insertion > 0U
++            && label.ordinal < view.labels[insertion - 1U].ordinal) {
++        view.labels[insertion] = view.labels[insertion - 1U];
++        --insertion;
++    }
++    view.labels[insertion] = label;
++    ++view.count;
++}
++
++[[nodiscard]] float usable_dimension(float value) noexcept {
++    return std::isfinite(value) && value > kGroundLootSafetyInset * 2.0F
++        ? value : kGroundLootSafetyInset * 2.0F;
++}
++
++void clamp_to_safety_area(LootLabelRect& rect,
++    float width,
++    float height) noexcept {
++    const float viewport_width = usable_dimension(width);
++    const float viewport_height = usable_dimension(height);
++    rect.width = (std::min)(rect.width,
++        viewport_width - kGroundLootSafetyInset * 2.0F);
++    rect.height = (std::min)(rect.height,
++        viewport_height - kGroundLootSafetyInset * 2.0F);
++    rect.x = std::clamp(rect.x, kGroundLootSafetyInset,
++        viewport_width - kGroundLootSafetyInset - rect.width);
++    rect.y = std::clamp(rect.y, kGroundLootSafetyInset,
++        viewport_height - kGroundLootSafetyInset - rect.height);
++}
++
++void layout_labels(GroundLootView& view,
++    float width,
++    float height) noexcept {
++    for (std::size_t index = 0U; index < view.count; ++index) {
++        GroundLootLabel& label = view.labels[index];
++        LootLabelRect& rect = label.rect;
++        rect = {label.anchor_x - kLabelWidth * 0.5F,
++            label.anchor_y - kLabelAnchorGap - kLabelHeight,
++            kLabelWidth, kLabelHeight};
++
++        for (std::size_t attempt = 0U;
++             attempt < dungeon::kGroundDropCapacity; ++attempt) {
++            bool collision = false;
++            for (std::size_t previous = 0U; previous < index; ++previous) {
++                if (overlaps(rect, view.labels[previous].rect)) {
++                    collision = true;
++                    break;
++                }
++            }
++            if (!collision) break;
++            rect.y -= kLabelHeight + kOverlapGap;
++            ++view.diagnostics.overlap_adjustment_count;
++        }
++        clamp_to_safety_area(rect, width, height);
++    }
++}
++
++}  // namespace
++
++bool ground_loot_visible(const dungeon::GroundItemSnapshot& item,
++    settings::LootFilterMode mode) noexcept {
++    if (item.source == dungeon::GroundItemSource::abyss_chest) {
++        return true;
++    }
++    switch (mode) {
++    case settings::LootFilterMode::show_all:
++        return true;
++    case settings::LootFilterMode::magic_or_better:
++        return item.rarity == items::ItemRarity::magic
++            || item.rarity == items::ItemRarity::rare;
++    case settings::LootFilterMode::rare_only:
++        return item.rarity == items::ItemRarity::rare;
++    }
++    return true;
++}
++
++GroundLootView build_ground_loot_view(
++    const dungeon::DungeonSnapshot& snapshot,
++    settings::LootFilterMode mode,
++    float width,
++    float height) noexcept {
++    GroundLootView view{};
++    const std::size_t source_count = (std::min)(
++        static_cast<std::size_t>(snapshot.ground_item_count),
++        dungeon::kGroundDropCapacity);
++    view.diagnostics.capacity_saturation_count =
++        static_cast<std::uint32_t>(snapshot.ground_item_count - source_count);
++
++    for (std::size_t index = 0U; index < source_count; ++index) {
++        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
++        if (!ground_loot_visible(item, mode)) continue;
++        if (view.count == view.labels.size()) {
++            ++view.diagnostics.capacity_saturation_count;
++            continue;
++        }
++
++        GroundLootLabel label{};
++        label.ordinal = item.ordinal;
++        label.abyss = item.source == dungeon::GroundItemSource::abyss_chest;
++        label.text_color = rarity_color(item.rarity);
++        label.border_color = label.abyss
++            ? kAbyssBorderColor : label.text_color;
++        const ScreenProjection projection =
++            project_combat_position(item.position, width, height);
++        label.anchor_x = projection.x;
++        label.anchor_y = projection.y;
++        format_label_text(label, item, view.diagnostics);
++        insert_by_ordinal(view, label);
++    }
++
++    layout_labels(view, width, height);
++    return view;
++}
++
++}  // namespace arpg::platform
+diff --git a/src/platform/raylib/ground_loot_view.hpp b/src/platform/raylib/ground_loot_view.hpp
+new file mode 100644
+index 0000000..54c5274
+--- /dev/null
++++ b/src/platform/raylib/ground_loot_view.hpp
+@@ -0,0 +1,57 @@
++#pragma once
++
++#include "dungeon/dungeon_types.hpp"
++#include "dungeon_view_math.hpp"
++#include "platform/settings/settings_types.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++
++namespace arpg::platform {
++
++inline constexpr std::size_t kGroundLootTextCapacity = 64U;
++inline constexpr float kGroundLootSafetyInset = 12.0F;
++
++struct LootLabelRect final {
++    float x{};
++    float y{};
++    float width{};
++    float height{};
++};
++
++struct GroundLootLabel final {
++    std::uint16_t ordinal{};
++    float anchor_x{};
++    float anchor_y{};
++    LootLabelRect rect{};
++    Rgba8 text_color{};
++    Rgba8 border_color{};
++    bool abyss{};
++    std::array<char, kGroundLootTextCapacity> text{};
++};
++
++struct GroundLootViewDiagnostics final {
++    std::uint32_t invalid_base_count{};
++    std::uint32_t text_truncation_count{};
++    std::uint32_t overlap_adjustment_count{};
++    std::uint32_t capacity_saturation_count{};
++};
++
++struct GroundLootView final {
++    std::array<GroundLootLabel, dungeon::kGroundDropCapacity> labels{};
++    std::size_t count{};
++    GroundLootViewDiagnostics diagnostics{};
++};
++
++[[nodiscard]] bool ground_loot_visible(
++    const dungeon::GroundItemSnapshot& item,
++    settings::LootFilterMode mode) noexcept;
++
++[[nodiscard]] GroundLootView build_ground_loot_view(
++    const dungeon::DungeonSnapshot& snapshot,
++    settings::LootFilterMode mode,
++    float width,
++    float height) noexcept;
++
++}  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index f5cb090..d0ae776 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -15,21 +15,22 @@ if(TARGET arpg_raylib)
+         pause_menu_view_tests.cpp
+         window_settings_tests.cpp
+         control_hints_tests.cpp
+         hud_view_model_tests.cpp
+         hud_notice_state_tests.cpp
+         hud_layout_tests.cpp
+         hud_font_tests.cpp
+         hud_render_plan_tests.cpp
+         hud_host_integration_tests.cpp
+         death_input_gate_tests.cpp
+-        death_overlay_view_tests.cpp)
++        death_overlay_view_tests.cpp
++        ground_loot_view_tests.cpp)
+     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
+     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+     target_include_directories(arpg_platform_tests
+         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+     if(MSVC)
+         target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+     endif()
+     arpg_enable_project_warnings(arpg_platform_tests)
+ 
+diff --git a/tests/platform/ground_loot_view_tests.cpp b/tests/platform/ground_loot_view_tests.cpp
+new file mode 100644
+index 0000000..050efb2
+--- /dev/null
++++ b/tests/platform/ground_loot_view_tests.cpp
+@@ -0,0 +1,307 @@
++#include "allocation_probe.hpp"
++#include "test_framework.hpp"
++
++#include "ground_loot_view.hpp"
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++
++namespace {
++
++namespace dungeon = arpg::dungeon;
++namespace items = arpg::items;
++namespace platform = arpg::platform;
++namespace settings = arpg::settings;
++
++[[nodiscard]] dungeon::GroundItemSnapshot ground_item(
++    std::uint16_t ordinal,
++    items::ItemRarity rarity,
++    std::uint8_t base_id = 1U,
++    dungeon::GroundItemSource source =
++        dungeon::GroundItemSource::monster_drop,
++    arpg::combat::Vec3 position = {}) noexcept {
++    dungeon::GroundItemSnapshot item{};
++    item.ordinal = ordinal;
++    item.source = source;
++    item.position = position;
++    item.item_id = 1000U + ordinal;
++    item.base_id = base_id;
++    item.item_level = static_cast<std::uint8_t>(20U + ordinal % 80U);
++    item.rarity = rarity;
++    return item;
++}
++
++[[nodiscard]] dungeon::DungeonSnapshot& scratch_snapshot() noexcept {
++    static dungeon::DungeonSnapshot snapshot{};
++    snapshot = {};
++    return snapshot;
++}
++
++void append(dungeon::DungeonSnapshot& snapshot,
++    dungeon::GroundItemSnapshot item) noexcept {
++    if (snapshot.ground_item_count < snapshot.ground_items.size()) {
++        snapshot.ground_items[snapshot.ground_item_count++] = item;
++    }
++}
++
++[[nodiscard]] bool same_color(platform::Rgba8 lhs,
++    platform::Rgba8 rhs) noexcept {
++    return lhs.r == rhs.r && lhs.g == rhs.g
++        && lhs.b == rhs.b && lhs.a == rhs.a;
++}
++
++[[nodiscard]] bool overlaps(platform::LootLabelRect lhs,
++    platform::LootLabelRect rhs) noexcept {
++    return lhs.x < rhs.x + rhs.width && rhs.x < lhs.x + lhs.width
++        && lhs.y < rhs.y + rhs.height && rhs.y < lhs.y + lhs.height;
++}
++
++arpg::test::Failure visibility_covers_three_modes_and_abyss_bypass() noexcept {
++    const auto normal = ground_item(1U, items::ItemRarity::normal);
++    const auto magic = ground_item(2U, items::ItemRarity::magic);
++    const auto rare = ground_item(3U, items::ItemRarity::rare);
++    const auto abyss = ground_item(4U, items::ItemRarity::normal, 1U,
++        dungeon::GroundItemSource::abyss_chest);
++
++    ARPG_REQUIRE(platform::ground_loot_visible(
++        normal, settings::LootFilterMode::show_all));
++    ARPG_REQUIRE(platform::ground_loot_visible(
++        magic, settings::LootFilterMode::show_all));
++    ARPG_REQUIRE(platform::ground_loot_visible(
++        rare, settings::LootFilterMode::show_all));
++    ARPG_REQUIRE(!platform::ground_loot_visible(
++        normal, settings::LootFilterMode::magic_or_better));
++    ARPG_REQUIRE(platform::ground_loot_visible(
++        magic, settings::LootFilterMode::magic_or_better));
++    ARPG_REQUIRE(platform::ground_loot_visible(
++        rare, settings::LootFilterMode::magic_or_better));
++    ARPG_REQUIRE(!platform::ground_loot_visible(
++        normal, settings::LootFilterMode::rare_only));
++    ARPG_REQUIRE(!platform::ground_loot_visible(
++        magic, settings::LootFilterMode::rare_only));
++    ARPG_REQUIRE(platform::ground_loot_visible(
++        rare, settings::LootFilterMode::rare_only));
++    ARPG_REQUIRE(platform::ground_loot_visible(
++        abyss, settings::LootFilterMode::rare_only));
++    ARPG_REQUIRE(platform::ground_loot_visible(normal,
++        static_cast<settings::LootFilterMode>(0xFFU)));
++    return {};
++}
++
++arpg::test::Failure builder_filters_and_orders_by_stable_ordinal() noexcept {
++    auto& snapshot = scratch_snapshot();
++    append(snapshot, ground_item(30U, items::ItemRarity::rare));
++    append(snapshot, ground_item(10U, items::ItemRarity::normal));
++    append(snapshot, ground_item(20U, items::ItemRarity::magic));
++
++    const auto all = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::show_all, 1280.0F, 720.0F);
++    ARPG_REQUIRE(all.count == 3U);
++    ARPG_REQUIRE(all.labels[0].ordinal == 10U);
++    ARPG_REQUIRE(all.labels[1].ordinal == 20U);
++    ARPG_REQUIRE(all.labels[2].ordinal == 30U);
++
++    const auto magic = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::magic_or_better, 1280.0F, 720.0F);
++    ARPG_REQUIRE(magic.count == 2U);
++    ARPG_REQUIRE(magic.labels[0].ordinal == 20U);
++    ARPG_REQUIRE(magic.labels[1].ordinal == 30U);
++
++    const auto rare = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::rare_only, 1280.0F, 720.0F);
++    ARPG_REQUIRE(rare.count == 1U);
++    ARPG_REQUIRE(rare.labels[0].ordinal == 30U);
++    return {};
++}
++
++arpg::test::Failure text_uses_catalog_chinese_rarity_ilvl_and_fallback() noexcept {
++    auto& snapshot = scratch_snapshot();
++    auto valid = ground_item(2U, items::ItemRarity::magic, 4U);
++    valid.item_level = 37U;
++    append(snapshot, valid);
++    auto invalid = ground_item(5U, items::ItemRarity::rare, 0xFFU);
++    invalid.item_level = 99U;
++    append(snapshot, invalid);
++
++    const auto view = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::show_all, 1280.0F, 720.0F);
++    ARPG_REQUIRE(view.count == 2U);
++    ARPG_REQUIRE(std::strcmp(
++        view.labels[0].text.data(), "魔法 Striker Gloves · i37") == 0);
++    ARPG_REQUIRE(std::strcmp(
++        view.labels[1].text.data(), "稀有 未知装备 · i99") == 0);
++    ARPG_REQUIRE(view.labels[0].text.back() == '\0');
++    ARPG_REQUIRE(view.labels[1].text.back() == '\0');
++    ARPG_REQUIRE(view.diagnostics.invalid_base_count == 1U);
++    ARPG_REQUIRE(view.diagnostics.text_truncation_count == 0U);
++    return {};
++}
++
++arpg::test::Failure rarity_palette_and_abyss_marker_are_stable() noexcept {
++    auto& snapshot = scratch_snapshot();
++    append(snapshot, ground_item(1U, items::ItemRarity::normal));
++    append(snapshot, ground_item(2U, items::ItemRarity::magic));
++    append(snapshot, ground_item(3U, items::ItemRarity::rare));
++    append(snapshot, ground_item(4U, items::ItemRarity::normal, 1U,
++        dungeon::GroundItemSource::abyss_chest));
++
++    const auto view = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::show_all, 1280.0F, 720.0F);
++    ARPG_REQUIRE(view.count == 4U);
++    ARPG_REQUIRE(same_color(view.labels[0].text_color,
++        platform::Rgba8{232U, 232U, 232U, 255U}));
++    ARPG_REQUIRE(same_color(view.labels[1].text_color,
++        platform::Rgba8{96U, 170U, 255U, 255U}));
++    ARPG_REQUIRE(same_color(view.labels[2].text_color,
++        platform::Rgba8{255U, 205U, 70U, 255U}));
++    ARPG_REQUIRE(!view.labels[0].abyss);
++    ARPG_REQUIRE(view.labels[3].abyss);
++    ARPG_REQUIRE(same_color(view.labels[3].border_color,
++        platform::Rgba8{184U, 96U, 255U, 255U}));
++    return {};
++}
++
++arpg::test::Failure overlapping_anchors_resolve_upward_deterministically() noexcept {
++    auto& snapshot = scratch_snapshot();
++    append(snapshot, ground_item(22U, items::ItemRarity::rare));
++    append(snapshot, ground_item(11U, items::ItemRarity::magic));
++
++    const auto first = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::show_all, 1280.0F, 720.0F);
++    const auto second = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::show_all, 1280.0F, 720.0F);
++    ARPG_REQUIRE(first.count == 2U);
++    ARPG_REQUIRE(!overlaps(first.labels[0].rect, first.labels[1].rect));
++    ARPG_REQUIRE(first.labels[1].rect.y < first.labels[0].rect.y);
++    ARPG_REQUIRE(first.labels[0].ordinal == 11U);
++    ARPG_REQUIRE(first.labels[1].ordinal == 22U);
++    ARPG_REQUIRE(first.labels[0].rect.x == second.labels[0].rect.x);
++    ARPG_REQUIRE(first.labels[0].rect.y == second.labels[0].rect.y);
++    ARPG_REQUIRE(first.labels[1].rect.x == second.labels[1].rect.x);
++    ARPG_REQUIRE(first.labels[1].rect.y == second.labels[1].rect.y);
++    ARPG_REQUIRE(first.diagnostics.overlap_adjustment_count > 0U);
++    return {};
++}
++
++arpg::test::Failure supported_resolutions_keep_all_rects_in_safety_area() noexcept {
++    constexpr std::array<std::array<float, 2>, 3> kViewports{{
++        {{1024.0F, 576.0F}}, {{1280.0F, 720.0F}}, {{1920.0F, 1080.0F}},
++    }};
++    auto& snapshot = scratch_snapshot();
++    append(snapshot, ground_item(1U, items::ItemRarity::normal, 1U,
++        dungeon::GroundItemSource::monster_drop, {-1000.0F, -1000.0F, 1000.0F}));
++    append(snapshot, ground_item(2U, items::ItemRarity::magic, 2U,
++        dungeon::GroundItemSource::monster_drop, {1000.0F, 1000.0F, -1000.0F}));
++
++    for (const auto viewport : kViewports) {
++        const auto view = platform::build_ground_loot_view(snapshot,
++            settings::LootFilterMode::show_all, viewport[0], viewport[1]);
++        ARPG_REQUIRE(view.count == 2U);
++        for (std::size_t index = 0U; index < view.count; ++index) {
++            const auto rect = view.labels[index].rect;
++            ARPG_REQUIRE(rect.x >= platform::kGroundLootSafetyInset);
++            ARPG_REQUIRE(rect.y >= platform::kGroundLootSafetyInset);
++            ARPG_REQUIRE(rect.x + rect.width
++                <= viewport[0] - platform::kGroundLootSafetyInset);
++            ARPG_REQUIRE(rect.y + rect.height
++                <= viewport[1] - platform::kGroundLootSafetyInset);
++        }
++    }
++    return {};
++}
++
++arpg::test::Failure full_capacity_extreme_layout_is_bounded() noexcept {
++    auto& snapshot = scratch_snapshot();
++    snapshot.ground_item_count = static_cast<std::uint16_t>(
++        dungeon::kGroundDropCapacity + 7U);
++    for (std::size_t index = 0U;
++         index < dungeon::kGroundDropCapacity; ++index) {
++        snapshot.ground_items[index] = ground_item(
++            static_cast<std::uint16_t>(dungeon::kGroundDropCapacity - index),
++            items::ItemRarity::rare);
++    }
++
++    const auto view = platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::show_all, 1024.0F, 576.0F);
++    ARPG_REQUIRE(view.count == dungeon::kGroundDropCapacity);
++    ARPG_REQUIRE(view.labels.size() == dungeon::kGroundDropCapacity);
++    ARPG_REQUIRE(view.diagnostics.capacity_saturation_count == 7U);
++    ARPG_REQUIRE(view.diagnostics.overlap_adjustment_count
++        <= dungeon::kGroundDropCapacity * dungeon::kGroundDropCapacity);
++    for (std::size_t index = 0U; index < view.count; ++index) {
++        const auto rect = view.labels[index].rect;
++        ARPG_REQUIRE(view.labels[index].ordinal == index + 1U);
++        ARPG_REQUIRE(view.labels[index].text.back() == '\0');
++        ARPG_REQUIRE(rect.x >= platform::kGroundLootSafetyInset);
++        ARPG_REQUIRE(rect.y >= platform::kGroundLootSafetyInset);
++        ARPG_REQUIRE(rect.x + rect.width
++            <= 1024.0F - platform::kGroundLootSafetyInset);
++        ARPG_REQUIRE(rect.y + rect.height
++            <= 576.0F - platform::kGroundLootSafetyInset);
++    }
++    return {};
++}
++
++arpg::test::Failure builder_does_not_mutate_snapshot_bytes() noexcept {
++    auto& snapshot = scratch_snapshot();
++    append(snapshot, ground_item(7U, items::ItemRarity::rare, 6U,
++        dungeon::GroundItemSource::abyss_chest, {2.0F, 3.0F, 1.0F}));
++    static dungeon::DungeonSnapshot before{};
++    before = snapshot;
++
++    static_cast<void>(platform::build_ground_loot_view(snapshot,
++        settings::LootFilterMode::rare_only, 1280.0F, 720.0F));
++    ARPG_REQUIRE(std::memcmp(&snapshot, &before, sizeof(snapshot)) == 0);
++    return {};
++}
++
++arpg::test::Failure hundred_thousand_builds_allocate_nothing() noexcept {
++    auto& snapshot = scratch_snapshot();
++    append(snapshot, ground_item(3U, items::ItemRarity::normal));
++    append(snapshot, ground_item(1U, items::ItemRarity::magic));
++    append(snapshot, ground_item(2U, items::ItemRarity::rare, 2U,
++        dungeon::GroundItemSource::abyss_chest));
++
++    std::uint64_t checksum{};
++    const std::uint64_t before = arpg::test::allocation_count();
++    for (std::size_t iteration = 0U; iteration < 100000U; ++iteration) {
++        const auto mode = iteration < 50000U
++            ? settings::LootFilterMode::show_all
++            : (iteration & 1U) == 0U
++                ? settings::LootFilterMode::magic_or_better
++                : settings::LootFilterMode::rare_only;
++        const auto view = platform::build_ground_loot_view(
++            snapshot, mode, 1280.0F, 720.0F);
++        checksum += view.count;
++        checksum += view.labels[0].ordinal;
++        ARPG_REQUIRE(view.labels[0].text.back() == '\0');
++    }
++    const std::uint64_t after = arpg::test::allocation_count();
++    ARPG_REQUIRE(after == before);
++    ARPG_REQUIRE(checksum != 0U);
++    std::printf("[stage11d-ground-loot] builds=100000 "
++        "unchanged=50000 alternating=50000 allocations=%llu\n",
++        static_cast<unsigned long long>(after - before));
++    return {};
++}
++
++constexpr arpg::test::TestCase kCases[] = {
++    {"three visibility modes and abyss", &visibility_covers_three_modes_and_abyss_bypass},
++    {"filter and stable ordinal order", &builder_filters_and_orders_by_stable_ordinal},
++    {"catalog Chinese text and invalid fallback", &text_uses_catalog_chinese_rarity_ilvl_and_fallback},
++    {"rarity palette and abyss marker", &rarity_palette_and_abyss_marker_are_stable},
++    {"overlap resolves upward stably", &overlapping_anchors_resolve_upward_deterministically},
++    {"three resolutions stay safe", &supported_resolutions_keep_all_rects_in_safety_area},
++    {"full capacity remains bounded", &full_capacity_extreme_layout_is_bounded},
++    {"snapshot bytes remain unchanged", &builder_does_not_mutate_snapshot_bytes},
++    {"hundred thousand builds no allocation", &hundred_thousand_builds_allocate_nothing},
++};
++
++}  // namespace
++
++arpg::test::TestSuite ground_loot_view_suite() noexcept {
++    return arpg::test::make_suite("ground_loot_view", kCases);
++}
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 44e7714..53c5f83 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -20,20 +20,21 @@ arpg::test::TestSuite pause_menu_state_suite() noexcept;
+ arpg::test::TestSuite pause_menu_view_suite() noexcept;
+ arpg::test::TestSuite window_settings_suite() noexcept;
+ arpg::test::TestSuite pause_host_gate_suite() noexcept;
+ arpg::test::TestSuite control_hints_suite() noexcept;
+ arpg::test::TestSuite hud_view_model_suite() noexcept;
+ arpg::test::TestSuite hud_notice_state_suite() noexcept;
+ arpg::test::TestSuite hud_layout_suite() noexcept;
+ arpg::test::TestSuite hud_font_suite() noexcept;
+ arpg::test::TestSuite hud_render_plan_suite() noexcept;
+ arpg::test::TestSuite hud_host_integration_suite() noexcept;
++arpg::test::TestSuite ground_loot_view_suite() noexcept;
+ 
+ int main() {
+ #if defined(_WIN32) && defined(_DEBUG)
+     _set_error_mode(_OUT_TO_STDERR);
+     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+     _set_abort_behavior(_WRITE_ABORT_MSG,
+         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+@@ -54,14 +55,15 @@ int main() {
+         pause_menu_state_suite(),
+         pause_menu_view_suite(),
+         window_settings_suite(),
+         control_hints_suite(),
+         hud_view_model_suite(),
+         hud_notice_state_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
++        ground_loot_view_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 244, "stage 11d loot filter runtime");
++    return arpg::test::run_suites(suites, 253, "stage 11d loot filter runtime");
+ }

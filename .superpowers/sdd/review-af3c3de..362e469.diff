@@ -1,0 +1,1498 @@
+# Review package: af3c3de..362e469
+
+## Commits
+362e469 fix: isolate loot preview and render plan lifetime
+bfec85f feat: render filtered ground loot labels
+
+## Files changed
+ .superpowers/sdd/task-6-report.md                  | 278 ++++++++++++++-------
+ src/platform/raylib/combat_renderer.cpp            |  56 ++++-
+ src/platform/raylib/combat_renderer.hpp            |  27 +-
+ src/platform/raylib/hud_font.cpp                   |  24 ++
+ src/platform/raylib/hud_renderer.cpp               |  31 +++
+ src/platform/raylib/hud_renderer.hpp               |   2 +
+ src/platform/raylib/raylib_host.cpp                |  35 ++-
+ src/platform/raylib/raylib_host.hpp                |   5 +
+ src/platform/raylib/room_renderer.cpp              |  34 ++-
+ tests/platform/CMakeLists.txt                      |   9 +
+ tests/platform/hud_font_tests.cpp                  |  13 +
+ tests/platform/hud_host_integration_tests.cpp      |  72 ++++++
+ tests/platform/pause_host_gate_tests.cpp           | 106 ++++++++
+ tests/platform/platform_test_main.cpp              |   2 +-
+ .../stage11d_renderer_integration_guard_test.cmake |  46 ++++
+ 15 files changed, 628 insertions(+), 112 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/task-6-report.md b/.superpowers/sdd/task-6-report.md
+index e2ffc44..ffbabdb 100644
+--- a/.superpowers/sdd/task-6-report.md
++++ b/.superpowers/sdd/task-6-report.md
+@@ -1,133 +1,225 @@
+-# Stage 10 Task 6 报告：六条深渊战斗数值规则
++# Stage 11-D Task 6 报告
+ 
+ ## 状态
+ 
+-- 基线 HEAD：`e4f9ff2df9dbea147df64d32a00d793fd87dabec`
+-- 范围：只实现 combat 数值与 Dungeon config 接线；未实现环境 runtime、清房调用、奖励或 UI。
+-- 结果：六条规则已通过 `CombatEncounterConfig::abyss` 消费；CombatWorld 不读取 checkpoint、save、room seed 或奖励状态。
++完成 Renderer and Draft Preview Integration，并按真实 RED -> GREEN 执行 TDD。范围停在 ground loot 图标/标签渲染、HUD 字体覆盖和 Host draft/committed policy separation；未实现 pickup feedback（Task 7）或 formal evidence（Task 9）。
+ 
+-## TDD：RED 证据
++## 实现
+ 
+-1. 配置契约 RED：新增 `CombatEncounterConfig::abyss` 测试后，MSVC 明确报错 `CombatEncounterConfig` 没有成员 `abyss`。
+-2. 100% 行为基线 RED（145 cases, 5 failures）：
+-   - Heavy Steps：期望 `4.59`，实际仍为地面速度 `5.4`。
+-   - Swift Pursuit：期望移动位移 `1.15x`，实际仍为 `1.0x`。
+-   - Abyss Bulwark：期望 armor `1007`，实际仍为 Stage 9 的 `775`。
+-   - Abyss Fury：期望接触伤害 `65`，实际仍为 `45`。
+-   - Exhausted Recovery：期望初始 hp `700`，实际仍为 `1000`。
+-3. 资源 API RED：测试先引用 `restore_player_resources` 与 `clear_abyss_rule_preserving_resources`，编译明确因两个成员不存在而失败。
+-4. Dungeon exact-receipt RED：固定选中 `abyss_fury` 后，receipt 前缓存 config 的 `rule` 仍为 `none`。
+-5. 自审补强 RED：Fury 下 death-blast hazard 仍为 `120`，未达到 `174`。
++- `CombatRenderPlan` 每次由 `CombatRenderer::draw` 构建一次，内部只拥有一个预构建 `GroundLootView`。
++- `GroundLootRenderConsumers` 将 room icon 与 HUD label 两个 consumer 指向同一个 `CombatRenderPlan::ground_loot`；两个 pass 不再各自过滤或重建 ordinal 集。
++- production render stage 顺序由可测 plan 驱动：`room -> actors -> ground_loot_labels -> normal_hud`。room 与 actors 在 `BeginMode2D` 内；标签在 actors 后结束 world mode，再由正常 HUD 绘制前呈现。
++- `room_renderer.cpp` 不再遍历所有 snapshot 掉落绘制图标，而是只按传入 View 的 ordinal 查找对应 snapshot item，保留 slot/rarity/world projection 的实际图标绘制。
++- `HudRenderer::draw_ground_loot(const GroundLootView&)` 复用 HUD 已加载 Font、HUD palette 和 `DrawTextEx`；标签路径不使用 `TextFormat`、`std::string` 或 `std::vector`。
++- `hud_font.cpp` 在 HUD shared font plan 中补齐 `普通魔法稀有已拾取未知装备` 的 codepoint，并将完整短语列入 required text coverage。
++- 新增 `CombatRenderer::set_loot_filter_mode(settings::LootFilterMode) noexcept`，仅控制 `draw` 的表现 plan。
++- Host 仅在 `PauseScreen::settings` 向 renderer 发送 `pause_menu.draft.loot_filter_mode`；closed/root/capture/quit-confirm 都发送 `live_settings` 的已提交 mode。
++- `PauseCommand::preview` 对音量、窗口和 VSync 继续 live preview，但构造 preview settings 时强制保留 `pause_menu.committed.loot_filter_mode`。因此 `DungeonRuntime::fixed_tick` 仍读取 `loot_pickup_policy(live_settings.loot_filter_mode)`，且该字段的语义现在真实等于 committed policy。
++- Apply 成功后 committed/draft/live 一起发布新 mode；Cancel 和可成功回滚的 Apply failure 恢复旧 mode。Apply failure 仍保留其他 draft 字段用于既有重试流程，只将表现相关 loot mode 复位为 committed。
+ 
+-## GREEN 与倍率组合顺序
++## TDD 证据
+ 
+-统一顺序为：
++### RED 1：Host / render plan API
+ 
+-1. 先完整求值 Stage 9 affix runtime profile。
+-2. 再顺序应用 Abyss basis points；不覆盖 Stage 9 结果。
+-3. 正整数资源/盾值需要上取整时使用统一 ceil helper；armor 与 damage 延续整数 floor。
+-4. tick 统一使用 ceil，非零 base 的结果至少为 1 tick。
++先只修改测试，加入 settings-only draft selection、renderer/live policy separation、单 View reuse、ordinal 与 stage ordering 断言，未修改生产接口。
+ 
+-统一基础 helper 位于 `combat_scaling.hpp`：`scale_basis_points`、`scale_ticks_ratio`、Stage 9 packet 缩放与 Abyss outgoing damage boundary；`monster_ai_common.hpp` 只保留 move/attack/cooldown 的 AI/profile 组合包装。三个 AI 文件不再各自复制 tick/packet 浮点逻辑。
++共享 `out/build/task5-debug` 受当前执行身份 ACL 影响，出现 `.ninja_lock permission denied`，因此使用独立构建目录 `E:/game/task6-build`：
+ 
+-## 六条规则精确证据
++```powershell
++cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake -S . -B E:/game/task6-build -G Ninja -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DFETCHCONTENT_SOURCE_DIR_RAYLIB=E:/game/.worktrees/stage11d-loot-filter/out/build/windows-msvc-debug/_deps/raylib-src && cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1'
++```
+ 
+-### Swift Pursuit
++有效 RED：
+ 
+-- chaos chaser 地面移动：`1.15x`。
+-- cooldown：`ceil(42 * 8500 / 10000) = 36`。
+-- 与 Stage 9 Swift M3 组合：Stage 9 cooldown `32`，再乘 Abyss 得 `ceil(32 * 0.85) = 28`。
+-- telegraph/recovery/active 不受 Swift 改动。
++```text
++pause_host_gate_tests.cpp: error C2039/C3861:
++renderer_loot_filter_mode 不是 arpg::platform 的成员 / 找不到标识符
++```
+ 
+-### Abyss Bulwark
++补最小 Host selection helper 后继续构建，得到下一条有效 RED：
+ 
+-- Armored M3：`floor(775 * 1.30) = 1007`；无 armor 时仍为 `0`。
+-- 基础 chaos chaser 实际 max hp `260`，额外盾 `ceil(260 * 0.30) = 78`；加入既有 fallback max shield 后为 `168`，current shield 增加 `78`。
+-- Mighty M3 先把实际 max hp 求为 `520`，再给额外盾 `156`，max/current 分别为 `246/156`。
+-- Shielding M2 的 Stage 9 max shield `91` 保留并叠加，得到 max/current `169/78`，没有把 Stage 9 shielding 免费激活或覆盖。
++```text
++hud_host_integration_tests.cpp: error C2039/C3861:
++CombatRenderPlan、make_combat_render_plan、GroundLootRenderConsumers、
++ground_loot_render_consumers、CombatRenderStage 尚不存在
++```
+ 
+-### Abyss Fury
++失败原因准确来自 Task 6 production API 与 render plan 尚不存在。
+ 
+-- 接触：`floor(45 * 1.45) = 65`。
+-- projectile：生成时保留 Stage 9 packet `40`，direct-hit 最终边界得到 `floor(40 * 1.45) = 58`。
+-- native monster hazard：`floor(35 * 1.45) = 50`。
+-- death-blast affix hazard：`floor(120 * 1.45) = 174`；chain/burning 也在生成边界走同一函数。
+-- Stage 9 Frenzy M3 先算 `floor(45 * 1.5) = 67`，再算 `floor(67 * 1.45) = 97`。
+-- telegraph/active/recovery/cooldown：`7/4/9/21`（Frenzy M3 后再除 Fury 1.45）；active ticks 保持 `4`。
+-- damage 只乘一次：contact/projectile/bomber 在 direct-hit 最终边界乘；native/death/chain/burning hazard 因不走 direct-hit，在生成边界乘；environment 未接入该边界。
++### RED 2：HUD glyph coverage
+ 
+-### Heavy Steps
++完成最小 renderer/Host 接线并成功编译后运行：
+ 
+-- 仅非 airborne 的水平地面速度：`5.4 * 0.85 = 4.59`。
+-- jump impulse/弧线不变；空中横移仍为 `3.78`；逐 tick 比较攻击 ID/phase 完全相同。
++```powershell
++ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
++```
+ 
+-### Exhausted Recovery
++有效 RED：
+ 
+-- 初次进入：hp `1000 -> 700`，barrier `101 -> 71`（ceil）。
+-- `reset_player_health=false` 跨 wave 保留受损后的当前 hp/barrier，不重复乘 `0.7`。
+-- 显式 restore amount：`1 -> 1`、`10 -> 7`；`reset_player_health=true` 先清零再走同一 restore API，恢复到 `700/71`。
++```text
++[FAIL] hud_font.ground loot Chinese coverage:
++death_overlay_font_covers_text(plan.shared, "普通魔法稀有已拾取未知装备")
++```
+ 
+-### Life Sacrifice
++同时 suite case-count guard 从 253 报告实际 257，这是新增 4 个用例后的预期登记更新。
+ 
+-- base max hp `1001` 经 ceil 得 `551`，进入时按同一 ratio mapping 保持满血比例。
+-- 退出前 `276/551`，调用 `clear_abyss_rule_preserving_resources()` 后为 `501/1001`（最近整数公式）。
+-- barrier `37/101` 退出后仍为 `37/101`，只 clamp，不 refill。
+-- clear API 只提供 Task 8 可测试接线点；本任务没有在清房时调用。
++### GREEN
+ 
+-## Dungeon 接线与依赖
++补齐 HUD shared glyph plan 并更新 case-count 后：
+ 
+-- `make_combat_encounter_config` 新增显式 `AbyssCombatConfig` 参数并原样缓存。
+-- normal room 显式传 `combat_config_for(none)`。
+-- abyss start 在 checkpoint selection 的 seed/depth/danger/rule/rules_version 全部匹配后，传 `combat_config_for(selection->rule)`；exact receipt 前只缓存，receipt 成功后才构造 CombatWorld。
+-- `arpg_combat` PUBLIC 链接 `arpg_abyss`；`arpg_abyss` 仍只 PRIVATE 链接 `arpg_core`，无反向 combat 依赖。
++```powershell
++cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1
++ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
++```
+ 
+-## 修改文件
++结果：`platform.units` 1/1 CTest 通过，257 cases、0 failures；100k GroundLootView 探针仍为 allocations=0。
+ 
+-- Combat public config/API/CMake：`combat_types.hpp`、`combat_world.hpp/.cpp`、`CMakeLists.txt`。
+-- 统一缩放与运行路径：`combat_scaling.hpp`、`monster_ai_common.hpp`、三个 monster AI、`monster_ai.cpp`、`monster_pool.hpp/.cpp`、`player_simulation.cpp`。
+-- Dungeon config/cached receipt 接线：`room_combat_template.hpp/.cpp`、`dungeon_session.cpp`。
+-- 测试：combat config/health/movement/melee/support/main，以及 Dungeon transaction/support。
++Task 6 新增/扩展的测试覆盖：
+ 
+-## 最终验证
++- 一个 `CombatRenderPlan` 只拥有一个 View；room icon 与 HUD label consumer 指针完全相同。
++- `magic_or_better` 下 normal ordinal 被排除，icon/label 共用的 ordinal 为 20、30。
++- production stage 顺序固定为 room、actors、ground labels、normal HUD。
++- settings screen 使用 draft mode，其余所有 pause screens 使用 committed/live mode。
++- Preview 后 renderer 可见 rare-only draft，但 `live_settings` 与 runtime pickup policy 保持 committed。
++- Cancel 恢复 renderer old mode；Apply failure 恢复 live/draft renderer mode；Apply 成功后 live/committed 才发布新 mode。
++- HUD-owned shared font 覆盖 `普通魔法稀有已拾取未知装备`。
+ 
+-- `ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure`
+-  - `combat.units` passed，`dungeon.units` passed。
+-  - 2/2 tests，0 failures，fresh 总耗时 `143.32 sec`。
+-- `ctest --preset windows-msvc-debug -R '^abyss.units$|^architecture\.' --output-on-failure`
+-  - 19/19 tests，0 failures；包括 combat no-raylib/no-dungeon/no-persistence 与 persistence checkpoint-only。
++## focused 回归
+ 
+-## 疑虑与边界
++```powershell
++ctest --test-dir E:/game/task6-build -R "^(platform\.pause_menu_state_boundary|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?)$" --output-on-failure
++```
+ 
+-- 无已知 Task 6 功能缺口。
+-- Task 7 的三条 environment runtime 仍未实现；当前 Fury boundary 不会误缩放未来 environment damage。
+-- Task 8 必须显式调用 `clear_abyss_rule_preserving_resources()`；本任务只提供并测试 API，没有提前接清房 lifecycle。
++结果：9/9 通过、0 failures。包括 Task 4 要求的 `stage11b.settings_evidence_guard` 与 mutation self-test；唯一 fixed tick 仍为：
+ 
+-## 审查修复：Fury 最终伤害边界与 helper 下沉
++```cpp
++runtime.fixed_tick(step_movement,
++    loot_pickup_policy(live_settings.loot_filter_mode));
++```
++
++```powershell
++cmake --build E:/game/task6-build --target arpg_settings_tests -- -j1
++ctest --test-dir E:/game/task6-build -R '^settings\.units$' --output-on-failure
++```
++
++结果：`settings.units` 1/1 通过、0 failures。
++
++```powershell
++cmake --build E:/game/task6-build --target arpg_stage11c_hud_stress -- -j1
++ctest --test-dir E:/game/task6-build -R '^stage11c\.hud_stress\.zero_alloc_100k$' --output-on-failure
++```
++
++结果：HUD stress 1/1 通过、0 failures。
++
++## 文件
++
++- `src/platform/raylib/combat_renderer.hpp`
++- `src/platform/raylib/combat_renderer.cpp`
++- `src/platform/raylib/room_renderer.cpp`
++- `src/platform/raylib/hud_renderer.hpp`
++- `src/platform/raylib/hud_renderer.cpp`
++- `src/platform/raylib/hud_font.cpp`
++- `src/platform/raylib/raylib_host.hpp`
++- `src/platform/raylib/raylib_host.cpp`
++- `tests/platform/hud_font_tests.cpp`
++- `tests/platform/hud_host_integration_tests.cpp`
++- `tests/platform/pause_host_gate_tests.cpp`
++- `tests/platform/platform_test_main.cpp`
++- `.superpowers/sdd/task-6-report.md`
++
++## 提交
++
++主题：`feat: render filtered ground loot labels`
++
++## 自审
++
++- `combat_renderer.cpp` 只有一处 `build_ground_loot_view` 调用；位于每次 `draw` 开头。room/HUD 两个 production stage 都直接读取同一个 `render_plan.ground_loot` 字段，不持有指针或跨帧引用。
++- room icon path 不调用 `ground_loot_visible` 或 `build_ground_loot_view`；HUD label path 同样不重算 filter。
++- label path 只使用固定容量 `GroundLootView` 文本和 `DrawTextEx`；源码扫描无 `TextFormat`、`std::string`、`std::vector` 或 `DrawText`。
++- `CombatRenderer::set_loot_filter_mode` 只写 renderer 私有 presentation 状态；runtime、session、pickup policy 不引用该字段。
++- settings draft 的 loot mode 不再写入 live runtime field。Apply 成功是唯一将新 loot mode 发布给 committed/live 的路径；Cancel/失败回滚保持旧 policy。
++- `git diff --check` 通过；platform、settings、settings/HUD architecture guards 与 HUD stress 全部通过。
++
++## 顾虑
++
++- headless 单元测试无法直接拦截 raylib `Draw*` 调用，因此顺序和复用由真实 production `CombatRenderPlan` 驱动并由纯 plan 测试、源码扫描及现有 architecture guards 验证；本任务未做 Task 9 的像素级 formal evidence。
++- Apply failure 即使 `rollback_live_settings` 失败，也会无条件恢复 live/draft loot mode；窗口、音量或 VSync 的外部 backend 状态仍遵循既有 rollback error 语义。
++- 独立 build 目录位于 `E:/game/task6-build`，因为共享 task5 build 目录对当前执行身份不可写。
++
++## 审查修复：Apply 隔离与 consumer 生命周期
++
++本节记录 `bfec85f feat: render filtered ground loot labels` 后的 Important 审查修复。
+ 
+ ### RED
+ 
+-- actual contact 使用 Blink Assault M1 把 Stage 9 contact packet 从 `45` 变为 `54`，再叠 Chilling M1：旧实现先 Fury 后 Chilling，结果为 `90`；期望先 `ceil(54 * 0.15) = 9` 合入 packet，再 final Fury，结果 `floor(63 * 1.45) = 91`。
+-- actual projectile 使用基础 lightning `40` 与 Chilling M1：旧顺序得到 `floor(40 * 1.45) + ceil(58 * 0.15) = 67`；期望先加入 `ceil(40 * 0.15) = 6`，再 final Fury 得 `floor(46 * 1.45) = 66`。
+-- Fury + Chaos Corrosion 三档旧实现仍写入原值 `20/30/45`；期望 final DoT `29/43/65`。
+-- RED 输出：`150 cases, 2 failures`，分别命中 contact `91` 断言与 Corrosion 三档断言。
++先新增真实 rollback-failure host 测试：Apply 的首次 fullscreen preview 成功，SettingsStore replace 失败，随后第二次 window-mode set（rollback）失败。生产代码未修改时运行：
++
++```powershell
++cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1
++ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
++```
++
++得到有效 RED：
++
++```text
++[FAIL] pause_host_gate.Apply rollback failure restores committed loot policy:
++live.loot_filter_mode == original.loot_filter_mode
++258 cases, 1 failures
++```
++
++consumer 生命周期使用独立 architecture guard 先锁定：禁止 `GroundLootRenderConsumers`、`ground_loot_render_consumers`、`room_icons`、`hud_labels`，并要求两个 production stage 直接消费 `render_plan.ground_loot`，同时要求 `build_ground_loot_view` 在 renderer source 恰好一处。修改生产代码前运行：
++
++```powershell
++ctest --test-dir E:/game/task6-build \
++  -R '^stage11d\.renderer_integration_guard$' -V
++```
++
++得到有效 RED：
++
++```text
++Stage11D renderer exposes forbidden loot consumer wrapper:
++GroundLootRenderConsumers
++```
++
++### GREEN 实现
++
++- Apply backend preview 改用 `preview_settings` 副本，其中 loot mode 强制等于 committed；因此 save committed 之前不会把 draft loot 写入 `live_settings`。
++- SettingsStore 保存继续使用原始 draft（仅按既有规则调整 revision），保存成功后才把新 loot mode 一起发布到 committed/draft/live/input。
++- Apply preview failure 与 save failure 均在检查 backend rollback 结果之前，无条件把 `live_settings.loot_filter_mode` 和 `pause_menu.draft.loot_filter_mode` 恢复为 committed。即使窗口 rollback 失败，fixed tick/live 与 renderer/draft 仍保持旧 loot policy。
++- 删除 `GroundLootRenderConsumers` 与 `ground_loot_render_consumers`。production room stage 和 ground-label stage 直接将同一个 `render_plan.ground_loot` const 引用传入 renderer，不再存在可空或 rvalue 悬空指针 API。
++- C++ plan 测试直接绑定 `plan.ground_loot` 的两个 stage 引用并验证地址、ordinal 和 draw order；Stage11D guard 验证 production 直连、wrapper 缺失和单次 builder 调用。
++
++### GREEN 与回归
++
++小步 GREEN：
++
++```text
++platform.units: 258 cases, 0 failures
++stage11d.renderer_integration_guard: Passed
++```
+ 
+-### GREEN 与 exactly-once 审计
++提交前 focused 回归命令：
+ 
+-- `apply_monster_direct_hit` 先完整合入 Chilling 水伤，再对最终 packet 每个元素 floor 乘 `monster_damage_bp`；AI contact、projectile 与 bomber 不再提前乘 Fury。
+-- projectile runtime 中保存 Stage 9 packet，命中 direct-hit 后只乘一次；Chilling M1 测试锁定 packet `40`、最终玩家伤害 `66`。
+-- Corrosion 在最终写入 `PlayerStatusRuntime` 前 floor 乘一次：M1/M2/M3 为 `29/43/65`；相同测试同时锁定无 Fury 时仍为 `20/30/45`，排除无条件缩放与双乘。
+-- native monster hazard 以及 death/chain/burning affix hazard 不经过 direct-hit，继续只在生成边界乘 Fury；environment 仍未实现且未接入。
+-- GREEN 输出：`150 cases, 0 failures`。
++```powershell
++cmake --build E:/game/task6-build \
++  --target arpg_platform_tests arpg_settings_tests arpg_stage11c_hud_stress -- -j1
++ctest --test-dir E:/game/task6-build \
++  -R "^(platform\.units|settings\.units|stage11c\.hud_stress\.zero_alloc_100k|platform\.pause_menu_state_boundary|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?|stage11d\.renderer_integration_guard)$" \
++  --output-on-failure
++```
+ 
+-### Minor Refactor
++结果：13/13 CTest 通过、0 failures；首次完整回归 43.72 秒，提交前 fresh 重跑 39.62 秒。包含 `platform.units` 258 cases、`settings.units`、HUD 100k stress、Task4 settings guard/self-test、Host/HUD architecture guards 和新 Stage11D renderer guard。
+ 
+-- 新增窄头 `src/combat/combat_scaling.hpp`，集中整数 basis-point、tick ratio、Stage 9 packet 与 outgoing packet 缩放。
+-- `monster_ai_common.hpp` 只保留 AI/profile 的 move/attack/cooldown 组合包装。
+-- `combat_world.cpp`、`monster_pool.cpp`、`player_simulation.cpp` 与 scaling 单测直接 include `combat_scaling.hpp`，不再 include AI common；没有复制 helper 实现。
++### 修复文件与提交
+ 
+-### 审查修复后的 fresh 验证
++- `src/platform/raylib/combat_renderer.hpp`
++- `src/platform/raylib/combat_renderer.cpp`
++- `src/platform/raylib/raylib_host.cpp`
++- `tests/platform/hud_host_integration_tests.cpp`
++- `tests/platform/pause_host_gate_tests.cpp`
++- `tests/platform/platform_test_main.cpp`
++- `tests/platform/CMakeLists.txt`
++- `tests/platform/stage11d_renderer_integration_guard_test.cmake`
++- `.superpowers/sdd/task-6-report.md`
+ 
+-- `ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure`
+-  - 2/2 tests，0 failures，总耗时 `143.81 sec`。
+-- `ctest --preset windows-msvc-debug -R '^abyss.units$|^architecture\.' --output-on-failure`
+-  - 19/19 tests，0 failures，总耗时 `53.55 sec`。
++修复提交主题：`fix: isolate loot preview and render plan lifetime`
+diff --git a/src/platform/raylib/combat_renderer.cpp b/src/platform/raylib/combat_renderer.cpp
+index b9d4d73..8b72719 100644
+--- a/src/platform/raylib/combat_renderer.cpp
++++ b/src/platform/raylib/combat_renderer.cpp
+@@ -2,20 +2,37 @@
+ 
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_runtime.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <algorithm>
+ 
+ namespace arpg::platform {
+ 
++CombatRenderPlan make_combat_render_plan(
++    const dungeon::DungeonSnapshot& snapshot,
++    settings::LootFilterMode mode,
++    float width,
++    float height) noexcept {
++    CombatRenderPlan plan{};
++    plan.ground_loot = build_ground_loot_view(snapshot, mode, width, height);
++    plan.stages = {{
++        CombatRenderStage::room,
++        CombatRenderStage::actors,
++        CombatRenderStage::ground_loot_labels,
++        CombatRenderStage::normal_hud,
++    }};
++    plan.stage_count = plan.stages.size();
++    return plan;
++}
++
+ std::optional<std::size_t> hud_presented_frame_index(
+     HudPresentedFrame frame) noexcept {
+     const std::size_t index = static_cast<std::size_t>(frame);
+     return index < static_cast<std::size_t>(HudPresentedFrame::count)
+         ? std::optional<std::size_t>{index} : std::nullopt;
+ }
+ 
+ bool CombatRenderer::initialize_resources() noexcept {
+     const bool death_font_ready = death_overlay_.initialize();
+     const bool hud_font_ready = hud_renderer_.initialize();
+@@ -53,20 +70,25 @@ void CombatRenderer::consume_event(const combat::CombatEvent& event) noexcept {
+ void CombatRenderer::consume_dungeon_event(
+     const dungeon::DungeonEvent& event) noexcept {
+     transition_ = transition_after_dungeon_event(transition_, event.kind);
+ }
+ 
+ void CombatRenderer::clear_combat_transients() noexcept {
+     last_event_ = combat::CombatEvent{};
+     has_last_event_ = false;
+ }
+ 
++void CombatRenderer::set_loot_filter_mode(
++    settings::LootFilterMode mode) noexcept {
++    loot_filter_mode_ = mode;
++}
++
+ void CombatRenderer::update(float frame_seconds) noexcept {
+     transition_ = advance_transition(transition_, frame_seconds);
+ }
+ 
+ void CombatRenderer::observe_hud(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     const ControlHints& control_hints,
+     float frame_seconds,
+@@ -129,31 +151,55 @@ std::uint64_t CombatRenderer::hud_presented_frame_count(
+ void CombatRenderer::draw(
+     const dungeon::DungeonSnapshot& previous,
+     const dungeon::DungeonSnapshot& current,
+     const DungeonRenderStatus& runtime_status,
+     float interpolation_alpha,
+     bool draw_debug,
+     const CombatFeedback& feedback,
+     bool audio_ready) noexcept {
+     transition_ = transition_after_room_phase(transition_, current.phase);
+ 
++    const CombatRenderPlan render_plan = make_combat_render_plan(current,
++        loot_filter_mode_, static_cast<float>(GetScreenWidth()),
++        static_cast<float>(GetScreenHeight()));
++
+     const CameraOffset camera_offset = feedback.camera_offset();
+     Camera2D world_camera{};
+     world_camera.offset = {camera_offset.x, camera_offset.y};
+     world_camera.zoom = 1.0F;
+     BeginMode2D(world_camera);
+-    draw_room(current);
+-    draw_actors(previous, current, std::clamp(interpolation_alpha, 0.0F, 1.0F),
+-        draw_debug, feedback);
+-    EndMode2D();
++    bool world_mode = true;
++    for (std::size_t index = 0U; index < render_plan.stage_count; ++index) {
++        const CombatRenderStage stage = render_plan.stages[index];
++        if (stage == CombatRenderStage::ground_loot_labels && world_mode) {
++            EndMode2D();
++            world_mode = false;
++        }
++        switch (stage) {
++        case CombatRenderStage::room:
++            draw_room(current, render_plan.ground_loot);
++            break;
++        case CombatRenderStage::actors:
++            draw_actors(previous, current,
++                std::clamp(interpolation_alpha, 0.0F, 1.0F),
++                draw_debug, feedback);
++            break;
++        case CombatRenderStage::ground_loot_labels:
++            hud_renderer_.draw_ground_loot(render_plan.ground_loot);
++            break;
++        case CombatRenderStage::normal_hud:
++            draw_hud();
++            break;
++        }
++    }
++    if (world_mode) EndMode2D();
+ 
+-    draw_hud();
+     if (draw_debug) {
+         const DebugOverlayDiagnosticsPlan diagnostics =
+             make_debug_overlay_diagnostics_plan(current, hud_model_.diagnostics,
+                 hud_notices_.dropped_count(), hud_binding_revision_, last_event_,
+                 has_last_event_, hud_renderer_.font_ready());
+         debug_overlay_.draw(current, runtime_status, feedback, audio_ready, diagnostics);
+     }
+ 
+     const float overlay_alpha = transition_overlay_alpha(transition_.seconds_left);
+     if (overlay_alpha > 0.0F) {
+diff --git a/src/platform/raylib/combat_renderer.hpp b/src/platform/raylib/combat_renderer.hpp
+index 7957e21..2915726 100644
+--- a/src/platform/raylib/combat_renderer.hpp
++++ b/src/platform/raylib/combat_renderer.hpp
+@@ -1,35 +1,55 @@
+ #pragma once
+ 
+ #include "combat_feedback.hpp"
+ #include "death_overlay_renderer.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_view_math.hpp"
++#include "ground_loot_view.hpp"
+ #include "hud_notice_state.hpp"
+ #include "hud_renderer.hpp"
+ 
+ #include <cstdint>
+ #include <array>
+ #include <optional>
+ #include <cstddef>
+ 
+ namespace arpg::platform {
+ 
+ struct DungeonRenderStatus;
+ struct ControlHints;
+ enum class HudPresentedFrame : std::uint8_t {
+     normal,
+     recovery,
+     death_overlay,
+     count,
+ };
+ 
++enum class CombatRenderStage : std::uint8_t {
++    room,
++    actors,
++    ground_loot_labels,
++    normal_hud,
++};
++
++struct CombatRenderPlan final {
++    GroundLootView ground_loot{};
++    std::array<CombatRenderStage, 4> stages{};
++    std::size_t stage_count{};
++};
++
++[[nodiscard]] CombatRenderPlan make_combat_render_plan(
++    const dungeon::DungeonSnapshot& snapshot,
++    settings::LootFilterMode mode,
++    float width,
++    float height) noexcept;
++
+ [[nodiscard]] std::optional<std::size_t> hud_presented_frame_index(
+     HudPresentedFrame) noexcept;
+ 
+ struct DoorRenderDecision final {
+     const char* label{};
+     const char* arrow{};
+     Rgba8 frame{};
+     Rgba8 text{};
+     Rgba8 locked_interior{};
+     bool draw_locked_interior{};
+@@ -39,20 +59,21 @@ struct DoorRenderDecision final {
+     DoorVisualMode mode,
+     dungeon::ExitDirection direction) noexcept;
+ 
+ class CombatRenderer final {
+ public:
+     [[nodiscard]] bool initialize_resources() noexcept;
+     void shutdown_resources() noexcept;
+     void consume_event(const combat::CombatEvent& event) noexcept;
+     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
+     void clear_combat_transients() noexcept;
++    void set_loot_filter_mode(settings::LootFilterMode mode) noexcept;
+     void update(float frame_seconds) noexcept;
+     void observe_hud(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         const ControlHints& control_hints,
+         float frame_seconds,
+         bool paused) noexcept;
+     void observe_presented_hud_frame(
+         HudPresentedFrame,
+@@ -73,21 +94,23 @@ public:
+     void draw(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         const DungeonRenderStatus& runtime_status,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback,
+         bool audio_ready) noexcept;
+ 
+ private:
+-    void draw_room(const dungeon::DungeonSnapshot& current) const noexcept;
++    void draw_room(
++        const dungeon::DungeonSnapshot& current,
++        const GroundLootView& ground_loot) const noexcept;
+     void draw_actors(
+         const dungeon::DungeonSnapshot& previous,
+         const dungeon::DungeonSnapshot& current,
+         float interpolation_alpha,
+         bool draw_debug,
+         const CombatFeedback& feedback) const noexcept;
+     void draw_hud() const noexcept;
+     void draw_abyss_hud(
+         const dungeon::DungeonSnapshot& current,
+         float x,
+@@ -104,13 +127,15 @@ private:
+     HudRenderer hud_renderer_{};
+     DebugOverlayRenderer debug_overlay_{};
+     HudNoticeState hud_notices_{};
+     HudViewModelProjector hud_projector_{};
+     HudViewModel hud_model_{};
+     HudLayout hud_layout_{};
+     std::uint64_t hud_binding_revision_{};
+     std::uint64_t hud_observation_count_{};
+     std::array<std::uint64_t,
+         static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
++    settings::LootFilterMode loot_filter_mode_{
++        settings::LootFilterMode::show_all};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/hud_font.cpp b/src/platform/raylib/hud_font.cpp
+index e22ad36..167bd1e 100644
+--- a/src/platform/raylib/hud_font.cpp
++++ b/src/platform/raylib/hud_font.cpp
+@@ -1,28 +1,52 @@
+ #include "hud_font.hpp"
+ 
+ namespace arpg::platform {
++namespace {
++
++void add_hud_codepoint(DeathOverlayFontPlan& plan, int codepoint) noexcept {
++    if (death_overlay_font_has_codepoint(plan, codepoint)
++            || plan.codepoint_count == plan.codepoints.size()) {
++        return;
++    }
++    plan.codepoints[plan.codepoint_count++] = codepoint;
++}
++
++void add_ground_loot_codepoints(DeathOverlayFontPlan& plan) noexcept {
++    constexpr int kCodepoints[] = {
++        0x666E, 0x901A, 0x9B54, 0x6CD5, 0x7A00,
++        0x6709, 0x5DF2, 0x62FE, 0x53D6, 0x672A,
++        0x77E5, 0x88C5, 0x5907,
++    };
++    for (const int codepoint : kCodepoints) {
++        add_hud_codepoint(plan, codepoint);
++    }
++}
++
++}  // namespace
+ 
+ HudFontPlan hud_font_plan() noexcept {
+     HudFontPlan plan{};
+     plan.shared = death_overlay_font_plan();
++    add_ground_loot_codepoints(plan.shared);
+     constexpr const char* kRequiredText[] = {
+         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
+         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
+         u8"减速", u8"腐蚀", u8"无敌", u8"深度", u8"层房间", u8"生态",
+         u8"第", u8"波", u8"下一波即将开始", u8"待领奖励", u8"未领取",
+         u8"正在保存房间", u8"正在处理撤退", u8"房间状态异常", u8"深渊",
+         u8"目标", u8"个敌人", u8"待结算经验",
+         u8"需要恢复存档", u8"离开后再次触碰同一出口以放弃全部剩余奖励",
+         u8"再次交互，放弃剩余奖励并下降", u8"进入下一层", u8"进入出口",
+         u8"房间已清理", u8"奖励", u8"升级至级", u8"有未分配被动点",
+         u8"打开背包", u8"打开被动树",
++        u8"普通魔法稀有已拾取未知装备",
+     };
+     plan.covers_required_text = true;
+     for (const char* text : kRequiredText) {
+         if (!death_overlay_font_covers_text(plan.shared, text)) {
+             plan.covers_required_text = false;
+             break;
+         }
+     }
+     return plan;
+ }
+diff --git a/src/platform/raylib/hud_renderer.cpp b/src/platform/raylib/hud_renderer.cpp
+index 35e523f..e4cb931 100644
+--- a/src/platform/raylib/hud_renderer.cpp
++++ b/src/platform/raylib/hud_renderer.cpp
+@@ -363,20 +363,51 @@ void HudRenderer::shutdown() noexcept {
+         make_hud_font_selection_plan(font_ready_);
+     if (selection.owns_loaded_font && IsWindowReady()) UnloadFont(font_);
+     font_ = {};
+     font_ready_ = false;
+ }
+ 
+ bool HudRenderer::font_ready() const noexcept {
+     return font_ready_;
+ }
+ 
++void HudRenderer::draw_ground_loot(
++    const GroundLootView& view) const noexcept {
++    if (!IsWindowReady()) return;
++    const HudFontSelectionPlan selection =
++        make_hud_font_selection_plan(font_ready_);
++    const Font draw_font = selection.use_default_font
++        ? GetFontDefault() : font_;
++    const HudPalette palette = hud_palette();
++    for (std::size_t index = 0U; index < view.count; ++index) {
++        const GroundLootLabel& label = view.labels[index];
++        const Rectangle bounds{label.rect.x, label.rect.y,
++            label.rect.width, label.rect.height};
++        const Color text{label.text_color.r, label.text_color.g,
++            label.text_color.b, label.text_color.a};
++        const Color border{label.border_color.r, label.border_color.g,
++            label.border_color.b, label.border_color.a};
++        const Color fill = label.abyss
++            ? Fade(palette.chaos, 0.42F)
++            : Fade(palette.text, 0.13F);
++        DrawRectangleRounded(bounds, 0.18F, 6, fill);
++        DrawRectangleLinesEx(bounds, label.abyss ? 2.0F : 1.0F, border);
++        BeginScissorMode(static_cast<int>(bounds.x),
++            static_cast<int>(bounds.y),
++            (std::max)(0, static_cast<int>(bounds.width)),
++            (std::max)(0, static_cast<int>(bounds.height)));
++        DrawTextEx(draw_font, label.text.data(),
++            {bounds.x + 8.0F, bounds.y + 3.0F}, 14.0F, 1.0F, text);
++        EndScissorMode();
++    }
++}
++
+ void HudRenderer::draw(const HudViewModel& view,
+     const HudLayout& layout) const noexcept {
+     if (!IsWindowReady()) return;
+     const HudFontSelectionPlan selection =
+         make_hud_font_selection_plan(font_ready_);
+     const Font draw_font = selection.use_default_font ? GetFontDefault() : font_;
+     const PlayerPanelPlan plan = make_player_panel_plan(view.player, layout,
+         static_cast<float>(GetTime()));
+     const ObjectivePanelPlan objective = make_objective_panel_plan(view.room, layout);
+     const NavigationPanelPlan navigation = make_navigation_panel_plan(
+diff --git a/src/platform/raylib/hud_renderer.hpp b/src/platform/raylib/hud_renderer.hpp
+index 67524ac..9bed785 100644
+--- a/src/platform/raylib/hud_renderer.hpp
++++ b/src/platform/raylib/hud_renderer.hpp
+@@ -1,15 +1,16 @@
+ #pragma once
+ 
+ #include "hud_layout.hpp"
+ #include "hud_palette.hpp"
+ #include "hud_view_model.hpp"
++#include "ground_loot_view.hpp"
+ 
+ #include <raylib.h>
+ 
+ #include <array>
+ #include <cstdint>
+ 
+ namespace arpg::combat {
+ struct MonsterSnapshot;
+ }
+ 
+@@ -98,18 +99,19 @@ struct HudTextDrawPlan final {
+ class HudRenderer final {
+ public:
+     HudRenderer() noexcept = default;
+     ~HudRenderer() noexcept;
+     HudRenderer(const HudRenderer&) = delete;
+     HudRenderer& operator=(const HudRenderer&) = delete;
+ 
+     [[nodiscard]] bool initialize() noexcept;
+     void shutdown() noexcept;
+     [[nodiscard]] bool font_ready() const noexcept;
++    void draw_ground_loot(const GroundLootView&) const noexcept;
+     void draw(const HudViewModel&, const HudLayout&) const noexcept;
+ 
+ private:
+     Font font_{};
+     bool font_ready_{};
+ };
+ 
+ }  // namespace arpg::platform
+diff --git a/src/platform/raylib/raylib_host.cpp b/src/platform/raylib/raylib_host.cpp
+index 4268a06..201aec7 100644
+--- a/src/platform/raylib/raylib_host.cpp
++++ b/src/platform/raylib/raylib_host.cpp
+@@ -897,20 +897,29 @@ DeathInputGate host_death_input_gate(
+     const PhysicalKeySnapshot& physical_keys) noexcept {
+     keys.e = stable_pressed(physical_keys, settings::StableKey::e);
+     return death_input_gate(death_saving, death_pending, keys);
+ }
+ 
+ HostSettingsNotice make_host_settings_notice(
+     settings::SettingsLoadStatus status) noexcept {
+     return {status == settings::SettingsLoadStatus::defaults_corrupt};
+ }
+ 
++settings::LootFilterMode renderer_loot_filter_mode(
++    PauseScreen screen,
++    const settings::SettingsData& live_settings,
++    const settings::SettingsData& draft_settings) noexcept {
++    return screen == PauseScreen::settings
++        ? draft_settings.loot_filter_mode
++        : live_settings.loot_filter_mode;
++}
++
+ void consume_host_settings_notice(
+     HostSettingsNotice& notice,
+     PauseScreen previous_screen,
+     PauseMenuState& pause_menu) noexcept {
+     if (!notice.recovered_defaults_pending
+             || previous_screen != PauseScreen::root
+             || pause_menu.screen != PauseScreen::settings) {
+         return;
+     }
+     pause_menu.message = kSettingsRecoveredDefaults;
+@@ -922,60 +931,74 @@ bool settle_host_pause_command(
+     bool window_close_requested,
+     PauseMenuState& pause_menu,
+     settings::SettingsData& live_settings,
+     settings::SettingsData& input_settings,
+     const settings::SettingsStore& settings_store,
+     WindowSettingsBackend settings_backend) {
+     switch (command) {
+     case PauseCommand::none:
+         break;
+     case PauseCommand::preview: {
++        settings::SettingsData preview_settings = pause_menu.draft;
++        preview_settings.loot_filter_mode =
++            pause_menu.committed.loot_filter_mode;
+         const LiveSettingsResult result = apply_live_settings(
+-            live_settings, pause_menu.draft, settings_backend);
++            live_settings, preview_settings, settings_backend);
+         if (result == LiveSettingsResult::applied) {
+-            live_settings = pause_menu.draft;
++            live_settings = preview_settings;
+             pause_menu.message = nullptr;
+         } else {
+             pause_menu.message = kSettingsPreviewFailed;
+         }
+         break;
+     }
+     case PauseCommand::apply: {
++        settings::SettingsData preview_settings = pause_menu.draft;
++        preview_settings.loot_filter_mode =
++            pause_menu.committed.loot_filter_mode;
+         const LiveSettingsResult preview = apply_live_settings(
+-            live_settings, pause_menu.draft, settings_backend);
++            live_settings, preview_settings, settings_backend);
+         if (preview != LiveSettingsResult::applied) {
+             const LiveSettingsResult rollback = rollback_live_settings(
+                 live_settings, pause_menu.committed, settings_backend);
++            live_settings.loot_filter_mode =
++                pause_menu.committed.loot_filter_mode;
++            pause_menu.draft.loot_filter_mode =
++                pause_menu.committed.loot_filter_mode;
+             if (rollback == LiveSettingsResult::applied) {
+                 live_settings = pause_menu.committed;
+                 pause_menu.message = kSettingsPreviewFailed;
+             } else {
+                 pause_menu.message = kSettingsRollbackFailed;
+             }
+             break;
+         }
+-        const settings::SettingsData previewed = pause_menu.draft;
++        const settings::SettingsData previewed = preview_settings;
+         live_settings = previewed;
+-        settings::SettingsData save_draft = previewed;
++        settings::SettingsData save_draft = pause_menu.draft;
+         save_draft.revision = pause_menu.committed.revision;
+         const settings::SettingsSaveResult saved = settings_store.save(
+             pause_menu.committed, save_draft);
+         if (saved.status == settings::SettingsSaveStatus::committed) {
+             pause_menu.committed = saved.settings;
+             pause_menu.draft = saved.settings;
+             live_settings = saved.settings;
+             input_settings = saved.settings;
+             pause_menu.message = kSettingsSaved;
+             break;
+         }
+         const LiveSettingsResult rollback = rollback_live_settings(
+             previewed, pause_menu.committed, settings_backend);
++        live_settings.loot_filter_mode =
++            pause_menu.committed.loot_filter_mode;
++        pause_menu.draft.loot_filter_mode =
++            pause_menu.committed.loot_filter_mode;
+         if (rollback == LiveSettingsResult::applied) {
+             live_settings = pause_menu.committed;
+             pause_menu.message = kSettingsSaveFailed;
+         } else {
+             pause_menu.message = kSettingsRollbackFailed;
+         }
+         break;
+     }
+     case PauseCommand::rollback: {
+         const LiveSettingsResult result = rollback_live_settings(
+@@ -1465,20 +1488,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+                 stage11c_validation_state.model = renderer.hud_model();
+                 stage11c_validation_state.notices = renderer.hud_notice_view();
+                 // Evidence records every formal HUD slot, including the F1 slot
+                 // while hidden; f1 remains the authoritative visibility flag.
+                 stage11c_validation_state.layout = make_hud_layout(
+                     GetScreenWidth(), GetScreenHeight(), true);
+                 stage11c_validation_state.debug_visible = draw_debug;
+             } else {
+                 stage11c_validation_state.target_presented_frames = 0U;
+             }
++            renderer.set_loot_filter_mode(renderer_loot_filter_mode(
++                pause_menu.screen, live_settings, pause_menu.draft));
+             BeginDrawing();
+             ClearBackground(Color{13, 17, 27, 255});
+             renderer.draw(previous, current, runtime.render_status(),
+                 static_cast<float>(frame.interpolation_alpha), draw_debug,
+                 feedback, audio_ready);
+             if (passive_overlay_open) {
+                 draw_passive_tree_overlay(current, runtime.render_status());
+             }
+             if (inventory.is_open()) {
+                 inventory.draw(*session, current, runtime.render_status());
+diff --git a/src/platform/raylib/raylib_host.hpp b/src/platform/raylib/raylib_host.hpp
+index 251640c..f794cfe 100644
+--- a/src/platform/raylib/raylib_host.hpp
++++ b/src/platform/raylib/raylib_host.hpp
+@@ -103,20 +103,25 @@ struct HostFrameGateResult final {
+ 
+ [[nodiscard]] HostFrameGateResult gate_host_frame(
+     core::FixedStepRunner& fixed_step,
+     bool& pause_latched,
+     bool paused,
+     double frame_seconds) noexcept;
+ 
+ [[nodiscard]] dungeon::AutoPickupPolicy loot_pickup_policy(
+     settings::LootFilterMode mode) noexcept;
+ 
++[[nodiscard]] settings::LootFilterMode renderer_loot_filter_mode(
++    PauseScreen screen,
++    const settings::SettingsData& live_settings,
++    const settings::SettingsData& draft_settings) noexcept;
++
+ [[nodiscard]] DeathInputGate host_death_input_gate(
+     bool death_saving,
+     bool death_pending,
+     FrameKeyState keys,
+     const PhysicalKeySnapshot& physical_keys) noexcept;
+ 
+ struct HostSettingsNotice final {
+     bool recovered_defaults_pending{};
+ };
+ 
+diff --git a/src/platform/raylib/room_renderer.cpp b/src/platform/raylib/room_renderer.cpp
+index 09f7a83..1f34d8c 100644
+--- a/src/platform/raylib/room_renderer.cpp
++++ b/src/platform/raylib/room_renderer.cpp
+@@ -196,35 +196,53 @@ void draw_ground_item_shape(items::ItemSlot slot, Vector2 center,
+         break;
+     case items::ItemSlot::accessory:
+         DrawPolyLines(center, 4, size, 45.0F, color);
+         DrawCircleV(center, 2.0F * scale, color);
+         break;
+     case items::ItemSlot::count:
+         break;
+     }
+ }
+ 
++const dungeon::GroundItemSnapshot* ground_item_with_ordinal(
++    const dungeon::DungeonSnapshot& snapshot,
++    std::uint16_t ordinal) noexcept {
++    const std::size_t count = (std::min)(
++        static_cast<std::size_t>(snapshot.ground_item_count),
++        snapshot.ground_items.size());
++    for (std::size_t index = 0U; index < count; ++index) {
++        if (snapshot.ground_items[index].ordinal == ordinal) {
++            return &snapshot.ground_items[index];
++        }
++    }
++    return nullptr;
++}
++
+ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
++    const GroundLootView& ground_loot,
+     float width, float height) noexcept {
+-    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
+-        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
++    for (std::size_t index = 0U; index < ground_loot.count; ++index) {
++        const dungeon::GroundItemSnapshot* const item =
++            ground_item_with_ordinal(snapshot,
++                ground_loot.labels[index].ordinal);
++        if (item == nullptr) continue;
+         const RenderProjection projected = project_render_world(
+-            item.position.x, item.position.y, item.position.z,
++            item->position.x, item->position.y, item->position.z,
+             width, height);
+         const Vector2 center{projected.x,
+             projected.ground_y - 13.0F * projected.scale};
+-        const Color color = ground_item_color(item.rarity);
++        const Color color = ground_item_color(item->rarity);
+         DrawEllipse(static_cast<int>(projected.x),
+             static_cast<int>(projected.ground_y + 2.0F),
+             17.0F * projected.scale, 6.0F * projected.scale,
+             Fade(color, 0.24F));
+-        draw_ground_item_shape(item.slot, center, projected.scale, color);
++        draw_ground_item_shape(item->slot, center, projected.scale, color);
+     }
+ }
+ 
+ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
+     if (!snapshot.is_abyss) {
+         return;
+     }
+     const float pulse = abyss_pulse_alpha(elapsed_seconds);
+     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+         Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));
+@@ -262,22 +280,24 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
+     DrawText(label, x - MeasureText(label, 16) / 2, y - 8, 16, color);
+     if (snapshot.combat.has_value()
+         && can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+         constexpr const char* kPrompt = "Press E to descend";
+         DrawText(kPrompt, x - MeasureText(kPrompt, 18) / 2, y + 34, 18, RAYWHITE);
+     }
+ }
+ 
+ }  // namespace
+ 
+-void CombatRenderer::draw_room(const dungeon::DungeonSnapshot& current) const noexcept {
++void CombatRenderer::draw_room(
++    const dungeon::DungeonSnapshot& current,
++    const GroundLootView& ground_loot) const noexcept {
+     const float width = static_cast<float>(GetScreenWidth());
+     const float height = static_cast<float>(GetScreenHeight());
+     draw_graybox_room(current.ecology);
+     draw_abyss(current, static_cast<float>(GetTime()));
+     draw_environment_hazards(current, width, height);
+-    draw_ground_items(current, width, height);
++    draw_ground_items(current, ground_loot, width, height);
+     draw_doors(current, width, height);
+     draw_hole(current);
+ }
+ 
+ }  // namespace arpg::platform
+diff --git a/tests/platform/CMakeLists.txt b/tests/platform/CMakeLists.txt
+index d0ae776..3158b0b 100644
+--- a/tests/platform/CMakeLists.txt
++++ b/tests/platform/CMakeLists.txt
+@@ -1284,10 +1284,19 @@ set_tests_properties(
+ 
+ add_test(
+     NAME stage11c.hud_evidence_guard_self_test
+     COMMAND "${CMAKE_COMMAND}"
+         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+         "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11c-hud-evidence-mutations"
+         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_evidence_guard_self_test.cmake")
+ set_tests_properties(
+     stage11c.hud_evidence_guard_self_test
+     PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 300)
++
++add_test(
++    NAME stage11d.renderer_integration_guard
++    COMMAND "${CMAKE_COMMAND}"
++        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_renderer_integration_guard_test.cmake")
++set_tests_properties(
++    stage11d.renderer_integration_guard
++    PROPERTIES LABELS "headless;platform;architecture;stage11d")
+diff --git a/tests/platform/hud_font_tests.cpp b/tests/platform/hud_font_tests.cpp
+index 5ed1520..52abeb3 100644
+--- a/tests/platform/hud_font_tests.cpp
++++ b/tests/platform/hud_font_tests.cpp
+@@ -104,20 +104,31 @@ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept
+         u8"减速", u8"腐蚀", u8"无敌",
+     };
+ 
+     ARPG_REQUIRE(plan.covers_required_text);
+     for (const char* text : kRequiredText) {
+         ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+     }
+     return {};
+ }
+ 
++arpg::test::Failure ground_loot_labels_are_covered_by_the_hud_owned_font() noexcept {
++    const platform::HudFontPlan plan = platform::hud_font_plan();
++    constexpr const char* kGroundLootText =
++        u8"普通魔法稀有已拾取未知装备";
++
++    ARPG_REQUIRE(plan.covers_required_text);
++    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
++        plan.shared, kGroundLootText));
++    return {};
++}
++
+ arpg::test::Failure task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity() noexcept {
+     const platform::HudFontPlan plan = platform::hud_font_plan();
+     constexpr const char* kTask6Text[] = {
+         u8"深度", u8"层房间", u8"生态", u8"第", u8"波", u8"下一波即将开始",
+         u8"待领奖励", u8"未领取", u8"正在保存房间", u8"正在处理撤退",
+         u8"房间状态异常", u8"深渊", u8"火", u8"水", u8"电", u8"混沌",
+     };
+ 
+     ARPG_REQUIRE(plan.covers_required_text);
+     ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+@@ -165,20 +176,22 @@ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
+     ARPG_REQUIRE(!renderer.font_ready());
+     renderer.shutdown();
+     renderer.shutdown();
+     ARPG_REQUIRE(!renderer.font_ready());
+     renderer.draw({}, {});
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
++    {"ground loot Chinese coverage",
++        &ground_loot_labels_are_covered_by_the_hud_owned_font},
+     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
+     {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
+     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},
+     {"opaque distinct HUD palette", &hud_palette_key_colors_are_opaque_and_distinct},
+     {"safe uninitialized renderer shutdown", &renderer_shutdown_is_safe_before_initialization},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_font_suite() noexcept {
+diff --git a/tests/platform/hud_host_integration_tests.cpp b/tests/platform/hud_host_integration_tests.cpp
+index 38b4f1e..cde2473 100644
+--- a/tests/platform/hud_host_integration_tests.cpp
++++ b/tests/platform/hud_host_integration_tests.cpp
+@@ -1,24 +1,42 @@
+ #include "test_framework.hpp"
+ 
+ #include "combat_renderer.hpp"
+ #include "control_hints.hpp"
+ #include "debug_overlay_renderer.hpp"
+ #include "dungeon_runtime.hpp"
++#include "ground_loot_view.hpp"
+ #include "hud_font.hpp"
++#include "pause_menu_state.hpp"
++#include "platform/settings/settings_types.hpp"
++#include "raylib_host.hpp"
+ 
+ #include <cstring>
+ 
+ namespace {
+ 
+ namespace dungeon = arpg::dungeon;
++namespace items = arpg::items;
+ namespace platform = arpg::platform;
++namespace settings = arpg::settings;
++
++dungeon::GroundItemSnapshot ground_item(
++    std::uint16_t ordinal,
++    items::ItemRarity rarity) noexcept {
++    dungeon::GroundItemSnapshot item{};
++    item.ordinal = ordinal;
++    item.item_id = 1000U + ordinal;
++    item.base_id = 1U;
++    item.item_level = 20U;
++    item.rarity = rarity;
++    return item;
++}
+ 
+ platform::ControlHints committed_hints(std::uint64_t revision) noexcept {
+     platform::ControlHints hints{};
+     static constexpr char kPrimary[] = "WASD Move";
+     static_assert(sizeof(kPrimary) <= 160U);
+     std::memcpy(hints.primary.data(), kPrimary, sizeof(kPrimary));
+     hints.revision = revision;
+     return hints;
+ }
+ 
+@@ -297,27 +315,81 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
+     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+ 
+     const auto invalid = static_cast<platform::HudPresentedFrame>(255U);
+     renderer.observe_presented_hud_frame(invalid, rewarded, current,
+         recovery_status(), committed_hints(999U), 0.1F, false);
+     ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+     ARPG_REQUIRE(renderer.hud_model().navigation.depth == 22U);
+     return {};
+ }
+ 
++arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
++    noexcept {
++    dungeon::DungeonSnapshot value = snapshot();
++    value.ground_items[0] = ground_item(30U, items::ItemRarity::rare);
++    value.ground_items[1] = ground_item(10U, items::ItemRarity::normal);
++    value.ground_items[2] = ground_item(20U, items::ItemRarity::magic);
++    value.ground_item_count = 3U;
++
++    const platform::CombatRenderPlan plan = platform::make_combat_render_plan(
++        value, settings::LootFilterMode::magic_or_better, 1280.0F, 720.0F);
++    const platform::GroundLootView& room_stage_view = plan.ground_loot;
++    const platform::GroundLootView& label_stage_view = plan.ground_loot;
++
++    ARPG_REQUIRE(&room_stage_view == &plan.ground_loot);
++    ARPG_REQUIRE(&label_stage_view == &plan.ground_loot);
++    ARPG_REQUIRE(&room_stage_view == &label_stage_view);
++    ARPG_REQUIRE(plan.ground_loot.count == 2U);
++    ARPG_REQUIRE(plan.ground_loot.labels[0].ordinal == 20U);
++    ARPG_REQUIRE(plan.ground_loot.labels[1].ordinal == 30U);
++    ARPG_REQUIRE(plan.stage_count == 4U);
++    ARPG_REQUIRE(plan.stages[0] == platform::CombatRenderStage::room);
++    ARPG_REQUIRE(plan.stages[1] == platform::CombatRenderStage::actors);
++    ARPG_REQUIRE(plan.stages[2]
++        == platform::CombatRenderStage::ground_loot_labels);
++    ARPG_REQUIRE(plan.stages[3] == platform::CombatRenderStage::normal_hud);
++    return {};
++}
++
++arpg::test::Failure renderer_uses_draft_only_on_the_settings_screen() noexcept {
++    settings::SettingsData live = settings::default_settings();
++    live.loot_filter_mode = settings::LootFilterMode::magic_or_better;
++    settings::SettingsData draft = live;
++    draft.loot_filter_mode = settings::LootFilterMode::rare_only;
++
++    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
++        platform::PauseScreen::settings, live, draft)
++        == settings::LootFilterMode::rare_only);
++    constexpr platform::PauseScreen kCommittedScreens[] = {
++        platform::PauseScreen::closed,
++        platform::PauseScreen::root,
++        platform::PauseScreen::capture_binding,
++        platform::PauseScreen::quit_confirm,
++    };
++    for (const platform::PauseScreen screen : kCommittedScreens) {
++        ARPG_REQUIRE(platform::renderer_loot_filter_mode(screen, live, draft)
++            == settings::LootFilterMode::magic_or_better);
++    }
++    return {};
++}
++
+ constexpr arpg::test::TestCase kCases[] = {
+     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
+     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
+     {"presentation frame sentinel is safe", &presentation_frame_sentinel_rejects_invalid_enum_values},
+     {"debug diagnostics plan covers F1 counters", &debug_diagnostics_plan_carries_all_f1_only_counters},
+     {"fallback font selection owns no default font", &fallback_font_selection_matches_actual_draw_and_shutdown_ownership},
+     {"paused hud notices freeze", &paused_frames_freeze_hud_notice_time},
+     {"settings apply uses committed hints", &committed_settings_hints_and_revision_are_used_after_apply},
+     {"observation publishes prebuilt hud model", &observation_publishes_the_prebuilt_hud_model},
+     {"static HUD text cache invalidates by fragment", &static_text_cache_rebuilds_only_changed_fragments},
++    {"ground loot render plan reuses view and orders stages",
++        &ground_loot_render_plan_reuses_one_view_and_orders_stages},
++    {"renderer draft is settings-only",
++        &renderer_uses_draft_only_on_the_settings_screen},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite hud_host_integration_suite() noexcept {
+     return arpg::test::make_suite("hud_host_integration", kCases);
+ }
+diff --git a/tests/platform/pause_host_gate_tests.cpp b/tests/platform/pause_host_gate_tests.cpp
+index bef974a..bce0206 100644
+--- a/tests/platform/pause_host_gate_tests.cpp
++++ b/tests/platform/pause_host_gate_tests.cpp
+@@ -43,20 +43,44 @@ bool memory_replace(void* context, const std::filesystem::path& path,
+     files.path = path;
+     files.bytes.assign(bytes, bytes + size);
+     return true;
+ }
+ 
+ settings::SettingsStore memory_store(MemorySettingsFiles& files) {
+     return settings::SettingsStore{"memory-settings",
+         {&files, &memory_read, &memory_replace}};
+ }
+ 
++struct ApplyRollbackFailureBackend final {
++    settings::WindowMode mode{settings::WindowMode::windowed};
++    std::size_t set_window_mode_calls{};
++};
++
++bool fail_rollback_window_mode(
++    void* context,
++    settings::WindowMode mode) noexcept {
++    auto& backend = *static_cast<ApplyRollbackFailureBackend*>(context);
++    backend.mode = mode;
++    ++backend.set_window_mode_calls;
++    return backend.set_window_mode_calls != 2U;
++}
++
++settings::WindowMode read_failure_backend_window_mode(void* context) noexcept {
++    return static_cast<ApplyRollbackFailureBackend*>(context)->mode;
++}
++
++platform::WindowSettingsBackend rollback_failure_backend(
++    ApplyRollbackFailureBackend& backend) noexcept {
++    return {&backend, nullptr, &fail_rollback_window_mode, nullptr,
++        &read_failure_backend_window_mode, nullptr};
++}
++
+ void run_frame(dungeon::DungeonSession& session,
+     const platform::HostFrameGateResult& frame,
+     bool request_action) noexcept {
+     if (frame.forward_gameplay && request_action) {
+         static_cast<void>(session.queue_action(combat::Action::light));
+     }
+     for (std::uint32_t step = 0U; step < frame.fixed_step.steps; ++step) {
+         session.tick({1, 0});
+     }
+ }
+@@ -229,73 +253,155 @@ arpg::test::Failure healthy_settings_loads_do_not_queue_recovery_notice()
+     return {};
+ }
+ 
+ arpg::test::Failure close_same_frame_waits_for_successful_apply() noexcept {
+     MemorySettingsFiles files{};
+     settings::SettingsStore store = memory_store(files);
+     platform::PauseMenuState state{};
+     state.committed = settings::default_settings();
+     state.draft = state.committed;
+     state.draft.revision = 1U;
++    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+     ARPG_REQUIRE(settings::assign_or_swap(state.draft,
+         settings::SettingAction::light_attack, settings::StableKey::q));
+     settings::SettingsData live = state.committed;
+     settings::SettingsData input = state.committed;
+ 
+     const bool exit_requested = platform::settle_host_pause_command(
+         platform::PauseCommand::apply, true, state, live, input, store, {});
+     ARPG_REQUIRE(exit_requested);
+     ARPG_REQUIRE(state.committed.revision == 1U);
+     ARPG_REQUIRE(settings::binding_for(state.committed,
+         settings::SettingAction::light_attack) == settings::StableKey::q);
+     ARPG_REQUIRE(input.bindings == state.committed.bindings);
+     ARPG_REQUIRE(live.bindings == state.committed.bindings);
++    ARPG_REQUIRE(state.committed.loot_filter_mode
++        == settings::LootFilterMode::rare_only);
++    ARPG_REQUIRE(live.loot_filter_mode == state.committed.loot_filter_mode);
+     return {};
+ }
+ 
+ arpg::test::Failure close_same_frame_waits_for_rejected_apply() noexcept {
+     MemorySettingsFiles files{};
+     files.fail_replace = true;
+     settings::SettingsStore store = memory_store(files);
+     platform::PauseMenuState state{};
+     state.committed = settings::default_settings();
+     state.draft = state.committed;
+     state.draft.revision = 1U;
++    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+     ARPG_REQUIRE(settings::assign_or_swap(state.draft,
+         settings::SettingAction::light_attack, settings::StableKey::q));
+     const settings::SettingsData original = state.committed;
+     settings::SettingsData live = state.committed;
+     settings::SettingsData input = state.committed;
+ 
+     const bool exit_requested = platform::settle_host_pause_command(
+         platform::PauseCommand::apply, true, state, live, input, store, {});
+     ARPG_REQUIRE(exit_requested);
+     ARPG_REQUIRE(state.committed.revision == original.revision);
+     ARPG_REQUIRE(state.committed.bindings == original.bindings);
+     ARPG_REQUIRE(input.bindings == original.bindings);
+     ARPG_REQUIRE(state.draft.bindings != original.bindings);
++    ARPG_REQUIRE(live.loot_filter_mode == original.loot_filter_mode);
++    ARPG_REQUIRE(state.draft.loot_filter_mode == original.loot_filter_mode);
++    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
++        state.screen, live, state.draft) == original.loot_filter_mode);
++    ARPG_REQUIRE(state.message != nullptr);
++    return {};
++}
++
++arpg::test::Failure loot_filter_preview_is_renderer_only_until_commit() noexcept {
++    MemorySettingsFiles files{};
++    settings::SettingsStore store = memory_store(files);
++    platform::PauseMenuState state{};
++    state.screen = platform::PauseScreen::settings;
++    state.committed = settings::default_settings();
++    state.draft = state.committed;
++    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
++    settings::SettingsData live = state.committed;
++    settings::SettingsData input = state.committed;
++
++    ARPG_REQUIRE(!platform::settle_host_pause_command(
++        platform::PauseCommand::preview, false, state, live, input, store, {}));
++    ARPG_REQUIRE(live.loot_filter_mode == state.committed.loot_filter_mode);
++    ARPG_REQUIRE(platform::loot_pickup_policy(live.loot_filter_mode).minimum_rarity
++        == platform::loot_pickup_policy(
++            state.committed.loot_filter_mode).minimum_rarity);
++    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
++        state.screen, live, state.draft)
++        == settings::LootFilterMode::rare_only);
++
++    platform::PauseInput cancel{};
++    cancel.escape = true;
++    const platform::PauseCommand rollback =
++        platform::update_pause_menu(state, {}, cancel);
++    ARPG_REQUIRE(rollback == platform::PauseCommand::rollback);
++    ARPG_REQUIRE(!platform::settle_host_pause_command(
++        rollback, false, state, live, input, store, {}));
++    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
++    ARPG_REQUIRE(state.draft.loot_filter_mode
++        == state.committed.loot_filter_mode);
++    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
++        state.screen, live, state.draft)
++        == state.committed.loot_filter_mode);
++    return {};
++}
++
++arpg::test::Failure apply_rollback_failure_still_restores_committed_loot_policy()
++    noexcept {
++    MemorySettingsFiles files{};
++    files.fail_replace = true;
++    settings::SettingsStore store = memory_store(files);
++    ApplyRollbackFailureBackend backend{};
++    platform::PauseMenuState state{};
++    state.screen = platform::PauseScreen::settings;
++    state.committed = settings::default_settings();
++    state.draft = state.committed;
++    state.draft.revision = 1U;
++    state.draft.window_mode = settings::WindowMode::fullscreen;
++    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
++    const settings::SettingsData original = state.committed;
++    settings::SettingsData live = state.committed;
++    settings::SettingsData input = state.committed;
++
++    ARPG_REQUIRE(!platform::settle_host_pause_command(
++        platform::PauseCommand::apply, false, state, live, input, store,
++        rollback_failure_backend(backend)));
++    ARPG_REQUIRE(backend.set_window_mode_calls == 3U);
+     ARPG_REQUIRE(state.message != nullptr);
++    ARPG_REQUIRE(state.committed.loot_filter_mode == original.loot_filter_mode);
++    ARPG_REQUIRE(live.loot_filter_mode == original.loot_filter_mode);
++    ARPG_REQUIRE(state.draft.loot_filter_mode == original.loot_filter_mode);
++    ARPG_REQUIRE(platform::loot_pickup_policy(live.loot_filter_mode).minimum_rarity
++        == platform::loot_pickup_policy(original.loot_filter_mode).minimum_rarity);
++    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
++        state.screen, live, state.draft) == original.loot_filter_mode);
+     return {};
+ }
+ 
+ constexpr arpg::test::TestCase kCases[] = {
+     {"600 paused frames freeze simulation",
+         &six_hundred_paused_presented_frames_freeze_simulation},
+     {"pause entry discards action and accumulator",
+         &pause_entry_discards_same_frame_action_and_accumulator},
+     {"death continue uses fixed E snapshot",
+         &death_continue_uses_fixed_e_from_authoritative_snapshot},
+     {"corrupt settings notice is deferred",
+         &corrupt_settings_notice_is_deferred_until_first_settings},
+     {"healthy settings loads have no notice",
+         &healthy_settings_loads_do_not_queue_recovery_notice},
+     {"close waits for successful Apply",
+         &close_same_frame_waits_for_successful_apply},
+     {"close waits for rejected Apply",
+         &close_same_frame_waits_for_rejected_apply},
++    {"loot filter preview is renderer-only until commit",
++        &loot_filter_preview_is_renderer_only_until_commit},
++    {"Apply rollback failure restores committed loot policy",
++        &apply_rollback_failure_still_restores_committed_loot_policy},
+ };
+ 
+ }  // namespace
+ 
+ arpg::test::TestSuite pause_host_gate_suite() noexcept {
+     return arpg::test::make_suite("pause_host_gate", kCases);
+ }
+diff --git a/tests/platform/platform_test_main.cpp b/tests/platform/platform_test_main.cpp
+index 53c5f83..45435cf 100644
+--- a/tests/platform/platform_test_main.cpp
++++ b/tests/platform/platform_test_main.cpp
+@@ -58,12 +58,12 @@ int main() {
+         control_hints_suite(),
+         hud_view_model_suite(),
+         hud_notice_state_suite(),
+         hud_layout_suite(),
+         hud_font_suite(),
+         hud_render_plan_suite(),
+         hud_host_integration_suite(),
+         ground_loot_view_suite(),
+     };
+ 
+-    return arpg::test::run_suites(suites, 253, "stage 11d loot filter runtime");
++    return arpg::test::run_suites(suites, 258, "stage 11d loot filter runtime");
+ }
+diff --git a/tests/platform/stage11d_renderer_integration_guard_test.cmake b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+new file mode 100644
+index 0000000..06f6740
+--- /dev/null
++++ b/tests/platform/stage11d_renderer_integration_guard_test.cmake
+@@ -0,0 +1,46 @@
++if(NOT DEFINED SOURCE_ROOT)
++    message(FATAL_ERROR "SOURCE_ROOT is required")
++endif()
++
++set(_header "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.hpp")
++set(_source "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
++foreach(_required IN ITEMS "${_header}" "${_source}")
++    if(NOT EXISTS "${_required}")
++        message(FATAL_ERROR "Stage11D renderer source is missing: ${_required}")
++    endif()
++endforeach()
++
++file(READ "${_header}" _header_text)
++file(READ "${_source}" _source_text)
++set(_combined "${_header_text}\n${_source_text}")
++
++foreach(_forbidden IN ITEMS
++        "GroundLootRenderConsumers"
++        "ground_loot_render_consumers"
++        "room_icons"
++        "hud_labels")
++    string(FIND "${_combined}" "${_forbidden}" _found)
++    if(NOT _found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D renderer exposes forbidden loot consumer wrapper: ${_forbidden}")
++    endif()
++endforeach()
++
++string(REGEX REPLACE "[ \t\r\n]+" "" _normalized "${_source_text}")
++foreach(_required IN ITEMS
++        "draw_room(current,render_plan.ground_loot);"
++        "hud_renderer_.draw_ground_loot(render_plan.ground_loot);")
++    string(FIND "${_normalized}" "${_required}" _found)
++    if(_found EQUAL -1)
++        message(FATAL_ERROR
++            "Stage11D renderer stage does not consume the owned plan field directly: ${_required}")
++    endif()
++endforeach()
++
++string(REGEX MATCHALL "build_ground_loot_view[ \t\r\n]*\\(" _builds
++    "${_source_text}")
++list(LENGTH _builds _build_count)
++if(NOT _build_count EQUAL 1)
++    message(FATAL_ERROR
++        "Stage11D renderer requires exactly one GroundLootView build, got ${_build_count}")
++endif()

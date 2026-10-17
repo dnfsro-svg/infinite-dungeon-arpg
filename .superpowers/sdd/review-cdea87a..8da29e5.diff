@@ -1,0 +1,714 @@
+# Review package: cdea87aba65f3d7c4f61c1c8e263b21b0a62ac7f..8da29e5
+
+## Commits
+8da29e5 feat: persist loot filter settings
+
+## Files changed
+ src/platform/settings/settings_codec.cpp | 14 ++++++++----
+ src/platform/settings/settings_store.cpp |  1 +
+ src/platform/settings/settings_types.cpp | 17 +++++++++++++++
+ src/platform/settings/settings_types.hpp |  9 ++++++++
+ tests/settings/settings_codec_tests.cpp  | 33 ++++++++++++++++++++++------
+ tests/settings/settings_store_tests.cpp  |  8 +++++--
+ tests/settings/settings_stress_tests.cpp | 37 ++++++++++++++++++++++++++++++--
+ tests/settings/settings_types_tests.cpp  | 19 ++++++++++++++++
+ 8 files changed, 123 insertions(+), 15 deletions(-)
+
+## Diff
+diff --git a/src/platform/settings/settings_codec.cpp b/src/platform/settings/settings_codec.cpp
+index f2ba81e..0069162 100644
+--- a/src/platform/settings/settings_codec.cpp
++++ b/src/platform/settings/settings_codec.cpp
+@@ -4,21 +4,22 @@
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ 
+ namespace arpg::settings {
+ namespace {
+ 
+ constexpr std::array<std::uint8_t, 8> magic{
+     'A', 'R', 'P', 'G', 'S', 'E', 'T', '1'};
+-constexpr std::uint16_t format = 1U;
++constexpr std::uint16_t format_v1 = 1U;
++constexpr std::uint16_t format_v2 = 2U;
+ constexpr std::uint16_t payload_size = 20U;
+ constexpr std::size_t crc_covered_offset = 8U;
+ constexpr std::size_t crc_covered_size = 32U;
+ constexpr std::size_t crc_offset = 40U;
+ 
+ void write_u16(
+     std::array<std::uint8_t, kSettingsEncodedSize>& bytes,
+     std::size_t offset,
+     std::uint16_t value) noexcept {
+     bytes[offset] = static_cast<std::uint8_t>(value & 0xFFU);
+@@ -74,73 +75,78 @@ void write_u64(
+ }
+ 
+ }  // namespace
+ 
+ std::array<std::uint8_t, kSettingsEncodedSize>
+ encode_settings(const SettingsData& settings) noexcept {
+     std::array<std::uint8_t, kSettingsEncodedSize> bytes{};
+     for (std::size_t index = 0U; index < magic.size(); ++index) {
+         bytes[index] = magic[index];
+     }
+-    write_u16(bytes, 8U, format);
++    write_u16(bytes, 8U, format_v2);
+     write_u16(bytes, 10U, payload_size);
+     write_u64(bytes, 12U, settings.revision);
+     bytes[20] = settings.master_sfx_percent;
+     bytes[21] = static_cast<std::uint8_t>(settings.window_mode);
+     bytes[22] = settings.vsync_enabled ? 1U : 0U;
++    bytes[23] = static_cast<std::uint8_t>(settings.loot_filter_mode);
+     for (std::size_t index = 0U; index < settings.bindings.size(); ++index) {
+         bytes[24U + index] = static_cast<std::uint8_t>(settings.bindings[index]);
+     }
+     const std::uint32_t checksum =
+         core::crc32(bytes.data() + crc_covered_offset, crc_covered_size);
+     write_u32(bytes, crc_offset, checksum);
+     return bytes;
+ }
+ 
+ SettingsDecodeResult decode_settings(
+     const std::uint8_t* bytes, std::size_t size) noexcept {
+     if (bytes == nullptr || size != kSettingsEncodedSize) {
+         return decode_error(SettingsCodecError::wrong_size);
+     }
+     for (std::size_t index = 0U; index < magic.size(); ++index) {
+         if (bytes[index] != magic[index]) {
+             return decode_error(SettingsCodecError::wrong_magic);
+         }
+     }
+-    if (read_u16(bytes, 8U) != format) {
++    const std::uint16_t record_format = read_u16(bytes, 8U);
++    if (record_format != format_v1 && record_format != format_v2) {
+         return decode_error(SettingsCodecError::wrong_format);
+     }
+     if (read_u16(bytes, 10U) != payload_size) {
+         return decode_error(SettingsCodecError::wrong_payload_size);
+     }
+     const std::uint32_t expected_crc =
+         core::crc32(bytes + crc_covered_offset, crc_covered_size);
+     if (read_u32(bytes, crc_offset) != expected_crc) {
+         return decode_error(SettingsCodecError::bad_crc);
+     }
+-    if (bytes[23] != 0U) {
++    if (record_format == format_v1 && bytes[23] != 0U) {
+         return decode_error(SettingsCodecError::reserved_nonzero);
+     }
+     for (std::size_t offset = 34U; offset < crc_offset; ++offset) {
+         if (bytes[offset] != 0U) {
+             return decode_error(SettingsCodecError::reserved_nonzero);
+         }
+     }
+     if (bytes[22] > 1U) {
+         return decode_error(SettingsCodecError::invalid_settings);
+     }
+ 
+     SettingsData settings{};
+     settings.revision = read_u64(bytes, 12U);
+     settings.master_sfx_percent = bytes[20];
+     settings.window_mode = static_cast<WindowMode>(bytes[21]);
+     settings.vsync_enabled = bytes[22] != 0U;
++    settings.loot_filter_mode = record_format == format_v1
++        ? LootFilterMode::show_all
++        : static_cast<LootFilterMode>(bytes[23]);
+     for (std::size_t index = 0U; index < settings.bindings.size(); ++index) {
+         settings.bindings[index] = static_cast<StableKey>(bytes[24U + index]);
+     }
+     if (validate_settings(settings) != SettingsValidationError::none) {
+         return decode_error(SettingsCodecError::invalid_settings);
+     }
+     return {SettingsCodecError::none, settings};
+ }
+ 
+ }  // namespace arpg::settings
+diff --git a/src/platform/settings/settings_store.cpp b/src/platform/settings/settings_store.cpp
+index 722d64e..58b6e05 100644
+--- a/src/platform/settings/settings_store.cpp
++++ b/src/platform/settings/settings_store.cpp
+@@ -29,20 +29,21 @@ enum class SlotState : std::uint8_t { missing, invalid, valid };
+ struct SlotRecord final {
+     SlotState state{SlotState::missing};
+     SettingsData settings{};
+ };
+ 
+ [[nodiscard]] bool same_settings(
+     const SettingsData& lhs, const SettingsData& rhs) noexcept {
+     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
+         lhs.window_mode == rhs.window_mode &&
+         lhs.vsync_enabled == rhs.vsync_enabled &&
++        lhs.loot_filter_mode == rhs.loot_filter_mode &&
+         lhs.bindings == rhs.bindings &&
+         lhs.revision == rhs.revision;
+ }
+ 
+ [[nodiscard]] SlotRecord read_slot(
+     const SettingsFileOps& ops,
+     const std::filesystem::path& path) {
+     if (ops.read == nullptr) {
+         return {};
+     }
+diff --git a/src/platform/settings/settings_types.cpp b/src/platform/settings/settings_types.cpp
+index c08b08c..5ffaeee 100644
+--- a/src/platform/settings/settings_types.cpp
++++ b/src/platform/settings/settings_types.cpp
+@@ -25,47 +25,59 @@ constexpr std::array<const char*, action_count> action_labels{
+     "Move Down",
+     "Move Left",
+     "Move Right",
+     "Light Attack",
+     "Jump",
+     "Launcher",
+     "Interact",
+     "Inventory",
+     "Passive Tree"};
+ 
++constexpr std::array<const char*, 3> loot_filter_labels{
++    "Show All",
++    "Magic or Better",
++    "Rare Only"};
++
+ [[nodiscard]] constexpr std::size_t action_index(SettingAction action) noexcept {
+     return static_cast<std::size_t>(action);
+ }
+ 
+ [[nodiscard]] constexpr bool valid_key(StableKey key) noexcept {
+     return static_cast<std::size_t>(key) < static_cast<std::size_t>(StableKey::count);
+ }
+ 
++[[nodiscard]] constexpr bool valid_loot_filter_mode(LootFilterMode mode) noexcept {
++    return static_cast<std::size_t>(mode) < loot_filter_labels.size();
++}
++
+ }  // namespace
+ 
+ SettingsData default_settings() noexcept {
+     SettingsData settings{};
+     settings.bindings = default_bindings;
+     return settings;
+ }
+ 
+ SettingsValidationError validate_settings(const SettingsData& settings) noexcept {
+     if (settings.master_sfx_percent > 100U) {
+         return SettingsValidationError::volume_range;
+     }
+     if (settings.master_sfx_percent % 5U != 0U) {
+         return SettingsValidationError::volume_step;
+     }
+     if (settings.window_mode != WindowMode::windowed &&
+         settings.window_mode != WindowMode::fullscreen) {
+         return SettingsValidationError::window_mode;
+     }
++    if (!valid_loot_filter_mode(settings.loot_filter_mode)) {
++        return SettingsValidationError::loot_filter_mode;
++    }
+ 
+     for (std::size_t index = 0; index < settings.bindings.size(); ++index) {
+         if (!valid_key(settings.bindings[index])) {
+             return SettingsValidationError::key_range;
+         }
+         if (settings.bindings[index] == StableKey::v) {
+             return SettingsValidationError::reserved_key;
+         }
+         for (std::size_t other = index + 1U; other < settings.bindings.size(); ++other) {
+             if (settings.bindings[index] == settings.bindings[other]) {
+@@ -96,11 +108,16 @@ bool assign_or_swap(SettingsData& settings, SettingAction action, StableKey key)
+     }
+     settings.bindings[target] = key;
+     return true;
+ }
+ 
+ const char* action_label(SettingAction action) noexcept {
+     const std::size_t index = action_index(action);
+     return index < action_labels.size() ? action_labels[index] : "Unknown";
+ }
+ 
++const char* loot_filter_label(LootFilterMode mode) noexcept {
++    const std::size_t index = static_cast<std::size_t>(mode);
++    return index < loot_filter_labels.size() ? loot_filter_labels[index] : "Unknown";
++}
++
+ }  // namespace arpg::settings
+diff --git a/src/platform/settings/settings_types.hpp b/src/platform/settings/settings_types.hpp
+index ad4067f..a752c3f 100644
+--- a/src/platform/settings/settings_types.hpp
++++ b/src/platform/settings/settings_types.hpp
+@@ -67,38 +67,47 @@ enum class StableKey : std::uint8_t {
+     left_control,
+     right_control,
+     count
+ };
+ 
+ enum class WindowMode : std::uint8_t {
+     windowed,
+     fullscreen
+ };
+ 
++enum class LootFilterMode : std::uint8_t {
++    show_all,
++    magic_or_better,
++    rare_only
++};
++
+ struct SettingsData final {
+     std::uint8_t master_sfx_percent{100};
+     WindowMode window_mode{WindowMode::windowed};
+     bool vsync_enabled{true};
++    LootFilterMode loot_filter_mode{LootFilterMode::show_all};
+     std::array<StableKey, static_cast<std::size_t>(SettingAction::count)> bindings{};
+     std::uint64_t revision{};
+ };
+ 
+ enum class SettingsValidationError : std::uint8_t {
+     none,
+     volume_range,
+     volume_step,
+     window_mode,
++    loot_filter_mode,
+     key_range,
+     reserved_key,
+     duplicate_key
+ };
+ 
+ [[nodiscard]] SettingsData default_settings() noexcept;
+ [[nodiscard]] SettingsValidationError validate_settings(const SettingsData& settings) noexcept;
+ [[nodiscard]] StableKey binding_for(const SettingsData& settings, SettingAction action) noexcept;
+ [[nodiscard]] bool assign_or_swap(
+     SettingsData& settings,
+     SettingAction action,
+     StableKey key) noexcept;
+ [[nodiscard]] const char* action_label(SettingAction action) noexcept;
++[[nodiscard]] const char* loot_filter_label(LootFilterMode mode) noexcept;
+ 
+ }  // namespace arpg::settings
+diff --git a/tests/settings/settings_codec_tests.cpp b/tests/settings/settings_codec_tests.cpp
+index df57333..85380de 100644
+--- a/tests/settings/settings_codec_tests.cpp
++++ b/tests/settings/settings_codec_tests.cpp
+@@ -5,20 +5,21 @@
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <utility>
+ 
+ namespace {
+ 
+ using arpg::settings::SettingsCodecError;
+ using arpg::settings::SettingsData;
+ using arpg::settings::StableKey;
++using arpg::settings::LootFilterMode;
+ using arpg::settings::WindowMode;
+ 
+ constexpr std::size_t crc_offset = 40U;
+ 
+ [[nodiscard]] std::uint32_t test_crc32(
+     const std::uint8_t* bytes, std::size_t size) noexcept {
+     std::uint32_t crc = 0xFFFFFFFFU;
+     for (std::size_t index = 0; index < size; ++index) {
+         crc ^= bytes[index];
+         for (int bit = 0; bit < 8; ++bit) {
+@@ -46,46 +47,58 @@ void refresh_crc(
+     settings.vsync_enabled = false;
+     settings.revision = 0x0102030405060708ULL;
+     return settings;
+ }
+ 
+ [[nodiscard]] bool same_settings(
+     const SettingsData& lhs, const SettingsData& rhs) noexcept {
+     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
+         lhs.window_mode == rhs.window_mode &&
+         lhs.vsync_enabled == rhs.vsync_enabled &&
++        lhs.loot_filter_mode == rhs.loot_filter_mode &&
+         lhs.bindings == rhs.bindings &&
+         lhs.revision == rhs.revision;
+ }
+ 
+ arpg::test::Failure fixed_layout_matches_golden_bytes() noexcept {
+     static_assert(arpg::settings::kSettingsEncodedSize == 44U,
+-        "settings record format 1 must remain exactly 44 bytes");
++        "settings record must remain exactly 44 bytes");
+     const auto encoded = arpg::settings::encode_settings(golden_settings());
+     constexpr std::array<std::uint8_t, 44> expected{
+         0x41, 0x52, 0x50, 0x47, 0x53, 0x45, 0x54, 0x31,
+-        0x01, 0x00, 0x14, 0x00,
++        0x02, 0x00, 0x14, 0x00,
+         0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
+         0x5F, 0x01, 0x00, 0x00,
+         0x16, 0x12, 0x00, 0x03, 0x09, 0x0A, 0x0B, 0x04, 0x08, 0x0F,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+-        0xE1, 0xE9, 0x38, 0x1C};
++        0x5E, 0xE1, 0x27, 0xD5};
+     ARPG_REQUIRE(encoded == expected);
+     return {};
+ }
+ 
+ arpg::test::Failure valid_records_round_trip() noexcept {
+-    const SettingsData expected = golden_settings();
+-    const auto encoded = arpg::settings::encode_settings(expected);
++    SettingsData expected = golden_settings();
++    expected.loot_filter_mode = LootFilterMode::rare_only;
++    auto encoded = arpg::settings::encode_settings(expected);
++    ARPG_REQUIRE(encoded[8] == 2U && encoded[9] == 0U);
++    ARPG_REQUIRE(encoded[23] == static_cast<std::uint8_t>(LootFilterMode::rare_only));
+     const auto decoded = arpg::settings::decode_settings(encoded.data(), encoded.size());
+     ARPG_REQUIRE(decoded.error == SettingsCodecError::none);
+     ARPG_REQUIRE(same_settings(decoded.settings, expected));
++
++    encoded[8] = 1U;
++    encoded[9] = 0U;
++    encoded[23] = 0U;
++    refresh_crc(encoded);
++    const auto migrated = arpg::settings::decode_settings(encoded.data(), encoded.size());
++    ARPG_REQUIRE(migrated.error == SettingsCodecError::none);
++    ARPG_REQUIRE(migrated.settings.loot_filter_mode == LootFilterMode::show_all);
+     return {};
+ }
+ 
+ arpg::test::Failure null_truncated_and_trailing_records_are_rejected() noexcept {
+     const auto encoded = arpg::settings::encode_settings(golden_settings());
+     ARPG_REQUIRE(arpg::settings::decode_settings(nullptr, encoded.size()).error ==
+         SettingsCodecError::wrong_size);
+     for (std::size_t size = 0U; size < encoded.size(); ++size) {
+         ARPG_REQUIRE(arpg::settings::decode_settings(encoded.data(), size).error ==
+             SettingsCodecError::wrong_size);
+@@ -108,48 +121,54 @@ arpg::test::Failure every_single_byte_mutation_is_rejected() noexcept {
+ 
+ arpg::test::Failure header_and_crc_errors_are_classified() noexcept {
+     const auto valid = arpg::settings::encode_settings(golden_settings());
+ 
+     auto bytes = valid;
+     bytes[0] ^= 0x01U;
+     ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
+         SettingsCodecError::wrong_magic);
+ 
+     bytes = valid;
+-    bytes[8] = 2U;
++    bytes[8] = 3U;
+     refresh_crc(bytes);
+     ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
+         SettingsCodecError::wrong_format);
+ 
+     bytes = valid;
+     bytes[10] = 19U;
+     refresh_crc(bytes);
+     ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
+         SettingsCodecError::wrong_payload_size);
+ 
+     bytes = valid;
+     bytes[crc_offset] ^= 0x01U;
+     ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
+         SettingsCodecError::bad_crc);
+     return {};
+ }
+ 
+ arpg::test::Failure every_reserved_byte_must_be_zero() noexcept {
+     const auto valid = arpg::settings::encode_settings(golden_settings());
+-    constexpr std::array<std::size_t, 7> reserved_offsets{23U, 34U, 35U, 36U, 37U, 38U, 39U};
++    constexpr std::array<std::size_t, 6> reserved_offsets{34U, 35U, 36U, 37U, 38U, 39U};
+     for (const std::size_t offset : reserved_offsets) {
+         auto bytes = valid;
+         bytes[offset] = 1U;
+         refresh_crc(bytes);
+         ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
+             SettingsCodecError::reserved_nonzero);
+     }
++    auto bytes = valid;
++    bytes[8] = 1U;
++    bytes[23] = 1U;
++    refresh_crc(bytes);
++    ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
++        SettingsCodecError::reserved_nonzero);
+     return {};
+ }
+ 
+ arpg::test::Failure invalid_scalar_fields_are_rejected() noexcept {
+     const auto valid = arpg::settings::encode_settings(golden_settings());
+     constexpr std::array<std::pair<std::size_t, std::uint8_t>, 4> mutations{{
+         {20U, static_cast<std::uint8_t>(101U)},
+         {20U, static_cast<std::uint8_t>(99U)},
+         {21U, static_cast<std::uint8_t>(2U)},
+         {22U, static_cast<std::uint8_t>(2U)}}};
+diff --git a/tests/settings/settings_store_tests.cpp b/tests/settings/settings_store_tests.cpp
+index bd14e3b..e6d7519 100644
+--- a/tests/settings/settings_store_tests.cpp
++++ b/tests/settings/settings_store_tests.cpp
+@@ -109,20 +109,21 @@ bool fake_replace(
+ void put(FakeFiles& fake, const char* name, const SettingsData& settings) {
+     const auto bytes = arpg::settings::encode_settings(settings);
+     fake.files[name] = {bytes.begin(), bytes.end()};
+ }
+ 
+ [[nodiscard]] bool same_settings(
+     const SettingsData& lhs, const SettingsData& rhs) noexcept {
+     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
+         lhs.window_mode == rhs.window_mode &&
+         lhs.vsync_enabled == rhs.vsync_enabled &&
++        lhs.loot_filter_mode == rhs.loot_filter_mode &&
+         lhs.bindings == rhs.bindings &&
+         lhs.revision == rhs.revision;
+ }
+ 
+ arpg::test::Failure missing_slots_load_defaults_without_writes() noexcept {
+     FakeFiles fake{};
+     const auto result = SettingsStore{"C:/settings", fake_ops(fake)}.load();
+     ARPG_REQUIRE(result.status == SettingsLoadStatus::defaults_missing);
+     ARPG_REQUIRE(same_settings(result.settings, arpg::settings::default_settings()));
+     ARPG_REQUIRE(fake.replacements.empty());
+@@ -177,22 +178,25 @@ arpg::test::Failure equal_revision_identical_slots_are_loadable() noexcept {
+     put(fake, "settings-a.bin", settings);
+     put(fake, "settings-b.bin", settings);
+     const auto result = SettingsStore{"C:/settings", fake_ops(fake)}.load();
+     ARPG_REQUIRE(result.status == SettingsLoadStatus::loaded);
+     ARPG_REQUIRE(same_settings(result.settings, settings));
+     return {};
+ }
+ 
+ arpg::test::Failure equal_revision_conflict_loads_corrupt_defaults() noexcept {
+     FakeFiles fake{};
+-    put(fake, "settings-a.bin", settings_at(11U, 85U));
+-    put(fake, "settings-b.bin", settings_at(11U, 90U));
++    const SettingsData slot_a = settings_at(11U, 85U);
++    SettingsData slot_b = slot_a;
++    slot_b.loot_filter_mode = arpg::settings::LootFilterMode::rare_only;
++    put(fake, "settings-a.bin", slot_a);
++    put(fake, "settings-b.bin", slot_b);
+     const auto result = SettingsStore{"C:/settings", fake_ops(fake)}.load();
+     ARPG_REQUIRE(result.status == SettingsLoadStatus::defaults_corrupt);
+     ARPG_REQUIRE(same_settings(result.settings, arpg::settings::default_settings()));
+     ARPG_REQUIRE(fake.replacements.empty());
+     return {};
+ }
+ 
+ arpg::test::Failure bad_crc_loads_corrupt_defaults_without_deleting() noexcept {
+     FakeFiles fake{};
+     put(fake, "settings-a.bin", settings_at(4U, 80U));
+diff --git a/tests/settings/settings_stress_tests.cpp b/tests/settings/settings_stress_tests.cpp
+index 81751f3..5e3eb8e 100644
+--- a/tests/settings/settings_stress_tests.cpp
++++ b/tests/settings/settings_stress_tests.cpp
+@@ -1,14 +1,15 @@
+ #include "test_framework.hpp"
+ 
+ #include "allocation_probe.hpp"
+ #include "control_hints.hpp"
++#include "core/crc32.hpp"
+ #include "host_input.hpp"
+ #include "dungeon_runtime.hpp"
+ #include "persistence/save_store.hpp"
+ #include "platform/settings/settings_codec.hpp"
+ #include "platform/settings/settings_store.hpp"
+ #include "platform/settings/settings_types.hpp"
+ 
+ #include <array>
+ #include <chrono>
+ #include <cstddef>
+@@ -22,22 +23,22 @@
+ #include <vector>
+ 
+ namespace {
+ 
+ namespace platform = arpg::platform;
+ namespace persistence = arpg::persistence;
+ namespace settings = arpg::settings;
+ 
+ // Independently derived from the documented 1,000-step mutation sequence and
+ // the settings file layout (including its CRC32 field), not from store output.
+-constexpr std::uint64_t kExpectedSlotAHash = 0xB18681AE11B562E5ULL;
+-constexpr std::uint64_t kExpectedSlotBHash = 0x2FCCF872A6729E6FULL;
++constexpr std::uint64_t kExpectedSlotAHash = 0xCFFDFDC436D24D81ULL;
++constexpr std::uint64_t kExpectedSlotBHash = 0xBADB6B4DC55C7E7DULL;
+ 
+ struct MemorySlots final {
+     std::array<std::uint8_t, settings::kSettingsEncodedSize> a{};
+     std::array<std::uint8_t, settings::kSettingsEncodedSize> b{};
+     bool has_a{};
+     bool has_b{};
+ };
+ 
+ [[nodiscard]] bool slot_is_a(const std::filesystem::path& path) noexcept {
+     return path.filename() == "settings-a.bin";
+@@ -68,25 +69,39 @@ bool memory_replace(void* context, const std::filesystem::path& path,
+     } else {
+         slots.has_b = true;
+     }
+     return true;
+ }
+ 
+ [[nodiscard]] settings::SettingsFileOps memory_ops(MemorySlots& slots) noexcept {
+     return {&slots, &memory_read, &memory_replace};
+ }
+ 
++[[nodiscard]] std::array<std::uint8_t, settings::kSettingsEncodedSize>
++    encode_v1(const settings::SettingsData& values) noexcept {
++    auto bytes = settings::encode_settings(values);
++    bytes[8] = 1U;
++    bytes[9] = 0U;
++    bytes[23] = 0U;
++    const std::uint32_t checksum = arpg::core::crc32(bytes.data() + 8U, 32U);
++    for (std::size_t index = 0U; index < 4U; ++index) {
++        bytes[40U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
++    }
++    return bytes;
++}
++
+ [[nodiscard]] bool same_settings(const settings::SettingsData& lhs,
+     const settings::SettingsData& rhs) noexcept {
+     return lhs.master_sfx_percent == rhs.master_sfx_percent
+         && lhs.window_mode == rhs.window_mode
+         && lhs.vsync_enabled == rhs.vsync_enabled
++        && lhs.loot_filter_mode == rhs.loot_filter_mode
+         && lhs.bindings == rhs.bindings
+         && lhs.revision == rhs.revision;
+ }
+ 
+ [[nodiscard]] std::uint64_t sentinel_hash(
+     const std::array<std::uint8_t, settings::kSettingsEncodedSize>& bytes) noexcept {
+     std::uint64_t value = 1469598103934665603ULL;
+     for (const std::uint8_t byte : bytes) {
+         value ^= byte;
+         value *= 1099511628211ULL;
+@@ -152,20 +167,21 @@ struct StressOutcome final {
+             revision % static_cast<std::uint64_t>(settings::SettingAction::count));
+         const std::size_t owner = static_cast<std::size_t>(
+             (revision * 7U) % draft.bindings.size());
+         if (!settings::assign_or_swap(draft, target, draft.bindings[owner])) {
+             return {};
+         }
+         draft.master_sfx_percent = static_cast<std::uint8_t>((revision % 21U) * 5U);
+         draft.window_mode = (revision & 1U) != 0U
+             ? settings::WindowMode::fullscreen : settings::WindowMode::windowed;
+         draft.vsync_enabled = (revision % 3U) != 0U;
++        draft.loot_filter_mode = static_cast<settings::LootFilterMode>(revision % 3U);
+         const auto saved = store.save(direct, draft);
+         if (saved.status != settings::SettingsSaveStatus::committed
+                 || saved.settings.revision != revision
+                 || settings::validate_settings(saved.settings)
+                     != settings::SettingsValidationError::none) {
+             return {};
+         }
+         direct = saved.settings;
+ 
+         for (const std::uint32_t interval : restart_intervals) {
+@@ -202,20 +218,37 @@ arpg::test::Failure thousand_atomic_reload_cycles_are_restart_stable() noexcept
+     ARPG_REQUIRE(first.slot_b_hash != 0U);
+     ARPG_REQUIRE(first.slot_a_hash == kExpectedSlotAHash);
+     ARPG_REQUIRE(first.slot_b_hash == kExpectedSlotBHash);
+     ARPG_REQUIRE(first.slot_a[12U] == 0xE7U);
+     ARPG_REQUIRE(first.slot_a[13U] == 0x03U);
+     ARPG_REQUIRE(first.slot_b[12U] == 0xE8U);
+     ARPG_REQUIRE(first.slot_b[13U] == 0x03U);
+     ARPG_REQUIRE(first.slot_a_hash == second.slot_a_hash);
+     ARPG_REQUIRE(first.slot_b_hash == second.slot_b_hash);
+     ARPG_REQUIRE(first.slot_a_hash != first.slot_b_hash);
++    MemorySlots slots{};
++    settings::SettingsData legacy = settings::default_settings();
++    legacy.revision = 51U;
++    legacy.loot_filter_mode = settings::LootFilterMode::rare_only;
++    slots.a = encode_v1(legacy);
++    slots.has_a = true;
++
++    settings::SettingsData current = settings::default_settings();
++    current.revision = 52U;
++    current.loot_filter_mode = settings::LootFilterMode::magic_or_better;
++    slots.b = settings::encode_settings(current);
++    slots.has_b = true;
++
++    const auto loaded = settings::SettingsStore{"stage11d-mixed", memory_ops(slots)}.load();
++    ARPG_REQUIRE(loaded.status == settings::SettingsLoadStatus::loaded);
++    ARPG_REQUIRE(loaded.settings.revision == current.revision);
++    ARPG_REQUIRE(loaded.settings.loot_filter_mode == current.loot_filter_mode);
+     return {};
+ }
+ 
+ arpg::test::Failure real_v6_slots_are_unchanged_by_thousand_settings_cycles() noexcept {
+     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+     const std::filesystem::path directory = std::filesystem::temp_directory_path()
+         / ("arpg-stage11b-v6-settings-" + std::to_string(stamp));
+     std::error_code error{};
+     std::filesystem::create_directories(directory, error);
+     ARPG_REQUIRE(!error);
+diff --git a/tests/settings/settings_types_tests.cpp b/tests/settings/settings_types_tests.cpp
+index 277f4b8..b4b47d6 100644
+--- a/tests/settings/settings_types_tests.cpp
++++ b/tests/settings/settings_types_tests.cpp
+@@ -6,58 +6,77 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <cstring>
+ 
+ namespace {
+ 
+ using arpg::settings::SettingAction;
+ using arpg::settings::SettingsData;
+ using arpg::settings::SettingsValidationError;
+ using arpg::settings::StableKey;
++using arpg::settings::LootFilterMode;
+ using arpg::settings::WindowMode;
+ 
+ constexpr std::array<SettingAction, 10> actions{
+     SettingAction::move_up,
+     SettingAction::move_down,
+     SettingAction::move_left,
+     SettingAction::move_right,
+     SettingAction::light_attack,
+     SettingAction::jump,
+     SettingAction::launcher,
+     SettingAction::interact,
+     SettingAction::inventory,
+     SettingAction::passive_tree};
+ 
+ [[nodiscard]] bool same_settings(
+     const SettingsData& lhs, const SettingsData& rhs) noexcept {
+     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
+         lhs.window_mode == rhs.window_mode &&
+         lhs.vsync_enabled == rhs.vsync_enabled &&
++        lhs.loot_filter_mode == rhs.loot_filter_mode &&
+         lhs.bindings == rhs.bindings &&
+         lhs.revision == rhs.revision;
+ }
+ 
+ arpg::test::Failure defaults_are_stable() noexcept {
+     const SettingsData settings = arpg::settings::default_settings();
+     const std::array<StableKey, 10> expected{
+         StableKey::w, StableKey::s, StableKey::a, StableKey::d, StableKey::j,
+         StableKey::k, StableKey::l, StableKey::e, StableKey::i, StableKey::p};
+ 
+     ARPG_REQUIRE(settings.master_sfx_percent == 100U);
+     ARPG_REQUIRE(settings.window_mode == WindowMode::windowed);
+     ARPG_REQUIRE(settings.vsync_enabled);
++    ARPG_REQUIRE(settings.loot_filter_mode == LootFilterMode::show_all);
+     ARPG_REQUIRE(settings.revision == 0U);
+     ARPG_REQUIRE(settings.bindings == expected);
+     for (std::size_t index = 0; index < actions.size(); ++index) {
+         ARPG_REQUIRE(arpg::settings::binding_for(settings, actions[index]) == expected[index]);
+     }
+     ARPG_REQUIRE(arpg::settings::validate_settings(settings) == SettingsValidationError::none);
++    SettingsData values = settings;
++    constexpr std::array<LootFilterMode, 3> modes{
++        LootFilterMode::show_all,
++        LootFilterMode::magic_or_better,
++        LootFilterMode::rare_only};
++    constexpr std::array<const char*, 3> labels{
++        "Show All", "Magic or Better", "Rare Only"};
++    for (std::size_t index = 0U; index < modes.size(); ++index) {
++        values.loot_filter_mode = modes[index];
++        ARPG_REQUIRE(arpg::settings::validate_settings(values) == SettingsValidationError::none);
++        ARPG_REQUIRE(std::strcmp(arpg::settings::loot_filter_label(modes[index]), labels[index]) == 0);
++    }
++    values.loot_filter_mode = static_cast<LootFilterMode>(3U);
++    ARPG_REQUIRE(arpg::settings::validate_settings(values) ==
++        SettingsValidationError::loot_filter_mode);
++    ARPG_REQUIRE(std::strcmp(arpg::settings::loot_filter_label(values.loot_filter_mode), "Unknown") == 0);
+     return {};
+ }
+ 
+ arpg::test::Failure action_labels_are_present_and_distinct() noexcept {
+     for (std::size_t lhs = 0; lhs < actions.size(); ++lhs) {
+         const char* label = arpg::settings::action_label(actions[lhs]);
+         ARPG_REQUIRE(label != nullptr);
+         ARPG_REQUIRE(label[0] != '\0');
+         for (std::size_t rhs = lhs + 1U; rhs < actions.size(); ++rhs) {
+             ARPG_REQUIRE(std::strcmp(label, arpg::settings::action_label(actions[rhs])) != 0);
